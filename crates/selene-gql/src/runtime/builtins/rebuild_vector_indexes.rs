@@ -17,7 +17,7 @@ use crate::{
 
 const PROC_NAME: &str = "selene.rebuild_vector_indexes";
 
-static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 67] = [
+static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 71] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -134,6 +134,14 @@ static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 67] = [
         .with_description("Live IVF entries inserted or replaced after prior centroid training."),
     StaticOutputColumn::new("after_ivf_pending_retrain_entries", GqlType::Uint64)
         .with_description("Live IVF entries still pending retrain after rebuild."),
+    StaticOutputColumn::new("before_ivf_pending_retrain_basis_points", GqlType::Uint64)
+        .with_description("Pending IVF retrain ratio before rebuild, scaled by 10,000."),
+    StaticOutputColumn::new("after_ivf_pending_retrain_basis_points", GqlType::Uint64)
+        .with_description("Pending IVF retrain ratio after rebuild, scaled by 10,000."),
+    StaticOutputColumn::new("before_ivf_rebuild_recommended", GqlType::Boolean)
+        .with_description("Whether IVF diagnostics recommended rebuild before maintenance."),
+    StaticOutputColumn::new("after_ivf_rebuild_recommended", GqlType::Boolean)
+        .with_description("Whether IVF diagnostics still recommend rebuild after maintenance."),
     StaticOutputColumn::new("before_estimated_index_bytes", GqlType::Uint64)
         .with_description("Estimated index-owned bytes before rebuild."),
     StaticOutputColumn::new("after_estimated_index_bytes", GqlType::Uint64)
@@ -293,6 +301,10 @@ impl RebuildRow {
             bytes(self.after.ivf_assigned_entries),
             bytes(self.before.ivf_pending_retrain_entries),
             bytes(self.after.ivf_pending_retrain_entries),
+            bytes(self.before.ivf_pending_retrain_basis_points()),
+            bytes(self.after.ivf_pending_retrain_basis_points()),
+            Value::Bool(self.before.ivf_rebuild_recommended()),
+            Value::Bool(self.after.ivf_rebuild_recommended()),
             bytes(self.before.estimated_index_bytes),
             bytes(self.after.estimated_index_bytes),
             bytes(self.before.estimated_reachable_bytes),

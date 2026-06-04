@@ -73,6 +73,20 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
         .collect()
 }
 
+fn bool_column(table: &BindingTable, name: &str) -> Vec<bool> {
+    let index = table
+        .column_index(istr(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::Bool(value)) => *value,
+            other => panic!("expected bool in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
 fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
     let index = table
         .column_index(istr(name))
@@ -176,7 +190,8 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
                ivf_deleted_entries, ivf_centroids, ivf_list_count, \
                ivf_non_empty_list_count, ivf_max_list_len, \
                ivf_average_list_len_basis_points, ivf_assigned_entries, \
-               ivf_pending_retrain_entries, estimated_index_bytes, estimated_reachable_bytes",
+               ivf_pending_retrain_entries, ivf_pending_retrain_basis_points, \
+               ivf_rebuild_recommended, estimated_index_bytes, estimated_reachable_bytes",
         &registry,
     );
 
@@ -200,10 +215,79 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
     );
     assert_eq!(uint_column(&table, "ivf_assigned_entries"), vec![10]);
     assert_eq!(uint_column(&table, "ivf_pending_retrain_entries"), vec![1]);
+    assert_eq!(
+        uint_column(&table, "ivf_pending_retrain_basis_points"),
+        vec![1_000]
+    );
+    assert_eq!(bool_column(&table, "ivf_rebuild_recommended"), vec![false]);
     assert!(
         uint_column(&table, "estimated_reachable_bytes")[0]
             > uint_column(&table, "estimated_index_bytes")[0]
     );
+}
+
+#[test]
+fn vector_index_stats_recommends_ivf_rebuild_after_scale_aware_drift() {
+    let graph = graph(330_153);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for value in 0..100 {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[value as f32, 0.0]))),
+                )
+                .expect("base vector insert succeeds");
+        }
+        txn.commit().expect("base seed commits");
+    }
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 2, 'ivf')",
+            &registry,
+        )
+        .expect("ivf vector index creation executes");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for value in 0..100 {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(
+                        &embedding,
+                        Value::Vector(vector(&[10_000.0 + value as f32, 0.0])),
+                    ),
+                )
+                .expect("post-training vector insert succeeds");
+        }
+        txn.commit().expect("post-training inserts commit");
+    }
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_index_stats() \
+         YIELD ivf_live_entries, ivf_pending_retrain_entries, \
+               ivf_pending_retrain_basis_points, ivf_rebuild_recommended",
+        &registry,
+    );
+
+    assert_eq!(uint_column(&table, "ivf_live_entries"), vec![200]);
+    assert_eq!(
+        uint_column(&table, "ivf_pending_retrain_entries"),
+        vec![100]
+    );
+    assert_eq!(
+        uint_column(&table, "ivf_pending_retrain_basis_points"),
+        vec![5_000]
+    );
+    assert_eq!(bool_column(&table, "ivf_rebuild_recommended"), vec![true]);
 }
 
 #[test]
@@ -271,6 +355,8 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
                before_ivf_deleted_entries, after_ivf_deleted_entries, \
                before_ivf_assigned_entries, after_ivf_centroids, after_ivf_list_count, \
                before_ivf_pending_retrain_entries, after_ivf_pending_retrain_entries, \
+               before_ivf_pending_retrain_basis_points, after_ivf_pending_retrain_basis_points, \
+               before_ivf_rebuild_recommended, after_ivf_rebuild_recommended, \
                after_ivf_non_empty_list_count, after_ivf_max_list_len, \
                after_ivf_average_list_len_basis_points, after_ivf_assigned_entries, \
                reclaimed_ivf_entries, reclaimed_ivf_deleted_entries, reclaimed_reachable_bytes",
@@ -296,6 +382,22 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     assert_eq!(
         uint_column(&table, "after_ivf_pending_retrain_entries"),
         vec![0]
+    );
+    assert_eq!(
+        uint_column(&table, "before_ivf_pending_retrain_basis_points"),
+        vec![1_818]
+    );
+    assert_eq!(
+        uint_column(&table, "after_ivf_pending_retrain_basis_points"),
+        vec![0]
+    );
+    assert_eq!(
+        bool_column(&table, "before_ivf_rebuild_recommended"),
+        vec![false]
+    );
+    assert_eq!(
+        bool_column(&table, "after_ivf_rebuild_recommended"),
+        vec![false]
     );
     assert!(uint_column(&table, "after_ivf_centroids")[0] > 0);
     assert!(uint_column(&table, "after_ivf_list_count")[0] > 0);

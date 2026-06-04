@@ -13,7 +13,7 @@ use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, Pr
 
 const PROC_NAME: &str = "selene.vector_index_stats";
 
-static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 33] = [
+static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 35] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -72,6 +72,11 @@ static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 33] = [
         .with_description("Live IVF entries assigned to inverted lists."),
     StaticOutputColumn::new("ivf_pending_retrain_entries", GqlType::Uint64)
         .with_description("Live IVF entries inserted or replaced after centroid training."),
+    StaticOutputColumn::new("ivf_pending_retrain_basis_points", GqlType::Uint64).with_description(
+        "Pending IVF retrain entries divided by live IVF entries, scaled by 10,000.",
+    ),
+    StaticOutputColumn::new("ivf_rebuild_recommended", GqlType::Boolean)
+        .with_description("Whether IVF drift diagnostics recommend a maintenance rebuild."),
     StaticOutputColumn::new("estimated_index_bytes", GqlType::Uint64)
         .with_description("Estimated index-owned bytes."),
     StaticOutputColumn::new("estimated_reachable_bytes", GqlType::Uint64)
@@ -204,6 +209,10 @@ impl StatsRow {
             Value::Uint(usize_to_u64_saturating(
                 self.usage.ivf_pending_retrain_entries,
             )),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.ivf_pending_retrain_basis_points(),
+            )),
+            Value::Bool(self.usage.ivf_rebuild_recommended()),
             Value::Uint(usize_to_u64_saturating(self.usage.estimated_index_bytes)),
             Value::Uint(usize_to_u64_saturating(
                 self.usage.estimated_reachable_bytes,

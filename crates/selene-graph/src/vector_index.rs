@@ -41,7 +41,10 @@ use config::hnsw_config_for_kind;
 pub(crate) use hnsw::HnswSearchScratch;
 use hnsw::HnswVectorIndex;
 use ivf::IvfVectorIndex;
-pub use memory::VectorIndexMemoryUsage;
+pub use memory::{
+    IVF_REBUILD_MIN_PENDING_RETRAIN_ENTRIES, IVF_REBUILD_PENDING_RETRAIN_BASIS_POINTS,
+    VectorIndexMemoryUsage,
+};
 pub use rebuild::{VectorIndexRebuildEntry, VectorIndexRebuildReport};
 pub(crate) use search_hit::VectorIndexSearchHit;
 use search_hit::{hnsw_hits, ivf_hits};
