@@ -156,7 +156,13 @@ pub(super) fn validate_inline_call(call: &InlineProcedureCall) -> Result<(), For
 
 fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
     match expr {
-        ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => Ok(()),
+        ValueExpr::Literal(_) | ValueExpr::Variable { .. } => Ok(()),
+        ValueExpr::Parameter { declared_type, .. } => {
+            if let Some(ty) = declared_type {
+                validate_type(ty)?;
+            }
+            Ok(())
+        }
         ValueExpr::PropertyAccess { target, .. } => validate_expr(target),
         ValueExpr::ListAccess { target, index, .. } => {
             validate_expr(target)?;
@@ -305,6 +311,26 @@ mod tests {
     }
 
     #[test]
+    fn preflight_rejects_vector_type() {
+        assert_unsupported(GqlType::Vector, "Vector");
+    }
+
+    #[test]
+    fn preflight_rejects_vector_type_inside_list() {
+        assert_unsupported(GqlType::List(Box::new(GqlType::Vector)), "Vector");
+    }
+
+    #[test]
+    fn preflight_rejects_ast_only_type_on_typed_parameter() {
+        let err = validate_formattable(&parameter_statement_with_type(GqlType::Vector))
+            .expect_err("typed parameter vector type is unsupported");
+        match err {
+            FormatError::Unsupported { variant } => assert_eq!(variant, "Vector"),
+            FormatError::Fmt(_) => panic!("expected unsupported variant"),
+        }
+    }
+
+    #[test]
     fn preflight_rejects_graph_ref_type() {
         assert_unsupported(GqlType::GraphRef, "GraphRef");
     }
@@ -343,6 +369,29 @@ mod tests {
                         operand: Box::new(ValueExpr::Literal(Literal::Null(span))),
                         kind: IsCheckKind::Typed(ty),
                         negated: false,
+                        span,
+                    },
+                    alias: None,
+                    span,
+                }],
+                group_by: None,
+                having: None,
+                span,
+            })],
+            span,
+        })
+    }
+
+    fn parameter_statement_with_type(ty: GqlType) -> Statement {
+        let span = SourceSpan::default();
+        Statement::Query(QueryPipeline {
+            statements: vec![PipelineStatement::Return(ReturnClause {
+                distinct: false,
+                star: false,
+                items: vec![ReturnItem {
+                    expr: ValueExpr::Parameter {
+                        name: selene_core::intern("value").expect("intern parameter name"),
+                        declared_type: Some(ty),
                         span,
                     },
                     alias: None,
