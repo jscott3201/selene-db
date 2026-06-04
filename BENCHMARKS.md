@@ -729,13 +729,15 @@ scripts/run-benches.sh --profile quick --bench vector_graph_retrieval --filter g
 The first local corpus is intentionally tiny (16 documents + 4 queries across
 GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
 endpoint embeddings round-trip through `Value::Vector`, graph HNSW indexing,
-exact cosine search, and ANN search before larger local corpus work:
+exact cosine search, ANN search, and graph-label candidate-set scoring before
+larger local corpus work:
 
 | oMLX row | Qwen3 0.6B / 1024 dim | Qwen3 4B / 2560 dim | Notes |
 |---|---:|---:|---|
 | `graph_vector_omlx_embedding_pressure/embed_batch/...docs20` | 39.23 ms | 208.8 ms | End-to-end localhost embedding request for 20 texts. |
 | `graph_vector_omlx_embedding_pressure/exact_graph_search/...precbp6875` | 13.58 µs | 31.81 µs | Exact cosine over 16 stored endpoint vectors and 4 query vectors. |
 | `graph_vector_omlx_embedding_pressure/hnsw_graph_search/...precbp6875` | 16.07 µs | 34.29 µs | HNSW cosine over the same vectors (`k=4`, `ef=64`). |
+| `graph_vector_omlx_embedding_pressure/topic_label_candidate_score/...c4...precbp10000` | 4.15 µs | 9.51 µs | Candidate sets are derived from graph topic labels and batch-scored exactly. |
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it

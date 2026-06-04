@@ -13,7 +13,8 @@ use selene_core::{
     VectorMetric, VectorValue,
 };
 use selene_graph::{
-    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexConfig, VectorIndexKind,
+    ApproximateVectorSearchOptions, RowIndex, SeleneGraph, SharedGraph, VectorCandidateSet,
+    VectorIndexConfig, VectorIndexKind,
 };
 
 use crate::common::scale_label;
@@ -45,6 +46,10 @@ pub(super) fn bench(c: &mut Criterion) {
             .embed(&model, &inputs)
             .expect("local oMLX embedding request succeeds");
         let fixture = OmlxVectorFixture::build(&model, vectors);
+        let topic_precision = basis_points(
+            fixture.topic_candidate_total_precision(),
+            fixture.query_count() * TOP_K,
+        );
         group.throughput(Throughput::Elements(inputs.len() as u64));
         group.bench_function(
             BenchmarkId::new(
@@ -95,6 +100,24 @@ pub(super) fn bench(c: &mut Criterion) {
             ),
             |b| {
                 b.iter(|| black_box(fixture.ann_total_precision()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_label_candidate_score",
+                format!(
+                    "{}_{}_q{}_k{}_c{}_dim{}_precbp{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.topic_candidate_count(),
+                    fixture.dimension,
+                    topic_precision,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.topic_candidate_total_precision()));
             },
         );
     }
@@ -374,7 +397,10 @@ impl OmlxVectorFixture {
                     )])
                     .expect("oMLX bench document properties fit");
                     let node = mutator
-                        .create_node(LabelSet::single(label.clone()), props)
+                        .create_node(
+                            LabelSet::from_iter([label.clone(), topic_label(input.topic)]),
+                            props,
+                        )
                         .expect("oMLX bench document node inserts");
                     documents.push(DocumentMeta {
                         node,
@@ -478,6 +504,52 @@ impl OmlxVectorFixture {
         basis_points(self.ann_total_precision(), self.query_count() * TOP_K)
     }
 
+    fn topic_candidate_total_precision(&self) -> usize {
+        let queries = self
+            .queries
+            .iter()
+            .map(|query| query.vector.clone())
+            .collect::<Vec<_>>();
+        let candidate_sets = self
+            .queries
+            .iter()
+            .map(|query| self.topic_candidate_set(query.topic))
+            .collect::<Vec<_>>();
+        let hits = self
+            .graph
+            .score_vector_candidate_sets_batch_checked(
+                &self.embedding_key,
+                &queries,
+                &candidate_sets,
+                VectorMetric::Cosine,
+                TOP_K,
+                CancellationChecker::disabled(),
+            )
+            .expect("oMLX topic candidate scoring succeeds");
+        self.queries
+            .iter()
+            .zip(hits)
+            .map(|(query, hits)| {
+                self.precision(query.topic, hits.into_iter().map(|hit| hit.node_id))
+            })
+            .sum()
+    }
+
+    fn topic_candidate_count(&self) -> usize {
+        self.topic_candidate_set(Topic::Gql).len()
+    }
+
+    fn topic_candidate_set(&self, topic: Topic) -> VectorCandidateSet {
+        let topic_label = topic_label(topic);
+        let Some(rows) = self.graph.nodes_with_label(&topic_label) else {
+            return VectorCandidateSet::default();
+        };
+        VectorCandidateSet::from_nodes(
+            rows.iter()
+                .filter_map(|row| self.graph.node_id_for_row(RowIndex::new(row))),
+        )
+    }
+
     fn precision<I>(&self, topic: Topic, hits: I) -> usize
     where
         I: IntoIterator<Item = NodeId>,
@@ -498,6 +570,15 @@ enum Topic {
     Vector,
     AgentMemory,
     Code,
+}
+
+fn topic_label(topic: Topic) -> selene_core::IStr {
+    match topic {
+        Topic::Gql => istr("OmlxTopicGql"),
+        Topic::Vector => istr("OmlxTopicVector"),
+        Topic::AgentMemory => istr("OmlxTopicAgentMemory"),
+        Topic::Code => istr("OmlxTopicCode"),
+    }
 }
 
 #[derive(Clone, Copy)]
