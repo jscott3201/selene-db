@@ -99,7 +99,10 @@ impl MemoryRetrievalFixture {
                         }
                     }
                 }
-                if topology == TopologyNoise::NoisySparseSupport {
+                if matches!(
+                    topology,
+                    TopologyNoise::NoisySparseSupport | TopologyNoise::NoisyMultiHopSupport
+                ) {
                     for topic in 0..topic_count {
                         let next_topic = (topic + 1) % topic_count;
                         for duplicate in 0..duplicates {
@@ -125,7 +128,12 @@ impl MemoryRetrievalFixture {
                                 continue;
                             }
                             let evidence = evidence_nodes[duplicate % evidence_nodes.len()];
-                            if topology == TopologyNoise::MultiHopSupport && fact >= SEED_K {
+                            if matches!(
+                                topology,
+                                TopologyNoise::MultiHopSupport
+                                    | TopologyNoise::NoisyMultiHopSupport
+                            ) && fact >= SEED_K
+                            {
                                 let bridge = mutator
                                     .create_node(
                                         LabelSet::single(bridge_label.clone()),
@@ -324,7 +332,8 @@ fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize)
         }
         TopologyNoise::Clean
         | TopologyNoise::CrossTopicSupportRing
-        | TopologyNoise::MultiHopSupport => true,
+        | TopologyNoise::MultiHopSupport
+        | TopologyNoise::NoisyMultiHopSupport => true,
     }
 }
 
