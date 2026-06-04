@@ -779,6 +779,7 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_neighbor_ann_union_score/...precbp5625/4843...ann8` | 331.61 µs | 668.26 µs | Same negative fallback result through explicit graph-neighbor candidates. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_score/...c16...precbp10000` | 61.74 µs | 135.29 µs | Two direct graph hints per topic expand through `OmlxSupports` to the full same-topic support set, restoring full precision with the same width as complete graph labels. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_cached_score/...c16...precbp10000` | 58.32 µs | 132.14 µs | Precomputing the same expanded support candidate sets trims query-time graph traversal overhead while preserving full precision. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_refresh_sets/...q16_c16_totalc256` | 2.97 µs | 3.05 µs | Recomputes every cached support candidate set from graph topology and asserts it matches cached state; refresh cost is small at this hot-scope size. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_ann_union_score/...precbp5625/4843...ann8` | 371.82 µs (`c22`) | 754.71 µs (`c21`) | ANN union after full graph expansion hurts precision and adds hundreds of microseconds; avoid widening precise graph-expanded candidate sets with ANN by default. |
 
 The opt-in `Qwen3-Embedding-8B-4bit-DWQ` local model also works on

@@ -75,6 +75,8 @@ pub(super) fn bench(c: &mut Criterion) {
             fixture.topic_hint_expansion_cached_total_precision(),
             fixture.query_count() * TOP_K,
         );
+        let hint_expansion_refresh_candidates =
+            fixture.topic_hint_expansion_refresh_total_candidates();
         group.throughput(Throughput::Elements(inputs.len() as u64));
         group.bench_function(
             BenchmarkId::new(
@@ -278,6 +280,24 @@ pub(super) fn bench(c: &mut Criterion) {
             ),
             |b| {
                 b.iter(|| black_box(fixture.topic_hint_expansion_ann_union_total_precision()));
+            },
+        );
+        group.throughput(Throughput::Elements(fixture.query_count() as u64));
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_hint_expansion_refresh_sets",
+                format!(
+                    "{}_{}_q{}_c{}_totalc{}_dim{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    fixture.query_count(),
+                    fixture.topic_hint_expansion_refresh_count(),
+                    hint_expansion_refresh_candidates,
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.topic_hint_expansion_refresh_total_candidates()));
             },
         );
     }
