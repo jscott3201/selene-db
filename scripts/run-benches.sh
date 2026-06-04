@@ -335,6 +335,7 @@ vector_rebuild_group_filter() {
   fi
   case "$filt" in
     graph_vector_index_rebuild*) echo "rebuild" ;;
+    graph_vector_index_recommended_rebuild*) echo "recommended_rebuild" ;;
     graph_vector_index_stale_query*) echo "stale_query" ;;
     graph_vector_index_dimension_projection*) echo "dimension_projection" ;;
   esac
