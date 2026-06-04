@@ -9,15 +9,22 @@ mod common;
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
+use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 use selene_testing::BenchFixture;
 
 const ACTIVE_SET_BATCH: usize = 40;
+static ACTIVE_SET_WAL_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn bench_provider_fanout(c: &mut Criterion) {
     let mut group = c.benchmark_group("provider_fanout");
@@ -47,6 +54,8 @@ fn bench_provider_fanout(c: &mut Criterion) {
 
     bench_active_set_edge_create(&mut group, &fixture);
     bench_active_set_edge_delete(&mut group, &fixture);
+    bench_active_set_wal_edge_create(&mut group, &fixture);
+    bench_active_set_wal_edge_delete(&mut group, &fixture);
 
     group.finish();
 }
@@ -122,7 +131,7 @@ fn bench_active_set_edge_create(
                                 .create_edge(
                                     label.clone(),
                                     source,
-                                    active_target(idx),
+                                    active_target(fixture, idx),
                                     PropertyMap::new(),
                                 )
                                 .expect("active-set edge create succeeds");
@@ -161,7 +170,7 @@ fn bench_active_set_edge_delete(
                                         .create_edge(
                                             label.clone(),
                                             source,
-                                            active_target(idx),
+                                            active_target(fixture, idx),
                                             PropertyMap::new(),
                                         )
                                         .expect("active-set seed edge create succeeds"),
@@ -191,6 +200,104 @@ fn bench_active_set_edge_delete(
     );
 }
 
+fn bench_active_set_wal_edge_create(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    fixture: &BenchFixture,
+) {
+    let label = active_set_edge_label();
+    let sources = active_sources();
+    group.throughput(Throughput::Elements(ACTIVE_SET_BATCH as u64));
+    group.bench_function(
+        BenchmarkId::from_parameter("active_set_wal_edge_create_k40"),
+        |b| {
+            b.iter_batched(
+                || active_set_wal_graph(fixture, &label, &sources),
+                |wal| {
+                    let mut txn = wal.shared.begin_write();
+                    {
+                        let mut mutator = txn.mutator();
+                        for (idx, source) in sources.iter().copied().enumerate() {
+                            mutator
+                                .create_edge(
+                                    label.clone(),
+                                    source,
+                                    active_target(fixture, idx),
+                                    PropertyMap::new(),
+                                )
+                                .expect("WAL active-set edge create succeeds");
+                        }
+                    }
+                    let changes = txn.commit().expect("WAL commit succeeds").changes.len();
+                    std::hint::black_box((
+                        wal.shared.read().edge_count(),
+                        changes,
+                        wal.active_len(),
+                    ))
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
+}
+
+fn bench_active_set_wal_edge_delete(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    fixture: &BenchFixture,
+) {
+    let label = active_set_edge_label();
+    let sources = active_sources();
+    group.throughput(Throughput::Elements(ACTIVE_SET_BATCH as u64));
+    group.bench_function(
+        BenchmarkId::from_parameter("active_set_wal_edge_delete_k40"),
+        |b| {
+            b.iter_batched(
+                || {
+                    let wal = active_set_wal_graph(fixture, &label, &sources);
+                    let mut seeded_edges = Vec::with_capacity(ACTIVE_SET_BATCH);
+                    {
+                        let mut txn = wal.shared.begin_write();
+                        {
+                            let mut mutator = txn.mutator();
+                            for (idx, source) in sources.iter().copied().enumerate() {
+                                seeded_edges.push(
+                                    mutator
+                                        .create_edge(
+                                            label.clone(),
+                                            source,
+                                            active_target(fixture, idx),
+                                            PropertyMap::new(),
+                                        )
+                                        .expect("WAL active-set seed edge create succeeds"),
+                                );
+                            }
+                        }
+                        txn.commit().expect("WAL seed commit succeeds");
+                    }
+                    (wal, seeded_edges)
+                },
+                |(wal, seeded_edges)| {
+                    let mut txn = wal.shared.begin_write();
+                    {
+                        let mut mutator = txn.mutator();
+                        for edge_id in seeded_edges {
+                            mutator
+                                .delete_edge(edge_id)
+                                .expect("WAL active-set edge delete succeeds");
+                        }
+                    }
+                    let changes = txn.commit().expect("WAL commit succeeds").changes.len();
+                    std::hint::black_box((
+                        wal.shared.read().edge_count(),
+                        changes,
+                        wal.active_len(),
+                    ))
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
+}
+
 fn active_set_shared(
     fixture: &BenchFixture,
     label: &IStr,
@@ -205,6 +312,55 @@ fn active_set_shared(
     (shared, provider)
 }
 
+fn active_set_wal_graph(
+    fixture: &BenchFixture,
+    label: &IStr,
+    sources: &[NodeId],
+) -> ActiveSetWalGraph {
+    let dir = fresh_active_set_wal_dir();
+    let provider = Arc::new(ActiveSetProvider::new(label.clone(), sources));
+    let shared = SharedGraph::builder(fixture.graph().meta.graph_id)
+        .with_provider(provider.clone() as Arc<dyn IndexProvider>)
+        .with_wal(dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())
+        .expect("active-set WAL opens")
+        .build()
+        .expect("active-set WAL graph builds");
+    seed_nodes(&shared, fixture.scale());
+    ActiveSetWalGraph {
+        shared,
+        provider,
+        dir,
+    }
+}
+
+fn seed_nodes(shared: &SharedGraph, count: usize) {
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        for _ in 0..count {
+            mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("WAL fixture node seed succeeds");
+        }
+    }
+    txn.commit().expect("WAL fixture node seed commits");
+}
+
+fn fresh_active_set_wal_dir() -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_nanos();
+    let seq = ACTIVE_SET_WAL_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "selene-bench-active-set-wal-{}-{nanos}-{seq}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create active-set WAL bench dir");
+    dir
+}
+
 fn active_set_edge_label() -> IStr {
     intern("ACTIVE_SET_CONTRADICTS").expect("bench edge label interns")
 }
@@ -213,8 +369,26 @@ fn active_sources() -> Vec<NodeId> {
     (1..=ACTIVE_SET_BATCH as u64).map(NodeId::new).collect()
 }
 
-fn active_target(idx: usize) -> NodeId {
-    NodeId::new(10_000 - idx as u64)
+fn active_target(fixture: &BenchFixture, idx: usize) -> NodeId {
+    NodeId::new((fixture.scale() - idx) as u64)
+}
+
+struct ActiveSetWalGraph {
+    shared: SharedGraph,
+    provider: Arc<ActiveSetProvider>,
+    dir: PathBuf,
+}
+
+impl ActiveSetWalGraph {
+    fn active_len(&self) -> usize {
+        self.provider.active_len()
+    }
+}
+
+impl Drop for ActiveSetWalGraph {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
 }
 
 struct ActiveSetProvider {

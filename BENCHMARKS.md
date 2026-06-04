@@ -364,6 +364,8 @@ fixture** (the headline scale); `empty_commit` shows the scale axis.
 | `provider_fanout/extra_k4_with_panic_one` | extra=4 + panic | n/a | Opt-in `SELENE_BENCH_INCLUDE_PANIC_PROVIDER=1`. |
 | `provider_fanout/active_set_edge_create_k40` | 40 edge creates + active-set provider | 283.2 µs | In-memory commit/provider path for `CONTRADICTS`-style active-set removal; no WAL. |
 | `provider_fanout/active_set_edge_delete_k40` | 40 edge deletes + active-set provider | 218.8 µs | Delete path uses provider-owned `edge_id -> source` state to reinsert active nodes; seed excluded from timed body. |
+| `provider_fanout/active_set_wal_edge_create_k40` | 40 edge creates + WAL + active-set provider | 4.75 ms | Core WAL durability plus provider removal; provider state itself remains in-memory. |
+| `provider_fanout/active_set_wal_edge_delete_k40` | 40 edge deletes + WAL + active-set provider | 4.21 ms | Core WAL durability plus provider reinsertion; seed excluded from timed body. |
 | `bound_type_validation/unbound_commit` | 10k / 50k / 100k | 291 / 246 / 320 µs | Commit without graph-type validation. |
 | `bound_type_validation/bound_commit_simple` | 10k / 50k / 100k | 304 / 250 / 350 µs | Typed-commit validation delta (small). |
 | `bound_type_validation/bound_commit_rich` | 10k / 50k / 100k | 1.01 / 1.14 / 1.67 ms | Wider type-graph validation delta. |
