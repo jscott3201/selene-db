@@ -713,6 +713,34 @@ ANN or compressed pre-scoring.
 | `graph_vector_retrieval/graph_expand_pagerank/...covbp9435_curbp4838_precbp9516` | 358.0 µs | 794.8 µs (`covbp8203_curbp4335_precbp8828`) | PageRank on top of raw expansion adds cost without current-valid uplift on this fixture; keep as a guardrail before promoting algorithm-prior policies. |
 | `graph_vector_retrieval/exact_graph_oracle/...covbp10000_curbp10000_precbp10000` | 1.414 ms | 22.2 ms | Exact vector search plus validity-aware expansion reaches the fixture oracle, but it is far slower at 10k and only suitable as a research bound. |
 
+Local-only oMLX embedding rows are disabled unless
+`SELENE_OMLX_EMBEDDING_BENCH=1` is set. They call the developer's localhost
+OpenAI-compatible endpoint and therefore are **not** expected to run in CI.
+Use the ignored `.env` key only through the shell environment; do not commit or
+print it:
+
+```bash
+set -a; source .env; set +a
+SELENE_OMLX_EMBEDDING_BENCH=1 \
+SELENE_OMLX_EMBEDDING_MODELS=Qwen3-Embedding-0.6B-4bit-DWQ,Qwen3-Embedding-4B-4bit-DWQ \
+scripts/run-benches.sh --profile quick --bench vector_graph_retrieval --filter graph_vector_omlx_embedding_pressure --vector-scales 1000
+```
+
+The first local corpus is intentionally tiny (16 documents + 4 queries across
+GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
+endpoint embeddings round-trip through `Value::Vector`, graph HNSW indexing,
+exact cosine search, and ANN search before larger local corpus work:
+
+| oMLX row | Qwen3 0.6B / 1024 dim | Qwen3 4B / 2560 dim | Notes |
+|---|---:|---:|---|
+| `graph_vector_omlx_embedding_pressure/embed_batch/...docs20` | 39.23 ms | 208.8 ms | End-to-end localhost embedding request for 20 texts. |
+| `graph_vector_omlx_embedding_pressure/exact_graph_search/...precbp6875` | 13.58 µs | 31.81 µs | Exact cosine over 16 stored endpoint vectors and 4 query vectors. |
+| `graph_vector_omlx_embedding_pressure/hnsw_graph_search/...precbp6875` | 16.07 µs | 34.29 µs | HNSW cosine over the same vectors (`k=4`, `ef=64`). |
+
+The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
+`/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it
+is exposed as an embedding model.
+
 Component-pressure rows pool the query component with additional graph
 components before exact vector scoring. Quality remains perfect on this clean
 fixture, so these rows isolate candidate-set size pressure rather than topology

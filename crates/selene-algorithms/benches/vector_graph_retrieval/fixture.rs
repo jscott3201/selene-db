@@ -15,6 +15,7 @@ mod ann_rerank_pressure;
 mod builder;
 mod community_pressure;
 mod component_pressure;
+mod omlx_embeddings;
 mod query_filter_pressure;
 mod session_pressure;
 mod support;
@@ -76,6 +77,7 @@ pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
     community_pressure::bench(c);
     query_filter_pressure::bench(c);
     ann_rerank_pressure::bench(c);
+    omlx_embeddings::bench(c);
     session_pressure::bench(c);
 }
 
