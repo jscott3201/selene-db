@@ -17,11 +17,13 @@ const SESSION_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::GraphSessionCurrentFilter,
     SessionStrategy::GraphSessionUnsupersededFilter,
     SessionStrategy::GraphSessionMaterializedCurrentFilter,
+    SessionStrategy::GraphSessionProvenanceExpandK1,
     SessionStrategy::GraphSessionProvenanceExpand,
     SessionStrategy::GraphScopeFilter,
     SessionStrategy::GraphScopeCurrentFilter,
     SessionStrategy::GraphScopeUnsupersededFilter,
     SessionStrategy::GraphScopeMaterializedCurrentFilter,
+    SessionStrategy::GraphScopeProvenanceExpandK1,
     SessionStrategy::GraphScopeProvenanceExpand,
     SessionStrategy::TopicFilter,
 ];
@@ -34,11 +36,13 @@ enum SessionStrategy {
     GraphSessionCurrentFilter,
     GraphSessionUnsupersededFilter,
     GraphSessionMaterializedCurrentFilter,
+    GraphSessionProvenanceExpandK1,
     GraphSessionProvenanceExpand,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
     GraphScopeMaterializedCurrentFilter,
+    GraphScopeProvenanceExpandK1,
     GraphScopeProvenanceExpand,
     TopicFilter,
 }
@@ -54,11 +58,13 @@ impl SessionStrategy {
             Self::GraphSessionMaterializedCurrentFilter => {
                 "graph_session_materialized_current_filter"
             }
+            Self::GraphSessionProvenanceExpandK1 => "graph_session_provenance_expand_k1",
             Self::GraphSessionProvenanceExpand => "graph_session_provenance_expand",
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
             Self::GraphScopeMaterializedCurrentFilter => "graph_scope_materialized_current_filter",
+            Self::GraphScopeProvenanceExpandK1 => "graph_scope_provenance_expand_k1",
             Self::GraphScopeProvenanceExpand => "graph_scope_provenance_expand",
             Self::TopicFilter => "topic_filter",
         }
@@ -129,12 +135,16 @@ impl MemoryRetrievalFixture {
 
     fn select_session_candidates(&self, query: &Query, strategy: SessionStrategy) -> Vec<NodeId> {
         let candidates = self.session_candidates(query, strategy);
-        if matches!(
-            strategy,
+        match strategy {
+            SessionStrategy::GraphSessionProvenanceExpandK1
+            | SessionStrategy::GraphScopeProvenanceExpandK1 => {
+                return self.select_provenance_expansion(query, candidates, 1);
+            }
             SessionStrategy::GraphSessionProvenanceExpand
-                | SessionStrategy::GraphScopeProvenanceExpand
-        ) {
-            return self.select_provenance_expansion(query, candidates);
+            | SessionStrategy::GraphScopeProvenanceExpand => {
+                return self.select_provenance_expansion(query, candidates, SEED_K);
+            }
+            _ => {}
         }
         let hits = self.score_candidate_ids(query, candidates);
         self.select_from_candidates(query, hits, true, false, true)
@@ -163,6 +173,9 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphSessionMaterializedCurrentFilter => {
                 self.materialized_current_candidates(self.graph_session_candidates(query))
             }
+            SessionStrategy::GraphSessionProvenanceExpandK1 => self.provenance_root_candidates(
+                self.materialized_current_candidates(self.graph_session_candidates(query)),
+            ),
             SessionStrategy::GraphSessionProvenanceExpand => self.provenance_root_candidates(
                 self.materialized_current_candidates(self.graph_session_candidates(query)),
             ),
@@ -176,6 +189,9 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphScopeMaterializedCurrentFilter => {
                 self.materialized_current_candidates(self.graph_session_scope_candidates(query))
             }
+            SessionStrategy::GraphScopeProvenanceExpandK1 => self.provenance_root_candidates(
+                self.materialized_current_candidates(self.graph_session_scope_candidates(query)),
+            ),
             SessionStrategy::GraphScopeProvenanceExpand => self.provenance_root_candidates(
                 self.materialized_current_candidates(self.graph_session_scope_candidates(query)),
             ),
@@ -255,6 +271,7 @@ impl MemoryRetrievalFixture {
         &self,
         query: &Query,
         root_candidates: Vec<NodeId>,
+        seed_roots: usize,
     ) -> Vec<NodeId> {
         let mut roots = self.score_candidate_ids(query, root_candidates);
         roots.sort_by(|left, right| {
@@ -264,7 +281,7 @@ impl MemoryRetrievalFixture {
         });
 
         let mut expanded = Vec::new();
-        for root in roots.into_iter().take(SEED_K) {
+        for root in roots.into_iter().take(seed_roots) {
             expanded.push(root.node_id);
             if let Some(edges) = self.graph.outgoing_edges(root.node_id) {
                 expanded.extend(
