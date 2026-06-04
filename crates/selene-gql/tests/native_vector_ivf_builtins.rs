@@ -162,7 +162,9 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
         &mut session,
         "CALL selene.vector_index_stats() \
          YIELD kind, indexed_rows, hnsw_entries, ivf_entries, ivf_live_entries, \
-               ivf_deleted_entries, ivf_centroids, ivf_list_count, ivf_assigned_entries, \
+               ivf_deleted_entries, ivf_centroids, ivf_list_count, \
+               ivf_non_empty_list_count, ivf_max_list_len, \
+               ivf_average_list_len_basis_points, ivf_assigned_entries, \
                estimated_index_bytes, estimated_reachable_bytes",
         &registry,
     );
@@ -179,6 +181,12 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
     assert_eq!(uint_column(&table, "ivf_deleted_entries"), vec![0]);
     assert_eq!(uint_column(&table, "ivf_centroids"), vec![3]);
     assert_eq!(uint_column(&table, "ivf_list_count"), vec![3]);
+    assert!(uint_column(&table, "ivf_non_empty_list_count")[0] > 0);
+    assert!(uint_column(&table, "ivf_max_list_len")[0] > 0);
+    assert_eq!(
+        uint_column(&table, "ivf_average_list_len_basis_points"),
+        vec![30_000]
+    );
     assert_eq!(uint_column(&table, "ivf_assigned_entries"), vec![9]);
     assert!(
         uint_column(&table, "estimated_reachable_bytes")[0]
@@ -249,7 +257,9 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
          YIELD kind, before_indexed_rows, after_indexed_rows, \
                before_ivf_entries, after_ivf_entries, \
                before_ivf_deleted_entries, after_ivf_deleted_entries, \
-               after_ivf_centroids, after_ivf_list_count, after_ivf_assigned_entries, \
+               after_ivf_centroids, after_ivf_list_count, \
+               after_ivf_non_empty_list_count, after_ivf_max_list_len, \
+               after_ivf_average_list_len_basis_points, after_ivf_assigned_entries, \
                reclaimed_ivf_entries, reclaimed_ivf_deleted_entries, reclaimed_reachable_bytes",
         &registry,
     );
@@ -267,6 +277,13 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     assert_eq!(uint_column(&table, "after_ivf_deleted_entries"), vec![0]);
     assert!(uint_column(&table, "after_ivf_centroids")[0] > 0);
     assert!(uint_column(&table, "after_ivf_list_count")[0] > 0);
+    assert!(uint_column(&table, "after_ivf_non_empty_list_count")[0] > 0);
+    assert!(uint_column(&table, "after_ivf_max_list_len")[0] > 0);
+    assert_eq!(
+        uint_column(&table, "after_ivf_average_list_len_basis_points")[0],
+        uint_column(&table, "after_ivf_assigned_entries")[0] * 10_000
+            / uint_column(&table, "after_ivf_list_count")[0]
+    );
     assert_eq!(uint_column(&table, "after_ivf_assigned_entries"), vec![22]);
     assert_eq!(uint_column(&table, "reclaimed_ivf_entries"), vec![6]);
     assert_eq!(

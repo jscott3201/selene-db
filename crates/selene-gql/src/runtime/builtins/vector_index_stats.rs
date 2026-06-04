@@ -13,7 +13,7 @@ use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, Pr
 
 const PROC_NAME: &str = "selene.vector_index_stats";
 
-static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 29] = [
+static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 32] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -62,6 +62,12 @@ static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 29] = [
         .with_description("Trained IVF centroid count."),
     StaticOutputColumn::new("ivf_list_count", GqlType::Uint64)
         .with_description("IVF inverted-list count."),
+    StaticOutputColumn::new("ivf_non_empty_list_count", GqlType::Uint64)
+        .with_description("IVF inverted lists with at least one assigned live entry."),
+    StaticOutputColumn::new("ivf_max_list_len", GqlType::Uint64)
+        .with_description("Maximum assigned live entries in one IVF inverted list."),
+    StaticOutputColumn::new("ivf_average_list_len_basis_points", GqlType::Uint64)
+        .with_description("Average IVF assigned entries per list scaled by 10,000."),
     StaticOutputColumn::new("ivf_assigned_entries", GqlType::Uint64)
         .with_description("Live IVF entries assigned to inverted lists."),
     StaticOutputColumn::new("estimated_index_bytes", GqlType::Uint64)
@@ -187,6 +193,11 @@ impl StatsRow {
             Value::Uint(usize_to_u64_saturating(self.usage.ivf_deleted_entries)),
             Value::Uint(usize_to_u64_saturating(self.usage.ivf_centroids)),
             Value::Uint(usize_to_u64_saturating(self.usage.ivf_list_count)),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_non_empty_list_count)),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_max_list_len)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.ivf_average_list_len_basis_points,
+            )),
             Value::Uint(usize_to_u64_saturating(self.usage.ivf_assigned_entries)),
             Value::Uint(usize_to_u64_saturating(self.usage.estimated_index_bytes)),
             Value::Uint(usize_to_u64_saturating(
