@@ -106,6 +106,24 @@ fn vector_candidate_set_algebra_handles_empty_and_disjoint_sets() {
 }
 
 #[test]
+fn vector_candidate_set_intersection_handles_asymmetric_sets() {
+    let small = VectorCandidateSet::from_nodes([
+        NodeId::new(3),
+        NodeId::new(128),
+        NodeId::new(700),
+        NodeId::new(900),
+    ]);
+    let large = VectorCandidateSet::from_nodes((1..=1024).map(NodeId::new));
+
+    assert_eq!(small.intersection(&large), small);
+    assert_eq!(large.intersection(&small), small);
+
+    let disjoint_small = VectorCandidateSet::from_nodes([NodeId::new(2048), NodeId::new(4096)]);
+    assert!(disjoint_small.intersection(&large).is_empty());
+    assert!(large.intersection(&disjoint_small).is_empty());
+}
+
+#[test]
 fn score_vector_nodes_batch_accepts_candidate_sets() {
     let shared = SharedGraph::new(GraphId::new(982));
     let label = intern("vector.score.candidate_set.doc").unwrap();
