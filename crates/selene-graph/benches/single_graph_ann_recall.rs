@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
 use selene_core::{
-    CancellationChecker, GraphId, HnswIndexConfig, IStr, LabelSet, PropertyMap, Value,
-    VectorMetric, VectorValue, intern,
+    CancellationChecker, GraphId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, PropertyMap,
+    Value, VectorMetric, VectorValue, intern,
 };
 use selene_graph::{
-    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind,
+    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexConfig, VectorIndexKind,
     VectorIndexMemoryUsage, VectorNodeSearchHit,
 };
 
@@ -37,7 +37,9 @@ enum AnnIndexKind {
     Hnsw {
         hnsw_config: Option<HnswIndexConfig>,
     },
-    Ivf,
+    Ivf {
+        ivf_config: Option<IvfIndexConfig>,
+    },
 }
 
 static DEFAULT_ANN_RECALL_VARIANTS: [AnnRecallVariant; 2] = [
@@ -47,7 +49,7 @@ static DEFAULT_ANN_RECALL_VARIANTS: [AnnRecallVariant; 2] = [
     },
     AnnRecallVariant {
         name_suffix: "ivf",
-        index: AnnIndexKind::Ivf,
+        index: AnnIndexKind::Ivf { ivf_config: None },
     },
 ];
 
@@ -64,22 +66,43 @@ static CLUSTERED_COSINE_ANN_RECALL_VARIANTS: [AnnRecallVariant; 3] = [
     },
     AnnRecallVariant {
         name_suffix: "ivf",
-        index: AnnIndexKind::Ivf,
+        index: AnnIndexKind::Ivf { ivf_config: None },
     },
 ];
 
 impl AnnRecallVariant {
+    pub(crate) const fn ivf(name_suffix: &'static str, ivf_config: Option<IvfIndexConfig>) -> Self {
+        Self {
+            name_suffix,
+            index: AnnIndexKind::Ivf { ivf_config },
+        }
+    }
+
+    pub(crate) const fn is_ivf(self) -> bool {
+        match self.index {
+            AnnIndexKind::Hnsw { .. } => false,
+            AnnIndexKind::Ivf { .. } => true,
+        }
+    }
+
     pub(crate) const fn search_widths(self) -> &'static [usize] {
         match self.index {
             AnnIndexKind::Hnsw { .. } => HNSW_SEARCH_WIDTHS,
-            AnnIndexKind::Ivf => IVF_SEARCH_WIDTHS,
+            AnnIndexKind::Ivf { .. } => IVF_SEARCH_WIDTHS,
         }
     }
 
     const fn hnsw_config(self) -> Option<HnswIndexConfig> {
         match self.index {
             AnnIndexKind::Hnsw { hnsw_config } => hnsw_config,
-            AnnIndexKind::Ivf => None,
+            AnnIndexKind::Ivf { .. } => None,
+        }
+    }
+
+    const fn ivf_config(self) -> Option<IvfIndexConfig> {
+        match self.index {
+            AnnIndexKind::Hnsw { .. } => None,
+            AnnIndexKind::Ivf { ivf_config } => ivf_config,
         }
     }
 }
@@ -124,11 +147,11 @@ impl AnnRecallProfile {
             (VectorMetric::NegativeInnerProduct, AnnIndexKind::Hnsw { .. }) => {
                 VectorIndexKind::HnswNegativeInnerProduct
             }
-            (VectorMetric::SquaredEuclidean, AnnIndexKind::Ivf) => {
+            (VectorMetric::SquaredEuclidean, AnnIndexKind::Ivf { .. }) => {
                 VectorIndexKind::IvfSquaredEuclidean
             }
-            (VectorMetric::Cosine, AnnIndexKind::Ivf) => VectorIndexKind::IvfCosine,
-            (VectorMetric::NegativeInnerProduct, AnnIndexKind::Ivf) => {
+            (VectorMetric::Cosine, AnnIndexKind::Ivf { .. }) => VectorIndexKind::IvfCosine,
+            (VectorMetric::NegativeInnerProduct, AnnIndexKind::Ivf { .. }) => {
                 VectorIndexKind::IvfNegativeInnerProduct
             }
         }
@@ -213,13 +236,13 @@ impl AnnRecallFixture {
             }
             let dimension = u32::try_from(dimension).expect("bench dimension fits u32");
             mutator
-                .create_vector_index_named_with_config(
+                .create_vector_index_named_with_configs(
                     label.clone(),
                     embedding_key.clone(),
                     profile.index_kind(variant),
                     dimension,
                     None,
-                    variant.hnsw_config(),
+                    VectorIndexConfig::new(variant.hnsw_config(), variant.ivf_config()),
                 )
                 .expect("bench ANN vector index build succeeds");
             txn.commit()
