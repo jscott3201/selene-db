@@ -39,6 +39,8 @@ const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::GraphExpand,
     RetrievalStrategy::GraphExpandValid,
     RetrievalStrategy::GraphExpandSuperseded,
+    RetrievalStrategy::GraphExpandValidWide,
+    RetrievalStrategy::GraphExpandSupersededWide,
     RetrievalStrategy::GraphExpandPagerank,
     RetrievalStrategy::ExactGraphOracle,
 ];
@@ -50,6 +52,8 @@ enum RetrievalStrategy {
     GraphExpand,
     GraphExpandValid,
     GraphExpandSuperseded,
+    GraphExpandValidWide,
+    GraphExpandSupersededWide,
     GraphExpandPagerank,
     ExactGraphOracle,
 }
@@ -62,6 +66,8 @@ impl RetrievalStrategy {
             Self::GraphExpand => "graph_expand",
             Self::GraphExpandValid => "graph_expand_valid",
             Self::GraphExpandSuperseded => "graph_expand_superseded",
+            Self::GraphExpandValidWide => "graph_expand_valid_wide",
+            Self::GraphExpandSupersededWide => "graph_expand_superseded_wide",
             Self::GraphExpandPagerank => "graph_expand_pagerank",
             Self::ExactGraphOracle => "exact_graph_oracle",
         }
@@ -308,6 +314,26 @@ impl MemoryRetrievalFixture {
             }
             RetrievalStrategy::GraphExpandSuperseded => {
                 let hits = self.ann_hits(query, SEED_K);
+                self.select_from_candidates(
+                    query,
+                    self.expand_with_supersession(query, hits),
+                    true,
+                    false,
+                    true,
+                )
+            }
+            RetrievalStrategy::GraphExpandValidWide => {
+                let hits = self.ann_hits(query, WIDE_SEED_K);
+                self.select_from_candidates(
+                    query,
+                    self.expand(query, hits, true),
+                    true,
+                    false,
+                    true,
+                )
+            }
+            RetrievalStrategy::GraphExpandSupersededWide => {
+                let hits = self.ann_hits(query, WIDE_SEED_K);
                 self.select_from_candidates(
                     query,
                     self.expand_with_supersession(query, hits),
