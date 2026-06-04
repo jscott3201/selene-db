@@ -775,6 +775,20 @@ policy can tolerate plausible cross-topic provenance noise:
 | `graph_vector_noisy_sparse_provenance_pressure/graph_scope_provenance_expand_k16/...covbp10000_curbp10000_precbp10000` | 61.98 µs (`c4`) | 533.4 µs (`c19`) | Sixteen roots reach full noisy-support quality and remain faster than the topic-filter reference. |
 | `graph_vector_noisy_sparse_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.6 µs (`c32`) | 1.190 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
 
+Multi-hop provenance rows route half of each summary root's support facts
+through `MemoryBridge` nodes. The one-hop row intentionally misses those bridged
+facts; the two-hop row follows one more `SUPPORTS` layer:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_multihop_provenance_pressure/graph_session_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 249.7 µs (`c70`) | 2.688 ms (`c356`) | Full-quality broad session-current baseline. |
+| `graph_vector_multihop_provenance_pressure/graph_session_provenance_expand_k1/...covbp5000_curbp5000_precbp5000` | 128.9 µs (`c15`) | 1.390 ms (`c76`) | One-hop expansion reaches only the direct half of each root's support set. |
+| `graph_vector_multihop_provenance_pressure/graph_session_provenance_expand_2hop_k1/...covbp10000_curbp10000_precbp10000` | 141.7 µs (`c15`) | 1.423 ms (`c76`) | Two-hop expansion restores full quality with a small extra traversal cost. |
+| `graph_vector_multihop_provenance_pressure/graph_scope_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 80.29 µs (`c18`) | 853.0 µs (`c89`) | Full-quality scope-current baseline. |
+| `graph_vector_multihop_provenance_pressure/graph_scope_provenance_expand_k1/...covbp5000_curbp5000_precbp5000` | 44.97 µs (`c4`) | 391.6 µs (`c19`) | Scope-local one-hop expansion has the same half-coverage failure. |
+| `graph_vector_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k1/...covbp10000_curbp10000_precbp10000` | 58.43 µs (`c4`) | 424.9 µs (`c19`) | Two-hop scope expansion restores full quality and stays below both materialized-current and topic-filter references. |
+| `graph_vector_multihop_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.5 µs (`c32`) | 1.218 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work

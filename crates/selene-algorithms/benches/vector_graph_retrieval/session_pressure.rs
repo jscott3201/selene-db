@@ -42,6 +42,16 @@ const PROVENANCE_PRESSURE_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
+const MULTIHOP_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
+    SessionStrategy::GraphSessionMaterializedCurrentFilter,
+    SessionStrategy::GraphSessionProvenanceExpandK1,
+    SessionStrategy::GraphSessionProvenanceExpand2HopK1,
+    SessionStrategy::GraphScopeMaterializedCurrentFilter,
+    SessionStrategy::GraphScopeProvenanceExpandK1,
+    SessionStrategy::GraphScopeProvenanceExpand2HopK1,
+    SessionStrategy::TopicFilter,
+];
+
 #[derive(Clone, Copy, Debug)]
 enum SessionStrategy {
     NoisyWcc,
@@ -51,6 +61,7 @@ enum SessionStrategy {
     GraphSessionUnsupersededFilter,
     GraphSessionMaterializedCurrentFilter,
     GraphSessionProvenanceExpandK1,
+    GraphSessionProvenanceExpand2HopK1,
     GraphSessionProvenanceExpand,
     GraphSessionProvenanceExpandK8,
     GraphSessionProvenanceExpandK16,
@@ -59,6 +70,7 @@ enum SessionStrategy {
     GraphScopeUnsupersededFilter,
     GraphScopeMaterializedCurrentFilter,
     GraphScopeProvenanceExpandK1,
+    GraphScopeProvenanceExpand2HopK1,
     GraphScopeProvenanceExpand,
     GraphScopeProvenanceExpandK8,
     GraphScopeProvenanceExpandK16,
@@ -77,6 +89,7 @@ impl SessionStrategy {
                 "graph_session_materialized_current_filter"
             }
             Self::GraphSessionProvenanceExpandK1 => "graph_session_provenance_expand_k1",
+            Self::GraphSessionProvenanceExpand2HopK1 => "graph_session_provenance_expand_2hop_k1",
             Self::GraphSessionProvenanceExpand => "graph_session_provenance_expand",
             Self::GraphSessionProvenanceExpandK8 => "graph_session_provenance_expand_k8",
             Self::GraphSessionProvenanceExpandK16 => "graph_session_provenance_expand_k16",
@@ -85,6 +98,7 @@ impl SessionStrategy {
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
             Self::GraphScopeMaterializedCurrentFilter => "graph_scope_materialized_current_filter",
             Self::GraphScopeProvenanceExpandK1 => "graph_scope_provenance_expand_k1",
+            Self::GraphScopeProvenanceExpand2HopK1 => "graph_scope_provenance_expand_2hop_k1",
             Self::GraphScopeProvenanceExpand => "graph_scope_provenance_expand",
             Self::GraphScopeProvenanceExpandK8 => "graph_scope_provenance_expand_k8",
             Self::GraphScopeProvenanceExpandK16 => "graph_scope_provenance_expand_k16",
@@ -92,15 +106,22 @@ impl SessionStrategy {
         }
     }
 
-    const fn provenance_seed_roots(self) -> Option<usize> {
+    const fn provenance_plan(self) -> Option<(usize, usize)> {
         match self {
-            Self::GraphSessionProvenanceExpandK1 | Self::GraphScopeProvenanceExpandK1 => Some(1),
-            Self::GraphSessionProvenanceExpand | Self::GraphScopeProvenanceExpand => Some(SEED_K),
+            Self::GraphSessionProvenanceExpandK1 | Self::GraphScopeProvenanceExpandK1 => {
+                Some((1, 1))
+            }
+            Self::GraphSessionProvenanceExpand2HopK1 | Self::GraphScopeProvenanceExpand2HopK1 => {
+                Some((1, 2))
+            }
+            Self::GraphSessionProvenanceExpand | Self::GraphScopeProvenanceExpand => {
+                Some((SEED_K, 1))
+            }
             Self::GraphSessionProvenanceExpandK8 | Self::GraphScopeProvenanceExpandK8 => {
-                Some(SEED_K * 2)
+                Some((SEED_K * 2, 1))
             }
             Self::GraphSessionProvenanceExpandK16 | Self::GraphScopeProvenanceExpandK16 => {
-                Some(WIDE_SEED_K)
+                Some((WIDE_SEED_K, 1))
             }
             _ => None,
         }
@@ -111,6 +132,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_session_filter_pressure(c);
     bench_sparse_provenance_pressure(c);
     bench_noisy_sparse_provenance_pressure(c);
+    bench_multihop_provenance_pressure(c);
 }
 
 fn bench_session_filter_pressure(c: &mut Criterion) {
@@ -177,6 +199,18 @@ fn bench_noisy_sparse_provenance_pressure(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_multihop_provenance_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_multihop_provenance_pressure");
+    for scale in vector_scales() {
+        let fixture =
+            MemoryRetrievalFixture::build_with_topology(scale, TopologyNoise::MultiHopSupport);
+        for &strategy in MULTIHOP_PROVENANCE_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
 fn bench_strategy(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     fixture: &MemoryRetrievalFixture,
@@ -235,8 +269,8 @@ impl MemoryRetrievalFixture {
 
     fn select_session_candidates(&self, query: &Query, strategy: SessionStrategy) -> Vec<NodeId> {
         let candidates = self.session_candidates(query, strategy);
-        if let Some(seed_roots) = strategy.provenance_seed_roots() {
-            return self.select_provenance_expansion(query, candidates, seed_roots);
+        if let Some((seed_roots, depth)) = strategy.provenance_plan() {
+            return self.select_provenance_expansion(query, candidates, seed_roots, depth);
         }
         let hits = self.score_candidate_ids(query, candidates);
         self.select_from_candidates(query, hits, true, false, true)
@@ -266,6 +300,7 @@ impl MemoryRetrievalFixture {
                 self.materialized_current_candidates(self.graph_session_candidates(query))
             }
             SessionStrategy::GraphSessionProvenanceExpandK1
+            | SessionStrategy::GraphSessionProvenanceExpand2HopK1
             | SessionStrategy::GraphSessionProvenanceExpand
             | SessionStrategy::GraphSessionProvenanceExpandK8
             | SessionStrategy::GraphSessionProvenanceExpandK16 => self.provenance_root_candidates(
@@ -282,6 +317,7 @@ impl MemoryRetrievalFixture {
                 self.materialized_current_candidates(self.graph_session_scope_candidates(query))
             }
             SessionStrategy::GraphScopeProvenanceExpandK1
+            | SessionStrategy::GraphScopeProvenanceExpand2HopK1
             | SessionStrategy::GraphScopeProvenanceExpand
             | SessionStrategy::GraphScopeProvenanceExpandK8
             | SessionStrategy::GraphScopeProvenanceExpandK16 => self.provenance_root_candidates(
@@ -364,6 +400,7 @@ impl MemoryRetrievalFixture {
         query: &Query,
         root_candidates: Vec<NodeId>,
         seed_roots: usize,
+        depth: usize,
     ) -> Vec<NodeId> {
         let mut roots = self.score_candidate_ids(query, root_candidates);
         roots.sort_by(|left, right| {
@@ -375,16 +412,21 @@ impl MemoryRetrievalFixture {
         let mut expanded = Vec::new();
         for root in roots.into_iter().take(seed_roots) {
             expanded.push(root.node_id);
-            if let Some(edges) = self.graph.outgoing_edges(root.node_id) {
-                expanded.extend(
-                    edges
-                        .iter()
-                        .filter(|edge| edge.label == self.support_edge)
-                        .map(|edge| {
-                            self.superseded_replacement(edge.neighbor)
-                                .unwrap_or(edge.neighbor)
-                        }),
-                );
+            let mut frontier = vec![root.node_id];
+            for _ in 0..depth {
+                let mut next_frontier = Vec::new();
+                for source in frontier {
+                    if let Some(edges) = self.graph.outgoing_edges(source) {
+                        for edge in edges.iter().filter(|edge| edge.label == self.support_edge) {
+                            expanded.push(
+                                self.superseded_replacement(edge.neighbor)
+                                    .unwrap_or(edge.neighbor),
+                            );
+                            next_frontier.push(edge.neighbor);
+                        }
+                    }
+                }
+                frontier = next_frontier;
             }
         }
         self.select_current_diverse_nodes(query, expanded)
