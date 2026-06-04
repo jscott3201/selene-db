@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use selene_core::VectorMetric;
 
 use super::*;
@@ -11,6 +13,29 @@ fn ivf_target_centroid_count_scales_until_cap() {
     assert_eq!(target_centroid_count(0), 1);
     assert_eq!(target_centroid_count(100_000), 317);
     assert_eq!(target_centroid_count(10_000_000), MAX_CENTROIDS);
+}
+
+#[test]
+fn ivf_training_entry_ids_borrow_when_below_sample_cap() {
+    let live_entries = (0..100_000).collect::<Vec<_>>();
+
+    let training_entries = training_entry_ids(&live_entries);
+
+    assert!(matches!(training_entries, Cow::Borrowed(_)));
+    assert_eq!(training_entries.as_ref(), live_entries.as_slice());
+}
+
+#[test]
+fn ivf_training_entry_ids_sample_evenly_when_above_cap() {
+    let live_entries = (0..250_000).collect::<Vec<_>>();
+
+    let training_entries = training_entry_ids(&live_entries);
+
+    assert!(matches!(training_entries, Cow::Owned(_)));
+    assert_eq!(training_entries.len(), TRAINING_SAMPLE_MAX_ENTRIES);
+    assert_eq!(training_entries[0], 0);
+    assert_eq!(training_entries[training_entries.len() - 1], 249_999);
+    assert!(training_entries.windows(2).all(|pair| pair[0] < pair[1]));
 }
 
 #[test]

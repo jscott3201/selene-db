@@ -5,7 +5,7 @@
 //! inverted lists. Search probes nearest centroids, exact-reranks candidates in
 //! those lists, and skips stale row versions left by updates/deletes.
 
-use std::mem::size_of;
+use std::{borrow::Cow, mem::size_of};
 
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -14,6 +14,8 @@ use selene_core::{
 };
 
 const MAX_CENTROIDS: usize = 1024;
+// Training is sampled above this point, but final list assignment is exhaustive.
+const TRAINING_SAMPLE_MAX_ENTRIES: usize = MAX_CENTROIDS * 128;
 const TRAINING_ITERATIONS: usize = 2;
 
 #[cfg(not(test))]
@@ -109,8 +111,9 @@ impl IvfVectorIndex {
             return Ok(());
         }
         let centroid_count = target_centroid_count(live_entries.len());
-        self.centroids = self.seed_centroids(&live_entries, centroid_count);
-        self.refine_centroids(&live_entries)?;
+        let training_entries = training_entry_ids(&live_entries);
+        self.centroids = self.seed_centroids(&training_entries, centroid_count);
+        self.refine_centroids(&training_entries)?;
         self.refresh_centroid_squared_norms();
         self.rebuild_lists(&live_entries)?;
         Ok(())
@@ -461,6 +464,32 @@ struct IvfEntry {
 
 fn target_centroid_count(live_len: usize) -> usize {
     ceil_sqrt(live_len).clamp(1, MAX_CENTROIDS)
+}
+
+fn training_entry_ids(live_entries: &[u32]) -> Cow<'_, [u32]> {
+    if live_entries.len() <= TRAINING_SAMPLE_MAX_ENTRIES {
+        return Cow::Borrowed(live_entries);
+    }
+    Cow::Owned(evenly_spaced_entry_ids(
+        live_entries,
+        TRAINING_SAMPLE_MAX_ENTRIES,
+    ))
+}
+
+fn evenly_spaced_entry_ids(live_entries: &[u32], sample_len: usize) -> Vec<u32> {
+    if sample_len == 0 || live_entries.is_empty() {
+        return Vec::new();
+    }
+    if sample_len == 1 {
+        return vec![live_entries[0]];
+    }
+    let last = live_entries.len() - 1;
+    (0..sample_len)
+        .map(|slot| {
+            let source = slot.saturating_mul(last) / (sample_len - 1);
+            live_entries[source]
+        })
+        .collect()
 }
 
 fn should_parallelize_assignments(live_len: usize, centroid_count: usize) -> bool {
