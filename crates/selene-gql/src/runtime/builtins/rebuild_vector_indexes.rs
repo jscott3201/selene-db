@@ -4,20 +4,29 @@
 //! primary graph values. This exposes the in-memory cleanup path to GQL without
 //! treating it as schema DDL or data mutation.
 
+use std::num::NonZeroUsize;
+
 use selene_core::{CancellationCause, IStr, Value, intern};
 use selene_graph::{
-    HnswIndexConfig, VectorIndexKind, VectorIndexMemoryUsage, VectorIndexRebuildEntry,
-    VectorIndexRebuildReport,
+    HnswIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMemoryUsage,
+    VectorIndexRebuildEntry, VectorIndexRebuildReport,
 };
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use crate::procedure_registry::ProcedureError;
 use crate::{
-    GqlType, MaintenanceContext, ProcedureOutputColumn, ProcedureParameter, ProcedureResult,
+    GqlType, MaintenanceContext, ProcedureDefaultValue, ProcedureOutputColumn, ProcedureParameter,
+    ProcedureResult,
 };
 
 const PROC_NAME: &str = "selene.rebuild_vector_indexes";
 const RECOMMENDED_PROC_NAME: &str = "selene.rebuild_recommended_vector_indexes";
+
+static RECOMMENDED_REBUILD_VECTOR_INDEXES_PARAMS: [StaticParameter; 1] =
+    [StaticParameter::new("max_indexes", GqlType::Integer, true)
+        .with_description("Maximum recommended indexes to rebuild in this maintenance call.")
+        .with_default_doc("NULL")
+        .with_default(ProcedureDefaultValue::Null)];
 
 static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 71] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
@@ -174,6 +183,14 @@ pub(super) fn signature() -> Vec<ProcedureParameter> {
         .collect()
 }
 
+pub(super) fn recommended_signature() -> Vec<ProcedureParameter> {
+    RECOMMENDED_REBUILD_VECTOR_INDEXES_PARAMS
+        .iter()
+        .cloned()
+        .map(StaticParameter::into_parameter)
+        .collect()
+}
+
 pub(super) fn output_columns() -> Vec<ProcedureOutputColumn> {
     REBUILD_VECTOR_INDEXES_OUTPUTS
         .iter()
@@ -186,21 +203,26 @@ pub(super) fn execute(
     ctx: &MaintenanceContext<'_, '_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    execute_with(ctx, args, PROC_NAME, |ctx| ctx.rebuild_vector_indexes())
+    if !args.is_empty() {
+        return Err(ProcedureError::InvalidArgument {
+            detail: format!("{PROC_NAME} expects zero arguments"),
+        });
+    }
+    execute_with(ctx, PROC_NAME, |ctx| ctx.rebuild_vector_indexes())
 }
 
 pub(super) fn execute_recommended(
     ctx: &MaintenanceContext<'_, '_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    execute_with(ctx, args, RECOMMENDED_PROC_NAME, |ctx| {
-        ctx.rebuild_recommended_vector_indexes()
+    let policy = recommended_policy_arg(args)?;
+    execute_with(ctx, RECOMMENDED_PROC_NAME, |ctx| {
+        ctx.maintain_vector_indexes(policy)
     })
 }
 
 fn execute_with<'ctx, 'graph, 'txn, F>(
     ctx: &'ctx MaintenanceContext<'graph, 'txn>,
-    args: &[Value],
     proc_name: &str,
     rebuild: F,
 ) -> Result<ProcedureResult, ProcedureError>
@@ -209,11 +231,6 @@ where
         &'ctx MaintenanceContext<'graph, 'txn>,
     ) -> selene_graph::GraphResult<VectorIndexRebuildReport>,
 {
-    if !args.is_empty() {
-        return Err(ProcedureError::InvalidArgument {
-            detail: format!("{proc_name} expects zero arguments"),
-        });
-    }
     ctx.cancellation_checker()
         .check()
         .map_err(|cause| match cause {
@@ -221,7 +238,7 @@ where
             CancellationCause::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
         })?;
     let report = rebuild(ctx).map_err(|source| ProcedureError::Internal {
-        detail: format!("vector index rebuild failed: {source}"),
+        detail: format!("{proc_name} failed: {source}"),
     })?;
     let rows = report
         .entries
@@ -234,6 +251,50 @@ where
             .map(RebuildRow::into_values)
             .collect::<Result<Vec<_>, _>>()?,
     })
+}
+
+fn recommended_policy_arg(args: &[Value]) -> Result<VectorIndexMaintenancePolicy, ProcedureError> {
+    if args.len() > 1 {
+        return Err(ProcedureError::InvalidArgument {
+            detail: format!("{RECOMMENDED_PROC_NAME} expects zero or 1 argument"),
+        });
+    }
+    let mut policy = VectorIndexMaintenancePolicy::recommended();
+    if let Some(max_indexes) = args
+        .first()
+        .map(|value| optional_nonzero_usize_arg(value, "max_indexes"))
+        .transpose()?
+        .flatten()
+    {
+        policy = policy.with_max_indexes_per_run(max_indexes);
+    }
+    Ok(policy)
+}
+
+fn optional_nonzero_usize_arg(
+    value: &Value,
+    name: &'static str,
+) -> Result<Option<NonZeroUsize>, ProcedureError> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Int(raw) => usize::try_from(*raw)
+            .ok()
+            .and_then(NonZeroUsize::new)
+            .map(Some)
+            .ok_or_else(|| positive_integer_arg(name)),
+        Value::Uint(raw) => usize::try_from(*raw)
+            .ok()
+            .and_then(NonZeroUsize::new)
+            .map(Some)
+            .ok_or_else(|| positive_integer_arg(name)),
+        _ => Err(positive_integer_arg(name)),
+    }
+}
+
+fn positive_integer_arg(name: &'static str) -> ProcedureError {
+    ProcedureError::InvalidArgument {
+        detail: format!("{RECOMMENDED_PROC_NAME} {name} must be NULL or a positive INTEGER"),
+    }
 }
 
 struct RebuildRow {

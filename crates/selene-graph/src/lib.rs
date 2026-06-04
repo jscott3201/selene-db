@@ -69,8 +69,8 @@ pub use type_validator::{EntityId, TypeViolation, validate_change, validate_enti
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
 pub use vector_index::{
     IVF_REBUILD_MIN_PENDING_RETRAIN_ENTRIES, IVF_REBUILD_PENDING_RETRAIN_BASIS_POINTS, VectorIndex,
-    VectorIndexKind, VectorIndexMemoryUsage, VectorIndexRebuildEntry, VectorIndexRebuildReport,
-    VectorIndexValueError,
+    VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMemoryUsage, VectorIndexRebuildEntry,
+    VectorIndexRebuildReport, VectorIndexValueError,
 };
 pub use vector_search::{ApproximateVectorSearchOptions, VectorNodeSearchHit, VectorSearchError};
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
