@@ -8,6 +8,7 @@ use super::super::support::istr;
 pub(super) enum CorpusProfile {
     Tiny,
     AgentMemory,
+    AmbiguousMemory,
 }
 
 impl CorpusProfile {
@@ -15,6 +16,7 @@ impl CorpusProfile {
         match std::env::var(env_name).ok().as_deref() {
             None | Some("") | Some("tiny") => Self::Tiny,
             Some("agent_memory") | Some("memory") => Self::AgentMemory,
+            Some("ambiguous_memory") | Some("ambiguous") => Self::AmbiguousMemory,
             Some(other) => panic!("unsupported SELENE_OMLX_CORPUS value: {other}"),
         }
     }
@@ -23,6 +25,7 @@ impl CorpusProfile {
         match self {
             Self::Tiny => tiny_inputs(),
             Self::AgentMemory => agent_memory_inputs(),
+            Self::AmbiguousMemory => ambiguous_memory_inputs(),
         }
     }
 }
@@ -224,6 +227,113 @@ fn agent_memory_inputs() -> Vec<CorpusInput> {
             topic: Topic::Code,
             is_document: false,
             text: "Which code path converts row indexes back to stable node ids?",
+        },
+    ]);
+    inputs
+}
+
+fn ambiguous_memory_inputs() -> Vec<CorpusInput> {
+    let mut inputs = Vec::new();
+    for (topic, texts) in [
+        (
+            Topic::Gql,
+            &[
+                "A query anchor matches active facts before vector scoring begins.",
+                "The graph pattern filters current memory candidates for a request.",
+                "A GQL procedure scores candidate nodes after a MATCH-derived scope.",
+                "Closed graph types validate the same memory record shape every commit.",
+                "Path traversal finds the supporting evidence behind a recalled fact.",
+                "A graph query can exclude stale facts without changing vector distance.",
+                "Serializable mutation order decides which replacement edge is current.",
+                "Projection names keep reusable candidate subgraphs stable across calls.",
+            ][..],
+        ),
+        (
+            Topic::Vector,
+            &[
+                "A query embedding scores active facts after graph filtering.",
+                "The vector index returns semantic candidates for a request.",
+                "An ANN procedure scores candidate nodes after an embedding-derived scope.",
+                "Vector dimensions validate the same memory record shape every insert.",
+                "Nearest-neighbor search finds the supporting evidence behind a recalled fact.",
+                "A vector query can retrieve stale facts unless graph currentness filters them.",
+                "Approximate ranking order decides which replacement fact appears nearest.",
+                "Centroid partitions keep reusable candidate regions stable across searches.",
+            ][..],
+        ),
+        (
+            Topic::AgentMemory,
+            &[
+                "A session anchor scores active facts after graph and vector filtering.",
+                "The memory graph returns current candidates for a request.",
+                "An agent recall procedure scores candidate nodes after a session-derived scope.",
+                "Memory schemas validate the same preference record shape every commit.",
+                "Provenance traversal finds the supporting evidence behind a recalled fact.",
+                "A memory query can exclude stale facts through graph currentness.",
+                "Supersession edge order decides which replacement fact is current.",
+                "Dependency hints keep reusable candidate memories stable across tasks.",
+            ][..],
+        ),
+        (
+            Topic::Code,
+            &[
+                "A benchmark anchor scores active fixtures after graph filtering.",
+                "The Rust fixture returns current candidates for a request.",
+                "A batch scoring function scores candidate nodes after a test-derived scope.",
+                "Constructor assertions validate the same vector record shape every run.",
+                "Fixture traversal finds the supporting edge behind a measured fact.",
+                "A benchmark query can exclude stale fixtures without changing vector distance.",
+                "Commit order decides which replacement edge appears in the snapshot.",
+                "Stable benchmark IDs keep reusable candidate rows comparable across runs.",
+            ][..],
+        ),
+    ] {
+        inputs.extend(texts.iter().map(|text| CorpusInput {
+            topic,
+            is_document: true,
+            text,
+        }));
+    }
+    inputs.extend([
+        CorpusInput {
+            topic: Topic::Gql,
+            is_document: false,
+            text: "Which graph query filters current candidate facts before scoring?",
+        },
+        CorpusInput {
+            topic: Topic::Gql,
+            is_document: false,
+            text: "How does GQL traversal find supporting evidence for a recalled fact?",
+        },
+        CorpusInput {
+            topic: Topic::Vector,
+            is_document: false,
+            text: "Which embedding search returns semantic candidates before reranking?",
+        },
+        CorpusInput {
+            topic: Topic::Vector,
+            is_document: false,
+            text: "How can vector ranking retrieve stale facts without graph filtering?",
+        },
+        CorpusInput {
+            topic: Topic::AgentMemory,
+            is_document: false,
+            text: "Which memory graph candidates are current for this session request?",
+        },
+        CorpusInput {
+            topic: Topic::AgentMemory,
+            is_document: false,
+            text: "How do dependency hints keep recalled agent memories stable?",
+        },
+        CorpusInput {
+            topic: Topic::Code,
+            is_document: false,
+            text: "Which Rust fixture function scores candidate nodes in a batch?",
+        },
+        CorpusInput {
+            topic: Topic::Code,
+            is_document: false,
+            text: "How do stable benchmark IDs keep candidate rows comparable?",
         },
     ]);
     inputs
