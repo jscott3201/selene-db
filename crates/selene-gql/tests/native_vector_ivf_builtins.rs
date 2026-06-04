@@ -257,7 +257,7 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
          YIELD kind, before_indexed_rows, after_indexed_rows, \
                before_ivf_entries, after_ivf_entries, \
                before_ivf_deleted_entries, after_ivf_deleted_entries, \
-               after_ivf_centroids, after_ivf_list_count, \
+               before_ivf_assigned_entries, after_ivf_centroids, after_ivf_list_count, \
                after_ivf_non_empty_list_count, after_ivf_max_list_len, \
                after_ivf_average_list_len_basis_points, after_ivf_assigned_entries, \
                reclaimed_ivf_entries, reclaimed_ivf_deleted_entries, reclaimed_reachable_bytes",
@@ -275,6 +275,7 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     assert_eq!(uint_column(&table, "after_ivf_entries"), vec![22]);
     assert_eq!(uint_column(&table, "before_ivf_deleted_entries"), vec![2]);
     assert_eq!(uint_column(&table, "after_ivf_deleted_entries"), vec![0]);
+    assert_eq!(uint_column(&table, "before_ivf_assigned_entries"), vec![22]);
     assert!(uint_column(&table, "after_ivf_centroids")[0] > 0);
     assert!(uint_column(&table, "after_ivf_list_count")[0] > 0);
     assert!(uint_column(&table, "after_ivf_non_empty_list_count")[0] > 0);
