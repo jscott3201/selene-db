@@ -639,7 +639,10 @@ computed in fixture setup through real `GraphProjection` paths; timed rows
 measure retrieval only. Expanded graph candidates are exact-scored through the
 native candidate scoring primitive before fact-diverse selection. The exact
 graph oracle uses exact vector search plus validity-aware graph expansion to
-bound achievable fixture quality.
+bound achievable fixture quality. The companion `graph_vector_component_pressure`
+group widens graph-derived component pools before the same exact candidate
+scorer, exposing when graph-bounded scoring stops being cheap enough to beat
+ANN or compressed pre-scoring.
 
 | Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
 |---|---:|---:|---|
@@ -653,6 +656,18 @@ bound achievable fixture quality.
 | `graph_vector_retrieval/graph_component_filter/...covbp10000_curbp10000_precbp10000` | 50.5 µs | 109.8 µs (`covbp10000_curbp10000_precbp10000`) | WCC-derived component filtering exact-scores only the query anchor's graph component, reaching oracle quality while avoiding global exact scan and ANN fanout. This is the first strong positive graph-acceleration row. |
 | `graph_vector_retrieval/graph_expand_pagerank/...covbp9435_curbp4838_precbp9516` | 358.0 µs | 794.8 µs (`covbp8203_curbp4335_precbp8828`) | PageRank on top of raw expansion adds cost without current-valid uplift on this fixture; keep as a guardrail before promoting algorithm-prior policies. |
 | `graph_vector_retrieval/exact_graph_oracle/...covbp10000_curbp10000_precbp10000` | 1.414 ms | 22.2 ms | Exact vector search plus validity-aware expansion reaches the fixture oracle, but it is far slower at 10k and only suitable as a research bound. |
+
+Component-pressure rows pool the query component with additional graph
+components before exact vector scoring. Quality remains perfect on this clean
+fixture, so these rows isolate candidate-set size pressure rather than topology
+noise:
+
+| Component pool | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_component_pressure/component_pool_w1/...c16_covbp10000_curbp10000_precbp10000` | 53.0 µs | 116.3 µs | Scores only the query anchor's compact component; this is the same primitive direction as WCC component filtering. |
+| `graph_vector_component_pressure/component_pool_w4/...c64_covbp10000_curbp10000_precbp10000` | 183.4 µs | 466.8 µs | Four pooled components still beat broad graph expansion at 10k while keeping oracle quality. |
+| `graph_vector_component_pressure/component_pool_w16/...c256_covbp10000_curbp10000_precbp10000` | 685.6 µs | 1.550 ms | Candidate scoring remains linear and predictable, but it is now in the same range as wide graph expansion. |
+| `graph_vector_component_pressure/component_pool_w64/...covbp10000_curbp10000_precbp10000` | 2.689 ms (`w62`, `c992`) | 5.691 ms (`c976`) | Near-global pooled scoring is still exact and high quality, but too expensive for the default graph-filtered path; this is the fallback point for ANN or compressed pre-scoring research. |
 
 ## Cluster-B regression targets
 
