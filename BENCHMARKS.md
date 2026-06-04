@@ -143,17 +143,20 @@ tripwire.
 
 ## §2 selene-graph — read hot paths
 
-Bench bins: `single_graph`, `vector_index_rebuild`, `bulk_mutation`,
-`concurrent_read`, `bfs`. The medians below predate CORE-06 (measured at the
-128 B `Value` layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy
-rows (`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten
-at the next full re-baseline. `graph_node_fetch` returns a column ref (no
-`Value` clone) and is unaffected. `graph_exact_vector_scan/*` is the native
-graph-level exact-vector oracle: label-filtered row scan plus the core vector
-metric kernels, returning stable node ids. `graph_vector_index_rebuild/*` times the
-maintenance rebuild that reclaims stale ANN entries after vector update/delete
-churn; fixture setup is excluded from the reported Criterion duration. Vector
-benchmark IDs include a memory/cardinality suffix:
+Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
+`bulk_mutation`, `concurrent_read`, `bfs`. The medians below predate CORE-06
+(measured at the 128 B `Value` layout); now that `Value` is 32 B, the
+`PropertyMap`-clone-heavy rows (`graph_edge_create_cascade`,
+`graph_mutation_commit_batch`) will tighten at the next full re-baseline.
+`graph_node_fetch` returns a column ref (no `Value` clone) and is unaffected.
+`graph_exact_vector_scan/*` is the native graph-level exact-vector oracle:
+label-filtered row scan plus the core vector metric kernels, returning stable
+node ids. `graph_vector_index_rebuild/*` times the maintenance rebuild that
+reclaims stale ANN entries after vector update/delete churn; fixture setup is
+excluded from the reported Criterion duration. `vector_pq` is a benchmark-only
+product-quantization candidate generator for compression/recall research: PQ
+codes produce a short candidate set, then full-fidelity vectors are exact
+reranked. Vector benchmark IDs include a memory/cardinality suffix:
 `m{index KiB}-{reachable KiB}_n{indexed rows}_{flat|he...|ve...}`. The
 `he...` form carries HNSW entries/live/deleted entries plus link counters; the
 `ve...` form carries IVF entries/live/deleted entries plus centroid/list
@@ -203,6 +206,17 @@ PR-local quick vector baseline:
 | `graph_vector_index_dimension_projection/hnsw_l2_default_dim128` | 10.98 µs (quick) | 1k HNSW L2 query row with suffix `m221-721`: ~221 KiB index-owned bytes and ~721 KiB reachable bytes after compact level-0 storage. |
 | `graph_vector_index_dimension_projection/hnsw_l2_default_dim768` | 42.34 µs (quick) | Same HNSW topology/link count as dim128; reachable bytes rise to ~3.15 MiB because full-precision vector components dominate. |
 | `graph_vector_index_dimension_projection/hnsw_l2_default_dim1536` | 81.01 µs (quick) | Reachable bytes rise to ~6.08 MiB at 1k vectors; extrapolation pressure is raw vector storage, not graph-link storage. |
+
+PR-local PQ candidate compression spot-check:
+
+| Bench | 100k | Notes |
+|---|---:|---|
+| `graph_pq_candidate_recall/cluster_l2/m16_k16_c64_d128_k10_recallbp2250_m1570-full50000` | 8.75 ms (quick) | Benchmark-only product quantization over 100k 128-dim vectors and 16 queries. The compressed codebook+codes footprint is ~1.53 MiB vs ~48.8 MiB full vectors, but 64 candidates is too narrow for standalone recall. |
+| `graph_pq_candidate_recall/cluster_l2/m16_k16_c256_d128_k10_recallbp9062_m1570-full50000` | 9.62 ms (quick) | Same compression footprint; widening exact rerank to 256 candidates restores most top-k overlap while staying under 10 ms for the 16-query batch. |
+| `graph_pq_candidate_recall/cluster_l2/m16_k16_c1024_d128_k10_recallbp10000_m1570-full50000` | 12.60 ms (quick) | High-recall anchor: 1024 rerank candidates reaches 10000 bp on this corpus, but exact rerank cost becomes visible. |
+| `graph_pq_candidate_recall/cluster_l2/m16_k64_c64_d128_k10_recallbp4625_m1594-full50000` | 8.87 ms (quick) | Larger subquantizer codebooks improve 64-candidate recall, with compressed storage still only ~1.56 MiB. |
+| `graph_pq_candidate_recall/cluster_l2/m16_k64_c256_d128_k10_recallbp9500_m1594-full50000` | 9.68 ms (quick) | Best medium-width row: higher recall than `k16` at the same 256-candidate rerank width, for a small codebook-memory increase. |
+| `graph_pq_candidate_recall/cluster_l2/m16_k64_c1024_d128_k10_recallbp10000_m1594-full50000` | 12.73 ms (quick) | Matches the 10000 bp high-recall row; useful as the baseline for future IVF/HNSW plus PQ layering rather than standalone full-code scans. |
 
 PR-local ANN recall spot-check:
 
