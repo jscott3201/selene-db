@@ -972,6 +972,24 @@ then exact-score the resulting sets in one batch:
 | `graph_vector_ann_rerank_pressure/ann_wide_dependency_union_batch_rerank/9k_q64_c23_covbp10000_curbp10000_precbp10000` | 694.4 µs (quick) | Unioning ANN hits with direct dependency candidates restores full quality, but the ANN search dominates latency and is roughly 10x slower than the graph-only dependency row. |
 | `graph_vector_ann_rerank_pressure/graph_dependency_candidate_set_batch/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 70.07 µs (quick) | Direct graph dependency candidates remain the best shape for tiny active hints; adding ANN output is unnecessary when graph topology already supplies one candidate per fact. |
 
+ANN+partial-graph fallback rows use the query-filter topology where label
+propagation is a compact but partial graph-derived candidate producer. They
+compare ANN alone, label propagation alone, their candidate-set union, and the
+full-quality graph-scope reference:
+
+| Bench | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_ann_graph_fallback_pressure/graph_scope_candidate_set_batch/...covbp10000_curbp10000_precbp10000` | 110.4 µs (`c32`) | 1.116 ms (`c152`) | Full-quality graph-scope reference using canonical candidate-set batch scoring. |
+| `graph_vector_ann_graph_fallback_pressure/label_propagation_candidate_set_batch/...` | 54.89 µs (`c17`, `covbp7661`, `precbp8830`) | 117.8 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation is fast and compact but partial recall. |
+| `graph_vector_ann_graph_fallback_pressure/ann_wide_hit_set_batch_rerank/...` | 265.5 µs (`c16`, `covbp5000`, `precbp10000`) | 624.9 µs (`c16`, `covbp1562`, `precbp9765`) | ANN alone is high precision but too low coverage to repair missing graph facts. |
+| `graph_vector_ann_graph_fallback_pressure/ann_wide_label_union_batch_rerank/...` | 303.1 µs (`c28`, `covbp9959`, `precbp10000`) | 730.1 µs (`c30`, `covbp7910`, `precbp9980`) | ANN+label union nearly closes 1k coverage but barely improves the 10k label row while adding substantial ANN latency. |
+
+Interpretation: ANN can help a small partial graph partition at 1k, but this
+synthetic 10k fixture is still candidate-producer limited. A cheap graph-scope
+candidate set remains the full-quality path; ANN fallback needs a different
+workload where graph candidates are broad enough to be expensive but not
+already quality-complete.
+
 Adaptive provenance rows use the noisy sparse multi-hop topology and a
 benchmark-only quality oracle. The adaptive row scores provenance roots once,
 then tries k1 one-hop, k1 two-hop, k4 two-hop, k8 two-hop, and k16 two-hop
