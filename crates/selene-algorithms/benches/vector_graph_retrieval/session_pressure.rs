@@ -7,7 +7,7 @@ use selene_core::NodeId;
 
 use crate::common::scale_label;
 
-use super::support::{FACTS_PER_TOPIC, RESULT_K, basis_points, vector_scales};
+use super::support::{FACTS_PER_TOPIC, RESULT_K, SEED_K, basis_points, vector_scales};
 use super::{MemoryRetrievalFixture, Query, RetrievalQuality, TopologyNoise};
 
 const SESSION_STRATEGIES: &[SessionStrategy] = &[
@@ -17,10 +17,12 @@ const SESSION_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::GraphSessionCurrentFilter,
     SessionStrategy::GraphSessionUnsupersededFilter,
     SessionStrategy::GraphSessionMaterializedCurrentFilter,
+    SessionStrategy::GraphSessionProvenanceExpand,
     SessionStrategy::GraphScopeFilter,
     SessionStrategy::GraphScopeCurrentFilter,
     SessionStrategy::GraphScopeUnsupersededFilter,
     SessionStrategy::GraphScopeMaterializedCurrentFilter,
+    SessionStrategy::GraphScopeProvenanceExpand,
     SessionStrategy::TopicFilter,
 ];
 
@@ -32,10 +34,12 @@ enum SessionStrategy {
     GraphSessionCurrentFilter,
     GraphSessionUnsupersededFilter,
     GraphSessionMaterializedCurrentFilter,
+    GraphSessionProvenanceExpand,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
     GraphScopeMaterializedCurrentFilter,
+    GraphScopeProvenanceExpand,
     TopicFilter,
 }
 
@@ -50,10 +54,12 @@ impl SessionStrategy {
             Self::GraphSessionMaterializedCurrentFilter => {
                 "graph_session_materialized_current_filter"
             }
+            Self::GraphSessionProvenanceExpand => "graph_session_provenance_expand",
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
             Self::GraphScopeMaterializedCurrentFilter => "graph_scope_materialized_current_filter",
+            Self::GraphScopeProvenanceExpand => "graph_scope_provenance_expand",
             Self::TopicFilter => "topic_filter",
         }
     }
@@ -123,6 +129,13 @@ impl MemoryRetrievalFixture {
 
     fn select_session_candidates(&self, query: &Query, strategy: SessionStrategy) -> Vec<NodeId> {
         let candidates = self.session_candidates(query, strategy);
+        if matches!(
+            strategy,
+            SessionStrategy::GraphSessionProvenanceExpand
+                | SessionStrategy::GraphScopeProvenanceExpand
+        ) {
+            return self.select_provenance_expansion(query, candidates);
+        }
         let hits = self.score_candidate_ids(query, candidates);
         self.select_from_candidates(query, hits, true, false, true)
     }
@@ -150,6 +163,9 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphSessionMaterializedCurrentFilter => {
                 self.materialized_current_candidates(self.graph_session_candidates(query))
             }
+            SessionStrategy::GraphSessionProvenanceExpand => self.provenance_root_candidates(
+                self.materialized_current_candidates(self.graph_session_candidates(query)),
+            ),
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
             SessionStrategy::GraphScopeCurrentFilter => {
                 self.current_candidates(self.graph_session_scope_candidates(query))
@@ -160,6 +176,9 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphScopeMaterializedCurrentFilter => {
                 self.materialized_current_candidates(self.graph_session_scope_candidates(query))
             }
+            SessionStrategy::GraphScopeProvenanceExpand => self.provenance_root_candidates(
+                self.materialized_current_candidates(self.graph_session_scope_candidates(query)),
+            ),
             SessionStrategy::TopicFilter => self
                 .topic_candidates
                 .get(query.topic)
@@ -211,12 +230,83 @@ impl MemoryRetrievalFixture {
             .collect()
     }
 
+    fn provenance_root_candidates(&self, candidates: Vec<NodeId>) -> Vec<NodeId> {
+        candidates
+            .into_iter()
+            .filter(|node_id| self.has_support_edge(*node_id))
+            .collect()
+    }
+
+    fn has_support_edge(&self, node_id: NodeId) -> bool {
+        self.graph
+            .outgoing_edges(node_id)
+            .is_some_and(|edges| edges.iter().any(|edge| edge.label == self.support_edge))
+    }
+
     fn has_superseded_by_edge(&self, node_id: NodeId) -> bool {
         self.graph.outgoing_edges(node_id).is_some_and(|edges| {
             edges
                 .iter()
                 .any(|edge| edge.label == self.superseded_by_edge)
         })
+    }
+
+    fn select_provenance_expansion(
+        &self,
+        query: &Query,
+        root_candidates: Vec<NodeId>,
+    ) -> Vec<NodeId> {
+        let mut roots = self.score_candidate_ids(query, root_candidates);
+        roots.sort_by(|left, right| {
+            left.distance
+                .total_cmp(&right.distance)
+                .then_with(|| left.node_id.cmp(&right.node_id))
+        });
+
+        let mut expanded = Vec::new();
+        for root in roots.into_iter().take(SEED_K) {
+            expanded.push(root.node_id);
+            if let Some(edges) = self.graph.outgoing_edges(root.node_id) {
+                expanded.extend(
+                    edges
+                        .iter()
+                        .filter(|edge| edge.label == self.support_edge)
+                        .map(|edge| {
+                            self.superseded_replacement(edge.neighbor)
+                                .unwrap_or(edge.neighbor)
+                        }),
+                );
+            }
+        }
+        self.select_current_diverse_nodes(query, expanded)
+    }
+
+    fn select_current_diverse_nodes(&self, query: &Query, candidates: Vec<NodeId>) -> Vec<NodeId> {
+        let mut selected = Vec::with_capacity(RESULT_K);
+        let mut seen_facts = std::collections::HashSet::new();
+        let mut deferred = Vec::new();
+        for node_id in candidates {
+            if !self.graph_current_nodes.contains(&node_id) {
+                continue;
+            }
+            let fact_key = self
+                .metadata
+                .get(&node_id)
+                .filter(|meta| meta.topic == query.topic)
+                .map(|meta| meta.fact);
+            if let Some(fact) = fact_key
+                && seen_facts.insert(fact)
+            {
+                selected.push(node_id);
+            } else {
+                deferred.push(node_id);
+            }
+            if selected.len() == RESULT_K {
+                return selected;
+            }
+        }
+        selected.extend(deferred.into_iter().take(RESULT_K - selected.len()));
+        selected
     }
 
     fn graph_session_scope_candidates(&self, query: &Query) -> Vec<NodeId> {
