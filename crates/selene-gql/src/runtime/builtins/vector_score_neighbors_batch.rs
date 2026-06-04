@@ -4,13 +4,14 @@
 //! per query vector. `queries[i]` is scored against neighbors derived from
 //! `anchors[i]`, and rows are grouped by `query_index`.
 
-use std::num::TryFromIntError;
-
-use selene_core::{IStr, NodeId, Value, VectorMetric, VectorValue};
+use selene_core::{Value, VectorMetric};
 use selene_graph::{VectorNeighborDirection, VectorNeighborSearchOptions};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
-use super::vector_score_neighbors::{direction_arg, invalid_arg, vector_search_error};
+use super::vector_common::{
+    BatchMismatch, cardinality_arg, invalid_arg, metric_arg, neighbor_direction_arg, node_list_arg,
+    queries_arg, query_index_too_large, string_arg, vector_search_error,
+};
 use crate::procedure_registry::ProcedureError;
 use crate::{
     GqlType, GraphContext, ProcedureDefaultValue, ProcedureOutputColumn, ProcedureParameter,
@@ -71,24 +72,24 @@ pub(super) fn execute(
         )));
     }
 
-    let property = string_arg(&args[0], "property")?;
-    let queries = queries_arg(&args[1])?;
-    let anchors = anchors_arg(&args[2])?;
+    let property = string_arg(PROC_NAME, &args[0], "property")?;
+    let queries = queries_arg(PROC_NAME, &args[1])?;
+    let anchors = node_list_arg(PROC_NAME, &args[2], "anchors")?;
     if queries.len() != anchors.len() {
         return Err(invalid_arg(format!(
             "{PROC_NAME} queries and anchors must have the same length"
         )));
     }
-    let edge_label = string_arg(&args[3], "edge_label")?;
-    let k = cardinality_arg(&args[4], "k")?;
+    let edge_label = string_arg(PROC_NAME, &args[3], "edge_label")?;
+    let k = cardinality_arg(PROC_NAME, &args[4], "k")?;
     let direction = args
         .get(5)
-        .map(direction_arg)
+        .map(|arg| neighbor_direction_arg(PROC_NAME, arg))
         .transpose()?
         .unwrap_or(VectorNeighborDirection::Outgoing);
     let metric = args
         .get(6)
-        .map(metric_arg)
+        .map(|arg| metric_arg(PROC_NAME, arg))
         .transpose()?
         .unwrap_or(VectorMetric::SquaredEuclidean);
     let options = VectorNeighborSearchOptions::new(&edge_label, direction, metric, k);
@@ -102,11 +103,19 @@ pub(super) fn execute(
             options,
             ctx.cancellation_checker(),
         )
-        .map_err(vector_search_error)?;
+        .map_err(|error| {
+            vector_search_error(
+                error,
+                "vector neighbor scoring",
+                BatchMismatch::Internal("vector neighbor scoring received batch-shape error"),
+                "vector neighbor scoring",
+            )
+        })?;
 
     let mut rows = Vec::with_capacity(batch_hits.iter().map(Vec::len).sum());
     for (query_index, hits) in batch_hits.into_iter().enumerate() {
-        let query_index = u64::try_from(query_index).map_err(query_index_too_large)?;
+        let query_index =
+            u64::try_from(query_index).map_err(|err| query_index_too_large(PROC_NAME, err))?;
         for hit in hits {
             rows.push(vec![
                 Value::Uint(query_index),
@@ -116,101 +125,4 @@ pub(super) fn execute(
         }
     }
     Ok(ProcedureResult { rows })
-}
-
-fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError> {
-    let Value::String(value) = value else {
-        return Err(invalid_arg(format!(
-            "{PROC_NAME} {name} must be a non-empty STRING"
-        )));
-    };
-    if value.as_str().is_empty() {
-        return Err(invalid_arg(format!(
-            "{PROC_NAME} {name} must be a non-empty STRING"
-        )));
-    }
-    Ok(value.clone())
-}
-
-fn queries_arg(value: &Value) -> Result<Vec<VectorValue>, ProcedureError> {
-    let Value::List(values) = value else {
-        return Err(invalid_arg(format!(
-            "{PROC_NAME} queries must be a LIST<VECTOR>"
-        )));
-    };
-    let mut queries = Vec::with_capacity(values.len());
-    let mut first_dimension = None;
-    for (index, value) in values.iter().enumerate() {
-        let Value::Vector(vector) = value else {
-            return Err(invalid_arg(format!(
-                "{PROC_NAME} queries[{index}] must be a VECTOR"
-            )));
-        };
-        match first_dimension {
-            Some(dimension) if vector.dimension() != dimension => {
-                return Err(invalid_arg(format!(
-                    "{PROC_NAME} queries must all have the same VECTOR dimension"
-                )));
-            }
-            Some(_) => {}
-            None => first_dimension = Some(vector.dimension()),
-        }
-        queries.push(vector.clone());
-    }
-    Ok(queries)
-}
-
-fn anchors_arg(value: &Value) -> Result<Vec<NodeId>, ProcedureError> {
-    let Value::List(values) = value else {
-        return Err(invalid_arg(format!(
-            "{PROC_NAME} anchors must be a LIST<NODE>"
-        )));
-    };
-    let mut anchors = Vec::with_capacity(values.len());
-    for (index, value) in values.iter().enumerate() {
-        let Value::NodeRef(node_id) = value else {
-            return Err(invalid_arg(format!(
-                "{PROC_NAME} anchors[{index}] must be a NODE"
-            )));
-        };
-        anchors.push(*node_id);
-    }
-    Ok(anchors)
-}
-
-fn cardinality_arg(value: &Value, name: &'static str) -> Result<usize, ProcedureError> {
-    match value {
-        Value::Int(value) if *value >= 0 => {
-            usize::try_from(*value).map_err(|err| too_large(err, name))
-        }
-        Value::Uint(value) => usize::try_from(*value).map_err(|err| too_large(err, name)),
-        _ => Err(invalid_arg(format!(
-            "{PROC_NAME} {name} must be a non-negative INTEGER"
-        ))),
-    }
-}
-
-fn metric_arg(value: &Value) -> Result<VectorMetric, ProcedureError> {
-    let metric = string_arg(value, "metric")?;
-    let raw = metric.as_str();
-    match raw.to_ascii_lowercase().as_str() {
-        "squared_euclidean" | "sq_l2" | "l2" | "euclidean" => Ok(VectorMetric::SquaredEuclidean),
-        "cosine" => Ok(VectorMetric::Cosine),
-        "negative_inner_product" | "inner_product" | "mips" | "dot" => {
-            Ok(VectorMetric::NegativeInnerProduct)
-        }
-        _ => Err(invalid_arg(format!(
-            "unknown vector metric '{raw}'; expected squared_euclidean, cosine, or negative_inner_product"
-        ))),
-    }
-}
-
-fn too_large(_err: TryFromIntError, name: &'static str) -> ProcedureError {
-    invalid_arg(format!("{PROC_NAME} {name} is too large for this platform"))
-}
-
-fn query_index_too_large(_err: TryFromIntError) -> ProcedureError {
-    invalid_arg(format!(
-        "{PROC_NAME} query count is too large for this platform"
-    ))
 }

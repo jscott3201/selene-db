@@ -53,6 +53,7 @@ mod feature_status;
 mod health;
 mod meta;
 mod rebuild_vector_indexes;
+mod vector_common;
 mod vector_index_stats;
 mod vector_score_expanded_candidates;
 mod vector_score_expanded_candidates_batch;
