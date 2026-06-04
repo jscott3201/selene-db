@@ -137,21 +137,24 @@ impl IvfVectorIndex {
         }
         let scorer = self.metric.bind_query(query)?;
         let mut top_k = VectorTopK::new(k);
+        let has_stale_entries = self.has_stale_entries();
         if self.centroids.is_empty() || self.lists.is_empty() {
             if self.metric == VectorMetric::Cosine {
                 for (entry_id, entry) in self.entries.iter().enumerate() {
-                    if entry.deleted || !self.row_to_entry.contains_key(&entry.row) {
+                    let entry_id = u32::try_from(entry_id).expect("IVF entry id fits u32");
+                    if !self.is_current_entry(entry_id, entry, has_stale_entries) {
                         continue;
                     }
                     let distance = scorer.distance_with_candidate_squared_norm(
                         &entry.vector,
-                        self.cached_entry_squared_norm(entry_id, &entry.vector),
+                        self.cached_entry_squared_norm(entry_id as usize, &entry.vector),
                     )?;
                     top_k.push_distance(entry.row, distance);
                 }
             } else {
-                for entry in &self.entries {
-                    if entry.deleted || !self.row_to_entry.contains_key(&entry.row) {
+                for (entry_id, entry) in self.entries.iter().enumerate() {
+                    let entry_id = u32::try_from(entry_id).expect("IVF entry id fits u32");
+                    if !self.is_current_entry(entry_id, entry, has_stale_entries) {
                         continue;
                     }
                     let distance = scorer.distance(&entry.vector)?;
@@ -184,7 +187,7 @@ impl IvfVectorIndex {
                 };
                 for &entry_id in list {
                     let entry = &self.entries[entry_id as usize];
-                    if entry.deleted || self.row_to_entry.get(&entry.row) != Some(&entry_id) {
+                    if !self.is_current_entry(entry_id, entry, has_stale_entries) {
                         continue;
                     }
                     let distance = scorer.distance_with_candidate_squared_norm(
@@ -201,7 +204,7 @@ impl IvfVectorIndex {
                 };
                 for &entry_id in list {
                     let entry = &self.entries[entry_id as usize];
-                    if entry.deleted || self.row_to_entry.get(&entry.row) != Some(&entry_id) {
+                    if !self.is_current_entry(entry_id, entry, has_stale_entries) {
                         continue;
                     }
                     let distance = scorer.distance(&entry.vector)?;
@@ -282,6 +285,18 @@ impl IvfVectorIndex {
         let list = self.nearest_centroid_for_entry(entry_id)?;
         self.lists[list].push(entry_id);
         Ok(())
+    }
+
+    fn has_stale_entries(&self) -> bool {
+        self.entries.len() != self.row_to_entry.len()
+    }
+
+    fn is_current_entry(&self, entry_id: u32, entry: &IvfEntry, has_stale_entries: bool) -> bool {
+        if !has_stale_entries {
+            debug_assert!(!entry.deleted);
+            return !entry.deleted;
+        }
+        !entry.deleted && self.row_to_entry.get(&entry.row) == Some(&entry_id)
     }
 
     fn record_entry_squared_norm(&mut self, entry_id: usize) {

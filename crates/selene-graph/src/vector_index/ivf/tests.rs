@@ -47,6 +47,7 @@ fn ivf_search_finds_near_rows_when_all_lists_are_probed() {
     index.finish_bulk_load().unwrap();
 
     let usage = index.memory_usage();
+    assert!(!index.has_stale_entries());
     let hits = index
         .search(&vector(&[4.1, 0.0]), 3, usage.list_count)
         .unwrap();
@@ -97,6 +98,7 @@ fn ivf_replace_marks_old_row_version_stale() {
 
     index.insert(1, vector(&[1.0, 0.0])).unwrap();
 
+    assert!(index.has_stale_entries());
     let hits = index.search(&vector(&[1.1, 0.0]), 2, 16).unwrap();
     assert_eq!(hits[0].row, 1);
     let usage = index.memory_usage();
@@ -113,6 +115,7 @@ fn ivf_remove_excludes_row_from_results() {
 
     index.remove(1);
 
+    assert!(index.has_stale_entries());
     let hits = index.search(&vector(&[1.0, 0.0]), 2, 16).unwrap();
     assert_eq!(hits[0].row, 2);
     let usage = index.memory_usage();
@@ -132,6 +135,7 @@ fn ivf_finish_bulk_load_rebuilds_lists_after_updates() {
 
     index.finish_bulk_load().unwrap();
 
+    assert!(index.has_stale_entries());
     let hits = index.search(&vector(&[0.0, 0.0]), 1, 16).unwrap();
     assert_eq!(hits[0].row, 12);
     let usage = index.memory_usage();
