@@ -51,6 +51,8 @@ pub(crate) struct IvfMemoryUsage {
     pub(crate) average_list_len_basis_points: usize,
     /// Non-stale entry ids assigned to inverted lists.
     pub(crate) assigned_entries: usize,
+    /// Live entries whose current vector was not part of the last centroid training pass.
+    pub(crate) pending_retrain_entries: usize,
     /// Estimated heap bytes owned by IVF structures, excluding vector components.
     pub(crate) estimated_heap_bytes: usize,
     /// Component bytes reachable through IVF entry and centroid vector handles.
@@ -68,6 +70,7 @@ pub(crate) struct IvfVectorIndex {
     centroid_squared_norms: Vec<f64>,
     lists: Vec<Vec<u32>>,
     assigned_entry_count: usize,
+    pending_retrain_entry_count: usize,
 }
 
 impl IvfVectorIndex {
@@ -82,6 +85,7 @@ impl IvfVectorIndex {
             centroid_squared_norms: Vec::new(),
             lists: Vec::new(),
             assigned_entry_count: 0,
+            pending_retrain_entry_count: 0,
         }
     }
 
@@ -91,14 +95,20 @@ impl IvfVectorIndex {
             return self.replace_entry(entry_id, vector);
         }
         let entry_id = u32::try_from(self.entries.len()).expect("node rows cap IVF entries at u32");
+        let pending_retrain = self.has_trained_centroids();
         self.entries.push(IvfEntry {
             row,
             vector,
             deleted: false,
+            pending_retrain,
         });
         self.record_entry_squared_norm(entry_id as usize);
         self.row_to_entry.insert(row, entry_id);
-        self.assign_entry(entry_id)
+        self.assign_entry(entry_id)?;
+        if pending_retrain {
+            self.pending_retrain_entry_count += 1;
+        }
+        Ok(())
     }
 
     /// Mark the current vector for `row` stale, if present.
@@ -112,6 +122,11 @@ impl IvfVectorIndex {
             self.assigned_entry_count = self.assigned_entry_count.saturating_sub(1);
         }
         if let Some(node) = self.entries.get_mut(entry_id as usize) {
+            if node.pending_retrain {
+                self.pending_retrain_entry_count =
+                    self.pending_retrain_entry_count.saturating_sub(1);
+                node.pending_retrain = false;
+            }
             node.deleted = true;
         }
     }
@@ -124,6 +139,7 @@ impl IvfVectorIndex {
             self.centroid_squared_norms.clear();
             self.lists.clear();
             self.assigned_entry_count = 0;
+            self.mark_all_entries_trained();
             return Ok(());
         }
         let centroid_count = target_centroid_count(live_entries.len());
@@ -132,6 +148,7 @@ impl IvfVectorIndex {
         self.refine_centroids(&training_entries)?;
         self.refresh_centroid_squared_norms();
         self.rebuild_lists(&live_entries)?;
+        self.mark_all_entries_trained();
         Ok(())
     }
 
@@ -236,6 +253,7 @@ impl IvfVectorIndex {
             self.lists.iter().map(Vec::len).sum::<usize>()
         );
         let assigned_entries = self.assigned_entry_count;
+        let pending_retrain_entries = self.pending_retrain_entry_count;
         let non_empty_list_count = self.lists.iter().filter(|list| !list.is_empty()).count();
         let max_list_len = self.lists.iter().map(Vec::len).max().unwrap_or_default();
         let list_capacity = self.lists.iter().map(Vec::capacity).sum::<usize>();
@@ -288,6 +306,7 @@ impl IvfVectorIndex {
                 self.lists.len(),
             ),
             assigned_entries,
+            pending_retrain_entries,
             estimated_heap_bytes,
             referenced_vector_bytes,
         }
@@ -304,20 +323,37 @@ impl IvfVectorIndex {
     fn replace_entry(&mut self, entry_id: u32, vector: VectorValue) -> CoreResult<()> {
         let old_list = self.nearest_centroid_for_current_entry(entry_id)?;
         let new_list = self.nearest_centroid_for_vector(&vector)?;
+        let pending_retrain = self.has_trained_centroids();
         if let Some(old_list) = old_list
             && self.remove_entry_from_list(entry_id, old_list)
         {
             self.assigned_entry_count = self.assigned_entry_count.saturating_sub(1);
         }
         let entry = &mut self.entries[entry_id as usize];
+        let was_pending_retrain = entry.pending_retrain;
         entry.vector = vector;
         entry.deleted = false;
+        entry.pending_retrain = entry.pending_retrain || pending_retrain;
         self.record_entry_squared_norm(entry_id as usize);
         if let Some(new_list) = new_list {
             self.lists[new_list].push(entry_id);
             self.assigned_entry_count += 1;
         }
+        if pending_retrain && !was_pending_retrain {
+            self.pending_retrain_entry_count += 1;
+        }
         Ok(())
+    }
+
+    fn has_trained_centroids(&self) -> bool {
+        !self.centroids.is_empty() && !self.lists.is_empty()
+    }
+
+    fn mark_all_entries_trained(&mut self) {
+        for entry in &mut self.entries {
+            entry.pending_retrain = false;
+        }
+        self.pending_retrain_entry_count = 0;
     }
 
     fn nearest_centroid_for_current_entry(&self, entry_id: u32) -> CoreResult<Option<usize>> {
@@ -563,6 +599,7 @@ struct IvfEntry {
     row: u32,
     vector: VectorValue,
     deleted: bool,
+    pending_retrain: bool,
 }
 
 fn target_centroid_count(live_len: usize) -> usize {

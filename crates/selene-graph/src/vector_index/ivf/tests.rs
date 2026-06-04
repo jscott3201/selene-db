@@ -56,6 +56,7 @@ fn ivf_search_finds_near_rows_when_all_lists_are_probed() {
     assert!(hits.iter().any(|hit| hit.row == 5));
     assert_eq!(usage.live_entries, 32);
     assert_eq!(usage.assigned_entries, 32);
+    assert_eq!(usage.pending_retrain_entries, 0);
     assert!(usage.non_empty_list_count > 0);
     assert!(usage.max_list_len > 0);
     assert_eq!(
@@ -106,6 +107,7 @@ fn ivf_replace_reuses_current_row_version() {
     assert_eq!(usage.live_entries, 2);
     assert_eq!(usage.deleted_entries, 0);
     assert_eq!(usage.assigned_entries, 2);
+    assert_eq!(usage.pending_retrain_entries, 1);
 }
 
 #[test]
@@ -125,6 +127,7 @@ fn ivf_replace_moves_entry_between_lists() {
     let after = index.memory_usage();
     assert_eq!(after.entries, before.entries);
     assert_eq!(after.assigned_entries, before.assigned_entries);
+    assert_eq!(after.pending_retrain_entries, 1);
     let hits = index
         .search(&vector(&[150.0, 0.0]), 1, after.list_count)
         .unwrap();
@@ -147,6 +150,7 @@ fn ivf_remove_excludes_row_from_results() {
     assert_eq!(usage.live_entries, 1);
     assert_eq!(usage.deleted_entries, 1);
     assert_eq!(usage.assigned_entries, 1);
+    assert_eq!(usage.pending_retrain_entries, 0);
 }
 
 #[test]
@@ -167,6 +171,32 @@ fn ivf_finish_bulk_load_rebuilds_lists_after_updates() {
     let usage = index.memory_usage();
     assert_eq!(usage.live_entries, 12);
     assert_eq!(usage.assigned_entries, 12);
+    assert_eq!(usage.pending_retrain_entries, 0);
+}
+
+#[test]
+fn ivf_pending_retrain_tracks_post_training_churn() {
+    let mut index = IvfVectorIndex::new(VectorMetric::SquaredEuclidean);
+    for row in 0..16 {
+        index.insert(row, vector(&[row as f32, 0.0])).unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    assert_eq!(index.memory_usage().pending_retrain_entries, 0);
+
+    index.insert(16, vector(&[16.0, 0.0])).unwrap();
+    assert_eq!(index.memory_usage().pending_retrain_entries, 1);
+
+    index.insert(16, vector(&[17.0, 0.0])).unwrap();
+    assert_eq!(index.memory_usage().pending_retrain_entries, 1);
+
+    index.insert(1, vector(&[100.0, 0.0])).unwrap();
+    assert_eq!(index.memory_usage().pending_retrain_entries, 2);
+
+    index.remove(16);
+    assert_eq!(index.memory_usage().pending_retrain_entries, 1);
+
+    index.finish_bulk_load().unwrap();
+    assert_eq!(index.memory_usage().pending_retrain_entries, 0);
 }
 
 #[test]
@@ -186,6 +216,7 @@ fn ivf_parallel_assignment_path_keeps_exact_full_probe_results() {
     assert!(index.entry_squared_norms.is_empty());
     assert!(index.centroid_squared_norms.is_empty());
     assert_eq!(usage.assigned_entries, 16);
+    assert_eq!(usage.pending_retrain_entries, 0);
     assert_eq!(index.lists.iter().map(Vec::capacity).sum::<usize>(), 16);
 
     let hits = index

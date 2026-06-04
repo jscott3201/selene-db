@@ -157,6 +157,17 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
             &registry,
         )
         .expect("ivf vector index creation executes");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&embedding, Value::Vector(vector(&[100.0, 0.0]))),
+            )
+            .expect("post-build vector insert succeeds");
+        txn.commit().expect("post-build insert commits");
+    }
 
     let table = execute_rows(
         &mut session,
@@ -165,7 +176,7 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
                ivf_deleted_entries, ivf_centroids, ivf_list_count, \
                ivf_non_empty_list_count, ivf_max_list_len, \
                ivf_average_list_len_basis_points, ivf_assigned_entries, \
-               estimated_index_bytes, estimated_reachable_bytes",
+               ivf_pending_retrain_entries, estimated_index_bytes, estimated_reachable_bytes",
         &registry,
     );
 
@@ -174,10 +185,10 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
         string_column(&table, "kind"),
         vec!["vector_ivf_squared_euclidean(2)"]
     );
-    assert_eq!(uint_column(&table, "indexed_rows"), vec![9]);
+    assert_eq!(uint_column(&table, "indexed_rows"), vec![10]);
     assert_eq!(uint_column(&table, "hnsw_entries"), vec![0]);
-    assert_eq!(uint_column(&table, "ivf_entries"), vec![9]);
-    assert_eq!(uint_column(&table, "ivf_live_entries"), vec![9]);
+    assert_eq!(uint_column(&table, "ivf_entries"), vec![10]);
+    assert_eq!(uint_column(&table, "ivf_live_entries"), vec![10]);
     assert_eq!(uint_column(&table, "ivf_deleted_entries"), vec![0]);
     assert_eq!(uint_column(&table, "ivf_centroids"), vec![3]);
     assert_eq!(uint_column(&table, "ivf_list_count"), vec![3]);
@@ -185,9 +196,10 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
     assert!(uint_column(&table, "ivf_max_list_len")[0] > 0);
     assert_eq!(
         uint_column(&table, "ivf_average_list_len_basis_points"),
-        vec![30_000]
+        vec![33_333]
     );
-    assert_eq!(uint_column(&table, "ivf_assigned_entries"), vec![9]);
+    assert_eq!(uint_column(&table, "ivf_assigned_entries"), vec![10]);
+    assert_eq!(uint_column(&table, "ivf_pending_retrain_entries"), vec![1]);
     assert!(
         uint_column(&table, "estimated_reachable_bytes")[0]
             > uint_column(&table, "estimated_index_bytes")[0]
@@ -258,6 +270,7 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
                before_ivf_entries, after_ivf_entries, \
                before_ivf_deleted_entries, after_ivf_deleted_entries, \
                before_ivf_assigned_entries, after_ivf_centroids, after_ivf_list_count, \
+               before_ivf_pending_retrain_entries, after_ivf_pending_retrain_entries, \
                after_ivf_non_empty_list_count, after_ivf_max_list_len, \
                after_ivf_average_list_len_basis_points, after_ivf_assigned_entries, \
                reclaimed_ivf_entries, reclaimed_ivf_deleted_entries, reclaimed_reachable_bytes",
@@ -276,6 +289,14 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     assert_eq!(uint_column(&table, "before_ivf_deleted_entries"), vec![2]);
     assert_eq!(uint_column(&table, "after_ivf_deleted_entries"), vec![0]);
     assert_eq!(uint_column(&table, "before_ivf_assigned_entries"), vec![22]);
+    assert_eq!(
+        uint_column(&table, "before_ivf_pending_retrain_entries"),
+        vec![4]
+    );
+    assert_eq!(
+        uint_column(&table, "after_ivf_pending_retrain_entries"),
+        vec![0]
+    );
     assert!(uint_column(&table, "after_ivf_centroids")[0] > 0);
     assert!(uint_column(&table, "after_ivf_list_count")[0] > 0);
     assert!(uint_column(&table, "after_ivf_non_empty_list_count")[0] > 0);

@@ -271,6 +271,7 @@ impl VectorIndex {
             ivf_max_list_len: ivf.max_list_len,
             ivf_average_list_len_basis_points: ivf.average_list_len_basis_points,
             ivf_assigned_entries: ivf.assigned_entries,
+            ivf_pending_retrain_entries: ivf.pending_retrain_entries,
             estimated_index_bytes,
             estimated_reachable_bytes: estimated_index_bytes
                 .saturating_add(hnsw.referenced_vector_bytes)

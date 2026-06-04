@@ -17,7 +17,7 @@ use crate::{
 
 const PROC_NAME: &str = "selene.rebuild_vector_indexes";
 
-static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 65] = [
+static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 67] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -130,6 +130,10 @@ static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 65] = [
         .with_description("Live IVF entries assigned to lists before rebuild."),
     StaticOutputColumn::new("after_ivf_assigned_entries", GqlType::Uint64)
         .with_description("Live IVF entries assigned to lists after rebuild."),
+    StaticOutputColumn::new("before_ivf_pending_retrain_entries", GqlType::Uint64)
+        .with_description("Live IVF entries inserted or replaced after prior centroid training."),
+    StaticOutputColumn::new("after_ivf_pending_retrain_entries", GqlType::Uint64)
+        .with_description("Live IVF entries still pending retrain after rebuild."),
     StaticOutputColumn::new("before_estimated_index_bytes", GqlType::Uint64)
         .with_description("Estimated index-owned bytes before rebuild."),
     StaticOutputColumn::new("after_estimated_index_bytes", GqlType::Uint64)
@@ -287,6 +291,8 @@ impl RebuildRow {
             bytes(self.after.ivf_average_list_len_basis_points),
             bytes(self.before.ivf_assigned_entries),
             bytes(self.after.ivf_assigned_entries),
+            bytes(self.before.ivf_pending_retrain_entries),
+            bytes(self.after.ivf_pending_retrain_entries),
             bytes(self.before.estimated_index_bytes),
             bytes(self.after.estimated_index_bytes),
             bytes(self.before.estimated_reachable_bytes),
