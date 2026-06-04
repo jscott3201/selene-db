@@ -722,6 +722,7 @@ print it:
 ```bash
 set -a; source .env; set +a
 SELENE_OMLX_EMBEDDING_BENCH=1 \
+SELENE_OMLX_CORPUS=tiny \
 SELENE_OMLX_EMBEDDING_MODELS=Qwen3-Embedding-0.6B-4bit-DWQ,Qwen3-Embedding-4B-4bit-DWQ \
 scripts/run-benches.sh --profile quick --bench vector_graph_retrieval --filter graph_vector_omlx_embedding_pressure --vector-scales 1000
 ```
@@ -737,7 +738,8 @@ larger local corpus work:
 | `graph_vector_omlx_embedding_pressure/embed_batch/...docs20` | 39.23 ms | 208.8 ms | End-to-end localhost embedding request for 20 texts. |
 | `graph_vector_omlx_embedding_pressure/exact_graph_search/...precbp6875` | 13.58 µs | 31.81 µs | Exact cosine over 16 stored endpoint vectors and 4 query vectors. |
 | `graph_vector_omlx_embedding_pressure/hnsw_graph_search/...precbp6875` | 16.07 µs | 34.29 µs | HNSW cosine over the same vectors (`k=4`, `ef=64`). |
-| `graph_vector_omlx_embedding_pressure/topic_label_candidate_score/...c4...precbp10000` | 4.15 µs | 9.51 µs | Candidate sets are derived from graph topic labels and batch-scored exactly. |
+| `graph_vector_omlx_embedding_pressure/topic_label_candidate_score/...c4...precbp10000` | 4.11 µs | 9.46 µs | Candidate sets are derived from graph topic labels and batch-scored exactly. |
+| `SELENE_OMLX_CORPUS=agent_memory` `topic_label_candidate_score/...c8...precbp10000` | 15.88 µs | 34.96 µs | Expanded 32-document / 8-query agent-memory profile; graph labels still restore full precision. |
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it

@@ -13,7 +13,7 @@ use selene_graph::{
 };
 
 use super::super::support::istr;
-use super::corpus::{Topic, corpus_inputs, topic_label};
+use super::corpus::{CorpusInput, Topic, topic_label};
 use super::{ANN_SEARCH_WIDTH, TOP_K, precision_basis_points};
 
 pub(super) struct OmlxVectorFixture {
@@ -27,8 +27,7 @@ pub(super) struct OmlxVectorFixture {
 }
 
 impl OmlxVectorFixture {
-    pub(super) fn build(model: &str, vectors: Vec<VectorValue>) -> Self {
-        let inputs = corpus_inputs();
+    pub(super) fn build(model: &str, inputs: &[CorpusInput], vectors: Vec<VectorValue>) -> Self {
         assert_eq!(
             vectors.len(),
             inputs.len(),
@@ -84,7 +83,7 @@ impl OmlxVectorFixture {
             txn.commit().expect("oMLX bench graph commits");
         }
         let queries = inputs
-            .into_iter()
+            .iter()
             .zip(vectors)
             .filter_map(|(input, vector)| {
                 (!input.is_document).then_some(QueryVector {

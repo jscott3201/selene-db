@@ -6,7 +6,7 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 
 use crate::common::scale_label;
 
-use self::{client::OmlxClient, corpus::corpus_inputs, fixture::OmlxVectorFixture};
+use self::{client::OmlxClient, corpus::CorpusProfile, fixture::OmlxVectorFixture};
 
 mod client;
 mod corpus;
@@ -16,6 +16,7 @@ const ENABLE_ENV: &str = "SELENE_OMLX_EMBEDDING_BENCH";
 const API_KEY_ENVS: &[&str] = &["SELENE_OMLX_API_KEY", "OMLX_KEY"];
 const BASE_URL_ENV: &str = "SELENE_OMLX_BASE_URL";
 const MODELS_ENV: &str = "SELENE_OMLX_EMBEDDING_MODELS";
+const CORPUS_ENV: &str = "SELENE_OMLX_CORPUS";
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:7700/v1";
 const DEFAULT_MODELS: &[&str] = &[
     "Qwen3-Embedding-0.6B-4bit-DWQ",
@@ -29,14 +30,14 @@ pub(super) fn bench(c: &mut Criterion) {
         return;
     };
     let client = OmlxClient::new(config.base_url, config.api_key);
-    let inputs = corpus_inputs();
+    let inputs = config.corpus.inputs();
     let mut group = c.benchmark_group("graph_vector_omlx_embedding_pressure");
     for model in config.models {
         let model_id = model_id(&model);
         let vectors = client
             .embed(&model, &inputs)
             .expect("local oMLX embedding request succeeds");
-        let fixture = OmlxVectorFixture::build(&model, vectors);
+        let fixture = OmlxVectorFixture::build(&model, &inputs, vectors);
         let topic_precision = precision_basis_points(
             fixture.topic_candidate_total_precision(),
             fixture.query_count() * TOP_K,
@@ -119,6 +120,7 @@ struct OmlxBenchConfig {
     base_url: String,
     api_key: String,
     models: Vec<String>,
+    corpus: CorpusProfile,
 }
 
 impl OmlxBenchConfig {
@@ -151,6 +153,7 @@ impl OmlxBenchConfig {
             base_url,
             api_key,
             models,
+            corpus: CorpusProfile::from_env(CORPUS_ENV),
         })
     }
 }
