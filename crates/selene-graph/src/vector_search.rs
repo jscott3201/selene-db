@@ -560,6 +560,8 @@ mod batch_tests;
 mod recall_tests;
 #[path = "vector_search/score.rs"]
 mod score;
+#[path = "vector_search/score_shared.rs"]
+mod score_shared;
 #[cfg(test)]
 #[path = "vector_search/score_tests.rs"]
 mod score_tests;
