@@ -121,6 +121,8 @@ struct MemoryRetrievalFixture {
     valid_edge: IStr,
     superseded_by_edge: IStr,
     contradicts_edge: IStr,
+    recent_edge: IStr,
+    depends_edge: IStr,
     queries: Vec<Query>,
     metadata: HashMap<NodeId, NodeMeta>,
     graph_current_nodes: HashSet<NodeId>,
@@ -467,6 +469,7 @@ enum TopologyNoise {
     NoisyMultiHopSupport,
     NoisySparseMultiHopSupport,
     NoisySparseMultiHopContradicted,
+    NoisySparseMultiHopContradictedActiveHints,
     ContradictedCurrentDuplicates,
 }
 

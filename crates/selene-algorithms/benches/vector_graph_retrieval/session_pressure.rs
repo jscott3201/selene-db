@@ -122,6 +122,14 @@ const ACTIVE_SUBGRAPH_FALLBACK_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
+const ACTIVE_HINT_STRATEGIES: &[SessionStrategy] = &[
+    SessionStrategy::GraphSessionMaterializedUnresolvedCurrentFilter,
+    SessionStrategy::GraphSessionRecentActiveFilter,
+    SessionStrategy::GraphSessionDependencyActiveFilter,
+    SessionStrategy::GraphSessionProvenanceExpand2HopK16,
+    SessionStrategy::TopicFilter,
+];
+
 #[derive(Clone, Copy, Debug)]
 enum SessionStrategy {
     NoisyWcc,
@@ -143,6 +151,8 @@ enum SessionStrategy {
     GraphSessionProvenanceAdaptiveQuality,
     GraphSessionUnresolvedProvenanceExpand2HopK16,
     GraphSessionUnresolvedProvenanceFallback2HopK16,
+    GraphSessionRecentActiveFilter,
+    GraphSessionDependencyActiveFilter,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
@@ -195,6 +205,8 @@ impl SessionStrategy {
             Self::GraphSessionUnresolvedProvenanceFallback2HopK16 => {
                 "graph_session_unresolved_provenance_fallback_2hop_k16"
             }
+            Self::GraphSessionRecentActiveFilter => "graph_session_recent_active_filter",
+            Self::GraphSessionDependencyActiveFilter => "graph_session_dependency_active_filter",
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
@@ -291,6 +303,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_negative_evidence_pressure(c);
     bench_active_subgraph_composition_pressure(c);
     bench_active_subgraph_fallback_pressure(c);
+    bench_active_hint_pressure(c);
     maintenance::bench_active_set_maintenance_pressure(c);
 }
 
@@ -446,6 +459,20 @@ fn bench_active_subgraph_fallback_pressure(c: &mut Criterion) {
             TopologyNoise::NoisySparseMultiHopContradicted,
         );
         for &strategy in ACTIVE_SUBGRAPH_FALLBACK_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
+fn bench_active_hint_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_active_hint_pressure");
+    for scale in vector_scales() {
+        let fixture = MemoryRetrievalFixture::build_with_topology(
+            scale,
+            TopologyNoise::NoisySparseMultiHopContradictedActiveHints,
+        );
+        for &strategy in ACTIVE_HINT_STRATEGIES {
             bench_strategy(&mut group, &fixture, strategy);
         }
     }

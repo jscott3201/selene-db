@@ -20,6 +20,7 @@ impl MemoryRetrievalFixture {
     pub(super) fn build_with_topology(requested_scale: usize, topology: TopologyNoise) -> Self {
         let label = istr("Memory");
         let bridge_label = istr("MemoryBridge");
+        let recent_label = istr("MemoryRecentWindow");
         let scope_label = istr("MemoryScope");
         let session_label = istr("MemorySession");
         let embedding_key = istr("embedding");
@@ -29,6 +30,8 @@ impl MemoryRetrievalFixture {
         let valid_edge = istr("VALID_AT");
         let superseded_by_edge = istr("SUPERSEDED_BY");
         let contradicts_edge = istr("CONTRADICTS");
+        let recent_edge = istr("RECENT_IN");
+        let depends_edge = istr("DEPENDS_ON");
         let topic_count = topic_count(requested_scale);
         let session_count = topic_count.div_ceil(TOPICS_PER_SESSION);
         let duplicates = duplicates_per_fact(requested_scale, topic_count);
@@ -106,6 +109,7 @@ impl MemoryRetrievalFixture {
                         | TopologyNoise::NoisyMultiHopSupport
                         | TopologyNoise::NoisySparseMultiHopSupport
                         | TopologyNoise::NoisySparseMultiHopContradicted
+                        | TopologyNoise::NoisySparseMultiHopContradictedActiveHints
                 ) {
                     for topic in 0..topic_count {
                         let next_topic = (topic + 1) % topic_count;
@@ -138,6 +142,7 @@ impl MemoryRetrievalFixture {
                                     | TopologyNoise::NoisyMultiHopSupport
                                     | TopologyNoise::NoisySparseMultiHopSupport
                                     | TopologyNoise::NoisySparseMultiHopContradicted
+                                    | TopologyNoise::NoisySparseMultiHopContradictedActiveHints
                             ) && fact >= SEED_K
                             {
                                 let bridge = mutator
@@ -239,12 +244,22 @@ impl MemoryRetrievalFixture {
                     topology,
                     TopologyNoise::ContradictedCurrentDuplicates
                         | TopologyNoise::NoisySparseMultiHopContradicted
+                        | TopologyNoise::NoisySparseMultiHopContradictedActiveHints
                 ) {
                     add_contradicted_current_duplicates(
                         &mut mutator,
                         &topic_nodes,
                         &metadata,
                         &contradicts_edge,
+                    );
+                }
+                if topology == TopologyNoise::NoisySparseMultiHopContradictedActiveHints {
+                    add_active_hint_edges(
+                        &mut mutator,
+                        &topic_nodes,
+                        &recent_label,
+                        &recent_edge,
+                        &depends_edge,
                     );
                 }
                 mutator
@@ -310,6 +325,8 @@ impl MemoryRetrievalFixture {
             valid_edge,
             superseded_by_edge,
             contradicts_edge,
+            recent_edge,
+            depends_edge,
             queries,
             metadata,
             graph_current_nodes,
@@ -356,7 +373,8 @@ fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize)
         TopologyNoise::SparseSupport
         | TopologyNoise::NoisySparseSupport
         | TopologyNoise::NoisySparseMultiHopSupport
-        | TopologyNoise::NoisySparseMultiHopContradicted => {
+        | TopologyNoise::NoisySparseMultiHopContradicted
+        | TopologyNoise::NoisySparseMultiHopContradictedActiveHints => {
             (fact - 1) % SEED_K == duplicate % SEED_K
         }
         TopologyNoise::Clean
@@ -364,6 +382,44 @@ fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize)
         | TopologyNoise::MultiHopSupport
         | TopologyNoise::NoisyMultiHopSupport
         | TopologyNoise::ContradictedCurrentDuplicates => true,
+    }
+}
+
+fn add_active_hint_edges(
+    mutator: &mut selene_graph::Mutator<'_, '_>,
+    topic_nodes: &[Vec<Vec<NodeId>>],
+    recent_label: &IStr,
+    recent_edge: &IStr,
+    depends_edge: &IStr,
+) {
+    for facts in topic_nodes {
+        let anchor = facts[0][facts[0].len() / 2];
+        let recent_window = mutator
+            .create_node(LabelSet::single(recent_label.clone()), PropertyMap::new())
+            .expect("bench recent window insert succeeds");
+        mutator
+            .create_edge(
+                recent_edge.clone(),
+                anchor,
+                recent_window,
+                PropertyMap::new(),
+            )
+            .expect("bench anchor-to-recent edge inserts");
+        for nodes in facts {
+            for &node in nodes {
+                if node == anchor {
+                    continue;
+                }
+                mutator
+                    .create_edge(recent_edge.clone(), node, recent_window, PropertyMap::new())
+                    .expect("bench recent membership edge inserts");
+            }
+        }
+        for nodes in facts {
+            mutator
+                .create_edge(depends_edge.clone(), anchor, nodes[0], PropertyMap::new())
+                .expect("bench dependency edge inserts");
+        }
     }
 }
 

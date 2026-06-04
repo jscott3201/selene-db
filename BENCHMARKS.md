@@ -896,6 +896,19 @@ scoring pass:
 | `graph_vector_active_subgraph_fallback_pressure/graph_scope_unresolved_provenance_fallback_2hop_k16/9k_q64_c58_covbp10000_curbp10000_precbp10000` | 796.5 µs (quick) | Scope fallback restores full quality, but remains slower than the active-set baseline. |
 | `graph_vector_active_subgraph_fallback_pressure/topic_filter/9k_q64_c152_covbp10000_curbp10000_precbp10000` | 1.131 ms (quick) | Metadata hard-topic reference. |
 
+Active-hint rows keep the same noisy sparse multi-hop contradicted fixture, but
+add graph-authored `RECENT_IN` windows and direct `DEPENDS_ON` edges. This
+models a broad session query that can derive a narrower active subgraph from
+task memory topology before exact vector scoring:
+
+| Bench | 9k/10k scale | Notes |
+|---|---:|---|
+| `graph_vector_active_hint_pressure/graph_session_materialized_unresolved_current_filter/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.619 ms (quick) | Broad session active-set baseline. |
+| `graph_vector_active_hint_pressure/graph_session_recent_active_filter/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 498.1 µs (quick) | Graph-authored recency window narrows the session to topic-sized active candidates while preserving full quality. |
+| `graph_vector_active_hint_pressure/graph_session_dependency_active_filter/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 73.25 µs (quick) | Direct dependency edges produce one unresolved current candidate per fact; strongest full-quality graph/vector row so far on this fixture. |
+| `graph_vector_active_hint_pressure/graph_session_provenance_expand_2hop_k16/9k_q64_c76_covbp10000_curbp10000_precbp10000` | 1.798 ms (quick) | Full-quality provenance reference is slower than direct active hints here. |
+| `graph_vector_active_hint_pressure/topic_filter/9k_q64_c152_covbp10000_curbp10000_precbp10000` | 1.099 ms (quick) | Metadata hard-topic reference. |
+
 Adaptive provenance rows use the noisy sparse multi-hop topology and a
 benchmark-only quality oracle. The adaptive row scores provenance roots once,
 then tries k1 one-hop, k1 two-hop, k4 two-hop, k8 two-hop, and k16 two-hop
