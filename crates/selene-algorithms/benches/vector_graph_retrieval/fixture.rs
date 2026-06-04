@@ -124,6 +124,7 @@ struct MemoryRetrievalFixture {
     queries: Vec<Query>,
     metadata: HashMap<NodeId, NodeMeta>,
     graph_current_nodes: HashSet<NodeId>,
+    graph_unresolved_current_nodes: HashSet<NodeId>,
     pagerank: HashMap<NodeId, f64>,
     component_candidates: HashMap<u64, Vec<NodeId>>,
     component_order: Vec<u64>,

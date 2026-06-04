@@ -846,11 +846,13 @@ fact. This measures graph-side candidate pruning before exact vector scoring:
 
 | Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
 |---|---:|---:|---|
-| `graph_vector_negative_evidence_pressure/graph_session_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 248.8 µs (`c70`) | 2.687 ms (`c356`) | Baseline broad session-current scoring still sees contradicted duplicate current facts. |
-| `graph_vector_negative_evidence_pressure/graph_session_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 173.4 µs (`c31`) | 1.083 ms (`c32`) | Graph-derived unresolved-current pruning keeps full quality while cutting the 10k session row by ~2.5x. |
-| `graph_vector_negative_evidence_pressure/graph_scope_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 80.74 µs (`c18`) | 862.0 µs (`c89`) | Topic-scope current baseline with contradicted duplicates still present. |
-| `graph_vector_negative_evidence_pressure/graph_scope_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 57.97 µs (`c8`) | 316.7 µs (`c8`) | One unresolved current node per fact gives the strongest 10k exact-scored graph row so far. |
-| `graph_vector_negative_evidence_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.7 µs (`c32`) | 1.230 ms (`c152`) | Metadata hard-topic reference remains slower than unresolved graph pruning at 10k. |
+| `graph_vector_negative_evidence_pressure/graph_session_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 228.2 µs (`c70`) | 2.424 ms (`c356`) | Baseline broad session-current scoring still sees contradicted duplicate current facts. |
+| `graph_vector_negative_evidence_pressure/graph_session_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 160.6 µs (`c31`) | 976.1 µs (`c32`) | Dynamic graph-derived unresolved-current pruning keeps full quality while cutting the 10k session row by ~2.5x. |
+| `graph_vector_negative_evidence_pressure/graph_session_materialized_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 122.0 µs (`c31`) | 556.6 µs (`c32`) | Maintaining the unresolved-current set keeps the same full-quality candidate shape while avoiding per-candidate edge scans. |
+| `graph_vector_negative_evidence_pressure/graph_scope_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 74.29 µs (`c18`) | 775.4 µs (`c89`) | Topic-scope current baseline with contradicted duplicates still present. |
+| `graph_vector_negative_evidence_pressure/graph_scope_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 53.33 µs (`c8`) | 289.8 µs (`c8`) | Dynamic unresolved-current pruning keeps the strongest exact-scored graph candidate shape. |
+| `graph_vector_negative_evidence_pressure/graph_scope_materialized_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 42.94 µs (`c8`) | 173.9 µs (`c8`) | Materialized unresolved-current scope pruning is the fastest full-quality graph row in this matrix. |
+| `graph_vector_negative_evidence_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 104.7 µs (`c32`) | 1.105 ms (`c152`) | Metadata hard-topic reference remains slower than unresolved graph pruning at 10k. |
 
 ## Cluster-B regression targets
 
