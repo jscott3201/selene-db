@@ -707,15 +707,20 @@ edges, then exact-scores those graph-derived candidates:
 Session-filter rows add a coarser graph-derived membership edge. Each memory
 node links to an `IN_SESSION` node shared by four topics, modeling task/session
 scope that is broader than an exact topic but much narrower than noisy
-connectivity. These rows keep the same noisy topology and exact vector scorer:
+connectivity. These rows keep the same noisy topology and exact vector scorer.
+The `*_current_filter` variants prune stale fixture metadata before scoring,
+mirroring a freshness-aware graph candidate producer instead of relying on
+post-score current-result selection:
 
 | Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
 |---|---:|---:|---|
-| `graph_vector_session_filter_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.803 ms (`c992`) | 61.76 ms (`c9728`) | Repeats the noisy WCC baseline with session edges present outside the WCC projection. |
-| `graph_vector_session_filter_pressure/label_propagation/...` | 59.18 µs (`c17`, `covbp7661`, `precbp8830`) | 124.0 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation remains fast but partial-recall against the full-quality graph membership filters. |
-| `graph_vector_session_filter_pressure/graph_session_filter/...covbp10000_curbp10000_precbp10000` | 377.3 µs (`c124`) | 3.829 ms (`c608`) | Four-topic session membership is a useful middle row: much cheaper than noisy WCC and full-quality, but about 3x the exact scope filter at 10k. |
-| `graph_vector_session_filter_pressure/graph_scope_filter/...covbp10000_curbp10000_precbp10000` | 119.8 µs (`c32`) | 1.243 ms (`c152`) | Exact graph scope remains the best product-shaped candidate filter when the query can identify a narrow subgraph. |
-| `graph_vector_session_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.2 µs (`c32`) | 1.202 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same narrow candidate set. |
+| `graph_vector_session_filter_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.788 ms (`c992`) | 60.69 ms (`c9728`) | Repeats the noisy WCC baseline with session edges present outside the WCC projection. |
+| `graph_vector_session_filter_pressure/label_propagation/...` | 59.11 µs (`c17`, `covbp7661`, `precbp8830`) | 122.3 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation remains fast but partial-recall against the full-quality graph membership filters. |
+| `graph_vector_session_filter_pressure/graph_session_filter/...covbp10000_curbp10000_precbp10000` | 372.1 µs (`c124`) | 3.787 ms (`c608`) | Four-topic session membership is a useful middle row: much cheaper than noisy WCC and full-quality, but about 3x the exact scope filter at 10k. |
+| `graph_vector_session_filter_pressure/graph_session_current_filter/...covbp10000_curbp10000_precbp10000` | 246.3 µs (`c70`) | 2.598 ms (`c356`) | Pre-score freshness pruning keeps full quality while cutting session candidate pressure by roughly half. |
+| `graph_vector_session_filter_pressure/graph_scope_filter/...covbp10000_curbp10000_precbp10000` | 120.1 µs (`c32`) | 1.225 ms (`c152`) | Exact graph scope remains the best product-shaped candidate filter when the query can identify a narrow subgraph. |
+| `graph_vector_session_filter_pressure/graph_scope_current_filter/...covbp10000_curbp10000_precbp10000` | 79.56 µs (`c18`) | 820.2 µs (`c89`) | Freshness-aware scope filtering preserves full quality and lowers exact scoring work below the metadata topic baseline. |
+| `graph_vector_session_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.4 µs (`c32`) | 1.181 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same narrow candidate set. |
 
 ## Cluster-B regression targets
 
