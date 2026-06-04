@@ -21,6 +21,7 @@ pub(super) struct OmlxVectorFixture {
     label: selene_core::IStr,
     embedding_key: selene_core::IStr,
     dependency_edge: selene_core::IStr,
+    support_edge: selene_core::IStr,
     pub(super) dimension: usize,
     documents: Vec<DocumentMeta>,
     topics_by_node: HashMap<NodeId, Topic>,
@@ -50,6 +51,7 @@ impl OmlxVectorFixture {
         let label = istr("OmlxEmbeddingDoc");
         let query_label = istr("OmlxQueryAnchor");
         let dependency_edge = istr("OmlxDependsOn");
+        let support_edge = istr("OmlxSupports");
         let embedding_key = istr("embedding");
         let shared = SharedGraph::new(graph_id_for_model(model));
         let mut documents = Vec::new();
@@ -85,6 +87,24 @@ impl OmlxVectorFixture {
                         topic: input.topic,
                         graph_hint,
                     });
+                }
+                for source in documents.iter().filter(|document| document.graph_hint) {
+                    for target in documents
+                        .iter()
+                        .filter(|document| document.topic == source.topic)
+                    {
+                        if target.node == source.node {
+                            continue;
+                        }
+                        mutator
+                            .create_edge(
+                                support_edge.clone(),
+                                source.node,
+                                target.node,
+                                PropertyMap::new(),
+                            )
+                            .expect("oMLX bench support edge inserts");
+                    }
                 }
                 for input in inputs.iter().filter(|input| !input.is_document) {
                     let anchor = mutator
@@ -155,6 +175,7 @@ impl OmlxVectorFixture {
             label,
             embedding_key,
             dependency_edge,
+            support_edge,
             dimension,
             documents,
             topics_by_node,
@@ -318,6 +339,20 @@ impl OmlxVectorFixture {
         })
     }
 
+    pub(super) fn topic_hint_expansion_total_precision(&self) -> usize {
+        self.candidate_sets_total_precision(|fixture, query| {
+            fixture.topic_hint_expansion_set(query)
+        })
+    }
+
+    pub(super) fn topic_hint_expansion_ann_union_total_precision(&self) -> usize {
+        self.candidate_sets_total_precision(|fixture, query| {
+            fixture
+                .topic_hint_expansion_set(query)
+                .union(&fixture.ann_hit_set(query, super::ANN_UNION_SEED_K))
+        })
+    }
+
     pub(super) fn topic_candidate_count(&self) -> usize {
         self.topic_candidate_set(Topic::Gql).len()
     }
@@ -339,6 +374,20 @@ impl OmlxVectorFixture {
     pub(super) fn topic_neighbor_ann_union_count(&self) -> usize {
         self.queries.first().map_or(0, |query| {
             self.topic_neighbor_set(query)
+                .union(&self.ann_hit_set(query, super::ANN_UNION_SEED_K))
+                .len()
+        })
+    }
+
+    pub(super) fn topic_hint_expansion_count(&self) -> usize {
+        self.queries
+            .first()
+            .map_or(0, |query| self.topic_hint_expansion_set(query).len())
+    }
+
+    pub(super) fn topic_hint_expansion_ann_union_count(&self) -> usize {
+        self.queries.first().map_or(0, |query| {
+            self.topic_hint_expansion_set(query)
                 .union(&self.ann_hit_set(query, super::ANN_UNION_SEED_K))
                 .len()
         })
@@ -395,6 +444,19 @@ impl OmlxVectorFixture {
             &self.dependency_edge,
             VectorNeighborDirection::Outgoing,
         )
+    }
+
+    fn topic_hint_expansion_set(&self, query: &QueryVector) -> VectorCandidateSet {
+        let roots = self.topic_neighbor_set(query);
+        let mut expanded = roots.clone();
+        for root in roots.as_nodes() {
+            expanded = expanded.union(&self.graph.vector_neighbor_candidates(
+                *root,
+                &self.support_edge,
+                VectorNeighborDirection::Outgoing,
+            ));
+        }
+        expanded
     }
 
     fn ann_hit_set(&self, query: &QueryVector, k: usize) -> VectorCandidateSet {

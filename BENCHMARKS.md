@@ -734,7 +734,10 @@ size preserve input order across multiple POSTs and fail if any response chunk
 does not return exactly one vector per input.
 `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=N` caps graph-authored topic labels and
 `OmlxDependsOn` edges to the first `N` same-topic documents per topic; unset
-means every same-topic document receives graph hints.
+means every same-topic document receives graph hints. The partial-hint fixture
+also adds `OmlxSupports` edges from graph-hint documents to same-topic support
+facts so rows can compare direct partial hints, graph-expanded hints, and ANN
+union against the same endpoint embeddings.
 
 The first local corpus is intentionally tiny (16 documents + 4 queries across
 GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
@@ -774,6 +777,8 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_neighbor_batch_score/...c2...precbp5000` | 9.64 µs | 22.40 µs | Batched partial neighbor hints are neutral at this tiny candidate width. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_label_ann_union_score/...precbp5625/4843...ann8` | 332.30 µs | 668.43 µs | Small ANN union raises the 1024-dim model only to vector-only precision and lowers the 2560-dim model below c2 graph-only precision. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_neighbor_ann_union_score/...precbp5625/4843...ann8` | 331.61 µs | 668.26 µs | Same negative fallback result through explicit graph-neighbor candidates. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_score/...c16...precbp10000` | 61.74 µs | 135.29 µs | Two direct graph hints per topic expand through `OmlxSupports` to the full same-topic support set, restoring full precision with the same width as complete graph labels. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_ann_union_score/...precbp5625/4843...ann8` | 371.82 µs (`c22`) | 754.71 µs (`c21`) | ANN union after full graph expansion hurts precision and adds hundreds of microseconds; avoid widening precise graph-expanded candidate sets with ANN by default. |
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it
