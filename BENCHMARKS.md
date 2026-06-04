@@ -172,7 +172,10 @@ compare standalone full-code scans against candidate-producer plus compression
 layering. `vector_ivf_pressure` uses the production graph IVF index and records
 list-skew plus candidate-pressure suffixes so future IVF/PQ layering work is
 grounded against real index fanout under the expected 60% read / 40% write
-workload. Vector benchmark IDs include a memory/cardinality suffix:
+workload. `vector_mixed_workload` also includes capped-maintenance cadence rows
+that compare rebuilding one recommended IVF index per maintenance pass against
+rebuilding every recommended IVF index after repeated 60/40 cycles. Vector
+benchmark IDs include a memory/cardinality suffix:
 `m{index KiB}-{reachable KiB}_n{indexed rows}_{flat|he...|ve...}`. The
 `he...` form carries HNSW entries/live/deleted entries plus link counters; the
 `ve...` form carries IVF entries/live/deleted entries plus centroid/list
@@ -312,6 +315,8 @@ PR-local mixed vector read/write spot-check:
 | Bench | 1k | 10k | Notes |
 |---|---:|---:|---|
 | `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40_ef2` | 2.09 ms | 7.48 ms | One measured cycle interleaves 60 IVF cosine ANN reads and 40 vector-property updates over a 128-dim index. Fixture build is excluded; timed replacement writes reuse IVF entries, so routine updates no longer add stale IVF rows before rebuild compaction. |
+| `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40x10_ef2_maint_cap1` | 51.67 ms | 84.64 ms | Ten measured cycles run 60 reads / 40 writes per cycle across four IVF cosine indexes, then rebuild at most one recommended index. Each index reaches 100 pending retrain updates before maintenance. |
+| `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40x10_ef2_maint_all` | 57.23 ms | 116.28 ms | Same fixture and 10-cycle workload, but maintenance rebuilds every recommended IVF index. At 10k this isolates the cost of rebuilding four drifted indexes instead of pacing maintenance one index at a time. |
 
 ## §3 selene-graph — write pipeline & concurrency
 
