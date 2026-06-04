@@ -929,12 +929,14 @@ producer:
 
 | Bench | 9k/10k scale | Notes |
 |---|---:|---|
-| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_repeated_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.739 ms (quick) | Existing repeated per-query candidate scoring over the broad active set. |
-| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.797 ms (quick) | Batch scorer regresses on broad candidate sets because the current implementation still scores each set independently after batch setup. |
-| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_repeated_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 567.0 µs (quick) | Existing repeated scoring over recency-window candidates. |
-| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 561.8 µs (quick) | Batch scorer is slightly faster for medium candidate sets and preserves full quality. |
-| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_repeated_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 80.81 µs (quick) | Existing repeated scoring over direct dependency candidates. |
-| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 81.11 µs (quick) | Batch scorer is effectively neutral for tiny candidate sets. |
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_repeated_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.634 ms (quick) | Existing repeated per-query candidate scoring over the broad active set. |
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.624 ms (quick) | Batch scorer is effectively neutral for broad candidate sets after this refreshed run. |
+| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_repeated_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 499.3 µs (quick) | Existing repeated scoring over recency-window candidates. |
+| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 499.0 µs (quick) | Batch scorer is effectively neutral for medium candidate sets and preserves full quality. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_repeated_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 72.86 µs (quick) | Existing repeated scoring over direct dependency candidates. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 72.59 µs (quick) | Batch scorer is effectively neutral for tiny candidate sets. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_neighbor_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 71.87 µs (quick) | Production neighbor scorer derives dependency candidates from the anchor's `DEPENDS_ON` edges and is slightly faster than manual candidate extraction. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_neighbor_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 71.66 µs (quick) | Batched production neighbor scorer is the fastest dependency active-hint row on this fixture, while preserving full quality. |
 
 Adaptive provenance rows use the noisy sparse multi-hop topology and a
 benchmark-only quality oracle. The adaptive row scores provenance roots once,
