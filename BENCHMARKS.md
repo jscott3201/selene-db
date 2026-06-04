@@ -919,6 +919,20 @@ task memory topology before exact vector scoring:
 | `graph_vector_active_hint_pressure/graph_session_provenance_expand_2hop_k16/9k_q64_c76_covbp10000_curbp10000_precbp10000` | 1.798 ms (quick) | Full-quality provenance reference is slower than direct active hints here. |
 | `graph_vector_active_hint_pressure/topic_filter/9k_q64_c152_covbp10000_curbp10000_precbp10000` | 1.099 ms (quick) | Metadata hard-topic reference. |
 
+Batched active-hint candidate-scoring rows use the PR #364
+`score_vector_nodes_batch_checked` graph API to score all query/candidate-set
+pairs in one call. This isolates the API-boundary impact from the candidate
+producer:
+
+| Bench | 9k/10k scale | Notes |
+|---|---:|---|
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_repeated_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.739 ms (quick) | Existing repeated per-query candidate scoring over the broad active set. |
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.797 ms (quick) | Batch scorer regresses on broad candidate sets because the current implementation still scores each set independently after batch setup. |
+| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_repeated_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 567.0 µs (quick) | Existing repeated scoring over recency-window candidates. |
+| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 561.8 µs (quick) | Batch scorer is slightly faster for medium candidate sets and preserves full quality. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_repeated_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 80.81 µs (quick) | Existing repeated scoring over direct dependency candidates. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 81.11 µs (quick) | Batch scorer is effectively neutral for tiny candidate sets. |
+
 Adaptive provenance rows use the noisy sparse multi-hop topology and a
 benchmark-only quality oracle. The adaptive row scores provenance roots once,
 then tries k1 one-hop, k1 two-hop, k4 two-hop, k8 two-hop, and k16 two-hop
