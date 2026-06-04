@@ -133,6 +133,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_sparse_provenance_pressure(c);
     bench_noisy_sparse_provenance_pressure(c);
     bench_multihop_provenance_pressure(c);
+    bench_noisy_multihop_provenance_pressure(c);
 }
 
 fn bench_session_filter_pressure(c: &mut Criterion) {
@@ -204,6 +205,18 @@ fn bench_multihop_provenance_pressure(c: &mut Criterion) {
     for scale in vector_scales() {
         let fixture =
             MemoryRetrievalFixture::build_with_topology(scale, TopologyNoise::MultiHopSupport);
+        for &strategy in MULTIHOP_PROVENANCE_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
+fn bench_noisy_multihop_provenance_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_noisy_multihop_provenance_pressure");
+    for scale in vector_scales() {
+        let fixture =
+            MemoryRetrievalFixture::build_with_topology(scale, TopologyNoise::NoisyMultiHopSupport);
         for &strategy in MULTIHOP_PROVENANCE_STRATEGIES {
             bench_strategy(&mut group, &fixture, strategy);
         }

@@ -789,6 +789,20 @@ facts; the two-hop row follows one more `SUPPORTS` layer:
 | `graph_vector_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k1/...covbp10000_curbp10000_precbp10000` | 58.43 µs (`c4`) | 424.9 µs (`c19`) | Two-hop scope expansion restores full quality and stays below both materialized-current and topic-filter references. |
 | `graph_vector_multihop_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.5 µs (`c32`) | 1.218 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
 
+Noisy multi-hop provenance rows add one current wrong-topic `SUPPORTS` edge
+before the same bridged support pattern. This keeps the full correct support
+set but tests whether bounded-depth expansion admits off-topic tail evidence:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_noisy_multihop_provenance_pressure/graph_session_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 248.4 µs (`c70`) | 2.677 ms (`c356`) | Full-quality broad session-current baseline under noisy bridged support. |
+| `graph_vector_noisy_multihop_provenance_pressure/graph_session_provenance_expand_k1/...covbp5000_curbp5000_precbp5000` | 127.8 µs (`c15`) | 1.402 ms (`c76`) | One-hop expansion still reaches only the direct half; off-topic tail evidence does not improve coverage. |
+| `graph_vector_noisy_multihop_provenance_pressure/graph_session_provenance_expand_2hop_k1/...covbp10000_curbp10000_precbp10000` | 141.7 µs (`c15`) | 1.433 ms (`c76`) | Two-hop expansion restores full quality before deferred off-topic support can enter the final result set. |
+| `graph_vector_noisy_multihop_provenance_pressure/graph_scope_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 80.09 µs (`c18`) | 851.0 µs (`c89`) | Full-quality scope-current baseline. |
+| `graph_vector_noisy_multihop_provenance_pressure/graph_scope_provenance_expand_k1/...covbp5000_curbp5000_precbp5000` | 45.76 µs (`c4`) | 400.2 µs (`c19`) | Scope-local one-hop expansion has the same half-coverage failure. |
+| `graph_vector_noisy_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k1/...covbp10000_curbp10000_precbp10000` | 59.09 µs (`c4`) | 432.1 µs (`c19`) | Two-hop scope expansion keeps full quality and stays below both materialized-current and topic-filter references. |
+| `graph_vector_noisy_multihop_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.6 µs (`c32`) | 1.209 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work
