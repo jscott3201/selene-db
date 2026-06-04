@@ -62,6 +62,10 @@ name = "vector_ivf_pressure"
 harness = false
 
 [[bench]]
+name = "vector_ivf_insert_drift"
+harness = false
+
+[[bench]]
 name = "vector_mixed_workload"
 harness = false
 

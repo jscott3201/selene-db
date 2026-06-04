@@ -256,6 +256,15 @@ falls to 8725 bp recall/quality at ~112.4 µs, while width 2 restores 10000 bp a
 ~160.8 µs. Width 4 / 8 / 64 remain perfect-recall guardrails at ~274.4 µs /
 ~494.1 µs / ~3.065 ms.
 
+PR-local IVF incremental-insert drift spot-check:
+
+| Bench | 1k | 10k | Notes |
+|---|---:|---:|---|
+| `vector_ivf_insert_drift` / `graph_ivf_insert_drift/ivf_cos_dim128_w2` incremental | 179.68 µs | 141.42 µs | 10% novel post-build inserts, queried against the inserted cluster. Recall/quality falls to 9563 bp at 1k and 8250 bp at 10k because centroids were trained before the new cluster arrived. |
+| `vector_ivf_insert_drift` / `graph_ivf_insert_drift/ivf_cos_dim128_w2` rebuilt | 39.85 µs | 113.36 µs | Rebuild retrains 34/105 lists for 1.1k/11k live entries and restores 10000 bp recall/quality; this is now the concrete threshold signal for future IVF maintenance policy. |
+| `vector_ivf_insert_drift` / `graph_ivf_insert_drift/ivf_cos_dim128_w64` incremental | 421.15 µs | 2.665 ms | Wide probing recovers 10000 bp without rebuild, but scans enough candidate rows to be a poor substitute for maintenance under the 60/40 workload. |
+| `vector_ivf_insert_drift` / `graph_ivf_insert_drift/ivf_cos_dim128_w64` rebuilt | 364.13 µs | 2.511 ms | Wide-probe guardrail after rebuild; still much slower than the width-2 rebuilt row. |
+
 PR-local ANN recall spot-check:
 
 | Bench | 10k | Notes |
