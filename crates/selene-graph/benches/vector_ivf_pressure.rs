@@ -9,15 +9,27 @@ mod common;
 mod single_graph_ann_recall;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use selene_core::IvfIndexConfig;
 use selene_graph::VectorIndexMemoryUsage;
 use selene_testing::BenchProfile;
 use single_graph_ann_recall::{AnnRecallFixture, AnnRecallProfile, AnnRecallVariant};
 
 const K_VALUES: &[usize] = &[10, 50];
+const TARGET_CENTROID_K: usize = 10;
+const TARGET_CENTROID_WIDTHS: &[usize] = &[1, 2, 4];
 const QUERY_COUNT: usize = 16;
 const PROFILES: [AnnRecallProfile; 1] = [AnnRecallProfile::ClusteredCosine];
+static TARGET_CENTROID_VARIANTS: [AnnRecallVariant; 4] = [
+    AnnRecallVariant::ivf("ivf_default", None),
+    AnnRecallVariant::ivf("ivf_c16", Some(IvfIndexConfig::new(16))),
+    AnnRecallVariant::ivf("ivf_c128", Some(IvfIndexConfig::new(128))),
+    AnnRecallVariant::ivf("ivf_c512", Some(IvfIndexConfig::new(512))),
+];
 
 fn bench_ivf_candidate_pressure(c: &mut Criterion) {
+    if !ivf_pressure_group_enabled("candidate_pressure") {
+        return;
+    }
     let mut group = c.benchmark_group("graph_ivf_candidate_pressure");
     for scale in vector_scales() {
         for profile in PROFILES {
@@ -55,12 +67,65 @@ fn bench_ivf_candidate_pressure(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_ivf_target_centroids(c: &mut Criterion) {
+    if !ivf_pressure_group_enabled("target_centroids") {
+        return;
+    }
+    let mut group = c.benchmark_group("graph_ivf_target_centroids");
+    for scale in vector_scales() {
+        for profile in PROFILES {
+            for variant in TARGET_CENTROID_VARIANTS {
+                let fixture = AnnRecallFixture::build(
+                    profile,
+                    variant,
+                    scale,
+                    QUERY_COUNT,
+                    TARGET_CENTROID_K,
+                );
+                let usage = fixture.memory_usage();
+                for &width in TARGET_CENTROID_WIDTHS {
+                    let recall = recall_basis_points(fixture.mean_recall(width));
+                    let quality = recall_basis_points(fixture.mean_distance_quality(width));
+                    group.throughput(Throughput::Elements(estimated_candidates_per_batch(
+                        usage,
+                        width,
+                        fixture.query_count(),
+                    ) as u64));
+                    group.bench_function(
+                        BenchmarkId::new(
+                            profile.name(),
+                            format!(
+                                "{}_d{}_k{TARGET_CENTROID_K}_w{width}_idbp{recall}_dqbp{quality}_{}",
+                                fixture.variant_name_suffix(),
+                                fixture.dimension(),
+                                pressure_suffix(usage, width)
+                            ),
+                        ),
+                        |b| {
+                            b.iter(|| {
+                                std::hint::black_box(fixture.total_overlap(width));
+                            });
+                        },
+                    );
+                }
+            }
+        }
+    }
+    group.finish();
+}
+
 fn ivf_variant(profile: AnnRecallProfile) -> AnnRecallVariant {
     *profile
         .variants()
         .iter()
-        .find(|variant| variant.name_suffix == "ivf")
+        .find(|variant| variant.is_ivf() && variant.name_suffix == "ivf")
         .expect("ANN recall profile includes an IVF variant")
+}
+
+fn ivf_pressure_group_enabled(group: &str) -> bool {
+    std::env::var("SELENE_VECTOR_IVF_PRESSURE_GROUP_FILTER")
+        .map(|filter| filter == group)
+        .unwrap_or(true)
 }
 
 fn vector_scales() -> Vec<usize> {
@@ -149,6 +214,6 @@ fn recall_basis_points(recall: f64) -> u64 {
 criterion_group! {
     name = vector_ivf_pressure;
     config = common::criterion_config();
-    targets = bench_ivf_candidate_pressure
+    targets = bench_ivf_candidate_pressure, bench_ivf_target_centroids
 }
 criterion_main!(vector_ivf_pressure);

@@ -172,9 +172,10 @@ compare standalone full-code scans against candidate-producer plus compression
 layering. `vector_ivf_pressure` uses the production graph IVF index and records
 list-skew plus candidate-pressure suffixes so future IVF/PQ layering work is
 grounded against real index fanout under the expected 60% read / 40% write
-workload. `vector_mixed_workload` also includes capped-maintenance cadence rows
-that compare rebuilding one recommended IVF index per maintenance pass against
-rebuilding every recommended IVF index after repeated 60/40 cycles. Vector
+workload. It also includes the `graph_ivf_target_centroids` sweep for explicit
+IVF list-count tuning. `vector_mixed_workload` includes capped-maintenance
+cadence rows that compare rebuilding one recommended IVF index per maintenance
+pass against rebuilding every recommended IVF index after repeated 60/40 cycles. Vector
 benchmark IDs include a memory/cardinality suffix:
 `m{index KiB}-{reachable KiB}_n{indexed rows}_{flat|he...|ve...}`. The
 `he...` form carries HNSW entries/live/deleted entries plus link counters; the
@@ -262,6 +263,15 @@ PR-local production IVF candidate-pressure spot-check:
 | `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w2_idbp10000_dqbp10000_lists100ne100max137avg100avgq200maxq274...` | 140.96 µs (quick) | High-recall knee after the clean-index fast path: perfect recall at about 200 average candidates/query and 274 worst-case candidates/query, making this the production-IVF pressure baseline for 60/40 read/write planning. |
 | `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w4_idbp10000_dqbp10000_lists100ne100max137avg100avgq400maxq548...` | 254.74 µs (quick) | Keeps perfect recall but doubles candidate pressure versus width 2; useful as the first guardrail for less separable future fixtures. |
 | `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w64_idbp10000_dqbp10000_lists100ne100max137avg100avgq6400maxq8768...` | 2.9860 ms (quick) | Width 64 is excessive on this corpus: it scans about 64% of the corpus per query on average and mainly bounds the high-probe tail. |
+
+PR-local explicit IVF target-centroid sweep:
+
+| Variant | 1k perfect-recall knee | 10k perfect-recall knee | Notes |
+|---|---:|---:|---|
+| `ivf_default` | width 2 / 94.80 µs | width 2 / 139.67 µs | Default `ceil(sqrt(n))` list count: 32 lists at 1k, 100 lists at 10k. Width 2 reaches 10000 bp recall/quality at both scales and remains the current 10k knee. |
+| `ivf_c16` | width 2 / 82.25 µs | width 1 / 621.23 µs | Low list count keeps recall perfect but creates very large 10k lists (`avg625`, max ~2k), so read cost scales poorly despite low centroid-scoring overhead. |
+| `ivf_c128` | width 4 / 66.46 µs | width 2 / 137.30 µs | At 1k, 128 lists with width 4 is the fastest perfect-recall row; at 10k, width 2 is slightly faster than default while using more centroid-scoring work. |
+| `ivf_c512` | no perfect row at width <= 4 | width 2 / 230.78 µs | High list count reduces candidate rows but pays heavy centroid scoring. On 1k it only reaches 7750 bp at width 4; on 10k width 2 is perfect but slower than default/c128 width 2. |
 
 After graph-level ANN row-hit conversion stopped re-heaping already bounded index
 hits, the same quick run measured width 1 / 2 / 4 / 64 at 92.38 µs / 140.91 µs /

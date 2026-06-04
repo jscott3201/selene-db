@@ -21,6 +21,7 @@
 #   run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 #   run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 #   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
+#   run-benches.sh --bench vector_ivf_pressure --filter graph_ivf_target_centroids --vector-scales 10000
 #   run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 #   SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 #   run-benches.sh --bench vector_index_rebuild --allocator system    # allocator A/B
@@ -311,6 +312,11 @@ bench_env_prefix() {
   if [ -n "$group_filter" ]; then
     prefix+=" SELENE_VECTOR_REBUILD_GROUP_FILTER=$group_filter"
   fi
+  local ivf_pressure_group_filter
+  ivf_pressure_group_filter="$(vector_ivf_pressure_group_filter "$bench" "$filt")"
+  if [ -n "$ivf_pressure_group_filter" ]; then
+    prefix+=" SELENE_VECTOR_IVF_PRESSURE_GROUP_FILTER=$ivf_pressure_group_filter"
+  fi
   if [ "$ALLOCATOR" = "system" ]; then
     prefix+=" RUSTFLAGS='${RUSTFLAGS:+$RUSTFLAGS }--cfg selene_bench_system_alloc'"
   fi
@@ -341,18 +347,33 @@ vector_rebuild_group_filter() {
   esac
 }
 
+vector_ivf_pressure_group_filter() {
+  local bench="$1" filt="$2"
+  if [ "$bench" != "vector_ivf_pressure" ] || [ -z "$filt" ]; then
+    return 0
+  fi
+  case "$filt" in
+    graph_ivf_candidate_pressure*) echo "candidate_pressure" ;;
+    graph_ivf_target_centroids*) echo "target_centroids" ;;
+  esac
+}
+
 run_cargo_for_bench() {
   local bench="$1" filt="$2"
   local variant_filter
   variant_filter="$(vector_rebuild_variant_filter "$bench" "$filt")"
   local group_filter
   group_filter="$(vector_rebuild_group_filter "$bench" "$filt")"
+  local ivf_pressure_group_filter
+  ivf_pressure_group_filter="$(vector_ivf_pressure_group_filter "$bench" "$filt")"
   if [ -n "$variant_filter" ] && [ -n "$group_filter" ]; then
     SELENE_VECTOR_REBUILD_VARIANT_FILTER="$variant_filter" SELENE_VECTOR_REBUILD_GROUP_FILTER="$group_filter" cargo "${RESOLVED[@]}"
   elif [ -n "$variant_filter" ]; then
     SELENE_VECTOR_REBUILD_VARIANT_FILTER="$variant_filter" cargo "${RESOLVED[@]}"
   elif [ -n "$group_filter" ]; then
     SELENE_VECTOR_REBUILD_GROUP_FILTER="$group_filter" cargo "${RESOLVED[@]}"
+  elif [ -n "$ivf_pressure_group_filter" ]; then
+    SELENE_VECTOR_IVF_PRESSURE_GROUP_FILTER="$ivf_pressure_group_filter" cargo "${RESOLVED[@]}"
   else
     cargo "${RESOLVED[@]}"
   fi
