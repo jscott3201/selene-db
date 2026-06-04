@@ -710,17 +710,21 @@ scope that is broader than an exact topic but much narrower than noisy
 connectivity. These rows keep the same noisy topology and exact vector scorer.
 The `*_current_filter` variants prune stale fixture metadata before scoring,
 mirroring a freshness-aware graph candidate producer instead of relying on
-post-score current-result selection:
+post-score current-result selection. The `*_unsuperseded_filter` variants derive
+the same current candidate set from graph topology by rejecting nodes with an
+outgoing `SUPERSEDED_BY` edge before scoring:
 
 | Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
 |---|---:|---:|---|
-| `graph_vector_session_filter_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.788 ms (`c992`) | 60.69 ms (`c9728`) | Repeats the noisy WCC baseline with session edges present outside the WCC projection. |
-| `graph_vector_session_filter_pressure/label_propagation/...` | 59.11 µs (`c17`, `covbp7661`, `precbp8830`) | 122.3 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation remains fast but partial-recall against the full-quality graph membership filters. |
-| `graph_vector_session_filter_pressure/graph_session_filter/...covbp10000_curbp10000_precbp10000` | 372.1 µs (`c124`) | 3.787 ms (`c608`) | Four-topic session membership is a useful middle row: much cheaper than noisy WCC and full-quality, but about 3x the exact scope filter at 10k. |
-| `graph_vector_session_filter_pressure/graph_session_current_filter/...covbp10000_curbp10000_precbp10000` | 246.3 µs (`c70`) | 2.598 ms (`c356`) | Pre-score freshness pruning keeps full quality while cutting session candidate pressure by roughly half. |
-| `graph_vector_session_filter_pressure/graph_scope_filter/...covbp10000_curbp10000_precbp10000` | 120.1 µs (`c32`) | 1.225 ms (`c152`) | Exact graph scope remains the best product-shaped candidate filter when the query can identify a narrow subgraph. |
-| `graph_vector_session_filter_pressure/graph_scope_current_filter/...covbp10000_curbp10000_precbp10000` | 79.56 µs (`c18`) | 820.2 µs (`c89`) | Freshness-aware scope filtering preserves full quality and lowers exact scoring work below the metadata topic baseline. |
-| `graph_vector_session_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.4 µs (`c32`) | 1.181 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same narrow candidate set. |
+| `graph_vector_session_filter_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.793 ms (`c992`) | 60.57 ms (`c9728`) | Repeats the noisy WCC baseline with session edges present outside the WCC projection. |
+| `graph_vector_session_filter_pressure/label_propagation/...` | 59.57 µs (`c17`, `covbp7661`, `precbp8830`) | 122.5 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation remains fast but partial-recall against the full-quality graph membership filters. |
+| `graph_vector_session_filter_pressure/graph_session_filter/...covbp10000_curbp10000_precbp10000` | 375.0 µs (`c124`) | 3.778 ms (`c608`) | Four-topic session membership is a useful middle row: much cheaper than noisy WCC and full-quality, but about 3x the exact scope filter at 10k. |
+| `graph_vector_session_filter_pressure/graph_session_current_filter/...covbp10000_curbp10000_precbp10000` | 247.2 µs (`c70`) | 2.595 ms (`c356`) | Pre-score metadata freshness pruning keeps full quality while cutting session candidate pressure by roughly half. |
+| `graph_vector_session_filter_pressure/graph_session_unsuperseded_filter/...covbp10000_curbp10000_precbp10000` | 299.1 µs (`c70`) | 3.181 ms (`c356`) | Graph-derived freshness reaches the same candidate count and quality as metadata current filtering, with extra edge-check overhead. |
+| `graph_vector_session_filter_pressure/graph_scope_filter/...covbp10000_curbp10000_precbp10000` | 119.9 µs (`c32`) | 1.225 ms (`c152`) | Exact graph scope remains the best product-shaped candidate filter when the query can identify a narrow subgraph. |
+| `graph_vector_session_filter_pressure/graph_scope_current_filter/...covbp10000_curbp10000_precbp10000` | 80.33 µs (`c18`) | 823.1 µs (`c89`) | Freshness-aware scope filtering preserves full quality and lowers exact scoring work below the metadata topic baseline. |
+| `graph_vector_session_filter_pressure/graph_scope_unsuperseded_filter/...covbp10000_curbp10000_precbp10000` | 94.37 µs (`c18`) | 989.9 µs (`c89`) | Graph-derived scope freshness is still faster than raw scope scoring while avoiding fixture-side current metadata. |
+| `graph_vector_session_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.8 µs (`c32`) | 1.185 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same narrow candidate set. |
 
 ## Cluster-B regression targets
 
