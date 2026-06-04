@@ -567,10 +567,11 @@ Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
 projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
 triangle_count and louvain. `vector_graph_retrieval` is the first native
 graph+vector agent-memory research fixture: it stores topic-summary vectors
-plus support and temporal-validity edges to evidence nodes, then compares
-vector-only ANN against PageRank rerank, graph expansion, validity-aware graph
-expansion, and an exact graph/vector oracle. Row IDs encode total graph coverage
-as `covbp{basis points}`, current-valid coverage as `curbp{basis points}`, and
+plus support, temporal-validity, and supersession edges to evidence nodes, then
+compares vector-only ANN against PageRank rerank, graph expansion,
+validity-aware expansion, supersession-aware expansion, and an exact
+graph/vector oracle. Row IDs encode total graph coverage as
+`covbp{basis points}`, current-valid coverage as `curbp{basis points}`, and
 topic precision as `precbp{basis points}`.
 
 ### §6a Algorithm baselines (Sequential vs Auto)
@@ -619,11 +620,13 @@ Quick rows below are local research fixtures, not production API claims. The
 fixture intentionally makes top-k vector retrieval semantically redundant:
 nearest summaries are high-precision but low-coverage, while one-hop `SUPPORTS`
 expansion can recover evidence facts from the graph. Half of evidence nodes are
-stale by construction; `VALID_AT` edges identify current evidence so the fixture
-can separate raw coverage from current-valid coverage. PageRank scores are
-computed in fixture setup through the real `GraphProjection`/`pagerank` path;
-timed rows measure retrieval only. The exact graph oracle uses exact vector
-search plus validity-aware graph expansion to bound achievable fixture quality.
+stale by construction; `VALID_AT` edges identify current evidence, while
+`SUPERSEDED_BY` edges link stale evidence to a current replacement. This lets
+the fixture separate raw coverage from current-valid coverage, then compare
+filtering against graph repair. PageRank scores are computed in fixture setup
+through the real `GraphProjection`/`pagerank` path; timed rows measure retrieval
+only. The exact graph oracle uses exact vector search plus validity-aware graph
+expansion to bound achievable fixture quality.
 
 | Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
 |---|---:|---:|---|
@@ -631,6 +634,7 @@ search plus validity-aware graph expansion to bound achievable fixture quality.
 | `graph_vector_retrieval/pagerank_prior/...covbp2459_curbp2459_precbp9677` | 225.4 µs | 524.9 µs (`covbp1289_curbp1289_precbp9687`) | Negative result: PageRank reranking alone does not add missing evidence candidates and can slightly hurt coverage at 10k. |
 | `graph_vector_retrieval/graph_expand/...covbp9435_curbp4838_precbp9516` | 324.9 µs | 731.1 µs (`covbp8203_curbp4335_precbp8828`) | Raw one-hop expansion improves total coverage but often selects stale evidence; current-valid coverage lands near half of total coverage. |
 | `graph_vector_retrieval/graph_expand_valid/...covbp9395_curbp9395_precbp9395` | 294.3 µs | 663.3 µs (`covbp7929_curbp7929_precbp8183`) | Validity-aware expansion prunes stale candidates, making current-valid coverage match total coverage while running faster than raw expansion. |
+| `graph_vector_retrieval/graph_expand_superseded/...covbp9395_curbp9395_precbp9395` | 290.4 µs | 761.3 µs (`covbp8203_curbp8203_precbp8339`) | Supersession-aware expansion repairs stale candidates through `SUPERSEDED_BY`; at 10k it recovers more current-valid coverage than validity filtering, with extra graph traversal cost. |
 | `graph_vector_retrieval/graph_expand_pagerank/...covbp9435_curbp4838_precbp9516` | 392.0 µs | 850.8 µs (`covbp8203_curbp4335_precbp8828`) | PageRank on top of raw expansion adds cost without current-valid uplift on this fixture; keep as a guardrail before promoting algorithm-prior policies. |
 | `graph_vector_retrieval/exact_graph_oracle/...covbp10000_curbp10000_precbp10000` | 1.393 ms | 22.0 ms | Exact vector search plus validity-aware expansion reaches the fixture oracle, but it is far slower at 10k and only suitable as a research bound. |
 
