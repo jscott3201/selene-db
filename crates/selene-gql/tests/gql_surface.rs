@@ -91,12 +91,13 @@ fn show_procedures_lists_default_registry() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = column_strings(&table, "name");
 
-    assert_eq!(table.row_count(), 34);
+    assert_eq!(table.row_count(), 35);
     assert!(names.contains(&"selene.feature_status".to_owned()));
     assert!(names.contains(&"selene.verify".to_owned()));
     assert!(names.contains(&"selene.vector_search_nodes".to_owned()));
     assert!(names.contains(&"selene.vector_search_nodes_batch".to_owned()));
     assert!(names.contains(&"selene.vector_score_nodes".to_owned()));
+    assert!(names.contains(&"selene.vector_score_nodes_batch".to_owned()));
     assert!(names.contains(&"selene.vector_search_nodes_ann".to_owned()));
     assert!(names.contains(&"selene.vector_search_nodes_ann_batch".to_owned()));
     assert!(names.contains(&"selene.vector_index_stats".to_owned()));

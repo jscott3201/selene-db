@@ -217,6 +217,9 @@ fn vector_search_error(error: VectorSearchError) -> ProcedureError {
         VectorSearchError::Graph(error) => graph_error(error),
         VectorSearchError::Cancelled => ProcedureError::Cancelled,
         VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        VectorSearchError::BatchLengthMismatch { .. } => ProcedureError::Internal {
+            detail: format!("batched ANN vector search received candidate-scoring error: {error}"),
+        },
         VectorSearchError::ApproximateIndexMissing => {
             invalid_arg(format!("{PROC_NAME} requires a matching ANN vector index"))
         }

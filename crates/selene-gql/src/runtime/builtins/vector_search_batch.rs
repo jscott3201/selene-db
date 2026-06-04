@@ -196,6 +196,11 @@ fn vector_search_error(error: VectorSearchError) -> ProcedureError {
         VectorSearchError::Graph(error) => graph_error(error),
         VectorSearchError::Cancelled => ProcedureError::Cancelled,
         VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        VectorSearchError::BatchLengthMismatch { .. } => ProcedureError::Internal {
+            detail: format!(
+                "exact batched vector search received candidate-scoring error: {error}"
+            ),
+        },
         VectorSearchError::ApproximateIndexMissing
         | VectorSearchError::ApproximateMetricMismatch { .. } => ProcedureError::Internal {
             detail: format!("exact batched vector search received approximate-only error: {error}"),

@@ -88,12 +88,12 @@ fn show_procedures_lists_all_nineteen_algo_procedures() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = string_column(&table, "name");
 
-    // The registry also carries the 15 `selene.*` platform built-ins, so SHOW
-    // PROCEDURES lists 34; all 19 algo names must still be present.
+    // The registry also carries the 16 `selene.*` platform built-ins, so SHOW
+    // PROCEDURES lists 35; all 19 algo names must still be present.
     assert_eq!(
         table.row_count(),
-        34,
-        "expected 19 algo procedures + 15 platform built-ins"
+        35,
+        "expected 19 algo procedures + 16 platform built-ins"
     );
     for expected in [
         "algo.projection_build",
