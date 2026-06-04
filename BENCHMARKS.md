@@ -738,6 +738,25 @@ non-suffixed provenance rows expand four roots:
 | `graph_vector_session_filter_pressure/graph_scope_provenance_expand/...covbp10000_curbp10000_precbp10000` | 71.85 µs (`c4`) | 429.6 µs (`c19`) | Four-root scope provenance expansion keeps full quality but is slower than k1 on this fixture. |
 | `graph_vector_session_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 114.0 µs (`c32`) | 1.190 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same narrow candidate set. |
 
+Sparse-provenance rows use the same scope/session candidate producers, but each
+summary provenance root supports only a partition of the topic facts. This
+turns provenance root fanout into a measurable quality/latency knob instead of
+letting a single nearest root cover the whole support set:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_sparse_provenance_pressure/graph_session_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 371.6 µs (`c113`) | 3.854 ms (`c552`) | Full-quality broad session-current baseline. |
+| `graph_vector_sparse_provenance_pressure/graph_session_provenance_expand_k1/...covbp3750_curbp3750_precbp10000` | 146.4 µs (`c15`) | 1.452 ms (`c76`) | Fast, but one sparse provenance root covers only 3750 bp of the supporting facts. |
+| `graph_vector_sparse_provenance_pressure/graph_session_provenance_expand/...` | 165.9 µs (`c15`) | 1.516 ms (`c76`, `covbp8144`) | Four roots recover full quality at 1k, but not at the larger session scale. |
+| `graph_vector_sparse_provenance_pressure/graph_session_provenance_expand_k8/...` | 172.8 µs (`c15`) | 1.545 ms (`c76`, `covbp9453`) | Eight roots nearly close the 10k quality gap with a small latency increase. |
+| `graph_vector_sparse_provenance_pressure/graph_session_provenance_expand_k16/...covbp10000_curbp10000_precbp10000` | 186.2 µs (`c15`) | 1.578 ms (`c76`) | Sixteen roots reach full quality while staying roughly 2.4x faster than materialized session-current scoring. |
+| `graph_vector_sparse_provenance_pressure/graph_scope_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 116.7 µs (`c29`) | 1.243 ms (`c138`) | Full-quality graph-scope current baseline. |
+| `graph_vector_sparse_provenance_pressure/graph_scope_provenance_expand_k1/...covbp3750_curbp3750_precbp10000` | 44.67 µs (`c4`) | 408.6 µs (`c19`) | The lowest-latency graph-derived row, but only partial support coverage. |
+| `graph_vector_sparse_provenance_pressure/graph_scope_provenance_expand/...` | 63.41 µs (`c4`) | 452.9 µs (`c19`, `covbp8144`) | Four roots are enough at 1k, but still partial at 10k. |
+| `graph_vector_sparse_provenance_pressure/graph_scope_provenance_expand_k8/...` | 63.49 µs (`c4`) | 489.6 µs (`c19`, `covbp9453`) | Eight roots improve 10k support coverage with little 1k cost. |
+| `graph_vector_sparse_provenance_pressure/graph_scope_provenance_expand_k16/...covbp10000_curbp10000_precbp10000` | 64.26 µs (`c4`) | 532.6 µs (`c19`) | Sixteen roots reach full quality and stay faster than the hard-topic metadata reference. |
+| `graph_vector_sparse_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.8 µs (`c32`) | 1.227 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work
