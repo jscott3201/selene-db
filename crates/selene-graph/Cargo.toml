@@ -62,6 +62,10 @@ name = "vector_ivf_pressure"
 harness = false
 
 [[bench]]
+name = "vector_mixed_workload"
+harness = false
+
+[[bench]]
 name = "bulk_mutation"
 harness = false
 
