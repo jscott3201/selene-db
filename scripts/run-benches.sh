@@ -86,6 +86,7 @@ selene-gql|procedure_call_repeat|0
 selene-gql|correlated_subquery|0
 selene-algorithms|algo_bench|0
 selene-algorithms|projection|0
+selene-algorithms|vector_graph_retrieval|0
 "
 
 # Curated smoke subset — highest-signal, lowest-variance rows for a <~60s

@@ -562,9 +562,15 @@ fixture and so scale with N; the single-node arms are flat.
 
 ## §6 selene-algorithms
 
-Bench bins: `algo_bench`, `projection`. Fixture: `BenchFixture::build(N)` (≈3N
-edges) for pagerank/betweenness/apsp and projection; `planted_community_graph(N)`
-(≈6N edges, ~N/64 communities) for triangle_count and louvain.
+Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
+`BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp and
+projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
+triangle_count and louvain. `vector_graph_retrieval` is the first native
+graph+vector agent-memory research fixture: it stores topic-summary vectors
+plus support edges to evidence nodes, then compares vector-only ANN against
+PageRank rerank, graph expansion, and graph expansion plus PageRank. Row IDs
+encode graph-coverage quality as `covbp{basis points}` and topic precision as
+`precbp{basis points}`.
 
 ### §6a Algorithm baselines (Sequential vs Auto)
 
@@ -605,6 +611,22 @@ resolved the dense index per edge (pagerank/louvain/apsp/triangle); even raw
 |---|---:|---:|---:|---|
 | `algo/projection_build` | 1.338 ms | 16.10 ms | 41.50 ms | Full `GraphProjection::build`; +4–7% (the `dense:u32` write). |
 | `algo/projection_neighbor_iter` | 20.7 µs | 128.0 µs | 291.9 µs | Sweep every node's out-neighbor slice. |
+
+### §6c Graph-Augmented Vector Retrieval Research
+
+Quick rows below are local research fixtures, not production API claims. The
+fixture intentionally makes top-k vector retrieval semantically redundant:
+nearest summaries are high-precision but low-coverage, while one-hop `SUPPORTS`
+expansion can recover evidence facts from the graph. PageRank scores are
+computed in fixture setup through the real `GraphProjection`/`pagerank` path;
+timed rows measure retrieval only.
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_retrieval/vector_only/...covbp2459_precbp9677` | 207.1 µs | 503.3 µs (`covbp1328_precbp9687`) | Baseline ANN top-k: high topic precision, poor evidence coverage because summaries dominate nearest neighbors. |
+| `graph_vector_retrieval/pagerank_prior/...covbp2459_precbp9677` | 224.1 µs | 525.2 µs (`covbp1289_precbp9687`) | Negative result: PageRank reranking alone does not add missing evidence candidates and can slightly hurt coverage at 10k. |
+| `graph_vector_retrieval/graph_expand/...covbp9435_precbp9516` | 321.2 µs | 730.1 µs (`covbp8203_precbp8828`) | One-hop graph expansion plus fact-diverse selection improves coverage 3.8× at 1k and 6.2× at 10k, at ~1.5× query cost. |
+| `graph_vector_retrieval/graph_expand_pagerank/...covbp9435_precbp9516` | 388.2 µs | 847.4 µs (`covbp8203_precbp8828`) | PageRank on top of expansion adds cost without coverage uplift on this fixture; keep as a guardrail before promoting algorithm-prior policies. |
 
 ## Cluster-B regression targets
 

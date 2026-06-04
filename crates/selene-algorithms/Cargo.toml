@@ -41,5 +41,9 @@ harness = false
 name = "projection"
 harness = false
 
+[[bench]]
+name = "vector_graph_retrieval"
+harness = false
+
 [lints]
 workspace = true
