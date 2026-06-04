@@ -10,7 +10,7 @@ mod common;
 use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorValue, intern};
+use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
 use selene_gql::{
     BuiltinProcedureRegistry, CallPlanCache, GqlType, ProcedureContext, ProcedureError,
     ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
@@ -24,11 +24,13 @@ const REPEATS: usize = 100;
 const VECTOR_SOURCE: &str =
     "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) YIELD node_id, distance";
 const VECTOR_BATCH_SOURCE: &str = "CALL selene.vector_search_nodes_batch('VectorDoc', 'embedding', $queries, 10, 'squared_euclidean') YIELD query_index, node_id, distance";
+const VECTOR_SCORE_SOURCE: &str = "CALL selene.vector_score_nodes('embedding', $query, $nodes, 10, 'squared_euclidean') YIELD node_id, distance";
 const VECTOR_ANN_SOURCE: &str = "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10, 'squared_euclidean', 64) YIELD node_id, distance";
 const VECTOR_ANN_BATCH_SOURCE: &str = "CALL selene.vector_search_nodes_ann_batch('VectorDoc', 'embedding', $queries, 10, 'squared_euclidean', 64) YIELD query_index, node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
 const VECTOR_DIMENSION: usize = 128;
 const VECTOR_BATCH_QUERIES: usize = 8;
+const VECTOR_SCORE_CANDIDATES: usize = 64;
 
 struct RepeatRegistry {
     name: Box<[IStr]>,
@@ -104,6 +106,7 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let indexed_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let exact_batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let score_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let hnsw_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_vector_cache(&graph, &registry, Arc::clone(&cache), VECTOR_SOURCE);
@@ -118,6 +121,12 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
         &registry,
         Arc::clone(&exact_batch_cache),
         VECTOR_BATCH_SOURCE,
+    );
+    warm_vector_score_cache(
+        &graph,
+        &registry,
+        Arc::clone(&score_cache),
+        VECTOR_SCORE_SOURCE,
     );
     warm_vector_cache(
         &hnsw_graph,
@@ -169,6 +178,15 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
                 &indexed_graph,
                 &registry,
                 Some(Arc::clone(&exact_batch_cache)),
+            ));
+        });
+    });
+    group.bench_function("shared_cache_score_nodes_64_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_score(
+                &graph,
+                &registry,
+                Some(Arc::clone(&score_cache)),
             ));
         });
     });
@@ -254,6 +272,19 @@ fn warm_vector_batch_cache(
         .expect("warmup batched vector search executes");
 }
 
+fn warm_vector_score_cache(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Arc<CallPlanCache>,
+    source: &str,
+) {
+    let mut session = Session::new(graph).with_call_plan_cache(cache);
+    bind_vector_score_inputs(&mut session);
+    session
+        .execute_source(source, registry)
+        .expect("warmup vector candidate scoring executes");
+}
+
 fn execute_vector_search(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
@@ -271,6 +302,25 @@ fn execute_vector_search(
     match session
         .execute_source(source, registry)
         .expect("vector search procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+fn execute_vector_score(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    bind_vector_score_inputs(&mut session);
+    match session
+        .execute_source(VECTOR_SCORE_SOURCE, registry)
+        .expect("vector candidate scoring procedure executes")
     {
         StatementOutput::Rows(table) => table.row_count(),
         other => panic!("unexpected output: {other:?}"),
@@ -421,6 +471,22 @@ fn vector_query_batch() -> Value {
     Value::List(
         (0..VECTOR_BATCH_QUERIES)
             .map(|query_index| Value::Vector(vector_value(query_index, VECTOR_DIMENSION)))
+            .collect(),
+    )
+}
+
+fn bind_vector_score_inputs(session: &mut Session<'_>) {
+    session.bind_parameter(
+        istr("query"),
+        Value::Vector(vector_value(0, VECTOR_DIMENSION)),
+    );
+    session.bind_parameter(istr("nodes"), vector_score_candidates());
+}
+
+fn vector_score_candidates() -> Value {
+    Value::List(
+        (0..VECTOR_SCORE_CANDIDATES)
+            .map(|idx| Value::NodeRef(NodeId::new((idx + 1) as u64)))
             .collect(),
     )
 }

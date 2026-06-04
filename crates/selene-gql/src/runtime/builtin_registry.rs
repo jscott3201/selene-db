@@ -10,14 +10,14 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 14 platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 15 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
 //! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
-//! `selene.vector_search_nodes_batch`, `selene.vector_search_nodes_ann`,
-//! `selene.vector_search_nodes_ann_batch`, `selene.vector_index_stats`,
-//! `selene.rebuild_vector_indexes`,
+//! `selene.vector_search_nodes_batch`, `selene.vector_score_nodes`,
+//! `selene.vector_search_nodes_ann`, `selene.vector_search_nodes_ann_batch`,
+//! `selene.vector_index_stats`, `selene.rebuild_vector_indexes`,
 //! `selene.rebuild_recommended_vector_indexes`, `selene.create_vector_index`,
-//! `selene.drop_vector_index`) are registered here, bringing the total to 33;
+//! `selene.drop_vector_index`) are registered here, bringing the total to 34;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -80,8 +80,8 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 14 `selene.*`
-        // platform built-ins (handles 20..=33), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 15 `selene.*`
+        // platform built-ins (handles 20..=34), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
@@ -248,18 +248,18 @@ mod tests {
     }
 
     #[test]
-    fn registers_all_thirty_three_procedures() {
+    fn registers_all_thirty_four_procedures() {
         let registry = BuiltinProcedureRegistry::new();
         let handles: Vec<_> = registry.iter_handles().collect();
         assert_eq!(
             handles.len(),
-            33,
-            "expected 19 algo procedures + 14 platform built-ins"
+            34,
+            "expected 19 algo procedures + 15 platform built-ins"
         );
     }
 
     #[test]
-    fn iter_handles_yields_all_fourteen_platform_builtins() {
+    fn iter_handles_yields_all_fifteen_platform_builtins() {
         let registry = BuiltinProcedureRegistry::new();
         let names: Vec<Vec<String>> = registry
             .iter_handles()
@@ -277,6 +277,7 @@ mod tests {
             ["selene", "drop_index"],
             ["selene", "vector_search_nodes"],
             ["selene", "vector_search_nodes_batch"],
+            ["selene", "vector_score_nodes"],
             ["selene", "vector_search_nodes_ann"],
             ["selene", "vector_search_nodes_ann_batch"],
             ["selene", "vector_index_stats"],
@@ -303,6 +304,7 @@ mod tests {
             &["selene", "verify"][..],
             &["selene", "vector_search_nodes"][..],
             &["selene", "vector_search_nodes_batch"][..],
+            &["selene", "vector_score_nodes"][..],
             &["selene", "vector_search_nodes_ann"][..],
             &["selene", "vector_search_nodes_ann_batch"][..],
             &["selene", "vector_index_stats"][..],
@@ -474,6 +476,42 @@ mod tests {
         assert_eq!(columns[1].ty, crate::GqlType::NodeRef);
         assert_eq!(columns[2].name.as_str(), "distance");
         assert_eq!(columns[2].ty, crate::GqlType::Float64);
+    }
+
+    #[test]
+    fn vector_score_nodes_signature_has_list_node_candidates_arg() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "vector_score_nodes"]))
+            .expect("vector_score_nodes resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 4);
+        assert_eq!(arity.maximum, 5);
+
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 5);
+        assert_eq!(parameters[0].name.as_str(), "property");
+        assert_eq!(parameters[0].ty, crate::GqlType::String);
+        assert_eq!(parameters[1].name.as_str(), "query");
+        assert_eq!(parameters[1].ty, crate::GqlType::Vector);
+        assert_eq!(parameters[2].name.as_str(), "nodes");
+        assert_eq!(
+            parameters[2].ty,
+            crate::GqlType::List(Box::new(crate::GqlType::NodeRef))
+        );
+        assert_eq!(parameters[3].name.as_str(), "k");
+        assert_eq!(parameters[3].ty, crate::GqlType::Integer);
+        assert_eq!(parameters[4].name.as_str(), "metric");
+        assert_eq!(parameters[4].ty, crate::GqlType::String);
+        assert_eq!(parameters[4].default_doc, Some("squared_euclidean"));
+        assert!(parameters[4].default.is_some());
+
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].name.as_str(), "node_id");
+        assert_eq!(columns[0].ty, crate::GqlType::NodeRef);
+        assert_eq!(columns[1].name.as_str(), "distance");
+        assert_eq!(columns[1].ty, crate::GqlType::Float64);
     }
 
     #[test]
@@ -736,7 +774,7 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=33).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=34).collect::<Vec<_>>());
     }
 
     #[test]

@@ -84,7 +84,7 @@ pub enum VectorSearchError {
 }
 
 impl VectorSearchError {
-    fn into_graph_error(self) -> GraphError {
+    pub(crate) fn into_graph_error(self) -> GraphError {
         match self {
             Self::Graph(error) => error,
             Self::Cancelled | Self::Timeout { .. } => GraphError::Cancelled,
@@ -635,6 +635,11 @@ mod batch_tests;
 #[cfg(test)]
 #[path = "vector_search/recall_tests.rs"]
 mod recall_tests;
+#[path = "vector_search/score.rs"]
+mod score;
+#[cfg(test)]
+#[path = "vector_search/score_tests.rs"]
+mod score_tests;
 #[cfg(test)]
 #[path = "vector_search/tests.rs"]
 mod tests;
