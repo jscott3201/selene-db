@@ -972,6 +972,28 @@ then exact-score the resulting sets in one batch:
 | `graph_vector_ann_rerank_pressure/ann_wide_dependency_union_batch_rerank/9k_q64_c23_covbp10000_curbp10000_precbp10000` | 694.4 µs (quick) | Unioning ANN hits with direct dependency candidates restores full quality, but the ANN search dominates latency and is roughly 10x slower than the graph-only dependency row. |
 | `graph_vector_ann_rerank_pressure/graph_dependency_candidate_set_batch/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 70.07 µs (quick) | Direct graph dependency candidates remain the best shape for tiny active hints; adding ANN output is unnecessary when graph topology already supplies one candidate per fact. |
 
+Broad graph-gate rows use the same active-hint fixture but deliberately start
+from the expensive session-level graph candidate set. They compare direct
+session scoring, direct unresolved-current session scoring, ANN-only hits,
+ANN-intersection gates, and ANN-union fallbacks:
+
+| Bench | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_ann_broad_graph_gate_pressure/graph_session_candidate_set_batch/...covbp10000_curbp10000_precbp10000` | 343.2 µs (`c124`) | 3.827 ms (`c608`) | Broad session exact-score reference; full quality but expensive at 10k. |
+| `graph_vector_ann_broad_graph_gate_pressure/graph_session_unresolved_candidate_set_batch/...covbp10000_curbp10000_precbp10000` | 217.5 µs (`c74`) | 1.505 ms (`c228`) | Maintained unresolved-current graph state cuts exact scoring while preserving full quality. |
+| `graph_vector_ann_broad_graph_gate_pressure/ann_wide_hit_set_batch_rerank/...` | 262.8 µs (`c16`, `covbp5000`) | 639.4 µs (`c16`, `covbp1562`) | ANN-only hits are cheaper at 10k but miss most graph-memory facts. |
+| `graph_vector_ann_broad_graph_gate_pressure/ann_wide_session_intersection_batch_rerank/...` | 280.9 µs (`c16`, `covbp5000`) | 783.5 µs (`c15`, `covbp1562`) | Intersecting 16 ANN hits with the broad session set trims exact scoring but does not improve recall. |
+| `graph_vector_ann_broad_graph_gate_pressure/ann_broad_session_intersection_batch_rerank/...` | 538.2 µs (`c34`, full quality) | 1.442 ms (`c62`, `covbp5019`) | A 64-hit ANN gate recovers 1k quality but only reaches half coverage at 10k, roughly tied with direct unresolved-current scoring. |
+| `graph_vector_ann_broad_graph_gate_pressure/ann_wide_session_union_batch_rerank/...` | 555.9 µs (`c124`) | 4.006 ms (`c608`) | ANN+session union preserves quality but adds ANN overhead without reducing the broad graph set. |
+| `graph_vector_ann_broad_graph_gate_pressure/ann_broad_session_union_batch_rerank/...` | 847.6 µs (`c154`) | 4.466 ms (`c609`) | Wider ANN union is strictly slower than direct session scoring on this fixture. |
+
+Interpretation: broad graph candidates are expensive enough that a gate would
+matter, but ANN hit sets still do not contain enough graph-memory facts. The
+best native shape remains graph-maintained unresolved-current state or stronger
+graph-derived active hints; ANN should not be promoted as a broad-session
+candidate gate without a different candidate producer or a much stronger recall
+profile.
+
 ANN+partial-graph fallback rows use the query-filter topology where label
 propagation is a compact but partial graph-derived candidate producer. They
 compare ANN alone, label propagation alone, their candidate-set union, and the
