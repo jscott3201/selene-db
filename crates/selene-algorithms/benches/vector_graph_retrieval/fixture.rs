@@ -17,6 +17,7 @@ use crate::common::scale_label;
 
 mod community_pressure;
 mod component_pressure;
+mod query_filter_pressure;
 mod support;
 mod topology_pressure;
 
@@ -75,6 +76,7 @@ pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
     component_pressure::bench(c);
     topology_pressure::bench(c);
     community_pressure::bench(c);
+    query_filter_pressure::bench(c);
 }
 
 fn bench_retrieval_strategies(c: &mut Criterion) {
@@ -118,6 +120,7 @@ struct MemoryRetrievalFixture {
     label: IStr,
     embedding_key: IStr,
     support_edge: IStr,
+    scope_edge: IStr,
     valid_edge: IStr,
     superseded_by_edge: IStr,
     queries: Vec<Query>,
@@ -140,8 +143,10 @@ impl MemoryRetrievalFixture {
 
     fn build_with_topology(requested_scale: usize, topology: TopologyNoise) -> Self {
         let label = istr("Memory");
+        let scope_label = istr("MemoryScope");
         let embedding_key = istr("embedding");
         let support_edge = istr("SUPPORTS");
+        let scope_edge = istr("IN_SCOPE");
         let valid_edge = istr("VALID_AT");
         let superseded_by_edge = istr("SUPERSEDED_BY");
         let topic_count = topic_count(requested_scale);
@@ -154,6 +159,13 @@ impl MemoryRetrievalFixture {
             let mut txn = shared.begin_write();
             {
                 let mut mutator = txn.mutator();
+                let scope_nodes: Vec<_> = (0..topic_count)
+                    .map(|_| {
+                        mutator
+                            .create_node(LabelSet::single(scope_label.clone()), PropertyMap::new())
+                            .expect("bench scope node insert succeeds")
+                    })
+                    .collect();
                 for (topic, facts) in topic_nodes.iter_mut().enumerate() {
                     for (fact, nodes) in facts.iter_mut().enumerate() {
                         for duplicate in 0..duplicates {
@@ -175,6 +187,16 @@ impl MemoryRetrievalFixture {
                                     current: fact == 0 || duplicate % 2 == 0,
                                 },
                             );
+                        }
+                    }
+                }
+                for (topic, facts) in topic_nodes.iter().enumerate() {
+                    let scope = scope_nodes[topic];
+                    for nodes in facts {
+                        for &node in nodes {
+                            mutator
+                                .create_edge(scope_edge.clone(), node, scope, PropertyMap::new())
+                                .expect("bench scope edge inserts");
                         }
                     }
                 }
@@ -282,6 +304,7 @@ impl MemoryRetrievalFixture {
             label,
             embedding_key,
             support_edge,
+            scope_edge,
             valid_edge,
             superseded_by_edge,
             queries,
