@@ -158,7 +158,9 @@ layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
 the next full re-baseline. `graph_node_fetch` returns a column ref (no `Value`
 clone) and is unaffected. `graph_exact_vector_scan/*` is the native graph-level
 exact-vector oracle: label-filtered row scan plus the core vector metric
-kernels, returning stable node ids. `graph_vector_index_rebuild/*` times the
+kernels, returning stable node ids. `graph_vector_candidate_set/*` measures the
+Rust graph/vector boundary for deriving canonical candidate sets from graph
+adjacency before scoring. `graph_vector_index_rebuild/*` times the
 maintenance rebuild that reclaims stale ANN entries after vector update/delete
 churn; `graph_vector_index_recommended_rebuild/*` compares recommended-only
 maintenance against full rebuild on a multi-index IVF fixture where only one
@@ -219,6 +221,7 @@ PR-local quick vector baseline:
 |---|---:|---|
 | `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 22.9 µs unindexed / 24.3 µs flat (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x4` L2-squared accumulation; flat 20k row: ~244 µs. |
 | `graph_exact_vector_scan/cosine_dim128_k10` | 33.5 µs unindexed / 33.6 µs flat (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x4` cosine accumulation; flat 20k row: ~276 µs. |
+| `graph_vector_candidate_set/neighbor_candidates_depends_on_k64` | 237.5 ns (quick) | Derives a sorted/deduplicated 64-node candidate set from one anchor's outgoing `DEPENDS_ON` adjacency. This measures the reusable Rust candidate-set boundary, not vector scoring. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128_default` | 118.9 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; compact level-0 links preserve the same link counts while reclaiming 150 stale HNSW entries. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128_m24ef64` | 200.7 ms (quick) | Tuned `M=24, ef_construction=64` rebuild row; keeps the high-recall research config covered with compacted post-rebuild level-0 links. |
 | `graph_vector_index_rebuild/hnsw_cos_dim128_default` | 146.1 ms (quick) | Same rebuild fixture for 128-dim HNSW cosine, covering construction-side scorer reuse for metrics with bound query state. |

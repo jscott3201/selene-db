@@ -8,6 +8,9 @@ use crate::{
     VectorSearchError,
 };
 
+#[path = "score_tests/candidate_set.rs"]
+mod candidate_set;
+
 fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
