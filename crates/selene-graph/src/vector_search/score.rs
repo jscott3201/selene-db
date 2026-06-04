@@ -7,7 +7,8 @@ use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 
 use super::{
-    VECTOR_SEARCH_CANCEL_STRIDE, VectorNodeSearchHit, VectorSearchError, vector_node_hits,
+    VECTOR_SEARCH_CANCEL_STRIDE, VectorNeighborDirection, VectorNeighborSearchOptions,
+    VectorNodeSearchHit, VectorSearchError, vector_node_hits,
 };
 
 impl SeleneGraph {
@@ -148,6 +149,140 @@ impl SeleneGraph {
         }
         Ok(batch_hits)
     }
+
+    /// Score vector-valued neighbors reached from one anchor through `edge_label`.
+    ///
+    /// This is the one-hop graph candidate-set companion to
+    /// [`Self::score_vector_nodes`]. It derives candidates from the snapshot's
+    /// directed adjacency, then applies the same dedupe, visibility, metric, and
+    /// ordering rules as explicit candidate scoring.
+    pub fn score_vector_neighbors(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        anchor: NodeId,
+        options: VectorNeighborSearchOptions<'_>,
+    ) -> GraphResult<Vec<VectorNodeSearchHit>> {
+        self.score_vector_neighbors_checked(
+            property,
+            query,
+            anchor,
+            options,
+            CancellationChecker::disabled(),
+        )
+        .map_err(VectorSearchError::into_graph_error)
+    }
+
+    /// Score vector-valued neighbors with cancellation checks.
+    pub fn score_vector_neighbors_checked(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        anchor: NodeId,
+        options: VectorNeighborSearchOptions<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        checker.check()?;
+        if options.k == 0 {
+            return Ok(Vec::new());
+        }
+        let candidates = self.neighbor_candidates(anchor, options.edge_label, options.direction);
+        self.score_vector_nodes_checked(
+            property,
+            query,
+            &candidates,
+            options.metric,
+            options.k,
+            checker,
+        )
+    }
+
+    /// Score one anchor's vector-valued neighbors for each query vector.
+    ///
+    /// `queries[i]` is scored against neighbors derived from `anchors[i]`.
+    /// Mismatched query/anchor counts and mixed query dimensions are rejected
+    /// before scoring.
+    pub fn score_vector_neighbors_batch(
+        &self,
+        property: &IStr,
+        queries: &[VectorValue],
+        anchors: &[NodeId],
+        options: VectorNeighborSearchOptions<'_>,
+    ) -> GraphResult<Vec<Vec<VectorNodeSearchHit>>> {
+        self.score_vector_neighbors_batch_checked(
+            property,
+            queries,
+            anchors,
+            options,
+            CancellationChecker::disabled(),
+        )
+        .map_err(VectorSearchError::into_graph_error)
+    }
+
+    /// Score batched one-hop graph neighbors with cancellation checks.
+    pub fn score_vector_neighbors_batch_checked(
+        &self,
+        property: &IStr,
+        queries: &[VectorValue],
+        anchors: &[NodeId],
+        options: VectorNeighborSearchOptions<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        checker.check()?;
+        validate_batch_inputs(queries, anchors.len())?;
+        if queries.is_empty() {
+            return Ok(Vec::new());
+        }
+        if options.k == 0 {
+            return Ok(vec![Vec::new(); queries.len()]);
+        }
+        let candidate_sets: Vec<_> = anchors
+            .iter()
+            .map(|anchor| self.neighbor_candidates(*anchor, options.edge_label, options.direction))
+            .collect();
+        self.score_vector_nodes_batch_checked(
+            property,
+            queries,
+            &candidate_sets,
+            options.metric,
+            options.k,
+            checker,
+        )
+    }
+
+    fn neighbor_candidates(
+        &self,
+        anchor: NodeId,
+        edge_label: &IStr,
+        direction: VectorNeighborDirection,
+    ) -> Vec<NodeId> {
+        let mut candidates = Vec::new();
+        if matches!(
+            direction,
+            VectorNeighborDirection::Outgoing | VectorNeighborDirection::Both
+        ) && let Some(entry) = self.outgoing_edges(anchor)
+        {
+            candidates.extend(
+                entry
+                    .iter()
+                    .filter(|edge| &edge.label == edge_label)
+                    .map(|edge| edge.neighbor),
+            );
+        }
+        if matches!(
+            direction,
+            VectorNeighborDirection::Incoming | VectorNeighborDirection::Both
+        ) && let Some(entry) = self.incoming_edges(anchor)
+        {
+            candidates.extend(
+                entry
+                    .iter()
+                    .filter(|edge| &edge.label == edge_label)
+                    .map(|edge| edge.neighbor),
+            );
+        }
+        candidates
+    }
 }
 
 impl SharedGraph {
@@ -223,6 +358,58 @@ impl SharedGraph {
             k,
             checker,
         )
+    }
+
+    /// Score vector-valued neighbors reached from one anchor in the current snapshot.
+    pub fn score_vector_neighbors(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        anchor: NodeId,
+        options: VectorNeighborSearchOptions<'_>,
+    ) -> GraphResult<Vec<VectorNodeSearchHit>> {
+        self.read()
+            .score_vector_neighbors(property, query, anchor, options)
+    }
+
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::score_vector_neighbors_checked`].
+    pub fn score_vector_neighbors_checked(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        anchor: NodeId,
+        options: VectorNeighborSearchOptions<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        self.read()
+            .score_vector_neighbors_checked(property, query, anchor, options, checker)
+    }
+
+    /// Score one anchor's vector-valued neighbors for each query in the current snapshot.
+    pub fn score_vector_neighbors_batch(
+        &self,
+        property: &IStr,
+        queries: &[VectorValue],
+        anchors: &[NodeId],
+        options: VectorNeighborSearchOptions<'_>,
+    ) -> GraphResult<Vec<Vec<VectorNodeSearchHit>>> {
+        self.read()
+            .score_vector_neighbors_batch(property, queries, anchors, options)
+    }
+
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::score_vector_neighbors_batch_checked`].
+    pub fn score_vector_neighbors_batch_checked(
+        &self,
+        property: &IStr,
+        queries: &[VectorValue],
+        anchors: &[NodeId],
+        options: VectorNeighborSearchOptions<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        self.read()
+            .score_vector_neighbors_batch_checked(property, queries, anchors, options, checker)
     }
 }
 

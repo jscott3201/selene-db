@@ -32,6 +32,48 @@ pub struct VectorNodeSearchHit {
     pub distance: f64,
 }
 
+/// Direction used when deriving vector-score candidates from a graph edge label.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VectorNeighborDirection {
+    /// Score outgoing neighbors reached from the anchor node.
+    Outgoing,
+    /// Score incoming neighbors that point at the anchor node.
+    Incoming,
+    /// Score both incoming and outgoing neighbors.
+    Both,
+}
+
+/// Tunable options for deriving and ranking vector neighbors from graph edges.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VectorNeighborSearchOptions<'a> {
+    /// Edge label used to derive the one-hop candidate set.
+    pub edge_label: &'a IStr,
+    /// Direction used when walking one-hop graph adjacency.
+    pub direction: VectorNeighborDirection,
+    /// Distance metric requested by the caller.
+    pub metric: VectorMetric,
+    /// Maximum result count.
+    pub k: usize,
+}
+
+impl<'a> VectorNeighborSearchOptions<'a> {
+    /// Construct one-hop vector-neighbor scoring options.
+    #[must_use]
+    pub const fn new(
+        edge_label: &'a IStr,
+        direction: VectorNeighborDirection,
+        metric: VectorMetric,
+        k: usize,
+    ) -> Self {
+        Self {
+            edge_label,
+            direction,
+            metric,
+            k,
+        }
+    }
+}
+
 /// Tunable options for approximate vector search.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ApproximateVectorSearchOptions {

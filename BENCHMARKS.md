@@ -563,6 +563,9 @@ PR-local quick vector procedure baseline:
 | `procedure_vector_search/shared_cache_score_nodes_64_dim128_k10_1000` | 5.15 µs (quick) | Cached `CALL selene.vector_score_nodes` over a 64-node candidate set; graph-derived candidate rerank baseline. |
 | `procedure_vector_search/shared_cache_score_nodes_repeated_8x64_dim128_k10_1000` | 45.4 µs (quick) | Eight separate cached candidate-score procedure calls, one short-lived session per query. |
 | `procedure_vector_search/shared_cache_score_nodes_batch_8x64_dim128_k10_1000` | 43.0 µs (quick) | One cached `CALL selene.vector_score_nodes_batch` over eight query vectors and eight 64-node candidate sets; ~5% below repeated single-call latency. |
+| `procedure_vector_neighbors/shared_cache_score_neighbors_64_dim128_k10_1000` | 4.60 µs (quick) | Cached `CALL selene.vector_score_neighbors` over one 64-neighbor graph-derived candidate set. |
+| `procedure_vector_neighbors/shared_cache_score_neighbors_repeated_8x64_dim128_k10_1000` | 40.3 µs (quick) | Eight separate cached graph-neighbor score calls, one short-lived session per query. |
+| `procedure_vector_neighbors/shared_cache_score_neighbors_batch_8x64_dim128_k10_1000` | 36.7 µs (quick) | One cached `CALL selene.vector_score_neighbors_batch` over eight anchors; ~9% below repeated neighbor-call latency. |
 | `procedure_vector_search/shared_cache_hnsw_ann_dim128_k10_1000` | 13.46 µs (quick) | Cached single-query `CALL selene.vector_search_nodes_ann` over the HNSW index; graph-level ANN hit conversion no longer re-heaps index results. |
 | `procedure_vector_search/shared_cache_hnsw_ann_repeated_8x_dim128_k10_1000` | 114.4 µs (quick) | Eight separate cached ANN procedure calls, one short-lived session per query. |
 | `procedure_vector_search/shared_cache_hnsw_ann_batch_8x_dim128_k10_1000` | 108.9 µs (quick) | One cached `CALL selene.vector_search_nodes_ann_batch` over eight query vectors; ~4.5% below repeated single-call latency. |
