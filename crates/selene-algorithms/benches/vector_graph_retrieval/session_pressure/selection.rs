@@ -213,7 +213,7 @@ impl MemoryRetrievalFixture {
         }
     }
 
-    fn graph_session_candidates(&self, query: &Query) -> Vec<NodeId> {
+    pub(super) fn graph_session_candidates(&self, query: &Query) -> Vec<NodeId> {
         let mut candidates = Vec::new();
         if let Some(anchor_edges) = self.graph.outgoing_edges(query.anchor) {
             for session_edge in anchor_edges
@@ -560,7 +560,7 @@ impl MemoryRetrievalFixture {
         candidates
     }
 
-    fn graph_recent_candidates(&self, query: &Query) -> Vec<NodeId> {
+    pub(super) fn graph_recent_candidates(&self, query: &Query) -> Vec<NodeId> {
         let mut candidates = Vec::new();
         if let Some(anchor_edges) = self.graph.outgoing_edges(query.anchor) {
             for recent_edge in anchor_edges
@@ -582,7 +582,7 @@ impl MemoryRetrievalFixture {
         candidates
     }
 
-    fn graph_dependency_candidates(&self, query: &Query) -> Vec<NodeId> {
+    pub(super) fn graph_dependency_candidates(&self, query: &Query) -> Vec<NodeId> {
         let mut candidates = Vec::new();
         if let Some(anchor_edges) = self.graph.outgoing_edges(query.anchor) {
             candidates.extend(

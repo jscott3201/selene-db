@@ -9,6 +9,7 @@ use crate::common::scale_label;
 use super::support::{FACTS_PER_TOPIC, RESULT_K, SEED_K, WIDE_SEED_K, basis_points, vector_scales};
 use super::{MemoryRetrievalFixture, TopologyNoise};
 
+mod candidate_set_algebra;
 mod candidate_set_scoring;
 mod maintenance;
 mod neighbor_scoring;
@@ -146,6 +147,10 @@ const ACTIVE_HINT_BATCH_STRATEGIES: &[(SessionStrategy, CandidateScoringMode)] =
         CandidateScoringMode::CandidateSetBatch,
     ),
     (
+        SessionStrategy::GraphSessionMaterializedUnresolvedCurrentFilter,
+        CandidateScoringMode::CandidateSetAlgebraBatch,
+    ),
+    (
         SessionStrategy::GraphSessionRecentActiveFilter,
         CandidateScoringMode::RepeatedSingle,
     ),
@@ -158,6 +163,10 @@ const ACTIVE_HINT_BATCH_STRATEGIES: &[(SessionStrategy, CandidateScoringMode)] =
         CandidateScoringMode::CandidateSetBatch,
     ),
     (
+        SessionStrategy::GraphSessionRecentActiveFilter,
+        CandidateScoringMode::CandidateSetAlgebraBatch,
+    ),
+    (
         SessionStrategy::GraphSessionDependencyActiveFilter,
         CandidateScoringMode::RepeatedSingle,
     ),
@@ -168,6 +177,10 @@ const ACTIVE_HINT_BATCH_STRATEGIES: &[(SessionStrategy, CandidateScoringMode)] =
     (
         SessionStrategy::GraphSessionDependencyActiveFilter,
         CandidateScoringMode::CandidateSetBatch,
+    ),
+    (
+        SessionStrategy::GraphSessionDependencyActiveFilter,
+        CandidateScoringMode::CandidateSetAlgebraBatch,
     ),
     (
         SessionStrategy::GraphSessionDependencyActiveFilter,
@@ -184,6 +197,7 @@ enum CandidateScoringMode {
     RepeatedSingle,
     Batch,
     CandidateSetBatch,
+    CandidateSetAlgebraBatch,
     NeighborSingle,
     NeighborBatch,
 }
@@ -194,6 +208,7 @@ impl CandidateScoringMode {
             Self::RepeatedSingle => "repeated_score",
             Self::Batch => "batch_score",
             Self::CandidateSetBatch => "candidate_set_batch_score",
+            Self::CandidateSetAlgebraBatch => "candidate_set_algebra_batch_score",
             Self::NeighborSingle => "neighbor_score",
             Self::NeighborBatch => "neighbor_batch_score",
         }
@@ -565,6 +580,9 @@ fn bench_active_hint_batch_pressure(c: &mut Criterion) {
                 CandidateScoringMode::CandidateSetBatch => {
                     fixture.session_candidate_set_batch_scoring_quality(strategy)
                 }
+                CandidateScoringMode::CandidateSetAlgebraBatch => {
+                    fixture.session_candidate_set_algebra_batch_scoring_quality(strategy)
+                }
                 CandidateScoringMode::NeighborSingle => {
                     fixture.session_neighbor_scoring_quality(strategy)
                 }
@@ -603,6 +621,13 @@ fn bench_active_hint_batch_pressure(c: &mut Criterion) {
                             black_box(
                                 fixture
                                     .session_candidate_set_batch_scoring_total_coverage(strategy),
+                            );
+                        }
+                        CandidateScoringMode::CandidateSetAlgebraBatch => {
+                            black_box(
+                                fixture.session_candidate_set_algebra_batch_scoring_total_coverage(
+                                    strategy,
+                                ),
                             );
                         }
                         CandidateScoringMode::NeighborSingle => {
