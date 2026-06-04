@@ -100,6 +100,58 @@ fn seed_vector_graph(graph: &SharedGraph) -> Vec<NodeId> {
     ids
 }
 
+fn seed_neighbor_vector_graph(graph: &SharedGraph) -> (NodeId, NodeId, Vec<NodeId>) {
+    let anchor_label = istr("Anchor");
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    let other = istr("other");
+    let depends = istr("DEPENDS_ON");
+    let mentions = istr("MENTIONS");
+    let mut txn = graph.begin_write();
+    let mut mutator = txn.mutator();
+    let anchor = mutator
+        .create_node(LabelSet::single(anchor_label.clone()), PropertyMap::new())
+        .expect("anchor inserts");
+    let second_anchor = mutator
+        .create_node(LabelSet::single(anchor_label), PropertyMap::new())
+        .expect("second anchor inserts");
+    let mut ids = Vec::new();
+    for i in 0..8 {
+        ids.push(
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[i as f32, 0.0]))),
+                )
+                .expect("vector node inserts"),
+        );
+    }
+    let non_vector = mutator
+        .create_node(
+            LabelSet::single(doc),
+            props(&other, Value::String(istr("not-a-vector"))),
+        )
+        .expect("non-vector node inserts");
+    for &node in &[ids[5], ids[2], ids[2], ids[0], non_vector] {
+        mutator
+            .create_edge(depends.clone(), anchor, node, PropertyMap::new())
+            .expect("outgoing dependency edge inserts");
+    }
+    mutator
+        .create_edge(mentions, anchor, ids[7], PropertyMap::new())
+        .expect("other edge inserts");
+    mutator
+        .create_edge(depends.clone(), ids[1], anchor, PropertyMap::new())
+        .expect("incoming dependency edge inserts");
+    for &node in &[ids[4], ids[6], ids[7]] {
+        mutator
+            .create_edge(depends.clone(), second_anchor, node, PropertyMap::new())
+            .expect("second anchor edge inserts");
+    }
+    txn.commit().expect("seed graph commits");
+    (anchor, second_anchor, ids)
+}
+
 #[test]
 fn vector_score_nodes_reranks_explicit_candidates_without_index() {
     let graph = graph(330_207);
@@ -297,5 +349,91 @@ fn vector_score_nodes_batch_rejects_non_nested_node_candidates() {
             source: ProcedureError::InvalidArgument { ref detail },
             ..
         } if detail.contains("nodes[0][0] must be a NODE")
+    ));
+}
+
+#[test]
+fn vector_score_neighbors_reranks_directional_graph_candidates() {
+    let graph = graph(330_214);
+    let registry = BuiltinProcedureRegistry::new();
+    let (anchor, _, ids) = seed_neighbor_vector_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[2.2, 0.0])));
+    session.bind_parameter(istr("anchor"), Value::NodeRef(anchor));
+
+    let outgoing = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_neighbors('embedding', $query, $anchor, 'DEPENDS_ON', 3, 'outgoing', 'squared_euclidean') \
+         YIELD node_id, distance",
+        &registry,
+    );
+    assert_eq!(
+        node_column(&outgoing, "node_id"),
+        vec![ids[2], ids[0], ids[5]]
+    );
+
+    let incoming = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_neighbors('embedding', $query, $anchor, 'DEPENDS_ON', 3, 'incoming', 'squared_euclidean') \
+         YIELD node_id, distance",
+        &registry,
+    );
+    assert_eq!(node_column(&incoming, "node_id"), vec![ids[1]]);
+}
+
+#[test]
+fn vector_score_neighbors_batch_reranks_per_anchor_neighbor_sets() {
+    let graph = graph(330_215);
+    let registry = BuiltinProcedureRegistry::new();
+    let (anchor, second_anchor, ids) = seed_neighbor_vector_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![
+            Value::Vector(vector(&[2.2, 0.0])),
+            Value::Vector(vector(&[6.2, 0.0])),
+        ]),
+    );
+    session.bind_parameter(
+        istr("anchors"),
+        Value::List(vec![Value::NodeRef(anchor), Value::NodeRef(second_anchor)]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_neighbors_batch('embedding', $queries, $anchors, 'DEPENDS_ON', 2, 'outgoing', 'squared_euclidean') \
+         YIELD query_index, node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(uint_column(&table, "query_index"), vec![0, 0, 1, 1]);
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![ids[2], ids[0], ids[6], ids[7]]
+    );
+}
+
+#[test]
+fn vector_score_neighbors_rejects_invalid_direction() {
+    let graph = graph(330_216);
+    let registry = BuiltinProcedureRegistry::new();
+    let (anchor, _, _) = seed_neighbor_vector_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(istr("anchor"), Value::NodeRef(anchor));
+
+    let err = session
+        .execute_source(
+            "CALL selene.vector_score_neighbors('embedding', $query, $anchor, 'DEPENDS_ON', 2, 'sideways')",
+            &registry,
+        )
+        .expect_err("invalid direction must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("unknown vector neighbor direction")
     ));
 }

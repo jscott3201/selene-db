@@ -6,6 +6,8 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
+#[path = "procedure_call_repeat/vector_neighbors.rs"]
+mod vector_neighbors;
 
 use std::{num::NonZeroUsize, sync::Arc};
 
@@ -615,6 +617,7 @@ fn istr(value: &str) -> IStr {
 criterion_group! {
     name = procedure_call_repeat_group;
     config = common::criterion_config();
-    targets = bench_procedure_call_repeat, bench_vector_search_procedure
+    targets = bench_procedure_call_repeat, bench_vector_search_procedure,
+        vector_neighbors::bench_vector_neighbor_procedure
 }
 criterion_main!(procedure_call_repeat_group);

@@ -72,7 +72,10 @@ pub use vector_index::{
     VectorIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMemoryUsage,
     VectorIndexRebuildEntry, VectorIndexRebuildReport, VectorIndexValueError,
 };
-pub use vector_search::{ApproximateVectorSearchOptions, VectorNodeSearchHit, VectorSearchError};
+pub use vector_search::{
+    ApproximateVectorSearchOptions, VectorNeighborDirection, VectorNeighborSearchOptions,
+    VectorNodeSearchHit, VectorSearchError,
+};
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 
 #[cfg(test)]
