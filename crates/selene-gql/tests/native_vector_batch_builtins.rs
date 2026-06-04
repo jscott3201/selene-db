@@ -71,7 +71,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
         .collect()
 }
 
-fn seed_hnsw_vector_graph(graph: &SharedGraph, registry: &BuiltinProcedureRegistry) {
+fn seed_vector_graph(graph: &SharedGraph) {
     let doc = istr("VectorDoc");
     let embedding = istr("embedding");
     {
@@ -87,6 +87,10 @@ fn seed_hnsw_vector_graph(graph: &SharedGraph, registry: &BuiltinProcedureRegist
         }
         txn.commit().expect("seed graph commits");
     }
+}
+
+fn seed_hnsw_vector_graph(graph: &SharedGraph, registry: &BuiltinProcedureRegistry) {
+    seed_vector_graph(graph);
     let mut session = Session::new(graph);
     session
         .execute_source(
@@ -94,6 +98,81 @@ fn seed_hnsw_vector_graph(graph: &SharedGraph, registry: &BuiltinProcedureRegist
             registry,
         )
         .expect("hnsw vector index creation executes");
+}
+
+#[test]
+fn vector_search_nodes_batch_groups_hits_by_query_index_without_ann_index() {
+    let graph = graph(330_204);
+    let registry = BuiltinProcedureRegistry::new();
+    seed_vector_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![
+            Value::Vector(vector(&[4.1, 0.0])),
+            Value::Vector(vector(&[12.2, 0.0])),
+        ]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes_batch('VectorDoc', 'embedding', $queries, 2, 'squared_euclidean') \
+         YIELD query_index, node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(uint_column(&table, "query_index"), vec![0, 0, 1, 1]);
+    let nodes = node_column(&table, "node_id");
+    assert_eq!(nodes[0], NodeId::new(5));
+    assert_eq!(nodes[2], NodeId::new(13));
+}
+
+#[test]
+fn vector_search_nodes_batch_returns_no_rows_for_empty_query_list() {
+    let graph = graph(330_205);
+    let registry = BuiltinProcedureRegistry::new();
+    seed_vector_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("queries"), Value::List(Vec::new()));
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes_batch('VectorDoc', 'embedding', $queries, 2) \
+         YIELD query_index, node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(table.row_count(), 0);
+}
+
+#[test]
+fn vector_search_nodes_batch_rejects_mixed_query_dimensions() {
+    let graph = graph(330_206);
+    let registry = BuiltinProcedureRegistry::new();
+    seed_vector_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![
+            Value::Vector(vector(&[0.0, 0.0])),
+            Value::Vector(vector(&[0.0, 0.0, 0.0])),
+        ]),
+    );
+
+    let err = session
+        .execute_source(
+            "CALL selene.vector_search_nodes_batch('VectorDoc', 'embedding', $queries, 10)",
+            &registry,
+        )
+        .expect_err("mixed query dimensions must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("same VECTOR dimension")
+    ));
 }
 
 #[test]

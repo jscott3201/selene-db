@@ -506,7 +506,9 @@ PR-local quick vector procedure baseline:
 | Bench | Median | Notes |
 |---|---:|---|
 | `procedure_vector_search/shared_cache_squared_euclidean_dim128_k10_1000` | 37.0 µs (quick) | Cached `CALL selene.vector_search_nodes` over 1,000 vector nodes; scalar exact scan. |
-| `procedure_vector_search/shared_cache_flat_index_dim128_k10_1000` | 37.5 µs (quick) | Cached exact search over the flat vector index. |
+| `procedure_vector_search/shared_cache_flat_index_dim128_k10_1000` | 25.0 µs (quick) | Cached exact search over the flat vector index. |
+| `procedure_vector_search/shared_cache_flat_index_repeated_8x_dim128_k10_1000` | 199.0 µs (quick) | Eight separate cached exact procedure calls, one short-lived session per query. |
+| `procedure_vector_search/shared_cache_flat_index_batch_8x_dim128_k10_1000` | 176.3 µs (quick) | One cached `CALL selene.vector_search_nodes_batch` over eight query vectors; ~11% below repeated exact single-call latency. |
 | `procedure_vector_search/shared_cache_hnsw_ann_dim128_k10_1000` | 13.46 µs (quick) | Cached single-query `CALL selene.vector_search_nodes_ann` over the HNSW index; graph-level ANN hit conversion no longer re-heaps index results. |
 | `procedure_vector_search/shared_cache_hnsw_ann_repeated_8x_dim128_k10_1000` | 114.4 µs (quick) | Eight separate cached ANN procedure calls, one short-lived session per query. |
 | `procedure_vector_search/shared_cache_hnsw_ann_batch_8x_dim128_k10_1000` | 108.9 µs (quick) | One cached `CALL selene.vector_search_nodes_ann_batch` over eight query vectors; ~4.5% below repeated single-call latency. |

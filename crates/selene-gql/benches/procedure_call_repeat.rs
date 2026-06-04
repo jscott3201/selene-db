@@ -23,6 +23,7 @@ const SOURCE: &str = "CALL bench.repeat() YIELD n";
 const REPEATS: usize = 100;
 const VECTOR_SOURCE: &str =
     "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) YIELD node_id, distance";
+const VECTOR_BATCH_SOURCE: &str = "CALL selene.vector_search_nodes_batch('VectorDoc', 'embedding', $queries, 10, 'squared_euclidean') YIELD query_index, node_id, distance";
 const VECTOR_ANN_SOURCE: &str = "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10, 'squared_euclidean', 64) YIELD node_id, distance";
 const VECTOR_ANN_BATCH_SOURCE: &str = "CALL selene.vector_search_nodes_ann_batch('VectorDoc', 'embedding', $queries, 10, 'squared_euclidean', 64) YIELD query_index, node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
@@ -102,6 +103,7 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
     let hnsw_graph = vector_graph_hnsw_indexed(VECTOR_SCALE, VECTOR_DIMENSION);
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let indexed_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let exact_batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let hnsw_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_vector_cache(&graph, &registry, Arc::clone(&cache), VECTOR_SOURCE);
@@ -110,6 +112,12 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
         &registry,
         Arc::clone(&indexed_cache),
         VECTOR_SOURCE,
+    );
+    warm_vector_batch_cache(
+        &indexed_graph,
+        &registry,
+        Arc::clone(&exact_batch_cache),
+        VECTOR_BATCH_SOURCE,
     );
     warm_vector_cache(
         &hnsw_graph,
@@ -143,6 +151,24 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
                 &registry,
                 Some(Arc::clone(&indexed_cache)),
                 VECTOR_SOURCE,
+            ));
+        });
+    });
+    group.bench_function("shared_cache_flat_index_repeated_8x_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_exact_repeated_batch(
+                &indexed_graph,
+                &registry,
+                Some(Arc::clone(&indexed_cache)),
+            ));
+        });
+    });
+    group.bench_function("shared_cache_flat_index_batch_8x_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_exact_batch(
+                &indexed_graph,
+                &registry,
+                Some(Arc::clone(&exact_batch_cache)),
             ));
         });
     });
@@ -275,6 +301,51 @@ fn execute_vector_ann_repeated_batch(
         }
     }
     rows
+}
+
+fn execute_vector_exact_repeated_batch(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut rows = 0;
+    for query_index in 0..VECTOR_BATCH_QUERIES {
+        let mut session = Session::new(graph);
+        if let Some(cache) = cache.as_ref() {
+            session = session.with_call_plan_cache(Arc::clone(cache));
+        }
+        session.bind_parameter(
+            istr("query"),
+            Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
+        );
+        match session
+            .execute_source(VECTOR_SOURCE, registry)
+            .expect("single exact vector search procedure executes")
+        {
+            StatementOutput::Rows(table) => rows += table.row_count(),
+            other => panic!("unexpected output: {other:?}"),
+        }
+    }
+    rows
+}
+
+fn execute_vector_exact_batch(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    session.bind_parameter(istr("queries"), vector_query_batch());
+    match session
+        .execute_source(VECTOR_BATCH_SOURCE, registry)
+        .expect("batched exact vector search procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
 }
 
 fn execute_vector_ann_batch(
