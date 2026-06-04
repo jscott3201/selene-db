@@ -1,186 +1,188 @@
 # AGENTS.md - selene-db
 
-Canonical startup context for AI coding agents working in this repository.
-`CLAUDE.md` is a symlink to this file, so this is the repo-specific source of
-truth for both Codex and Claude.
+Repository-specific operating guide for AI agents working in `selene-db`.
+`CLAUDE.md` is a symlink to this file, so keep this file current, concise, and
+specific to this repository.
 
-The universal partner workflow lives outside the repo:
+The global partner workflow still lives outside the repo:
 
-- Executor condensation: `~/.codex/AGENTS.md`
-- Full lead workflow: `/Users/justin/Development/_agent_helpers/partner-workflow.md`
+- Executor summary: `~/.codex/AGENTS.md`
+- Full workflow spec: `/Users/justin/Development/_agent_helpers/partner-workflow.md`
 
-This file is intentionally repo-specific. It should describe the current engine,
-validation gates, and local constraints. It should not carry fast-moving PR
-state, stale release plans, or long historical decision tables.
+This file is not a changelog, milestone ledger, or architectural archive. Do not
+put fast-moving PR state here. Use the current source, tests, `BENCHMARKS.md`,
+GitHub state, and local `_goalslogs/` notes for that.
 
 ## Mission
 
-`selene-db` is a greenfield, embeddable Rust graph database centered on
+`selene-db` is a greenfield, embeddable Rust graph database centered on strict
 ISO/IEC 39075:2024 GQL. It is a single native engine:
 
 - GQL is the only query and mutation language.
-- Graph algorithms are mandatory native engine capability, not extensions.
-- Dense vectors are first-class engine values and vector indexes are native graph
-  indexes.
-- Native platform and algorithm surfaces are exposed through `CALL selene.*` and
-  `CALL algo.*`, not through grammar drift.
+- Graph storage, graph algorithms, dense vectors, vector indexes, persistence,
+  and the native procedure registry live in-tree as one cohesive engine.
+- Non-standard capabilities are exposed through implementation-defined values,
+  indexes, and `CALL selene.*` / `CALL algo.*` procedures, not grammar drift.
 - There is no loadable extension pack system.
+- There are no downstream compatibility constraints yet. Large refactors are
+  allowed when they improve correctness, performance, or engine cohesion and are
+  backed by tests and benchmark evidence.
 
-The current workspace package version is `1.1.0`; Rust is edition 2024 with the
-toolchain pinned to `1.95.0`.
+Read the current `Cargo.toml` / `rust-toolchain.toml` for versions. The workspace
+uses Rust edition 2024 and a pinned stable toolchain.
 
-## Non-Negotiables
+## Hard Rules
 
-1. Keep ISO GQL compliance at the language boundary. Non-standard behavior must
-   live behind implementation-defined types, values, or procedures and must be
-   feature-flagged where the parser exposes it.
-2. Do not add SQL, Cypher, SPARQL, or ad hoc query grammar.
-3. Do not bypass the mutation funnel. Schema/index writes go through the
-   `Mutator` path; maintenance writes use the maintenance context; read-only
-   built-ins must not mutate or re-enter writes.
-4. Keep `#![forbid(unsafe_code)]` and `missing_docs = "deny"` working
-   workspace-wide. Any future unsafe exception needs an explicit, reviewed
-   architectural reason.
-5. Keep files under the 700 LOC cap. Split modules before they approach the cap.
-6. Prefer no new dependencies. When a dependency is justified, it must be
-   current, maintained, license-compatible, and stronger than a local
-   implementation. SIMD/NEON/acceleration crates are acceptable when well
-   supported.
-7. Do not hand-roll crypto, TLS, async runtimes, or serialization primitives.
-8. Keep the rustls-only posture. No native-tls, no openssl-sys.
-9. Preserve the dual MIT OR Apache-2.0 license posture and third-party
-   attribution (`NOTICE`, `THIRDPARTY.md`, per-file attribution for adapted
-   third-party code).
-10. Treat benchmark evidence as part of engineering, not decoration. New
-    performance claims need commands, scales, and numbers.
+1. Preserve strict ISO GQL at the language boundary. Do not add SQL, Cypher,
+   SPARQL, or ad hoc grammar.
+2. Route mutations through the proper graph/mutation/maintenance funnels. A
+   read-only built-in must not mutate or re-enter the write path.
+3. Keep `#![forbid(unsafe_code)]` and `missing_docs = "deny"` working
+   workspace-wide. Any future unsafe exception needs explicit design rationale.
+4. Keep tracked Rust files below 700 LOC. Split modules before they approach the
+   cap.
+5. Prefer no new dependencies. A dependency must be maintained, current,
+   license-compatible, and clearly better than local code. Well-supported
+   SIMD/NEON/acceleration crates are acceptable when evidence justifies them.
+6. Do not hand-roll crypto, TLS, async runtimes, or serialization primitives.
+7. Keep the rustls-only posture. No `native-tls`, no `openssl-sys`.
+8. Preserve dual MIT OR Apache-2.0 licensing and third-party attribution:
+   `NOTICE`, `THIRDPARTY.md`, and per-file attribution for adapted third-party
+   code.
+9. Benchmark claims require commands, scales, and numbers.
+10. Do not optimize beyond the evidence. Queue larger research when the next
+    step needs a broader design.
 
-Error codes are GQLSTATUS, not SQLSTATE. Do not introduce SQL drift such as
-`LIKE`, `BETWEEN`, `^`, `XX500`, `0A000`, `42883`, or `22023` unless the current
-feature register and parser explicitly support the GQL construct.
+Use GQLSTATUS codes for query/runtime errors. Do not introduce SQLSTATE-style
+codes or SQL-only syntax.
 
 ## Workspace Map
 
-The workspace has no umbrella crate. Dependency direction is intentionally
-linear:
+There is no umbrella crate. Keep dependency direction intentional:
 
 `selene-core -> selene-graph -> selene-algorithms -> selene-gql`
 
-`selene-persist` depends on `selene-core` and stays below `selene-graph`.
-`selene-testing` is fixtures and harness support, normally dev-dependency only.
+`selene-persist` depends on `selene-core` and stays below graph semantics.
+`selene-testing` provides fixtures, corpus helpers, and benchmark profiles for
+dev-dependencies.
 
 | Crate | Owns |
 |---|---|
-| `selene-core` | Foundation types: `Value`, `VectorValue`, vector metrics/top-k helpers, `IStr`, identities, schema/value types, feature register, property maps, codecs, changesets. |
-| `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, recovery provider, compaction, graph type enforcement. |
-| `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention/prune. It does not own graph semantics. |
-| `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It depends on core/graph only and never on GQL. |
+| `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, vector metrics/top-k helpers, `IStr`, schema/value types, feature register, property maps, codecs, and changesets. |
+| `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, recovery provider, compaction, and graph type enforcement. |
+| `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
+| `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |
 | `selene-gql` | Parser, AST, analyzer, planner, optimizer, executor, procedure tiers, and the concrete native `BuiltinProcedureRegistry`. |
-| `selene-testing` | Shared test fixtures, graph generators, benchmark profiles, snapshot-harness support. |
+| `selene-testing` | Shared fixtures, graph generators, corpus helpers, benchmark profiles, and snapshot-harness support. |
 
-## Current Native Surfaces
+## Query And Procedure Surface
 
-### GQL And Procedures
+- `crates/selene-core/src/feature_register.rs` is the parser-visible optional
+  feature surface.
+- `ProcedureRegistry` is the planner/executor/test seam. It is not a third-party
+  extension point.
+- `BuiltinProcedureRegistry` is the production registry. Procedure names,
+  counts, signatures, and metadata are pinned by source and surface tests; update
+  those tests and docs together when the surface changes.
+- Procedure tiers are load-bearing:
+  - graph tier: read-only health, feature status, verify, vector search/score,
+    vector index stats;
+  - mutation tier: property and vector index create/drop;
+  - maintenance tier: vector index rebuild and rebuild recommendation.
 
-- `crates/selene-core/src/feature_register.rs` is the canonical optional-feature
-  surface.
-- `BuiltinProcedureRegistry` currently exposes 37 procedures: 18 `selene.*`
-  platform built-ins plus 19 `algo.*` graph algorithm procedures.
-- The registry is concrete and native. The `ProcedureRegistry` trait remains the
-  planner/executor/test seam, not a third-party extension point.
-- Procedure tiering matters:
-  - Graph tier: read-only health, feature status, verify, vector search/score,
-    vector index stats.
-  - Mutation tier: property index and vector index create/drop.
-  - Maintenance tier: vector index rebuild/recommended rebuild.
+Keep native procedure APIs policy-neutral. Agentic-memory use cases should be
+able to compose graph, vector, and future text primitives without the engine
+hard-coding one retrieval policy.
 
-### Vectors
+## Vectors
 
-Vectors are first-class, not externalized:
+Vectors are first-class engine data:
 
-- `Value::Vector(VectorValue)` is the native dense-vector value.
+- `Value::Vector(VectorValue)` is the native value variant.
 - `VectorValue` stores finite, non-empty `f32` components behind shared storage.
 - `MAX_VECTOR_DIMENSION` is `u16::MAX`.
-- Metrics are exact lower-is-better `squared_euclidean`, `cosine`, and
+- Supported metrics are lower-is-better `squared_euclidean`, `cosine`, and
   `negative_inner_product`.
-- Core vector kernels use safe SIMD through `wide` where available and keep
-  `f64` score semantics.
+- Core vector kernels use safe SIMD through `wide` where available while
+  preserving `f64` score semantics.
 
-Vector indexes are native graph indexes over `(label, property)`:
+Native vector indexes are graph indexes over `(label, property)`:
 
 - `Flat`
 - `HnswSquaredEuclidean`, `HnswCosine`, `HnswNegativeInnerProduct`
 - `IvfSquaredEuclidean`, `IvfCosine`, `IvfNegativeInnerProduct`
 
-Index registrations are durable schema state; HNSW/IVF accelerators are derived
-in-memory state and can be rebuilt from primary graph values. Delete/update
-visibility and rebuild correctness are required tests for any vector-index
-change.
+Index registrations are durable schema state. HNSW/IVF accelerators are derived
+in-memory state and must be rebuildable from primary graph values. Delete,
+update, rebuild, WAL/snapshot recovery, and stale-index visibility are required
+correctness concerns for vector-index changes.
 
-Production vector APIs include:
+Current production vector primitives include:
 
 - exact node search and batch exact search;
 - ANN node search and batch ANN search;
 - explicit candidate scoring and batch candidate scoring;
 - one-hop graph-neighbor scoring and batch neighbor scoring;
-- index stats, create/drop, rebuild, and recommended rebuild.
+- reusable `VectorCandidateSet` for canonical sorted/deduped `NodeId` sets;
+- candidate-set scoring, batch candidate-set scoring, candidate-set algebra, and
+  conversion from vector-search hits;
+- vector index stats, create/drop, rebuild, and recommended rebuild.
 
-Research-only vector compression/ANN experiments live in benchmark code until
-they earn a production design. PQ, IVF+PQ, binary sign-bit scoring, OPQ, ScaNN,
-DiskANN, and TurboQuant-style ideas are benchmark/research inputs, not
-production surfaces by default.
+Keep compression and alternative ANN ideas out of production until evidence
+earns a design. PQ, IVF+PQ, binary quantization, OPQ, ScaNN, DiskANN, and
+TurboQuant-style work belong in research/benchmark code first.
 
-### Graph Algorithms
+## Graph Algorithms And Retrieval
 
-`selene-algorithms` is mandatory and native. Algorithms operate on
-`GraphProjection`, not directly on live mutable graph state. Keep algorithm
-work independent of `selene-gql`; GQL bindings are registry adapters over the
+`selene-algorithms` is mandatory native engine functionality. Algorithms operate
+over `GraphProjection`, not live mutable graph state. Keep algorithm
+implementations independent of GQL; GQL bindings are registry adapters over the
 native Rust API.
 
-### Graph-Accelerated Retrieval
-
-Agentic-memory workloads are a major product driver, but the engine should ship
-policy-neutral primitives. Prefer composable pieces:
+Graph-accelerated vector retrieval is an active product track. Prefer
+composable primitives:
 
 - graph-derived candidate sets;
+- `VectorCandidateSet` composition;
 - exact vector scoring over explicit candidates;
 - graph-neighbor vector scoring;
-- maintained or rebuildable active sets when evidence supports them;
-- graph algorithm priors only when they change candidate coverage, diversity, or
-  correctness.
+- maintained or rebuildable active sets when benchmarks justify them;
+- graph algorithm priors only when they improve candidate coverage, diversity,
+  correctness, or latency.
 
-Do not hard-code one agent-memory retrieval policy into the engine.
+Do not bake one agent-memory policy into the engine. Build reusable graph/vector
+substrate and benchmark product-shaped retrieval rows.
 
-### BM25 / Full Text
+## BM25 / Full Text
 
-Native BM25/full-text search is queued research, not production code yet. When
-it starts, treat it like vectors and algorithms:
+Native BM25/full-text search is queued research, not production code yet. When it
+starts:
 
-- ISO GQL grammar stays strict.
-- Expose through native values/indexes/procedures as appropriate.
-- Ground against Tantivy and the old local SeleneDB donor code, but do not add a
-  dependency or copy old code without fresh design, tests, and benchmarks.
-- Define delete/update/WAL/snapshot/rebuild semantics before shipping.
-- Test hybrid graph/vector/text retrieval, not only text-only ranking.
+- keep ISO GQL grammar strict;
+- expose through native values, indexes, and procedures as appropriate;
+- ground design against Tantivy and the old local SeleneDB donor code, but do
+  not dependency-import or copy old code without fresh tests and benchmarks;
+- define delete/update/WAL/snapshot/rebuild semantics before shipping;
+- benchmark text-only and hybrid graph/vector/text retrieval.
 
 ## Performance Posture
 
-Expected workload shape is read-heavy but not append-only: roughly 60% reads and
-40% writes. Optimize for evidence:
+Expected workload shape is read-heavy but write-relevant, roughly 60% reads and
+40% writes.
 
-- Use Rayon when the workload size justifies parallel overhead.
+- Use Rayon only where workload size justifies parallel overhead.
 - Use safe SIMD/NEON acceleration where stable and measurable.
-- Keep library crates allocator-agnostic. Bench binaries use mimalloc; a global
-  engine allocator needs benchmark evidence and an explicit decision.
-- WAL durability is often the write-side cost center. Do not optimize provider
-  or index-maintenance micro-paths past the evidence.
-- Prefer larger, product-shaped benchmark rows over tiny loop tuning once the
-  API boundary is correct.
+- Keep library crates allocator-agnostic. Bench binaries use mimalloc. A global
+  engine allocator requires a measured decision.
+- WAL durability is often the write-side cost center. Do not over-optimize
+  provider/index maintenance paths when durability dominates.
+- Prefer product-shaped benchmark rows once API boundaries are correct.
 
-## Build And Validation
+## Validation
 
-Use the repo scripts rather than recreating CI inline.
+Use repository scripts rather than recreating CI inline.
 
-Common local gate:
+Common full local gate for code changes:
 
 ```bash
 cargo fmt --all --check
@@ -188,6 +190,7 @@ cargo check --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --all-features --profile default
 cargo test --workspace --locked --all-features --doc
+cargo doc --workspace --no-deps
 cargo deny check bans licenses sources
 cargo audit -d /private/tmp/selene-advisory-db
 bash .github/scripts/check-file-size.sh
@@ -195,22 +198,28 @@ bash .github/scripts/check-no-secrets.sh
 bash .github/scripts/check-thirdparty-current.sh
 bash .github/scripts/check-no-rowid-arith.sh
 bash .github/scripts/check-no-version-locked-feature-error.sh
+bash .github/scripts/check-bench-invocation.sh
+bash .github/scripts/check-benchmarks-doc.sh .
+bash .github/scripts/check-mimalloc-dev-dep.sh
+git diff --check
 ```
 
-Fuzz when parser or persist decoding risk changed:
+Run focused tests and focused benchmark compiles before the full gate when a
+change has a narrow surface. Run parser/persist fuzz when parser or decoding
+risk changes.
 
 ```bash
 cd crates/selene-gql/fuzz
 cargo +nightly fuzz run parse_gql -- -max_total_time=60
 ```
 
-Docs-only changes can run the cheap local gates, but any code change needs the
-relevant focused tests plus the full gate before PR.
+Docs-only changes can use cheap gates, but still run `git diff --check`,
+formatting, file-size, secret scan, and any doc registry scripts they affect.
 
 ## Benchmarks
 
-`scripts/run-benches.sh` is the only sanctioned benchmark entry point. Do not run
-`cargo bench --workspace`; Cargo may run bench binaries concurrently and pollute
+`scripts/run-benches.sh` is the sanctioned benchmark entry point. Do not run
+`cargo bench --workspace`; Cargo can run bench binaries concurrently and pollute
 wall-clock medians.
 
 Useful invocations:
@@ -220,89 +229,101 @@ scripts/run-benches.sh --list
 scripts/run-benches.sh --smoke
 scripts/run-benches.sh --profile quick --bench vector_graph_retrieval
 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter vector
+scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set --vector-scales 1000
 scripts/run-benches.sh --profile quick --bench vector_index_rebuild --vector-scales 10000
 scripts/run-benches.sh --bench vector_index_rebuild --allocator system
 ```
 
-The benchmark suite is Criterion-only. iai-callgrind/valgrind is not part of
-the current runner. Every committed bench target must be registered in
-`scripts/run-benches.sh` and documented in `BENCHMARKS.md`; CI checks both.
+The runner is Criterion-only. There is no active iai-callgrind/valgrind layer.
+Every committed bench target must be registered in `scripts/run-benches.sh` and
+documented in `BENCHMARKS.md`.
 
-## CI And Hooks
+## CI, Hooks, And PR Flow
 
-- PRs to `development` run the cheap `ci.yml` gate: rustfmt, file-size,
-  no-secrets, row-id arithmetic, version-locked feature error, benchmark
-  invocation/docs, and dependency gates only when manifests changed.
-- PRs to `main` run `release.yml`: clippy, nextest, doctests, deny, audit,
-  third-party attribution, macOS validation, parser fuzz, and persist fuzz.
-- Nightly handles longer advisory/fuzz work.
-- `.githooks/pre-commit` mirrors cheap checks.
+- `development` is the integration trunk.
+- Release PRs go from `development` to `main`.
+- PRs to `development` run the cheap CI gate: formatting, file-size, secret
+  scan, row-id arithmetic, version-locked feature errors, benchmark invocation
+  and docs checks, plus dependency gates when manifests changed.
+- PRs to `main` run the full release workflow: clippy, nextest, doctests, deny,
+  audit, third-party attribution, macOS validation, and fuzz.
+- `.githooks/pre-commit` mirrors cheap local checks.
 - `.githooks/pre-push` runs fast workspace clippy.
 
-Install hooks with:
+Install hooks once per clone:
 
 ```bash
 scripts/install-hooks.sh
 ```
 
-After each merged PR in the long-running goal workflow, run:
+Use conventional commits with meaningful scopes, for example:
+
+```text
+feat(vector): add candidate set algebra
+bench(algorithms): add graph retrieval pressure rows
+docs(workflow): refresh agent instructions
+```
+
+Use GitHub connector tools when available for PR comments, CI polling, and
+merges. If the connector does not expose a needed operation, use `gh` and request
+network escalation when sandboxing blocks it. Under the current long-goal user
+direction, merge PRs to `development` after local validation, local review, and
+green CI. Do not use trigger mentions for the cloud reviewer and do not add PR
+reactions.
+
+After every merged PR in this long-running goal workflow:
 
 ```bash
+git switch development
+git pull --ff-only
 cargo clean
 ```
 
-## Branches And PRs
-
-- `development` is the integration trunk.
-- Release PRs go from `development` to `main`.
-- Use conventional commits with a meaningful scope: `feat(vector): ...`,
-  `bench(algorithms): ...`, `docs(workflow): ...`.
-- Keep PRs focused. One behavior, benchmark slice, or docs refresh per PR.
-- Use GitHub connector tools when available for PR comments, CI polling, and
-  merges. Merge authority is governed by the current user/lead instructions, not
-  by this file.
-- Do not mention the cloud reviewer in PR bodies or comments with trigger
-  syntax. Do not add reactions.
+Delete merged feature branches locally and remotely when appropriate.
 
 ## Local Working Docs
 
 Top-level underscore directories are local-only and gitignored:
 
-- `_briefs/`, `_design/`, `_review/`, `_spec/`, `_plan/`, `_goalslogs/`
+- `_briefs/`
+- `_design/`
+- `_review/`
+- `_spec/`
+- `_plan/`
+- `_goalslogs/`
 
-Never commit them. They are working views, scratchpads, or local goal memory.
-For this long-running vector/performance goal, `_goalslogs/` is the preferred
-place to keep local research notes, PR logs, benchmark ledgers, and follow-up
-queues.
+Never commit them. `_goalslogs/` is the preferred place to keep local research
+notes, PR logs, benchmark ledgers, and follow-up queues for this long-running
+goal. Keep those notes short, dated, and tied to evidence.
 
-Tracked docs such as `AGENTS.md`, `BENCHMARKS.md`, `NOTICE`,
-`THIRDPARTY.md`, workflow files, scripts, and crate docs are normal repo
-artifacts and may be committed.
+Tracked docs such as `AGENTS.md`, `BENCHMARKS.md`, `NOTICE`, `THIRDPARTY.md`,
+workflow files, scripts, and crate docs are normal repository artifacts and may
+be committed.
 
 ## Donor Code
 
-The user owns the donor codebases below. They are reference material, not
-runtime dependencies:
+The user owns these donor codebases. They are reference material, not runtime
+dependencies:
 
 | Path | Use |
 |---|---|
 | `/Users/justin/Development/SeleneDB/` | Original prototype. Useful for vector/BM25 archaeology and cautionary examples. |
-| `/Users/justin/Development/AetherDB/` | Scope-reduction fork and prior storage/API lessons. |
+| `/Users/justin/Development/AetherDB/` | Scope-reduction fork and storage/API lessons. |
 | `/Users/justin/Development/AgentAether/aether-db/` | Library-only fork; useful for audit/funnel patterns, not extension-pack revival. |
 | `/Users/justin/Development/rusty-bacnet/` | Codec/parser donor patterns. |
 
-Archived MCP services and old donor code are not authoritative for this repo.
+Archived MCP services and donor code are not authoritative for this repository.
 Current source, tests, benchmarks, and GitHub state win.
 
 ## Recurring Footguns
 
-- Do not re-externalize vectors or describe them as out-of-tree. They are native
-  `Value` and graph-index functionality now.
+- Do not describe vectors as externalized or out-of-tree.
 - Do not revive procedure packs, manifest validation, or loadable extensions.
 - Do not add BM25/full-text as a grammar shortcut or dependency-first import.
 - Do not commit `_goalslogs` or any other `_*/` working directory.
 - Do not bypass row-id mapping. External `NodeId`/`EdgeId` are stable; internal
-  `RowIndex` is a storage position.
+  `RowIndex` is storage position.
 - Do not skip benchmark documentation for new benchmark targets.
-- Do not optimize beyond the current evidence trail; queue research when the
-  next step needs a larger design.
+- Do not leave build artifacts between merged PRs; run `cargo clean`.
+- Do not mix broad refactors into behavior PRs unless the refactor is needed to
+  make the behavior correct and testable.
