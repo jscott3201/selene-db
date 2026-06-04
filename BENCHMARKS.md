@@ -825,6 +825,21 @@ the first fixture where provenance depth and root fanout matter together:
 | `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k16/...covbp10000_curbp10000_precbp10000` | 74.23 µs (`c4`) | 615.2 µs (`c19`) | Wide two-hop scope expansion restores full quality and remains below materialized-current and topic-filter references. |
 | `graph_vector_noisy_sparse_multihop_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 114.2 µs (`c32`) | 1.214 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
 
+Adaptive provenance rows use the noisy sparse multi-hop topology and a
+benchmark-only quality oracle. The adaptive row scores provenance roots once,
+then tries k1 one-hop, k1 two-hop, k4 two-hop, k8 two-hop, and k16 two-hop
+until full quality is reached or the ladder is exhausted:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_adaptive_provenance_pressure/graph_session_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 376.3 µs (`c113`) | 4.529 ms (`c552`) | Full-quality broad session-current baseline on the adaptive run. |
+| `graph_vector_adaptive_provenance_pressure/graph_session_provenance_expand_2hop_k16/...covbp10000_curbp10000_precbp10000` | 232.5 µs (`c15`) | 2.336 ms (`c76`) | Fixed wide two-hop session reference. |
+| `graph_vector_adaptive_provenance_pressure/graph_session_provenance_adaptive_quality/...covbp10000_curbp10000_precbp10000` | 200.7 µs (`c15`) | 2.402 ms (`c76`) | Stops early at 1k, but at 10k pays the staged probes before reaching the same full-quality plan. |
+| `graph_vector_adaptive_provenance_pressure/graph_scope_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 116.8 µs (`c29`) | 1.403 ms (`c138`) | Full-quality scope-current baseline on the adaptive run. |
+| `graph_vector_adaptive_provenance_pressure/graph_scope_provenance_expand_2hop_k16/...covbp10000_curbp10000_precbp10000` | 77.61 µs (`c4`) | 802.3 µs (`c19`) | Fixed wide two-hop scope reference. |
+| `graph_vector_adaptive_provenance_pressure/graph_scope_provenance_adaptive_quality/...covbp10000_curbp10000_precbp10000` | 98.00 µs (`c4`) | 875.9 µs (`c19`) | Oracle-style staged probing is slower than fixed k16 on the scope path. |
+| `graph_vector_adaptive_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 114.8 µs (`c32`) | 1.195 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work
