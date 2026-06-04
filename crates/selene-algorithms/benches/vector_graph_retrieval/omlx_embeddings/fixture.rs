@@ -9,7 +9,7 @@ use selene_core::{
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, RowIndex, SeleneGraph, SharedGraph, VectorCandidateSet,
-    VectorIndexConfig, VectorIndexKind,
+    VectorIndexConfig, VectorIndexKind, VectorNeighborDirection, VectorNeighborSearchOptions,
 };
 
 use super::super::support::istr;
@@ -20,6 +20,7 @@ pub(super) struct OmlxVectorFixture {
     graph: SeleneGraph,
     label: selene_core::IStr,
     embedding_key: selene_core::IStr,
+    dependency_edge: selene_core::IStr,
     pub(super) dimension: usize,
     documents: Vec<DocumentMeta>,
     topics_by_node: HashMap<NodeId, Topic>,
@@ -42,9 +43,12 @@ impl OmlxVectorFixture {
             "oMLX returned consistent vector dimensions"
         );
         let label = istr("OmlxEmbeddingDoc");
+        let query_label = istr("OmlxQueryAnchor");
+        let dependency_edge = istr("OmlxDependsOn");
         let embedding_key = istr("embedding");
         let shared = SharedGraph::new(graph_id_for_model(model));
         let mut documents = Vec::new();
+        let mut query_anchors = Vec::new();
         {
             let mut txn = shared.begin_write();
             {
@@ -69,6 +73,31 @@ impl OmlxVectorFixture {
                         topic: input.topic,
                     });
                 }
+                for input in inputs.iter().filter(|input| !input.is_document) {
+                    let anchor = mutator
+                        .create_node(
+                            LabelSet::from_iter([query_label.clone()]),
+                            PropertyMap::new(),
+                        )
+                        .expect("oMLX bench query anchor inserts");
+                    for document in documents
+                        .iter()
+                        .filter(|document| document.topic == input.topic)
+                    {
+                        mutator
+                            .create_edge(
+                                dependency_edge.clone(),
+                                anchor,
+                                document.node,
+                                PropertyMap::new(),
+                            )
+                            .expect("oMLX bench query dependency edge inserts");
+                    }
+                    query_anchors.push(QueryAnchor {
+                        node: anchor,
+                        topic: input.topic,
+                    });
+                }
                 mutator
                     .create_vector_index_named_with_configs(
                         label.clone(),
@@ -82,16 +111,28 @@ impl OmlxVectorFixture {
             }
             txn.commit().expect("oMLX bench graph commits");
         }
+        let mut query_anchors = query_anchors.into_iter();
         let queries = inputs
             .iter()
             .zip(vectors)
             .filter_map(|(input, vector)| {
-                (!input.is_document).then_some(QueryVector {
-                    topic: input.topic,
-                    vector,
+                (!input.is_document).then(|| {
+                    let anchor = query_anchors
+                        .next()
+                        .expect("oMLX bench query anchor count matches queries");
+                    debug_assert_eq!(anchor.topic, input.topic);
+                    QueryVector {
+                        anchor: anchor.node,
+                        topic: input.topic,
+                        vector,
+                    }
                 })
             })
             .collect();
+        debug_assert!(
+            query_anchors.next().is_none(),
+            "oMLX bench consumed every query anchor"
+        );
         let topics_by_node = documents
             .iter()
             .map(|document| (document.node, document.topic))
@@ -100,6 +141,7 @@ impl OmlxVectorFixture {
             graph: shared.read().as_ref().clone(),
             label,
             embedding_key,
+            dependency_edge,
             dimension,
             documents,
             topics_by_node,
@@ -197,8 +239,70 @@ impl OmlxVectorFixture {
             .sum()
     }
 
+    pub(super) fn topic_neighbor_total_precision(&self) -> usize {
+        let options = self.neighbor_options(TOP_K);
+        self.queries
+            .iter()
+            .map(|query| {
+                let hits = self
+                    .graph
+                    .score_vector_neighbors_checked(
+                        &self.embedding_key,
+                        &query.vector,
+                        query.anchor,
+                        options,
+                        CancellationChecker::disabled(),
+                    )
+                    .expect("oMLX topic neighbor scoring succeeds");
+                self.precision(query.topic, hits.into_iter().map(|hit| hit.node_id))
+            })
+            .sum()
+    }
+
+    pub(super) fn topic_neighbor_batch_total_precision(&self) -> usize {
+        let queries = self
+            .queries
+            .iter()
+            .map(|query| query.vector.clone())
+            .collect::<Vec<_>>();
+        let anchors = self
+            .queries
+            .iter()
+            .map(|query| query.anchor)
+            .collect::<Vec<_>>();
+        let hits = self
+            .graph
+            .score_vector_neighbors_batch_checked(
+                &self.embedding_key,
+                &queries,
+                &anchors,
+                self.neighbor_options(TOP_K),
+                CancellationChecker::disabled(),
+            )
+            .expect("oMLX topic neighbor batch scoring succeeds");
+        self.queries
+            .iter()
+            .zip(hits)
+            .map(|(query, hits)| {
+                self.precision(query.topic, hits.into_iter().map(|hit| hit.node_id))
+            })
+            .sum()
+    }
+
     pub(super) fn topic_candidate_count(&self) -> usize {
         self.topic_candidate_set(Topic::Gql).len()
+    }
+
+    pub(super) fn topic_neighbor_count(&self) -> usize {
+        self.queries.first().map_or(0, |query| {
+            self.graph
+                .vector_neighbor_candidates(
+                    query.anchor,
+                    &self.dependency_edge,
+                    VectorNeighborDirection::Outgoing,
+                )
+                .len()
+        })
     }
 
     fn topic_candidate_set(&self, topic: Topic) -> VectorCandidateSet {
@@ -209,6 +313,15 @@ impl OmlxVectorFixture {
         VectorCandidateSet::from_nodes(
             rows.iter()
                 .filter_map(|row| self.graph.node_id_for_row(RowIndex::new(row))),
+        )
+    }
+
+    fn neighbor_options(&self, k: usize) -> VectorNeighborSearchOptions<'_> {
+        VectorNeighborSearchOptions::new(
+            &self.dependency_edge,
+            VectorNeighborDirection::Outgoing,
+            VectorMetric::Cosine,
+            k,
         )
     }
 
@@ -231,7 +344,13 @@ struct DocumentMeta {
     topic: Topic,
 }
 
+struct QueryAnchor {
+    node: NodeId,
+    topic: Topic,
+}
+
 struct QueryVector {
+    anchor: NodeId,
     topic: Topic,
     vector: VectorValue,
 }
