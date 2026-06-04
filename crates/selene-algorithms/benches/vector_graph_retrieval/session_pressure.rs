@@ -15,8 +15,10 @@ const SESSION_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::LabelPropagation,
     SessionStrategy::GraphSessionFilter,
     SessionStrategy::GraphSessionCurrentFilter,
+    SessionStrategy::GraphSessionUnsupersededFilter,
     SessionStrategy::GraphScopeFilter,
     SessionStrategy::GraphScopeCurrentFilter,
+    SessionStrategy::GraphScopeUnsupersededFilter,
     SessionStrategy::TopicFilter,
 ];
 
@@ -26,8 +28,10 @@ enum SessionStrategy {
     LabelPropagation,
     GraphSessionFilter,
     GraphSessionCurrentFilter,
+    GraphSessionUnsupersededFilter,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
+    GraphScopeUnsupersededFilter,
     TopicFilter,
 }
 
@@ -38,8 +42,10 @@ impl SessionStrategy {
             Self::LabelPropagation => "label_propagation",
             Self::GraphSessionFilter => "graph_session_filter",
             Self::GraphSessionCurrentFilter => "graph_session_current_filter",
+            Self::GraphSessionUnsupersededFilter => "graph_session_unsuperseded_filter",
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
+            Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
             Self::TopicFilter => "topic_filter",
         }
     }
@@ -130,9 +136,15 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphSessionCurrentFilter => {
                 self.current_candidates(self.graph_session_candidates(query))
             }
+            SessionStrategy::GraphSessionUnsupersededFilter => {
+                self.unsuperseded_candidates(self.graph_session_candidates(query))
+            }
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
             SessionStrategy::GraphScopeCurrentFilter => {
                 self.current_candidates(self.graph_session_scope_candidates(query))
+            }
+            SessionStrategy::GraphScopeUnsupersededFilter => {
+                self.unsuperseded_candidates(self.graph_session_scope_candidates(query))
             }
             SessionStrategy::TopicFilter => self
                 .topic_candidates
@@ -169,6 +181,21 @@ impl MemoryRetrievalFixture {
             .into_iter()
             .filter(|node_id| self.is_current(*node_id))
             .collect()
+    }
+
+    fn unsuperseded_candidates(&self, candidates: Vec<NodeId>) -> Vec<NodeId> {
+        candidates
+            .into_iter()
+            .filter(|node_id| !self.has_superseded_by_edge(*node_id))
+            .collect()
+    }
+
+    fn has_superseded_by_edge(&self, node_id: NodeId) -> bool {
+        self.graph.outgoing_edges(node_id).is_some_and(|edges| {
+            edges
+                .iter()
+                .any(|edge| edge.label == self.superseded_by_edge)
+        })
     }
 
     fn graph_session_scope_candidates(&self, query: &Query) -> Vec<NodeId> {
