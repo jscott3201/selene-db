@@ -110,6 +110,13 @@ impl MemoryRetrievalFixture {
                 .provenance_root_candidates(self.materialized_unresolved_current_candidates(
                     self.graph_session_candidates(query),
                 )),
+            SessionStrategy::GraphSessionRecentActiveFilter => {
+                self.materialized_unresolved_current_candidates(self.graph_recent_candidates(query))
+            }
+            SessionStrategy::GraphSessionDependencyActiveFilter => self
+                .materialized_unresolved_current_candidates(
+                    self.graph_dependency_candidates(query),
+                ),
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
             SessionStrategy::GraphScopeCurrentFilter => {
                 self.current_candidates(self.graph_session_scope_candidates(query))
@@ -498,6 +505,43 @@ impl MemoryRetrievalFixture {
                     );
                 }
             }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+    }
+
+    fn graph_recent_candidates(&self, query: &Query) -> Vec<NodeId> {
+        let mut candidates = Vec::new();
+        if let Some(anchor_edges) = self.graph.outgoing_edges(query.anchor) {
+            for recent_edge in anchor_edges
+                .iter()
+                .filter(|edge| edge.label == self.recent_edge)
+            {
+                if let Some(recent_members) = self.graph.incoming_edges(recent_edge.neighbor) {
+                    candidates.extend(
+                        recent_members
+                            .iter()
+                            .filter(|edge| edge.label == self.recent_edge)
+                            .map(|edge| edge.neighbor),
+                    );
+                }
+            }
+        }
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates
+    }
+
+    fn graph_dependency_candidates(&self, query: &Query) -> Vec<NodeId> {
+        let mut candidates = Vec::new();
+        if let Some(anchor_edges) = self.graph.outgoing_edges(query.anchor) {
+            candidates.extend(
+                anchor_edges
+                    .iter()
+                    .filter(|edge| edge.label == self.depends_edge)
+                    .map(|edge| edge.neighbor),
+            );
         }
         candidates.sort_unstable();
         candidates.dedup();
