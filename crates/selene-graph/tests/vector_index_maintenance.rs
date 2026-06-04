@@ -1,7 +1,9 @@
 //! Integration coverage for selective vector-index maintenance.
 
+use std::num::NonZeroUsize;
+
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorValue, intern};
-use selene_graph::{SharedGraph, VectorIndexKind};
+use selene_graph::{SharedGraph, VectorIndexKind, VectorIndexMaintenancePolicy};
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
@@ -101,4 +103,74 @@ fn rebuild_recommended_vector_indexes_selects_only_drifted_ivf_indexes() {
         .expect("second recommended rebuild succeeds");
     assert_eq!(noop.indexes_rebuilt, 0);
     assert!(noop.entries.is_empty());
+}
+
+#[test]
+fn maintain_vector_indexes_caps_rebuilds_by_drift_pressure() {
+    let shared = SharedGraph::new(GraphId::new(8_302));
+    let property = istr("embedding");
+    let high_label = istr("vector.maintenance.high");
+    let low_label = istr("vector.maintenance.low");
+    let cold_label = istr("vector.maintenance.cold");
+    for (label, offset) in [
+        (&high_label, 0.0),
+        (&low_label, 10_000.0),
+        (&cold_label, 20_000.0),
+    ] {
+        insert_vectors(&shared, label, &property, 100, offset);
+        shared
+            .create_vector_index(
+                label.clone(),
+                property.clone(),
+                VectorIndexKind::IvfSquaredEuclidean,
+                2,
+            )
+            .expect("ivf index creates");
+    }
+    insert_vectors(&shared, &high_label, &property, 200, 30_000.0);
+    insert_vectors(&shared, &low_label, &property, 100, 40_000.0);
+    insert_vectors(&shared, &cold_label, &property, 1, 50_000.0);
+
+    let one_at_a_time = VectorIndexMaintenancePolicy::recommended()
+        .with_max_indexes_per_run(NonZeroUsize::new(1).expect("one is non-zero"));
+
+    let first = shared
+        .maintain_vector_indexes(one_at_a_time)
+        .expect("first capped maintenance succeeds");
+    assert_eq!(first.indexes_rebuilt, 1);
+    assert_eq!(first.entries[0].label, high_label);
+    assert!(first.entries[0].before.ivf_rebuild_recommended());
+    assert!(!first.entries[0].after.ivf_rebuild_recommended());
+
+    let snapshot = shared.read();
+    assert!(
+        !snapshot
+            .vector_index_for(&high_label, &property)
+            .expect("high index remains registered")
+            .memory_usage()
+            .ivf_rebuild_recommended()
+    );
+    assert!(
+        snapshot
+            .vector_index_for(&low_label, &property)
+            .expect("low index remains registered")
+            .memory_usage()
+            .ivf_rebuild_recommended()
+    );
+    assert!(
+        !snapshot
+            .vector_index_for(&cold_label, &property)
+            .expect("cold index remains registered")
+            .memory_usage()
+            .ivf_rebuild_recommended()
+    );
+    drop(snapshot);
+
+    let second = shared
+        .maintain_vector_indexes(one_at_a_time)
+        .expect("second capped maintenance succeeds");
+    assert_eq!(second.indexes_rebuilt, 1);
+    assert_eq!(second.entries[0].label, low_label);
+    assert!(second.entries[0].before.ivf_rebuild_recommended());
+    assert!(!second.entries[0].after.ivf_rebuild_recommended());
 }

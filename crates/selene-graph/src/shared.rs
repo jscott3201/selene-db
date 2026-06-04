@@ -23,7 +23,9 @@ use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
 use crate::store::{EdgeStore, RowIndex};
 use crate::typed_index::TypedIndexKind;
-use crate::vector_index::{VectorIndexKind, VectorIndexRebuildReport};
+use crate::vector_index::{
+    VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
+};
 use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
@@ -380,12 +382,28 @@ impl SharedGraph {
     /// The rebuild is strict on live data for selected indexes, matching
     /// [`Self::rebuild_vector_indexes`].
     pub fn rebuild_recommended_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
+        self.maintain_vector_indexes(VectorIndexMaintenancePolicy::recommended())
+    }
+
+    /// Maintain recommended vector indexes under a caller-supplied policy.
+    ///
+    /// This is the explicit orchestration API for amortized vector-index maintenance. It rebuilds
+    /// only indexes whose diagnostics currently recommend maintenance and applies the policy cap
+    /// after ordering recommended indexes by pending IVF retrain pressure. It remains a
+    /// maintenance-tier operation: reads never trigger it, and a no-op call returns an empty report
+    /// without publishing a derived-state replacement.
+    ///
+    /// The rebuild is strict on live data for selected indexes, matching
+    /// [`Self::rebuild_vector_indexes`].
+    pub fn maintain_vector_indexes(
+        &self,
+        policy: VectorIndexMaintenancePolicy,
+    ) -> GraphResult<VectorIndexRebuildReport> {
         let committer = self.committer.handle();
         let (seal_seq, rebuilt, report) = {
             let mut guard = self.shared.write();
             let mut rebuilt = guard.as_ref().clone();
-            let report =
-                crate::vector_index::rebuild_recommended_vector_indexes_strict(&mut rebuilt)?;
+            let report = crate::vector_index::maintain_vector_indexes_strict(&mut rebuilt, policy)?;
             if report.entries.is_empty() {
                 return Ok(report);
             }

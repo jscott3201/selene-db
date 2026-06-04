@@ -6,9 +6,9 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
 
 use super::{
-    VectorIndex, VectorIndexKind, VectorIndexMap, VectorIndexMemoryUsage, VectorIndexRebuildEntry,
-    VectorIndexRebuildReport, admit, hnsw::HnswSearchScratch, index_rejection, is_null,
-    warn_rejected,
+    VectorIndex, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMap,
+    VectorIndexMemoryUsage, VectorIndexRebuildEntry, VectorIndexRebuildReport, admit,
+    hnsw::HnswSearchScratch, index_rejection, is_null, warn_rejected,
 };
 
 struct VectorIndexRegistration {
@@ -73,11 +73,16 @@ pub(crate) fn rebuild_vector_indexes_strict(
     rebuild_vector_indexes_inner(graph, BuildPolicy::Strict, RebuildSelection::All)
 }
 
-/// Strictly rebuild vector indexes whose diagnostics recommend maintenance.
-pub(crate) fn rebuild_recommended_vector_indexes_strict(
+/// Strictly maintain vector indexes under a caller-supplied policy.
+pub(crate) fn maintain_vector_indexes_strict(
     graph: &mut crate::SeleneGraph,
+    policy: VectorIndexMaintenancePolicy,
 ) -> GraphResult<VectorIndexRebuildReport> {
-    rebuild_vector_indexes_inner(graph, BuildPolicy::Strict, RebuildSelection::Recommended)
+    rebuild_vector_indexes_inner(
+        graph,
+        BuildPolicy::Strict,
+        RebuildSelection::Recommended(policy),
+    )
 }
 
 fn rebuild_vector_indexes_inner(
@@ -85,7 +90,7 @@ fn rebuild_vector_indexes_inner(
     policy: BuildPolicy,
     selection: RebuildSelection,
 ) -> GraphResult<VectorIndexRebuildReport> {
-    let registrations: Vec<VectorIndexRegistration> = graph
+    let mut registrations: Vec<VectorIndexRegistration> = graph
         .vector_index
         .iter()
         .map(|((label, property), entry)| VectorIndexRegistration {
@@ -98,15 +103,13 @@ fn rebuild_vector_indexes_inner(
             before: entry.memory_usage(),
         })
         .collect();
+    selection.filter_and_order(&mut registrations);
     let mut rebuilt = match selection {
         RebuildSelection::All => VectorIndexMap::default(),
-        RebuildSelection::Recommended => graph.vector_index.clone(),
+        RebuildSelection::Recommended(_) => graph.vector_index.clone(),
     };
     let mut entries = Vec::with_capacity(registrations.len());
     for registration in registrations {
-        if !selection.should_rebuild(&registration.before) {
-            continue;
-        }
         let index = build_vector_index_inner(
             graph,
             registration.label.clone(),
@@ -212,14 +215,35 @@ enum BuildPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RebuildSelection {
     All,
-    Recommended,
+    Recommended(VectorIndexMaintenancePolicy),
 }
 
 impl RebuildSelection {
-    fn should_rebuild(self, usage: &VectorIndexMemoryUsage) -> bool {
-        match self {
-            Self::All => true,
-            Self::Recommended => usage.ivf_rebuild_recommended(),
+    fn filter_and_order(self, registrations: &mut Vec<VectorIndexRegistration>) {
+        if let Self::Recommended(policy) = self {
+            registrations.retain(|registration| registration.before.ivf_rebuild_recommended());
+            registrations.sort_by(compare_recommended_registrations);
+            if let Some(max) = policy.max_indexes_per_run {
+                registrations.truncate(max.get());
+            }
         }
     }
+}
+
+fn compare_recommended_registrations(
+    left: &VectorIndexRegistration,
+    right: &VectorIndexRegistration,
+) -> std::cmp::Ordering {
+    right
+        .before
+        .ivf_pending_retrain_basis_points()
+        .cmp(&left.before.ivf_pending_retrain_basis_points())
+        .then_with(|| {
+            right
+                .before
+                .ivf_pending_retrain_entries
+                .cmp(&left.before.ivf_pending_retrain_entries)
+        })
+        .then_with(|| left.label.as_str().cmp(right.label.as_str()))
+        .then_with(|| left.property.as_str().cmp(right.property.as_str()))
 }

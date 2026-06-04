@@ -264,8 +264,9 @@ impl BuiltinKind {
             Self::VectorSearchNodesAnn => vector_search_ann::signature(),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::signature(),
             Self::VectorIndexStats => vector_index_stats::signature(),
-            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
-                rebuild_vector_indexes::signature()
+            Self::RebuildVectorIndexes => rebuild_vector_indexes::signature(),
+            Self::RebuildRecommendedVectorIndexes => {
+                rebuild_vector_indexes::recommended_signature()
             }
             Self::CreateIndex => create_index::signature(),
             Self::DropIndex => drop_index::signature(),

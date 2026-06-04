@@ -35,8 +35,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
 pub(crate) use build::{
     build_vector_index_lenient_with_hnsw_config, build_vector_index_with_hnsw_config,
-    rebuild_recommended_vector_indexes_strict, rebuild_vector_indexes,
-    rebuild_vector_indexes_strict,
+    maintain_vector_indexes_strict, rebuild_vector_indexes, rebuild_vector_indexes_strict,
 };
 use config::hnsw_config_for_kind;
 pub(crate) use hnsw::HnswSearchScratch;
@@ -46,7 +45,9 @@ pub use memory::{
     IVF_REBUILD_MIN_PENDING_RETRAIN_ENTRIES, IVF_REBUILD_PENDING_RETRAIN_BASIS_POINTS,
     VectorIndexMemoryUsage,
 };
-pub use rebuild::{VectorIndexRebuildEntry, VectorIndexRebuildReport};
+pub use rebuild::{
+    VectorIndexMaintenancePolicy, VectorIndexRebuildEntry, VectorIndexRebuildReport,
+};
 pub(crate) use search_hit::VectorIndexSearchHit;
 use search_hit::{hnsw_hits, ivf_hits};
 

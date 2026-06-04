@@ -1,8 +1,41 @@
 //! Vector-index rebuild reporting.
 
+use std::num::NonZeroUsize;
+
 use selene_core::{HnswIndexConfig, IStr};
 
 use super::{VectorIndexKind, VectorIndexMemoryUsage};
+
+/// Policy for explicit vector-index maintenance runs.
+///
+/// The policy only controls derived index maintenance. It never changes graph
+/// data, WAL contents, or vector-index registrations.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VectorIndexMaintenancePolicy {
+    /// Maximum recommended indexes to rebuild in one maintenance call.
+    ///
+    /// `None` rebuilds every index whose diagnostics currently recommend
+    /// maintenance. A cap lets embedders amortize IVF retraining across
+    /// foreground write-heavy periods while keeping reads free of rebuild work.
+    pub max_indexes_per_run: Option<NonZeroUsize>,
+}
+
+impl VectorIndexMaintenancePolicy {
+    /// Return the default recommended-index maintenance policy.
+    #[must_use]
+    pub const fn recommended() -> Self {
+        Self {
+            max_indexes_per_run: None,
+        }
+    }
+
+    /// Return a policy capped to at most `max_indexes_per_run` rebuilds.
+    #[must_use]
+    pub const fn with_max_indexes_per_run(mut self, max_indexes_per_run: NonZeroUsize) -> Self {
+        self.max_indexes_per_run = Some(max_indexes_per_run);
+        self
+    }
+}
 
 /// One vector-index entry rebuilt by [`VectorIndexRebuildReport`].
 #[derive(Clone, Debug, Eq, PartialEq)]

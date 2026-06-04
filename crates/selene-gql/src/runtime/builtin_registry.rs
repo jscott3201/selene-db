@@ -529,21 +529,31 @@ mod tests {
             .lookup(&name(&["selene", "rebuild_vector_indexes"]))
             .expect("rebuild_vector_indexes resolves");
         assert_rebuild_vector_indexes_metadata(&metadata);
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 0);
+        assert_eq!(arity.maximum, 0);
     }
 
     #[test]
-    fn rebuild_recommended_vector_indexes_signature_is_zero_arg_maintenance() {
+    fn rebuild_recommended_vector_indexes_signature_accepts_optional_cap() {
         let registry = BuiltinProcedureRegistry::new();
         let metadata = registry
             .lookup(&name(&["selene", "rebuild_recommended_vector_indexes"]))
             .expect("rebuild_recommended_vector_indexes resolves");
         assert_rebuild_vector_indexes_metadata(&metadata);
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 0);
+        assert_eq!(arity.maximum, 1);
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(parameters[0].name.as_str(), "max_indexes");
+        assert_eq!(parameters[0].ty, crate::GqlType::Integer);
+        assert!(parameters[0].nullable);
+        assert_eq!(parameters[0].default_doc, Some("NULL"));
+        assert!(parameters[0].default.is_some());
     }
 
     fn assert_rebuild_vector_indexes_metadata(metadata: &crate::ProcedureMetadata) {
-        let arity = metadata.signature.arity();
-        assert_eq!(arity.minimum, 0);
-        assert_eq!(arity.maximum, 0);
         assert_eq!(metadata.tier, ProcedureTier::Maintenance);
         assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
         let columns = &metadata.output_schema.columns;

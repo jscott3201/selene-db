@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::Arc};
 use selene_core::{BindingTableId, CancellationChecker};
 use selene_graph::{
     GraphResult, IndexProvider, Mutator, ProviderTag, SeleneGraph, SharedGraph,
-    VectorIndexRebuildReport,
+    VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
 };
 
 use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureTier};
@@ -190,6 +190,18 @@ impl<'a, 'g> MaintenanceContext<'a, 'g> {
     /// Returns graph errors raised by strict rebuild validation.
     pub fn rebuild_recommended_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
         self.graph.rebuild_recommended_vector_indexes()
+    }
+
+    /// Maintain recommended vector indexes under a caller-supplied policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns graph errors raised by strict rebuild validation.
+    pub fn maintain_vector_indexes(
+        &self,
+        policy: VectorIndexMaintenancePolicy,
+    ) -> GraphResult<VectorIndexRebuildReport> {
+        self.graph.maintain_vector_indexes(policy)
     }
 
     /// Register a binding table for this procedure call's statement.
