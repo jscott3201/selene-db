@@ -85,7 +85,9 @@ impl IvfVectorIndex {
 
     /// Insert or replace the current vector for a graph row.
     pub(crate) fn insert(&mut self, row: u32, vector: VectorValue) -> CoreResult<()> {
-        self.remove(row);
+        if let Some(entry_id) = self.row_to_entry.get(&row).copied() {
+            return self.replace_entry(entry_id, vector);
+        }
         let entry_id = u32::try_from(self.entries.len()).expect("node rows cap IVF entries at u32");
         self.entries.push(IvfEntry {
             row,
@@ -279,12 +281,61 @@ impl IvfVectorIndex {
     }
 
     fn assign_entry(&mut self, entry_id: u32) -> CoreResult<()> {
-        if self.centroids.is_empty() || self.lists.is_empty() {
-            return Ok(());
+        if let Some(list) = self.nearest_centroid_for_current_entry(entry_id)? {
+            self.lists[list].push(entry_id);
         }
-        let list = self.nearest_centroid_for_entry(entry_id)?;
-        self.lists[list].push(entry_id);
         Ok(())
+    }
+
+    fn replace_entry(&mut self, entry_id: u32, vector: VectorValue) -> CoreResult<()> {
+        let old_list = self.nearest_centroid_for_current_entry(entry_id)?;
+        let new_list = self.nearest_centroid_for_vector(&vector)?;
+        if let Some(old_list) = old_list {
+            self.remove_entry_from_list(entry_id, old_list);
+        }
+        let entry = &mut self.entries[entry_id as usize];
+        entry.vector = vector;
+        entry.deleted = false;
+        self.record_entry_squared_norm(entry_id as usize);
+        if let Some(new_list) = new_list {
+            self.lists[new_list].push(entry_id);
+        }
+        Ok(())
+    }
+
+    fn nearest_centroid_for_current_entry(&self, entry_id: u32) -> CoreResult<Option<usize>> {
+        if self.centroids.is_empty() || self.lists.is_empty() {
+            return Ok(None);
+        }
+        self.nearest_centroid_for_entry(entry_id).map(Some)
+    }
+
+    fn nearest_centroid_for_vector(&self, vector: &VectorValue) -> CoreResult<Option<usize>> {
+        if self.centroids.is_empty() || self.lists.is_empty() {
+            return Ok(None);
+        }
+        let scorer = if self.metric == VectorMetric::Cosine {
+            self.metric
+                .bind_query_with_squared_norm(vector, vector_squared_norm(vector))?
+        } else {
+            self.metric.bind_query(vector)?
+        };
+        self.nearest_centroid(scorer).map(Some)
+    }
+
+    fn remove_entry_from_list(&mut self, entry_id: u32, list_id: usize) {
+        if self
+            .lists
+            .get_mut(list_id)
+            .is_some_and(|list| remove_entry_id(list, entry_id))
+        {
+            return;
+        }
+        for list in &mut self.lists {
+            if remove_entry_id(list, entry_id) {
+                return;
+            }
+        }
     }
 
     fn has_stale_entries(&self) -> bool {
@@ -541,6 +592,14 @@ fn average_list_len_basis_points(assigned_entries: usize, list_count: usize) -> 
         .saturating_mul(10_000)
         .checked_div(list_count)
         .unwrap_or_default()
+}
+
+fn remove_entry_id(list: &mut Vec<u32>, entry_id: u32) -> bool {
+    let Some(offset) = list.iter().position(|id| *id == entry_id) else {
+        return false;
+    };
+    list.swap_remove(offset);
+    true
 }
 
 fn vector_hits(top_k: VectorTopK<u32>) -> Vec<IvfVectorHit> {

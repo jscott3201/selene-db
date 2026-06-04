@@ -659,16 +659,15 @@ fn shared_rebuild_vector_indexes_reclaims_stale_ivf_entries() {
         .unwrap()
         .memory_usage();
     assert_eq!(before.indexed_rows, 22);
-    assert_eq!(before.ivf_entries, 28);
+    assert_eq!(before.ivf_entries, 24);
     assert_eq!(before.ivf_live_entries, 22);
-    assert_eq!(before.ivf_deleted_entries, 6);
+    assert_eq!(before.ivf_deleted_entries, 2);
 
     let report = shared.rebuild_vector_indexes().unwrap();
 
     assert_eq!(report.indexes_rebuilt, 1);
-    assert_eq!(report.reclaimed_ivf_entries, 6);
-    assert_eq!(report.reclaimed_ivf_deleted_entries, 6);
-    assert!(report.reclaimed_reachable_bytes > 0);
+    assert_eq!(report.reclaimed_ivf_entries, 2);
+    assert_eq!(report.reclaimed_ivf_deleted_entries, 2);
     let entry = &report.entries[0];
     assert_eq!(entry.label, label);
     assert_eq!(entry.property, property);

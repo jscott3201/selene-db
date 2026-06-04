@@ -448,11 +448,27 @@ pub(crate) fn apply_node_update(
 ) -> GraphResult<()> {
     let candidates = candidate_keys(indexes, old_labels, old_props, new_labels, new_props);
     for (label, property) in candidates {
-        if let Some(value) = indexable_value(old_labels, old_props, &label, &property) {
-            remove_commit(indexes, label.clone(), property.clone(), value, row)?;
-        }
-        if let Some(value) = indexable_value(new_labels, new_props, &label, &property) {
-            insert_commit(indexes, label.clone(), property.clone(), value, row)?;
+        match (
+            indexable_value(old_labels, old_props, &label, &property),
+            indexable_value(new_labels, new_props, &label, &property),
+        ) {
+            (Some(old_value), Some(new_value)) => {
+                replace_commit(
+                    indexes,
+                    label.clone(),
+                    property.clone(),
+                    old_value,
+                    new_value,
+                    row,
+                )?;
+            }
+            (Some(value), None) => {
+                remove_commit(indexes, label.clone(), property.clone(), value, row)?;
+            }
+            (None, Some(value)) => {
+                insert_commit(indexes, label.clone(), property.clone(), value, row)?;
+            }
+            (None, None) => {}
         }
     }
     Ok(())
@@ -526,6 +542,25 @@ fn remove_commit(
         admit(value, entry.kind(), entry.dimension())
             .map_err(|err| index_rejection(label, property, entry.dimension(), err))?;
         std::sync::Arc::make_mut(&mut entry.index).remove_row(row);
+    }
+    Ok(())
+}
+
+fn replace_commit(
+    indexes: &mut VectorIndexMap,
+    label: IStr,
+    property: IStr,
+    old_value: &Value,
+    new_value: &Value,
+    row: u32,
+) -> GraphResult<()> {
+    if let Some(entry) = indexes.get_mut(&(label.clone(), property.clone())) {
+        admit(old_value, entry.kind(), entry.dimension()).map_err(|err| {
+            index_rejection(label.clone(), property.clone(), entry.dimension(), err)
+        })?;
+        let vector = admit(new_value, entry.kind(), entry.dimension())
+            .map_err(|err| index_rejection(label, property, entry.dimension(), err))?;
+        std::sync::Arc::make_mut(&mut entry.index).insert_value(row, vector)?;
     }
     Ok(())
 }
