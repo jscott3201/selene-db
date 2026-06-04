@@ -18,6 +18,7 @@ const BASE_URL_ENV: &str = "SELENE_OMLX_BASE_URL";
 const MODELS_ENV: &str = "SELENE_OMLX_EMBEDDING_MODELS";
 const CORPUS_ENV: &str = "SELENE_OMLX_CORPUS";
 const BATCH_SIZE_ENV: &str = "SELENE_OMLX_EMBEDDING_BATCH_SIZE";
+const GRAPH_HINT_DOCS_PER_TOPIC_ENV: &str = "SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC";
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:7700/v1";
 const DEFAULT_MODELS: &[&str] = &[
     "Qwen3-Embedding-0.6B-4bit-DWQ",
@@ -26,6 +27,7 @@ const DEFAULT_MODELS: &[&str] = &[
 const DEFAULT_EMBEDDING_BATCH_SIZE: usize = 64;
 const TOP_K: usize = 4;
 const ANN_SEARCH_WIDTH: usize = 64;
+const ANN_UNION_SEED_K: usize = 8;
 
 pub(super) fn bench(c: &mut Criterion) {
     let Some(config) = OmlxBenchConfig::from_env() else {
@@ -39,7 +41,8 @@ pub(super) fn bench(c: &mut Criterion) {
         let vectors = client
             .embed(&model, &inputs)
             .expect("local oMLX embedding request succeeds");
-        let fixture = OmlxVectorFixture::build(&model, &inputs, vectors);
+        let fixture =
+            OmlxVectorFixture::build(&model, &inputs, vectors, config.graph_hint_docs_per_topic);
         let topic_precision = precision_basis_points(
             fixture.topic_candidate_total_precision(),
             fixture.query_count() * TOP_K,
@@ -50,6 +53,14 @@ pub(super) fn bench(c: &mut Criterion) {
         );
         let neighbor_batch_precision = precision_basis_points(
             fixture.topic_neighbor_batch_total_precision(),
+            fixture.query_count() * TOP_K,
+        );
+        let label_ann_union_precision = precision_basis_points(
+            fixture.topic_label_ann_union_total_precision(),
+            fixture.query_count() * TOP_K,
+        );
+        let neighbor_ann_union_precision = precision_basis_points(
+            fixture.topic_neighbor_ann_union_total_precision(),
             fixture.query_count() * TOP_K,
         );
         group.throughput(Throughput::Elements(inputs.len() as u64));
@@ -164,6 +175,44 @@ pub(super) fn bench(c: &mut Criterion) {
                 b.iter(|| black_box(fixture.topic_neighbor_batch_total_precision()));
             },
         );
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_label_ann_union_score",
+                format!(
+                    "{}_{}_precbp{}_q{}_k{}_c{}_ann{}_dim{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    label_ann_union_precision,
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.topic_label_ann_union_count(),
+                    ANN_UNION_SEED_K,
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.topic_label_ann_union_total_precision()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_neighbor_ann_union_score",
+                format!(
+                    "{}_{}_precbp{}_q{}_k{}_c{}_ann{}_dim{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    neighbor_ann_union_precision,
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.topic_neighbor_ann_union_count(),
+                    ANN_UNION_SEED_K,
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.topic_neighbor_ann_union_total_precision()));
+            },
+        );
     }
     group.finish();
 }
@@ -174,6 +223,7 @@ struct OmlxBenchConfig {
     models: Vec<String>,
     corpus: CorpusProfile,
     batch_size: usize,
+    graph_hint_docs_per_topic: Option<usize>,
 }
 
 impl OmlxBenchConfig {
@@ -208,6 +258,7 @@ impl OmlxBenchConfig {
             models,
             corpus: CorpusProfile::from_env(CORPUS_ENV),
             batch_size: embedding_batch_size(),
+            graph_hint_docs_per_topic: graph_hint_docs_per_topic(),
         })
     }
 }
@@ -226,6 +277,16 @@ fn embedding_batch_size() -> usize {
             batch_size
         })
         .unwrap_or(DEFAULT_EMBEDDING_BATCH_SIZE)
+}
+
+fn graph_hint_docs_per_topic() -> Option<usize> {
+    std::env::var(GRAPH_HINT_DOCS_PER_TOPIC_ENV)
+        .ok()
+        .filter(|raw| !raw.is_empty())
+        .map(|raw| {
+            raw.parse::<usize>()
+                .expect("SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC must be a non-negative integer")
+        })
 }
 
 fn model_id(model: &str) -> String {

@@ -35,7 +35,7 @@ impl CorpusProfile {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum Topic {
     Gql,
     Vector,
