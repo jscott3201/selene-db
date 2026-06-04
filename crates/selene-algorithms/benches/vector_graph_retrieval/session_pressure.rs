@@ -14,7 +14,9 @@ const SESSION_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::NoisyWcc,
     SessionStrategy::LabelPropagation,
     SessionStrategy::GraphSessionFilter,
+    SessionStrategy::GraphSessionCurrentFilter,
     SessionStrategy::GraphScopeFilter,
+    SessionStrategy::GraphScopeCurrentFilter,
     SessionStrategy::TopicFilter,
 ];
 
@@ -23,7 +25,9 @@ enum SessionStrategy {
     NoisyWcc,
     LabelPropagation,
     GraphSessionFilter,
+    GraphSessionCurrentFilter,
     GraphScopeFilter,
+    GraphScopeCurrentFilter,
     TopicFilter,
 }
 
@@ -33,7 +37,9 @@ impl SessionStrategy {
             Self::NoisyWcc => "noisy_wcc",
             Self::LabelPropagation => "label_propagation",
             Self::GraphSessionFilter => "graph_session_filter",
+            Self::GraphSessionCurrentFilter => "graph_session_current_filter",
             Self::GraphScopeFilter => "graph_scope_filter",
+            Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::TopicFilter => "topic_filter",
         }
     }
@@ -121,7 +127,13 @@ impl MemoryRetrievalFixture {
                 .cloned()
                 .unwrap_or_default(),
             SessionStrategy::GraphSessionFilter => self.graph_session_candidates(query),
+            SessionStrategy::GraphSessionCurrentFilter => {
+                self.current_candidates(self.graph_session_candidates(query))
+            }
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
+            SessionStrategy::GraphScopeCurrentFilter => {
+                self.current_candidates(self.graph_session_scope_candidates(query))
+            }
             SessionStrategy::TopicFilter => self
                 .topic_candidates
                 .get(query.topic)
@@ -150,6 +162,13 @@ impl MemoryRetrievalFixture {
         candidates.sort_unstable();
         candidates.dedup();
         candidates
+    }
+
+    fn current_candidates(&self, candidates: Vec<NodeId>) -> Vec<NodeId> {
+        candidates
+            .into_iter()
+            .filter(|node_id| self.is_current(*node_id))
+            .collect()
     }
 
     fn graph_session_scope_candidates(&self, query: &Query) -> Vec<NodeId> {
