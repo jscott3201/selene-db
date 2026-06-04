@@ -38,6 +38,7 @@ const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::PagerankPrior,
     RetrievalStrategy::GraphExpand,
     RetrievalStrategy::GraphExpandValid,
+    RetrievalStrategy::GraphExpandSuperseded,
     RetrievalStrategy::GraphExpandPagerank,
     RetrievalStrategy::ExactGraphOracle,
 ];
@@ -48,6 +49,7 @@ enum RetrievalStrategy {
     PagerankPrior,
     GraphExpand,
     GraphExpandValid,
+    GraphExpandSuperseded,
     GraphExpandPagerank,
     ExactGraphOracle,
 }
@@ -59,6 +61,7 @@ impl RetrievalStrategy {
             Self::PagerankPrior => "pagerank_prior",
             Self::GraphExpand => "graph_expand",
             Self::GraphExpandValid => "graph_expand_valid",
+            Self::GraphExpandSuperseded => "graph_expand_superseded",
             Self::GraphExpandPagerank => "graph_expand_pagerank",
             Self::ExactGraphOracle => "exact_graph_oracle",
         }
@@ -107,6 +110,7 @@ struct MemoryRetrievalFixture {
     embedding_key: IStr,
     support_edge: IStr,
     valid_edge: IStr,
+    superseded_by_edge: IStr,
     queries: Vec<Query>,
     metadata: HashMap<NodeId, NodeMeta>,
     pagerank: HashMap<NodeId, f64>,
@@ -118,6 +122,7 @@ impl MemoryRetrievalFixture {
         let embedding_key = istr("embedding");
         let support_edge = istr("SUPPORTS");
         let valid_edge = istr("VALID_AT");
+        let superseded_by_edge = istr("SUPERSEDED_BY");
         let topic_count = topic_count(requested_scale);
         let duplicates = duplicates_per_fact(requested_scale, topic_count);
         let shared = SharedGraph::new(GraphId::new(91_000 + requested_scale as u64));
@@ -173,6 +178,16 @@ impl MemoryRetrievalFixture {
                                         PropertyMap::new(),
                                     )
                                     .expect("bench valid edge inserts");
+                            } else {
+                                let replacement = current_replacement(evidence_nodes, duplicate);
+                                mutator
+                                    .create_edge(
+                                        superseded_by_edge.clone(),
+                                        evidence,
+                                        replacement,
+                                        PropertyMap::new(),
+                                    )
+                                    .expect("bench supersession edge inserts");
                             }
                         }
                     }
@@ -206,6 +221,7 @@ impl MemoryRetrievalFixture {
             embedding_key,
             support_edge,
             valid_edge,
+            superseded_by_edge,
             queries,
             metadata,
             pagerank,
@@ -290,6 +306,16 @@ impl MemoryRetrievalFixture {
                     true,
                 )
             }
+            RetrievalStrategy::GraphExpandSuperseded => {
+                let hits = self.ann_hits(query, SEED_K);
+                self.select_from_candidates(
+                    query,
+                    self.expand_with_supersession(query, hits),
+                    true,
+                    false,
+                    true,
+                )
+            }
             RetrievalStrategy::GraphExpandPagerank => {
                 let hits = self.ann_hits(query, SEED_K);
                 self.select_from_candidates(
@@ -361,11 +387,43 @@ impl MemoryRetrievalFixture {
         candidates.into_values().collect()
     }
 
+    fn expand_with_supersession(
+        &self,
+        query: &Query,
+        hits: Vec<VectorNodeSearchHit>,
+    ) -> Vec<VectorNodeSearchHit> {
+        let mut candidates = HashMap::new();
+        for hit in hits {
+            let node_id = hit.node_id;
+            candidates.insert(node_id, hit);
+            if let Some(edges) = self.graph.outgoing_edges(node_id) {
+                for edge in edges.iter().filter(|edge| edge.label == self.support_edge) {
+                    let neighbor = self
+                        .superseded_replacement(edge.neighbor)
+                        .unwrap_or(edge.neighbor);
+                    candidates
+                        .entry(neighbor)
+                        .or_insert_with(|| self.exact_hit(neighbor, query));
+                }
+            }
+        }
+        candidates.into_values().collect()
+    }
+
     fn has_valid_edge(&self, source: NodeId, target: NodeId) -> bool {
         self.graph.outgoing_edges(source).is_some_and(|edges| {
             edges
                 .iter()
                 .any(|edge| edge.label == self.valid_edge && edge.neighbor == target)
+        })
+    }
+
+    fn superseded_replacement(&self, node_id: NodeId) -> Option<NodeId> {
+        self.graph.outgoing_edges(node_id).and_then(|edges| {
+            edges
+                .iter()
+                .find(|edge| edge.label == self.superseded_by_edge)
+                .map(|edge| edge.neighbor)
         })
     }
 
@@ -501,6 +559,15 @@ fn topic_count(scale: usize) -> usize {
 
 fn duplicates_per_fact(scale: usize, topics: usize) -> usize {
     (scale / (topics * FACTS_PER_TOPIC)).max(2)
+}
+
+fn current_replacement(nodes: &[NodeId], duplicate: usize) -> NodeId {
+    let replacement = if duplicate.is_multiple_of(2) {
+        duplicate
+    } else {
+        duplicate.saturating_sub(1)
+    };
+    nodes[replacement]
 }
 
 fn vector_scales() -> Vec<usize> {
