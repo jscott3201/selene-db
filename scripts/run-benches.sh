@@ -291,7 +291,10 @@ resolve_args() {
   RESOLVED=(bench -p "$crate" --bench "$bench")
   [ "$harness" = "1" ] && RESOLVED+=(--features test-harness)
   [ "$no_run" = "1" ] && RESOLVED+=(--no-run)
-  local tail=("${CRIT_ARGS[@]}")
+  local tail=()
+  if [ "${#CRIT_ARGS[@]}" -gt 0 ]; then
+    tail=("${CRIT_ARGS[@]}")
+  fi
   [ -n "$filt" ] && tail+=("$filt")
   if [ "$no_run" != "1" ] && [ "${#tail[@]}" -gt 0 ]; then
     RESOLVED+=(-- "${tail[@]}")

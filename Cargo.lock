@@ -1669,6 +1669,7 @@ dependencies = [
  "selene-core",
  "selene-graph",
  "selene-testing",
+ "serde_json",
  "smallvec",
  "thiserror",
 ]
