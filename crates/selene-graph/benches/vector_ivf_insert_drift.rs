@@ -21,43 +21,46 @@ use selene_testing::BenchProfile;
 const DIMENSION: usize = 128;
 const K: usize = 10;
 const QUERY_COUNT: usize = 16;
-const INSERT_DIVISOR: usize = 10;
+const BASIS_POINTS_DENOMINATOR: usize = 10_000;
+const DEFAULT_DRIFT_BASIS_POINTS: &[usize] = &[1_000];
 const SEARCH_WIDTHS: &[usize] = &[2, 64];
 const DISTANCE_TIE_EPSILON: f64 = 1e-9;
 
 fn bench_ivf_insert_drift(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_ivf_insert_drift");
     for scale in vector_scales() {
-        for &width in SEARCH_WIDTHS {
-            for mode in [DriftMode::Incremental, DriftMode::Rebuilt] {
-                let fixture = IvfInsertDriftFixture::build(scale, mode);
-                let usage = fixture.memory_usage();
-                let recall = recall_basis_points(fixture.mean_recall(width));
-                let quality = recall_basis_points(fixture.mean_distance_quality(width));
-                group.throughput(Throughput::Elements(estimated_candidates_per_batch(
-                    usage,
-                    width,
-                    fixture.query_count(),
-                ) as u64));
-                group.bench_function(
-                    BenchmarkId::new(
-                        format!("ivf_cos_dim{DIMENSION}_w{width}"),
-                        format!(
-                            "{}_n{}_i{}_idbp{}_dqbp{}_{}",
-                            mode.name(),
-                            compact_usize(fixture.scale()),
-                            compact_usize(fixture.insert_count()),
-                            recall,
-                            quality,
-                            pressure_suffix(usage, width)
+        for drift_basis_points in drift_basis_points() {
+            for &width in SEARCH_WIDTHS {
+                for mode in [DriftMode::Incremental, DriftMode::Rebuilt] {
+                    let fixture = IvfInsertDriftFixture::build(scale, mode, drift_basis_points);
+                    let usage = fixture.memory_usage();
+                    let recall = recall_basis_points(fixture.mean_recall(width));
+                    let quality = recall_basis_points(fixture.mean_distance_quality(width));
+                    group.throughput(Throughput::Elements(estimated_candidates_per_batch(
+                        usage,
+                        width,
+                        fixture.query_count(),
+                    ) as u64));
+                    group.bench_function(
+                        BenchmarkId::new(
+                            format!("ivf_cos_dim{DIMENSION}_w{width}_d{drift_basis_points}bp"),
+                            format!(
+                                "{}_n{}_i{}_idbp{}_dqbp{}_{}",
+                                mode.name(),
+                                compact_usize(fixture.scale()),
+                                compact_usize(fixture.insert_count()),
+                                recall,
+                                quality,
+                                pressure_suffix(usage, width)
+                            ),
                         ),
-                    ),
-                    |b| {
-                        b.iter(|| {
-                            std::hint::black_box(fixture.total_overlap(width));
-                        });
-                    },
-                );
+                        |b| {
+                            b.iter(|| {
+                                std::hint::black_box(fixture.total_overlap(width));
+                            });
+                        },
+                    );
+                }
             }
         }
     }
@@ -90,12 +93,16 @@ struct IvfInsertDriftFixture {
 }
 
 impl IvfInsertDriftFixture {
-    fn build(scale: usize, mode: DriftMode) -> Self {
-        let scale = scale.max(10);
-        let insert_count = (scale / INSERT_DIVISOR).max(1);
+    fn build(scale: usize, mode: DriftMode, drift_basis_points: usize) -> Self {
+        let scale = scale.max(1);
+        let insert_count = drift_insert_count(scale, drift_basis_points);
         let label = intern("VectorIvfInsertDriftDoc").expect("bench label is valid");
         let embedding_key = intern("embedding").expect("bench key is valid");
-        let shared = SharedGraph::new(GraphId::new(80_000_000 + scale as u64));
+        let graph_id = 80_000_000u64
+            .saturating_add(scale as u64)
+            .saturating_mul(BASIS_POINTS_DENOMINATOR as u64)
+            .saturating_add(drift_basis_points as u64);
+        let shared = SharedGraph::new(GraphId::new(graph_id));
         seed_base_index(&shared, &label, &embedding_key, scale);
         insert_novel_cluster(&shared, &label, &embedding_key, scale, insert_count);
         if matches!(mode, DriftMode::Rebuilt) {
@@ -305,7 +312,7 @@ fn distance_quality_count(
 
 fn pressure_suffix(usage: VectorIndexMemoryUsage, width: usize) -> String {
     format!(
-        "lists{}ne{}max{}avg{}avgq{}maxq{}assn{}m{}-{}",
+        "lists{}ne{}max{}avg{}avgq{}maxq{}assn{}pend{}pdbp{}m{}-{}",
         compact_usize(usage.ivf_list_count),
         compact_usize(usage.ivf_non_empty_list_count),
         compact_usize(usage.ivf_max_list_len),
@@ -313,6 +320,8 @@ fn pressure_suffix(usage: VectorIndexMemoryUsage, width: usize) -> String {
         compact_usize(estimated_candidates_per_query(usage, width)),
         compact_usize(worst_case_candidates_per_query(usage, width)),
         compact_usize(usage.ivf_assigned_entries),
+        compact_usize(usage.ivf_pending_retrain_entries),
+        compact_usize(pending_retrain_basis_points(usage)),
         usage.estimated_index_bytes / 1024,
         usage.estimated_reachable_bytes / 1024,
     )
@@ -349,22 +358,44 @@ fn average_list_len(usage: VectorIndexMemoryUsage) -> usize {
         / 10_000
 }
 
+fn pending_retrain_basis_points(usage: VectorIndexMemoryUsage) -> usize {
+    usage
+        .ivf_pending_retrain_entries
+        .saturating_mul(BASIS_POINTS_DENOMINATOR)
+        .checked_div(usage.ivf_live_entries)
+        .unwrap_or_default()
+}
+
+fn drift_insert_count(scale: usize, drift_basis_points: usize) -> usize {
+    scale
+        .saturating_mul(drift_basis_points)
+        .saturating_add(BASIS_POINTS_DENOMINATOR - 1)
+        / BASIS_POINTS_DENOMINATOR
+}
+
 fn vector_scales() -> Vec<usize> {
     std::env::var("SELENE_VECTOR_BENCH_SCALES")
         .ok()
-        .and_then(parse_scales)
+        .and_then(|raw| parse_positive_usize_list(raw, usize::MAX))
         .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
 }
 
-fn parse_scales(raw: String) -> Option<Vec<usize>> {
-    let mut scales: Vec<_> = raw
+fn drift_basis_points() -> Vec<usize> {
+    std::env::var("SELENE_VECTOR_IVF_INSERT_DRIFT_BPS")
+        .ok()
+        .and_then(|raw| parse_positive_usize_list(raw, BASIS_POINTS_DENOMINATOR))
+        .unwrap_or_else(|| DEFAULT_DRIFT_BASIS_POINTS.to_vec())
+}
+
+fn parse_positive_usize_list(raw: String, max_value: usize) -> Option<Vec<usize>> {
+    let mut values: Vec<_> = raw
         .split(',')
         .filter_map(|part| part.trim().parse::<usize>().ok())
-        .filter(|scale| *scale > 0)
+        .filter(|value| (1..=max_value).contains(value))
         .collect();
-    scales.sort_unstable();
-    scales.dedup();
-    (!scales.is_empty()).then_some(scales)
+    values.sort_unstable();
+    values.dedup();
+    (!values.is_empty()).then_some(values)
 }
 
 fn recall_basis_points(recall: f64) -> u64 {
