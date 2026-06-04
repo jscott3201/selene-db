@@ -21,6 +21,7 @@
 #   run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 #   run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 #   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
+#   run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 #   run-benches.sh --bench vector_index_rebuild --allocator system    # allocator A/B
 #   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
 #
@@ -59,6 +60,7 @@ selene-graph|vector_index_rebuild|0
 selene-graph|vector_pq|0
 selene-graph|vector_ivf_pq|0
 selene-graph|vector_ivf_pressure|0
+selene-graph|vector_ivf_insert_drift|0
 selene-graph|vector_mixed_workload|0
 selene-graph|bulk_mutation|0
 selene-graph|concurrent_read|0
