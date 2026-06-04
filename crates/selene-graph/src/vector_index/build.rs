@@ -1,12 +1,12 @@
 //! Vector-index build and rebuild helpers.
 
-use selene_core::{HnswIndexConfig, IStr};
+use selene_core::IStr;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
 
 use super::{
-    VectorIndex, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMap,
+    VectorIndex, VectorIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMap,
     VectorIndexMemoryUsage, VectorIndexRebuildEntry, VectorIndexRebuildReport, admit,
     hnsw::HnswSearchScratch, index_rejection, is_null, warn_rejected,
 };
@@ -16,19 +16,19 @@ struct VectorIndexRegistration {
     property: IStr,
     kind: VectorIndexKind,
     dimension: u32,
-    hnsw_config: Option<HnswIndexConfig>,
+    config: VectorIndexConfig,
     name: Option<IStr>,
     before: VectorIndexMemoryUsage,
 }
 
-/// Build a vector index strictly with optional HNSW construction config.
-pub(crate) fn build_vector_index_with_hnsw_config(
+/// Build a vector index strictly with optional ANN construction config.
+pub(crate) fn build_vector_index_with_configs(
     graph: &crate::SeleneGraph,
     label: IStr,
     property: IStr,
     kind: VectorIndexKind,
     dimension: u32,
-    hnsw_config: Option<HnswIndexConfig>,
+    config: VectorIndexConfig,
 ) -> GraphResult<VectorIndex> {
     build_vector_index_inner(
         graph,
@@ -36,19 +36,19 @@ pub(crate) fn build_vector_index_with_hnsw_config(
         property,
         kind,
         dimension,
-        hnsw_config,
+        config,
         BuildPolicy::Strict,
     )
 }
 
-/// Build a vector index leniently with optional HNSW construction config.
-pub(crate) fn build_vector_index_lenient_with_hnsw_config(
+/// Build a vector index leniently with optional ANN construction config.
+pub(crate) fn build_vector_index_lenient_with_configs(
     graph: &crate::SeleneGraph,
     label: IStr,
     property: IStr,
     kind: VectorIndexKind,
     dimension: u32,
-    hnsw_config: Option<HnswIndexConfig>,
+    config: VectorIndexConfig,
 ) -> GraphResult<VectorIndex> {
     build_vector_index_inner(
         graph,
@@ -56,7 +56,7 @@ pub(crate) fn build_vector_index_lenient_with_hnsw_config(
         property,
         kind,
         dimension,
-        hnsw_config,
+        config,
         BuildPolicy::Lenient,
     )
 }
@@ -98,7 +98,7 @@ fn rebuild_vector_indexes_inner(
             property: property.clone(),
             kind: entry.kind(),
             dimension: entry.dimension(),
-            hnsw_config: entry.hnsw_config(),
+            config: VectorIndexConfig::new(entry.hnsw_config(), entry.ivf_config()),
             name: entry.name.clone(),
             before: entry.memory_usage(),
         })
@@ -116,7 +116,7 @@ fn rebuild_vector_indexes_inner(
             registration.property.clone(),
             registration.kind,
             registration.dimension,
-            registration.hnsw_config,
+            registration.config,
             policy,
         )?;
         let after = index.memory_usage();
@@ -128,7 +128,8 @@ fn rebuild_vector_indexes_inner(
             name: registration.name,
             kind: registration.kind,
             dimension: registration.dimension,
-            hnsw_config: registration.hnsw_config,
+            hnsw_config: registration.config.hnsw,
+            ivf_config: registration.config.ivf,
             before: registration.before,
             after,
         });
@@ -143,10 +144,10 @@ fn build_vector_index_inner(
     property: IStr,
     kind: VectorIndexKind,
     dimension: u32,
-    hnsw_config: Option<HnswIndexConfig>,
+    config: VectorIndexConfig,
     policy: BuildPolicy,
 ) -> GraphResult<VectorIndex> {
-    let mut index = VectorIndex::new_with_hnsw_config(kind, dimension, hnsw_config)?;
+    let mut index = VectorIndex::new_with_configs(kind, dimension, config.hnsw, config.ivf)?;
     let mut hnsw_scratch = HnswSearchScratch::default();
     for row_index in 0..graph.node_store.labels.len() {
         let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {

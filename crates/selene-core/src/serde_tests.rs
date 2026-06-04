@@ -341,6 +341,7 @@ fn schema_change_postcard_round_trip() {
             dimension: 3,
             name: Some(istr("serde.schema.vector.index.name")),
             hnsw_config: None,
+            ivf_config: None,
         },
         SchemaChange::VectorIndexCreated {
             label: node_label.clone(),
@@ -349,6 +350,16 @@ fn schema_change_postcard_round_trip() {
             dimension: 3,
             name: Some(istr("serde.schema.vector.hnsw.index.name")),
             hnsw_config: Some(crate::HnswIndexConfig::new(24, 128)),
+            ivf_config: None,
+        },
+        SchemaChange::VectorIndexCreated {
+            label: node_label.clone(),
+            property: istr("serde.schema.ivf.embedding"),
+            kind: SchemaVectorIndexKind::IvfCosine,
+            dimension: 3,
+            name: Some(istr("serde.schema.vector.ivf.index.name")),
+            hnsw_config: None,
+            ivf_config: Some(crate::IvfIndexConfig::new(128)),
         },
         SchemaChange::VectorIndexDropped {
             label: node_label.clone(),

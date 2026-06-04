@@ -157,6 +157,16 @@ pub enum GraphError {
         reason: &'static str,
     },
 
+    /// A vector index was declared with invalid IVF construction parameters.
+    #[error("invalid IVF vector index config target_centroids={target_centroids}: {reason}")]
+    #[diagnostic(code(SLENE_G_025))]
+    VectorIndexInvalidIvfConfig {
+        /// Declared IVF target centroid count.
+        target_centroids: u16,
+        /// Reason the configuration is rejected.
+        reason: &'static str,
+    },
+
     /// A value cannot be admitted to a vector index.
     #[error(
         "vector index ({label}, {property}) expected VECTOR<{expected_dimension}> but observed {observed}"
@@ -228,6 +238,7 @@ impl GraphError {
             | Self::VectorIndexAlreadyExists { .. }
             | Self::VectorIndexInvalidDimension { .. }
             | Self::VectorIndexInvalidHnswConfig { .. }
+            | Self::VectorIndexInvalidIvfConfig { .. }
             | Self::VectorIndexValueRejected { .. } => "22G03",
             Self::TypeViolation(_) => "G2000",
             Self::Core(source) => source.gqlstatus(),
@@ -295,6 +306,13 @@ mod tests {
             max_neighbors: 24,
             ef_construction: 8,
             reason: "ef_construction must be at least max_neighbors",
+        },
+        "22G03"
+    )]
+    #[case(
+        GraphError::VectorIndexInvalidIvfConfig {
+            target_centroids: 0,
+            reason: "target_centroids must be greater than zero",
         },
         "22G03"
     )]
@@ -403,6 +421,10 @@ mod tests {
                 max_neighbors: 24,
                 ef_construction: 8,
                 reason: "ef_construction must be at least max_neighbors",
+            },
+            GraphError::VectorIndexInvalidIvfConfig {
+                target_centroids: 0,
+                reason: "target_centroids must be greater than zero",
             },
             GraphError::VectorIndexValueRejected {
                 label: lbl.clone(),

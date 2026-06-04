@@ -612,10 +612,10 @@ mod tests {
             .expect("create_vector_index resolves");
         let arity = metadata.signature.arity();
         assert_eq!(arity.minimum, 3);
-        assert_eq!(arity.maximum, 8);
+        assert_eq!(arity.maximum, 9);
 
         let parameters = &metadata.signature.parameters;
-        assert_eq!(parameters.len(), 8);
+        assert_eq!(parameters.len(), 9);
         assert_eq!(parameters[0].name.as_str(), "label");
         assert_eq!(parameters[0].ty, crate::GqlType::String);
         assert_eq!(parameters[1].name.as_str(), "property");
@@ -646,6 +646,11 @@ mod tests {
         assert!(parameters[7].nullable);
         assert_eq!(parameters[7].default_doc, Some("NULL"));
         assert!(parameters[7].default.is_some());
+        assert_eq!(parameters[8].name.as_str(), "ivf_target_centroids");
+        assert_eq!(parameters[8].ty, crate::GqlType::Integer);
+        assert!(parameters[8].nullable);
+        assert_eq!(parameters[8].default_doc, Some("NULL"));
+        assert!(parameters[8].default.is_some());
         assert!(metadata.output_schema.columns.is_empty());
     }
 

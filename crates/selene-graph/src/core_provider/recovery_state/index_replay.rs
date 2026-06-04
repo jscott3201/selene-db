@@ -8,7 +8,8 @@
 //! `SharedGraph::from_graph_parts_and_snapshot` (GRAPH-06 dedup).
 
 use selene_core::{
-    HnswIndexConfig, IStr, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
+    HnswIndexConfig, IStr, IvfIndexConfig, SchemaChange, SchemaPropertyIndexKind,
+    SchemaVectorIndexKind,
 };
 use smallvec::SmallVec;
 
@@ -80,6 +81,8 @@ pub(super) enum PendingVectorIndex {
         dimension: u32,
         /// Optional HNSW construction config.
         hnsw_config: Option<HnswIndexConfig>,
+        /// Optional IVF construction config.
+        ivf_config: Option<IvfIndexConfig>,
         /// Optional explicit catalog name.
         name: Option<IStr>,
     },
@@ -231,12 +234,14 @@ pub(super) fn pending_vector_index_change(change: &SchemaChange) -> Option<Pendi
             dimension,
             name,
             hnsw_config,
+            ivf_config,
         } => Some(PendingVectorIndex::Create {
             label: label.clone(),
             property: property.clone(),
             kind: vector_kind_from(*kind),
             dimension: *dimension,
             hnsw_config: *hnsw_config,
+            ivf_config: *ivf_config,
             name: name.clone(),
         }),
         SchemaChange::VectorIndexDropped { label, property } => Some(PendingVectorIndex::Drop {
@@ -261,12 +266,18 @@ pub(super) fn replay_vector_index_changes(
                 kind,
                 dimension,
                 hnsw_config,
+                ivf_config,
                 name,
             } => {
                 graph.vector_index.insert(
                     (label.clone(), property.clone()),
                     VectorIndexEntry::new(
-                        VectorIndex::new_with_hnsw_config(*kind, *dimension, *hnsw_config)?,
+                        VectorIndex::new_with_configs(
+                            *kind,
+                            *dimension,
+                            *hnsw_config,
+                            *ivf_config,
+                        )?,
                         name.clone(),
                     ),
                 );

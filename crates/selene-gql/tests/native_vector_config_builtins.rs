@@ -1,7 +1,8 @@
 //! End-to-end coverage for HNSW config arguments on vector built-ins.
 
 use selene_core::{
-    GraphId, HnswIndexConfig, IStr, LabelSet, PropertyMap, Value, VectorValue, intern,
+    GraphId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorValue,
+    intern,
 };
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
@@ -142,5 +143,91 @@ fn create_vector_index_rejects_hnsw_config_for_flat_indexes() {
             source: ProcedureError::InvalidArgument { ref detail },
             ..
         } if detail.contains("only HNSW vector indexes accept HNSW config")
+    ));
+}
+
+#[test]
+fn create_vector_index_can_register_explicit_ivf_config() {
+    let graph = graph(330_123);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    {
+        let mut txn = graph.begin_write();
+        for idx in 0..6 {
+            txn.mutator()
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[idx as f32, 0.0, 1.0]))),
+                )
+                .expect("vector node inserts");
+        }
+        txn.commit().expect("seed commits");
+    }
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'ivf', NULL, 'cosine', NULL, NULL, 4)",
+            &registry,
+        )
+        .expect("configured ivf vector index creation executes");
+
+    let snapshot = graph.read();
+    let index = snapshot
+        .vector_index_for(&doc, &embedding)
+        .expect("configured vector index is committed");
+    assert_eq!(index.ivf_config(), Some(IvfIndexConfig::new(4)));
+    assert_eq!(index.memory_usage().ivf_centroids, 4);
+    drop(snapshot);
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    assert_eq!(
+        string_column(&table, "kind"),
+        vec!["vector_ivf_cosine(3,target_centroids=4)"]
+    );
+}
+
+#[test]
+fn create_vector_index_rejects_ivf_config_for_flat_indexes() {
+    let graph = graph(330_124);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let err = session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'flat', NULL, NULL, NULL, NULL, 4)",
+            &registry,
+        )
+        .expect_err("flat vector index must reject IVF config");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("only IVF vector indexes accept IVF config")
+    ));
+}
+
+#[test]
+fn create_vector_index_rejects_oversized_ivf_config() {
+    let graph = graph(330_125);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let err = session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'ivf', NULL, NULL, NULL, NULL, 2048)",
+            &registry,
+        )
+        .expect_err("oversized IVF config must be rejected");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("target_centroids exceeds engine cap")
     ));
 }

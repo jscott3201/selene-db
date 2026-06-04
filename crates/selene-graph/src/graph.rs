@@ -10,7 +10,9 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-use selene_core::{EdgeId, GraphId, HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap, Value};
+use selene_core::{
+    EdgeId, GraphId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, NodeId, PropertyMap, Value,
+};
 
 use crate::adjacency::AdjacencyEntry;
 use crate::composite_typed_index::CompositeTypedIndex;
@@ -115,6 +117,12 @@ impl VectorIndexEntry {
         self.index.hnsw_config()
     }
 
+    /// Return the registered IVF construction config, if this is a configured IVF index.
+    #[must_use]
+    pub fn ivf_config(&self) -> Option<IvfIndexConfig> {
+        self.index.ivf_config()
+    }
+
     /// Return an estimated memory usage snapshot for this vector index.
     #[must_use]
     pub fn memory_usage(&self) -> VectorIndexMemoryUsage {
@@ -137,6 +145,7 @@ pub type VectorIndexEntryRow = (
     VectorIndexKind,
     u32,
     Option<HnswIndexConfig>,
+    Option<IvfIndexConfig>,
     Option<IStr>,
 );
 
@@ -516,6 +525,7 @@ impl SeleneGraph {
                 entry.kind(),
                 entry.dimension(),
                 entry.hnsw_config(),
+                entry.ivf_config(),
                 entry.name.clone(),
             )
         })

@@ -5,7 +5,7 @@
 //! instead of changing ISO catalog statement row shapes.
 
 use selene_core::{IStr, Value, intern};
-use selene_graph::{HnswIndexConfig, VectorIndexKind, VectorIndexMemoryUsage};
+use selene_graph::{HnswIndexConfig, IvfIndexConfig, VectorIndexKind, VectorIndexMemoryUsage};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use crate::procedure_registry::ProcedureError;
@@ -113,7 +113,7 @@ pub(super) fn execute(
     let mut rows = snapshot
         .iter_vector_index_entries()
         .map(
-            |(label, property, kind, dimension, hnsw_config, explicit_name)| {
+            |(label, property, kind, dimension, hnsw_config, ivf_config, explicit_name)| {
                 let index = snapshot
                     .vector_index_for(&label, &property)
                     .ok_or_else(|| ProcedureError::Internal {
@@ -123,7 +123,7 @@ pub(super) fn execute(
                     })?;
                 let usage = index.memory_usage();
                 let name = render_vector_index_name(label.clone(), property.clone(), explicit_name);
-                let kind = render_vector_index_kind(kind, dimension, hnsw_config);
+                let kind = render_vector_index_kind(kind, dimension, hnsw_config, ivf_config);
                 Ok(StatsRow {
                     label,
                     property,
@@ -241,6 +241,7 @@ fn render_vector_index_kind(
     kind: VectorIndexKind,
     dimension: u32,
     hnsw_config: Option<HnswIndexConfig>,
+    ivf_config: Option<IvfIndexConfig>,
 ) -> String {
     match kind {
         VectorIndexKind::Flat => format!("vector_flat({dimension})"),
@@ -254,11 +255,11 @@ fn render_vector_index_kind(
             render_hnsw_kind("vector_hnsw_negative_inner_product", dimension, hnsw_config)
         }
         VectorIndexKind::IvfSquaredEuclidean => {
-            format!("vector_ivf_squared_euclidean({dimension})")
+            render_ivf_kind("vector_ivf_squared_euclidean", dimension, ivf_config)
         }
-        VectorIndexKind::IvfCosine => format!("vector_ivf_cosine({dimension})"),
+        VectorIndexKind::IvfCosine => render_ivf_kind("vector_ivf_cosine", dimension, ivf_config),
         VectorIndexKind::IvfNegativeInnerProduct => {
-            format!("vector_ivf_negative_inner_product({dimension})")
+            render_ivf_kind("vector_ivf_negative_inner_product", dimension, ivf_config)
         }
     }
 }
@@ -276,6 +277,21 @@ fn render_hnsw_kind(
             "{name}({dimension},m={},ef_construction={})",
             config.max_neighbors, config.ef_construction
         )
+    }
+}
+
+fn render_ivf_kind(
+    name: &'static str,
+    dimension: u32,
+    ivf_config: Option<IvfIndexConfig>,
+) -> String {
+    if let Some(config) = ivf_config {
+        format!(
+            "{name}({dimension},target_centroids={})",
+            config.target_centroids
+        )
+    } else {
+        format!("{name}({dimension})")
     }
 }
 
