@@ -19,6 +19,7 @@ impl MemoryRetrievalFixture {
 
     pub(super) fn build_with_topology(requested_scale: usize, topology: TopologyNoise) -> Self {
         let label = istr("Memory");
+        let bridge_label = istr("MemoryBridge");
         let scope_label = istr("MemoryScope");
         let session_label = istr("MemorySession");
         let embedding_key = istr("embedding");
@@ -124,6 +125,52 @@ impl MemoryRetrievalFixture {
                                 continue;
                             }
                             let evidence = evidence_nodes[duplicate % evidence_nodes.len()];
+                            if topology == TopologyNoise::MultiHopSupport && fact >= SEED_K {
+                                let bridge = mutator
+                                    .create_node(
+                                        LabelSet::single(bridge_label.clone()),
+                                        PropertyMap::new(),
+                                    )
+                                    .expect("bench support bridge inserts");
+                                mutator
+                                    .create_edge(
+                                        support_edge.clone(),
+                                        *summary,
+                                        bridge,
+                                        PropertyMap::new(),
+                                    )
+                                    .expect("bench summary-to-bridge support edge inserts");
+                                mutator
+                                    .create_edge(
+                                        support_edge.clone(),
+                                        bridge,
+                                        evidence,
+                                        PropertyMap::new(),
+                                    )
+                                    .expect("bench bridge-to-evidence support edge inserts");
+                                if metadata.get(&evidence).is_some_and(|meta| meta.current) {
+                                    mutator
+                                        .create_edge(
+                                            valid_edge.clone(),
+                                            bridge,
+                                            evidence,
+                                            PropertyMap::new(),
+                                        )
+                                        .expect("bench bridge valid edge inserts");
+                                } else {
+                                    let replacement =
+                                        current_replacement(evidence_nodes, duplicate);
+                                    mutator
+                                        .create_edge(
+                                            superseded_by_edge.clone(),
+                                            evidence,
+                                            replacement,
+                                            PropertyMap::new(),
+                                        )
+                                        .expect("bench bridge supersession edge inserts");
+                                }
+                                continue;
+                            }
                             mutator
                                 .create_edge(
                                     support_edge.clone(),
@@ -275,7 +322,9 @@ fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize)
         TopologyNoise::SparseSupport | TopologyNoise::NoisySparseSupport => {
             (fact - 1) % SEED_K == duplicate % SEED_K
         }
-        TopologyNoise::Clean | TopologyNoise::CrossTopicSupportRing => true,
+        TopologyNoise::Clean
+        | TopologyNoise::CrossTopicSupportRing
+        | TopologyNoise::MultiHopSupport => true,
     }
 }
 

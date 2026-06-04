@@ -461,6 +461,7 @@ enum TopologyNoise {
     CrossTopicSupportRing,
     SparseSupport,
     NoisySparseSupport,
+    MultiHopSupport,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
