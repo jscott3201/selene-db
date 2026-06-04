@@ -11,9 +11,10 @@
 //! `ProcedureMetadata` conversion the pack registry performed). The vector
 //! search, batched exact vector-search, candidate vector scoring, batched
 //! candidate vector scoring, neighbor candidate vector scoring, batched neighbor
-//! candidate vector scoring, approximate vector-search, batched approximate
-//! vector-search, vector-index stats, and vector-index procedures are new native
-//! engine functionality on the same concrete built-in dispatch path.
+//! candidate vector scoring, expanded-candidate vector scoring, approximate
+//! vector-search, batched approximate vector-search, vector-index stats, and
+//! vector-index procedures are new native engine functionality on the same
+//! concrete built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify`, and
@@ -21,6 +22,7 @@
 //!   `selene.vector_score_nodes`, `selene.vector_score_nodes_batch`,
 //!   `selene.vector_score_neighbors`,
 //!   `selene.vector_score_neighbors_batch`,
+//!   `selene.vector_score_expanded_candidates`,
 //!   `selene.vector_search_nodes_ann`, `selene.vector_search_nodes_ann_batch`,
 //!   and `selene.vector_index_stats` are read-only graph-tier
 //!   ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]); they never
@@ -50,6 +52,7 @@ mod health;
 mod meta;
 mod rebuild_vector_indexes;
 mod vector_index_stats;
+mod vector_score_expanded_candidates;
 mod vector_score_neighbors;
 mod vector_score_neighbors_batch;
 mod vector_score_nodes;
@@ -91,6 +94,8 @@ pub(super) enum BuiltinKind {
     VectorScoreNeighbors,
     /// `selene.vector_score_neighbors_batch` — batched exact scoring for one-hop graph neighbors.
     VectorScoreNeighborsBatch,
+    /// `selene.vector_score_expanded_candidates` — exact scoring for graph-expanded candidates.
+    VectorScoreExpandedCandidates,
     /// `selene.vector_search_nodes_ann` — approximate vector node search.
     VectorSearchNodesAnn,
     /// `selene.vector_search_nodes_ann_batch` — batched approximate vector node search.
@@ -128,7 +133,7 @@ pub(super) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(super) const BUILTIN_SPECS: [BuiltinSpec; 18] = [
+pub(super) const BUILTIN_SPECS: [BuiltinSpec; 19] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -237,6 +242,12 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 18] = [
         since_version: "1.1.0",
         kind: BuiltinKind::VectorScoreNeighborsBatch,
     },
+    BuiltinSpec {
+        name: &["selene", "vector_score_expanded_candidates"],
+        description: "Score graph-expanded node candidates by a vector property.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::VectorScoreExpandedCandidates,
+    },
 ];
 
 impl BuiltinKind {
@@ -277,6 +288,7 @@ impl BuiltinKind {
             | Self::VectorScoreNodesBatch
             | Self::VectorScoreNeighbors
             | Self::VectorScoreNeighborsBatch
+            | Self::VectorScoreExpandedCandidates
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => ProcedureTier::Graph,
@@ -302,6 +314,7 @@ impl BuiltinKind {
             | Self::VectorScoreNodesBatch
             | Self::VectorScoreNeighbors
             | Self::VectorScoreNeighborsBatch
+            | Self::VectorScoreExpandedCandidates
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => ProcedureMutability::Read,
@@ -326,6 +339,7 @@ impl BuiltinKind {
             Self::VectorScoreNodesBatch => vector_score_nodes_batch::signature(),
             Self::VectorScoreNeighbors => vector_score_neighbors::signature(),
             Self::VectorScoreNeighborsBatch => vector_score_neighbors_batch::signature(),
+            Self::VectorScoreExpandedCandidates => vector_score_expanded_candidates::signature(),
             Self::VectorSearchNodesAnn => vector_search_ann::signature(),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::signature(),
             Self::VectorIndexStats => vector_index_stats::signature(),
@@ -351,6 +365,9 @@ impl BuiltinKind {
             Self::VectorScoreNodesBatch => vector_score_nodes_batch::output_columns(),
             Self::VectorScoreNeighbors => vector_score_neighbors::output_columns(),
             Self::VectorScoreNeighborsBatch => vector_score_neighbors_batch::output_columns(),
+            Self::VectorScoreExpandedCandidates => {
+                vector_score_expanded_candidates::output_columns()
+            }
             Self::VectorSearchNodesAnn => vector_search_ann::output_columns(),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::output_columns(),
             Self::VectorIndexStats => vector_index_stats::output_columns(),
@@ -387,6 +404,9 @@ impl BuiltinKind {
             Self::VectorScoreNodesBatch => vector_score_nodes_batch::execute(ctx, args),
             Self::VectorScoreNeighbors => vector_score_neighbors::execute(ctx, args),
             Self::VectorScoreNeighborsBatch => vector_score_neighbors_batch::execute(ctx, args),
+            Self::VectorScoreExpandedCandidates => {
+                vector_score_expanded_candidates::execute(ctx, args)
+            }
             Self::VectorSearchNodesAnn => vector_search_ann::execute(ctx, args),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::execute(ctx, args),
             Self::VectorIndexStats => vector_index_stats::execute(ctx, args),
@@ -427,6 +447,7 @@ impl BuiltinKind {
             | Self::VectorScoreNodesBatch
             | Self::VectorScoreNeighbors
             | Self::VectorScoreNeighborsBatch
+            | Self::VectorScoreExpandedCandidates
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => Err(ProcedureError::TierMismatch {
@@ -462,6 +483,7 @@ impl BuiltinKind {
             | Self::VectorScoreNodesBatch
             | Self::VectorScoreNeighbors
             | Self::VectorScoreNeighborsBatch
+            | Self::VectorScoreExpandedCandidates
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => Err(ProcedureError::TierMismatch {
