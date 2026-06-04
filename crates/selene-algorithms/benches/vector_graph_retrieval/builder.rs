@@ -28,6 +28,7 @@ impl MemoryRetrievalFixture {
         let session_edge = istr("IN_SESSION");
         let valid_edge = istr("VALID_AT");
         let superseded_by_edge = istr("SUPERSEDED_BY");
+        let contradicts_edge = istr("CONTRADICTS");
         let topic_count = topic_count(requested_scale);
         let session_count = topic_count.div_ceil(TOPICS_PER_SESSION);
         let duplicates = duplicates_per_fact(requested_scale, topic_count);
@@ -232,6 +233,14 @@ impl MemoryRetrievalFixture {
                         }
                     }
                 }
+                if topology == TopologyNoise::ContradictedCurrentDuplicates {
+                    add_contradicted_current_duplicates(
+                        &mut mutator,
+                        &topic_nodes,
+                        &metadata,
+                        &contradicts_edge,
+                    );
+                }
                 mutator
                     .create_vector_index_named_with_configs(
                         label.clone(),
@@ -288,6 +297,7 @@ impl MemoryRetrievalFixture {
             session_edge,
             valid_edge,
             superseded_by_edge,
+            contradicts_edge,
             queries,
             metadata,
             graph_current_nodes,
@@ -336,7 +346,33 @@ fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize)
         TopologyNoise::Clean
         | TopologyNoise::CrossTopicSupportRing
         | TopologyNoise::MultiHopSupport
-        | TopologyNoise::NoisyMultiHopSupport => true,
+        | TopologyNoise::NoisyMultiHopSupport
+        | TopologyNoise::ContradictedCurrentDuplicates => true,
+    }
+}
+
+fn add_contradicted_current_duplicates(
+    mutator: &mut selene_graph::Mutator<'_, '_>,
+    topic_nodes: &[Vec<Vec<NodeId>>],
+    metadata: &HashMap<NodeId, NodeMeta>,
+    contradicts_edge: &IStr,
+) {
+    for facts in topic_nodes {
+        for nodes in facts {
+            let canonical = nodes[0];
+            for &node in nodes.iter().skip(1) {
+                if metadata.get(&node).is_some_and(|meta| meta.current) {
+                    mutator
+                        .create_edge(
+                            contradicts_edge.clone(),
+                            node,
+                            canonical,
+                            PropertyMap::new(),
+                        )
+                        .expect("bench contradiction edge inserts");
+                }
+            }
+        }
     }
 }
 

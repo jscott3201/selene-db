@@ -72,6 +72,9 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphSessionMaterializedCurrentFilter => {
                 self.materialized_current_candidates(self.graph_session_candidates(query))
             }
+            SessionStrategy::GraphSessionUnresolvedCurrentFilter => {
+                self.unresolved_current_candidates(self.graph_session_candidates(query))
+            }
             SessionStrategy::GraphSessionProvenanceExpandK1
             | SessionStrategy::GraphSessionProvenanceExpand2HopK1
             | SessionStrategy::GraphSessionProvenanceExpand
@@ -93,6 +96,9 @@ impl MemoryRetrievalFixture {
             }
             SessionStrategy::GraphScopeMaterializedCurrentFilter => {
                 self.materialized_current_candidates(self.graph_session_scope_candidates(query))
+            }
+            SessionStrategy::GraphScopeUnresolvedCurrentFilter => {
+                self.unresolved_current_candidates(self.graph_session_scope_candidates(query))
             }
             SessionStrategy::GraphScopeProvenanceExpandK1
             | SessionStrategy::GraphScopeProvenanceExpand2HopK1
@@ -152,6 +158,15 @@ impl MemoryRetrievalFixture {
             .collect()
     }
 
+    fn unresolved_current_candidates(&self, candidates: Vec<NodeId>) -> Vec<NodeId> {
+        candidates
+            .into_iter()
+            .filter(|node_id| {
+                self.graph_current_nodes.contains(node_id) && !self.has_contradicts_edge(*node_id)
+            })
+            .collect()
+    }
+
     fn unsuperseded_candidates(&self, candidates: Vec<NodeId>) -> Vec<NodeId> {
         candidates
             .into_iter()
@@ -178,6 +193,12 @@ impl MemoryRetrievalFixture {
                 .iter()
                 .any(|edge| edge.label == self.superseded_by_edge)
         })
+    }
+
+    fn has_contradicts_edge(&self, node_id: NodeId) -> bool {
+        self.graph
+            .outgoing_edges(node_id)
+            .is_some_and(|edges| edges.iter().any(|edge| edge.label == self.contradicts_edge))
     }
 
     fn select_provenance_expansion(

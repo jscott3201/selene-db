@@ -840,6 +840,18 @@ until full quality is reached or the ladder is exhausted:
 | `graph_vector_adaptive_provenance_pressure/graph_scope_provenance_adaptive_quality/...covbp10000_curbp10000_precbp10000` | 98.00 µs (`c4`) | 875.9 µs (`c19`) | Oracle-style staged probing is slower than fixed k16 on the scope path. |
 | `graph_vector_adaptive_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 114.8 µs (`c32`) | 1.195 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
 
+Negative-evidence rows use a graph-authored `CONTRADICTS` edge to mark duplicate
+current facts as resolved elsewhere, leaving one unresolved current node per
+fact. This measures graph-side candidate pruning before exact vector scoring:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_negative_evidence_pressure/graph_session_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 248.8 µs (`c70`) | 2.687 ms (`c356`) | Baseline broad session-current scoring still sees contradicted duplicate current facts. |
+| `graph_vector_negative_evidence_pressure/graph_session_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 173.4 µs (`c31`) | 1.083 ms (`c32`) | Graph-derived unresolved-current pruning keeps full quality while cutting the 10k session row by ~2.5x. |
+| `graph_vector_negative_evidence_pressure/graph_scope_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 80.74 µs (`c18`) | 862.0 µs (`c89`) | Topic-scope current baseline with contradicted duplicates still present. |
+| `graph_vector_negative_evidence_pressure/graph_scope_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 57.97 µs (`c8`) | 316.7 µs (`c8`) | One unresolved current node per fact gives the strongest 10k exact-scored graph row so far. |
+| `graph_vector_negative_evidence_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.7 µs (`c32`) | 1.230 ms (`c152`) | Metadata hard-topic reference remains slower than unresolved graph pruning at 10k. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work

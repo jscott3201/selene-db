@@ -89,6 +89,14 @@ const ADAPTIVE_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
+const NEGATIVE_EVIDENCE_STRATEGIES: &[SessionStrategy] = &[
+    SessionStrategy::GraphSessionMaterializedCurrentFilter,
+    SessionStrategy::GraphSessionUnresolvedCurrentFilter,
+    SessionStrategy::GraphScopeMaterializedCurrentFilter,
+    SessionStrategy::GraphScopeUnresolvedCurrentFilter,
+    SessionStrategy::TopicFilter,
+];
+
 #[derive(Clone, Copy, Debug)]
 enum SessionStrategy {
     NoisyWcc,
@@ -97,6 +105,7 @@ enum SessionStrategy {
     GraphSessionCurrentFilter,
     GraphSessionUnsupersededFilter,
     GraphSessionMaterializedCurrentFilter,
+    GraphSessionUnresolvedCurrentFilter,
     GraphSessionProvenanceExpandK1,
     GraphSessionProvenanceExpand2HopK1,
     GraphSessionProvenanceExpand,
@@ -110,6 +119,7 @@ enum SessionStrategy {
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
     GraphScopeMaterializedCurrentFilter,
+    GraphScopeUnresolvedCurrentFilter,
     GraphScopeProvenanceExpandK1,
     GraphScopeProvenanceExpand2HopK1,
     GraphScopeProvenanceExpand,
@@ -133,6 +143,7 @@ impl SessionStrategy {
             Self::GraphSessionMaterializedCurrentFilter => {
                 "graph_session_materialized_current_filter"
             }
+            Self::GraphSessionUnresolvedCurrentFilter => "graph_session_unresolved_current_filter",
             Self::GraphSessionProvenanceExpandK1 => "graph_session_provenance_expand_k1",
             Self::GraphSessionProvenanceExpand2HopK1 => "graph_session_provenance_expand_2hop_k1",
             Self::GraphSessionProvenanceExpand => "graph_session_provenance_expand",
@@ -148,6 +159,7 @@ impl SessionStrategy {
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
             Self::GraphScopeMaterializedCurrentFilter => "graph_scope_materialized_current_filter",
+            Self::GraphScopeUnresolvedCurrentFilter => "graph_scope_unresolved_current_filter",
             Self::GraphScopeProvenanceExpandK1 => "graph_scope_provenance_expand_k1",
             Self::GraphScopeProvenanceExpand2HopK1 => "graph_scope_provenance_expand_2hop_k1",
             Self::GraphScopeProvenanceExpand => "graph_scope_provenance_expand",
@@ -207,6 +219,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_noisy_multihop_provenance_pressure(c);
     bench_noisy_sparse_multihop_provenance_pressure(c);
     bench_adaptive_provenance_pressure(c);
+    bench_negative_evidence_pressure(c);
 }
 
 fn bench_session_filter_pressure(c: &mut Criterion) {
@@ -319,6 +332,20 @@ fn bench_adaptive_provenance_pressure(c: &mut Criterion) {
             TopologyNoise::NoisySparseMultiHopSupport,
         );
         for &strategy in ADAPTIVE_PROVENANCE_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
+fn bench_negative_evidence_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_negative_evidence_pressure");
+    for scale in vector_scales() {
+        let fixture = MemoryRetrievalFixture::build_with_topology(
+            scale,
+            TopologyNoise::ContradictedCurrentDuplicates,
+        );
+        for &strategy in NEGATIVE_EVIDENCE_STRATEGIES {
             bench_strategy(&mut group, &fixture, strategy);
         }
     }
