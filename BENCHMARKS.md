@@ -879,6 +879,23 @@ unresolved roots remain:
 | `graph_vector_active_subgraph_composition_pressure/graph_scope_unresolved_provenance_expand_2hop_k16/9k_q64_c1_covbp3750_curbp3750_precbp3750` | 179.4 µs (quick) | Strict scope unresolved-root provenance is also partial recall; active-set filtering needs a full-recall fallback. |
 | `graph_vector_active_subgraph_composition_pressure/topic_filter/9k_q64_c152_covbp10000_curbp10000_precbp10000` | 1.095 ms (quick) | Metadata hard-topic reference. |
 
+Active-subgraph fallback rows test that follow-up directly: run strict
+unresolved-provenance first, then fill missing current facts from the
+materialized unresolved-current active set. The fallback restores full quality,
+but it is slower than scoring the maintained active set directly on this
+fixture because it pays both the narrow provenance pass and the broad fallback
+scoring pass:
+
+| Bench | 9k/10k scale | Notes |
+|---|---:|---|
+| `graph_vector_active_subgraph_fallback_pressure/graph_session_materialized_unresolved_current_filter/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.673 ms (quick) | Full-quality maintained active-set baseline. |
+| `graph_vector_active_subgraph_fallback_pressure/graph_session_unresolved_provenance_expand_2hop_k16/9k_q64_c4_covbp3750_curbp3750_precbp4042` | 664.1 µs (quick) | Fast strict provenance pass, still partial recall. |
+| `graph_vector_active_subgraph_fallback_pressure/graph_session_unresolved_provenance_fallback_2hop_k16/9k_q64_c232_covbp10000_curbp10000_precbp10000` | 2.443 ms (quick) | Full-quality fallback, but slower than scoring the maintained active set directly. |
+| `graph_vector_active_subgraph_fallback_pressure/graph_scope_materialized_unresolved_current_filter/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 523.6 µs (quick) | Scope-local maintained active-set baseline. |
+| `graph_vector_active_subgraph_fallback_pressure/graph_scope_unresolved_provenance_expand_2hop_k16/9k_q64_c1_covbp3750_curbp3750_precbp3750` | 184.4 µs (quick) | Fast strict scope provenance, still partial recall. |
+| `graph_vector_active_subgraph_fallback_pressure/graph_scope_unresolved_provenance_fallback_2hop_k16/9k_q64_c58_covbp10000_curbp10000_precbp10000` | 796.5 µs (quick) | Scope fallback restores full quality, but remains slower than the active-set baseline. |
+| `graph_vector_active_subgraph_fallback_pressure/topic_filter/9k_q64_c152_covbp10000_curbp10000_precbp10000` | 1.131 ms (quick) | Metadata hard-topic reference. |
+
 Adaptive provenance rows use the noisy sparse multi-hop topology and a
 benchmark-only quality oracle. The adaptive row scores provenance roots once,
 then tries k1 one-hop, k1 two-hop, k4 two-hop, k8 two-hop, and k16 two-hop

@@ -43,6 +43,15 @@ impl MemoryRetrievalFixture {
             return self.select_adaptive_provenance_expansion(query, candidates);
         }
         if let Some((seed_roots, depth)) = strategy.provenance_plan() {
+            if strategy.is_unresolved_provenance_fallback() {
+                return self.select_unresolved_provenance_with_fallback(
+                    query,
+                    candidates,
+                    self.unresolved_active_candidates(query, strategy),
+                    seed_roots,
+                    depth,
+                );
+            }
             if strategy.is_unresolved_provenance() {
                 return self
                     .select_unresolved_provenance_expansion(query, candidates, seed_roots, depth);
@@ -97,6 +106,10 @@ impl MemoryRetrievalFixture {
                 .provenance_root_candidates(self.materialized_unresolved_current_candidates(
                     self.graph_session_candidates(query),
                 )),
+            SessionStrategy::GraphSessionUnresolvedProvenanceFallback2HopK16 => self
+                .provenance_root_candidates(self.materialized_unresolved_current_candidates(
+                    self.graph_session_candidates(query),
+                )),
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
             SessionStrategy::GraphScopeCurrentFilter => {
                 self.current_candidates(self.graph_session_scope_candidates(query))
@@ -129,6 +142,10 @@ impl MemoryRetrievalFixture {
                     ),
                 ),
             SessionStrategy::GraphScopeUnresolvedProvenanceExpand2HopK16 => self
+                .provenance_root_candidates(self.materialized_unresolved_current_candidates(
+                    self.graph_session_scope_candidates(query),
+                )),
+            SessionStrategy::GraphScopeUnresolvedProvenanceFallback2HopK16 => self
                 .provenance_root_candidates(self.materialized_unresolved_current_candidates(
                     self.graph_session_scope_candidates(query),
                 )),
@@ -250,6 +267,23 @@ impl MemoryRetrievalFixture {
         self.select_unresolved_diverse_nodes(query, expanded)
     }
 
+    fn select_unresolved_provenance_with_fallback(
+        &self,
+        query: &Query,
+        root_candidates: Vec<NodeId>,
+        active_candidates: Vec<NodeId>,
+        seed_roots: usize,
+        depth: usize,
+    ) -> Vec<NodeId> {
+        let roots = self.sorted_provenance_roots(query, root_candidates);
+        let expanded = self.expand_provenance_roots(&roots, seed_roots, depth);
+        let selected = self.select_unresolved_fact_nodes(query, expanded);
+        if quality_is_full(self.selected_quality(query, selected.clone())) {
+            return selected;
+        }
+        self.fill_unresolved_from_active(query, selected, active_candidates)
+    }
+
     fn select_adaptive_provenance_expansion(
         &self,
         query: &Query,
@@ -349,7 +383,8 @@ impl MemoryRetrievalFixture {
         let mut seen_facts = std::collections::HashSet::new();
         let mut deferred = Vec::new();
         for node_id in candidates {
-            if !self.graph_unresolved_current_nodes.contains(&node_id) {
+            if !self.graph_unresolved_current_nodes.contains(&node_id) || !self.is_current(node_id)
+            {
                 continue;
             }
             let fact_key = self
@@ -369,6 +404,81 @@ impl MemoryRetrievalFixture {
             }
         }
         selected.extend(deferred.into_iter().take(RESULT_K - selected.len()));
+        selected
+    }
+
+    fn select_unresolved_fact_nodes(&self, query: &Query, candidates: Vec<NodeId>) -> Vec<NodeId> {
+        let mut selected = Vec::with_capacity(RESULT_K);
+        let mut seen_facts = std::collections::HashSet::new();
+        for node_id in candidates {
+            if !self.graph_unresolved_current_nodes.contains(&node_id) || !self.is_current(node_id)
+            {
+                continue;
+            }
+            let Some(fact) = self
+                .metadata
+                .get(&node_id)
+                .filter(|meta| meta.topic == query.topic)
+                .map(|meta| meta.fact)
+            else {
+                continue;
+            };
+            if seen_facts.insert(fact) {
+                selected.push(node_id);
+            }
+            if selected.len() == RESULT_K {
+                return selected;
+            }
+        }
+        selected
+    }
+
+    fn fill_unresolved_from_active(
+        &self,
+        query: &Query,
+        mut selected: Vec<NodeId>,
+        active_candidates: Vec<NodeId>,
+    ) -> Vec<NodeId> {
+        let mut selected_nodes: std::collections::HashSet<_> = selected.iter().copied().collect();
+        let mut seen_facts: std::collections::HashSet<_> = selected
+            .iter()
+            .filter_map(|node_id| {
+                self.metadata
+                    .get(node_id)
+                    .filter(|meta| meta.topic == query.topic)
+                    .map(|meta| meta.fact)
+            })
+            .collect();
+        let mut fallback_hits = self.score_candidate_ids(query, active_candidates);
+        fallback_hits.sort_by(|left, right| {
+            left.distance
+                .total_cmp(&right.distance)
+                .then_with(|| left.node_id.cmp(&right.node_id))
+        });
+        for hit in fallback_hits {
+            if !selected_nodes.insert(hit.node_id) {
+                continue;
+            }
+            if !self.graph_unresolved_current_nodes.contains(&hit.node_id)
+                || !self.is_current(hit.node_id)
+            {
+                continue;
+            }
+            let Some(fact) = self
+                .metadata
+                .get(&hit.node_id)
+                .filter(|meta| meta.topic == query.topic)
+                .map(|meta| meta.fact)
+            else {
+                continue;
+            };
+            if seen_facts.insert(fact) {
+                selected.push(hit.node_id);
+            }
+            if selected.len() == RESULT_K {
+                return selected;
+            }
+        }
         selected
     }
 
@@ -395,7 +505,27 @@ impl MemoryRetrievalFixture {
     }
 
     fn session_candidate_count(&self, query: &Query, strategy: SessionStrategy) -> usize {
+        if strategy.is_unresolved_provenance_fallback() {
+            return self.session_candidates(query, strategy).len()
+                + self.unresolved_active_candidates(query, strategy).len();
+        }
         self.session_candidates(query, strategy).len()
+    }
+
+    fn unresolved_active_candidates(
+        &self,
+        query: &Query,
+        strategy: SessionStrategy,
+    ) -> Vec<NodeId> {
+        match strategy {
+            SessionStrategy::GraphSessionUnresolvedProvenanceFallback2HopK16 => self
+                .materialized_unresolved_current_candidates(self.graph_session_candidates(query)),
+            SessionStrategy::GraphScopeUnresolvedProvenanceFallback2HopK16 => self
+                .materialized_unresolved_current_candidates(
+                    self.graph_session_scope_candidates(query),
+                ),
+            _ => Vec::new(),
+        }
     }
 }
 

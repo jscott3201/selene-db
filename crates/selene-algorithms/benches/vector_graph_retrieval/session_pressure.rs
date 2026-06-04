@@ -112,6 +112,16 @@ const ACTIVE_SUBGRAPH_COMPOSITION_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
+const ACTIVE_SUBGRAPH_FALLBACK_STRATEGIES: &[SessionStrategy] = &[
+    SessionStrategy::GraphSessionMaterializedUnresolvedCurrentFilter,
+    SessionStrategy::GraphSessionUnresolvedProvenanceExpand2HopK16,
+    SessionStrategy::GraphSessionUnresolvedProvenanceFallback2HopK16,
+    SessionStrategy::GraphScopeMaterializedUnresolvedCurrentFilter,
+    SessionStrategy::GraphScopeUnresolvedProvenanceExpand2HopK16,
+    SessionStrategy::GraphScopeUnresolvedProvenanceFallback2HopK16,
+    SessionStrategy::TopicFilter,
+];
+
 #[derive(Clone, Copy, Debug)]
 enum SessionStrategy {
     NoisyWcc,
@@ -132,6 +142,7 @@ enum SessionStrategy {
     GraphSessionProvenanceExpand2HopK16,
     GraphSessionProvenanceAdaptiveQuality,
     GraphSessionUnresolvedProvenanceExpand2HopK16,
+    GraphSessionUnresolvedProvenanceFallback2HopK16,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
@@ -148,6 +159,7 @@ enum SessionStrategy {
     GraphScopeProvenanceExpand2HopK16,
     GraphScopeProvenanceAdaptiveQuality,
     GraphScopeUnresolvedProvenanceExpand2HopK16,
+    GraphScopeUnresolvedProvenanceFallback2HopK16,
     TopicFilter,
 }
 
@@ -180,6 +192,9 @@ impl SessionStrategy {
             Self::GraphSessionUnresolvedProvenanceExpand2HopK16 => {
                 "graph_session_unresolved_provenance_expand_2hop_k16"
             }
+            Self::GraphSessionUnresolvedProvenanceFallback2HopK16 => {
+                "graph_session_unresolved_provenance_fallback_2hop_k16"
+            }
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
@@ -199,6 +214,9 @@ impl SessionStrategy {
             Self::GraphScopeProvenanceAdaptiveQuality => "graph_scope_provenance_adaptive_quality",
             Self::GraphScopeUnresolvedProvenanceExpand2HopK16 => {
                 "graph_scope_unresolved_provenance_expand_2hop_k16"
+            }
+            Self::GraphScopeUnresolvedProvenanceFallback2HopK16 => {
+                "graph_scope_unresolved_provenance_fallback_2hop_k16"
             }
             Self::TopicFilter => "topic_filter",
         }
@@ -231,7 +249,9 @@ impl SessionStrategy {
                 Some((WIDE_SEED_K, 2))
             }
             Self::GraphSessionUnresolvedProvenanceExpand2HopK16
-            | Self::GraphScopeUnresolvedProvenanceExpand2HopK16 => Some((WIDE_SEED_K, 2)),
+            | Self::GraphSessionUnresolvedProvenanceFallback2HopK16
+            | Self::GraphScopeUnresolvedProvenanceExpand2HopK16
+            | Self::GraphScopeUnresolvedProvenanceFallback2HopK16 => Some((WIDE_SEED_K, 2)),
             _ => None,
         }
     }
@@ -250,6 +270,14 @@ impl SessionStrategy {
                 | Self::GraphScopeUnresolvedProvenanceExpand2HopK16
         )
     }
+
+    const fn is_unresolved_provenance_fallback(self) -> bool {
+        matches!(
+            self,
+            Self::GraphSessionUnresolvedProvenanceFallback2HopK16
+                | Self::GraphScopeUnresolvedProvenanceFallback2HopK16
+        )
+    }
 }
 
 pub(super) fn bench(c: &mut Criterion) {
@@ -262,6 +290,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_adaptive_provenance_pressure(c);
     bench_negative_evidence_pressure(c);
     bench_active_subgraph_composition_pressure(c);
+    bench_active_subgraph_fallback_pressure(c);
     maintenance::bench_active_set_maintenance_pressure(c);
 }
 
@@ -403,6 +432,20 @@ fn bench_active_subgraph_composition_pressure(c: &mut Criterion) {
             TopologyNoise::NoisySparseMultiHopContradicted,
         );
         for &strategy in ACTIVE_SUBGRAPH_COMPOSITION_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
+fn bench_active_subgraph_fallback_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_active_subgraph_fallback_pressure");
+    for scale in vector_scales() {
+        let fixture = MemoryRetrievalFixture::build_with_topology(
+            scale,
+            TopologyNoise::NoisySparseMultiHopContradicted,
+        );
+        for &strategy in ACTIVE_SUBGRAPH_FALLBACK_STRATEGIES {
             bench_strategy(&mut group, &fixture, strategy);
         }
     }
