@@ -397,6 +397,14 @@ fixture** (the headline scale); `empty_commit` shows the scale axis.
 | `provider_fanout/active_set_edge_delete_k40` | 40 edge deletes + active-set provider | 218.8 µs | Delete path uses provider-owned `edge_id -> source` state to reinsert active nodes; seed excluded from timed body. |
 | `provider_fanout/active_set_wal_edge_create_k40` | 40 edge creates + WAL + active-set provider | 4.75 ms | Core WAL durability plus provider removal; provider state itself remains in-memory. |
 | `provider_fanout/active_set_wal_edge_delete_k40` | 40 edge deletes + WAL + active-set provider | 4.21 ms | Core WAL durability plus provider reinsertion; seed excluded from timed body. |
+| `provider_fanout/active_hint_recent_edge_create_k40` | 40 `RECENT_IN` creates + active-hint provider | 242.5 µs | Maintains window→member state in provider memory; no WAL. |
+| `provider_fanout/active_hint_recent_edge_delete_k40` | 40 `RECENT_IN` deletes + active-hint provider | 199.4 µs | Delete path uses provider-owned edge provenance to remove window members. |
+| `provider_fanout/active_hint_wal_recent_edge_create_k40` | 40 `RECENT_IN` creates + WAL + active-hint provider | 4.78 ms | Core WAL durability dominates active-hint membership maintenance. |
+| `provider_fanout/active_hint_wal_recent_edge_delete_k40` | 40 `RECENT_IN` deletes + WAL + active-hint provider | 4.41 ms | WAL-backed delete path remains near the active-set WAL boundary. |
+| `provider_fanout/active_hint_dependency_edge_create_k40` | 40 `DEPENDS_ON` creates + active-hint provider | 300.3 µs | Maintains anchor→dependency state for one broad task anchor; no WAL. |
+| `provider_fanout/active_hint_dependency_edge_delete_k40` | 40 `DEPENDS_ON` deletes + active-hint provider | 199.4 µs | Delete path removes dependency targets through provider-owned edge provenance. |
+| `provider_fanout/active_hint_wal_dependency_edge_create_k40` | 40 `DEPENDS_ON` creates + WAL + active-hint provider | 4.57 ms | Core WAL durability dominates dependency maintenance. |
+| `provider_fanout/active_hint_wal_dependency_edge_delete_k40` | 40 `DEPENDS_ON` deletes + WAL + active-hint provider | 4.55 ms | WAL-backed dependency deletes stay in the same cost band as active-set deletes. |
 | `bound_type_validation/unbound_commit` | 10k / 50k / 100k | 291 / 246 / 320 µs | Commit without graph-type validation. |
 | `bound_type_validation/bound_commit_simple` | 10k / 50k / 100k | 304 / 250 / 350 µs | Typed-commit validation delta (small). |
 | `bound_type_validation/bound_commit_rich` | 10k / 50k / 100k | 1.01 / 1.14 / 1.67 ms | Wider type-graph validation delta. |

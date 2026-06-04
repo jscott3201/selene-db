@@ -5,6 +5,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[path = "provider_fanout/active_hints.rs"]
+mod active_hints;
 mod common;
 
 use std::{
@@ -56,6 +58,7 @@ fn bench_provider_fanout(c: &mut Criterion) {
     bench_active_set_edge_delete(&mut group, &fixture);
     bench_active_set_wal_edge_create(&mut group, &fixture);
     bench_active_set_wal_edge_delete(&mut group, &fixture);
+    active_hints::bench_active_hint_edges(&mut group, &fixture);
 
     group.finish();
 }
@@ -333,7 +336,7 @@ fn active_set_wal_graph(
     }
 }
 
-fn seed_nodes(shared: &SharedGraph, count: usize) {
+pub(crate) fn seed_nodes(shared: &SharedGraph, count: usize) {
     let mut txn = shared.begin_write();
     {
         let mut mutator = txn.mutator();
@@ -346,7 +349,7 @@ fn seed_nodes(shared: &SharedGraph, count: usize) {
     txn.commit().expect("WAL fixture node seed commits");
 }
 
-fn fresh_active_set_wal_dir() -> PathBuf {
+pub(crate) fn fresh_active_set_wal_dir() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is after unix epoch")
