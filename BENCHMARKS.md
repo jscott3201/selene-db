@@ -952,6 +952,18 @@ from the candidate producer:
 | `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_neighbor_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 72.64 µs (quick) | Production neighbor scorer derives dependency candidates from the anchor's `DEPENDS_ON` edges; the direct candidate-set scorer removes the extra normalization pass. |
 | `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_neighbor_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 71.79 µs (quick) | Batched production neighbor scorer remains the fastest dependency active-hint row on this fixture, while preserving full quality. |
 
+ANN rerank rows use the same active-hint fixture, but start from ANN/search-hit
+output. They convert wide ANN hits into `VectorCandidateSet`s, optionally
+compose them with graph-maintained unresolved-current or dependency candidates,
+then exact-score the resulting sets in one batch:
+
+| Bench | 9k/10k scale | Notes |
+|---|---:|---|
+| `graph_vector_ann_rerank_pressure/ann_wide_hit_set_batch_rerank/9k_q64_c16_covbp1562_curbp1562_precbp9765` | 617.4 µs (quick) | Wide ANN hits stay high precision but low coverage; exact rerank of the ANN hit set cannot recover facts missing from the approximate candidate producer. |
+| `graph_vector_ann_rerank_pressure/ann_wide_active_intersection_batch_rerank/9k_q64_c1_covbp644_curbp644_precbp644` | 567.8 µs (quick) | Intersecting wide ANN hits with the maintained unresolved-current set trims candidates but collapses recall because the ANN seed rarely contains the active fact nodes. |
+| `graph_vector_ann_rerank_pressure/ann_wide_dependency_union_batch_rerank/9k_q64_c23_covbp10000_curbp10000_precbp10000` | 687.6 µs (quick) | Unioning ANN hits with direct dependency candidates restores full quality, but the ANN search dominates latency and is roughly 10x slower than the graph-only dependency row. |
+| `graph_vector_ann_rerank_pressure/graph_dependency_candidate_set_batch/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 68.96 µs (quick) | Direct graph dependency candidates remain the best shape for tiny active hints; adding ANN output is unnecessary when graph topology already supplies one candidate per fact. |
+
 Adaptive provenance rows use the noisy sparse multi-hop topology and a
 benchmark-only quality oracle. The adaptive row scores provenance roots once,
 then tries k1 one-hop, k1 two-hop, k4 two-hop, k8 two-hop, and k16 two-hop

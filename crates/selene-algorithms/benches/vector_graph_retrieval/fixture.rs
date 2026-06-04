@@ -11,6 +11,7 @@ use selene_graph::{
 
 use crate::common::scale_label;
 
+mod ann_rerank_pressure;
 mod builder;
 mod community_pressure;
 mod component_pressure;
@@ -74,6 +75,7 @@ pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
     topology_pressure::bench(c);
     community_pressure::bench(c);
     query_filter_pressure::bench(c);
+    ann_rerank_pressure::bench(c);
     session_pressure::bench(c);
 }
 
