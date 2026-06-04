@@ -5,7 +5,9 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use selene_core::{CancellationChecker, IStr, NodeId, VectorMetric, VectorValue};
-use selene_graph::{ApproximateVectorSearchOptions, SeleneGraph, VectorNodeSearchHit};
+use selene_graph::{
+    ApproximateVectorSearchOptions, SeleneGraph, VectorCandidateSet, VectorNodeSearchHit,
+};
 
 use crate::common::scale_label;
 
@@ -127,6 +129,7 @@ struct MemoryRetrievalFixture {
     metadata: HashMap<NodeId, NodeMeta>,
     graph_current_nodes: HashSet<NodeId>,
     graph_unresolved_current_nodes: HashSet<NodeId>,
+    graph_unresolved_current_candidate_set: VectorCandidateSet,
     pagerank: HashMap<NodeId, f64>,
     component_candidates: HashMap<u64, Vec<NodeId>>,
     component_order: Vec<u64>,

@@ -285,6 +285,9 @@ impl MemoryRetrievalFixture {
             &superseded_by_edge,
             &contradicts_edge,
         );
+        let graph_unresolved_current_candidate_set = selene_graph::VectorCandidateSet::from_nodes(
+            graph_unresolved_current_nodes.iter().copied(),
+        );
         let pagerank = pagerank_scores(&graph, &label, &support_edge);
         let (component_by_node, component_candidates) =
             component_candidates(&graph, &label, &support_edge, &superseded_by_edge);
@@ -331,6 +334,7 @@ impl MemoryRetrievalFixture {
             metadata,
             graph_current_nodes,
             graph_unresolved_current_nodes,
+            graph_unresolved_current_candidate_set,
             pagerank,
             component_candidates,
             component_order,
