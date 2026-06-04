@@ -289,6 +289,18 @@ PR-local IVF+binary layering spot-check:
 | `graph_ivf_binary_candidate_recall/cluster_l2/sign_c256_p2_d128_k10_recallbp10000_rows50010_m2375-full50000` | 363.3 µs (quick) | Two-list probe doubles searched rows but has no recall upside on this separable fixture; p1 is the better knee. |
 | `graph_ivf_binary_candidate_recall/cluster_l2/sign_c1024_p1_d128_k10_recallbp10000_rows25008_m2375-full50000` | 901.6 µs (quick) | Wider exact rerank stays below IVF+PQ full-recall latency but has no quality benefit over c256 on this corpus. |
 
+PR-local IVF overlap-corpus compression spot-check:
+
+| Bench | 100k | Notes |
+|---|---:|---|
+| `graph_ivf_overlap_candidate_recall/pq_overlap_l2/m16_k64_c1024_p1_d128_k10_recallbp5000_rows24996_m2407-full50000` | 1.334 ms (quick) | Harder overlap profile where cluster signal competes with local variation. One-list probing misses half the oracle hits even with 1024 PQ rerank candidates. |
+| `graph_ivf_overlap_candidate_recall/pq_overlap_l2/m16_k64_c1024_p4_d128_k10_recallbp10000_rows100005_m2407-full50000` | 2.407 ms (quick) | Four-list probing restores full recall for the IVF+PQ high-recall row, but searches about 100k rows across the 16-query batch. |
+| `graph_ivf_overlap_candidate_recall/pq_overlap_l2/m16_k64_c4096_p4_d128_k10_recallbp10000_rows100005_m2407-full50000` | 7.766 ms (quick) | Wider PQ rerank has no quality upside over 1024 candidates after four-list probing and mostly measures exact-rerank cost. |
+| `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c256_p1_d128_k10_recallbp5000_rows24996_m2375-full50000` | 411.1 µs (quick) | Binary Hamming keeps the same recall failure mode as PQ under one-list probing, so the candidate producer, not the compressed scorer width, is the limiting factor here. |
+| `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c256_p4_d128_k10_recallbp10000_rows100005_m2375-full50000` | 711.7 µs (quick) | Four-list probing restores full recall and remains about 3.4x faster than the IVF+PQ full-recall p4 row at similar compressed/coarse memory. |
+| `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c1024_p1_d128_k10_recallbp5000_rows24996_m2375-full50000` | 1.013 ms (quick) | Wider exact rerank cannot recover missing coarse lists; recall remains 5000 bp. |
+| `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c1024_p4_d128_k10_recallbp10000_rows100005_m2375-full50000` | 1.821 ms (quick) | Wider binary rerank has no recall upside over c256 after p4 and is slower, confirming c256 remains the overlap-profile knee. |
+
 PR-local production IVF candidate-pressure spot-check:
 
 | Bench | 10k | Notes |
