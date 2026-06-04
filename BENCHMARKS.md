@@ -755,10 +755,17 @@ edges, then exact-scores those graph-derived candidates:
 
 | Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
 |---|---:|---:|---|
-| `graph_vector_query_filter_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.761 ms (`c992`) | 60.62 ms (`c9728`) | Repeats the noisy WCC baseline inside the query-filter fixture. |
-| `graph_vector_query_filter_pressure/label_propagation/...` | 58.89 µs (`c17`, `covbp7661`, `precbp8830`) | 122.3 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation stays compact and partial-recall when compared with graph-derived scope filtering. |
-| `graph_vector_query_filter_pressure/graph_scope_filter/...covbp10000_curbp10000_precbp10000` | 120.0 µs (`c32`) | 1.230 ms (`c152`) | Graph-derived scope membership matches hard-topic quality with a small traversal overhead. This is the strongest product-shaped primitive so far: graph/query candidate production plus exact vector scoring. |
-| `graph_vector_query_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 112.5 µs (`c32`) | 1.181 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same candidate set. |
+| `graph_vector_query_filter_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.558 ms (`c992`) | 56.61 ms (`c9728`) | Repeats the noisy WCC baseline inside the query-filter fixture. |
+| `graph_vector_query_filter_pressure/label_propagation/...` | 54.86 µs (`c17`, `covbp7661`, `precbp8830`) | 114.3 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation stays compact and partial-recall when compared with graph-derived scope filtering. |
+| `graph_vector_query_filter_pressure/graph_scope_filter/...covbp10000_curbp10000_precbp10000` | 111.2 µs (`c32`) | 1.142 ms (`c152`) | Graph-derived scope membership matches hard-topic quality with a small traversal overhead. This is the strongest product-shaped primitive so far: graph/query candidate production plus exact vector scoring. |
+| `graph_vector_query_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 104.3 µs (`c32`) | 1.102 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same candidate set. |
+| `graph_vector_query_filter_pressure/graph_scope_candidate_set_batch_score/...covbp10000_curbp10000_precbp10000` | 121.8 µs (`c32`) | 1.238 ms (`c152`) | Canonical `VectorCandidateSet` batch scoring over graph-query output preserves quality but adds normalization/batch overhead when no second set is composed. |
+| `graph_vector_query_filter_pressure/graph_scope_unresolved_current_algebra_batch_score/...covbp10000_curbp10000_precbp10000` | 80.92 µs (`c18`) | 840.4 µs (`c89`) | Composing graph-scope output with the maintained unresolved-current candidate set cuts exact scoring work while preserving full quality. |
+
+The candidate-set rows show the boundary tradeoff: canonical graph-query output
+is not faster by itself, but it becomes valuable once it composes with another
+maintained graph-derived set. That supports `VectorCandidateSet` as a Rust-side
+graph/query/active-set glue primitive before adding narrower procedure surfaces.
 
 Session-filter rows add a coarser graph-derived membership edge. Each memory
 node links to an `IN_SESSION` node shared by four topics, modeling task/session
