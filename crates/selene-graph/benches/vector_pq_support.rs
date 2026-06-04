@@ -27,6 +27,12 @@ pub(crate) struct BinaryQuantVariant {
     pub(crate) candidates: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CorpusProfile {
+    Clustered,
+    Overlap,
+}
+
 #[derive(Debug)]
 pub(crate) struct PqCorpus {
     pub(crate) scale: usize,
@@ -37,16 +43,20 @@ pub(crate) struct PqCorpus {
 
 impl PqCorpus {
     pub(crate) fn build(scale: usize) -> Self {
+        Self::build_profile(scale, CorpusProfile::Clustered)
+    }
+
+    pub(crate) fn build_profile(scale: usize, profile: CorpusProfile) -> Self {
         let scale = scale.max(K);
         let vectors = (0..scale)
-            .map(|seed| clustered_vector(seed, scale, 0.0))
+            .map(|seed| profile_vector(profile, seed, scale, 0.0))
             .collect::<Vec<_>>();
         let queries = (0..QUERY_COUNT)
             .map(|idx| {
                 let clusters = cluster_count(scale);
                 let cluster = idx % clusters;
                 let seed = cluster + (scale / clusters / 2) * clusters;
-                clustered_vector(seed.min(scale - 1), scale, 0.0003)
+                profile_vector(profile, seed.min(scale - 1), scale, query_jitter(profile))
             })
             .collect::<Vec<_>>();
         let exact = queries
@@ -470,6 +480,20 @@ fn encode_binary_vector(vector: &VectorValue, words: &mut [u64]) {
     }
 }
 
+fn profile_vector(profile: CorpusProfile, seed: usize, scale: usize, jitter: f32) -> VectorValue {
+    match profile {
+        CorpusProfile::Clustered => clustered_vector(seed, scale, jitter),
+        CorpusProfile::Overlap => overlapping_vector(seed, scale, jitter),
+    }
+}
+
+fn query_jitter(profile: CorpusProfile) -> f32 {
+    match profile {
+        CorpusProfile::Clustered => 0.0003,
+        CorpusProfile::Overlap => 0.015,
+    }
+}
+
 fn clustered_vector(seed: usize, scale: usize, jitter: f32) -> VectorValue {
     let clusters = cluster_count(scale);
     let cluster = seed % clusters;
@@ -479,6 +503,21 @@ fn clustered_vector(seed: usize, scale: usize, jitter: f32) -> VectorValue {
             let base = ((((cluster + 1) * (dim + 3)) % 97) as f32 - 48.0) / 48.0;
             let local = ((((ordinal + 5) * (dim + 11)) % 31) as f32 - 15.0) * 0.001;
             base + local + jitter
+        })
+        .collect::<Vec<_>>();
+    VectorValue::new(components).expect("benchmark vector is finite and non-empty")
+}
+
+fn overlapping_vector(seed: usize, scale: usize, jitter: f32) -> VectorValue {
+    let clusters = cluster_count(scale);
+    let cluster = seed % clusters;
+    let ordinal = seed / clusters;
+    let components = (0..DIMENSION)
+        .map(|dim| {
+            let base = ((((cluster + 1) * (dim + 7)) % 41) as f32 - 20.0) / 96.0;
+            let local = ((((ordinal + 13) * (dim + 17)) % 89) as f32 - 44.0) / 220.0;
+            let cross = ((((seed + 3) * (dim + 19)) % 53) as f32 - 26.0) / 260.0;
+            base + local + cross + jitter
         })
         .collect::<Vec<_>>();
     VectorValue::new(components).expect("benchmark vector is finite and non-empty")

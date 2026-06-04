@@ -13,8 +13,8 @@ use std::mem::size_of;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{VectorTopK, VectorValue};
 use vector_pq_support::{
-    BinaryQuantIndex, BinaryQuantVariant, DIMENSION, K, PqCorpus, PqIndex, PqVariant,
-    cluster_count, compact_count, memory_suffix, squared_l2, vector_scales,
+    BinaryQuantIndex, BinaryQuantVariant, CorpusProfile, DIMENSION, K, PqCorpus, PqIndex,
+    PqVariant, cluster_count, compact_count, memory_suffix, squared_l2, vector_scales,
 };
 
 const VARIANTS: [IvfPqVariant; 4] = [
@@ -95,6 +95,74 @@ const BINARY_VARIANTS: [IvfBinaryVariant; 4] = [
     },
 ];
 
+const OVERLAP_PQ_VARIANTS: [IvfPqVariant; 3] = [
+    IvfPqVariant {
+        name: "m16_k64_c1024_p1",
+        pq: PqVariant {
+            name: "m16_k64_c1024",
+            subvectors: 16,
+            codewords: 64,
+            candidates: 1024,
+        },
+        probes: 1,
+    },
+    IvfPqVariant {
+        name: "m16_k64_c1024_p4",
+        pq: PqVariant {
+            name: "m16_k64_c1024",
+            subvectors: 16,
+            codewords: 64,
+            candidates: 1024,
+        },
+        probes: 4,
+    },
+    IvfPqVariant {
+        name: "m16_k64_c4096_p4",
+        pq: PqVariant {
+            name: "m16_k64_c4096",
+            subvectors: 16,
+            codewords: 64,
+            candidates: 4096,
+        },
+        probes: 4,
+    },
+];
+
+const OVERLAP_BINARY_VARIANTS: [IvfBinaryVariant; 4] = [
+    IvfBinaryVariant {
+        name: "sign_c256_p1",
+        binary: BinaryQuantVariant {
+            name: "sign_c256",
+            candidates: 256,
+        },
+        probes: 1,
+    },
+    IvfBinaryVariant {
+        name: "sign_c256_p4",
+        binary: BinaryQuantVariant {
+            name: "sign_c256",
+            candidates: 256,
+        },
+        probes: 4,
+    },
+    IvfBinaryVariant {
+        name: "sign_c1024_p1",
+        binary: BinaryQuantVariant {
+            name: "sign_c1024",
+            candidates: 1024,
+        },
+        probes: 1,
+    },
+    IvfBinaryVariant {
+        name: "sign_c1024_p4",
+        binary: BinaryQuantVariant {
+            name: "sign_c1024",
+            candidates: 1024,
+        },
+        probes: 4,
+    },
+];
+
 #[derive(Clone, Copy, Debug)]
 struct IvfPqVariant {
     name: &'static str,
@@ -169,6 +237,60 @@ fn bench_ivf_binary_candidate_recall(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_ivf_overlap_candidate_recall(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_ivf_overlap_candidate_recall");
+    for scale in vector_scales() {
+        for variant in OVERLAP_PQ_VARIANTS {
+            let fixture = IvfPqFixture::build_with_profile(scale, variant, CorpusProfile::Overlap);
+            group.throughput(Throughput::Elements(
+                u64::try_from(fixture.searched_rows()).unwrap_or(u64::MAX),
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    "pq_overlap_l2",
+                    format!(
+                        "{}_d{DIMENSION}_k{K}_recallbp{}_rows{}_{}",
+                        variant.name,
+                        fixture.recall_basis_points(),
+                        compact_count(fixture.searched_rows()),
+                        fixture.memory_suffix()
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(fixture.total_overlap());
+                    });
+                },
+            );
+        }
+        for variant in OVERLAP_BINARY_VARIANTS {
+            let fixture =
+                IvfBinaryFixture::build_with_profile(scale, variant, CorpusProfile::Overlap);
+            group.throughput(Throughput::Elements(
+                u64::try_from(fixture.searched_rows()).unwrap_or(u64::MAX),
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    "binary_overlap_l2",
+                    format!(
+                        "{}_d{DIMENSION}_k{K}_recallbp{}_rows{}_{}",
+                        variant.name,
+                        fixture.recall_basis_points(),
+                        compact_count(fixture.searched_rows()),
+                        fixture.memory_suffix()
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(fixture.total_overlap());
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
 #[derive(Debug)]
 struct IvfPqFixture {
     variant: IvfPqVariant,
@@ -179,7 +301,11 @@ struct IvfPqFixture {
 
 impl IvfPqFixture {
     fn build(scale: usize, variant: IvfPqVariant) -> Self {
-        let corpus = PqCorpus::build(scale);
+        Self::build_with_profile(scale, variant, CorpusProfile::Clustered)
+    }
+
+    fn build_with_profile(scale: usize, variant: IvfPqVariant, profile: CorpusProfile) -> Self {
+        let corpus = PqCorpus::build_profile(scale, profile);
         let pq = PqIndex::train(&corpus.vectors, variant.pq);
         let coarse = CoarsePartition::build(&corpus);
         Self {
@@ -237,7 +363,11 @@ struct IvfBinaryFixture {
 
 impl IvfBinaryFixture {
     fn build(scale: usize, variant: IvfBinaryVariant) -> Self {
-        let corpus = PqCorpus::build(scale);
+        Self::build_with_profile(scale, variant, CorpusProfile::Clustered)
+    }
+
+    fn build_with_profile(scale: usize, variant: IvfBinaryVariant, profile: CorpusProfile) -> Self {
+        let corpus = PqCorpus::build_profile(scale, profile);
         let binary = BinaryQuantIndex::build(&corpus.vectors, variant.binary);
         let coarse = CoarsePartition::build(&corpus);
         Self {
@@ -349,6 +479,9 @@ impl CoarsePartition {
 criterion_group! {
     name = vector_ivf_pq;
     config = common::criterion_config();
-    targets = bench_ivf_pq_candidate_recall, bench_ivf_binary_candidate_recall
+    targets =
+        bench_ivf_pq_candidate_recall,
+        bench_ivf_binary_candidate_recall,
+        bench_ivf_overlap_candidate_recall
 }
 criterion_main!(vector_ivf_pq);
