@@ -860,6 +860,25 @@ the first fixture where provenance depth and root fanout matter together:
 | `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k16/...covbp10000_curbp10000_precbp10000` | 74.23 µs (`c4`) | 615.2 µs (`c19`) | Wide two-hop scope expansion restores full quality and remains below materialized-current and topic-filter references. |
 | `graph_vector_noisy_sparse_multihop_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 114.2 µs (`c32`) | 1.214 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
 
+Active-subgraph composition rows reuse the noisy sparse multi-hop topology and
+add `CONTRADICTS` edges to current duplicates. The new unresolved-provenance
+rows intentionally intersect session/scope, unresolved-current active set,
+provenance roots, two-hop expansion, and unresolved-current selection. That is
+too strict on this fixture: it is fast, but loses recall because too few
+unresolved roots remain:
+
+| Bench | 9k/10k scale | Notes |
+|---|---:|---|
+| `graph_vector_active_subgraph_composition_pressure/graph_session_materialized_current_filter/9k_q64_c552_covbp10000_curbp10000_precbp10000` | 3.438 ms (quick) | Full-quality broad session-current baseline under noisy sparse multi-hop plus contradictions. |
+| `graph_vector_active_subgraph_composition_pressure/graph_session_materialized_unresolved_current_filter/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.626 ms (quick) | Active unresolved-current set keeps full quality and cuts session candidates from 552 to 228. |
+| `graph_vector_active_subgraph_composition_pressure/graph_session_provenance_expand_2hop_k16/9k_q64_c76_covbp10000_curbp10000_precbp10000` | 1.663 ms (quick) | Full-quality provenance reference over current roots; similar latency to materialized unresolved-current on this topology. |
+| `graph_vector_active_subgraph_composition_pressure/graph_session_unresolved_provenance_expand_2hop_k16/9k_q64_c4_covbp3750_curbp3750_precbp4042` | 662.2 µs (quick) | Strict unresolved-root provenance is a negative result: very small root set, fast, but only partial coverage/precision. |
+| `graph_vector_active_subgraph_composition_pressure/graph_scope_materialized_current_filter/9k_q64_c138_covbp10000_curbp10000_precbp10000` | 1.110 ms (quick) | Scope-local current baseline. |
+| `graph_vector_active_subgraph_composition_pressure/graph_scope_materialized_unresolved_current_filter/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 497.3 µs (quick) | Scope-local active unresolved-current set keeps full quality and cuts candidates from 138 to 57. |
+| `graph_vector_active_subgraph_composition_pressure/graph_scope_provenance_expand_2hop_k16/9k_q64_c19_covbp10000_curbp10000_precbp10000` | 611.4 µs (quick) | Full-quality scope provenance reference. |
+| `graph_vector_active_subgraph_composition_pressure/graph_scope_unresolved_provenance_expand_2hop_k16/9k_q64_c1_covbp3750_curbp3750_precbp3750` | 179.4 µs (quick) | Strict scope unresolved-root provenance is also partial recall; active-set filtering needs a full-recall fallback. |
+| `graph_vector_active_subgraph_composition_pressure/topic_filter/9k_q64_c152_covbp10000_curbp10000_precbp10000` | 1.095 ms (quick) | Metadata hard-topic reference. |
+
 Adaptive provenance rows use the noisy sparse multi-hop topology and a
 benchmark-only quality oracle. The adaptive row scores provenance roots once,
 then tries k1 one-hop, k1 two-hop, k4 two-hop, k8 two-hop, and k16 two-hop

@@ -466,6 +466,7 @@ enum TopologyNoise {
     MultiHopSupport,
     NoisyMultiHopSupport,
     NoisySparseMultiHopSupport,
+    NoisySparseMultiHopContradicted,
     ContradictedCurrentDuplicates,
 }
 
