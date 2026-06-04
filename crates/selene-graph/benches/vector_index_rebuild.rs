@@ -13,12 +13,12 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    CancellationChecker, GraphId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value,
-    VectorValue, intern,
+    CancellationChecker, GraphId, IStr, IvfIndexConfig, LabelDiff, LabelSet, PropertyDiff,
+    PropertyMap, Value, VectorValue, intern,
 };
 use selene_graph::{
-    ApproximateVectorSearchOptions, HnswIndexConfig, SharedGraph, VectorIndexKind,
-    VectorIndexMemoryUsage, VectorIndexRebuildReport,
+    ApproximateVectorSearchOptions, HnswIndexConfig, SharedGraph, VectorIndexConfig,
+    VectorIndexKind, VectorIndexMemoryUsage, VectorIndexRebuildReport,
 };
 use selene_testing::BenchProfile;
 
@@ -33,31 +33,63 @@ const VECTOR_REBUILD_VARIANTS: [VectorRebuildVariant; 6] = [
         name: "hnsw_l2_dim128_default",
         kind: VectorIndexKind::HnswSquaredEuclidean,
         hnsw_config: None,
+        ivf_config: None,
     },
     VectorRebuildVariant {
         name: "hnsw_l2_dim128_m24ef64",
         kind: VectorIndexKind::HnswSquaredEuclidean,
         hnsw_config: Some(HnswIndexConfig::new(24, 64)),
+        ivf_config: None,
     },
     VectorRebuildVariant {
         name: "hnsw_cos_dim128_default",
         kind: VectorIndexKind::HnswCosine,
         hnsw_config: None,
+        ivf_config: None,
     },
     VectorRebuildVariant {
         name: "hnsw_cos_dim128_m24ef64",
         kind: VectorIndexKind::HnswCosine,
         hnsw_config: Some(HnswIndexConfig::new(24, 64)),
+        ivf_config: None,
     },
     VectorRebuildVariant {
         name: "ivf_l2_dim128",
         kind: VectorIndexKind::IvfSquaredEuclidean,
         hnsw_config: None,
+        ivf_config: None,
     },
     VectorRebuildVariant {
         name: "ivf_cos_dim128",
         kind: VectorIndexKind::IvfCosine,
         hnsw_config: None,
+        ivf_config: None,
+    },
+];
+const IVF_TARGET_REBUILD_VARIANTS: [VectorRebuildVariant; 4] = [
+    VectorRebuildVariant {
+        name: "ivf_cos_dim128_default",
+        kind: VectorIndexKind::IvfCosine,
+        hnsw_config: None,
+        ivf_config: None,
+    },
+    VectorRebuildVariant {
+        name: "ivf_cos_dim128_c16",
+        kind: VectorIndexKind::IvfCosine,
+        hnsw_config: None,
+        ivf_config: Some(IvfIndexConfig::new(16)),
+    },
+    VectorRebuildVariant {
+        name: "ivf_cos_dim128_c128",
+        kind: VectorIndexKind::IvfCosine,
+        hnsw_config: None,
+        ivf_config: Some(IvfIndexConfig::new(128)),
+    },
+    VectorRebuildVariant {
+        name: "ivf_cos_dim128_c512",
+        kind: VectorIndexKind::IvfCosine,
+        hnsw_config: None,
+        ivf_config: Some(IvfIndexConfig::new(512)),
     },
 ];
 
@@ -66,6 +98,7 @@ struct VectorRebuildVariant {
     name: &'static str,
     kind: VectorIndexKind,
     hnsw_config: Option<HnswIndexConfig>,
+    ivf_config: Option<IvfIndexConfig>,
 }
 
 impl VectorRebuildVariant {
@@ -81,6 +114,14 @@ impl VectorRebuildVariant {
             .map(|_| self.hnsw_config.unwrap_or_default())
     }
 
+    fn expected_ivf_config(self) -> Option<IvfIndexConfig> {
+        self.kind.ivf_metric().and(self.ivf_config)
+    }
+
+    fn index_config(self) -> VectorIndexConfig {
+        VectorIndexConfig::new(self.hnsw_config, self.ivf_config)
+    }
+
     fn is_hnsw(self) -> bool {
         self.kind.hnsw_metric().is_some()
     }
@@ -90,8 +131,22 @@ fn bench_vector_index_rebuild(c: &mut Criterion) {
     if !vector_rebuild_group_enabled("rebuild") {
         return;
     }
-    let mut group = c.benchmark_group("graph_vector_index_rebuild");
-    let variants = vector_rebuild_variants();
+    bench_rebuild_group(c, "graph_vector_index_rebuild", vector_rebuild_variants());
+}
+
+fn bench_vector_index_ivf_target_centroid_rebuild(c: &mut Criterion) {
+    if !vector_rebuild_group_enabled("ivf_target_centroids") {
+        return;
+    }
+    bench_rebuild_group(
+        c,
+        "graph_vector_index_ivf_target_centroid_rebuild",
+        IVF_TARGET_REBUILD_VARIANTS.to_vec(),
+    );
+}
+
+fn bench_rebuild_group(c: &mut Criterion, name: &str, variants: Vec<VectorRebuildVariant>) {
+    let mut group = c.benchmark_group(name);
     for scale in vector_rebuild_scales() {
         for variant in &variants {
             let variant = *variant;
@@ -309,6 +364,7 @@ impl VectorRebuildFixture {
         let entry = &report.entries[0];
         assert_eq!(entry.kind, self.variant.kind);
         assert_eq!(entry.hnsw_config, self.variant.expected_hnsw_config());
+        assert_eq!(entry.ivf_config, self.variant.expected_ivf_config());
         assert_eq!(
             usize::try_from(entry.dimension).expect("dimension fits usize"),
             VECTOR_DIMENSION
@@ -408,6 +464,7 @@ impl VectorMemoryProjectionFixture {
             name: "hnsw_l2_default",
             kind: VectorIndexKind::HnswSquaredEuclidean,
             hnsw_config: None,
+            ivf_config: None,
         };
         let _ids = seed_indexed_nodes(&shared, &label, &embedding_key, scale, dimension, variant);
         Self {
@@ -470,13 +527,13 @@ fn seed_indexed_nodes(
         );
     }
     mutator
-        .create_vector_index_named_with_config(
+        .create_vector_index_named_with_configs(
             label.clone(),
             embedding_key.clone(),
             variant.kind,
             u32::try_from(dimension).expect("bench dimension fits u32"),
             None,
-            variant.hnsw_config,
+            variant.index_config(),
         )
         .expect("bench vector index build succeeds");
     txn.commit().expect("bench seed commit succeeds");
@@ -611,7 +668,7 @@ criterion_group! {
     name = vector_index_maintenance;
     config = common::criterion_config();
     targets = bench_vector_index_rebuild, bench_vector_index_stale_query,
-        bench_vector_index_dimension_projection,
+        bench_vector_index_dimension_projection, bench_vector_index_ivf_target_centroid_rebuild,
         recommended::bench_vector_index_recommended_rebuild
 }
 criterion_main!(vector_index_maintenance);

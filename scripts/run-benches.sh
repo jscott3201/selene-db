@@ -21,6 +21,7 @@
 #   run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 #   run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 #   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
+#   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_ivf_target_centroid_rebuild --vector-scales 10000
 #   run-benches.sh --bench vector_ivf_pressure --filter graph_ivf_target_centroids --vector-scales 10000
 #   run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 #   SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
@@ -341,6 +342,7 @@ vector_rebuild_group_filter() {
   fi
   case "$filt" in
     graph_vector_index_rebuild*) echo "rebuild" ;;
+    graph_vector_index_ivf_target_centroid_rebuild*) echo "ivf_target_centroids" ;;
     graph_vector_index_recommended_rebuild*) echo "recommended_rebuild" ;;
     graph_vector_index_stale_query*) echo "stale_query" ;;
     graph_vector_index_dimension_projection*) echo "dimension_projection" ;;

@@ -164,6 +164,9 @@ churn; `graph_vector_index_recommended_rebuild/*` compares recommended-only
 maintenance against full rebuild on a multi-index IVF fixture where only one
 index is above the rebuild threshold. Fixture setup is excluded from the
 reported Criterion duration.
+The focused `graph_vector_index_ivf_target_centroid_rebuild/*` group sweeps
+explicit IVF list-count targets on the same rebuild fixture so read-side
+candidate pressure can be compared against write-side retrain/reassignment cost.
 `vector_pq` is a benchmark-only product-quantization candidate generator for
 compression/recall research: PQ codes produce a short candidate set, then
 full-fidelity vectors are exact reranked. `vector_ivf_pq` adds a coarse
@@ -221,6 +224,10 @@ PR-local quick vector baseline:
 | `graph_vector_index_rebuild/hnsw_cos_dim128_m24ef64` | 247.1 ms (quick) | Tuned cosine rebuild row; link counts and recall shape are unchanged, but level-0 storage compacts after rebuild. |
 | `graph_vector_index_rebuild/ivf_l2_dim128` | 2.108 ms (quick) | IVF rebuild row for the same 1k / 10% update / 5% delete fixture; replacements reuse IVF entries, so the suffix now reclaims only 50 delete-stale entries (`b1k-950-50`). |
 | `graph_vector_index_rebuild/ivf_cos_dim128` | 2.124 ms (quick) | IVF cosine rebuild row with replacement reuse; bound cosine scorer cost is now mostly hidden by deterministic centroid retraining at this scale. |
+| `graph_vector_index_ivf_target_centroid_rebuild/ivf_cos_dim128_default` | 1.704 ms at 1k / 11.25 ms at 10k (quick) | Default IVF target-list rebuild baseline for the 10% update / 5% delete fixture; suffixes reclaim 50 stale entries at 1k and 500 at 10k. |
+| `graph_vector_index_ivf_target_centroid_rebuild/ivf_cos_dim128_c16` | 950.5 µs at 1k / 3.267 ms at 10k (quick) | Coarse 16-list rebuild row; cheapest retrain/reassignment cost, but read-side target-centroid pressure showed coarse lists can hurt 10k candidate fanout. |
+| `graph_vector_index_ivf_target_centroid_rebuild/ivf_cos_dim128_c128` | 6.625 ms at 1k / 13.08 ms at 10k (quick) | Explicit 128-list rebuild row; near default cost at 10k, but much more expensive than coarse lists at 1k. |
+| `graph_vector_index_ivf_target_centroid_rebuild/ivf_cos_dim128_c512` | 26.23 ms at 1k / 46.46 ms at 10k (quick) | Over-wide 512-list rebuild row; matches the read-side finding that very high list counts add cost before improving this fixture. |
 | `graph_vector_index_recommended_rebuild/ivf_l2_dim128_recommended` | 2.256 ms at 1k / 12.92 ms at 10k (quick) | Multi-index IVF fixture with 4 registered indexes and one hot index above the rebuild threshold. Recommended maintenance rebuilds only the hot index (`idx4_rb1`). |
 | `graph_vector_index_recommended_rebuild/ivf_l2_dim128_full` | 8.022 ms at 1k / 46.68 ms at 10k (quick) | Same fixture with full rebuild (`idx4_rb4`), grounding the avoided cold-index rebuild cost for maintenance orchestration. |
 | `graph_vector_index_recommended_rebuild/ivf_cos_dim128_recommended` | 2.131 ms at 1k / 12.63 ms at 10k (quick) | Cosine variant of the recommended-only maintenance row. |
