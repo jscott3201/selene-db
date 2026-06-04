@@ -9,6 +9,7 @@ use crate::common::scale_label;
 use super::support::{FACTS_PER_TOPIC, RESULT_K, SEED_K, WIDE_SEED_K, basis_points, vector_scales};
 use super::{MemoryRetrievalFixture, TopologyNoise};
 
+mod candidate_set_scoring;
 mod maintenance;
 mod neighbor_scoring;
 mod selection;
@@ -141,6 +142,10 @@ const ACTIVE_HINT_BATCH_STRATEGIES: &[(SessionStrategy, CandidateScoringMode)] =
         CandidateScoringMode::Batch,
     ),
     (
+        SessionStrategy::GraphSessionMaterializedUnresolvedCurrentFilter,
+        CandidateScoringMode::CandidateSetBatch,
+    ),
+    (
         SessionStrategy::GraphSessionRecentActiveFilter,
         CandidateScoringMode::RepeatedSingle,
     ),
@@ -149,12 +154,20 @@ const ACTIVE_HINT_BATCH_STRATEGIES: &[(SessionStrategy, CandidateScoringMode)] =
         CandidateScoringMode::Batch,
     ),
     (
+        SessionStrategy::GraphSessionRecentActiveFilter,
+        CandidateScoringMode::CandidateSetBatch,
+    ),
+    (
         SessionStrategy::GraphSessionDependencyActiveFilter,
         CandidateScoringMode::RepeatedSingle,
     ),
     (
         SessionStrategy::GraphSessionDependencyActiveFilter,
         CandidateScoringMode::Batch,
+    ),
+    (
+        SessionStrategy::GraphSessionDependencyActiveFilter,
+        CandidateScoringMode::CandidateSetBatch,
     ),
     (
         SessionStrategy::GraphSessionDependencyActiveFilter,
@@ -170,6 +183,7 @@ const ACTIVE_HINT_BATCH_STRATEGIES: &[(SessionStrategy, CandidateScoringMode)] =
 enum CandidateScoringMode {
     RepeatedSingle,
     Batch,
+    CandidateSetBatch,
     NeighborSingle,
     NeighborBatch,
 }
@@ -179,6 +193,7 @@ impl CandidateScoringMode {
         match self {
             Self::RepeatedSingle => "repeated_score",
             Self::Batch => "batch_score",
+            Self::CandidateSetBatch => "candidate_set_batch_score",
             Self::NeighborSingle => "neighbor_score",
             Self::NeighborBatch => "neighbor_batch_score",
         }
@@ -547,6 +562,9 @@ fn bench_active_hint_batch_pressure(c: &mut Criterion) {
             let quality = match mode {
                 CandidateScoringMode::RepeatedSingle => fixture.session_quality(strategy),
                 CandidateScoringMode::Batch => fixture.session_batch_scoring_quality(strategy),
+                CandidateScoringMode::CandidateSetBatch => {
+                    fixture.session_candidate_set_batch_scoring_quality(strategy)
+                }
                 CandidateScoringMode::NeighborSingle => {
                     fixture.session_neighbor_scoring_quality(strategy)
                 }
@@ -580,6 +598,12 @@ fn bench_active_hint_batch_pressure(c: &mut Criterion) {
                         }
                         CandidateScoringMode::Batch => {
                             black_box(fixture.session_batch_scoring_total_coverage(strategy));
+                        }
+                        CandidateScoringMode::CandidateSetBatch => {
+                            black_box(
+                                fixture
+                                    .session_candidate_set_batch_scoring_total_coverage(strategy),
+                            );
                         }
                         CandidateScoringMode::NeighborSingle => {
                             black_box(fixture.session_neighbor_scoring_total_coverage(strategy));
