@@ -75,6 +75,8 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphSessionUnresolvedCurrentFilter => {
                 self.unresolved_current_candidates(self.graph_session_candidates(query))
             }
+            SessionStrategy::GraphSessionMaterializedUnresolvedCurrentFilter => self
+                .materialized_unresolved_current_candidates(self.graph_session_candidates(query)),
             SessionStrategy::GraphSessionProvenanceExpandK1
             | SessionStrategy::GraphSessionProvenanceExpand2HopK1
             | SessionStrategy::GraphSessionProvenanceExpand
@@ -100,6 +102,10 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphScopeUnresolvedCurrentFilter => {
                 self.unresolved_current_candidates(self.graph_session_scope_candidates(query))
             }
+            SessionStrategy::GraphScopeMaterializedUnresolvedCurrentFilter => self
+                .materialized_unresolved_current_candidates(
+                    self.graph_session_scope_candidates(query),
+                ),
             SessionStrategy::GraphScopeProvenanceExpandK1
             | SessionStrategy::GraphScopeProvenanceExpand2HopK1
             | SessionStrategy::GraphScopeProvenanceExpand
@@ -164,6 +170,13 @@ impl MemoryRetrievalFixture {
             .filter(|node_id| {
                 self.graph_current_nodes.contains(node_id) && !self.has_contradicts_edge(*node_id)
             })
+            .collect()
+    }
+
+    fn materialized_unresolved_current_candidates(&self, candidates: Vec<NodeId>) -> Vec<NodeId> {
+        candidates
+            .into_iter()
+            .filter(|node_id| self.graph_unresolved_current_nodes.contains(node_id))
             .collect()
     }
 

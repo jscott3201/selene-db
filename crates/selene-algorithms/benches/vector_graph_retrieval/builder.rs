@@ -258,6 +258,12 @@ impl MemoryRetrievalFixture {
         let graph = shared.read().as_ref().clone();
         let graph_current_nodes =
             materialized_current_nodes(&graph, metadata.keys().copied(), &superseded_by_edge);
+        let graph_unresolved_current_nodes = materialized_unresolved_current_nodes(
+            &graph,
+            metadata.keys().copied(),
+            &superseded_by_edge,
+            &contradicts_edge,
+        );
         let pagerank = pagerank_scores(&graph, &label, &support_edge);
         let (component_by_node, component_candidates) =
             component_candidates(&graph, &label, &support_edge, &superseded_by_edge);
@@ -301,6 +307,7 @@ impl MemoryRetrievalFixture {
             queries,
             metadata,
             graph_current_nodes,
+            graph_unresolved_current_nodes,
             pagerank,
             component_candidates,
             component_order,
@@ -390,6 +397,27 @@ where
             !graph
                 .outgoing_edges(*node_id)
                 .is_some_and(|edges| edges.iter().any(|edge| edge.label == *superseded_by_edge))
+        })
+        .collect()
+}
+
+fn materialized_unresolved_current_nodes<I>(
+    graph: &SeleneGraph,
+    nodes: I,
+    superseded_by_edge: &IStr,
+    contradicts_edge: &IStr,
+) -> HashSet<NodeId>
+where
+    I: IntoIterator<Item = NodeId>,
+{
+    nodes
+        .into_iter()
+        .filter(|node_id| {
+            !graph.outgoing_edges(*node_id).is_some_and(|edges| {
+                edges.iter().any(|edge| {
+                    edge.label == *superseded_by_edge || edge.label == *contradicts_edge
+                })
+            })
         })
         .collect()
 }

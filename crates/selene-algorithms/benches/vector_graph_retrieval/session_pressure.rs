@@ -92,8 +92,10 @@ const ADAPTIVE_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
 const NEGATIVE_EVIDENCE_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::GraphSessionMaterializedCurrentFilter,
     SessionStrategy::GraphSessionUnresolvedCurrentFilter,
+    SessionStrategy::GraphSessionMaterializedUnresolvedCurrentFilter,
     SessionStrategy::GraphScopeMaterializedCurrentFilter,
     SessionStrategy::GraphScopeUnresolvedCurrentFilter,
+    SessionStrategy::GraphScopeMaterializedUnresolvedCurrentFilter,
     SessionStrategy::TopicFilter,
 ];
 
@@ -106,6 +108,7 @@ enum SessionStrategy {
     GraphSessionUnsupersededFilter,
     GraphSessionMaterializedCurrentFilter,
     GraphSessionUnresolvedCurrentFilter,
+    GraphSessionMaterializedUnresolvedCurrentFilter,
     GraphSessionProvenanceExpandK1,
     GraphSessionProvenanceExpand2HopK1,
     GraphSessionProvenanceExpand,
@@ -120,6 +123,7 @@ enum SessionStrategy {
     GraphScopeUnsupersededFilter,
     GraphScopeMaterializedCurrentFilter,
     GraphScopeUnresolvedCurrentFilter,
+    GraphScopeMaterializedUnresolvedCurrentFilter,
     GraphScopeProvenanceExpandK1,
     GraphScopeProvenanceExpand2HopK1,
     GraphScopeProvenanceExpand,
@@ -144,6 +148,9 @@ impl SessionStrategy {
                 "graph_session_materialized_current_filter"
             }
             Self::GraphSessionUnresolvedCurrentFilter => "graph_session_unresolved_current_filter",
+            Self::GraphSessionMaterializedUnresolvedCurrentFilter => {
+                "graph_session_materialized_unresolved_current_filter"
+            }
             Self::GraphSessionProvenanceExpandK1 => "graph_session_provenance_expand_k1",
             Self::GraphSessionProvenanceExpand2HopK1 => "graph_session_provenance_expand_2hop_k1",
             Self::GraphSessionProvenanceExpand => "graph_session_provenance_expand",
@@ -160,6 +167,9 @@ impl SessionStrategy {
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
             Self::GraphScopeMaterializedCurrentFilter => "graph_scope_materialized_current_filter",
             Self::GraphScopeUnresolvedCurrentFilter => "graph_scope_unresolved_current_filter",
+            Self::GraphScopeMaterializedUnresolvedCurrentFilter => {
+                "graph_scope_materialized_unresolved_current_filter"
+            }
             Self::GraphScopeProvenanceExpandK1 => "graph_scope_provenance_expand_k1",
             Self::GraphScopeProvenanceExpand2HopK1 => "graph_scope_provenance_expand_2hop_k1",
             Self::GraphScopeProvenanceExpand => "graph_scope_provenance_expand",
