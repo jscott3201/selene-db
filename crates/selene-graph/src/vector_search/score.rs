@@ -57,6 +57,69 @@ impl SeleneGraph {
         }
 
         let candidates = VectorCandidateSet::from_nodes(candidates.iter().copied());
+        self.score_vector_candidate_set_after_initial_check(
+            property,
+            query,
+            &candidates,
+            metric,
+            k,
+            checker,
+        )
+    }
+
+    /// Score one canonical node candidate set against one query vector.
+    ///
+    /// This is the zero-renormalization companion to
+    /// [`Self::score_vector_nodes`]. Callers that already hold a
+    /// [`VectorCandidateSet`] can avoid the extra sort/dedup pass while keeping
+    /// the same live-snapshot visibility, metric, and hit ordering semantics.
+    pub fn score_vector_candidate_set(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        candidates: &VectorCandidateSet,
+        metric: VectorMetric,
+        k: usize,
+    ) -> GraphResult<Vec<VectorNodeSearchHit>> {
+        self.score_vector_candidate_set_checked(
+            property,
+            query,
+            candidates,
+            metric,
+            k,
+            CancellationChecker::disabled(),
+        )
+        .map_err(VectorSearchError::into_graph_error)
+    }
+
+    /// Score one canonical node candidate set with cancellation checks.
+    pub fn score_vector_candidate_set_checked(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        candidates: &VectorCandidateSet,
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        checker.check()?;
+        if k == 0 || candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.score_vector_candidate_set_after_initial_check(
+            property, query, candidates, metric, k, checker,
+        )
+    }
+
+    fn score_vector_candidate_set_after_initial_check(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        candidates: &VectorCandidateSet,
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
         checker.check()?;
 
         let scorer = metric.bind_query(query).map_err(GraphError::from)?;
@@ -148,6 +211,60 @@ impl SeleneGraph {
         Ok(batch_hits)
     }
 
+    /// Score one canonical candidate set for each query vector.
+    ///
+    /// This is the batch companion to [`Self::score_vector_candidate_set`]. It
+    /// preserves the generic batch scoring contract while avoiding a second
+    /// normalization pass for callers that already hold canonical candidate
+    /// sets.
+    pub fn score_vector_candidate_sets_batch(
+        &self,
+        property: &IStr,
+        queries: &[VectorValue],
+        candidate_sets: &[VectorCandidateSet],
+        metric: VectorMetric,
+        k: usize,
+    ) -> GraphResult<Vec<Vec<VectorNodeSearchHit>>> {
+        self.score_vector_candidate_sets_batch_checked(
+            property,
+            queries,
+            candidate_sets,
+            metric,
+            k,
+            CancellationChecker::disabled(),
+        )
+        .map_err(VectorSearchError::into_graph_error)
+    }
+
+    /// Score batched canonical candidate sets with cancellation checks.
+    pub fn score_vector_candidate_sets_batch_checked(
+        &self,
+        property: &IStr,
+        queries: &[VectorValue],
+        candidate_sets: &[VectorCandidateSet],
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        checker.check()?;
+        validate_batch_inputs(queries, candidate_sets.len())?;
+        if queries.is_empty() {
+            return Ok(Vec::new());
+        }
+        if k == 0 {
+            return Ok(vec![Vec::new(); queries.len()]);
+        }
+
+        let mut batch_hits = Vec::with_capacity(queries.len());
+        for (query, candidates) in queries.iter().zip(candidate_sets) {
+            checker.check()?;
+            batch_hits.push(self.score_vector_candidate_set_checked(
+                property, query, candidates, metric, k, checker,
+            )?);
+        }
+        Ok(batch_hits)
+    }
+
     /// Score vector-valued neighbors reached from one anchor through `edge_label`.
     ///
     /// This is the one-hop graph candidate-set companion to
@@ -186,10 +303,10 @@ impl SeleneGraph {
         }
         let candidates =
             self.vector_neighbor_candidates(anchor, options.edge_label, options.direction);
-        self.score_vector_nodes_checked(
+        self.score_vector_candidate_set_checked(
             property,
             query,
-            candidates.as_nodes(),
+            &candidates,
             options.metric,
             options.k,
             checker,
@@ -241,7 +358,7 @@ impl SeleneGraph {
                 self.vector_neighbor_candidates(*anchor, options.edge_label, options.direction)
             })
             .collect();
-        self.score_vector_nodes_batch_checked(
+        self.score_vector_candidate_sets_batch_checked(
             property,
             queries,
             &candidate_sets,
@@ -359,6 +476,74 @@ impl SharedGraph {
         C: AsRef<[NodeId]>,
     {
         self.read().score_vector_nodes_batch_checked(
+            property,
+            queries,
+            candidate_sets,
+            metric,
+            k,
+            checker,
+        )
+    }
+
+    /// Score one canonical candidate set against one query in the current snapshot.
+    ///
+    /// This loads one immutable snapshot and delegates to
+    /// [`SeleneGraph::score_vector_candidate_set`].
+    pub fn score_vector_candidate_set(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        candidates: &VectorCandidateSet,
+        metric: VectorMetric,
+        k: usize,
+    ) -> GraphResult<Vec<VectorNodeSearchHit>> {
+        self.read()
+            .score_vector_candidate_set(property, query, candidates, metric, k)
+    }
+
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::score_vector_candidate_set_checked`].
+    pub fn score_vector_candidate_set_checked(
+        &self,
+        property: &IStr,
+        query: &VectorValue,
+        candidates: &VectorCandidateSet,
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        self.read()
+            .score_vector_candidate_set_checked(property, query, candidates, metric, k, checker)
+    }
+
+    /// Score one canonical candidate set per query in the current snapshot.
+    ///
+    /// This loads one immutable snapshot and delegates to
+    /// [`SeleneGraph::score_vector_candidate_sets_batch`].
+    pub fn score_vector_candidate_sets_batch(
+        &self,
+        property: &IStr,
+        queries: &[VectorValue],
+        candidate_sets: &[VectorCandidateSet],
+        metric: VectorMetric,
+        k: usize,
+    ) -> GraphResult<Vec<Vec<VectorNodeSearchHit>>> {
+        self.read()
+            .score_vector_candidate_sets_batch(property, queries, candidate_sets, metric, k)
+    }
+
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::score_vector_candidate_sets_batch_checked`].
+    pub fn score_vector_candidate_sets_batch_checked(
+        &self,
+        property: &IStr,
+        queries: &[VectorValue],
+        candidate_sets: &[VectorCandidateSet],
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        self.read().score_vector_candidate_sets_batch_checked(
             property,
             queries,
             candidate_sets,

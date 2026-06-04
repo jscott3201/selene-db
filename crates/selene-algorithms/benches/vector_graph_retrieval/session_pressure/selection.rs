@@ -107,7 +107,11 @@ impl MemoryRetrievalFixture {
         self.select_from_candidates(query, hits, true, false, true)
     }
 
-    fn session_candidates(&self, query: &Query, strategy: SessionStrategy) -> Vec<NodeId> {
+    pub(super) fn session_candidates(
+        &self,
+        query: &Query,
+        strategy: SessionStrategy,
+    ) -> Vec<NodeId> {
         match strategy {
             SessionStrategy::NoisyWcc => self
                 .component_candidates

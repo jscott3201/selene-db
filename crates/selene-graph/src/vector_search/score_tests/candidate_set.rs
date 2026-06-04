@@ -78,6 +78,130 @@ fn score_vector_nodes_batch_accepts_candidate_sets() {
 }
 
 #[test]
+fn score_vector_candidate_set_matches_explicit_node_scoring() {
+    let shared = SharedGraph::new(GraphId::new(985));
+    let label = intern("vector.score.canonical_set.doc").unwrap();
+    let embedding = intern("embedding").unwrap();
+    let ids = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let mut ids = Vec::new();
+        for value in 0..5 {
+            ids.push(
+                mutator
+                    .create_node(
+                        LabelSet::single(label.clone()),
+                        props(&embedding, Value::Vector(vector(&[value as f32, 0.0]))),
+                    )
+                    .unwrap(),
+            );
+        }
+        txn.commit().unwrap();
+        ids
+    };
+    let query = vector(&[2.2, 0.0]);
+    let explicit_candidates = vec![ids[4], ids[2], ids[2], ids[1], ids[0]];
+    let canonical_candidates = VectorCandidateSet::from_nodes(explicit_candidates.clone());
+
+    let explicit = shared
+        .score_vector_nodes_checked(
+            &embedding,
+            &query,
+            &explicit_candidates,
+            VectorMetric::SquaredEuclidean,
+            3,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let canonical = shared
+        .score_vector_candidate_set_checked(
+            &embedding,
+            &query,
+            &canonical_candidates,
+            VectorMetric::SquaredEuclidean,
+            3,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+
+    assert_eq!(canonical, explicit);
+    assert_eq!(
+        canonical.iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
+        vec![ids[2], ids[1], ids[4]]
+    );
+}
+
+#[test]
+fn score_vector_candidate_sets_batch_matches_generic_batch() {
+    let shared = SharedGraph::new(GraphId::new(986));
+    let label = intern("vector.score.canonical_batch.doc").unwrap();
+    let embedding = intern("embedding").unwrap();
+    let ids = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let mut ids = Vec::new();
+        for value in 0..7 {
+            ids.push(
+                mutator
+                    .create_node(
+                        LabelSet::single(label.clone()),
+                        props(&embedding, Value::Vector(vector(&[value as f32, 0.0]))),
+                    )
+                    .unwrap(),
+            );
+        }
+        txn.commit().unwrap();
+        ids
+    };
+    let queries = vec![vector(&[0.9, 0.0]), vector(&[5.1, 0.0])];
+    let explicit_sets = vec![
+        vec![ids[3], ids[0], ids[1], ids[1]],
+        vec![ids[6], ids[5], ids[4], ids[6]],
+    ];
+    let canonical_sets = explicit_sets
+        .iter()
+        .map(|set| VectorCandidateSet::from_nodes(set.iter().copied()))
+        .collect::<Vec<_>>();
+
+    let generic = shared
+        .score_vector_nodes_batch_checked(
+            &embedding,
+            &queries,
+            &explicit_sets,
+            VectorMetric::SquaredEuclidean,
+            2,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let canonical = shared
+        .score_vector_candidate_sets_batch_checked(
+            &embedding,
+            &queries,
+            &canonical_sets,
+            VectorMetric::SquaredEuclidean,
+            2,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+
+    assert_eq!(canonical, generic);
+    assert_eq!(
+        canonical[0]
+            .iter()
+            .map(|hit| hit.node_id)
+            .collect::<Vec<_>>(),
+        vec![ids[1], ids[0]]
+    );
+    assert_eq!(
+        canonical[1]
+            .iter()
+            .map(|hit| hit.node_id)
+            .collect::<Vec<_>>(),
+        vec![ids[5], ids[6]]
+    );
+}
+
+#[test]
 fn vector_neighbor_candidates_filter_direction_and_normalize() {
     let shared = SharedGraph::new(GraphId::new(983));
     let anchor_label = intern("vector.candidate.anchor").unwrap();
