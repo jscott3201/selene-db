@@ -57,6 +57,7 @@ selene-core|value_clone|0
 selene-graph|single_graph|0
 selene-graph|vector_index_rebuild|0
 selene-graph|vector_pq|0
+selene-graph|vector_ivf_pq|0
 selene-graph|bulk_mutation|0
 selene-graph|concurrent_read|0
 selene-graph|bfs|0
