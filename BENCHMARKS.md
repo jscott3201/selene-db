@@ -692,6 +692,18 @@ quality rather than rerank behavior:
 | `graph_vector_community_pressure/label_propagation/...` | 53.34 µs (`c17`, `covbp7661`, `precbp8830`) | 112.0 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation is a useful middle row: compact and fast, but partial-recall compared with the hard topic/session filter. |
 | `graph_vector_community_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 102.6 µs (`c32`) | 1.094 ms (`c152`) | The hard topic/session filter remains the full-quality reference under this noisy graph. Next research should derive comparable filters from graph/query structure rather than trusting connectivity alone. |
 
+Query-filter rows replace the metadata-only hard topic candidate set with graph
+candidate production. Each memory node links to a scope node via `IN_SCOPE`;
+the query path follows the anchor's scope edge, scans incoming scope membership
+edges, then exact-scores those graph-derived candidates:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_query_filter_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.761 ms (`c992`) | 60.62 ms (`c9728`) | Repeats the noisy WCC baseline inside the query-filter fixture. |
+| `graph_vector_query_filter_pressure/label_propagation/...` | 58.89 µs (`c17`, `covbp7661`, `precbp8830`) | 122.3 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation stays compact and partial-recall when compared with graph-derived scope filtering. |
+| `graph_vector_query_filter_pressure/graph_scope_filter/...covbp10000_curbp10000_precbp10000` | 120.0 µs (`c32`) | 1.230 ms (`c152`) | Graph-derived scope membership matches hard-topic quality with a small traversal overhead. This is the strongest product-shaped primitive so far: graph/query candidate production plus exact vector scoring. |
+| `graph_vector_query_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 112.5 µs (`c32`) | 1.181 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same candidate set. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work
