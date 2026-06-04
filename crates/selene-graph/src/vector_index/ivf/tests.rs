@@ -90,7 +90,7 @@ fn ivf_memory_usage_reports_list_distribution() {
 }
 
 #[test]
-fn ivf_replace_marks_old_row_version_stale() {
+fn ivf_replace_reuses_current_row_version() {
     let mut index = IvfVectorIndex::new(VectorMetric::SquaredEuclidean);
     index.insert(1, vector(&[100.0, 0.0])).unwrap();
     index.insert(2, vector(&[2.0, 0.0])).unwrap();
@@ -98,12 +98,37 @@ fn ivf_replace_marks_old_row_version_stale() {
 
     index.insert(1, vector(&[1.0, 0.0])).unwrap();
 
-    assert!(index.has_stale_entries());
+    assert!(!index.has_stale_entries());
     let hits = index.search(&vector(&[1.1, 0.0]), 2, 16).unwrap();
     assert_eq!(hits[0].row, 1);
     let usage = index.memory_usage();
+    assert_eq!(usage.entries, 2);
     assert_eq!(usage.live_entries, 2);
-    assert_eq!(usage.deleted_entries, 1);
+    assert_eq!(usage.deleted_entries, 0);
+    assert_eq!(usage.assigned_entries, 2);
+}
+
+#[test]
+fn ivf_replace_moves_entry_between_lists() {
+    let mut index = IvfVectorIndex::new(VectorMetric::SquaredEuclidean);
+    for row in 0..16 {
+        index
+            .insert(row, vector(&[row as f32 * 10.0, 0.0]))
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+
+    let before = index.memory_usage();
+    index.insert(1, vector(&[150.0, 0.0])).unwrap();
+
+    assert!(!index.has_stale_entries());
+    let after = index.memory_usage();
+    assert_eq!(after.entries, before.entries);
+    assert_eq!(after.assigned_entries, before.assigned_entries);
+    let hits = index
+        .search(&vector(&[150.0, 0.0]), 1, after.list_count)
+        .unwrap();
+    assert_eq!(hits[0].row, 1);
 }
 
 #[test]
@@ -200,7 +225,7 @@ fn ivf_cosine_replace_keeps_entry_norm_cache_aligned() {
     index.insert(1, vector(&[0.9, 0.1])).unwrap();
 
     assert_eq!(index.entry_squared_norms.len(), index.entries.len());
-    assert_eq!(index.memory_usage().deleted_entries, 1);
+    assert_eq!(index.memory_usage().deleted_entries, 0);
     let hits = index.search(&vector(&[1.0, 0.0]), 1, 16).unwrap();
     assert_eq!(hits[0].row, 1);
 }

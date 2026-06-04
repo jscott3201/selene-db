@@ -291,13 +291,16 @@ impl VectorRebuildFixture {
     }
 
     fn validate_report(&self, report: &VectorIndexRebuildReport) {
+        let expected_deleted_entries = self.expected_deleted_entries();
         assert_eq!(report.indexes_rebuilt, 1);
         assert_eq!(report.entries.len(), 1);
         assert_eq!(
             reclaimed_deleted_entries(report, self.variant),
-            self.update_count + self.delete_count
+            expected_deleted_entries
         );
-        assert!(report.reclaimed_reachable_bytes > 0);
+        if self.variant.is_hnsw() {
+            assert!(report.reclaimed_reachable_bytes > 0);
+        }
 
         let live_rows = self.scale - self.delete_count;
         let live_rows_u64 = u64::try_from(live_rows).expect("bench scale fits u64");
@@ -312,7 +315,7 @@ impl VectorRebuildFixture {
         assert_eq!(usage_live_entries(entry.before, self.variant), live_rows);
         assert_eq!(
             usage_deleted_entries(entry.before, self.variant),
-            self.update_count + self.delete_count
+            expected_deleted_entries
         );
         assert_eq!(entry.after.indexed_rows, live_rows_u64);
         assert_eq!(usage_entries(entry.after, self.variant), live_rows);
@@ -333,6 +336,14 @@ impl VectorRebuildFixture {
                     .saturating_add(entry.after.hnsw_upper_layer_link_count),
                 entry.after.hnsw_link_count
             );
+        }
+    }
+
+    fn expected_deleted_entries(&self) -> usize {
+        if self.variant.is_hnsw() {
+            self.update_count + self.delete_count
+        } else {
+            self.delete_count
         }
     }
 

@@ -271,9 +271,9 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     );
     assert_eq!(uint_column(&table, "before_indexed_rows"), vec![22]);
     assert_eq!(uint_column(&table, "after_indexed_rows"), vec![22]);
-    assert_eq!(uint_column(&table, "before_ivf_entries"), vec![28]);
+    assert_eq!(uint_column(&table, "before_ivf_entries"), vec![24]);
     assert_eq!(uint_column(&table, "after_ivf_entries"), vec![22]);
-    assert_eq!(uint_column(&table, "before_ivf_deleted_entries"), vec![6]);
+    assert_eq!(uint_column(&table, "before_ivf_deleted_entries"), vec![2]);
     assert_eq!(uint_column(&table, "after_ivf_deleted_entries"), vec![0]);
     assert!(uint_column(&table, "after_ivf_centroids")[0] > 0);
     assert!(uint_column(&table, "after_ivf_list_count")[0] > 0);
@@ -285,12 +285,11 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
             / uint_column(&table, "after_ivf_list_count")[0]
     );
     assert_eq!(uint_column(&table, "after_ivf_assigned_entries"), vec![22]);
-    assert_eq!(uint_column(&table, "reclaimed_ivf_entries"), vec![6]);
+    assert_eq!(uint_column(&table, "reclaimed_ivf_entries"), vec![2]);
     assert_eq!(
         uint_column(&table, "reclaimed_ivf_deleted_entries"),
-        vec![6]
+        vec![2]
     );
-    assert!(uint_column(&table, "reclaimed_reachable_bytes")[0] > 0);
 }
 
 #[test]

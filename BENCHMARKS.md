@@ -203,14 +203,14 @@ PR-local quick vector baseline:
 | `graph_vector_index_rebuild/hnsw_l2_dim128_m24ef64` | 200.7 ms (quick) | Tuned `M=24, ef_construction=64` rebuild row; keeps the high-recall research config covered with compacted post-rebuild level-0 links. |
 | `graph_vector_index_rebuild/hnsw_cos_dim128_default` | 146.1 ms (quick) | Same rebuild fixture for 128-dim HNSW cosine, covering construction-side scorer reuse for metrics with bound query state. |
 | `graph_vector_index_rebuild/hnsw_cos_dim128_m24ef64` | 247.1 ms (quick) | Tuned cosine rebuild row; link counts and recall shape are unchanged, but level-0 storage compacts after rebuild. |
-| `graph_vector_index_rebuild/ivf_l2_dim128` | 2.196 ms (quick) | First IVF rebuild row for the same 1k / 10% update / 5% delete fixture; reclaims 150 stale IVF entries with deterministic centroid retraining. |
-| `graph_vector_index_rebuild/ivf_cos_dim128` | 3.287 ms (quick) | IVF cosine rebuild row; bound cosine scorer cost dominates over L2, while rebuild remains far cheaper than HNSW at this scale. |
+| `graph_vector_index_rebuild/ivf_l2_dim128` | 2.108 ms (quick) | IVF rebuild row for the same 1k / 10% update / 5% delete fixture; replacements reuse IVF entries, so the suffix now reclaims only 50 delete-stale entries (`b1k-950-50`). |
+| `graph_vector_index_rebuild/ivf_cos_dim128` | 2.124 ms (quick) | IVF cosine rebuild row with replacement reuse; bound cosine scorer cost is now mostly hidden by deterministic centroid retraining at this scale. |
 | `graph_vector_index_stale_query/hnsw_l2_dim128_default` | 11.24 µs stale / 10.92 µs rebuilt (quick) | 1k fixture after 10% updates + 5% deletes. Stale overlay/mutable state reports `m478-1028`; rebuild compacts to `m212-687`. |
 | `graph_vector_index_stale_query/hnsw_cos_dim128_default` | 12.12 µs stale / 12.59 µs rebuilt (quick) | Same churn shape under cosine. On this small fixture, rebuild is still a memory-control operation more than a strict query-latency win. |
 | `graph_vector_index_stale_query/hnsw_l2_dim128_m24ef64` | 14.02 µs stale / 13.85 µs rebuilt (quick) | Tuned `M=24, ef_construction=64`; stale `m578-*` compacts to rebuilt `m258-*` while latency stays effectively neutral. |
 | `graph_vector_index_stale_query/hnsw_cos_dim128_m24ef64` | 14.90 µs stale / 14.93 µs rebuilt (quick) | Tuned cosine row; memory compaction is visible, latency delta is noise-scale. |
-| `graph_vector_index_stale_query/ivf_l2_dim128` | 25.06 µs stale / 25.12 µs rebuilt (quick) | IVF L2 probes 64 lists on the 1k fixture; stale suffix `ve1100l950d150_m74-640` compacts to `ve950l950d0_m48-539`. |
-| `graph_vector_index_stale_query/ivf_cos_dim128` | 36.64 µs stale / 36.67 µs rebuilt (quick) | IVF cosine query row; rebuild controls retained vector memory, while query latency is stable at this small scale. |
+| `graph_vector_index_stale_query/ivf_l2_dim128` | 19.88 µs stale / 19.33 µs rebuilt (quick) | IVF L2 probes 64 lists on the 1k fixture; replacement reuse changes the stale suffix to `ve1kl950d50_m46-562`, compacting to `ve950l950d0_m47-537`. |
+| `graph_vector_index_stale_query/ivf_cos_dim128` | 19.66 µs stale / 19.08 µs rebuilt (quick) | IVF cosine query row; update churn no longer inflates stale candidate checks, while delete-stale compaction remains a memory-control path. |
 | `graph_vector_index_dimension_projection/hnsw_l2_default_dim128` | 10.98 µs (quick) | 1k HNSW L2 query row with suffix `m221-721`: ~221 KiB index-owned bytes and ~721 KiB reachable bytes after compact level-0 storage. |
 | `graph_vector_index_dimension_projection/hnsw_l2_default_dim768` | 42.34 µs (quick) | Same HNSW topology/link count as dim128; reachable bytes rise to ~3.15 MiB because full-precision vector components dominate. |
 | `graph_vector_index_dimension_projection/hnsw_l2_default_dim1536` | 81.01 µs (quick) | Reachable bytes rise to ~6.08 MiB at 1k vectors; extrapolation pressure is raw vector storage, not graph-link storage. |
@@ -276,7 +276,7 @@ PR-local mixed vector read/write spot-check:
 
 | Bench | 1k | 10k | Notes |
 |---|---:|---:|---|
-| `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40_ef2` | 2.28 ms | 7.75 ms | One measured cycle interleaves 60 IVF cosine ANN reads and 40 vector-property updates over a 128-dim index. Fixture build is excluded; timed writes retain stale IVF entries, matching the hot update path before rebuild compaction. |
+| `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40_ef2` | 2.09 ms | 7.48 ms | One measured cycle interleaves 60 IVF cosine ANN reads and 40 vector-property updates over a 128-dim index. Fixture build is excluded; timed replacement writes reuse IVF entries, so routine updates no longer add stale IVF rows before rebuild compaction. |
 
 ## §3 selene-graph — write pipeline & concurrency
 
