@@ -160,7 +160,10 @@ clone) and is unaffected. `graph_exact_vector_scan/*` is the native graph-level
 exact-vector oracle: label-filtered row scan plus the core vector metric
 kernels, returning stable node ids. `graph_vector_index_rebuild/*` times the
 maintenance rebuild that reclaims stale ANN entries after vector update/delete
-churn; fixture setup is excluded from the reported Criterion duration.
+churn; `graph_vector_index_recommended_rebuild/*` compares recommended-only
+maintenance against full rebuild on a multi-index IVF fixture where only one
+index is above the rebuild threshold. Fixture setup is excluded from the
+reported Criterion duration.
 `vector_pq` is a benchmark-only product-quantization candidate generator for
 compression/recall research: PQ codes produce a short candidate set, then
 full-fidelity vectors are exact reranked. `vector_ivf_pq` adds a coarse
@@ -178,6 +181,8 @@ tie-tolerant nearest-distance quality as `dqbp{basis points}` before that
 memory suffix.
 unindexed rows use `noidx`. Rebuild IDs add
 `upd{updates}_del{deletes}_b{entries-live-deleted}_a{entries-live-deleted}_rk{reclaimed reachable KiB}`.
+Recommended-rebuild IDs add
+`idx{registered indexes}_rb{rebuilt indexes}_pend{pending retrain entries}_bp{pending basis points}`.
 Stale-query IDs use
 `{stale|rebuilt}_n{rows}_{h|v}e{entries}l{live}d{deleted}_m{index KiB}-{reachable KiB}`,
 where `h` is HNSW and `v` is IVF.
@@ -212,6 +217,10 @@ PR-local quick vector baseline:
 | `graph_vector_index_rebuild/hnsw_cos_dim128_m24ef64` | 247.1 ms (quick) | Tuned cosine rebuild row; link counts and recall shape are unchanged, but level-0 storage compacts after rebuild. |
 | `graph_vector_index_rebuild/ivf_l2_dim128` | 2.108 ms (quick) | IVF rebuild row for the same 1k / 10% update / 5% delete fixture; replacements reuse IVF entries, so the suffix now reclaims only 50 delete-stale entries (`b1k-950-50`). |
 | `graph_vector_index_rebuild/ivf_cos_dim128` | 2.124 ms (quick) | IVF cosine rebuild row with replacement reuse; bound cosine scorer cost is now mostly hidden by deterministic centroid retraining at this scale. |
+| `graph_vector_index_recommended_rebuild/ivf_l2_dim128_recommended` | 2.256 ms at 1k / 12.92 ms at 10k (quick) | Multi-index IVF fixture with 4 registered indexes and one hot index above the rebuild threshold. Recommended maintenance rebuilds only the hot index (`idx4_rb1`). |
+| `graph_vector_index_recommended_rebuild/ivf_l2_dim128_full` | 8.022 ms at 1k / 46.68 ms at 10k (quick) | Same fixture with full rebuild (`idx4_rb4`), grounding the avoided cold-index rebuild cost for maintenance orchestration. |
+| `graph_vector_index_recommended_rebuild/ivf_cos_dim128_recommended` | 2.131 ms at 1k / 12.63 ms at 10k (quick) | Cosine variant of the recommended-only maintenance row. |
+| `graph_vector_index_recommended_rebuild/ivf_cos_dim128_full` | 7.595 ms at 1k / 45.64 ms at 10k (quick) | Cosine full-rebuild comparison for the same 4-index fixture. |
 | `graph_vector_index_stale_query/hnsw_l2_dim128_default` | 11.24 µs stale / 10.92 µs rebuilt (quick) | 1k fixture after 10% updates + 5% deletes. Stale overlay/mutable state reports `m478-1028`; rebuild compacts to `m212-687`. |
 | `graph_vector_index_stale_query/hnsw_cos_dim128_default` | 12.12 µs stale / 12.59 µs rebuilt (quick) | Same churn shape under cosine. On this small fixture, rebuild is still a memory-control operation more than a strict query-latency win. |
 | `graph_vector_index_stale_query/hnsw_l2_dim128_m24ef64` | 14.02 µs stale / 13.85 µs rebuilt (quick) | Tuned `M=24, ef_construction=64`; stale `m578-*` compacts to rebuilt `m258-*` while latency stays effectively neutral. |

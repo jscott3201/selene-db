@@ -6,6 +6,8 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
+#[path = "vector_index_rebuild/recommended.rs"]
+mod recommended;
 
 use std::time::{Duration, Instant};
 
@@ -609,6 +611,7 @@ criterion_group! {
     name = vector_index_maintenance;
     config = common::criterion_config();
     targets = bench_vector_index_rebuild, bench_vector_index_stale_query,
-        bench_vector_index_dimension_projection
+        bench_vector_index_dimension_projection,
+        recommended::bench_vector_index_recommended_rebuild
 }
 criterion_main!(vector_index_maintenance);
