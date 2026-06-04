@@ -13,7 +13,7 @@ use selene_graph::VectorIndexMemoryUsage;
 use selene_testing::BenchProfile;
 use single_graph_ann_recall::{AnnRecallFixture, AnnRecallProfile, AnnRecallVariant};
 
-const K: usize = 10;
+const K_VALUES: &[usize] = &[10, 50];
 const QUERY_COUNT: usize = 16;
 const PROFILES: [AnnRecallProfile; 1] = [AnnRecallProfile::ClusteredCosine];
 
@@ -22,31 +22,33 @@ fn bench_ivf_candidate_pressure(c: &mut Criterion) {
     for scale in vector_scales() {
         for profile in PROFILES {
             let variant = ivf_variant(profile);
-            let fixture = AnnRecallFixture::build(profile, variant, scale, QUERY_COUNT, K);
-            let usage = fixture.memory_usage();
-            for &width in variant.search_widths() {
-                let recall = recall_basis_points(fixture.mean_recall(width));
-                let quality = recall_basis_points(fixture.mean_distance_quality(width));
-                group.throughput(Throughput::Elements(estimated_candidates_per_batch(
-                    usage,
-                    width,
-                    fixture.query_count(),
-                ) as u64));
-                group.bench_function(
-                    BenchmarkId::new(
-                        profile.name(),
-                        format!(
-                            "d{}_k{K}_w{width}_idbp{recall}_dqbp{quality}_{}",
-                            fixture.dimension(),
-                            pressure_suffix(usage, width)
+            for &k in K_VALUES {
+                let fixture = AnnRecallFixture::build(profile, variant, scale, QUERY_COUNT, k);
+                let usage = fixture.memory_usage();
+                for &width in variant.search_widths() {
+                    let recall = recall_basis_points(fixture.mean_recall(width));
+                    let quality = recall_basis_points(fixture.mean_distance_quality(width));
+                    group.throughput(Throughput::Elements(estimated_candidates_per_batch(
+                        usage,
+                        width,
+                        fixture.query_count(),
+                    ) as u64));
+                    group.bench_function(
+                        BenchmarkId::new(
+                            profile.name(),
+                            format!(
+                                "d{}_k{k}_w{width}_idbp{recall}_dqbp{quality}_{}",
+                                fixture.dimension(),
+                                pressure_suffix(usage, width)
+                            ),
                         ),
-                    ),
-                    |b| {
-                        b.iter(|| {
-                            std::hint::black_box(fixture.total_overlap(width));
-                        });
-                    },
-                );
+                        |b| {
+                            b.iter(|| {
+                                std::hint::black_box(fixture.total_overlap(width));
+                            });
+                        },
+                    );
+                }
             }
         }
     }

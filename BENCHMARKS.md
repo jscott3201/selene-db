@@ -250,6 +250,12 @@ hits, the same quick run measured width 1 / 2 / 4 / 64 at 92.38 µs / 140.91 µs
 `k=10`; the value is avoiding redundant heap work on the read path while
 preserving dead-row filtering and deterministic `NodeId` tie ordering.
 
+The same pressure bench also carries a `k=50` top-k sweep to catch wider
+agent-memory retrieval requests. On the 10k clustered-cosine fixture, width 1
+falls to 8725 bp recall/quality at ~112.4 µs, while width 2 restores 10000 bp at
+~160.8 µs. Width 4 / 8 / 64 remain perfect-recall guardrails at ~274.4 µs /
+~494.1 µs / ~3.065 ms.
+
 PR-local ANN recall spot-check:
 
 | Bench | 10k | Notes |
