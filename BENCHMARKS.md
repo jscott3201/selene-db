@@ -739,7 +739,11 @@ larger local corpus work:
 | `graph_vector_omlx_embedding_pressure/exact_graph_search/...precbp6875` | 13.58 µs | 31.81 µs | Exact cosine over 16 stored endpoint vectors and 4 query vectors. |
 | `graph_vector_omlx_embedding_pressure/hnsw_graph_search/...precbp6875` | 16.07 µs | 34.29 µs | HNSW cosine over the same vectors (`k=4`, `ef=64`). |
 | `graph_vector_omlx_embedding_pressure/topic_label_candidate_score/...c4...precbp10000` | 4.11 µs | 9.46 µs | Candidate sets are derived from graph topic labels and batch-scored exactly. |
+| `graph_vector_omlx_embedding_pressure/topic_neighbor_score/...c4...precbp10000` | 4.04 µs | 9.41 µs | Query-anchor `OmlxDependsOn` edges derive same-topic candidates through one-hop graph-neighbor scoring. |
+| `graph_vector_omlx_embedding_pressure/topic_neighbor_batch_score/...c4...precbp10000` | 4.07 µs | 9.46 µs | Batched one-hop neighbor scoring over the same tiny profile. |
 | `SELENE_OMLX_CORPUS=agent_memory` `topic_label_candidate_score/...c8...precbp10000` | 15.88 µs | 34.96 µs | Expanded 32-document / 8-query agent-memory profile; graph labels still restore full precision. |
+| `SELENE_OMLX_CORPUS=agent_memory` `topic_neighbor_score/...c8...precbp10000` | 15.51 µs | 34.80 µs | Explicit graph-neighbor candidate derivation stays full-precision on the expanded profile. |
+| `SELENE_OMLX_CORPUS=agent_memory` `topic_neighbor_batch_score/...c8...precbp10000` | 15.61 µs | 34.74 µs | Batched one-hop neighbor scoring over the expanded profile. |
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it

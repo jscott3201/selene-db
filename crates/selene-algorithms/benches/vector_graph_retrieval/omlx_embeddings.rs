@@ -42,6 +42,14 @@ pub(super) fn bench(c: &mut Criterion) {
             fixture.topic_candidate_total_precision(),
             fixture.query_count() * TOP_K,
         );
+        let neighbor_precision = precision_basis_points(
+            fixture.topic_neighbor_total_precision(),
+            fixture.query_count() * TOP_K,
+        );
+        let neighbor_batch_precision = precision_basis_points(
+            fixture.topic_neighbor_batch_total_precision(),
+            fixture.query_count() * TOP_K,
+        );
         group.throughput(Throughput::Elements(inputs.len() as u64));
         group.bench_function(
             BenchmarkId::new(
@@ -110,6 +118,42 @@ pub(super) fn bench(c: &mut Criterion) {
             ),
             |b| {
                 b.iter(|| black_box(fixture.topic_candidate_total_precision()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_neighbor_score",
+                format!(
+                    "{}_{}_q{}_k{}_c{}_dim{}_precbp{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.topic_neighbor_count(),
+                    fixture.dimension,
+                    neighbor_precision,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.topic_neighbor_total_precision()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_neighbor_batch_score",
+                format!(
+                    "{}_{}_q{}_k{}_c{}_dim{}_precbp{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.topic_neighbor_count(),
+                    fixture.dimension,
+                    neighbor_batch_precision,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.topic_neighbor_batch_total_precision()));
             },
         );
     }
