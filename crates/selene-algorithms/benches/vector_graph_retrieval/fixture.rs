@@ -15,6 +15,7 @@ use selene_graph::{
 
 use crate::common::scale_label;
 
+mod community_pressure;
 mod component_pressure;
 mod support;
 mod topology_pressure;
@@ -73,6 +74,7 @@ pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
     bench_retrieval_strategies(c);
     component_pressure::bench(c);
     topology_pressure::bench(c);
+    community_pressure::bench(c);
 }
 
 fn bench_retrieval_strategies(c: &mut Criterion) {
@@ -124,6 +126,10 @@ struct MemoryRetrievalFixture {
     component_candidates: HashMap<u64, Vec<NodeId>>,
     component_order: Vec<u64>,
     component_offsets: HashMap<u64, usize>,
+    louvain_by_node: HashMap<NodeId, u64>,
+    louvain_candidates: HashMap<u64, Vec<NodeId>>,
+    label_by_node: HashMap<NodeId, u64>,
+    label_candidates: HashMap<u64, Vec<NodeId>>,
     topic_candidates: Vec<Vec<NodeId>>,
 }
 
@@ -260,10 +266,14 @@ impl MemoryRetrievalFixture {
             candidates.sort_unstable();
         }
         let queries = (0..topic_count)
-            .map(|topic| Query {
-                topic,
-                component: component_by_node[&topic_nodes[topic][0][duplicates / 2]],
-                vector: memory_vector(topic, 0, duplicates / 2, 0.0003),
+            .map(|topic| {
+                let anchor = topic_nodes[topic][0][duplicates / 2];
+                Query {
+                    topic,
+                    anchor,
+                    component: component_by_node[&anchor],
+                    vector: memory_vector(topic, 0, duplicates / 2, 0.0003),
+                }
             })
             .collect();
         Self {
@@ -280,8 +290,33 @@ impl MemoryRetrievalFixture {
             component_candidates,
             component_order,
             component_offsets,
+            louvain_by_node: HashMap::new(),
+            louvain_candidates: HashMap::new(),
+            label_by_node: HashMap::new(),
+            label_candidates: HashMap::new(),
             topic_candidates,
         }
+    }
+
+    fn build_with_community_topology(requested_scale: usize, topology: TopologyNoise) -> Self {
+        let mut fixture = Self::build_with_topology(requested_scale, topology);
+        let (louvain_by_node, louvain_candidates) = support::louvain_candidates(
+            &fixture.graph,
+            &fixture.label,
+            &fixture.support_edge,
+            &fixture.superseded_by_edge,
+        );
+        let (label_by_node, label_candidates) = support::label_propagation_candidates(
+            &fixture.graph,
+            &fixture.label,
+            &fixture.support_edge,
+            &fixture.superseded_by_edge,
+        );
+        fixture.louvain_by_node = louvain_by_node;
+        fixture.louvain_candidates = louvain_candidates;
+        fixture.label_by_node = label_by_node;
+        fixture.label_candidates = label_candidates;
+        fixture
     }
 
     const fn scale(&self) -> usize {
@@ -593,6 +628,7 @@ impl MemoryRetrievalFixture {
 
 struct Query {
     topic: usize,
+    anchor: NodeId,
     component: u64,
     vector: VectorValue,
 }

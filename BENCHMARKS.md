@@ -680,6 +680,18 @@ inflation:
 | `graph_vector_topology_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.535 ms (`c992`) | 56.68 ms (`c9728`) | Cross-topic topology noise collapses WCC into a near-global candidate set; exact scoring preserves quality but is far too expensive. |
 | `graph_vector_topology_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 102.7 µs (`c32`) | 1.109 ms (`c152`) | A hard topic/session candidate set restores bounded exact scoring under the same noisy graph, pointing toward query-derived subgraph filters before ANN/PQ fallback. |
 
+Community-pressure rows compare algorithm-derived community partitions against
+the same noisy topology. These rows are benchmark-only and intentionally use the
+same exact vector scorer/fact-diverse selector, so they isolate partition
+quality rather than rerank behavior:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_community_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.534 ms (`c992`) | 56.11 ms (`c9728`) | Same broad WCC baseline as topology pressure; quality is perfect only because exact scoring scans nearly the whole noisy graph. |
+| `graph_vector_community_pressure/louvain/...` | 7.08 µs (`c2`, `covbp2500`) | 15.59 µs (`c2`, `covbp1250`) | Single-pass Louvain over this star-like memory topology over-partitions to tiny candidate sets. It is fast, but loses too much coverage to be a useful default partition source here. |
+| `graph_vector_community_pressure/label_propagation/...` | 53.34 µs (`c17`, `covbp7661`, `precbp8830`) | 112.0 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation is a useful middle row: compact and fast, but partial-recall compared with the hard topic/session filter. |
+| `graph_vector_community_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 102.6 µs (`c32`) | 1.094 ms (`c152`) | The hard topic/session filter remains the full-quality reference under this noisy graph. Next research should derive comparable filters from graph/query structure rather than trusting connectivity alone. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work

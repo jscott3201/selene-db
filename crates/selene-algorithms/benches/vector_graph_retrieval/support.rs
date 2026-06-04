@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use selene_algorithms::{
-    GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank, wcc,
+    GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, label_propagation, louvain,
+    pagerank, wcc,
 };
 use selene_core::{GraphId, IStr, NodeId, VectorValue, intern};
 use selene_graph::SeleneGraph;
@@ -78,6 +79,66 @@ pub(super) fn component_candidates(
         by_component.entry(component).or_default().push(node);
     }
     (by_node, by_component)
+}
+
+pub(super) fn louvain_candidates(
+    graph: &SeleneGraph,
+    label: &IStr,
+    support_edge: &IStr,
+    superseded_by_edge: &IStr,
+) -> (HashMap<NodeId, u64>, HashMap<u64, Vec<NodeId>>) {
+    let projection = GraphProjection::build(
+        graph,
+        &ProjectionConfig {
+            name: "memory_louvain".to_owned(),
+            node_labels: vec![label.clone()],
+            edge_labels: vec![support_edge.clone(), superseded_by_edge.clone()],
+            weight_property: None,
+        },
+        None,
+    )
+    .expect("bench louvain projection builds");
+    partition_candidates(
+        louvain(&projection, 32)
+            .into_iter()
+            .map(|(node, community, _)| (node, community)),
+    )
+}
+
+pub(super) fn label_propagation_candidates(
+    graph: &SeleneGraph,
+    label: &IStr,
+    support_edge: &IStr,
+    superseded_by_edge: &IStr,
+) -> (HashMap<NodeId, u64>, HashMap<u64, Vec<NodeId>>) {
+    let projection = GraphProjection::build(
+        graph,
+        &ProjectionConfig {
+            name: "memory_label_propagation".to_owned(),
+            node_labels: vec![label.clone()],
+            edge_labels: vec![support_edge.clone(), superseded_by_edge.clone()],
+            weight_property: None,
+        },
+        None,
+    )
+    .expect("bench label propagation projection builds");
+    partition_candidates(label_propagation(&projection, 32))
+}
+
+fn partition_candidates<I>(assignments: I) -> (HashMap<NodeId, u64>, HashMap<u64, Vec<NodeId>>)
+where
+    I: IntoIterator<Item = (NodeId, u64)>,
+{
+    let mut by_node = HashMap::new();
+    let mut by_partition: HashMap<u64, Vec<NodeId>> = HashMap::new();
+    for (node, partition) in assignments {
+        by_node.insert(node, partition);
+        by_partition.entry(partition).or_default().push(node);
+    }
+    for nodes in by_partition.values_mut() {
+        nodes.sort_unstable();
+    }
+    (by_node, by_partition)
 }
 
 pub(super) fn topic_count(scale: usize) -> usize {
