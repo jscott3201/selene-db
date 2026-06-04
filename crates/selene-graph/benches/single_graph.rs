@@ -185,7 +185,7 @@ fn bench_ann_recall(c: &mut Criterion) {
                     ANN_RECALL_QUERIES,
                     ANN_RECALL_K,
                 );
-                let memory_suffix = fixture.memory_id_suffix();
+                let memory_suffix = format_vector_memory_id_suffix(fixture.memory_usage());
                 let profile_name = ann_recall_benchmark_name(&fixture);
                 group.throughput(Throughput::Elements(
                     (fixture.scale() * fixture.query_count()) as u64,

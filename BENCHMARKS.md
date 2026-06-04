@@ -144,22 +144,25 @@ tripwire.
 ## §2 selene-graph — read hot paths
 
 Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
-`vector_ivf_pq`, `bulk_mutation`, `concurrent_read`, `bfs`. The medians below
-predate CORE-06 (measured at the 128 B `Value` layout); now that `Value` is 32
-B, the `PropertyMap`-clone-heavy rows (`graph_edge_create_cascade`,
-`graph_mutation_commit_batch`) will tighten at the next full re-baseline.
-`graph_node_fetch` returns a column ref (no `Value` clone) and is unaffected.
-`graph_exact_vector_scan/*` is the native graph-level exact-vector oracle:
-label-filtered row scan plus the core vector metric kernels, returning stable
-node ids. `graph_vector_index_rebuild/*` times the maintenance rebuild that
-reclaims stale ANN entries after vector update/delete churn; fixture setup is
-excluded from the reported Criterion duration. `vector_pq` is a benchmark-only
-product-quantization candidate generator for compression/recall research: PQ
-codes produce a short candidate set, then full-fidelity vectors are exact
-reranked. `vector_ivf_pq` adds a coarse synthetic IVF-style partition ahead of
-the same PQ scorer so future work can compare standalone full-code scans
-against candidate-producer plus compression layering. Vector benchmark IDs
-include a memory/cardinality suffix:
+`vector_ivf_pq`, `vector_ivf_pressure`, `bulk_mutation`, `concurrent_read`,
+`bfs`. The medians below predate CORE-06 (measured at the 128 B `Value`
+layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
+(`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten at
+the next full re-baseline. `graph_node_fetch` returns a column ref (no `Value`
+clone) and is unaffected. `graph_exact_vector_scan/*` is the native graph-level
+exact-vector oracle: label-filtered row scan plus the core vector metric
+kernels, returning stable node ids. `graph_vector_index_rebuild/*` times the
+maintenance rebuild that reclaims stale ANN entries after vector update/delete
+churn; fixture setup is excluded from the reported Criterion duration.
+`vector_pq` is a benchmark-only product-quantization candidate generator for
+compression/recall research: PQ codes produce a short candidate set, then
+full-fidelity vectors are exact reranked. `vector_ivf_pq` adds a coarse
+synthetic IVF-style partition ahead of the same PQ scorer so future work can
+compare standalone full-code scans against candidate-producer plus compression
+layering. `vector_ivf_pressure` uses the production graph IVF index and records
+list-skew plus candidate-pressure suffixes so future IVF/PQ layering work is
+grounded against real index fanout under the expected 60% read / 40% write
+workload. Vector benchmark IDs include a memory/cardinality suffix:
 `m{index KiB}-{reachable KiB}_n{indexed rows}_{flat|he...|ve...}`. The
 `he...` form carries HNSW entries/live/deleted entries plus link counters; the
 `ve...` form carries IVF entries/live/deleted entries plus centroid/list
@@ -171,6 +174,8 @@ unindexed rows use `noidx`. Rebuild IDs add
 Stale-query IDs use
 `{stale|rebuilt}_n{rows}_{h|v}e{entries}l{live}d{deleted}_m{index KiB}-{reachable KiB}`,
 where `h` is HNSW and `v` is IVF.
+IVF pressure IDs use
+`lists{centroids}ne{non_empty}max{max_list_len}avg{avg_list_len}avgq{avg_candidates_per_query}maxq{worst_case_candidates_per_query}_m{index KiB}-{reachable KiB}`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
@@ -229,6 +234,15 @@ PR-local IVF+PQ layering spot-check:
 | `graph_ivf_pq_candidate_recall/cluster_l2/m16_k64_c256_p2_d128_k10_recallbp9500_rows50010_m2407-full50000` | 609.20 µs (quick) | Probing two lists doubles candidate rows but does not improve recall on this corpus, which suggests the synthetic partition is already separating the query clusters cleanly. |
 | `graph_ivf_pq_candidate_recall/cluster_l2/m16_k64_c1024_p1_d128_k10_recallbp10000_rows25008_m2407-full50000` | 1.0475 ms (quick) | High-recall layered row: matches standalone PQ's 10000 bp result while scanning ~25k rows across the 16-query batch instead of 1.6M full-code rows, running roughly 12x faster than the standalone `m16_k64_c1024` row. |
 | `graph_ivf_pq_candidate_recall/cluster_l2/m16_k64_c1024_p2_d128_k10_recallbp10000_rows50010_m2407-full50000` | 1.1879 ms (quick) | Two-list probe keeps perfect recall but adds work without benefit on the clustered fixture; useful as a guardrail when future fixtures are less separable. |
+
+PR-local production IVF candidate-pressure spot-check:
+
+| Bench | 10k | Notes |
+|---|---:|---|
+| `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w1_idbp9750_dqbp9750_lists100ne100max137avg100avgq100maxq137...` | 94.75 µs (quick) | Production IVF index with 100 lists, all non-empty, max list 137, average list 100. Width 1 is close to HNSW latency but misses one oracle hit across the 16-query clustered-cosine fixture. |
+| `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w2_idbp10000_dqbp10000_lists100ne100max137avg100avgq200maxq274...` | 143.42 µs (quick) | High-recall knee: perfect recall at about 200 average candidates/query and 274 worst-case candidates/query, making this the first production-IVF pressure baseline for 60/40 read/write planning. |
+| `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w4_idbp10000_dqbp10000_lists100ne100max137avg100avgq400maxq548...` | 258.12 µs (quick) | Keeps perfect recall but doubles candidate pressure versus width 2; useful as the first guardrail for less separable future fixtures. |
+| `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w64_idbp10000_dqbp10000_lists100ne100max137avg100avgq6400maxq8768...` | 3.0968 ms (quick) | Width 64 is excessive on this corpus: it scans about 64% of the corpus per query on average and mainly bounds the high-probe tail. |
 
 PR-local ANN recall spot-check:
 
