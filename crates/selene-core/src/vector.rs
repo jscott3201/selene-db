@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use serde::{Deserialize, Serialize};
-use wide::f64x2;
+use wide::f64x4;
 
 use crate::{CoreError, CoreResult, VectorValue};
 
@@ -390,20 +390,17 @@ fn check_same_dimension(lhs: usize, rhs: usize) -> CoreResult<()> {
 }
 
 fn squared_euclidean(lhs: &[f32], rhs: &[f32]) -> f64 {
-    let mut chunks_lhs = lhs.chunks_exact(2);
-    let mut chunks_rhs = rhs.chunks_exact(2);
-    let mut distance = f64x2::ZERO;
+    let mut chunks_lhs = lhs.chunks_exact(4);
+    let mut chunks_rhs = rhs.chunks_exact(4);
+    let mut distance = f64x4::ZERO;
     for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x2::from([f64::from(lhs[0]), f64::from(lhs[1])]);
-        let rhs = f64x2::from([f64::from(rhs[0]), f64::from(rhs[1])]);
+        let lhs = f64x4_from_f32(lhs);
+        let rhs = f64x4_from_f32(rhs);
         let delta = lhs - rhs;
         distance += delta * delta;
     }
     let mut distance = distance.reduce_add();
-    if let (Some(&lhs), Some(&rhs)) = (
-        chunks_lhs.remainder().first(),
-        chunks_rhs.remainder().first(),
-    ) {
+    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
         let delta = f64::from(lhs) - f64::from(rhs);
         distance += delta * delta;
     }
@@ -450,14 +447,14 @@ fn validate_precomputed_squared_norm(norm: f64, side: &'static str) -> CoreResul
 }
 
 fn cosine_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64) {
-    let mut chunks_lhs = lhs.chunks_exact(2);
-    let mut chunks_rhs = rhs.chunks_exact(2);
-    let mut lhs_norm = f64x2::ZERO;
-    let mut rhs_norm = f64x2::ZERO;
-    let mut dot = f64x2::ZERO;
+    let mut chunks_lhs = lhs.chunks_exact(4);
+    let mut chunks_rhs = rhs.chunks_exact(4);
+    let mut lhs_norm = f64x4::ZERO;
+    let mut rhs_norm = f64x4::ZERO;
+    let mut dot = f64x4::ZERO;
     for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x2::from([f64::from(lhs[0]), f64::from(lhs[1])]);
-        let rhs = f64x2::from([f64::from(rhs[0]), f64::from(rhs[1])]);
+        let lhs = f64x4_from_f32(lhs);
+        let rhs = f64x4_from_f32(rhs);
         lhs_norm += lhs * lhs;
         rhs_norm += rhs * rhs;
         dot += lhs * rhs;
@@ -465,10 +462,7 @@ fn cosine_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64) {
     let mut lhs_norm = lhs_norm.reduce_add();
     let mut rhs_norm = rhs_norm.reduce_add();
     let mut dot = dot.reduce_add();
-    if let (Some(&lhs), Some(&rhs)) = (
-        chunks_lhs.remainder().first(),
-        chunks_rhs.remainder().first(),
-    ) {
+    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
         let lhs = f64::from(lhs);
         let rhs = f64::from(rhs);
         lhs_norm += lhs * lhs;
@@ -479,22 +473,19 @@ fn cosine_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64) {
 }
 
 fn norm_and_dot(lhs: &[f32], rhs: &[f32]) -> (f64, f64) {
-    let mut chunks_lhs = lhs.chunks_exact(2);
-    let mut chunks_rhs = rhs.chunks_exact(2);
-    let mut rhs_norm = f64x2::ZERO;
-    let mut dot = f64x2::ZERO;
+    let mut chunks_lhs = lhs.chunks_exact(4);
+    let mut chunks_rhs = rhs.chunks_exact(4);
+    let mut rhs_norm = f64x4::ZERO;
+    let mut dot = f64x4::ZERO;
     for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x2::from([f64::from(lhs[0]), f64::from(lhs[1])]);
-        let rhs = f64x2::from([f64::from(rhs[0]), f64::from(rhs[1])]);
+        let lhs = f64x4_from_f32(lhs);
+        let rhs = f64x4_from_f32(rhs);
         rhs_norm += rhs * rhs;
         dot += lhs * rhs;
     }
     let mut rhs_norm = rhs_norm.reduce_add();
     let mut dot = dot.reduce_add();
-    if let (Some(&lhs), Some(&rhs)) = (
-        chunks_lhs.remainder().first(),
-        chunks_rhs.remainder().first(),
-    ) {
+    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
         let lhs = f64::from(lhs);
         let rhs = f64::from(rhs);
         rhs_norm += rhs * rhs;
@@ -504,22 +495,29 @@ fn norm_and_dot(lhs: &[f32], rhs: &[f32]) -> (f64, f64) {
 }
 
 fn dot(lhs: &[f32], rhs: &[f32]) -> f64 {
-    let mut chunks_lhs = lhs.chunks_exact(2);
-    let mut chunks_rhs = rhs.chunks_exact(2);
-    let mut product = f64x2::ZERO;
+    let mut chunks_lhs = lhs.chunks_exact(4);
+    let mut chunks_rhs = rhs.chunks_exact(4);
+    let mut product = f64x4::ZERO;
     for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x2::from([f64::from(lhs[0]), f64::from(lhs[1])]);
-        let rhs = f64x2::from([f64::from(rhs[0]), f64::from(rhs[1])]);
+        let lhs = f64x4_from_f32(lhs);
+        let rhs = f64x4_from_f32(rhs);
         product += lhs * rhs;
     }
     let mut product = product.reduce_add();
-    if let (Some(&lhs), Some(&rhs)) = (
-        chunks_lhs.remainder().first(),
-        chunks_rhs.remainder().first(),
-    ) {
+    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
         product += f64::from(lhs) * f64::from(rhs);
     }
     product
+}
+
+#[inline(always)]
+fn f64x4_from_f32(chunk: &[f32]) -> f64x4 {
+    f64x4::from([
+        f64::from(chunk[0]),
+        f64::from(chunk[1]),
+        f64::from(chunk[2]),
+        f64::from(chunk[3]),
+    ])
 }
 
 fn canonical_score(score: f64) -> f64 {

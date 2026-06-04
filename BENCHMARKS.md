@@ -123,8 +123,8 @@ maps with many properties. The `core_vector_value/*` rows are the first native
 vector baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
 round-trip cost at common embedding dimensions. The `core_vector_distance/*`
 and `core_vector_exact_top_k/*` rows are exact-search oracle baselines for the
-future ANN layer; current kernels use safe `wide::f64x2` pair accumulation over
-the existing `f64` score semantics, so these rows are the SIMD/Rayon improvement
+future ANN layer; current kernels use safe `wide::f64x4` accumulation over the
+existing `f64` score semantics, so these rows are the SIMD/Rayon improvement
 tripwire.
 
 | Bench | Median | Notes |
@@ -135,11 +135,11 @@ tripwire.
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
 | `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
 | `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |
-| `core_vector_distance/squared_euclidean/128/768/1536` | 22.3 ns / 203 ns / 447 ns (quick) | Exact lower-is-better L2-squared metric, safe `f64x2` accumulation; previous scalar row was 39.2 ns / 333 ns / 713 ns. |
-| `core_vector_distance/cosine/128/768/1536` | 36.5 ns / 255 ns / 506 ns (quick) | Exact cosine distance with zero-norm checks and clamped similarity; previous scalar row was 88.4 ns / 918 ns / 2.02 µs. |
-| `core_vector_distance/negative_inner_product/128/768/1536` | 21.1 ns / 194 ns / 421 ns (quick) | Max-inner-product adapter (`-dot`) with lower-is-better ordering; previous scalar row was 33.8 ns / 326 ns / 706 ns. |
-| `core_vector_exact_top_k/squared_euclidean_2048x128_k10` | 49.4 µs (quick) | Exhaustive exact-search oracle over 2,048 candidates using a bounded max-heap (`O(n log k)`); previous scalar row was 84.7 µs. |
-| `core_vector_exact_top_k/cosine_2048x128_k10` | 73.2 µs (quick) | Bound-query cosine exact top-k over 2,048 candidates; the unbound comparison row is 78.8 µs. |
+| `core_vector_distance/squared_euclidean/128/768/1536` | 18.8 ns / 113.9 ns / 249.1 ns (quick) | Exact lower-is-better L2-squared metric, safe `f64x4` accumulation; previous `f64x2` row was 22.3 ns / 203 ns / 447 ns. |
+| `core_vector_distance/cosine/128/768/1536` | 32.0 ns / 179.9 ns / 358.2 ns (quick) | Exact cosine distance with zero-norm checks and clamped similarity; previous `f64x2` row was 36.5 ns / 255 ns / 506 ns. |
+| `core_vector_distance/negative_inner_product/128/768/1536` | 15.7 ns / 114.0 ns / 240.6 ns (quick) | Max-inner-product adapter (`-dot`) with lower-is-better ordering; previous `f64x2` row was 21.1 ns / 194 ns / 421 ns. |
+| `core_vector_exact_top_k/squared_euclidean_2048x128_k10` | ~42.0 µs (quick) | Exhaustive exact-search oracle over 2,048 candidates using a bounded max-heap (`O(n log k)`); previous `f64x2` row was 49.4 µs. |
+| `core_vector_exact_top_k/cosine_2048x128_k10` | 54.8 µs (quick) | Bound-query cosine exact top-k over 2,048 candidates; the unbound comparison row is 65.2 µs. |
 
 ## §2 selene-graph — read hot paths
 
@@ -197,8 +197,8 @@ PR-local quick vector baseline:
 
 | Bench | 1k | Notes |
 |---|---:|---|
-| `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 35.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x2` L2-squared accumulation; ~28.1 Melem/s. 20k flat-index row: ~267 µs. |
-| `graph_exact_vector_scan/cosine_dim128_k10` | 42.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x2` cosine accumulation; ~23.5 Melem/s. 20k flat-index row: ~280 µs. |
+| `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 22.9 µs unindexed / 24.3 µs flat (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x4` L2-squared accumulation; flat 20k row: ~244 µs. |
+| `graph_exact_vector_scan/cosine_dim128_k10` | 33.5 µs unindexed / 33.6 µs flat (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x4` cosine accumulation; flat 20k row: ~276 µs. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128_default` | 118.9 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; compact level-0 links preserve the same link counts while reclaiming 150 stale HNSW entries. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128_m24ef64` | 200.7 ms (quick) | Tuned `M=24, ef_construction=64` rebuild row; keeps the high-recall research config covered with compacted post-rebuild level-0 links. |
 | `graph_vector_index_rebuild/hnsw_cos_dim128_default` | 146.1 ms (quick) | Same rebuild fixture for 128-dim HNSW cosine, covering construction-side scorer reuse for metrics with bound query state. |
