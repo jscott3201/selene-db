@@ -731,7 +731,10 @@ The first local corpus is intentionally tiny (16 documents + 4 queries across
 GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
 endpoint embeddings round-trip through `Value::Vector`, graph HNSW indexing,
 exact cosine search, ANN search, and graph-label candidate-set scoring before
-larger local corpus work:
+larger local corpus work. `SELENE_OMLX_CORPUS=agent_memory` expands that to
+32 documents + 8 queries; `SELENE_OMLX_CORPUS=ambiguous_memory` keeps the same
+shape but deliberately overlaps vocabulary across topics to stress vector-only
+retrieval:
 
 | oMLX row | Qwen3 0.6B / 1024 dim | Qwen3 4B / 2560 dim | Notes |
 |---|---:|---:|---|
@@ -744,6 +747,11 @@ larger local corpus work:
 | `SELENE_OMLX_CORPUS=agent_memory` `topic_label_candidate_score/...c8...precbp10000` | 15.88 µs | 34.96 µs | Expanded 32-document / 8-query agent-memory profile; graph labels still restore full precision. |
 | `SELENE_OMLX_CORPUS=agent_memory` `topic_neighbor_score/...c8...precbp10000` | 15.51 µs | 34.80 µs | Explicit graph-neighbor candidate derivation stays full-precision on the expanded profile. |
 | `SELENE_OMLX_CORPUS=agent_memory` `topic_neighbor_batch_score/...c8...precbp10000` | 15.61 µs | 34.74 µs | Batched one-hop neighbor scoring over the expanded profile. |
+| `SELENE_OMLX_CORPUS=ambiguous_memory` `exact_graph_search/...` | 51.72 µs | 122.08 µs | Vector-only exact scan drops to `precbp6250` / `precbp4375` under cross-topic vocabulary overlap. |
+| `SELENE_OMLX_CORPUS=ambiguous_memory` `hnsw_graph_search/...ef64...` | 74.46 µs | 152.15 µs | HNSW mirrors exact precision on this profile, but is slower at this tiny scale. |
+| `SELENE_OMLX_CORPUS=ambiguous_memory` `topic_label_candidate_score/...c8...precbp10000` | 15.63 µs | 35.11 µs | Graph-label candidate sets restore full precision despite semantic cross-talk. |
+| `SELENE_OMLX_CORPUS=ambiguous_memory` `topic_neighbor_score/...c8...precbp10000` | 15.47 µs | 34.93 µs | Explicit graph-neighbor candidates restore full precision with similar latency. |
+| `SELENE_OMLX_CORPUS=ambiguous_memory` `topic_neighbor_batch_score/...c8...precbp10000` | 15.57 µs | 35.05 µs | Batched one-hop neighbor scoring over the ambiguity-stress profile. |
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it
