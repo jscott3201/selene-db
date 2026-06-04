@@ -369,22 +369,20 @@ impl MemoryRetrievalFixture {
         hits: Vec<VectorNodeSearchHit>,
         valid_only: bool,
     ) -> Vec<VectorNodeSearchHit> {
-        let mut candidates = HashMap::new();
+        let mut candidates = Vec::new();
         for hit in hits {
             let node_id = hit.node_id;
-            candidates.insert(node_id, hit);
+            candidates.push(node_id);
             if let Some(edges) = self.graph.outgoing_edges(node_id) {
                 for edge in edges.iter().filter(|edge| edge.label == self.support_edge) {
                     if valid_only && !self.has_valid_edge(node_id, edge.neighbor) {
                         continue;
                     }
-                    candidates
-                        .entry(edge.neighbor)
-                        .or_insert_with(|| self.exact_hit(edge.neighbor, query));
+                    candidates.push(edge.neighbor);
                 }
             }
         }
-        candidates.into_values().collect()
+        self.score_candidate_ids(query, candidates)
     }
 
     fn expand_with_supersession(
@@ -392,22 +390,20 @@ impl MemoryRetrievalFixture {
         query: &Query,
         hits: Vec<VectorNodeSearchHit>,
     ) -> Vec<VectorNodeSearchHit> {
-        let mut candidates = HashMap::new();
+        let mut candidates = Vec::new();
         for hit in hits {
             let node_id = hit.node_id;
-            candidates.insert(node_id, hit);
+            candidates.push(node_id);
             if let Some(edges) = self.graph.outgoing_edges(node_id) {
                 for edge in edges.iter().filter(|edge| edge.label == self.support_edge) {
                     let neighbor = self
                         .superseded_replacement(edge.neighbor)
                         .unwrap_or(edge.neighbor);
-                    candidates
-                        .entry(neighbor)
-                        .or_insert_with(|| self.exact_hit(neighbor, query));
+                    candidates.push(neighbor);
                 }
             }
         }
-        candidates.into_values().collect()
+        self.score_candidate_ids(query, candidates)
     }
 
     fn has_valid_edge(&self, source: NodeId, target: NodeId) -> bool {
@@ -427,19 +423,21 @@ impl MemoryRetrievalFixture {
         })
     }
 
-    fn exact_hit(&self, node_id: NodeId, query: &Query) -> VectorNodeSearchHit {
-        let scorer = VectorMetric::Cosine
-            .bind_query(&query.vector)
-            .expect("bench query binds");
-        let distance = self
-            .graph
-            .node_properties(node_id)
-            .and_then(|props| match props.get(&self.embedding_key) {
-                Some(Value::Vector(vector)) => scorer.distance(vector).ok(),
-                _ => None,
-            })
-            .expect("bench expanded node has a vector");
-        VectorNodeSearchHit { node_id, distance }
+    fn score_candidate_ids<I>(&self, query: &Query, candidates: I) -> Vec<VectorNodeSearchHit>
+    where
+        I: IntoIterator<Item = NodeId>,
+    {
+        let candidates = candidates.into_iter().collect::<Vec<_>>();
+        self.graph
+            .score_vector_nodes_checked(
+                &self.embedding_key,
+                &query.vector,
+                &candidates,
+                VectorMetric::Cosine,
+                candidates.len(),
+                CancellationChecker::disabled(),
+            )
+            .expect("bench candidate scoring succeeds")
     }
 
     fn select_from_candidates(
