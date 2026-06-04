@@ -28,6 +28,11 @@ const DEFAULT_EMBEDDING_BATCH_SIZE: usize = 64;
 const TOP_K: usize = 4;
 const ANN_SEARCH_WIDTH: usize = 64;
 const ANN_UNION_SEED_K: usize = 8;
+const MIXED_READS_PER_CYCLE: usize = 60;
+const MIXED_REFRESHES_PER_CYCLE: usize = 40;
+const MIXED_ROUNDS_PER_CYCLE: usize = 10;
+const MIXED_READS_PER_ROUND: usize = MIXED_READS_PER_CYCLE / MIXED_ROUNDS_PER_CYCLE;
+const MIXED_REFRESHES_PER_ROUND: usize = MIXED_REFRESHES_PER_CYCLE / MIXED_ROUNDS_PER_CYCLE;
 
 pub(super) fn bench(c: &mut Criterion) {
     let Some(config) = OmlxBenchConfig::from_env() else {
@@ -77,6 +82,10 @@ pub(super) fn bench(c: &mut Criterion) {
         );
         let hint_expansion_refresh_candidates =
             fixture.topic_hint_expansion_refresh_total_candidates();
+        let mixed_cycle_elements = MIXED_READS_PER_CYCLE
+            * fixture.query_count()
+            * fixture.topic_hint_expansion_cached_count()
+            + MIXED_REFRESHES_PER_CYCLE * hint_expansion_refresh_candidates;
         group.throughput(Throughput::Elements(inputs.len() as u64));
         group.bench_function(
             BenchmarkId::new(
@@ -261,6 +270,34 @@ pub(super) fn bench(c: &mut Criterion) {
             ),
             |b| {
                 b.iter(|| black_box(fixture.topic_hint_expansion_cached_total_precision()));
+            },
+        );
+        group.throughput(Throughput::Elements(mixed_cycle_elements as u64));
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_hint_expansion_cached_r60w40",
+                format!(
+                    "{}_{}_precbp{}_q{}_k{}_c{}_r{}w{}_totalc{}_dim{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    hint_expansion_cached_precision,
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.topic_hint_expansion_cached_count(),
+                    MIXED_READS_PER_CYCLE,
+                    MIXED_REFRESHES_PER_CYCLE,
+                    hint_expansion_refresh_candidates,
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.topic_hint_expansion_cached_mixed_read_refresh_work(
+                        MIXED_ROUNDS_PER_CYCLE,
+                        MIXED_READS_PER_ROUND,
+                        MIXED_REFRESHES_PER_ROUND,
+                    ));
+                });
             },
         );
         group.bench_function(

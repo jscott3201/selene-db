@@ -366,6 +366,24 @@ impl OmlxVectorFixture {
         self.candidate_sets_total_precision_from_sets(&self.expanded_hint_sets)
     }
 
+    pub(super) fn topic_hint_expansion_cached_mixed_read_refresh_work(
+        &self,
+        rounds: usize,
+        reads_per_round: usize,
+        refreshes_per_round: usize,
+    ) -> usize {
+        let mut total = 0usize;
+        for _ in 0..rounds {
+            for _ in 0..reads_per_round {
+                total = total.wrapping_add(self.topic_hint_expansion_cached_total_precision());
+            }
+            for _ in 0..refreshes_per_round {
+                total = total.wrapping_add(self.topic_hint_expansion_refresh_total_candidates());
+            }
+        }
+        total
+    }
+
     pub(super) fn topic_hint_expansion_refresh_total_candidates(&self) -> usize {
         let refreshed = self.refresh_expanded_hint_sets();
         assert_eq!(
