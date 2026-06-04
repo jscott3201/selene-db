@@ -144,8 +144,8 @@ tripwire.
 ## §2 selene-graph — read hot paths
 
 Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
-`vector_ivf_pq`, `vector_ivf_pressure`, `bulk_mutation`, `concurrent_read`,
-`bfs`. The medians below predate CORE-06 (measured at the 128 B `Value`
+`vector_ivf_pq`, `vector_ivf_pressure`, `vector_mixed_workload`,
+`bulk_mutation`, `concurrent_read`, `bfs`. The medians below predate CORE-06 (measured at the 128 B `Value`
 layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
 (`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten at
 the next full re-baseline. `graph_node_fetch` returns a column ref (no `Value`
@@ -271,6 +271,12 @@ PR-local IVF probe sweep:
 | `graph_ann_recall_validation/cluster_cos_ivf_d128_k10_ef1_idbp9750_dqbp9750` | 128.38 µs (quick) | One-list IVF probe is close to tuned-HNSW latency but misses one exact-oracle hit on the 16-query clustered-cosine fixture. |
 | `graph_ann_recall_validation/cluster_cos_ivf_d128_k10_ef2_idbp10000_dqbp10000` | 194.98 µs (quick) | Two-list IVF probe restores 10000 bp ID-overlap and distance-quality recall while cutting latency ~3.9x versus ef10 and ~22x versus ef64 on this fixture. |
 | `graph_ann_recall_validation/cluster_cos_ivf_d128_k10_ef4_idbp10000_dqbp10000` | 349.02 µs (quick) | Still perfect on this corpus, but extra probes are already dominated by exact rerank work. |
+
+PR-local mixed vector read/write spot-check:
+
+| Bench | 1k | 10k | Notes |
+|---|---:|---:|---|
+| `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40_ef2` | 2.28 ms | 7.75 ms | One measured cycle interleaves 60 IVF cosine ANN reads and 40 vector-property updates over a 128-dim index. Fixture build is excluded; timed writes retain stale IVF entries, matching the hot update path before rebuild compaction. |
 
 ## §3 selene-graph — write pipeline & concurrency
 
