@@ -6,6 +6,8 @@ use selene_core::{CancellationCause, IStr, NodeId, VectorMetric};
 
 use crate::error::GraphError;
 
+const INTERSECTION_BINARY_SEARCH_RATIO: usize = 8;
+
 /// Exact vector-search result for a graph node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VectorNodeSearchHit {
@@ -81,12 +83,37 @@ impl VectorCandidateSet {
     /// Return the sorted intersection of this set and `other`.
     #[must_use]
     pub fn intersection(&self, other: &Self) -> Self {
-        let mut nodes = Vec::with_capacity(self.len().min(other.len()));
+        if self.is_empty() || other.is_empty() {
+            return Self::default();
+        }
+        let (small, large) = if self.len() <= other.len() {
+            (&self.nodes, &other.nodes)
+        } else {
+            (&other.nodes, &self.nodes)
+        };
+        if small.len().saturating_mul(INTERSECTION_BINARY_SEARCH_RATIO) < large.len() {
+            return Self::intersection_by_probe(small, large);
+        }
+        Self::intersection_by_merge(&self.nodes, &other.nodes)
+    }
+
+    fn intersection_by_probe(small: &[NodeId], large: &[NodeId]) -> Self {
+        let mut nodes = Vec::with_capacity(small.len());
+        for &node in small {
+            if large.binary_search(&node).is_ok() {
+                nodes.push(node);
+            }
+        }
+        Self { nodes }
+    }
+
+    fn intersection_by_merge(left_nodes: &[NodeId], right_nodes: &[NodeId]) -> Self {
+        let mut nodes = Vec::with_capacity(left_nodes.len().min(right_nodes.len()));
         let mut lhs = 0usize;
         let mut rhs = 0usize;
-        while lhs < self.nodes.len() && rhs < other.nodes.len() {
-            let left = self.nodes[lhs];
-            let right = other.nodes[rhs];
+        while lhs < left_nodes.len() && rhs < right_nodes.len() {
+            let left = left_nodes[lhs];
+            let right = right_nodes[rhs];
             match left.cmp(&right) {
                 std::cmp::Ordering::Less => {
                     lhs += 1;

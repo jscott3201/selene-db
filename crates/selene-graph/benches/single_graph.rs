@@ -24,6 +24,8 @@ const ANN_RECALL_QUERIES: usize = 16;
 const VECTOR_CANDIDATE_NEIGHBORS: usize = 64;
 const VECTOR_CANDIDATE_ALGEBRA_SET: usize = 256;
 const VECTOR_CANDIDATE_ALGEBRA_OVERLAP: usize = 128;
+const VECTOR_CANDIDATE_ASYM_SMALL_SET: usize = 8;
+const VECTOR_CANDIDATE_ASYM_LARGE_SET: usize = 1024;
 
 fn bench_node_fetch(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_node_fetch");
@@ -224,6 +226,26 @@ fn bench_vector_candidate_set(c: &mut Criterion) {
             });
         },
     );
+    let asymmetric_fixture = VectorCandidateAlgebraFixture::build_asymmetric(
+        VECTOR_CANDIDATE_ASYM_SMALL_SET,
+        VECTOR_CANDIDATE_ASYM_LARGE_SET,
+    );
+    group.throughput(Throughput::Elements(asymmetric_fixture.left_width() as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            asymmetric_fixture.bench_id("set_intersection"),
+            asymmetric_fixture.overlap_width(),
+        ),
+        |b| {
+            b.iter(|| {
+                let candidates = asymmetric_fixture
+                    .left()
+                    .intersection(asymmetric_fixture.right());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.throughput(Throughput::Elements(fixture.set_width() as u64));
     group.bench_function(
         BenchmarkId::new(fixture.bench_id("set_union"), fixture.overlap_width()),
         |b| {
@@ -333,7 +355,8 @@ struct VectorCandidateAlgebraFixture {
     left: VectorCandidateSet,
     right: VectorCandidateSet,
     hits: Vec<VectorNodeSearchHit>,
-    set_width: usize,
+    left_width: usize,
+    right_width: usize,
     overlap_width: usize,
 }
 
@@ -359,7 +382,26 @@ impl VectorCandidateAlgebraFixture {
             left: VectorCandidateSet::from_nodes(left_nodes),
             right: VectorCandidateSet::from_nodes(right_nodes),
             hits,
-            set_width,
+            left_width: set_width,
+            right_width: set_width,
+            overlap_width,
+        }
+    }
+
+    fn build_asymmetric(left_width: usize, right_width: usize) -> Self {
+        let overlap_width = left_width.min(right_width);
+        let left_nodes = (1..=left_width)
+            .map(|id| NodeId::new(id as u64 * 64))
+            .collect::<Vec<_>>();
+        let right_nodes = (1..=right_width)
+            .map(|id| NodeId::new(id as u64))
+            .collect::<Vec<_>>();
+        Self {
+            left: VectorCandidateSet::from_nodes(left_nodes),
+            right: VectorCandidateSet::from_nodes(right_nodes),
+            hits: Vec::new(),
+            left_width,
+            right_width,
             overlap_width,
         }
     }
@@ -367,7 +409,7 @@ impl VectorCandidateAlgebraFixture {
     fn bench_id(&self, prefix: &str) -> String {
         format!(
             "{prefix}_l{}_r{}_o{}",
-            self.set_width, self.set_width, self.overlap_width
+            self.left_width, self.right_width, self.overlap_width
         )
     }
 
@@ -384,7 +426,11 @@ impl VectorCandidateAlgebraFixture {
     }
 
     const fn set_width(&self) -> usize {
-        self.set_width
+        self.left_width
+    }
+
+    const fn left_width(&self) -> usize {
+        self.left_width
     }
 
     const fn overlap_width(&self) -> usize {
