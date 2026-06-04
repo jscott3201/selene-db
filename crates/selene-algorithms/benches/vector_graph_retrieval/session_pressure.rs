@@ -70,6 +70,24 @@ const SPARSE_MULTIHOP_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
+const ADAPTIVE_PROVENANCE_PLANS: &[(usize, usize)] = &[
+    (1, 1),
+    (1, 2),
+    (SEED_K, 2),
+    (SEED_K * 2, 2),
+    (WIDE_SEED_K, 2),
+];
+
+const ADAPTIVE_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
+    SessionStrategy::GraphSessionMaterializedCurrentFilter,
+    SessionStrategy::GraphSessionProvenanceExpand2HopK16,
+    SessionStrategy::GraphSessionProvenanceAdaptiveQuality,
+    SessionStrategy::GraphScopeMaterializedCurrentFilter,
+    SessionStrategy::GraphScopeProvenanceExpand2HopK16,
+    SessionStrategy::GraphScopeProvenanceAdaptiveQuality,
+    SessionStrategy::TopicFilter,
+];
+
 #[derive(Clone, Copy, Debug)]
 enum SessionStrategy {
     NoisyWcc,
@@ -86,6 +104,7 @@ enum SessionStrategy {
     GraphSessionProvenanceExpand2HopK8,
     GraphSessionProvenanceExpandK16,
     GraphSessionProvenanceExpand2HopK16,
+    GraphSessionProvenanceAdaptiveQuality,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
@@ -98,6 +117,7 @@ enum SessionStrategy {
     GraphScopeProvenanceExpand2HopK8,
     GraphScopeProvenanceExpandK16,
     GraphScopeProvenanceExpand2HopK16,
+    GraphScopeProvenanceAdaptiveQuality,
     TopicFilter,
 }
 
@@ -120,6 +140,9 @@ impl SessionStrategy {
             Self::GraphSessionProvenanceExpand2HopK8 => "graph_session_provenance_expand_2hop_k8",
             Self::GraphSessionProvenanceExpandK16 => "graph_session_provenance_expand_k16",
             Self::GraphSessionProvenanceExpand2HopK16 => "graph_session_provenance_expand_2hop_k16",
+            Self::GraphSessionProvenanceAdaptiveQuality => {
+                "graph_session_provenance_adaptive_quality"
+            }
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
@@ -132,6 +155,7 @@ impl SessionStrategy {
             Self::GraphScopeProvenanceExpand2HopK8 => "graph_scope_provenance_expand_2hop_k8",
             Self::GraphScopeProvenanceExpandK16 => "graph_scope_provenance_expand_k16",
             Self::GraphScopeProvenanceExpand2HopK16 => "graph_scope_provenance_expand_2hop_k16",
+            Self::GraphScopeProvenanceAdaptiveQuality => "graph_scope_provenance_adaptive_quality",
             Self::TopicFilter => "topic_filter",
         }
     }
@@ -165,6 +189,13 @@ impl SessionStrategy {
             _ => None,
         }
     }
+
+    const fn is_adaptive_provenance(self) -> bool {
+        matches!(
+            self,
+            Self::GraphSessionProvenanceAdaptiveQuality | Self::GraphScopeProvenanceAdaptiveQuality
+        )
+    }
 }
 
 pub(super) fn bench(c: &mut Criterion) {
@@ -174,6 +205,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_multihop_provenance_pressure(c);
     bench_noisy_multihop_provenance_pressure(c);
     bench_noisy_sparse_multihop_provenance_pressure(c);
+    bench_adaptive_provenance_pressure(c);
 }
 
 fn bench_session_filter_pressure(c: &mut Criterion) {
@@ -278,6 +310,20 @@ fn bench_noisy_sparse_multihop_provenance_pressure(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_adaptive_provenance_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_adaptive_provenance_pressure");
+    for scale in vector_scales() {
+        let fixture = MemoryRetrievalFixture::build_with_topology(
+            scale,
+            TopologyNoise::NoisySparseMultiHopSupport,
+        );
+        for &strategy in ADAPTIVE_PROVENANCE_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
 fn bench_strategy(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     fixture: &MemoryRetrievalFixture,
@@ -336,6 +382,9 @@ impl MemoryRetrievalFixture {
 
     fn select_session_candidates(&self, query: &Query, strategy: SessionStrategy) -> Vec<NodeId> {
         let candidates = self.session_candidates(query, strategy);
+        if strategy.is_adaptive_provenance() {
+            return self.select_adaptive_provenance_expansion(query, candidates);
+        }
         if let Some((seed_roots, depth)) = strategy.provenance_plan() {
             return self.select_provenance_expansion(query, candidates, seed_roots, depth);
         }
@@ -373,7 +422,8 @@ impl MemoryRetrievalFixture {
             | SessionStrategy::GraphSessionProvenanceExpandK8
             | SessionStrategy::GraphSessionProvenanceExpand2HopK8
             | SessionStrategy::GraphSessionProvenanceExpandK16
-            | SessionStrategy::GraphSessionProvenanceExpand2HopK16 => self
+            | SessionStrategy::GraphSessionProvenanceExpand2HopK16
+            | SessionStrategy::GraphSessionProvenanceAdaptiveQuality => self
                 .provenance_root_candidates(
                     self.materialized_current_candidates(self.graph_session_candidates(query)),
                 ),
@@ -394,7 +444,8 @@ impl MemoryRetrievalFixture {
             | SessionStrategy::GraphScopeProvenanceExpandK8
             | SessionStrategy::GraphScopeProvenanceExpand2HopK8
             | SessionStrategy::GraphScopeProvenanceExpandK16
-            | SessionStrategy::GraphScopeProvenanceExpand2HopK16 => self
+            | SessionStrategy::GraphScopeProvenanceExpand2HopK16
+            | SessionStrategy::GraphScopeProvenanceAdaptiveQuality => self
                 .provenance_root_candidates(
                     self.materialized_current_candidates(
                         self.graph_session_scope_candidates(query),
@@ -479,17 +530,54 @@ impl MemoryRetrievalFixture {
         seed_roots: usize,
         depth: usize,
     ) -> Vec<NodeId> {
+        let roots = self.sorted_provenance_roots(query, root_candidates);
+        let expanded = self.expand_provenance_roots(&roots, seed_roots, depth);
+        self.select_current_diverse_nodes(query, expanded)
+    }
+
+    fn select_adaptive_provenance_expansion(
+        &self,
+        query: &Query,
+        root_candidates: Vec<NodeId>,
+    ) -> Vec<NodeId> {
+        let roots = self.sorted_provenance_roots(query, root_candidates);
+        let mut best = Vec::new();
+        let mut best_quality = RetrievalQuality::default();
+        for &(seed_roots, depth) in ADAPTIVE_PROVENANCE_PLANS {
+            let expanded = self.expand_provenance_roots(&roots, seed_roots, depth);
+            let selected = self.select_current_diverse_nodes(query, expanded);
+            let quality = self.selected_quality(query, selected.clone());
+            if quality_is_full(quality) {
+                return selected;
+            }
+            if quality_tuple(quality) > quality_tuple(best_quality) {
+                best = selected;
+                best_quality = quality;
+            }
+        }
+        best
+    }
+
+    fn sorted_provenance_roots(&self, query: &Query, root_candidates: Vec<NodeId>) -> Vec<NodeId> {
         let mut roots = self.score_candidate_ids(query, root_candidates);
         roots.sort_by(|left, right| {
             left.distance
                 .total_cmp(&right.distance)
                 .then_with(|| left.node_id.cmp(&right.node_id))
         });
+        roots.into_iter().map(|root| root.node_id).collect()
+    }
 
+    fn expand_provenance_roots(
+        &self,
+        roots: &[NodeId],
+        seed_roots: usize,
+        depth: usize,
+    ) -> Vec<NodeId> {
         let mut expanded = Vec::new();
-        for root in roots.into_iter().take(seed_roots) {
-            expanded.push(root.node_id);
-            let mut frontier = vec![root.node_id];
+        for &root in roots.iter().take(seed_roots) {
+            expanded.push(root);
+            let mut frontier = vec![root];
             for _ in 0..depth {
                 let mut next_frontier = Vec::new();
                 for source in frontier {
@@ -506,7 +594,7 @@ impl MemoryRetrievalFixture {
                 frontier = next_frontier;
             }
         }
-        self.select_current_diverse_nodes(query, expanded)
+        expanded
     }
 
     fn select_current_diverse_nodes(&self, query: &Query, candidates: Vec<NodeId>) -> Vec<NodeId> {
@@ -571,4 +659,18 @@ impl MemoryRetrievalFixture {
             .checked_div(self.query_count())
             .unwrap_or(0)
     }
+}
+
+fn quality_tuple(quality: RetrievalQuality) -> (usize, usize, usize) {
+    (
+        quality.coverage,
+        quality.current_coverage,
+        quality.precision,
+    )
+}
+
+fn quality_is_full(quality: RetrievalQuality) -> bool {
+    quality.coverage == FACTS_PER_TOPIC
+        && quality.current_coverage == FACTS_PER_TOPIC
+        && quality.precision == RESULT_K
 }
