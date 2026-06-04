@@ -38,6 +38,88 @@ impl VectorCandidateSet {
         Self { nodes }
     }
 
+    /// Build a canonical candidate set from vector-search hits.
+    #[must_use]
+    pub fn from_search_hits<I, H>(hits: I) -> Self
+    where
+        I: IntoIterator<Item = H>,
+        H: std::borrow::Borrow<VectorNodeSearchHit>,
+    {
+        Self::from_nodes(hits.into_iter().map(|hit| hit.borrow().node_id))
+    }
+
+    /// Return the sorted union of this set and `other`.
+    #[must_use]
+    pub fn union(&self, other: &Self) -> Self {
+        let mut nodes = Vec::with_capacity(self.len().saturating_add(other.len()));
+        let mut lhs = 0usize;
+        let mut rhs = 0usize;
+        while lhs < self.nodes.len() && rhs < other.nodes.len() {
+            let left = self.nodes[lhs];
+            let right = other.nodes[rhs];
+            match left.cmp(&right) {
+                std::cmp::Ordering::Less => {
+                    nodes.push(left);
+                    lhs += 1;
+                }
+                std::cmp::Ordering::Equal => {
+                    nodes.push(left);
+                    lhs += 1;
+                    rhs += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    nodes.push(right);
+                    rhs += 1;
+                }
+            }
+        }
+        nodes.extend_from_slice(&self.nodes[lhs..]);
+        nodes.extend_from_slice(&other.nodes[rhs..]);
+        Self { nodes }
+    }
+
+    /// Return the sorted intersection of this set and `other`.
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Self {
+        let mut nodes = Vec::with_capacity(self.len().min(other.len()));
+        let mut lhs = 0usize;
+        let mut rhs = 0usize;
+        while lhs < self.nodes.len() && rhs < other.nodes.len() {
+            let left = self.nodes[lhs];
+            let right = other.nodes[rhs];
+            match left.cmp(&right) {
+                std::cmp::Ordering::Less => {
+                    lhs += 1;
+                }
+                std::cmp::Ordering::Equal => {
+                    nodes.push(left);
+                    lhs += 1;
+                    rhs += 1;
+                }
+                std::cmp::Ordering::Greater => {
+                    rhs += 1;
+                }
+            }
+        }
+        Self { nodes }
+    }
+
+    /// Return the sorted candidates in this set that are absent from `other`.
+    #[must_use]
+    pub fn difference(&self, other: &Self) -> Self {
+        let mut nodes = Vec::with_capacity(self.len());
+        let mut rhs_index = 0usize;
+        for &node in &self.nodes {
+            while rhs_index < other.nodes.len() && other.nodes[rhs_index] < node {
+                rhs_index += 1;
+            }
+            if rhs_index == other.nodes.len() || other.nodes[rhs_index] != node {
+                nodes.push(node);
+            }
+        }
+        Self { nodes }
+    }
+
     /// Borrow the sorted, deduplicated node ids.
     #[must_use]
     pub fn as_nodes(&self) -> &[NodeId] {

@@ -1,6 +1,7 @@
 use super::{props, vector};
 use crate::{
     SharedGraph, VectorCandidateSet, VectorNeighborDirection, VectorNeighborSearchOptions,
+    VectorNodeSearchHit,
 };
 use selene_core::{
     CancellationChecker, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric, intern,
@@ -26,6 +27,82 @@ fn vector_candidate_set_sorts_and_deduplicates_nodes() {
         vec![NodeId::new(1), NodeId::new(3), NodeId::new(9)]
     );
     assert!(VectorCandidateSet::from_nodes([]).is_empty());
+}
+
+#[test]
+fn vector_candidate_set_builds_from_search_hits() {
+    let hits = [
+        VectorNodeSearchHit {
+            node_id: NodeId::new(8),
+            distance: 0.2,
+        },
+        VectorNodeSearchHit {
+            node_id: NodeId::new(3),
+            distance: 0.1,
+        },
+        VectorNodeSearchHit {
+            node_id: NodeId::new(8),
+            distance: 0.0,
+        },
+    ];
+
+    let set = VectorCandidateSet::from_search_hits(&hits);
+
+    assert_eq!(set.as_nodes(), &[NodeId::new(3), NodeId::new(8)]);
+}
+
+#[test]
+fn vector_candidate_set_algebra_preserves_canonical_order() {
+    let left = VectorCandidateSet::from_nodes([
+        NodeId::new(1),
+        NodeId::new(3),
+        NodeId::new(5),
+        NodeId::new(7),
+    ]);
+    let right = VectorCandidateSet::from_nodes([
+        NodeId::new(3),
+        NodeId::new(4),
+        NodeId::new(5),
+        NodeId::new(9),
+    ]);
+
+    assert_eq!(
+        left.union(&right).as_nodes(),
+        &[
+            NodeId::new(1),
+            NodeId::new(3),
+            NodeId::new(4),
+            NodeId::new(5),
+            NodeId::new(7),
+            NodeId::new(9),
+        ]
+    );
+    assert_eq!(
+        left.intersection(&right).as_nodes(),
+        &[NodeId::new(3), NodeId::new(5)]
+    );
+    assert_eq!(
+        left.difference(&right).as_nodes(),
+        &[NodeId::new(1), NodeId::new(7)]
+    );
+    assert_eq!(
+        right.difference(&left).as_nodes(),
+        &[NodeId::new(4), NodeId::new(9)]
+    );
+}
+
+#[test]
+fn vector_candidate_set_algebra_handles_empty_and_disjoint_sets() {
+    let empty = VectorCandidateSet::default();
+    let left = VectorCandidateSet::from_nodes([NodeId::new(1), NodeId::new(2)]);
+    let right = VectorCandidateSet::from_nodes([NodeId::new(7), NodeId::new(9)]);
+
+    assert_eq!(left.union(&empty), left);
+    assert_eq!(empty.union(&right), right);
+    assert!(left.intersection(&right).is_empty());
+    assert!(empty.intersection(&right).is_empty());
+    assert_eq!(left.difference(&right), left);
+    assert!(left.difference(&left).is_empty());
 }
 
 #[test]
