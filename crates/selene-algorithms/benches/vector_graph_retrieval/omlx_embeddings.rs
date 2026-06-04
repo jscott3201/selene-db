@@ -71,6 +71,10 @@ pub(super) fn bench(c: &mut Criterion) {
             fixture.topic_hint_expansion_ann_union_total_precision(),
             fixture.query_count() * TOP_K,
         );
+        let hint_expansion_cached_precision = precision_basis_points(
+            fixture.topic_hint_expansion_cached_total_precision(),
+            fixture.query_count() * TOP_K,
+        );
         group.throughput(Throughput::Elements(inputs.len() as u64));
         group.bench_function(
             BenchmarkId::new(
@@ -237,6 +241,24 @@ pub(super) fn bench(c: &mut Criterion) {
             ),
             |b| {
                 b.iter(|| black_box(fixture.topic_hint_expansion_total_precision()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_hint_expansion_cached_score",
+                format!(
+                    "{}_{}_precbp{}_q{}_k{}_c{}_dim{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    hint_expansion_cached_precision,
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.topic_hint_expansion_cached_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.topic_hint_expansion_cached_total_precision()));
             },
         );
         group.bench_function(
