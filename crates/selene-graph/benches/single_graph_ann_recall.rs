@@ -1,9 +1,12 @@
+#![allow(dead_code)]
+
 use selene_core::{
     CancellationChecker, GraphId, HnswIndexConfig, IStr, LabelSet, PropertyMap, Value,
     VectorMetric, VectorValue, intern,
 };
 use selene_graph::{
-    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind, VectorNodeSearchHit,
+    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind,
+    VectorIndexMemoryUsage, VectorNodeSearchHit,
 };
 
 const DISTANCE_TIE_EPSILON: f64 = 1e-9;
@@ -293,8 +296,11 @@ impl AnnRecallFixture {
             .sum()
     }
 
-    pub(crate) fn memory_id_suffix(&self) -> String {
-        super::vector_index_memory_id_suffix(&self.graph, &self.label, &self.embedding_key)
+    pub(crate) fn memory_usage(&self) -> VectorIndexMemoryUsage {
+        self.graph
+            .vector_index_for(&self.label, &self.embedding_key)
+            .expect("ANN recall fixture has a vector index")
+            .memory_usage()
     }
 
     fn total_distance_quality(&self, ef_search: usize) -> usize {
