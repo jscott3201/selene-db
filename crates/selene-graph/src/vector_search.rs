@@ -1,6 +1,6 @@
 //! Exact native vector search over graph node properties.
 
-use std::time::Duration;
+use std::{cmp::Ordering, time::Duration};
 
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
@@ -13,7 +13,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
-use crate::vector_index::{HnswSearchScratch, VectorIndex};
+use crate::vector_index::{HnswSearchScratch, VectorIndex, VectorIndexSearchHit};
 
 const VECTOR_SEARCH_CANCEL_STRIDE: usize = 1024;
 const VECTOR_SEARCH_PARALLEL_CHUNK_ROWS: usize = 2048;
@@ -313,33 +313,7 @@ impl SeleneGraph {
             .ok_or(VectorSearchError::ApproximateIndexMissing)?
             .map_err(GraphError::from)?;
 
-        let mut top_k = VectorTopK::new(options.k);
-        for hit in row_hits {
-            checker.check()?;
-            if !self.node_store.is_alive(hit.row) {
-                continue;
-            }
-            let row = RowIndex::new(hit.row);
-            let node_id = self
-                .node_id_for_row(row)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "ANN vector index row {} for {} has no node id",
-                        hit.row,
-                        label.as_str()
-                    ),
-                })?;
-            top_k.push_distance(node_id, hit.distance);
-        }
-
-        Ok(top_k
-            .into_hits()
-            .into_iter()
-            .map(|hit| VectorNodeSearchHit {
-                node_id: hit.key,
-                distance: hit.distance,
-            })
-            .collect())
+        ann_row_hits_to_node_hits(self, label, row_hits, &checker)
     }
 
     /// Run approximate ANN vector search for a batch of queries.
@@ -394,35 +368,7 @@ impl SeleneGraph {
                 .ok_or(VectorSearchError::ApproximateIndexMissing)?
                 .map_err(GraphError::from)?;
 
-            let mut top_k = VectorTopK::new(options.k);
-            for hit in row_hits {
-                checker.check()?;
-                if !self.node_store.is_alive(hit.row) {
-                    continue;
-                }
-                let row = RowIndex::new(hit.row);
-                let node_id =
-                    self.node_id_for_row(row)
-                        .ok_or_else(|| GraphError::Inconsistent {
-                            reason: format!(
-                                "ANN vector index row {} for {} has no node id",
-                                hit.row,
-                                label.as_str()
-                            ),
-                        })?;
-                top_k.push_distance(node_id, hit.distance);
-            }
-
-            batch_hits.push(
-                top_k
-                    .into_hits()
-                    .into_iter()
-                    .map(|hit| VectorNodeSearchHit {
-                        node_id: hit.key,
-                        distance: hit.distance,
-                    })
-                    .collect(),
-            );
+            batch_hits.push(ann_row_hits_to_node_hits(self, label, row_hits, &checker)?);
         }
 
         Ok(batch_hits)
@@ -460,6 +406,50 @@ fn vector_node_hits(top_k: VectorTopK<NodeId>) -> Vec<VectorNodeSearchHit> {
             distance: hit.distance,
         })
         .collect()
+}
+
+fn ann_row_hits_to_node_hits(
+    graph: &SeleneGraph,
+    label: &IStr,
+    row_hits: Vec<VectorIndexSearchHit>,
+    checker: &CancellationChecker<'_>,
+) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+    let mut hits = Vec::with_capacity(row_hits.len());
+    let mut needs_sort = false;
+    for hit in row_hits {
+        checker.check()?;
+        if !graph.node_store.is_alive(hit.row) {
+            continue;
+        }
+        let row = RowIndex::new(hit.row);
+        let node_id = graph
+            .node_id_for_row(row)
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!(
+                    "ANN vector index row {} for {} has no node id",
+                    hit.row,
+                    label.as_str()
+                ),
+            })?;
+        let node_hit = VectorNodeSearchHit {
+            node_id,
+            distance: hit.distance,
+        };
+        needs_sort |= hits
+            .last()
+            .is_some_and(|previous| compare_node_search_hit(previous, &node_hit).is_gt());
+        hits.push(node_hit);
+    }
+    if needs_sort {
+        hits.sort_by(compare_node_search_hit);
+    }
+    Ok(hits)
+}
+
+fn compare_node_search_hit(lhs: &VectorNodeSearchHit, rhs: &VectorNodeSearchHit) -> Ordering {
+    lhs.distance
+        .total_cmp(&rhs.distance)
+        .then_with(|| lhs.node_id.cmp(&rhs.node_id))
 }
 
 impl SharedGraph {
@@ -529,6 +519,9 @@ impl SharedGraph {
     }
 }
 
+#[cfg(test)]
+#[path = "vector_search/ann_conversion_tests.rs"]
+mod ann_conversion_tests;
 #[cfg(test)]
 #[path = "vector_search/recall_tests.rs"]
 mod recall_tests;
