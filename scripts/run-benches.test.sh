@@ -30,6 +30,12 @@ if ! grep -q "SELENE_VECTOR_REBUILD_GROUP_FILTER=recommended_rebuild" <<< "$reco
   exit 1
 fi
 
+ivf_rebuild_target_dry_run="$(scripts/run-benches.sh --profile quick --bench vector_index_rebuild --filter graph_vector_index_ivf_target_centroid_rebuild --dry-run)"
+if ! grep -q "SELENE_VECTOR_REBUILD_GROUP_FILTER=ivf_target_centroids" <<< "$ivf_rebuild_target_dry_run"; then
+  echo "FAIL: IVF target-centroid rebuild filter did not select the ivf_target_centroids group" >&2
+  exit 1
+fi
+
 ivf_target_dry_run="$(scripts/run-benches.sh --profile quick --bench vector_ivf_pressure --filter graph_ivf_target_centroids --dry-run)"
 if ! grep -q "SELENE_VECTOR_IVF_PRESSURE_GROUP_FILTER=target_centroids" <<< "$ivf_target_dry_run"; then
   echo "FAIL: IVF target-centroid filter did not select the target_centroids group" >&2
