@@ -408,6 +408,75 @@ impl SeleneGraph {
         }
         VectorCandidateSet::from_nodes(candidates)
     }
+
+    /// Expand canonical candidates through one labeled graph hop.
+    ///
+    /// The returned set contains every root candidate plus neighbors reached
+    /// from those roots through `edge_label` in `direction`. This is the
+    /// production primitive behind graph-authored support/provenance expansion:
+    /// callers can build a small root set from graph queries or ANN hits, expand
+    /// through graph topology, then pass the canonical result to vector scoring.
+    #[must_use]
+    pub fn expand_vector_candidate_set(
+        &self,
+        roots: &VectorCandidateSet,
+        edge_label: &IStr,
+        direction: VectorNeighborDirection,
+    ) -> VectorCandidateSet {
+        self.expand_vector_candidate_set_checked(
+            roots,
+            edge_label,
+            direction,
+            CancellationChecker::disabled(),
+        )
+        .expect("disabled cancellation cannot fail")
+    }
+
+    /// Expand canonical candidates through one labeled graph hop with cancellation checks.
+    pub fn expand_vector_candidate_set_checked(
+        &self,
+        roots: &VectorCandidateSet,
+        edge_label: &IStr,
+        direction: VectorNeighborDirection,
+        checker: CancellationChecker<'_>,
+    ) -> Result<VectorCandidateSet, VectorSearchError> {
+        checker.check()?;
+        if roots.is_empty() {
+            return Ok(VectorCandidateSet::default());
+        }
+        let mut candidates = Vec::with_capacity(roots.len());
+        candidates.extend_from_slice(roots.as_nodes());
+        for (offset, root) in roots.as_nodes().iter().copied().enumerate() {
+            if offset % VECTOR_SEARCH_CANCEL_STRIDE == 0 {
+                checker.check()?;
+            }
+            if matches!(
+                direction,
+                VectorNeighborDirection::Outgoing | VectorNeighborDirection::Both
+            ) && let Some(entry) = self.outgoing_edges(root)
+            {
+                candidates.extend(
+                    entry
+                        .iter()
+                        .filter(|edge| &edge.label == edge_label)
+                        .map(|edge| edge.neighbor),
+                );
+            }
+            if matches!(
+                direction,
+                VectorNeighborDirection::Incoming | VectorNeighborDirection::Both
+            ) && let Some(entry) = self.incoming_edges(root)
+            {
+                candidates.extend(
+                    entry
+                        .iter()
+                        .filter(|edge| &edge.label == edge_label)
+                        .map(|edge| edge.neighbor),
+                );
+            }
+        }
+        Ok(VectorCandidateSet::from_nodes(candidates))
+    }
 }
 
 impl SharedGraph {
@@ -616,6 +685,31 @@ impl SharedGraph {
     ) -> VectorCandidateSet {
         self.read()
             .vector_neighbor_candidates(anchor, edge_label, direction)
+    }
+
+    /// Expand canonical candidates through one labeled graph hop in the current snapshot.
+    #[must_use]
+    pub fn expand_vector_candidate_set(
+        &self,
+        roots: &VectorCandidateSet,
+        edge_label: &IStr,
+        direction: VectorNeighborDirection,
+    ) -> VectorCandidateSet {
+        self.read()
+            .expand_vector_candidate_set(roots, edge_label, direction)
+    }
+
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::expand_vector_candidate_set_checked`].
+    pub fn expand_vector_candidate_set_checked(
+        &self,
+        roots: &VectorCandidateSet,
+        edge_label: &IStr,
+        direction: VectorNeighborDirection,
+        checker: CancellationChecker<'_>,
+    ) -> Result<VectorCandidateSet, VectorSearchError> {
+        self.read()
+            .expand_vector_candidate_set_checked(roots, edge_label, direction, checker)
     }
 }
 

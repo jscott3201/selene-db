@@ -569,15 +569,7 @@ fn topic_hint_expansion_set_for(
         dependency_edge,
         VectorNeighborDirection::Outgoing,
     );
-    let mut expanded = roots.clone();
-    for root in roots.as_nodes() {
-        expanded = expanded.union(&graph.vector_neighbor_candidates(
-            *root,
-            support_edge,
-            VectorNeighborDirection::Outgoing,
-        ));
-    }
-    expanded
+    graph.expand_vector_candidate_set(&roots, support_edge, VectorNeighborDirection::Outgoing)
 }
 
 struct DocumentMeta {

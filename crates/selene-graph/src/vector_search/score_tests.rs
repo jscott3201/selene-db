@@ -1,11 +1,11 @@
 use selene_core::{
-    CancellationChecker, CoreError, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
-    VectorValue, intern,
+    CancellationChecker, CancellationToken, CoreError, GraphId, LabelSet, NodeId, PropertyMap,
+    Value, VectorMetric, VectorValue, intern,
 };
 
 use crate::{
-    GraphError, SharedGraph, VectorNeighborDirection, VectorNeighborSearchOptions,
-    VectorSearchError,
+    GraphError, SharedGraph, VectorCandidateSet, VectorNeighborDirection,
+    VectorNeighborSearchOptions, VectorSearchError,
 };
 
 #[path = "score_tests/candidate_set.rs"]
@@ -420,6 +420,95 @@ fn score_vector_neighbors_filters_direction_and_ranks_unique_live_vectors() {
         )
         .unwrap();
     assert!(missing_anchor.is_empty());
+}
+
+#[test]
+fn expand_vector_candidate_set_preserves_roots_and_walks_labeled_edges() {
+    let shared = SharedGraph::new(GraphId::new(982));
+    let root_label = intern("vector.expand.root").unwrap();
+    let doc_label = intern("vector.expand.doc").unwrap();
+    let support = intern("SUPPORTS").unwrap();
+    let other = intern("MENTIONS").unwrap();
+    let (root_a, root_b, out_a, out_b, incoming, wrong_label) = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let root_a = mutator
+            .create_node(LabelSet::single(root_label.clone()), PropertyMap::new())
+            .unwrap();
+        let root_b = mutator
+            .create_node(LabelSet::single(root_label), PropertyMap::new())
+            .unwrap();
+        let out_a = mutator
+            .create_node(LabelSet::single(doc_label.clone()), PropertyMap::new())
+            .unwrap();
+        let out_b = mutator
+            .create_node(LabelSet::single(doc_label.clone()), PropertyMap::new())
+            .unwrap();
+        let incoming = mutator
+            .create_node(LabelSet::single(doc_label.clone()), PropertyMap::new())
+            .unwrap();
+        let wrong_label = mutator
+            .create_node(LabelSet::single(doc_label), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(support.clone(), root_a, out_b, PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(support.clone(), root_a, out_b, PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(support.clone(), root_b, out_a, PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(support.clone(), incoming, root_a, PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(other.clone(), root_a, wrong_label, PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        (root_a, root_b, out_a, out_b, incoming, wrong_label)
+    };
+    let roots = VectorCandidateSet::from_nodes([root_b, root_a, root_a]);
+
+    let outgoing =
+        shared.expand_vector_candidate_set(&roots, &support, VectorNeighborDirection::Outgoing);
+    assert_eq!(outgoing.as_nodes(), &[root_a, root_b, out_a, out_b]);
+
+    let incoming_set =
+        shared.expand_vector_candidate_set(&roots, &support, VectorNeighborDirection::Incoming);
+    assert_eq!(incoming_set.as_nodes(), &[root_a, root_b, incoming]);
+
+    let both = shared.expand_vector_candidate_set(&roots, &support, VectorNeighborDirection::Both);
+    assert_eq!(both.as_nodes(), &[root_a, root_b, out_a, out_b, incoming]);
+
+    let missing =
+        shared.expand_vector_candidate_set(&roots, &other, VectorNeighborDirection::Incoming);
+    assert_eq!(missing.as_nodes(), &[root_a, root_b]);
+    assert!(!both.as_nodes().contains(&wrong_label));
+}
+
+#[test]
+fn expand_vector_candidate_set_handles_empty_and_cancelled_inputs() {
+    let shared = SharedGraph::new(GraphId::new(983));
+    let link = intern("EXPANDS_TO").unwrap();
+    let empty = VectorCandidateSet::default();
+    assert!(
+        shared
+            .expand_vector_candidate_set(&empty, &link, VectorNeighborDirection::Both)
+            .is_empty()
+    );
+
+    let token = CancellationToken::new();
+    token.cancel();
+    let err = shared
+        .expand_vector_candidate_set_checked(
+            &empty,
+            &link,
+            VectorNeighborDirection::Both,
+            CancellationChecker::new(Some(&token), None),
+        )
+        .expect_err("cancelled expansion must report cancellation");
+    assert!(matches!(err, VectorSearchError::Cancelled));
 }
 
 #[test]
