@@ -1,6 +1,6 @@
 //! Vector-index configuration validation.
 
-use selene_core::HnswIndexConfig;
+use selene_core::{HnswIndexConfig, IvfIndexConfig};
 
 use crate::{GraphError, GraphResult};
 
@@ -10,6 +10,8 @@ use super::VectorIndexKind;
 pub(crate) const MAX_HNSW_MAX_NEIGHBORS: u16 = 512;
 /// Upper bound for HNSW construction beam width.
 pub(crate) const MAX_HNSW_EF_CONSTRUCTION: u16 = 4096;
+/// Upper bound for explicit IVF target centroid counts.
+pub(crate) const MAX_IVF_TARGET_CENTROIDS: u16 = 1024;
 
 pub(crate) fn hnsw_config_for_kind(
     kind: VectorIndexKind,
@@ -61,6 +63,47 @@ fn invalid_config(config: HnswIndexConfig, reason: &'static str) -> GraphError {
     GraphError::VectorIndexInvalidHnswConfig {
         max_neighbors: config.max_neighbors,
         ef_construction: config.ef_construction,
+        reason,
+    }
+}
+
+pub(crate) fn ivf_config_for_kind(
+    kind: VectorIndexKind,
+    config: Option<IvfIndexConfig>,
+) -> GraphResult<Option<IvfIndexConfig>> {
+    match (kind.ivf_metric(), config) {
+        (None, None) => Ok(None),
+        (None, Some(config)) => Err(invalid_ivf_config(
+            config,
+            "only IVF vector indexes accept IVF config",
+        )),
+        (Some(_), None) => Ok(None),
+        (Some(_), Some(config)) => {
+            validate_ivf_config(config)?;
+            Ok(Some(config))
+        }
+    }
+}
+
+pub(crate) fn validate_ivf_config(config: IvfIndexConfig) -> GraphResult<()> {
+    if config.target_centroids == 0 {
+        return Err(invalid_ivf_config(
+            config,
+            "target_centroids must be greater than zero",
+        ));
+    }
+    if config.target_centroids > MAX_IVF_TARGET_CENTROIDS {
+        return Err(invalid_ivf_config(
+            config,
+            "target_centroids exceeds engine cap",
+        ));
+    }
+    Ok(())
+}
+
+fn invalid_ivf_config(config: IvfIndexConfig, reason: &'static str) -> GraphError {
+    GraphError::VectorIndexInvalidIvfConfig {
+        target_centroids: config.target_centroids,
         reason,
     }
 }

@@ -15,6 +15,8 @@
 //! `SNAPSHOT_VERSION_MINOR` 0 -> 1 (selene-persist); pre-STEP-9 (minor 0)
 //! snapshots are cleanly rejected — a clean break, not a dual decoder
 //! (deferred to 4c per the D14 amendment).
+//! `CORE/VIDX` later added optional IVF construction config beside HNSW config,
+//! which bumped `SNAPSHOT_VERSION_MINOR` 2 -> 3 for the same clean-break reason.
 //!
 //! `CORE/SCMA` schema rows are stored in memory in `(label, property)` order
 //! via [`SchemaKey`]'s derived `Ord`, which is lexicographic through [`IStr`].
@@ -32,13 +34,13 @@ use rkyv::{
     vec::{ArchivedVec, VecResolver},
     with::{ArchiveWith, DeserializeWith, SerializeWith},
 };
-use selene_core::{EdgeId, HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap};
+use selene_core::{EdgeId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, NodeId, PropertyMap};
 use serde::{Deserialize, Serialize};
 
 use crate::core_provider::{inconsistent, invalid_payload};
 use crate::graph::{GraphMeta, SeleneGraph};
 use crate::typed_index::TypedIndexKind;
-use crate::vector_index::VectorIndexKind;
+use crate::vector_index::{MAX_IVF_TARGET_CENTROIDS, VectorIndexKind};
 
 mod codec;
 mod gtyp;
@@ -330,6 +332,8 @@ pub struct VectorSchemaEntry {
     pub dimension: u32,
     /// HNSW construction config for HNSW vector indexes.
     pub hnsw_config: Option<HnswIndexConfig>,
+    /// IVF construction config for IVF vector indexes.
+    pub ivf_config: Option<IvfIndexConfig>,
     /// Optional explicit catalog name for the vector index.
     pub name: Option<IStr>,
 }
@@ -578,6 +582,7 @@ pub(super) fn encode_vector_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crat
                     kind: entry.kind(),
                     dimension: entry.dimension(),
                     hnsw_config: entry.hnsw_config(),
+                    ivf_config: entry.ivf_config(),
                     name: entry.name.clone(),
                 },
             )
@@ -655,6 +660,22 @@ fn validate_vector_schema_rows(
         if entry.kind.hnsw_metric().is_some() != entry.hnsw_config.is_some() {
             return Err(invalid_payload(format!(
                 "CORE/VIDX row for ({}, {}) has inconsistent HNSW config",
+                key.label, key.property
+            )));
+        }
+        if entry.kind.ivf_metric().is_some() {
+            if let Some(config) = entry.ivf_config
+                && (config.target_centroids == 0
+                    || config.target_centroids > MAX_IVF_TARGET_CENTROIDS)
+            {
+                return Err(invalid_payload(format!(
+                    "CORE/VIDX row for ({}, {}) has invalid IVF config",
+                    key.label, key.property
+                )));
+            }
+        } else if entry.ivf_config.is_some() {
+            return Err(invalid_payload(format!(
+                "CORE/VIDX row for ({}, {}) has inconsistent IVF config",
                 key.label, key.property
             )));
         }

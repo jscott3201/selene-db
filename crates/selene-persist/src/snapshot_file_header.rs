@@ -25,7 +25,12 @@ pub const SNAPSHOT_VERSION_MAJOR: u16 = 1;
 /// inside the rkyv `CORE/NODE` / `CORE/EDGE` sections. A pre-stage-B snapshot is
 /// rejected by the same exact-match gate rather than mis-decoding a shifted
 /// variant — another clean greenfield break.
-pub const SNAPSHOT_VERSION_MINOR: u16 = 2;
+///
+/// Bumped `2 -> 3` by first-class IVF config: `CORE/VIDX` rows now persist
+/// optional IVF construction parameters beside HNSW construction parameters.
+/// The exact-match gate rejects older vector-index schema rows rather than
+/// decoding them against the wrong rkyv shape.
+pub const SNAPSHOT_VERSION_MINOR: u16 = 3;
 /// Fixed snapshot file-header length.
 pub const SNAPSHOT_FILE_HEADER_LEN: usize = 32;
 /// Whole-body compression flag, reserved in v1.0.
@@ -214,11 +219,11 @@ mod tests {
             .write_to(&mut bytes)
             .unwrap();
         bytes[4..6].copy_from_slice(&2_u16.to_le_bytes());
-        // `new()` writes the current minor (2 after the stage-B bump); patching
+        // `new()` writes the current minor (3 after the IVF config bump); patching
         // only the major byte leaves minor at its written value.
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 2 })
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 3 })
         ));
     }
 

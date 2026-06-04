@@ -421,12 +421,12 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
         })
         .collect::<Vec<_>>();
     indexes.extend(ctx.snapshot().iter_vector_index_entries().map(
-        |(label, property, kind, dimension, hnsw_config, name)| {
+        |(label, property, kind, dimension, hnsw_config, ivf_config, name)| {
             (
                 render_vector_index_name(label.clone(), property.clone(), name),
                 label,
                 property,
-                render_vector_index_kind(kind, dimension, hnsw_config),
+                render_vector_index_kind(kind, dimension, hnsw_config, ivf_config),
             )
         },
     ));

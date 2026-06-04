@@ -6,8 +6,8 @@
 //! (Hard Rule 11). It never bypasses the funnel and never re-enters
 //! `begin_write`.
 
-use selene_core::{HnswIndexConfig, IStr, Value, VectorMetric};
-use selene_graph::{GraphError, VectorIndexKind};
+use selene_core::{HnswIndexConfig, IStr, IvfIndexConfig, Value, VectorMetric};
+use selene_graph::{GraphError, VectorIndexConfig, VectorIndexKind};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::unit_result;
@@ -19,7 +19,7 @@ use crate::{
 
 const PROC_NAME: &str = "selene.create_vector_index";
 
-static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 8] = [
+static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 9] = [
     StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
     StaticParameter::new("property", GqlType::String, false).with_description("Vector property."),
     StaticParameter::new("dimension", GqlType::Integer, false)
@@ -42,6 +42,10 @@ static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 8] = [
         .with_default(ProcedureDefaultValue::Null),
     StaticParameter::new("hnsw_ef_construction", GqlType::Integer, true)
         .with_description("Optional HNSW construction beam width.")
+        .with_default_doc("NULL")
+        .with_default(ProcedureDefaultValue::Null),
+    StaticParameter::new("ivf_target_centroids", GqlType::Integer, true)
+        .with_description("Optional IVF target centroid count.")
         .with_default_doc("NULL")
         .with_default(ProcedureDefaultValue::Null),
 ];
@@ -68,8 +72,8 @@ pub(super) fn execute(
     ctx: &mut MutationContext<'_, '_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    if !(3..=8).contains(&args.len()) {
-        return Err(invalid_arg(format!("{PROC_NAME} expects 3 to 8 arguments")));
+    if !(3..=9).contains(&args.len()) {
+        return Err(invalid_arg(format!("{PROC_NAME} expects 3 to 9 arguments")));
     }
     let label = string_arg(&args[0], "label")?;
     let property = string_arg(&args[1], "property")?;
@@ -78,14 +82,15 @@ pub(super) fn execute(
     let kind = kind_arg(args.get(3), metric)?;
     let name = args.get(4).map(name_arg).transpose()?.flatten();
     let hnsw_config = hnsw_config_arg(args.get(6), args.get(7))?;
+    let ivf_config = ivf_config_arg(args.get(8))?;
 
-    match ctx.mutator().create_vector_index_named_with_config(
+    match ctx.mutator().create_vector_index_named_with_configs(
         label.clone(),
         property.clone(),
         kind,
         dimension,
         name,
-        hnsw_config,
+        VectorIndexConfig::new(hnsw_config, ivf_config),
     ) {
         Ok(()) => Ok(unit_result()),
         Err(GraphError::VectorIndexAlreadyExists { .. }) => Err(invalid_arg(format!(
@@ -96,6 +101,9 @@ pub(super) fn execute(
         )),
         Err(GraphError::VectorIndexInvalidHnswConfig { reason, .. }) => Err(invalid_arg(format!(
             "invalid HNSW vector index config: {reason}"
+        ))),
+        Err(GraphError::VectorIndexInvalidIvfConfig { reason, .. }) => Err(invalid_arg(format!(
+            "invalid IVF vector index config: {reason}"
         ))),
         Err(GraphError::VectorIndexValueRejected { observed, .. }) => Err(invalid_arg(format!(
             "existing nodes contain values incompatible with the requested vector index: {observed}"
@@ -211,6 +219,15 @@ fn hnsw_config_arg(
         max_neighbors.unwrap_or(default.max_neighbors),
         ef_construction.unwrap_or(default.ef_construction),
     )))
+}
+
+fn ivf_config_arg(
+    target_centroids: Option<&Value>,
+) -> Result<Option<IvfIndexConfig>, ProcedureError> {
+    target_centroids
+        .map(|value| optional_u16_arg(value, "ivf_target_centroids"))
+        .transpose()
+        .map(|value| value.flatten().map(IvfIndexConfig::new))
 }
 
 fn optional_u16_arg(value: &Value, name: &'static str) -> Result<Option<u16>, ProcedureError> {

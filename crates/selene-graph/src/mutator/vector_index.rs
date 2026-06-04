@@ -3,7 +3,7 @@
 use selene_core::{Change, HnswIndexConfig, IStr, SchemaChange, SchemaVectorIndexKind};
 
 use crate::graph::VectorIndexEntry;
-use crate::{GraphError, GraphResult, Mutator, VectorIndexKind};
+use crate::{GraphError, GraphResult, Mutator, VectorIndexConfig, VectorIndexKind};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Register a durable node vector index in the active write transaction.
@@ -46,6 +46,26 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         name: Option<IStr>,
         hnsw_config: Option<HnswIndexConfig>,
     ) -> GraphResult<()> {
+        self.create_vector_index_named_with_configs(
+            label,
+            property,
+            kind,
+            dimension,
+            name,
+            VectorIndexConfig::new(hnsw_config, None),
+        )
+    }
+
+    /// Register a durable node vector index with optional ANN construction config.
+    pub fn create_vector_index_named_with_configs(
+        &mut self,
+        label: IStr,
+        property: IStr,
+        kind: VectorIndexKind,
+        dimension: u32,
+        name: Option<IStr>,
+        config: VectorIndexConfig,
+    ) -> GraphResult<()> {
         if self
             .txn
             .read()
@@ -54,15 +74,16 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         {
             return Err(GraphError::VectorIndexAlreadyExists { label, property });
         }
-        let index = crate::vector_index::build_vector_index_with_hnsw_config(
+        let index = crate::vector_index::build_vector_index_with_configs(
             self.txn.read(),
             label.clone(),
             property.clone(),
             kind,
             dimension,
-            hnsw_config,
+            config,
         )?;
         let hnsw_config = index.hnsw_config();
+        let ivf_config = index.ivf_config();
         let graph_id = self.txn.read().graph_id();
         self.txn.guard_mut().vector_index.insert(
             (label.clone(), property.clone()),
@@ -77,6 +98,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 dimension,
                 name,
                 hnsw_config,
+                ivf_config,
             },
         });
         Ok(())

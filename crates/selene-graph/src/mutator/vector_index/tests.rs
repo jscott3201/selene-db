@@ -1,9 +1,9 @@
 use selene_core::{
-    Change, GraphId, HnswIndexConfig, IStr, LabelSet, PropertyMap, SchemaChange,
+    Change, GraphId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, PropertyMap, SchemaChange,
     SchemaVectorIndexKind, Value, VectorValue, intern,
 };
 
-use crate::{GraphError, SharedGraph, VectorIndexKind};
+use crate::{GraphError, SharedGraph, VectorIndexConfig, VectorIndexKind};
 
 fn istr(value: &str) -> IStr {
     intern(value).unwrap()
@@ -66,6 +66,7 @@ fn create_vector_index_updates_working_graph_and_emits_schema_change() {
                 dimension: 3,
                 name: Some(changed_name),
                 hnsw_config: None,
+                ivf_config: None,
             },
         }] if *graph == GraphId::new(8201)
             && *changed_label == label
@@ -123,8 +124,69 @@ fn create_hnsw_vector_index_emits_explicit_config_in_schema_change() {
                 dimension: 2,
                 name: None,
                 hnsw_config: Some(changed_config),
+                ivf_config: None,
             },
         }] if *graph == GraphId::new(8206)
+            && *changed_label == label
+            && *changed_property == property
+            && *changed_config == config
+    ));
+}
+
+#[test]
+fn create_ivf_vector_index_emits_explicit_config_in_schema_change() {
+    let shared = SharedGraph::new(GraphId::new(8207));
+    let label = istr("mutator.vector.ivf.config");
+    let property = istr("embedding");
+    let config = IvfIndexConfig::new(4);
+    let outcome = {
+        let mut txn = shared.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            for idx in 0..6 {
+                mutator
+                    .create_node(
+                        LabelSet::single(label.clone()),
+                        props([(property.clone(), vector(&[idx as f32 + 1.0, 1.0]))]),
+                    )
+                    .unwrap();
+            }
+            mutator
+                .create_vector_index_named_with_configs(
+                    label.clone(),
+                    property.clone(),
+                    VectorIndexKind::IvfCosine,
+                    2,
+                    None,
+                    VectorIndexConfig::ivf(config),
+                )
+                .unwrap();
+            let index = mutator.read().vector_index_for(&label, &property).unwrap();
+            assert_eq!(index.ivf_config(), Some(config));
+            assert_eq!(
+                index.memory_usage().ivf_centroids,
+                usize::from(config.target_centroids)
+            );
+        }
+        txn.commit().unwrap()
+    };
+
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::NodeCreated { .. }, Change::NodeCreated { .. }, Change::NodeCreated { .. },
+            Change::NodeCreated { .. }, Change::NodeCreated { .. }, Change::NodeCreated { .. },
+            Change::SchemaChanged {
+                graph,
+                change: SchemaChange::VectorIndexCreated {
+                    label: changed_label,
+                    property: changed_property,
+                    kind: SchemaVectorIndexKind::IvfCosine,
+                    dimension: 2,
+                    name: None,
+                    hnsw_config: None,
+                    ivf_config: Some(changed_config),
+                },
+            }] if *graph == GraphId::new(8207)
             && *changed_label == label
             && *changed_property == property
             && *changed_config == config

@@ -1,12 +1,12 @@
 use std::fs;
 
 use selene_core::{
-    Change, HnswIndexConfig, LabelSet, NodeId, PropertyValueType, SchemaChange,
+    Change, HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, PropertyValueType, SchemaChange,
     SchemaVectorIndexKind, Value, VectorValue, intern,
 };
 
 use super::*;
-use crate::VectorIndexKind;
+use crate::{VectorIndexConfig, VectorIndexKind};
 
 fn vector_value() -> Value {
     Value::Vector(VectorValue::new(vec![0.25, 0.5, 0.75]).unwrap())
@@ -120,6 +120,7 @@ fn recover_snapshot_preserves_ivf_vector_index_registration() {
     let dir = temp_dir("snapshot-ivf-vector-index");
     let label = intern("recover.ivf.vector.index.node").unwrap();
     let property = intern("recover.ivf.vector.index.embedding").unwrap();
+    let config = IvfIndexConfig::new(4);
     let shared = SharedGraph::builder(GraphId::new(43)).build().unwrap();
     {
         let mut txn = shared.begin_write();
@@ -135,11 +136,13 @@ fn recover_snapshot_preserves_ivf_vector_index_registration() {
         txn.commit().unwrap();
     }
     shared
-        .create_vector_index(
+        .create_vector_index_named_with_configs(
             label.clone(),
             property.clone(),
             VectorIndexKind::IvfCosine,
             3,
+            None,
+            VectorIndexConfig::ivf(config),
         )
         .unwrap();
     write_snapshot(&dir, &shared, 1);
@@ -150,7 +153,9 @@ fn recover_snapshot_preserves_ivf_vector_index_registration() {
     assert_eq!(index.kind(), VectorIndexKind::IvfCosine);
     assert_eq!(index.dimension(), 3);
     assert_eq!(index.hnsw_config(), None);
+    assert_eq!(index.ivf_config(), Some(config));
     assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
+    assert_eq!(index.memory_usage().ivf_centroids, 1);
     assert_eq!(index.memory_usage().ivf_live_entries, 1);
     let _ = fs::remove_dir_all(dir);
 }
@@ -206,6 +211,7 @@ fn recover_wal_only_replays_vector_index_registration() {
                     dimension: 3,
                     name: None,
                     hnsw_config: Some(config),
+                    ivf_config: None,
                 },
             },
         ],
@@ -226,6 +232,7 @@ fn recover_wal_only_replays_ivf_vector_index_registration() {
     let dir = temp_dir("wal-ivf-vector-index");
     let label = intern("recover.wal.ivf.vector.index.node").unwrap();
     let property = intern("recover.wal.ivf.vector.index.embedding").unwrap();
+    let config = IvfIndexConfig::new(4);
     append_wal(
         &dir,
         0,
@@ -247,6 +254,7 @@ fn recover_wal_only_replays_ivf_vector_index_registration() {
                     dimension: 3,
                     name: None,
                     hnsw_config: None,
+                    ivf_config: Some(config),
                 },
             },
         ],
@@ -258,6 +266,7 @@ fn recover_wal_only_replays_ivf_vector_index_registration() {
     assert_eq!(index.kind(), VectorIndexKind::IvfSquaredEuclidean);
     assert_eq!(index.dimension(), 3);
     assert_eq!(index.hnsw_config(), None);
+    assert_eq!(index.ivf_config(), Some(config));
     assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
     assert_eq!(index.memory_usage().ivf_live_entries, 1);
     let _ = fs::remove_dir_all(dir);

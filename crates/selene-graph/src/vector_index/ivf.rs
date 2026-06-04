@@ -10,10 +10,13 @@ use std::{borrow::Cow, mem::size_of};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use selene_core::{
-    CoreResult, VectorMetric, VectorMetricQuery, VectorTopK, VectorValue, vector_squared_norm,
+    CoreResult, IvfIndexConfig, VectorMetric, VectorMetricQuery, VectorTopK, VectorValue,
+    vector_squared_norm,
 };
 
-const MAX_CENTROIDS: usize = 1024;
+use super::config::MAX_IVF_TARGET_CENTROIDS;
+
+const MAX_CENTROIDS: usize = MAX_IVF_TARGET_CENTROIDS as usize;
 // Training is sampled above this point, but final list assignment is exhaustive.
 const TRAINING_SAMPLE_MAX_ENTRIES: usize = MAX_CENTROIDS * 128;
 const TRAINING_ITERATIONS: usize = 2;
@@ -63,6 +66,7 @@ pub(crate) struct IvfMemoryUsage {
 #[derive(Clone, Debug)]
 pub(crate) struct IvfVectorIndex {
     metric: VectorMetric,
+    config: Option<IvfIndexConfig>,
     entries: Vec<IvfEntry>,
     entry_squared_norms: Vec<f64>,
     row_to_entry: FxHashMap<u32, u32>,
@@ -75,9 +79,16 @@ pub(crate) struct IvfVectorIndex {
 
 impl IvfVectorIndex {
     /// Construct an empty IVF index for `metric`.
+    #[cfg(test)]
     pub(crate) fn new(metric: VectorMetric) -> Self {
+        Self::with_config(metric, None)
+    }
+
+    /// Construct an empty IVF index for `metric` and optional construction config.
+    pub(crate) fn with_config(metric: VectorMetric, config: Option<IvfIndexConfig>) -> Self {
         Self {
             metric,
+            config,
             entries: Vec::new(),
             entry_squared_norms: Vec::new(),
             row_to_entry: FxHashMap::default(),
@@ -142,7 +153,7 @@ impl IvfVectorIndex {
             self.mark_all_entries_trained();
             return Ok(());
         }
-        let centroid_count = target_centroid_count(live_entries.len());
+        let centroid_count = self.target_centroid_count(live_entries.len());
         let training_entries = training_entry_ids(&live_entries);
         self.centroids = self.seed_centroids(&training_entries, centroid_count);
         self.refine_centroids(&training_entries)?;
@@ -347,6 +358,12 @@ impl IvfVectorIndex {
 
     fn has_trained_centroids(&self) -> bool {
         !self.centroids.is_empty() && !self.lists.is_empty()
+    }
+
+    fn target_centroid_count(&self, live_len: usize) -> usize {
+        self.config
+            .map(|config| usize::from(config.target_centroids).min(live_len.max(1)))
+            .unwrap_or_else(|| target_centroid_count(live_len))
     }
 
     fn mark_all_entries_trained(&mut self) {

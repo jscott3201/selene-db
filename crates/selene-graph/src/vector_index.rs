@@ -28,16 +28,19 @@ mod rebuild;
 #[path = "vector_index/search_hit.rs"]
 mod search_hit;
 
-use selene_core::{HnswIndexConfig, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue};
+use selene_core::{
+    HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorMetric, VectorValue,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
 pub(crate) use build::{
-    build_vector_index_lenient_with_hnsw_config, build_vector_index_with_hnsw_config,
+    build_vector_index_lenient_with_configs, build_vector_index_with_configs,
     maintain_vector_indexes_strict, rebuild_vector_indexes, rebuild_vector_indexes_strict,
 };
-use config::hnsw_config_for_kind;
+pub(crate) use config::MAX_IVF_TARGET_CENTROIDS;
+use config::{hnsw_config_for_kind, ivf_config_for_kind};
 pub(crate) use hnsw::HnswSearchScratch;
 use hnsw::HnswVectorIndex;
 use ivf::IvfVectorIndex;
@@ -82,6 +85,41 @@ pub enum VectorIndexKind {
     IvfCosine,
     /// Approximate IVF index using negative inner product distance.
     IvfNegativeInnerProduct,
+}
+
+/// Optional ANN construction config for one vector-index registration.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VectorIndexConfig {
+    /// HNSW construction config for HNSW vector indexes.
+    pub hnsw: Option<HnswIndexConfig>,
+    /// IVF construction config for IVF vector indexes.
+    pub ivf: Option<IvfIndexConfig>,
+}
+
+impl VectorIndexConfig {
+    /// Construct a vector-index config from optional ANN-specific configs.
+    #[must_use]
+    pub const fn new(hnsw: Option<HnswIndexConfig>, ivf: Option<IvfIndexConfig>) -> Self {
+        Self { hnsw, ivf }
+    }
+
+    /// Construct a vector-index config with HNSW settings only.
+    #[must_use]
+    pub const fn hnsw(config: HnswIndexConfig) -> Self {
+        Self {
+            hnsw: Some(config),
+            ivf: None,
+        }
+    }
+
+    /// Construct a vector-index config with IVF settings only.
+    #[must_use]
+    pub const fn ivf(config: IvfIndexConfig) -> Self {
+        Self {
+            hnsw: None,
+            ivf: Some(config),
+        }
+    }
 }
 
 impl VectorIndexKind {
@@ -133,6 +171,7 @@ pub struct VectorIndex {
     kind: VectorIndexKind,
     dimension: u32,
     hnsw_config: Option<HnswIndexConfig>,
+    ivf_config: Option<IvfIndexConfig>,
     rows: RoaringBitmap,
     hnsw: Option<HnswVectorIndex>,
     ivf: Option<IvfVectorIndex>,
@@ -146,7 +185,7 @@ impl VectorIndex {
     /// Returns [`GraphError::VectorIndexInvalidDimension`] when `dimension` is
     /// zero.
     pub fn new(kind: VectorIndexKind, dimension: u32) -> GraphResult<Self> {
-        Self::new_with_hnsw_config(kind, dimension, None)
+        Self::new_with_configs(kind, dimension, None, None)
     }
 
     /// Construct an empty vector index with optional HNSW configuration.
@@ -161,16 +200,38 @@ impl VectorIndex {
         dimension: u32,
         hnsw_config: Option<HnswIndexConfig>,
     ) -> GraphResult<Self> {
+        Self::new_with_configs(kind, dimension, hnsw_config, None)
+    }
+
+    /// Construct an empty vector index with optional ANN construction config.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::VectorIndexInvalidDimension`] when `dimension` is
+    /// zero, [`GraphError::VectorIndexInvalidHnswConfig`] when supplied HNSW
+    /// parameters are invalid for the chosen kind, or
+    /// [`GraphError::VectorIndexInvalidIvfConfig`] when supplied IVF parameters
+    /// are invalid for the chosen kind.
+    pub fn new_with_configs(
+        kind: VectorIndexKind,
+        dimension: u32,
+        hnsw_config: Option<HnswIndexConfig>,
+        ivf_config: Option<IvfIndexConfig>,
+    ) -> GraphResult<Self> {
         ensure_dimension(dimension)?;
         let hnsw_config = hnsw_config_for_kind(kind, hnsw_config)?;
+        let ivf_config = ivf_config_for_kind(kind, ivf_config)?;
         let hnsw = kind.hnsw_metric().map(|metric| {
             HnswVectorIndex::with_config(metric, hnsw_config.expect("HNSW kind stores config"))
         });
-        let ivf = kind.ivf_metric().map(IvfVectorIndex::new);
+        let ivf = kind
+            .ivf_metric()
+            .map(|metric| IvfVectorIndex::with_config(metric, ivf_config));
         Ok(Self {
             kind,
             dimension,
             hnsw_config,
+            ivf_config,
             rows: RoaringBitmap::new(),
             hnsw,
             ivf,
@@ -193,6 +254,12 @@ impl VectorIndex {
     #[must_use]
     pub const fn hnsw_config(&self) -> Option<HnswIndexConfig> {
         self.hnsw_config
+    }
+
+    /// Return the IVF construction config, if this is a configured IVF index.
+    #[must_use]
+    pub const fn ivf_config(&self) -> Option<IvfIndexConfig> {
+        self.ivf_config
     }
 
     /// Return the number of indexed rows.
@@ -329,6 +396,7 @@ impl VectorIndex {
         self.kind == reference.kind
             && self.dimension == reference.dimension
             && self.hnsw_config == reference.hnsw_config
+            && self.ivf_config == reference.ivf_config
             && self.rows == reference.rows
     }
 
@@ -677,6 +745,10 @@ const fn value_kind_name(value: &Value) -> &'static str {
         _ => "Unknown",
     }
 }
+
+#[cfg(test)]
+#[path = "vector_index/config_tests.rs"]
+mod config_tests;
 
 #[cfg(test)]
 #[path = "vector_index/tests.rs"]

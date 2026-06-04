@@ -24,7 +24,7 @@ use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
 use crate::store::{EdgeStore, RowIndex};
 use crate::typed_index::TypedIndexKind;
 use crate::vector_index::{
-    VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
+    VectorIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
 };
 use crate::write_txn::WriteTxn;
 
@@ -587,14 +587,29 @@ impl SharedGraph {
         name: Option<IStr>,
         hnsw_config: Option<HnswIndexConfig>,
     ) -> GraphResult<()> {
-        let mut txn = self.begin_write();
-        txn.mutator().create_vector_index_named_with_config(
+        self.create_vector_index_named_with_configs(
             label,
             property,
             kind,
             dimension,
             name,
-            hnsw_config,
+            VectorIndexConfig::new(hnsw_config, None),
+        )
+    }
+
+    /// Register a built-in node vector index with optional ANN construction config.
+    pub fn create_vector_index_named_with_configs(
+        &self,
+        label: IStr,
+        property: IStr,
+        kind: VectorIndexKind,
+        dimension: u32,
+        name: Option<IStr>,
+        config: VectorIndexConfig,
+    ) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator().create_vector_index_named_with_configs(
+            label, property, kind, dimension, name, config,
         )?;
         txn.commit()?;
         Ok(())

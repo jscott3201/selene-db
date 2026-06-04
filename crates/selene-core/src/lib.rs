@@ -68,7 +68,7 @@ pub use vector::{
     VectorMetric, VectorMetricQuery, VectorSearchHit, VectorTopK, exact_vector_top_k,
     vector_squared_norm,
 };
-pub use vector_index::HnswIndexConfig;
+pub use vector_index::{HnswIndexConfig, IvfIndexConfig};
 
 #[cfg(test)]
 mod serde_tests;

@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use selene_core::{HnswIndexConfig, IStr};
+use selene_core::{HnswIndexConfig, IStr, IvfIndexConfig};
 
 use super::{VectorIndexKind, VectorIndexMemoryUsage};
 
@@ -52,6 +52,8 @@ pub struct VectorIndexRebuildEntry {
     pub dimension: u32,
     /// HNSW construction config for HNSW indexes.
     pub hnsw_config: Option<HnswIndexConfig>,
+    /// IVF construction config for IVF indexes.
+    pub ivf_config: Option<IvfIndexConfig>,
     /// Memory and cardinality before the rebuild.
     pub before: VectorIndexMemoryUsage,
     /// Memory and cardinality after the rebuild.

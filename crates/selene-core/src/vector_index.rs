@@ -62,3 +62,37 @@ impl Default for HnswIndexConfig {
         Self::DEFAULT
     }
 }
+
+/// IVF construction parameters for native vector indexes.
+///
+/// `target_centroids` is the requested inverted-list count used during bulk
+/// training and rebuild. The graph layer validates the upper bound and caps the
+/// effective count to the number of live vectors being trained, so explicit
+/// configuration never creates empty centroids beyond the current corpus.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct IvfIndexConfig {
+    /// Requested IVF centroid/list count.
+    pub target_centroids: u16,
+}
+
+impl IvfIndexConfig {
+    /// Construct a configuration without validation.
+    ///
+    /// The graph layer validates bounds because it owns index memory policy.
+    #[must_use]
+    pub const fn new(target_centroids: u16) -> Self {
+        Self { target_centroids }
+    }
+}

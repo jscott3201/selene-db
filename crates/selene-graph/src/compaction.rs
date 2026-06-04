@@ -209,7 +209,12 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         dense.vector_index.insert(
             (label.clone(), property.clone()),
             VectorIndexEntry::new(
-                crate::VectorIndex::new(entry.kind(), entry.dimension())?,
+                crate::VectorIndex::new_with_configs(
+                    entry.kind(),
+                    entry.dimension(),
+                    entry.hnsw_config(),
+                    entry.ivf_config(),
+                )?,
                 entry.name.clone(),
             ),
         );
