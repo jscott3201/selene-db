@@ -11,7 +11,9 @@ use std::collections::{HashMap, HashSet};
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_algorithms::{GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank};
+use selene_algorithms::{
+    GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank, wcc,
+};
 use selene_core::{
     CancellationChecker, GraphId, HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap, Value,
     VectorMetric, VectorValue, intern,
@@ -41,6 +43,7 @@ const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::GraphExpandSuperseded,
     RetrievalStrategy::GraphExpandValidWide,
     RetrievalStrategy::GraphExpandSupersededWide,
+    RetrievalStrategy::GraphComponentFilter,
     RetrievalStrategy::GraphExpandPagerank,
     RetrievalStrategy::ExactGraphOracle,
 ];
@@ -54,6 +57,7 @@ enum RetrievalStrategy {
     GraphExpandSuperseded,
     GraphExpandValidWide,
     GraphExpandSupersededWide,
+    GraphComponentFilter,
     GraphExpandPagerank,
     ExactGraphOracle,
 }
@@ -68,6 +72,7 @@ impl RetrievalStrategy {
             Self::GraphExpandSuperseded => "graph_expand_superseded",
             Self::GraphExpandValidWide => "graph_expand_valid_wide",
             Self::GraphExpandSupersededWide => "graph_expand_superseded_wide",
+            Self::GraphComponentFilter => "graph_component_filter",
             Self::GraphExpandPagerank => "graph_expand_pagerank",
             Self::ExactGraphOracle => "exact_graph_oracle",
         }
@@ -120,6 +125,7 @@ struct MemoryRetrievalFixture {
     queries: Vec<Query>,
     metadata: HashMap<NodeId, NodeMeta>,
     pagerank: HashMap<NodeId, f64>,
+    component_candidates: HashMap<u64, Vec<NodeId>>,
 }
 
 impl MemoryRetrievalFixture {
@@ -214,9 +220,12 @@ impl MemoryRetrievalFixture {
 
         let graph = shared.read().as_ref().clone();
         let pagerank = pagerank_scores(&graph, &label, &support_edge);
+        let (component_by_node, component_candidates) =
+            component_candidates(&graph, &label, &support_edge, &superseded_by_edge);
         let queries = (0..topic_count)
             .map(|topic| Query {
                 topic,
+                component: component_by_node[&topic_nodes[topic][0][duplicates / 2]],
                 vector: memory_vector(topic, 0, duplicates / 2, 0.0003),
             })
             .collect();
@@ -231,6 +240,7 @@ impl MemoryRetrievalFixture {
             queries,
             metadata,
             pagerank,
+            component_candidates,
         }
     }
 
@@ -342,6 +352,14 @@ impl MemoryRetrievalFixture {
                     true,
                 )
             }
+            RetrievalStrategy::GraphComponentFilter => self
+                .component_candidates
+                .get(&query.component)
+                .map(|candidates| {
+                    let hits = self.score_candidate_ids(query, candidates.iter().copied());
+                    self.select_from_candidates(query, hits, true, false, true)
+                })
+                .unwrap_or_default(),
             RetrievalStrategy::GraphExpandPagerank => {
                 let hits = self.ann_hits(query, SEED_K);
                 self.select_from_candidates(
@@ -529,13 +547,12 @@ impl MemoryRetrievalFixture {
     }
 }
 
-#[derive(Clone, Debug)]
 struct Query {
     topic: usize,
+    component: u64,
     vector: VectorValue,
 }
 
-#[derive(Clone, Copy, Debug)]
 struct NodeMeta {
     topic: usize,
     fact: usize,
@@ -575,6 +592,32 @@ fn pagerank_scores(graph: &SeleneGraph, label: &IStr, support_edge: &IStr) -> Ha
         .into_iter()
         .map(|(node, score)| (node, if max > 0.0 { score / max } else { 0.0 }))
         .collect()
+}
+
+fn component_candidates(
+    graph: &SeleneGraph,
+    label: &IStr,
+    support_edge: &IStr,
+    superseded_by_edge: &IStr,
+) -> (HashMap<NodeId, u64>, HashMap<u64, Vec<NodeId>>) {
+    let projection = GraphProjection::build(
+        graph,
+        &ProjectionConfig {
+            name: "memory_components".to_owned(),
+            node_labels: vec![label.clone()],
+            edge_labels: vec![support_edge.clone(), superseded_by_edge.clone()],
+            weight_property: None,
+        },
+        None,
+    )
+    .expect("bench component projection builds");
+    let mut by_node = HashMap::new();
+    let mut by_component: HashMap<u64, Vec<NodeId>> = HashMap::new();
+    for (node, component) in wcc(&projection) {
+        by_node.insert(node, component);
+        by_component.entry(component).or_default().push(node);
+    }
+    (by_node, by_component)
 }
 
 fn topic_count(scale: usize) -> usize {
