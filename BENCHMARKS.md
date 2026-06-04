@@ -732,6 +732,9 @@ Embedding requests are chunked by `SELENE_OMLX_EMBEDDING_BATCH_SIZE` (default:
 64, matching the current local oMLX embedding setting). Profiles above that
 size preserve input order across multiple POSTs and fail if any response chunk
 does not return exactly one vector per input.
+`SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=N` caps graph-authored topic labels and
+`OmlxDependsOn` edges to the first `N` same-topic documents per topic; unset
+means every same-topic document receives graph hints.
 
 The first local corpus is intentionally tiny (16 documents + 4 queries across
 GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
@@ -766,6 +769,11 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `topic_label_candidate_score/...c16...precbp10000` | 59.93 µs | 133.58 µs | Graph-label candidate sets restore full precision over 16 same-topic documents per query. |
 | `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `topic_neighbor_score/...c16...precbp10000` | 59.69 µs | 133.92 µs | Explicit graph-neighbor candidates preserve full precision with equivalent candidate width. |
 | `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `topic_neighbor_batch_score/...c16...precbp10000` | 59.90 µs | 134.19 µs | Batched one-hop neighbor scoring over the scaled 80-input profile. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_label_candidate_score/...c2...precbp5000` | 9.65 µs | 22.46 µs | Partial graph labels cap graph-only precision at 2 of 4 hits per query while staying cheap. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_neighbor_score/...c2...precbp5000` | 9.63 µs | 22.31 µs | Partial graph-neighbor hints have the same c2 quality/cost shape as labels. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_neighbor_batch_score/...c2...precbp5000` | 9.64 µs | 22.40 µs | Batched partial neighbor hints are neutral at this tiny candidate width. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_label_ann_union_score/...precbp5625/4843...ann8` | 332.30 µs | 668.43 µs | Small ANN union raises the 1024-dim model only to vector-only precision and lowers the 2560-dim model below c2 graph-only precision. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_neighbor_ann_union_score/...precbp5625/4843...ann8` | 331.61 µs | 668.26 µs | Same negative fallback result through explicit graph-neighbor candidates. |
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it
