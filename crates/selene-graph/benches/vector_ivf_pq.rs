@@ -13,8 +13,8 @@ use std::mem::size_of;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{VectorTopK, VectorValue};
 use vector_pq_support::{
-    DIMENSION, K, PqCorpus, PqIndex, PqVariant, cluster_count, compact_count, memory_suffix,
-    squared_l2, vector_scales,
+    BinaryQuantIndex, BinaryQuantVariant, DIMENSION, K, PqCorpus, PqIndex, PqVariant,
+    cluster_count, compact_count, memory_suffix, squared_l2, vector_scales,
 };
 
 const VARIANTS: [IvfPqVariant; 4] = [
@@ -60,10 +60,52 @@ const VARIANTS: [IvfPqVariant; 4] = [
     },
 ];
 
+const BINARY_VARIANTS: [IvfBinaryVariant; 4] = [
+    IvfBinaryVariant {
+        name: "sign_c64_p1",
+        binary: BinaryQuantVariant {
+            name: "sign_c64",
+            candidates: 64,
+        },
+        probes: 1,
+    },
+    IvfBinaryVariant {
+        name: "sign_c256_p1",
+        binary: BinaryQuantVariant {
+            name: "sign_c256",
+            candidates: 256,
+        },
+        probes: 1,
+    },
+    IvfBinaryVariant {
+        name: "sign_c256_p2",
+        binary: BinaryQuantVariant {
+            name: "sign_c256",
+            candidates: 256,
+        },
+        probes: 2,
+    },
+    IvfBinaryVariant {
+        name: "sign_c1024_p1",
+        binary: BinaryQuantVariant {
+            name: "sign_c1024",
+            candidates: 1024,
+        },
+        probes: 1,
+    },
+];
+
 #[derive(Clone, Copy, Debug)]
 struct IvfPqVariant {
     name: &'static str,
     pq: PqVariant,
+    probes: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IvfBinaryVariant {
+    name: &'static str,
+    binary: BinaryQuantVariant,
     probes: usize,
 }
 
@@ -72,6 +114,36 @@ fn bench_ivf_pq_candidate_recall(c: &mut Criterion) {
     for scale in vector_scales() {
         for variant in VARIANTS {
             let fixture = IvfPqFixture::build(scale, variant);
+            group.throughput(Throughput::Elements(
+                u64::try_from(fixture.searched_rows()).unwrap_or(u64::MAX),
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    "cluster_l2",
+                    format!(
+                        "{}_d{DIMENSION}_k{K}_recallbp{}_rows{}_{}",
+                        variant.name,
+                        fixture.recall_basis_points(),
+                        compact_count(fixture.searched_rows()),
+                        fixture.memory_suffix()
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(fixture.total_overlap());
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+fn bench_ivf_binary_candidate_recall(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_ivf_binary_candidate_recall");
+    for scale in vector_scales() {
+        for variant in BINARY_VARIANTS {
+            let fixture = IvfBinaryFixture::build(scale, variant);
             group.throughput(Throughput::Elements(
                 u64::try_from(fixture.searched_rows()).unwrap_or(u64::MAX),
             ));
@@ -156,6 +228,64 @@ impl IvfPqFixture {
 }
 
 #[derive(Debug)]
+struct IvfBinaryFixture {
+    variant: IvfBinaryVariant,
+    corpus: PqCorpus,
+    binary: BinaryQuantIndex,
+    coarse: CoarsePartition,
+}
+
+impl IvfBinaryFixture {
+    fn build(scale: usize, variant: IvfBinaryVariant) -> Self {
+        let corpus = PqCorpus::build(scale);
+        let binary = BinaryQuantIndex::build(&corpus.vectors, variant.binary);
+        let coarse = CoarsePartition::build(&corpus);
+        Self {
+            variant,
+            corpus,
+            binary,
+            coarse,
+        }
+    }
+
+    fn total_overlap(&self) -> usize {
+        let mut rows = Vec::new();
+        self.corpus.total_overlap(|query| {
+            self.coarse
+                .candidate_rows(query, self.variant.probes, &mut rows);
+            self.binary
+                .search_rows(&self.corpus.vectors, query, rows.iter().copied(), K)
+        })
+    }
+
+    fn recall_basis_points(&self) -> usize {
+        self.corpus.recall_basis_points(self.total_overlap())
+    }
+
+    fn searched_rows(&self) -> usize {
+        let mut rows = Vec::new();
+        self.corpus
+            .queries
+            .iter()
+            .map(|query| {
+                self.coarse
+                    .candidate_rows(query, self.variant.probes, &mut rows);
+                rows.len()
+            })
+            .sum()
+    }
+
+    fn memory_suffix(&self) -> String {
+        memory_suffix(
+            self.binary
+                .estimated_bytes()
+                .saturating_add(self.coarse.estimated_bytes()),
+            self.corpus.full_vector_bytes(),
+        )
+    }
+}
+
+#[derive(Debug)]
 struct CoarsePartition {
     centroids: Vec<f32>,
     lists: Vec<Vec<usize>>,
@@ -219,6 +349,6 @@ impl CoarsePartition {
 criterion_group! {
     name = vector_ivf_pq;
     config = common::criterion_config();
-    targets = bench_ivf_pq_candidate_recall
+    targets = bench_ivf_pq_candidate_recall, bench_ivf_binary_candidate_recall
 }
 criterion_main!(vector_ivf_pq);
