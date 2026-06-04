@@ -13,6 +13,7 @@ mod builder;
 mod community_pressure;
 mod component_pressure;
 mod query_filter_pressure;
+mod session_pressure;
 mod support;
 mod topology_pressure;
 
@@ -71,6 +72,7 @@ pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
     topology_pressure::bench(c);
     community_pressure::bench(c);
     query_filter_pressure::bench(c);
+    session_pressure::bench(c);
 }
 
 fn bench_retrieval_strategies(c: &mut Criterion) {
@@ -115,6 +117,7 @@ struct MemoryRetrievalFixture {
     embedding_key: IStr,
     support_edge: IStr,
     scope_edge: IStr,
+    session_edge: IStr,
     valid_edge: IStr,
     superseded_by_edge: IStr,
     queries: Vec<Query>,

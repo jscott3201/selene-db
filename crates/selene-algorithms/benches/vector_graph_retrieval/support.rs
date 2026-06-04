@@ -17,6 +17,7 @@ pub(super) const SEED_K: usize = 4;
 pub(super) const WIDE_SEED_K: usize = 16;
 pub(super) const ORACLE_SEED_K: usize = 64;
 pub(super) const SEARCH_WIDTH: usize = 32;
+pub(super) const TOPICS_PER_SESSION: usize = 4;
 pub(super) const PAGERANK_WEIGHT: f64 = 0.05;
 
 pub(super) fn graph_id_for_scale(requested_scale: usize) -> GraphId {

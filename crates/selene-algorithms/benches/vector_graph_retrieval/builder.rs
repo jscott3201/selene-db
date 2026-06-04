@@ -6,8 +6,8 @@ use selene_core::{HnswIndexConfig, LabelSet, PropertyMap, Value};
 use selene_graph::{SharedGraph, VectorIndexConfig, VectorIndexKind};
 
 use super::support::{
-    DIMENSION, FACTS_PER_TOPIC, component_candidates, current_replacement, duplicates_per_fact,
-    graph_id_for_scale, istr, memory_vector, pagerank_scores, topic_count,
+    DIMENSION, FACTS_PER_TOPIC, TOPICS_PER_SESSION, component_candidates, current_replacement,
+    duplicates_per_fact, graph_id_for_scale, istr, memory_vector, pagerank_scores, topic_count,
 };
 use super::{MemoryRetrievalFixture, NodeMeta, Query, TopologyNoise, support};
 
@@ -19,12 +19,15 @@ impl MemoryRetrievalFixture {
     pub(super) fn build_with_topology(requested_scale: usize, topology: TopologyNoise) -> Self {
         let label = istr("Memory");
         let scope_label = istr("MemoryScope");
+        let session_label = istr("MemorySession");
         let embedding_key = istr("embedding");
         let support_edge = istr("SUPPORTS");
         let scope_edge = istr("IN_SCOPE");
+        let session_edge = istr("IN_SESSION");
         let valid_edge = istr("VALID_AT");
         let superseded_by_edge = istr("SUPERSEDED_BY");
         let topic_count = topic_count(requested_scale);
+        let session_count = topic_count.div_ceil(TOPICS_PER_SESSION);
         let duplicates = duplicates_per_fact(requested_scale, topic_count);
         let shared = SharedGraph::new(graph_id_for_scale(requested_scale));
         let mut topic_nodes = vec![vec![Vec::new(); FACTS_PER_TOPIC]; topic_count];
@@ -39,6 +42,16 @@ impl MemoryRetrievalFixture {
                         mutator
                             .create_node(LabelSet::single(scope_label.clone()), PropertyMap::new())
                             .expect("bench scope node insert succeeds")
+                    })
+                    .collect();
+                let session_nodes: Vec<_> = (0..session_count)
+                    .map(|_| {
+                        mutator
+                            .create_node(
+                                LabelSet::single(session_label.clone()),
+                                PropertyMap::new(),
+                            )
+                            .expect("bench session node insert succeeds")
                     })
                     .collect();
                 for (topic, facts) in topic_nodes.iter_mut().enumerate() {
@@ -67,11 +80,20 @@ impl MemoryRetrievalFixture {
                 }
                 for (topic, facts) in topic_nodes.iter().enumerate() {
                     let scope = scope_nodes[topic];
+                    let session = session_nodes[topic / TOPICS_PER_SESSION];
                     for nodes in facts {
                         for &node in nodes {
                             mutator
                                 .create_edge(scope_edge.clone(), node, scope, PropertyMap::new())
                                 .expect("bench scope edge inserts");
+                            mutator
+                                .create_edge(
+                                    session_edge.clone(),
+                                    node,
+                                    session,
+                                    PropertyMap::new(),
+                                )
+                                .expect("bench session edge inserts");
                         }
                     }
                 }
@@ -180,6 +202,7 @@ impl MemoryRetrievalFixture {
             embedding_key,
             support_edge,
             scope_edge,
+            session_edge,
             valid_edge,
             superseded_by_edge,
             queries,
