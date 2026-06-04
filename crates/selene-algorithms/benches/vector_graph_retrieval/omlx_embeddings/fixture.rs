@@ -26,6 +26,7 @@ pub(super) struct OmlxVectorFixture {
     documents: Vec<DocumentMeta>,
     topics_by_node: HashMap<NodeId, Topic>,
     queries: Vec<QueryVector>,
+    expanded_hint_sets: Vec<VectorCandidateSet>,
 }
 
 impl OmlxVectorFixture {
@@ -145,7 +146,7 @@ impl OmlxVectorFixture {
             txn.commit().expect("oMLX bench graph commits");
         }
         let mut query_anchors = query_anchors.into_iter();
-        let queries = inputs
+        let queries: Vec<QueryVector> = inputs
             .iter()
             .zip(vectors)
             .filter_map(|(input, vector)| {
@@ -166,12 +167,19 @@ impl OmlxVectorFixture {
             query_anchors.next().is_none(),
             "oMLX bench consumed every query anchor"
         );
+        let graph = shared.read().as_ref().clone();
+        let expanded_hint_sets = queries
+            .iter()
+            .map(|query| {
+                topic_hint_expansion_set_for(&graph, &dependency_edge, &support_edge, query.anchor)
+            })
+            .collect();
         let topics_by_node = documents
             .iter()
             .map(|document| (document.node, document.topic))
             .collect();
         Self {
-            graph: shared.read().as_ref().clone(),
+            graph,
             label,
             embedding_key,
             dependency_edge,
@@ -180,6 +188,7 @@ impl OmlxVectorFixture {
             documents,
             topics_by_node,
             queries,
+            expanded_hint_sets,
         }
     }
 
@@ -353,6 +362,10 @@ impl OmlxVectorFixture {
         })
     }
 
+    pub(super) fn topic_hint_expansion_cached_total_precision(&self) -> usize {
+        self.candidate_sets_total_precision_from_sets(&self.expanded_hint_sets)
+    }
+
     pub(super) fn topic_candidate_count(&self) -> usize {
         self.topic_candidate_set(Topic::Gql).len()
     }
@@ -393,26 +406,39 @@ impl OmlxVectorFixture {
         })
     }
 
+    pub(super) fn topic_hint_expansion_cached_count(&self) -> usize {
+        self.expanded_hint_sets
+            .first()
+            .map_or(0, VectorCandidateSet::len)
+    }
+
     fn candidate_sets_total_precision<F>(&self, candidate_set_for: F) -> usize
     where
         F: Fn(&Self, &QueryVector) -> VectorCandidateSet,
     {
-        let queries = self
-            .queries
-            .iter()
-            .map(|query| query.vector.clone())
-            .collect::<Vec<_>>();
         let candidate_sets = self
             .queries
             .iter()
             .map(|query| candidate_set_for(self, query))
+            .collect::<Vec<_>>();
+        self.candidate_sets_total_precision_from_sets(&candidate_sets)
+    }
+
+    fn candidate_sets_total_precision_from_sets(
+        &self,
+        candidate_sets: &[VectorCandidateSet],
+    ) -> usize {
+        let queries = self
+            .queries
+            .iter()
+            .map(|query| query.vector.clone())
             .collect::<Vec<_>>();
         let hits = self
             .graph
             .score_vector_candidate_sets_batch_checked(
                 &self.embedding_key,
                 &queries,
-                &candidate_sets,
+                candidate_sets,
                 VectorMetric::Cosine,
                 TOP_K,
                 CancellationChecker::disabled(),
@@ -447,16 +473,12 @@ impl OmlxVectorFixture {
     }
 
     fn topic_hint_expansion_set(&self, query: &QueryVector) -> VectorCandidateSet {
-        let roots = self.topic_neighbor_set(query);
-        let mut expanded = roots.clone();
-        for root in roots.as_nodes() {
-            expanded = expanded.union(&self.graph.vector_neighbor_candidates(
-                *root,
-                &self.support_edge,
-                VectorNeighborDirection::Outgoing,
-            ));
-        }
-        expanded
+        topic_hint_expansion_set_for(
+            &self.graph,
+            &self.dependency_edge,
+            &self.support_edge,
+            query.anchor,
+        )
     }
 
     fn ann_hit_set(&self, query: &QueryVector, k: usize) -> VectorCandidateSet {
@@ -494,6 +516,28 @@ impl OmlxVectorFixture {
             })
             .count()
     }
+}
+
+fn topic_hint_expansion_set_for(
+    graph: &SeleneGraph,
+    dependency_edge: &selene_core::IStr,
+    support_edge: &selene_core::IStr,
+    anchor: NodeId,
+) -> VectorCandidateSet {
+    let roots = graph.vector_neighbor_candidates(
+        anchor,
+        dependency_edge,
+        VectorNeighborDirection::Outgoing,
+    );
+    let mut expanded = roots.clone();
+    for root in roots.as_nodes() {
+        expanded = expanded.union(&graph.vector_neighbor_candidates(
+            *root,
+            support_edge,
+            VectorNeighborDirection::Outgoing,
+        ));
+    }
+    expanded
 }
 
 struct DocumentMeta {
