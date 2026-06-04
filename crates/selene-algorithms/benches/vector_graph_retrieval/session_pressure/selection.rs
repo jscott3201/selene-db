@@ -43,6 +43,10 @@ impl MemoryRetrievalFixture {
             return self.select_adaptive_provenance_expansion(query, candidates);
         }
         if let Some((seed_roots, depth)) = strategy.provenance_plan() {
+            if strategy.is_unresolved_provenance() {
+                return self
+                    .select_unresolved_provenance_expansion(query, candidates, seed_roots, depth);
+            }
             return self.select_provenance_expansion(query, candidates, seed_roots, depth);
         }
         let hits = self.score_candidate_ids(query, candidates);
@@ -89,6 +93,10 @@ impl MemoryRetrievalFixture {
                 .provenance_root_candidates(
                     self.materialized_current_candidates(self.graph_session_candidates(query)),
                 ),
+            SessionStrategy::GraphSessionUnresolvedProvenanceExpand2HopK16 => self
+                .provenance_root_candidates(self.materialized_unresolved_current_candidates(
+                    self.graph_session_candidates(query),
+                )),
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
             SessionStrategy::GraphScopeCurrentFilter => {
                 self.current_candidates(self.graph_session_scope_candidates(query))
@@ -120,6 +128,10 @@ impl MemoryRetrievalFixture {
                         self.graph_session_scope_candidates(query),
                     ),
                 ),
+            SessionStrategy::GraphScopeUnresolvedProvenanceExpand2HopK16 => self
+                .provenance_root_candidates(self.materialized_unresolved_current_candidates(
+                    self.graph_session_scope_candidates(query),
+                )),
             SessionStrategy::TopicFilter => self
                 .topic_candidates
                 .get(query.topic)
@@ -226,6 +238,18 @@ impl MemoryRetrievalFixture {
         self.select_current_diverse_nodes(query, expanded)
     }
 
+    fn select_unresolved_provenance_expansion(
+        &self,
+        query: &Query,
+        root_candidates: Vec<NodeId>,
+        seed_roots: usize,
+        depth: usize,
+    ) -> Vec<NodeId> {
+        let roots = self.sorted_provenance_roots(query, root_candidates);
+        let expanded = self.expand_provenance_roots(&roots, seed_roots, depth);
+        self.select_unresolved_diverse_nodes(query, expanded)
+    }
+
     fn select_adaptive_provenance_expansion(
         &self,
         query: &Query,
@@ -294,6 +318,38 @@ impl MemoryRetrievalFixture {
         let mut deferred = Vec::new();
         for node_id in candidates {
             if !self.graph_current_nodes.contains(&node_id) {
+                continue;
+            }
+            let fact_key = self
+                .metadata
+                .get(&node_id)
+                .filter(|meta| meta.topic == query.topic)
+                .map(|meta| meta.fact);
+            if let Some(fact) = fact_key
+                && seen_facts.insert(fact)
+            {
+                selected.push(node_id);
+            } else {
+                deferred.push(node_id);
+            }
+            if selected.len() == RESULT_K {
+                return selected;
+            }
+        }
+        selected.extend(deferred.into_iter().take(RESULT_K - selected.len()));
+        selected
+    }
+
+    fn select_unresolved_diverse_nodes(
+        &self,
+        query: &Query,
+        candidates: Vec<NodeId>,
+    ) -> Vec<NodeId> {
+        let mut selected = Vec::with_capacity(RESULT_K);
+        let mut seen_facts = std::collections::HashSet::new();
+        let mut deferred = Vec::new();
+        for node_id in candidates {
+            if !self.graph_unresolved_current_nodes.contains(&node_id) {
                 continue;
             }
             let fact_key = self

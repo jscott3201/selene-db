@@ -105,6 +105,7 @@ impl MemoryRetrievalFixture {
                     TopologyNoise::NoisySparseSupport
                         | TopologyNoise::NoisyMultiHopSupport
                         | TopologyNoise::NoisySparseMultiHopSupport
+                        | TopologyNoise::NoisySparseMultiHopContradicted
                 ) {
                     for topic in 0..topic_count {
                         let next_topic = (topic + 1) % topic_count;
@@ -136,6 +137,7 @@ impl MemoryRetrievalFixture {
                                 TopologyNoise::MultiHopSupport
                                     | TopologyNoise::NoisyMultiHopSupport
                                     | TopologyNoise::NoisySparseMultiHopSupport
+                                    | TopologyNoise::NoisySparseMultiHopContradicted
                             ) && fact >= SEED_K
                             {
                                 let bridge = mutator
@@ -233,7 +235,11 @@ impl MemoryRetrievalFixture {
                         }
                     }
                 }
-                if topology == TopologyNoise::ContradictedCurrentDuplicates {
+                if matches!(
+                    topology,
+                    TopologyNoise::ContradictedCurrentDuplicates
+                        | TopologyNoise::NoisySparseMultiHopContradicted
+                ) {
                     add_contradicted_current_duplicates(
                         &mut mutator,
                         &topic_nodes,
@@ -349,7 +355,10 @@ fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize)
     match topology {
         TopologyNoise::SparseSupport
         | TopologyNoise::NoisySparseSupport
-        | TopologyNoise::NoisySparseMultiHopSupport => (fact - 1) % SEED_K == duplicate % SEED_K,
+        | TopologyNoise::NoisySparseMultiHopSupport
+        | TopologyNoise::NoisySparseMultiHopContradicted => {
+            (fact - 1) % SEED_K == duplicate % SEED_K
+        }
         TopologyNoise::Clean
         | TopologyNoise::CrossTopicSupportRing
         | TopologyNoise::MultiHopSupport
