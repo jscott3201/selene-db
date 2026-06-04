@@ -723,9 +723,15 @@ print it:
 set -a; source .env; set +a
 SELENE_OMLX_EMBEDDING_BENCH=1 \
 SELENE_OMLX_CORPUS=tiny \
+SELENE_OMLX_EMBEDDING_BATCH_SIZE=64 \
 SELENE_OMLX_EMBEDDING_MODELS=Qwen3-Embedding-0.6B-4bit-DWQ,Qwen3-Embedding-4B-4bit-DWQ \
 scripts/run-benches.sh --profile quick --bench vector_graph_retrieval --filter graph_vector_omlx_embedding_pressure --vector-scales 1000
 ```
+
+Embedding requests are chunked by `SELENE_OMLX_EMBEDDING_BATCH_SIZE` (default:
+64, matching the current local oMLX embedding setting). Profiles above that
+size preserve input order across multiple POSTs and fail if any response chunk
+does not return exactly one vector per input.
 
 The first local corpus is intentionally tiny (16 documents + 4 queries across
 GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
@@ -734,11 +740,13 @@ exact cosine search, ANN search, and graph-label candidate-set scoring before
 larger local corpus work. `SELENE_OMLX_CORPUS=agent_memory` expands that to
 32 documents + 8 queries; `SELENE_OMLX_CORPUS=ambiguous_memory` keeps the same
 shape but deliberately overlaps vocabulary across topics to stress vector-only
-retrieval:
+retrieval. `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` combines both 40-input
+profiles into 64 documents + 16 queries, crossing the default batch size as a
+64+16 request pair:
 
 | oMLX row | Qwen3 0.6B / 1024 dim | Qwen3 4B / 2560 dim | Notes |
 |---|---:|---:|---|
-| `graph_vector_omlx_embedding_pressure/embed_batch/...docs20` | 39.23 ms | 208.8 ms | End-to-end localhost embedding request for 20 texts. |
+| `graph_vector_omlx_embedding_pressure/embed_batch/...docs20_batch64` | 39.23 ms | 208.8 ms | End-to-end localhost embedding request for 20 texts. |
 | `graph_vector_omlx_embedding_pressure/exact_graph_search/...precbp6875` | 13.58 µs | 31.81 µs | Exact cosine over 16 stored endpoint vectors and 4 query vectors. |
 | `graph_vector_omlx_embedding_pressure/hnsw_graph_search/...precbp6875` | 16.07 µs | 34.29 µs | HNSW cosine over the same vectors (`k=4`, `ef=64`). |
 | `graph_vector_omlx_embedding_pressure/topic_label_candidate_score/...c4...precbp10000` | 4.11 µs | 9.46 µs | Candidate sets are derived from graph topic labels and batch-scored exactly. |
@@ -752,6 +760,12 @@ retrieval:
 | `SELENE_OMLX_CORPUS=ambiguous_memory` `topic_label_candidate_score/...c8...precbp10000` | 15.63 µs | 35.11 µs | Graph-label candidate sets restore full precision despite semantic cross-talk. |
 | `SELENE_OMLX_CORPUS=ambiguous_memory` `topic_neighbor_score/...c8...precbp10000` | 15.47 µs | 34.93 µs | Explicit graph-neighbor candidates restore full precision with similar latency. |
 | `SELENE_OMLX_CORPUS=ambiguous_memory` `topic_neighbor_batch_score/...c8...precbp10000` | 15.57 µs | 35.05 µs | Batched one-hop neighbor scoring over the ambiguity-stress profile. |
+| `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `embed_batch/...docs80_batch64` | 132.97 ms | 822.68 ms | Two local embedding POSTs (64 + 16 inputs) over the scaled 80-input profile. |
+| `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `exact_graph_search/...` | 199.12 µs | 478.63 µs | Vector-only exact scan drops to `precbp5625` / `precbp4843` at 64 documents + 16 queries. |
+| `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `hnsw_graph_search/...ef64...` | 295.10 µs | 583.72 µs | HNSW mirrors exact precision on the scaled profile, remaining slower at this local size. |
+| `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `topic_label_candidate_score/...c16...precbp10000` | 59.93 µs | 133.58 µs | Graph-label candidate sets restore full precision over 16 same-topic documents per query. |
+| `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `topic_neighbor_score/...c16...precbp10000` | 59.69 µs | 133.92 µs | Explicit graph-neighbor candidates preserve full precision with equivalent candidate width. |
+| `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` `topic_neighbor_batch_score/...c16...precbp10000` | 59.90 µs | 134.19 µs | Batched one-hop neighbor scoring over the scaled 80-input profile. |
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it

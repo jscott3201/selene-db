@@ -9,6 +9,7 @@ pub(super) enum CorpusProfile {
     Tiny,
     AgentMemory,
     AmbiguousMemory,
+    ScaledAmbiguousMemory,
 }
 
 impl CorpusProfile {
@@ -17,6 +18,9 @@ impl CorpusProfile {
             None | Some("") | Some("tiny") => Self::Tiny,
             Some("agent_memory") | Some("memory") => Self::AgentMemory,
             Some("ambiguous_memory") | Some("ambiguous") => Self::AmbiguousMemory,
+            Some("scaled_ambiguous_memory") | Some("scaled_ambiguous") => {
+                Self::ScaledAmbiguousMemory
+            }
             Some(other) => panic!("unsupported SELENE_OMLX_CORPUS value: {other}"),
         }
     }
@@ -26,6 +30,7 @@ impl CorpusProfile {
             Self::Tiny => tiny_inputs(),
             Self::AgentMemory => agent_memory_inputs(),
             Self::AmbiguousMemory => ambiguous_memory_inputs(),
+            Self::ScaledAmbiguousMemory => scaled_ambiguous_memory_inputs(),
         }
     }
 }
@@ -336,5 +341,11 @@ fn ambiguous_memory_inputs() -> Vec<CorpusInput> {
             text: "How do stable benchmark IDs keep candidate rows comparable?",
         },
     ]);
+    inputs
+}
+
+fn scaled_ambiguous_memory_inputs() -> Vec<CorpusInput> {
+    let mut inputs = ambiguous_memory_inputs();
+    inputs.extend(agent_memory_inputs());
     inputs
 }
