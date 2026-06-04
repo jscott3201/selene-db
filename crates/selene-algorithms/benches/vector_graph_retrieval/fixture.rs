@@ -15,7 +15,9 @@ use selene_graph::{
 
 use crate::common::scale_label;
 
+mod component_pressure;
 mod support;
+mod topology_pressure;
 
 use support::{
     DIMENSION, FACTS_PER_TOPIC, ORACLE_SEED_K, PAGERANK_WEIGHT, RESULT_K, SEARCH_WIDTH, SEED_K,
@@ -35,8 +37,6 @@ const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::GraphExpandPagerank,
     RetrievalStrategy::ExactGraphOracle,
 ];
-
-const COMPONENT_PRESSURE_WIDTHS: &[usize] = &[1, 4, 16, 64];
 
 #[derive(Clone, Copy, Debug)]
 enum RetrievalStrategy {
@@ -71,7 +71,8 @@ impl RetrievalStrategy {
 
 pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
     bench_retrieval_strategies(c);
-    bench_component_pressure(c);
+    component_pressure::bench(c);
+    topology_pressure::bench(c);
 }
 
 fn bench_retrieval_strategies(c: &mut Criterion) {
@@ -109,44 +110,6 @@ fn bench_retrieval_strategies(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_component_pressure(c: &mut Criterion) {
-    let mut group = c.benchmark_group("graph_vector_component_pressure");
-    for scale in vector_scales() {
-        let fixture = MemoryRetrievalFixture::build(scale);
-        for &width in COMPONENT_PRESSURE_WIDTHS {
-            let actual_width = fixture.component_pool_width(width);
-            let avg_candidates = fixture.average_component_pool_candidates(width);
-            let quality = fixture.component_pressure_quality(width);
-            group.throughput(Throughput::Elements(
-                (fixture.query_count() * avg_candidates) as u64,
-            ));
-            group.bench_function(
-                BenchmarkId::new(
-                    format!("component_pool_w{actual_width}"),
-                    format!(
-                        "{}_q{}_c{}_covbp{}_curbp{}_precbp{}",
-                        scale_label(fixture.scale()),
-                        fixture.query_count(),
-                        avg_candidates,
-                        basis_points(quality.coverage, fixture.query_count() * FACTS_PER_TOPIC),
-                        basis_points(
-                            quality.current_coverage,
-                            fixture.query_count() * FACTS_PER_TOPIC
-                        ),
-                        basis_points(quality.precision, fixture.query_count() * RESULT_K),
-                    ),
-                ),
-                |b| {
-                    b.iter(|| {
-                        black_box(fixture.component_pressure_total_coverage(width));
-                    });
-                },
-            );
-        }
-    }
-    group.finish();
-}
-
 struct MemoryRetrievalFixture {
     graph: SeleneGraph,
     scale: usize,
@@ -161,10 +124,15 @@ struct MemoryRetrievalFixture {
     component_candidates: HashMap<u64, Vec<NodeId>>,
     component_order: Vec<u64>,
     component_offsets: HashMap<u64, usize>,
+    topic_candidates: Vec<Vec<NodeId>>,
 }
 
 impl MemoryRetrievalFixture {
     fn build(requested_scale: usize) -> Self {
+        Self::build_with_topology(requested_scale, TopologyNoise::Clean)
+    }
+
+    fn build_with_topology(requested_scale: usize, topology: TopologyNoise) -> Self {
         let label = istr("Memory");
         let embedding_key = istr("embedding");
         let support_edge = istr("SUPPORTS");
@@ -239,6 +207,25 @@ impl MemoryRetrievalFixture {
                         }
                     }
                 }
+                if topology == TopologyNoise::CrossTopicSupportRing {
+                    for topic in 0..topic_count {
+                        let next_topic = (topic + 1) % topic_count;
+                        for duplicate in 0..duplicates {
+                            let summary = topic_nodes[topic][0][duplicate];
+                            let target_fact = 1 + duplicate % (FACTS_PER_TOPIC - 1);
+                            let target_duplicate = (duplicate + 1) % duplicates;
+                            let target = topic_nodes[next_topic][target_fact][target_duplicate];
+                            mutator
+                                .create_edge(
+                                    support_edge.clone(),
+                                    summary,
+                                    target,
+                                    PropertyMap::new(),
+                                )
+                                .expect("bench noisy support edge inserts");
+                        }
+                    }
+                }
                 mutator
                     .create_vector_index_named_with_configs(
                         label.clone(),
@@ -265,6 +252,13 @@ impl MemoryRetrievalFixture {
             .enumerate()
             .map(|(offset, component)| (component, offset))
             .collect();
+        let mut topic_candidates = vec![Vec::new(); topic_count];
+        for (&node, meta) in &metadata {
+            topic_candidates[meta.topic].push(node);
+        }
+        for candidates in &mut topic_candidates {
+            candidates.sort_unstable();
+        }
         let queries = (0..topic_count)
             .map(|topic| Query {
                 topic,
@@ -286,6 +280,7 @@ impl MemoryRetrievalFixture {
             component_candidates,
             component_order,
             component_offsets,
+            topic_candidates,
         }
     }
 
@@ -311,27 +306,6 @@ impl MemoryRetrievalFixture {
 
     fn total_coverage(&self, strategy: RetrievalStrategy) -> usize {
         self.quality(strategy).coverage
-    }
-
-    fn component_pressure_quality(&self, width: usize) -> RetrievalQuality {
-        self.queries
-            .iter()
-            .map(|query| self.component_pressure_query_quality(query, width))
-            .fold(RetrievalQuality::default(), |mut total, next| {
-                total.coverage += next.coverage;
-                total.current_coverage += next.current_coverage;
-                total.precision += next.precision;
-                total
-            })
-    }
-
-    fn component_pressure_total_coverage(&self, width: usize) -> usize {
-        self.component_pressure_quality(width).coverage
-    }
-
-    fn component_pressure_query_quality(&self, query: &Query, width: usize) -> RetrievalQuality {
-        let selected = self.select_component_pool(query, width);
-        self.selected_quality(query, selected)
     }
 
     fn query_quality(&self, query: &Query, strategy: RetrievalStrategy) -> RetrievalQuality {
@@ -451,53 +425,6 @@ impl MemoryRetrievalFixture {
                 )
             }
         }
-    }
-
-    fn select_component_pool(&self, query: &Query, width: usize) -> Vec<NodeId> {
-        let candidates = self.component_pool_candidates(query, width);
-        let hits = self.score_candidate_ids(query, candidates);
-        self.select_from_candidates(query, hits, true, false, true)
-    }
-
-    fn component_pool_candidates(&self, query: &Query, width: usize) -> Vec<NodeId> {
-        let Some(start) = self.component_offsets.get(&query.component).copied() else {
-            return Vec::new();
-        };
-        let mut candidates = Vec::with_capacity(self.component_pool_candidate_count(query, width));
-        for offset in 0..self.component_pool_width(width) {
-            let component = self.component_order[(start + offset) % self.component_order.len()];
-            if let Some(nodes) = self.component_candidates.get(&component) {
-                candidates.extend(nodes.iter().copied());
-            }
-        }
-        candidates
-    }
-
-    fn component_pool_width(&self, width: usize) -> usize {
-        width.max(1).min(self.component_order.len())
-    }
-
-    fn component_pool_candidate_count(&self, query: &Query, width: usize) -> usize {
-        let Some(start) = self.component_offsets.get(&query.component).copied() else {
-            return 0;
-        };
-        (0..self.component_pool_width(width))
-            .map(|offset| {
-                let component = self.component_order[(start + offset) % self.component_order.len()];
-                self.component_candidates
-                    .get(&component)
-                    .map_or(0, Vec::len)
-            })
-            .sum()
-    }
-
-    fn average_component_pool_candidates(&self, width: usize) -> usize {
-        self.queries
-            .iter()
-            .map(|query| self.component_pool_candidate_count(query, width))
-            .sum::<usize>()
-            .checked_div(self.query_count())
-            .unwrap_or(0)
     }
 
     fn ann_hits(&self, query: &Query, k: usize) -> Vec<VectorNodeSearchHit> {
@@ -674,6 +601,12 @@ struct NodeMeta {
     topic: usize,
     fact: usize,
     current: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TopologyNoise {
+    Clean,
+    CrossTopicSupportRing,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

@@ -669,6 +669,17 @@ noise:
 | `graph_vector_component_pressure/component_pool_w16/...c256_covbp10000_curbp10000_precbp10000` | 685.6 µs | 1.550 ms | Candidate scoring remains linear and predictable, but it is now in the same range as wide graph expansion. |
 | `graph_vector_component_pressure/component_pool_w64/...covbp10000_curbp10000_precbp10000` | 2.689 ms (`w62`, `c992`) | 5.691 ms (`c976`) | Near-global pooled scoring is still exact and high quality, but too expensive for the default graph-filtered path; this is the fallback point for ANN or compressed pre-scoring research. |
 
+Topology-pressure rows add cross-topic `SUPPORTS` noise before WCC projection,
+then compare the broadened WCC component against a hard topic/session-style
+candidate filter. Quality remains perfect because exact vector scoring can
+still recover the right topic, so this isolates topology noise as candidate-set
+inflation:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_topology_pressure/noisy_wcc/...covbp10000_curbp10000_precbp10000` | 2.535 ms (`c992`) | 56.68 ms (`c9728`) | Cross-topic topology noise collapses WCC into a near-global candidate set; exact scoring preserves quality but is far too expensive. |
+| `graph_vector_topology_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 102.7 µs (`c32`) | 1.109 ms (`c152`) | A hard topic/session candidate set restores bounded exact scoring under the same noisy graph, pointing toward query-derived subgraph filters before ANN/PQ fallback. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work
