@@ -29,6 +29,7 @@ const FACTS_PER_TOPIC: usize = 8;
 const RESULT_K: usize = FACTS_PER_TOPIC;
 const SEED_K: usize = 4;
 const WIDE_SEED_K: usize = 16;
+const ORACLE_SEED_K: usize = 64;
 const SEARCH_WIDTH: usize = 32;
 const PAGERANK_WEIGHT: f64 = 0.05;
 
@@ -36,7 +37,9 @@ const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::VectorOnly,
     RetrievalStrategy::PagerankPrior,
     RetrievalStrategy::GraphExpand,
+    RetrievalStrategy::GraphExpandValid,
     RetrievalStrategy::GraphExpandPagerank,
+    RetrievalStrategy::ExactGraphOracle,
 ];
 
 #[derive(Clone, Copy, Debug)]
@@ -44,7 +47,9 @@ enum RetrievalStrategy {
     VectorOnly,
     PagerankPrior,
     GraphExpand,
+    GraphExpandValid,
     GraphExpandPagerank,
+    ExactGraphOracle,
 }
 
 impl RetrievalStrategy {
@@ -53,7 +58,9 @@ impl RetrievalStrategy {
             Self::VectorOnly => "vector_only",
             Self::PagerankPrior => "pagerank_prior",
             Self::GraphExpand => "graph_expand",
+            Self::GraphExpandValid => "graph_expand_valid",
             Self::GraphExpandPagerank => "graph_expand_pagerank",
+            Self::ExactGraphOracle => "exact_graph_oracle",
         }
     }
 }
@@ -71,10 +78,14 @@ fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
                 BenchmarkId::new(
                     strategy.name(),
                     format!(
-                        "{}_q{}_covbp{}_precbp{}",
+                        "{}_q{}_covbp{}_curbp{}_precbp{}",
                         scale_label(fixture.scale()),
                         fixture.query_count(),
                         basis_points(quality.coverage, fixture.query_count() * FACTS_PER_TOPIC),
+                        basis_points(
+                            quality.current_coverage,
+                            fixture.query_count() * FACTS_PER_TOPIC
+                        ),
                         basis_points(quality.precision, fixture.query_count() * RESULT_K),
                     ),
                 ),
@@ -95,6 +106,7 @@ struct MemoryRetrievalFixture {
     label: IStr,
     embedding_key: IStr,
     support_edge: IStr,
+    valid_edge: IStr,
     queries: Vec<Query>,
     metadata: HashMap<NodeId, NodeMeta>,
     pagerank: HashMap<NodeId, f64>,
@@ -105,6 +117,7 @@ impl MemoryRetrievalFixture {
         let label = istr("Memory");
         let embedding_key = istr("embedding");
         let support_edge = istr("SUPPORTS");
+        let valid_edge = istr("VALID_AT");
         let topic_count = topic_count(requested_scale);
         let duplicates = duplicates_per_fact(requested_scale, topic_count);
         let shared = SharedGraph::new(GraphId::new(91_000 + requested_scale as u64));
@@ -128,7 +141,14 @@ impl MemoryRetrievalFixture {
                                 .create_node(LabelSet::single(label.clone()), props)
                                 .expect("bench node insert succeeds");
                             nodes.push(node);
-                            metadata.insert(node, NodeMeta { topic, fact });
+                            metadata.insert(
+                                node,
+                                NodeMeta {
+                                    topic,
+                                    fact,
+                                    current: fact == 0 || duplicate % 2 == 0,
+                                },
+                            );
                         }
                     }
                 }
@@ -144,6 +164,16 @@ impl MemoryRetrievalFixture {
                                     PropertyMap::new(),
                                 )
                                 .expect("bench support edge inserts");
+                            if metadata.get(&evidence).is_some_and(|meta| meta.current) {
+                                mutator
+                                    .create_edge(
+                                        valid_edge.clone(),
+                                        *summary,
+                                        evidence,
+                                        PropertyMap::new(),
+                                    )
+                                    .expect("bench valid edge inserts");
+                            }
                         }
                     }
                 }
@@ -175,6 +205,7 @@ impl MemoryRetrievalFixture {
             label,
             embedding_key,
             support_edge,
+            valid_edge,
             queries,
             metadata,
             pagerank,
@@ -195,6 +226,7 @@ impl MemoryRetrievalFixture {
             .map(|query| self.query_quality(query, strategy))
             .fold(RetrievalQuality::default(), |mut total, next| {
                 total.coverage += next.coverage;
+                total.current_coverage += next.current_coverage;
                 total.precision += next.precision;
                 total
             })
@@ -207,6 +239,7 @@ impl MemoryRetrievalFixture {
     fn query_quality(&self, query: &Query, strategy: RetrievalStrategy) -> RetrievalQuality {
         let selected = self.select(query, strategy);
         let mut facts = [false; FACTS_PER_TOPIC];
+        let mut current_facts = [false; FACTS_PER_TOPIC];
         let mut precision = 0usize;
         for node in selected {
             if let Some(meta) = self.metadata.get(&node)
@@ -214,10 +247,14 @@ impl MemoryRetrievalFixture {
             {
                 precision += 1;
                 facts[meta.fact] = true;
+                if meta.current {
+                    current_facts[meta.fact] = true;
+                }
             }
         }
         RetrievalQuality {
             coverage: facts.into_iter().filter(|covered| *covered).count(),
+            current_coverage: current_facts.into_iter().filter(|covered| *covered).count(),
             precision,
         }
     }
@@ -231,15 +268,47 @@ impl MemoryRetrievalFixture {
                 .collect(),
             RetrievalStrategy::PagerankPrior => {
                 let hits = self.ann_hits(query, WIDE_SEED_K);
-                self.select_from_candidates(query, hits, false, true)
+                self.select_from_candidates(query, hits, false, true, false)
             }
             RetrievalStrategy::GraphExpand => {
                 let hits = self.ann_hits(query, SEED_K);
-                self.select_from_candidates(query, self.expand(query, hits), true, false)
+                self.select_from_candidates(
+                    query,
+                    self.expand(query, hits, false),
+                    true,
+                    false,
+                    false,
+                )
+            }
+            RetrievalStrategy::GraphExpandValid => {
+                let hits = self.ann_hits(query, SEED_K);
+                self.select_from_candidates(
+                    query,
+                    self.expand(query, hits, true),
+                    true,
+                    false,
+                    true,
+                )
             }
             RetrievalStrategy::GraphExpandPagerank => {
                 let hits = self.ann_hits(query, SEED_K);
-                self.select_from_candidates(query, self.expand(query, hits), true, true)
+                self.select_from_candidates(
+                    query,
+                    self.expand(query, hits, false),
+                    true,
+                    true,
+                    false,
+                )
+            }
+            RetrievalStrategy::ExactGraphOracle => {
+                let hits = self.exact_hits(query, ORACLE_SEED_K);
+                self.select_from_candidates(
+                    query,
+                    self.expand(query, hits, true),
+                    true,
+                    false,
+                    true,
+                )
             }
         }
     }
@@ -256,13 +325,33 @@ impl MemoryRetrievalFixture {
             .expect("bench ANN search succeeds")
     }
 
-    fn expand(&self, query: &Query, hits: Vec<VectorNodeSearchHit>) -> Vec<VectorNodeSearchHit> {
+    fn exact_hits(&self, query: &Query, k: usize) -> Vec<VectorNodeSearchHit> {
+        self.graph
+            .exact_vector_search_nodes(
+                &self.label,
+                &self.embedding_key,
+                &query.vector,
+                VectorMetric::Cosine,
+                k,
+            )
+            .expect("bench exact search succeeds")
+    }
+
+    fn expand(
+        &self,
+        query: &Query,
+        hits: Vec<VectorNodeSearchHit>,
+        valid_only: bool,
+    ) -> Vec<VectorNodeSearchHit> {
         let mut candidates = HashMap::new();
         for hit in hits {
             let node_id = hit.node_id;
             candidates.insert(node_id, hit);
             if let Some(edges) = self.graph.outgoing_edges(node_id) {
                 for edge in edges.iter().filter(|edge| edge.label == self.support_edge) {
+                    if valid_only && !self.has_valid_edge(node_id, edge.neighbor) {
+                        continue;
+                    }
                     candidates
                         .entry(edge.neighbor)
                         .or_insert_with(|| self.exact_hit(edge.neighbor, query));
@@ -270,6 +359,14 @@ impl MemoryRetrievalFixture {
             }
         }
         candidates.into_values().collect()
+    }
+
+    fn has_valid_edge(&self, source: NodeId, target: NodeId) -> bool {
+        self.graph.outgoing_edges(source).is_some_and(|edges| {
+            edges
+                .iter()
+                .any(|edge| edge.label == self.valid_edge && edge.neighbor == target)
+        })
     }
 
     fn exact_hit(&self, node_id: NodeId, query: &Query) -> VectorNodeSearchHit {
@@ -293,6 +390,7 @@ impl MemoryRetrievalFixture {
         mut candidates: Vec<VectorNodeSearchHit>,
         diversify: bool,
         use_prior: bool,
+        require_current: bool,
     ) -> Vec<NodeId> {
         candidates.sort_by(|left, right| {
             self.rank_score(left, use_prior)
@@ -311,6 +409,9 @@ impl MemoryRetrievalFixture {
         let mut seen_facts = HashSet::new();
         let mut deferred = Vec::new();
         for hit in candidates {
+            if require_current && !self.is_current(hit.node_id) {
+                continue;
+            }
             let fact_key = self
                 .metadata
                 .get(&hit.node_id)
@@ -329,6 +430,12 @@ impl MemoryRetrievalFixture {
         }
         selected.extend(deferred.into_iter().take(RESULT_K - selected.len()));
         selected
+    }
+
+    fn is_current(&self, node_id: NodeId) -> bool {
+        self.metadata
+            .get(&node_id)
+            .is_some_and(|metadata| metadata.current)
     }
 
     fn rank_score(&self, hit: &VectorNodeSearchHit, use_prior: bool) -> f64 {
@@ -350,11 +457,13 @@ struct Query {
 struct NodeMeta {
     topic: usize,
     fact: usize,
+    current: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 struct RetrievalQuality {
     coverage: usize,
+    current_coverage: usize,
     precision: usize,
 }
 
