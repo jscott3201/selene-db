@@ -9,6 +9,7 @@ use crate::common::scale_label;
 use super::support::{FACTS_PER_TOPIC, RESULT_K, SEED_K, WIDE_SEED_K, basis_points, vector_scales};
 use super::{MemoryRetrievalFixture, TopologyNoise};
 
+mod maintenance;
 mod selection;
 
 const SESSION_STRATEGIES: &[SessionStrategy] = &[
@@ -230,6 +231,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_noisy_sparse_multihop_provenance_pressure(c);
     bench_adaptive_provenance_pressure(c);
     bench_negative_evidence_pressure(c);
+    maintenance::bench_active_set_maintenance_pressure(c);
 }
 
 fn bench_session_filter_pressure(c: &mut Criterion) {

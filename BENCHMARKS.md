@@ -854,6 +854,18 @@ fact. This measures graph-side candidate pruning before exact vector scoring:
 | `graph_vector_negative_evidence_pressure/graph_scope_materialized_unresolved_current_filter/...covbp10000_curbp10000_precbp10000` | 42.94 µs (`c8`) | 173.9 µs (`c8`) | Materialized unresolved-current scope pruning is the fastest full-quality graph row in this matrix. |
 | `graph_vector_negative_evidence_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 104.7 µs (`c32`) | 1.105 ms (`c152`) | Metadata hard-topic reference remains slower than unresolved graph pruning at 10k. |
 
+Active-set maintenance rows reuse the negative-evidence fixture and time a
+60-read / 40-write cycle. The dynamic row pays graph-edge checks on every read
+and no maintained-state work on writes. The materialized row pays maintained
+set membership on reads and a balanced 20-remove / 20-insert active-set update
+cycle on writes:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_active_set_maintenance_pressure/dynamic_edge_checks_r60w40/...covbp10000_curbp10000_precbp10000` | 9.622 ms (`c31`) | 58.35 ms (`c32`) | Baseline 60/40 cycle using dynamic contradiction-edge checks for unresolved-current reads. |
+| `graph_vector_active_set_maintenance_pressure/materialized_set_r60w40/...covbp10000_curbp10000_precbp10000` | 6.904 ms (`c31`) | 26.41 ms (`c32`) | Maintained active set keeps full quality and remains faster even after 40 balanced set updates per cycle. |
+| `graph_vector_active_set_maintenance_pressure/materialized_set_maintenance_w40/...` | 454.1 ns (`active248`) | 396.8 ns (`active512`) | Isolated 40-update HashSet maintenance is negligible next to exact vector rerank cost on this fixture. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work
