@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(metadata.tier, ProcedureTier::Graph);
         assert_eq!(metadata.mutability, ProcedureMutability::Read);
         let columns = &metadata.output_schema.columns;
-        assert_eq!(columns.len(), 32);
+        assert_eq!(columns.len(), 33);
         assert_eq!(columns[0].name.as_str(), "name");
         assert_eq!(columns[0].ty, crate::GqlType::String);
         assert_eq!(columns[4].name.as_str(), "dimension");
@@ -504,8 +504,10 @@ mod tests {
             "ivf_average_list_len_basis_points"
         );
         assert_eq!(columns[28].ty, crate::GqlType::Uint64);
-        assert_eq!(columns[31].name.as_str(), "estimated_reachable_bytes");
-        assert_eq!(columns[31].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[30].name.as_str(), "ivf_pending_retrain_entries");
+        assert_eq!(columns[30].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[32].name.as_str(), "estimated_reachable_bytes");
+        assert_eq!(columns[32].ty, crate::GqlType::Uint64);
     }
 
     #[test]
@@ -520,7 +522,7 @@ mod tests {
         assert_eq!(metadata.tier, ProcedureTier::Maintenance);
         assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
         let columns = &metadata.output_schema.columns;
-        assert_eq!(columns.len(), 65);
+        assert_eq!(columns.len(), 67);
         assert_eq!(columns[0].name.as_str(), "name");
         assert_eq!(columns[0].ty, crate::GqlType::String);
         assert_eq!(columns[19].name.as_str(), "before_hnsw_deleted_entries");
@@ -539,8 +541,18 @@ mod tests {
             "before_ivf_average_list_len_basis_points"
         );
         assert_eq!(columns[51].ty, crate::GqlType::Uint64);
-        assert_eq!(columns[64].name.as_str(), "reclaimed_reachable_bytes");
-        assert_eq!(columns[64].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[55].name.as_str(),
+            "before_ivf_pending_retrain_entries"
+        );
+        assert_eq!(columns[55].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[56].name.as_str(),
+            "after_ivf_pending_retrain_entries"
+        );
+        assert_eq!(columns[56].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[66].name.as_str(), "reclaimed_reachable_bytes");
+        assert_eq!(columns[66].ty, crate::GqlType::Uint64);
     }
 
     #[test]

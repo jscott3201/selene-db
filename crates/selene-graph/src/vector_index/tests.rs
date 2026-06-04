@@ -314,6 +314,7 @@ fn ivf_vector_index_tracks_membership_and_metric() {
     assert_eq!(usage.ivf_entries, 2);
     assert_eq!(usage.ivf_live_entries, 2);
     assert_eq!(usage.ivf_assigned_entries, 2);
+    assert_eq!(usage.ivf_pending_retrain_entries, 0);
     assert!(usage.ivf_non_empty_list_count > 0);
     assert!(usage.ivf_max_list_len > 0);
     assert_eq!(
@@ -439,6 +440,7 @@ fn flat_vector_index_memory_usage_reports_row_bitmap_only() {
     assert_eq!(usage.ivf_max_list_len, 0);
     assert_eq!(usage.ivf_average_list_len_basis_points, 0);
     assert_eq!(usage.ivf_assigned_entries, 0);
+    assert_eq!(usage.ivf_pending_retrain_entries, 0);
     assert_eq!(usage.estimated_reachable_bytes, usage.estimated_index_bytes);
     assert!(usage.estimated_index_bytes >= usage.row_bitmap_bytes);
 }
@@ -663,6 +665,7 @@ fn shared_rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     assert_eq!(before.ivf_live_entries, 22);
     assert_eq!(before.ivf_deleted_entries, 2);
     assert_eq!(before.ivf_assigned_entries, 22);
+    assert_eq!(before.ivf_pending_retrain_entries, 4);
 
     let report = shared.rebuild_vector_indexes().unwrap();
 
@@ -679,6 +682,7 @@ fn shared_rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     assert_eq!(entry.after.ivf_live_entries, 22);
     assert_eq!(entry.after.ivf_deleted_entries, 0);
     assert_eq!(entry.after.ivf_assigned_entries, 22);
+    assert_eq!(entry.after.ivf_pending_retrain_entries, 0);
     assert!(entry.after.ivf_non_empty_list_count > 0);
     assert!(entry.after.ivf_max_list_len > 0);
     assert_eq!(

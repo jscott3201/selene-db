@@ -60,6 +60,8 @@ pub struct VectorIndexMemoryUsage {
     pub ivf_average_list_len_basis_points: usize,
     /// Non-stale IVF entries assigned to inverted lists.
     pub ivf_assigned_entries: usize,
+    /// Live IVF entries whose current vector was inserted or replaced after centroid training.
+    pub ivf_pending_retrain_entries: usize,
     /// Estimated bytes for index-owned structures, excluding referenced vector components.
     pub estimated_index_bytes: usize,
     /// Estimated upper-bound bytes reachable from the index including ANN vector components.
