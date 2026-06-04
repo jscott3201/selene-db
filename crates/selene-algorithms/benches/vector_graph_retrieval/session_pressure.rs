@@ -28,7 +28,7 @@ const SESSION_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
-const SPARSE_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
+const PROVENANCE_PRESSURE_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::GraphSessionMaterializedCurrentFilter,
     SessionStrategy::GraphSessionProvenanceExpandK1,
     SessionStrategy::GraphSessionProvenanceExpand,
@@ -110,6 +110,7 @@ impl SessionStrategy {
 pub(super) fn bench(c: &mut Criterion) {
     bench_session_filter_pressure(c);
     bench_sparse_provenance_pressure(c);
+    bench_noisy_sparse_provenance_pressure(c);
 }
 
 fn bench_session_filter_pressure(c: &mut Criterion) {
@@ -157,37 +158,57 @@ fn bench_sparse_provenance_pressure(c: &mut Criterion) {
     for scale in vector_scales() {
         let fixture =
             MemoryRetrievalFixture::build_with_topology(scale, TopologyNoise::SparseSupport);
-        for &strategy in SPARSE_PROVENANCE_STRATEGIES {
-            let avg_candidates = fixture.average_session_candidates(strategy);
-            let quality = fixture.session_quality(strategy);
-            group.throughput(Throughput::Elements(
-                (fixture.query_count() * avg_candidates) as u64,
-            ));
-            group.bench_function(
-                BenchmarkId::new(
-                    strategy.name(),
-                    format!(
-                        "{}_q{}_c{}_covbp{}_curbp{}_precbp{}",
-                        scale_label(fixture.scale()),
-                        fixture.query_count(),
-                        avg_candidates,
-                        basis_points(quality.coverage, fixture.query_count() * FACTS_PER_TOPIC),
-                        basis_points(
-                            quality.current_coverage,
-                            fixture.query_count() * FACTS_PER_TOPIC
-                        ),
-                        basis_points(quality.precision, fixture.query_count() * RESULT_K),
-                    ),
-                ),
-                |b| {
-                    b.iter(|| {
-                        black_box(fixture.session_total_coverage(strategy));
-                    });
-                },
-            );
+        for &strategy in PROVENANCE_PRESSURE_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
         }
     }
     group.finish();
+}
+
+fn bench_noisy_sparse_provenance_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_noisy_sparse_provenance_pressure");
+    for scale in vector_scales() {
+        let fixture =
+            MemoryRetrievalFixture::build_with_topology(scale, TopologyNoise::NoisySparseSupport);
+        for &strategy in PROVENANCE_PRESSURE_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
+fn bench_strategy(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    fixture: &MemoryRetrievalFixture,
+    strategy: SessionStrategy,
+) {
+    let avg_candidates = fixture.average_session_candidates(strategy);
+    let quality = fixture.session_quality(strategy);
+    group.throughput(Throughput::Elements(
+        (fixture.query_count() * avg_candidates) as u64,
+    ));
+    group.bench_function(
+        BenchmarkId::new(
+            strategy.name(),
+            format!(
+                "{}_q{}_c{}_covbp{}_curbp{}_precbp{}",
+                scale_label(fixture.scale()),
+                fixture.query_count(),
+                avg_candidates,
+                basis_points(quality.coverage, fixture.query_count() * FACTS_PER_TOPIC),
+                basis_points(
+                    quality.current_coverage,
+                    fixture.query_count() * FACTS_PER_TOPIC
+                ),
+                basis_points(quality.precision, fixture.query_count() * RESULT_K),
+            ),
+        ),
+        |b| {
+            b.iter(|| {
+                black_box(fixture.session_total_coverage(strategy));
+            });
+        },
+    );
 }
 
 impl MemoryRetrievalFixture {
