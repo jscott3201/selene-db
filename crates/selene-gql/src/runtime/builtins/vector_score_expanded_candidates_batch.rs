@@ -5,7 +5,7 @@
 //! each canonical expanded set by a vector-valued node property.
 
 use selene_core::{Value, VectorMetric};
-use selene_graph::VectorNeighborDirection;
+use selene_graph::{VectorNeighborDirection, VectorNeighborSearchOptions};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::vector_common::{
@@ -98,33 +98,12 @@ pub(super) fn execute(
         .unwrap_or(VectorMetric::SquaredEuclidean);
 
     let snapshot = ctx.snapshot();
-    let mut expanded_sets = Vec::with_capacity(root_sets.len());
-    for roots in &root_sets {
-        expanded_sets.push(
-            snapshot
-                .expand_vector_candidate_set_checked(
-                    roots,
-                    &edge_label,
-                    direction,
-                    ctx.cancellation_checker(),
-                )
-                .map_err(|error| {
-                    vector_search_error(
-                        error,
-                        "batched expanded vector candidate scoring",
-                        BatchMismatch::InvalidArgument,
-                        "batched expanded vector candidate scoring",
-                    )
-                })?,
-        );
-    }
     let batch_hits = snapshot
-        .score_vector_candidate_sets_batch_checked(
+        .score_vector_expanded_candidate_sets_batch_checked(
             &property,
             &queries,
-            &expanded_sets,
-            metric,
-            k,
+            &root_sets,
+            VectorNeighborSearchOptions::new(&edge_label, direction, metric, k),
             ctx.cancellation_checker(),
         )
         .map_err(|error| {

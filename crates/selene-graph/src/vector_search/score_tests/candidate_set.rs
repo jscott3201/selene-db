@@ -429,3 +429,153 @@ fn vector_neighbor_candidate_set_scores_like_neighbor_search() {
         vec![near, far]
     );
 }
+
+#[test]
+fn score_vector_expanded_candidate_sets_batch_matches_manual_expansion() {
+    let shared = SharedGraph::new(GraphId::new(987));
+    let root_label = intern("vector.expanded.batch.root").unwrap();
+    let doc_label = intern("vector.expanded.batch.doc").unwrap();
+    let embedding = intern("embedding").unwrap();
+    let support = intern("SUPPORTS").unwrap();
+    let other = intern("MENTIONS").unwrap();
+    let (root_a, root_b, near_a, far_a, near_b, wrong_label) = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let root_a = mutator
+            .create_node(
+                LabelSet::single(root_label.clone()),
+                props(&embedding, Value::Vector(vector(&[0.0, 0.0]))),
+            )
+            .unwrap();
+        let root_b = mutator
+            .create_node(
+                LabelSet::single(root_label),
+                props(&embedding, Value::Vector(vector(&[8.0, 0.0]))),
+            )
+            .unwrap();
+        let near_a = mutator
+            .create_node(
+                LabelSet::single(doc_label.clone()),
+                props(&embedding, Value::Vector(vector(&[1.0, 0.0]))),
+            )
+            .unwrap();
+        let far_a = mutator
+            .create_node(
+                LabelSet::single(doc_label.clone()),
+                props(&embedding, Value::Vector(vector(&[3.0, 0.0]))),
+            )
+            .unwrap();
+        let near_b = mutator
+            .create_node(
+                LabelSet::single(doc_label.clone()),
+                props(&embedding, Value::Vector(vector(&[7.5, 0.0]))),
+            )
+            .unwrap();
+        let wrong_label = mutator
+            .create_node(
+                LabelSet::single(doc_label),
+                props(&embedding, Value::Vector(vector(&[1.1, 0.0]))),
+            )
+            .unwrap();
+        mutator
+            .create_edge(support.clone(), root_a, near_a, PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(support.clone(), root_a, far_a, PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(support.clone(), root_b, near_b, PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(other, root_a, wrong_label, PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        (root_a, root_b, near_a, far_a, near_b, wrong_label)
+    };
+    let queries = vec![vector(&[1.1, 0.0]), vector(&[7.7, 0.0])];
+    let roots = vec![
+        VectorCandidateSet::from_nodes([root_a]),
+        VectorCandidateSet::from_nodes([root_b, root_b]),
+    ];
+    let options = VectorNeighborSearchOptions::new(
+        &support,
+        VectorNeighborDirection::Outgoing,
+        VectorMetric::SquaredEuclidean,
+        2,
+    );
+
+    let expanded = roots
+        .iter()
+        .map(|root_set| {
+            shared.expand_vector_candidate_set(root_set, options.edge_label, options.direction)
+        })
+        .collect::<Vec<_>>();
+    let manual = shared
+        .score_vector_candidate_sets_batch_checked(
+            &embedding,
+            &queries,
+            &expanded,
+            options.metric,
+            options.k,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let composed = shared
+        .score_vector_expanded_candidate_sets_batch_checked(
+            &embedding,
+            &queries,
+            &roots,
+            options,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+
+    assert_eq!(composed, manual);
+    assert_eq!(
+        composed[0]
+            .iter()
+            .map(|hit| hit.node_id)
+            .collect::<Vec<_>>(),
+        vec![near_a, root_a]
+    );
+    assert_eq!(
+        composed[1]
+            .iter()
+            .map(|hit| hit.node_id)
+            .collect::<Vec<_>>(),
+        vec![near_b, root_b]
+    );
+    assert!(!composed[0].iter().any(|hit| hit.node_id == far_a));
+    assert!(!composed[0].iter().any(|hit| hit.node_id == wrong_label));
+}
+
+#[test]
+fn score_vector_expanded_candidate_sets_batch_rejects_invalid_batch_shape() {
+    let shared = SharedGraph::new(GraphId::new(988));
+    let embedding = intern("embedding").unwrap();
+    let link = intern("SUPPORTS").unwrap();
+    let roots = [VectorCandidateSet::from_nodes([NodeId::new(1)])];
+    let queries = [vector(&[0.0, 0.0]), vector(&[1.0, 0.0])];
+
+    let err = shared
+        .score_vector_expanded_candidate_sets_batch_checked(
+            &embedding,
+            &queries,
+            &roots,
+            VectorNeighborSearchOptions::new(
+                &link,
+                VectorNeighborDirection::Outgoing,
+                VectorMetric::SquaredEuclidean,
+                1,
+            ),
+            CancellationChecker::disabled(),
+        )
+        .expect_err("query/root-set count mismatch must error");
+    assert!(matches!(
+        err,
+        crate::VectorSearchError::BatchLengthMismatch {
+            queries: 2,
+            candidate_sets: 1
+        }
+    ));
+}
