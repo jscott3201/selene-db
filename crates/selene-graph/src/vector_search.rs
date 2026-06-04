@@ -5,8 +5,8 @@ use std::{cmp::Ordering, time::Duration};
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{
-    CancellationCause, CancellationChecker, IStr, NodeId, Value, VectorMetric, VectorMetricQuery,
-    VectorTopK, VectorValue,
+    CancellationCause, CancellationChecker, CoreError, IStr, NodeId, Value, VectorMetric,
+    VectorMetricQuery, VectorTopK, VectorValue,
 };
 
 use crate::error::{GraphError, GraphResult};
@@ -215,6 +215,98 @@ impl SeleneGraph {
                 distance: hit.distance,
             })
             .collect())
+    }
+
+    /// Exhaustively rank vector-valued node properties for a batch of queries.
+    ///
+    /// The output position corresponds to the input query position. This keeps
+    /// the exact single-query semantics but resolves the row set once and scans
+    /// candidates once, which is useful for agent-memory workloads that probe
+    /// several embeddings over the same `(label, property)` surface.
+    pub fn exact_vector_search_nodes_batch_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        queries: &[VectorValue],
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        checker.check()?;
+        let Some(first_query) = queries.first() else {
+            return Ok(Vec::new());
+        };
+        let first_dimension = first_query.dimension();
+        for query in &queries[1..] {
+            if query.dimension() != first_dimension {
+                return Err(GraphError::from(CoreError::VectorDimensionMismatch {
+                    lhs: first_dimension,
+                    rhs: query.dimension(),
+                })
+                .into());
+            }
+        }
+        if k == 0 {
+            return Ok(vec![Vec::new(); queries.len()]);
+        }
+        let Some(label_rows) = self.nodes_with_label(label) else {
+            return Ok(vec![Vec::new(); queries.len()]);
+        };
+
+        let query_dimension = u32::try_from(first_dimension).ok();
+        let vector_index = query_dimension.and_then(|dimension| {
+            self.vector_index_for(label, property)
+                .filter(|index| index.dimension() == dimension)
+        });
+        let rows = vector_index
+            .as_ref()
+            .map_or(label_rows, |index| index.rows());
+        let scorers: Result<Vec<_>, GraphError> = queries
+            .iter()
+            .map(|query| metric.bind_query(query).map_err(GraphError::from))
+            .collect();
+        let scorers = scorers?;
+        let mut top_ks: Vec<_> = queries.iter().map(|_| VectorTopK::new(k)).collect();
+
+        let mut rows_since_check = 0usize;
+        for raw_row in rows.iter() {
+            rows_since_check += 1;
+            if rows_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
+                checker.check()?;
+                rows_since_check = 0;
+            }
+            if !self.node_store.is_alive(raw_row) {
+                continue;
+            }
+            let row = RowIndex::new(raw_row);
+            let node_id = self
+                .node_id_for_row(row)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "vector search row {raw_row} for {} has no node id",
+                        label.as_str()
+                    ),
+                })?;
+            let properties = self
+                .node_store
+                .properties
+                .get(raw_row as usize)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "vector search row {raw_row} for {} has no property row",
+                        label.as_str()
+                    ),
+                })?;
+            let Some(Value::Vector(vector)) = properties.get(property) else {
+                continue;
+            };
+            for (scorer, top_k) in scorers.iter().zip(&mut top_ks) {
+                let distance = scorer.distance(vector).map_err(GraphError::from)?;
+                top_k.push_distance(node_id, distance);
+            }
+        }
+
+        Ok(top_ks.into_iter().map(vector_node_hits).collect())
     }
 
     fn exact_vector_search_indexed_parallel(
@@ -487,6 +579,21 @@ impl SharedGraph {
             .exact_vector_search_nodes_checked(label, property, query, metric, k, checker)
     }
 
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::exact_vector_search_nodes_batch_checked`].
+    pub fn exact_vector_search_nodes_batch_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        queries: &[VectorValue],
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        self.read()
+            .exact_vector_search_nodes_batch_checked(label, property, queries, metric, k, checker)
+    }
+
     /// Approximately rank vector-valued node properties through an ANN index.
     ///
     /// This loads one immutable snapshot and delegates to
@@ -522,6 +629,9 @@ impl SharedGraph {
 #[cfg(test)]
 #[path = "vector_search/ann_conversion_tests.rs"]
 mod ann_conversion_tests;
+#[cfg(test)]
+#[path = "vector_search/batch_tests.rs"]
+mod batch_tests;
 #[cfg(test)]
 #[path = "vector_search/recall_tests.rs"]
 mod recall_tests;
