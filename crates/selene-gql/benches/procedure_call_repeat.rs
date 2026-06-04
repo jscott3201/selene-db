@@ -6,6 +6,8 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
+#[path = "procedure_call_repeat/vector_expanded.rs"]
+mod vector_expanded;
 #[path = "procedure_call_repeat/vector_neighbors.rs"]
 mod vector_neighbors;
 
@@ -618,6 +620,7 @@ criterion_group! {
     name = procedure_call_repeat_group;
     config = common::criterion_config();
     targets = bench_procedure_call_repeat, bench_vector_search_procedure,
+        vector_expanded::bench_vector_expanded_procedure,
         vector_neighbors::bench_vector_neighbor_procedure
 }
 criterion_main!(procedure_call_repeat_group);
