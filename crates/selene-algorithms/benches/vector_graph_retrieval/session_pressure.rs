@@ -130,6 +130,48 @@ const ACTIVE_HINT_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
+const ACTIVE_HINT_BATCH_STRATEGIES: &[(SessionStrategy, CandidateScoringMode)] = &[
+    (
+        SessionStrategy::GraphSessionMaterializedUnresolvedCurrentFilter,
+        CandidateScoringMode::RepeatedSingle,
+    ),
+    (
+        SessionStrategy::GraphSessionMaterializedUnresolvedCurrentFilter,
+        CandidateScoringMode::Batch,
+    ),
+    (
+        SessionStrategy::GraphSessionRecentActiveFilter,
+        CandidateScoringMode::RepeatedSingle,
+    ),
+    (
+        SessionStrategy::GraphSessionRecentActiveFilter,
+        CandidateScoringMode::Batch,
+    ),
+    (
+        SessionStrategy::GraphSessionDependencyActiveFilter,
+        CandidateScoringMode::RepeatedSingle,
+    ),
+    (
+        SessionStrategy::GraphSessionDependencyActiveFilter,
+        CandidateScoringMode::Batch,
+    ),
+];
+
+#[derive(Clone, Copy, Debug)]
+enum CandidateScoringMode {
+    RepeatedSingle,
+    Batch,
+}
+
+impl CandidateScoringMode {
+    const fn suffix(self) -> &'static str {
+        match self {
+            Self::RepeatedSingle => "repeated_score",
+            Self::Batch => "batch_score",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum SessionStrategy {
     NoisyWcc,
@@ -304,6 +346,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_active_subgraph_composition_pressure(c);
     bench_active_subgraph_fallback_pressure(c);
     bench_active_hint_pressure(c);
+    bench_active_hint_batch_pressure(c);
     maintenance::bench_active_set_maintenance_pressure(c);
 }
 
@@ -474,6 +517,54 @@ fn bench_active_hint_pressure(c: &mut Criterion) {
         );
         for &strategy in ACTIVE_HINT_STRATEGIES {
             bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
+fn bench_active_hint_batch_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_active_hint_batch_pressure");
+    for scale in vector_scales() {
+        let fixture = MemoryRetrievalFixture::build_with_topology(
+            scale,
+            TopologyNoise::NoisySparseMultiHopContradictedActiveHints,
+        );
+        for &(strategy, mode) in ACTIVE_HINT_BATCH_STRATEGIES {
+            let avg_candidates = fixture.average_session_candidates(strategy);
+            let quality = match mode {
+                CandidateScoringMode::RepeatedSingle => fixture.session_quality(strategy),
+                CandidateScoringMode::Batch => fixture.session_batch_scoring_quality(strategy),
+            };
+            group.throughput(Throughput::Elements(
+                (fixture.query_count() * avg_candidates) as u64,
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    format!("{}_{}", strategy.name(), mode.suffix()),
+                    format!(
+                        "{}_q{}_c{}_covbp{}_curbp{}_precbp{}",
+                        scale_label(fixture.scale()),
+                        fixture.query_count(),
+                        avg_candidates,
+                        basis_points(quality.coverage, fixture.query_count() * FACTS_PER_TOPIC),
+                        basis_points(
+                            quality.current_coverage,
+                            fixture.query_count() * FACTS_PER_TOPIC
+                        ),
+                        basis_points(quality.precision, fixture.query_count() * RESULT_K),
+                    ),
+                ),
+                |b| {
+                    b.iter(|| match mode {
+                        CandidateScoringMode::RepeatedSingle => {
+                            black_box(fixture.session_total_coverage(strategy));
+                        }
+                        CandidateScoringMode::Batch => {
+                            black_box(fixture.session_batch_scoring_total_coverage(strategy));
+                        }
+                    });
+                },
+            );
         }
     }
     group.finish();
