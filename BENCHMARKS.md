@@ -758,10 +758,13 @@ query pipeline: `MATCH` derives `OmlxDependsOn` graph-hint roots,
 through `OmlxSupports` before exact scoring. Its maintained-state companion
 uses the same GQL-produced roots with
 `selene.vector_score_candidate_state_expanded`, intersecting expanded roots
-with the provider-maintained `omlx_support_facts` set. The batched row stores
-each query vector on the query anchor, lets GQL aggregate per-query root sets,
-then calls `selene.vector_score_expanded_candidates_batch` once for the full
-16-query profile:
+with the provider-maintained `omlx_support_facts` set. The negative-evidence
+state row uses the same procedure over `omlx_current_support_facts`, where
+documents containing stale/superseded/contradictory wording have an outgoing
+`OmlxNegativeEvidence` edge and are excluded from current support state. The
+batched row stores each query vector on the query anchor, lets GQL aggregate
+per-query root sets, then calls `selene.vector_score_expanded_candidates_batch`
+once for the full 16-query profile:
 
 ```bash
 SELENE_OMLX_EMBEDDING_BENCH=1 \
@@ -781,11 +784,15 @@ also adds `OmlxSupports` edges from graph-hint documents to same-topic support
 facts so rows can compare direct partial hints, graph-expanded hints, and ANN
 union against the same endpoint embeddings.
 The fixture also registers a maintained candidate-state provider named
-`omlx_support_facts` over an explicit `OmlxSupportFact` label. With partial
-graph hints, graph-hint roots are not support facts; with uncapped hints, every
-document remains a support fact. That models provider-maintained support facts
+`omlx_support_facts` over an explicit `OmlxSupportFact` label, plus
+`omlx_current_support_facts` over the same label with outgoing
+`OmlxNegativeEvidence` edges as exclusions. With partial graph hints,
+graph-hint roots are not support facts; with uncapped hints, every document
+remains a support fact. That models provider-maintained support facts
 separately from graph-hint root documents without making the default uncapped
-profile degenerate to an empty state.
+profile degenerate to an empty state. `curbp{basis points}` records current
+support precision, while `basecurbp` records the direct graph-expanded row's
+current precision before negative-evidence filtering.
 
 The first local corpus is intentionally tiny (16 documents + 4 queries across
 GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
@@ -832,9 +839,10 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_cached_r60w40/...r60w40_totalc256` | 3.64 ms | 8.05 ms | Conservative mixed cycle with 60 cached candidate-set scoring reads plus 40 full graph-topology refreshes via the production candidate-expansion API; vector rerank dominates refresh work on this local profile. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_ann_union_score/...precbp5625/4843...ann8` | 371.82 µs (`c22`) | 754.71 µs (`c21`) | ANN union after full graph expansion hurts precision and adds hundreds of microseconds; avoid widening precise graph-expanded candidate sets with ANN by default. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `ann_hint_expansion_state_score/...ann8` | 392.51 µs (`precbp5312`, `c44`) | 699.14 µs (`precbp4531`, `c42`) | ANN roots expanded through support edges and intersected with maintained support-fact state still miss too many target facts; avoid adding a batched ANN/state procedure until a workload shows better quality. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.60 ms | 1.68 ms | Full GQL row over the scaled partial-hint corpus: `MATCH` + `collect_list(root)` derives two roots per query, graph expansion restores the 16-document same-topic set, and all 64 returned top-k hits are on-topic. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.71 ms | 1.76 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving full precision. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/...q16_k4_r2_c16...precbp10000` | 309.20 µs | 497.56 µs | Single GQL statement builds all 16 query vectors and root sets from graph rows, then calls the batched expanded scorer once; avoids repeated statement/session overhead while preserving full precision. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.42 ms | 1.51 ms | Full GQL row over the scaled partial-hint corpus: `MATCH` + `collect_list(root)` derives two roots per query, graph expansion restores the 16-document same-topic set, and all 64 returned top-k hits are on-topic; current-fact precision is lower (`basecurbp8593/8281`) because stale same-topic facts remain eligible. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.61 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.54 ms | 1.58 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/...q16_k4_r2_c16...precbp10000` | 304.27 µs | 487.13 µs | Single GQL statement builds all 16 query vectors and root sets from graph rows, then calls the batched expanded scorer once; avoids repeated statement/session overhead while preserving full topic precision. |
 
 The opt-in `Qwen3-Embedding-8B-4bit-DWQ` local model also works on
 `/v1/embeddings` and returns 4096-dimensional vectors. With
@@ -843,9 +851,11 @@ partial-hint expansion row reaches `precbp10000`, `c16`, at 205.26 us on the
 same scaled profile, the maintained `omlx_support_facts` state row reaches
 `precbp10000`, `c14`, at 184.50 us, and the ANN-root maintained-state row only
 reaches `precbp5625`, `c42`, at 1.113 ms. The full GQL query-root expansion row
-reaches `precbp10000`, `r2`, `c16`, at 1.62 ms, the GQL maintained-state
-intersection row reaches `precbp10000`, `r2`, `c14`, at 1.69 ms, and the GQL
-batched expansion row reaches `precbp10000`, `r2`, `c16`, at 683.94 µs. The
+reaches `precbp10000`, `r2`, `c16`, at 1.60 ms but only `basecurbp8437`, the
+GQL maintained-state intersection row reaches `precbp10000`, `r2`, `c14`, at
+1.67 ms, the negative-evidence current-state row reaches `curbp10000`, `r2`,
+`c13`, at 1.66 ms, and the GQL batched expansion row reaches `precbp10000`,
+`r2`, `c16`, at 674.55 µs. The
 conservative cached r60/w40 mixed cycle is 12.52 ms on the same
 4096-dimensional row. It stays opt-in for now so default local oMLX rows remain
 short and comparable to the earlier two-model baseline.

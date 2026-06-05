@@ -13,6 +13,7 @@ use selene_testing::local_omlx::{CorpusInput, Topic, topic_label};
 
 const QUERY_ROOT_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_expanded_candidates('embedding', $query, roots, 'OmlxSupports', 4, 'outgoing', 'cosine') YIELD node_id, distance RETURN node_id, distance";
 const QUERY_ROOT_STATE_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_candidate_state_expanded('embedding', $query, 'omlx_support_facts', roots, 'OmlxSupports', 4, 'intersection', 'outgoing', 'cosine') YIELD node_id, distance RETURN node_id, distance";
+const QUERY_ROOT_CURRENT_STATE_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_candidate_state_expanded('embedding', $query, 'omlx_current_support_facts', roots, 'OmlxSupports', 4, 'intersection', 'outgoing', 'cosine') YIELD node_id, distance RETURN node_id, distance";
 const QUERY_ROOT_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query AS query, collect_list(root) AS roots GROUP BY anchor.query_index, anchor.query ORDER BY query_index WITH collect_list(query) AS queries, collect_list(roots) AS root_sets CALL selene.vector_score_expanded_candidates_batch('embedding', queries, root_sets, 'OmlxSupports', 4, 'outgoing', 'cosine') YIELD query_index, node_id, distance RETURN query_index, node_id, distance";
 
 pub(super) const TOP_K: usize = 4;
@@ -22,6 +23,7 @@ pub(super) struct OmlxGqlQueryRootFixture {
     pub(super) dimension: usize,
     documents: Vec<DocumentMeta>,
     topics_by_node: HashMap<NodeId, Topic>,
+    current_by_node: HashMap<NodeId, bool>,
     queries: Vec<QueryVector>,
 }
 
@@ -50,14 +52,18 @@ impl OmlxGqlQueryRootFixture {
         let support_fact_label = istr("OmlxSupportFact");
         let dependency_edge = istr("OmlxDependsOn");
         let support_edge = istr("OmlxSupports");
+        let negative_evidence_edge = istr("OmlxNegativeEvidence");
         let embedding_key = istr("embedding");
         let query_key = istr("query");
         let query_index_key = istr("query_index");
         let support_state_provider = Arc::new(
-            MaintainedCandidateStateProvider::new([CandidateStateSpec::new(istr(
-                "omlx_support_facts",
-            ))
-            .require_label(support_fact_label.clone())])
+            MaintainedCandidateStateProvider::new([
+                CandidateStateSpec::new(istr("omlx_support_facts"))
+                    .require_label(support_fact_label.clone()),
+                CandidateStateSpec::new(istr("omlx_current_support_facts"))
+                    .require_label(support_fact_label.clone())
+                    .exclude_outgoing(negative_evidence_edge.clone()),
+            ])
             .expect("oMLX GQL maintained support state provider is valid"),
         );
         let graph = SharedGraph::builder(graph_id_for_model(model))
@@ -93,6 +99,7 @@ impl OmlxGqlQueryRootFixture {
                     if support_fact {
                         labels.insert(support_fact_label.clone());
                     }
+                    let current_fact = !is_negative_evidence_document(input.text);
                     let node = mutator
                         .create_node(labels, props)
                         .expect("oMLX GQL bench document node inserts");
@@ -101,6 +108,7 @@ impl OmlxGqlQueryRootFixture {
                         topic: input.topic,
                         graph_hint,
                         support_fact,
+                        current_fact,
                     });
                 }
                 for source in documents.iter().filter(|document| document.graph_hint) {
@@ -120,6 +128,20 @@ impl OmlxGqlQueryRootFixture {
                             )
                             .expect("oMLX GQL bench support edge inserts");
                     }
+                }
+                for stale in documents.iter().filter(|document| !document.current_fact) {
+                    let replacement = documents
+                        .iter()
+                        .find(|document| document.topic == stale.topic && document.current_fact)
+                        .expect("each oMLX topic has a current replacement fact");
+                    mutator
+                        .create_edge(
+                            negative_evidence_edge.clone(),
+                            stale.node,
+                            replacement.node,
+                            PropertyMap::new(),
+                        )
+                        .expect("oMLX GQL bench negative-evidence edge inserts");
                 }
                 for (query_index, (input, vector)) in inputs
                     .iter()
@@ -178,11 +200,16 @@ impl OmlxGqlQueryRootFixture {
             .iter()
             .map(|document| (document.node, document.topic))
             .collect();
+        let current_by_node = documents
+            .iter()
+            .map(|document| (document.node, document.current_fact))
+            .collect();
         Self {
             graph,
             dimension,
             documents,
             topics_by_node,
+            current_by_node,
             queries,
         }
     }
@@ -226,6 +253,23 @@ impl OmlxGqlQueryRootFixture {
         })
     }
 
+    pub(super) fn first_query_current_state_intersection_count(&self) -> usize {
+        self.queries.first().map_or(0, |query| {
+            if self.first_query_root_count() == 0 {
+                0
+            } else {
+                self.documents
+                    .iter()
+                    .filter(|document| {
+                        document.topic == query.topic
+                            && document.support_fact
+                            && document.current_fact
+                    })
+                    .count()
+            }
+        })
+    }
+
     pub(super) fn warm_query_root_cache(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -240,6 +284,14 @@ impl OmlxGqlQueryRootFixture {
         cache: Arc<CallPlanCache>,
     ) {
         self.execute_state_query(0, registry, Some(cache));
+    }
+
+    pub(super) fn warm_query_root_current_state_cache(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Arc<CallPlanCache>,
+    ) {
+        self.execute_current_state_query(0, registry, Some(cache));
     }
 
     pub(super) fn warm_query_root_batch_cache(
@@ -276,6 +328,23 @@ impl OmlxGqlQueryRootFixture {
             .sum()
     }
 
+    pub(super) fn execute_all_current_state_queries(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        (0..self.queries.len())
+            .map(|query_index| {
+                self.execute_current_state_query(
+                    query_index,
+                    registry,
+                    cache.as_ref().map(Arc::clone),
+                )
+                .row_count()
+            })
+            .sum()
+    }
+
     pub(super) fn gql_precision_basis_points(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -294,6 +363,24 @@ impl OmlxGqlQueryRootFixture {
         precision_basis_points(total_precision, self.query_count() * TOP_K)
     }
 
+    pub(super) fn gql_current_precision_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        let total_precision = self
+            .queries
+            .iter()
+            .enumerate()
+            .map(|(query_index, query)| {
+                let table =
+                    self.execute_query(query_index, registry, cache.as_ref().map(Arc::clone));
+                self.current_precision(query.topic, &table)
+            })
+            .sum();
+        precision_basis_points(total_precision, self.query_count() * TOP_K)
+    }
+
     pub(super) fn gql_state_precision_basis_points(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -307,6 +394,27 @@ impl OmlxGqlQueryRootFixture {
                 let table =
                     self.execute_state_query(query_index, registry, cache.as_ref().map(Arc::clone));
                 self.precision(query.topic, &table)
+            })
+            .sum();
+        precision_basis_points(total_precision, self.query_count() * TOP_K)
+    }
+
+    pub(super) fn gql_current_state_precision_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        let total_precision = self
+            .queries
+            .iter()
+            .enumerate()
+            .map(|(query_index, query)| {
+                let table = self.execute_current_state_query(
+                    query_index,
+                    registry,
+                    cache.as_ref().map(Arc::clone),
+                );
+                self.current_precision(query.topic, &table)
             })
             .sum();
         precision_basis_points(total_precision, self.query_count() * TOP_K)
@@ -371,6 +479,31 @@ impl OmlxGqlQueryRootFixture {
         }
     }
 
+    fn execute_current_state_query(
+        &self,
+        query_index: usize,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> BindingTable {
+        let mut session = Session::new(&self.graph);
+        if let Some(cache) = cache {
+            session = session.with_call_plan_cache(cache);
+        }
+        let query = self
+            .queries
+            .get(query_index)
+            .expect("oMLX GQL bench query index is valid");
+        session.bind_parameter(istr("query"), Value::Vector(query.vector.clone()));
+        session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
+        match session
+            .execute_source(QUERY_ROOT_CURRENT_STATE_SOURCE, registry)
+            .expect("oMLX GQL query-root current-state vector procedure executes")
+        {
+            StatementOutput::Rows(table) => table,
+            other => panic!("unexpected output: {other:?}"),
+        }
+    }
+
     pub(super) fn execute_batch_query(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -407,6 +540,25 @@ impl OmlxGqlQueryRootFixture {
             .count()
     }
 
+    fn current_precision(&self, topic: Topic, table: &BindingTable) -> usize {
+        let node_column = table
+            .column_index(istr("node_id"))
+            .expect("node_id column exists");
+        table
+            .iter()
+            .filter_map(|row| match row.get(node_column) {
+                Some(Value::NodeRef(node)) => Some(*node),
+                _ => None,
+            })
+            .filter(|node| {
+                self.topics_by_node
+                    .get(node)
+                    .is_some_and(|hit_topic| *hit_topic == topic)
+                    && self.current_by_node.get(node).copied().unwrap_or(false)
+            })
+            .count()
+    }
+
     fn batch_precision(&self, table: &BindingTable) -> usize {
         let query_column = table
             .column_index(istr("query_index"))
@@ -439,6 +591,7 @@ struct DocumentMeta {
     topic: Topic,
     graph_hint: bool,
     support_fact: bool,
+    current_fact: bool,
 }
 
 struct QueryVector {
@@ -466,6 +619,13 @@ fn admits_graph_hint(
     }
     *count += 1;
     true
+}
+
+fn is_negative_evidence_document(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    ["stale", "superseded", "contradict"]
+        .iter()
+        .any(|needle| text.contains(needle))
 }
 
 fn precision_basis_points(numerator: usize, denominator: usize) -> usize {
