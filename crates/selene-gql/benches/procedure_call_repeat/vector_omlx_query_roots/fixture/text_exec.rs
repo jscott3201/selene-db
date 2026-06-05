@@ -92,6 +92,39 @@ impl OmlxGqlQueryRootFixture {
         )
     }
 
+    pub(crate) fn gql_text_score_current_precision_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        let total_precision = self
+            .queries
+            .iter()
+            .enumerate()
+            .map(|(query_index, query)| {
+                let table = self.execute_text_score_query(
+                    query_index,
+                    registry,
+                    cache.as_ref().map(Arc::clone),
+                );
+                self.text_score_current_precision(query.topic, &table)
+            })
+            .sum();
+        precision_basis_points(total_precision, self.query_count() * TOP_K)
+    }
+
+    pub(crate) fn gql_text_score_batch_current_precision_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        let table = self.execute_text_score_batch_query(registry, cache);
+        precision_basis_points(
+            self.text_score_batch_current_precision(&table),
+            self.query_count() * TOP_K,
+        )
+    }
+
     pub(crate) fn execute_text_score_batch_query(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -162,6 +195,25 @@ impl OmlxGqlQueryRootFixture {
             .count()
     }
 
+    fn text_score_current_precision(&self, topic: super::Topic, table: &BindingTable) -> usize {
+        let node_column = table
+            .column_index(istr("node_id"))
+            .expect("node_id column exists");
+        table
+            .iter()
+            .filter_map(|row| match row.get(node_column) {
+                Some(Value::NodeRef(node)) => Some(*node),
+                _ => None,
+            })
+            .filter(|node| {
+                self.topics_by_node
+                    .get(node)
+                    .is_some_and(|hit_topic| *hit_topic == topic)
+                    && self.current_by_node.get(node).copied().unwrap_or(false)
+            })
+            .count()
+    }
+
     fn text_score_batch_precision(&self, table: &BindingTable) -> usize {
         let query_column = table
             .column_index(istr("query_index"))
@@ -183,6 +235,32 @@ impl OmlxGqlQueryRootFixture {
                 self.topics_by_node
                     .get(node)
                     .is_some_and(|hit_topic| hit_topic == topic)
+            })
+            .count()
+    }
+
+    fn text_score_batch_current_precision(&self, table: &BindingTable) -> usize {
+        let query_column = table
+            .column_index(istr("query_index"))
+            .expect("query_index column exists");
+        let node_column = table
+            .column_index(istr("node_id"))
+            .expect("node_id column exists");
+        table
+            .iter()
+            .filter_map(|row| match (row.get(query_column), row.get(node_column)) {
+                (Some(Value::Uint(query_index)), Some(Value::NodeRef(node))) => {
+                    let query_index = usize::try_from(*query_index).ok()?;
+                    let topic = self.queries.get(query_index)?.topic;
+                    Some((topic, *node))
+                }
+                _ => None,
+            })
+            .filter(|(topic, node)| {
+                self.topics_by_node
+                    .get(node)
+                    .is_some_and(|hit_topic| hit_topic == topic)
+                    && self.current_by_node.get(node).copied().unwrap_or(false)
             })
             .count()
     }

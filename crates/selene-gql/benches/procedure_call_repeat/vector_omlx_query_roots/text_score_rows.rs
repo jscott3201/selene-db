@@ -5,6 +5,12 @@ use selene_gql::{BuiltinProcedureRegistry, CallPlanCache};
 
 use super::fixture::{OmlxGqlQueryRootFixture, TOP_K};
 
+#[derive(Clone, Copy)]
+struct TextScoreQuality {
+    precision: usize,
+    current_precision: usize,
+}
+
 pub(super) fn bench_text_score_rows(
     group: &mut BenchmarkGroup<'_, WallTime>,
     registry: &BuiltinProcedureRegistry,
@@ -16,10 +22,20 @@ pub(super) fn bench_text_score_rows(
     let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     fixture.warm_query_root_text_score_cache(registry, Arc::clone(&cache));
     fixture.warm_query_root_text_score_batch_cache(registry, Arc::clone(&batch_cache));
-    let precision =
-        fixture.gql_text_score_precision_basis_points(registry, Some(Arc::clone(&cache)));
-    let batch_precision = fixture
-        .gql_text_score_batch_precision_basis_points(registry, Some(Arc::clone(&batch_cache)));
+    let quality = TextScoreQuality {
+        precision: fixture
+            .gql_text_score_precision_basis_points(registry, Some(Arc::clone(&cache))),
+        current_precision: fixture
+            .gql_text_score_current_precision_basis_points(registry, Some(Arc::clone(&cache))),
+    };
+    let batch_quality = TextScoreQuality {
+        precision: fixture
+            .gql_text_score_batch_precision_basis_points(registry, Some(Arc::clone(&batch_cache))),
+        current_precision: fixture.gql_text_score_batch_current_precision_basis_points(
+            registry,
+            Some(Arc::clone(&batch_cache)),
+        ),
+    };
     let mut plan_session = fixture.reusable_plan_cache_session();
     fixture.warm_query_root_text_score_session(&mut plan_session, registry);
     bench_shared_cache(
@@ -28,7 +44,7 @@ pub(super) fn bench_text_score_rows(
         fixture,
         model_id,
         corpus_label,
-        precision,
+        quality,
         cache,
     );
     bench_batch(
@@ -37,7 +53,7 @@ pub(super) fn bench_text_score_rows(
         fixture,
         model_id,
         corpus_label,
-        batch_precision,
+        batch_quality,
         batch_cache,
     );
     bench_plan_cache_session(
@@ -46,7 +62,7 @@ pub(super) fn bench_text_score_rows(
         fixture,
         model_id,
         corpus_label,
-        precision,
+        quality,
         plan_session,
     );
 }
@@ -57,13 +73,13 @@ fn bench_batch(
     fixture: &OmlxGqlQueryRootFixture,
     model_id: &str,
     corpus_label: &str,
-    precision: usize,
+    quality: TextScoreQuality,
     cache: Arc<CallPlanCache>,
 ) {
     group.bench_function(
         BenchmarkId::new(
             "shared_cache_query_root_text_score_batch",
-            row_label(fixture, model_id, corpus_label, precision),
+            row_label(fixture, model_id, corpus_label, quality),
         ),
         |b| {
             b.iter(|| {
@@ -83,13 +99,13 @@ fn bench_shared_cache(
     fixture: &OmlxGqlQueryRootFixture,
     model_id: &str,
     corpus_label: &str,
-    precision: usize,
+    quality: TextScoreQuality,
     cache: Arc<CallPlanCache>,
 ) {
     group.bench_function(
         BenchmarkId::new(
             "shared_cache_query_root_text_score",
-            row_label(fixture, model_id, corpus_label, precision),
+            row_label(fixture, model_id, corpus_label, quality),
         ),
         |b| {
             b.iter(|| {
@@ -107,13 +123,13 @@ fn bench_plan_cache_session(
     fixture: &OmlxGqlQueryRootFixture,
     model_id: &str,
     corpus_label: &str,
-    precision: usize,
+    quality: TextScoreQuality,
     mut session: selene_gql::Session<'_>,
 ) {
     group.bench_function(
         BenchmarkId::new(
             "shared_session_plan_cache_query_root_text_score",
-            row_label(fixture, model_id, corpus_label, precision),
+            row_label(fixture, model_id, corpus_label, quality),
         ),
         |b| {
             b.iter(|| {
@@ -129,10 +145,10 @@ fn row_label(
     fixture: &OmlxGqlQueryRootFixture,
     model_id: &str,
     corpus_label: &str,
-    precision: usize,
+    quality: TextScoreQuality,
 ) -> String {
     format!(
-        "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
+        "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}_curbp{}",
         model_id,
         corpus_label,
         fixture.query_count(),
@@ -140,6 +156,7 @@ fn row_label(
         fixture.first_query_root_count(),
         fixture.first_query_expanded_count(),
         fixture.dimension,
-        precision,
+        quality.precision,
+        quality.current_precision,
     )
 }
