@@ -44,13 +44,22 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         );
         let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         let state_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+        let current_state_cache =
+            Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         fixture.warm_query_root_cache(&registry, Arc::clone(&cache));
         fixture.warm_query_root_state_cache(&registry, Arc::clone(&state_cache));
+        fixture.warm_query_root_current_state_cache(&registry, Arc::clone(&current_state_cache));
         fixture.warm_query_root_batch_cache(&registry, Arc::clone(&batch_cache));
         let precision = fixture.gql_precision_basis_points(&registry, Some(Arc::clone(&cache)));
+        let current_precision =
+            fixture.gql_current_precision_basis_points(&registry, Some(Arc::clone(&cache)));
         let state_precision =
             fixture.gql_state_precision_basis_points(&registry, Some(Arc::clone(&state_cache)));
+        let current_state_precision = fixture.gql_current_state_precision_basis_points(
+            &registry,
+            Some(Arc::clone(&current_state_cache)),
+        );
         let batch_precision =
             fixture.gql_batch_precision_basis_points(&registry, Some(Arc::clone(&batch_cache)));
         group.throughput(Throughput::Elements((fixture.query_count() * TOP_K) as u64));
@@ -96,6 +105,31 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
                         fixture
                             .execute_all_state_queries(&registry, Some(Arc::clone(&state_cache))),
                     );
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_cache_query_root_current_state_intersection",
+                format!(
+                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.first_query_root_count(),
+                    fixture.first_query_current_state_intersection_count(),
+                    fixture.dimension,
+                    current_precision,
+                    current_state_precision,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_current_state_queries(
+                        &registry,
+                        Some(Arc::clone(&current_state_cache)),
+                    ));
                 });
             },
         );
