@@ -3,6 +3,7 @@
 use selene_core::{IStr, intern};
 
 mod code_alias;
+mod project_code;
 
 /// Corpus size and ambiguity profile for local embedding benchmarks.
 #[derive(Clone, Copy)]
@@ -19,6 +20,8 @@ pub enum CorpusProfile {
     CodeAliasMemory,
     /// Wider code and symbol alias corpus with more target-hit queries.
     CodeAliasWideMemory,
+    /// Target-aware corpus shaped like current selene-db source files.
+    ProjectCodeMemory,
 }
 
 impl CorpusProfile {
@@ -39,6 +42,9 @@ impl CorpusProfile {
             "scaled_ambiguous_memory" | "scaled_ambiguous" => Self::ScaledAmbiguousMemory,
             "code_alias_memory" | "code_alias" => Self::CodeAliasMemory,
             "code_alias_wide_memory" | "code_alias_wide" => Self::CodeAliasWideMemory,
+            "project_code_memory" | "project_code" | "selene_project_code" => {
+                Self::ProjectCodeMemory
+            }
             other => panic!("unsupported embedding corpus value: {other}"),
         }
     }
@@ -52,6 +58,7 @@ impl CorpusProfile {
             Self::ScaledAmbiguousMemory => scaled_ambiguous_memory_inputs(),
             Self::CodeAliasMemory => code_alias::inputs(),
             Self::CodeAliasWideMemory => code_alias::wide_inputs(),
+            Self::ProjectCodeMemory => project_code::inputs(),
         }
     }
 }
@@ -480,6 +487,28 @@ mod tests {
     }
 
     #[test]
+    fn project_code_profile_targets_existing_documents() {
+        let inputs = CorpusProfile::ProjectCodeMemory.inputs();
+        let document_keys = inputs
+            .iter()
+            .filter(|input| input.is_document)
+            .filter_map(|input| input.target_key)
+            .collect::<HashSet<_>>();
+        let query_targets = inputs
+            .iter()
+            .filter(|input| !input.is_document)
+            .map(|input| input.target_key.expect("project code query has target"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(query_targets.len(), 16);
+        assert!(
+            query_targets
+                .iter()
+                .all(|target| document_keys.contains(target))
+        );
+    }
+
+    #[test]
     fn parses_corpus_profile_values() {
         assert!(matches!(
             CorpusProfile::from_value("tiny"),
@@ -492,6 +521,10 @@ mod tests {
         assert!(matches!(
             CorpusProfile::from_value("code_alias_wide"),
             CorpusProfile::CodeAliasWideMemory
+        ));
+        assert!(matches!(
+            CorpusProfile::from_value("selene_project_code"),
+            CorpusProfile::ProjectCodeMemory
         ));
         assert!(matches!(
             CorpusProfile::from_value("scaled_ambiguous_memory"),
