@@ -22,6 +22,8 @@ pub struct RecoveryOutcome {
     pub last_wal_seq: u64,
     /// Provider tags that received at least one callback, sorted ascending.
     pub providers_invoked: Vec<[u8; 4]>,
+    /// Provider tags that restored at least one snapshot section, sorted ascending.
+    pub snapshot_providers_invoked: Vec<[u8; 4]>,
     /// Number of WAL `Change` values delivered to provider fan-out.
     pub wal_changes_applied: u64,
     /// Number of replicated `Change` values skipped by `(source, sequence)`
@@ -40,6 +42,7 @@ impl RecoveryOutcome {
             applied_snapshot_seq: 0,
             last_wal_seq: 0,
             providers_invoked: Vec::new(),
+            snapshot_providers_invoked: Vec::new(),
             wal_changes_applied: 0,
             replicated_changes_deduplicated: 0,
             manifest_present: false,
@@ -79,6 +82,7 @@ pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<Recover
     let started = Instant::now();
     let mut outcome = RecoveryOutcome::empty();
     let mut providers_invoked = BTreeSet::new();
+    let mut snapshot_providers_invoked = BTreeSet::new();
 
     // Step 0: the MANIFEST, if present, is authoritative.
     let manifest = Manifest::read(dir)?;
@@ -101,8 +105,19 @@ pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<Recover
 
     // Step 1: snapshot apply.
     outcome.applied_snapshot_seq = match &manifest {
-        Some(manifest) => apply_manifest_snapshot(dir, manifest, registry, &mut providers_invoked)?,
-        None => apply_snapshot(dir, registry, &mut providers_invoked)?,
+        Some(manifest) => apply_manifest_snapshot(
+            dir,
+            manifest,
+            registry,
+            &mut providers_invoked,
+            &mut snapshot_providers_invoked,
+        )?,
+        None => apply_snapshot(
+            dir,
+            registry,
+            &mut providers_invoked,
+            &mut snapshot_providers_invoked,
+        )?,
     };
     outcome.last_wal_seq = outcome.applied_snapshot_seq;
 
@@ -117,6 +132,7 @@ pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<Recover
         &mut providers_invoked,
     )?;
     outcome.providers_invoked = providers_invoked.into_iter().collect();
+    outcome.snapshot_providers_invoked = snapshot_providers_invoked.into_iter().collect();
     metrics::counter_inc(metrics::RECOVERIES_TOTAL);
     metrics::histogram_record(
         metrics::RECOVERY_DURATION_SECONDS,
@@ -137,12 +153,18 @@ fn apply_manifest_snapshot(
     manifest: &Manifest,
     registry: &ProviderRegistry,
     providers_invoked: &mut BTreeSet<[u8; 4]>,
+    snapshot_providers_invoked: &mut BTreeSet<[u8; 4]>,
 ) -> PersistResult<u64> {
     if manifest.live_snapshot_seq == 0 {
         return Ok(0);
     }
     let path = snapshot_path(dir, manifest.live_snapshot_seq);
-    route_snapshot_sections(&path, registry, providers_invoked)?;
+    route_snapshot_sections(
+        &path,
+        registry,
+        providers_invoked,
+        snapshot_providers_invoked,
+    )?;
     Ok(manifest.live_snapshot_seq)
 }
 
@@ -152,6 +174,7 @@ fn route_snapshot_sections(
     path: &Path,
     registry: &ProviderRegistry,
     providers_invoked: &mut BTreeSet<[u8; 4]>,
+    snapshot_providers_invoked: &mut BTreeSet<[u8; 4]>,
 ) -> PersistResult<()> {
     let mut reader = SnapshotReader::open(path)?;
     reader.verify_body_hash()?;
@@ -174,6 +197,7 @@ fn route_snapshot_sections(
             }
         })?;
         providers_invoked.insert(entry.provider);
+        snapshot_providers_invoked.insert(entry.provider);
     }
     Ok(())
 }
@@ -182,11 +206,17 @@ fn apply_snapshot(
     dir: &Path,
     registry: &ProviderRegistry,
     providers_invoked: &mut BTreeSet<[u8; 4]>,
+    snapshot_providers_invoked: &mut BTreeSet<[u8; 4]>,
 ) -> PersistResult<u64> {
     let Some((snapshot_seq, path)) = find_latest_snapshot(dir)? else {
         return Ok(0);
     };
-    route_snapshot_sections(&path, registry, providers_invoked)?;
+    route_snapshot_sections(
+        &path,
+        registry,
+        providers_invoked,
+        snapshot_providers_invoked,
+    )?;
     Ok(snapshot_seq)
 }
 

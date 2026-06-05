@@ -115,9 +115,9 @@ const _: fn() = || {
 ///
 /// Since v1.2 (BRIEF 1) the transaction no longer holds the snapshot cell,
 /// schema-version, or provider handles — those moved to the single committer
-/// thread, which the transaction reaches via the cheap [`Committer`] submit
+/// thread, which the transaction reaches via the cheap `Committer` submit
 /// handle. The transaction still owns the write lock + allocator guards for the
-/// duration of execution and releases them when [`Self::seal`] consumes it.
+/// duration of execution and releases them when `seal` consumes it.
 pub struct WriteTxn<'g> {
     pub(crate) guard: RwLockWriteGuard<'g, Arc<SeleneGraph>>,
     pub(crate) committer: Committer,
@@ -187,9 +187,9 @@ impl<'g> WriteTxn<'g> {
     /// Commit with optional caller-owned principal bytes for D12 audit replay.
     ///
     /// Since v1.2 (BRIEF 1) commit is **seal-and-handover**: this method runs
-    /// [`Self::seal`] on the calling thread (generation/meta bump + GG02
+    /// `seal` on the calling thread (generation/meta bump + GG02
     /// validation under the write lock, then **lock release**), then submits the
-    /// resulting [`SealedCommit`] to the per-graph single committer thread and
+    /// resulting `SealedCommit` to the per-graph single committer thread and
     /// blocks until it is durable + visible. The public contract is unchanged —
     /// "`commit()` returns ⇒ durable + visible" — only the internal threading
     /// model differs.
@@ -208,7 +208,7 @@ impl<'g> WriteTxn<'g> {
     ///
     /// # Errors
     ///
-    /// Returns the GG02 / validation error from [`Self::seal`], or a
+    /// Returns the GG02 / validation error from `seal`, or a
     /// [`GraphError::Durable`] if the WAL append failed or the committer thread
     /// is no longer running.
     #[tracing::instrument(
@@ -662,7 +662,7 @@ pub(crate) fn publish_appended(
     let fanout: &[Change] = fanout_changes.as_deref().unwrap_or(&changes);
     {
         let _fanout_guard = crate::reentry::FanoutGuard::enter();
-        crate::provider_fanout::notify_providers(providers, fanout);
+        crate::provider_fanout::notify_providers(providers, generation, fanout);
     }
 
     // (4) Metrics + outcome.

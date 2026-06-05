@@ -8,7 +8,9 @@
 
 use std::fmt;
 
-use selene_core::Change;
+use selene_core::{Change, IStr};
+
+use crate::{SeleneGraph, VectorCandidateSet};
 
 /// Stable 4-byte ASCII identifier for an [`IndexProvider`] registration.
 ///
@@ -120,6 +122,57 @@ pub trait IndexProvider: Send + Sync + 'static {
             self.on_change(change)?;
         }
         Ok(())
+    }
+
+    /// Rebuild provider-owned derived state from a recovered graph snapshot.
+    ///
+    /// Recovery calls this when a provider declares persisted snapshot sections,
+    /// a graph snapshot was applied, and that snapshot did not contain this
+    /// provider's section. Providers that can derive their complete state from
+    /// CORE graph rows should override this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when the provider cannot rebuild safely.
+    fn rebuild_from_graph(&self, _graph: &SeleneGraph) -> Result<(), ProviderError> {
+        Err(ProviderError::Inconsistent {
+            reason: format!(
+                "provider {} has persisted sections but does not support graph rebuild",
+                self.provider_tag()
+            ),
+        })
+    }
+
+    /// Observe that every change for a committed graph generation was applied.
+    ///
+    /// Live fan-out calls this only after the provider's mutation callback path
+    /// completed without returning an error or panicking. Providers that expose
+    /// read-side state tied to graph generations can use this as their
+    /// visibility watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] for provider-local failures.
+    fn on_commit_applied(&self, _generation: u64) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    /// Return a provider-owned vector candidate set for `name` at `generation`.
+    ///
+    /// Providers that do not own named vector candidate state return `Ok(None)`.
+    /// A provider that owns the name but cannot prove the requested generation
+    /// should return an error instead of serving stale derived state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when the named state exists but is stale or
+    /// internally inconsistent.
+    fn vector_candidate_set(
+        &self,
+        _name: &IStr,
+        _generation: u64,
+    ) -> Result<Option<VectorCandidateSet>, ProviderError> {
+        Ok(None)
     }
 
     /// Provider-owned snapshot subsection tags.

@@ -31,14 +31,14 @@ pub enum PathSelector {
     AnyShortest,
     /// `ALL SHORTEST`.
     AllShortest,
-    /// ISO §16.6 G019 <counted shortest path search>: SHORTEST N [PATHS].
+    /// ISO §16.6 G019 counted shortest path search: `SHORTEST N [PATHS]`.
     /// Retains up to N individually-shortest path bindings per endpoint
     /// partition (§22.4 GR13b-i). `ANY SHORTEST` == `CountedShortest { paths: 1 }`.
     CountedShortest {
         /// Number of shortest path bindings to retain per endpoint partition.
         paths: u32,
     },
-    /// ISO §16.6 G020 <counted shortest group search>: SHORTEST [N] GROUP[S].
+    /// ISO §16.6 G020 counted shortest group search: `SHORTEST [N] GROUP[S]`.
     /// Retains all bindings within the N smallest distinct-length groups per
     /// endpoint partition (§22.4 GR13b-ii). `ALL SHORTEST` == `CountedShortestGroup { groups: 1 }`.
     CountedShortestGroup {

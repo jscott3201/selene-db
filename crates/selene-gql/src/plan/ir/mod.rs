@@ -396,10 +396,10 @@ pub enum JoinTree {
     /// body imports outer bindings will lower to this variant so the inner
     /// pipeline runs per outer row. No production lowering rule constructs it
     /// yet (correlated-`CALL` is not lowered at HEAD; only tests build it), but
-    /// the runtime path is complete — the sole executor is
-    /// [`crate::runtime::subplan::execute`], reached from the
-    /// `JoinTree::Subplan` arm of pattern walking. It is kept (not removed) as
-    /// the working substrate for that near-term direction.
+    /// the runtime path is complete — the sole executor is the runtime subplan
+    /// executor reached from the `JoinTree::Subplan` arm of pattern walking. It
+    /// is kept (not removed) as the working substrate for that near-term
+    /// direction.
     Subplan(Box<ExecutionPlan>),
     /// Per-label sub-scans wrapping a flat-disjunctive-label pattern.
     ///

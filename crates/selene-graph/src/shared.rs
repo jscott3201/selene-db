@@ -31,7 +31,7 @@ use crate::write_txn::WriteTxn;
 /// Per-graph shared runtime state.
 ///
 /// Since v1.2 (BRIEF 1) every snapshot publish is funneled through a single
-/// per-graph committer thread ([`crate::committer::CommitterThread`]), which is
+/// per-graph committer thread (`CommitterThread`), which is
 /// the **sole writer** of the `snapshot` [`ArcSwap`] cell. `begin_write` hands
 /// each [`WriteTxn`] a cheap submit handle; `commit`/`compact` seal-and-submit
 /// to the committer and block until it publishes. This single-committer +

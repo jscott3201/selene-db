@@ -304,7 +304,7 @@ impl WalWriter {
     /// Crash-safe rotate: finalize `builder`, commit a MANIFEST, then reset.
     ///
     /// This is the v1.x replacement for the embedder's two-call
-    /// finalize-then-[`Self::rotate`] sequence. It runs the 4-phase rotation
+    /// finalize-then-`rotate` sequence. It runs the 4-phase rotation
     /// whose MANIFEST write is the single linearization / commit point, so a
     /// crash at any point either leaves the previous epoch fully recoverable or
     /// the new epoch fully committed — never the [`PersistError::WalSnapshotMismatch`]

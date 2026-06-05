@@ -157,6 +157,7 @@ impl MaintainedCandidateStateProvider {
             );
         }
         rebuilt.rebuild_derived(&self.specs);
+        rebuilt.generation = graph.meta.generation;
         *self.state.lock() = rebuilt;
         Ok(())
     }
@@ -174,6 +175,35 @@ impl MaintainedCandidateStateProvider {
         state.members.get(name).map(|members| {
             VectorCandidateSet::from_canonical_nodes(members.iter().copied().collect())
         })
+    }
+
+    /// Return the provider generation watermark.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.state.lock().generation
+    }
+
+    /// Return the current candidate set for `name` if it matches `generation`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when this provider has not applied every
+    /// mutation through `generation`.
+    pub fn candidate_set_at_generation(
+        &self,
+        name: &IStr,
+        generation: u64,
+    ) -> Result<Option<VectorCandidateSet>, ProviderError> {
+        let state = self.state.lock();
+        if state.generation != generation {
+            return Err(inconsistent(format!(
+                "candidate-state generation {} does not match graph generation {generation}",
+                state.generation
+            )));
+        }
+        Ok(state.members.get(name).map(|members| {
+            VectorCandidateSet::from_canonical_nodes(members.iter().copied().collect())
+        }))
     }
 
     /// Return true when `node` is currently a member of the named set.
@@ -209,6 +239,7 @@ impl IndexProvider for MaintainedCandidateStateProvider {
             ));
         }
         let mut state = CandidateState::new(&self.specs);
+        state.generation = snapshot.generation;
         for (id, labels) in snapshot.node_labels {
             if state.node_labels.insert(id, labels).is_some() {
                 return Err(invalid_payload(format!(
@@ -246,6 +277,7 @@ impl IndexProvider for MaintainedCandidateStateProvider {
         let state = self.state.lock();
         let snapshot = CandidateStateSnapshot {
             version: SNAPSHOT_VERSION,
+            generation: state.generation,
             specs: self.specs.clone(),
             node_labels: state
                 .node_labels
@@ -279,6 +311,23 @@ impl IndexProvider for MaintainedCandidateStateProvider {
         Ok(())
     }
 
+    fn rebuild_from_graph(&self, graph: &SeleneGraph) -> Result<(), ProviderError> {
+        MaintainedCandidateStateProvider::rebuild_from_graph(self, graph)
+    }
+
+    fn on_commit_applied(&self, generation: u64) -> Result<(), ProviderError> {
+        self.state.lock().generation = generation;
+        Ok(())
+    }
+
+    fn vector_candidate_set(
+        &self,
+        name: &IStr,
+        generation: u64,
+    ) -> Result<Option<VectorCandidateSet>, ProviderError> {
+        self.candidate_set_at_generation(name, generation)
+    }
+
     fn declared_sub_tags(&self) -> &[SubTag] {
         SUB_TAGS
     }
@@ -294,6 +343,7 @@ struct TrackedEdge {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct CandidateStateSnapshot {
     version: u8,
+    generation: u64,
     specs: Vec<CandidateStateSpec>,
     node_labels: Vec<(NodeId, LabelSet)>,
     edges: Vec<(EdgeId, TrackedEdge)>,
@@ -301,6 +351,7 @@ struct CandidateStateSnapshot {
 
 #[derive(Clone, Debug)]
 struct CandidateState {
+    generation: u64,
     node_labels: BTreeMap<NodeId, LabelSet>,
     edges: BTreeMap<EdgeId, TrackedEdge>,
     outgoing_counts: BTreeMap<(NodeId, IStr), usize>,
@@ -311,6 +362,7 @@ struct CandidateState {
 impl CandidateState {
     fn new(specs: &[CandidateStateSpec]) -> Self {
         Self {
+            generation: 0,
             node_labels: BTreeMap::new(),
             edges: BTreeMap::new(),
             outgoing_counts: BTreeMap::new(),

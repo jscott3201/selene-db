@@ -51,7 +51,7 @@ pub fn triangle_count(proj: &GraphProjection, config: TriangleCountConfig) -> Ve
 /// Count triangles per node with cooperative cancellation checkpoints.
 ///
 /// A disabled checker takes the cheap early-return path inside every checkpoint
-/// (see [`check_algorithm`] / [`check_algorithm_stride`]), so the single
+/// (see `check_algorithm` / `check_algorithm_stride`), so the single
 /// checker-threaded impl is the crate-standard shape used by every other
 /// algorithm — there is no hand-duplicated fast path.
 pub fn triangle_count_with_checker(

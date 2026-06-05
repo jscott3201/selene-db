@@ -14,7 +14,7 @@ pub const WAL_VERSION_MAJOR: u16 = 2;
 /// from the middle of the `Value` enum shifts the postcard variant discriminant
 /// of every following variant (`Bytes`, `List`, `Record`, the temporals, …),
 /// and WAL change payloads (`payload.rs`) postcard-encode `Value`. The version
-/// gate ([`WalFileHeader::read_from`]) rejects any mismatch, so a pre-stage-B
+/// gate (`WalFileHeader::read_from`) rejects any mismatch, so a pre-stage-B
 /// WAL is cleanly rejected with [`crate::PersistError::UnsupportedVersion`]
 /// rather than silently mis-decoding a shifted variant — a clean greenfield
 /// break, not a dual decoder.

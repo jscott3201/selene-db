@@ -20,7 +20,7 @@ use super::{parse, to_u32};
 /// # DoS guards are enforced per-statement, not per-call
 ///
 /// Each non-empty segment is handed to [`parse`], which runs the nesting
-/// [`guard`](super::guard) over that segment alone. The syntactic nesting
+/// nesting guard over that segment alone. The syntactic nesting
 /// limit therefore applies to each statement's own delimiter depth rather
 /// than the summed depth of the whole input. A single segment that exceeds
 /// the guard is rejected with that segment's error, span-rebased to the
