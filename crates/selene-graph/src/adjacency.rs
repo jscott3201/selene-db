@@ -48,6 +48,15 @@ impl AdjacencyEntry {
         self.edges.iter()
     }
 
+    /// Iterate adjacent edges with exactly `label`.
+    ///
+    /// Entries are sorted by `(label, neighbor, edge_id)`, so this uses a
+    /// bounded label range rather than scanning unrelated edge labels.
+    pub fn iter_label<'a>(&'a self, label: &IStr) -> impl Iterator<Item = &'a AdjacencyEdge> {
+        let range = self.label_range(label);
+        self.edges[range].iter()
+    }
+
     /// Insert `edge` while maintaining sorted order.
     pub fn add(&mut self, edge: AdjacencyEdge) {
         let key = adjacency_key(&edge);
@@ -64,6 +73,14 @@ impl AdjacencyEntry {
             .iter()
             .position(|edge| edge.edge_id == edge_id)
             .map(|index| self.edges.remove(index))
+    }
+
+    fn label_range(&self, label: &IStr) -> std::ops::Range<usize> {
+        let start = self
+            .edges
+            .partition_point(|edge| edge.label.as_str() < label.as_str());
+        let len = self.edges[start..].partition_point(|edge| edge.label.as_str() == label.as_str());
+        start..start + len
     }
 
     #[cfg(test)]
@@ -143,6 +160,36 @@ mod tests {
     fn remove_returns_none_when_absent() {
         let mut entry = AdjacencyEntry::new();
         assert_eq!(entry.remove(EdgeId::new(1)), None);
+    }
+
+    #[test]
+    fn iter_label_returns_only_matching_label_range() {
+        let mut entry = AdjacencyEntry::new();
+        let a1 = edge("adj.a", 3, 1);
+        let a2 = edge("adj.a", 4, 2);
+        let b = edge("adj.b", 5, 3);
+        let c = edge("adj.c", 6, 4);
+        entry.add(c);
+        entry.add(a2.clone());
+        entry.add(b);
+        entry.add(a1.clone());
+
+        assert_eq!(
+            entry
+                .iter_label(&label("adj.a"))
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![a1, a2],
+        );
+    }
+
+    #[test]
+    fn iter_label_returns_empty_for_absent_labels() {
+        let mut entry = AdjacencyEntry::new();
+        entry.add(edge("adj.a", 2, 1));
+        entry.add(edge("adj.c", 3, 2));
+
+        assert_eq!(entry.iter_label(&label("adj.b")).count(), 0);
     }
 
     #[test]
