@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_42_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_43_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 42);
+    assert_eq!(procedures.len(), 43);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 42);
+    assert_eq!(table.row_count(), 43);
 
     let names = column_strings(&table, "name");
     let descriptions = column_strings(&table, "description");
@@ -182,6 +182,11 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
         names
             .iter()
             .any(|name| name == "selene.vector_score_candidate_state")
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.vector_candidate_states")
     );
     let rebuild = names
         .iter()
@@ -242,4 +247,31 @@ fn vector_score_nodes_batch_metadata_has_nested_node_candidates() {
     assert_eq!(columns[1].ty, GqlType::NodeRef);
     assert_eq!(columns[2].name.as_str(), "distance");
     assert_eq!(columns[2].ty, GqlType::Float64);
+}
+
+#[test]
+fn vector_candidate_states_metadata_has_descriptor_columns() {
+    let registry = full_registry();
+    let name = [istr("selene"), istr("vector_candidate_states")];
+    let metadata = registry
+        .lookup(&name)
+        .expect("vector_candidate_states resolves");
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 0);
+    assert_eq!(arity.maximum, 0);
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 6);
+    assert_eq!(columns[0].name.as_str(), "state_name");
+    assert_eq!(columns[0].ty, GqlType::String);
+    assert_eq!(columns[1].name.as_str(), "generation");
+    assert_eq!(columns[1].ty, GqlType::Uint64);
+    assert_eq!(columns[2].name.as_str(), "candidate_count");
+    assert_eq!(columns[2].ty, GqlType::Uint64);
+    assert_eq!(columns[3].name.as_str(), "required_label");
+    assert_eq!(columns[3].ty, GqlType::String);
+    assert_eq!(columns[4].name.as_str(), "exclude_outgoing");
+    assert_eq!(columns[4].ty, GqlType::List(Box::new(GqlType::String)));
+    assert_eq!(columns[5].name.as_str(), "exclude_incoming");
+    assert_eq!(columns[5].ty, GqlType::List(Box::new(GqlType::String)));
 }

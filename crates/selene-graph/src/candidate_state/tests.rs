@@ -102,6 +102,51 @@ fn provider_tracks_label_and_edge_exclusions_through_commits() {
 }
 
 #[test]
+fn shared_graph_lists_generation_checked_candidate_state_metadata() {
+    let (spec, name, doc, superseded, contradicts) = current_spec();
+    let provider = provider_with(spec);
+    let shared = SharedGraph::builder(GraphId::new(81_016))
+        .with_provider(provider as Arc<dyn IndexProvider>)
+        .build()
+        .unwrap();
+
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let active = mutator
+            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+            .unwrap();
+        let stale = mutator
+            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+            .unwrap();
+        let unresolved = mutator
+            .create_node(LabelSet::single(doc), PropertyMap::new())
+            .unwrap();
+        let blocked = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(superseded.clone(), stale, active, PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(contradicts.clone(), blocked, unresolved, PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let infos = shared.vector_candidate_state_infos().unwrap();
+
+    assert_eq!(infos.len(), 1);
+    let info = &infos[0];
+    assert_eq!(info.name, name);
+    assert_eq!(info.generation, shared.read().meta.generation);
+    assert_eq!(info.candidate_count, 1);
+    assert_eq!(info.required_label, Some(label("MemoryFact")));
+    assert_eq!(info.exclude_outgoing, vec![superseded]);
+    assert_eq!(info.exclude_incoming, vec![contradicts]);
+}
+
+#[test]
 fn provider_can_rebuild_from_existing_graph_snapshot() {
     let (spec, name, doc, superseded, _) = current_spec();
     let shared = SharedGraph::new(GraphId::new(81_002));

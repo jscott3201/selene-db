@@ -13,6 +13,7 @@
 
 pub mod adjacency;
 pub mod candidate_state;
+mod candidate_state_shared;
 pub mod chunked_vec;
 pub(crate) mod committer;
 pub(crate) mod committer_batch;
@@ -66,7 +67,9 @@ pub use graph_types::{
     RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 pub use id_allocator::IdAllocator;
-pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
+pub use index_provider::{
+    IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
+};
 pub use mutator::Mutator;
 pub use selene_core::{HnswIndexConfig, IvfIndexConfig};
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
