@@ -1,4 +1,4 @@
-//! `selene.text_search_nodes` and `selene.text_score_nodes` native built-ins.
+//! `selene.text_search_nodes` and candidate text-scoring native built-ins.
 //!
 //! Read-only graph-tier procedure exposing BM25 full-text search over
 //! string-valued node properties. A registered maintained text index is used
@@ -9,16 +9,20 @@
 //! search is an implementation-defined engine capability layered on ISO GQL
 //! values.
 
-use selene_core::Value;
+use selene_core::{IStr, Value};
 use selene_graph::{GraphError, TextSearchError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
-use super::vector_common::{cardinality_arg, invalid_arg, node_list_arg, string_arg};
+use super::vector_common::{
+    cardinality_arg, invalid_arg, node_list_arg, node_list_sets_arg, query_index_too_large,
+    string_arg,
+};
 use crate::procedure_registry::ProcedureError;
 use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, ProcedureResult};
 
 const PROC_NAME: &str = "selene.text_search_nodes";
 const SCORE_PROC_NAME: &str = "selene.text_score_nodes";
+const SCORE_BATCH_PROC_NAME: &str = "selene.text_score_nodes_batch";
 
 static TEXT_SEARCH_PARAMS: [StaticParameter; 4] = [
     StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
@@ -29,6 +33,13 @@ static TEXT_SEARCH_PARAMS: [StaticParameter; 4] = [
 ];
 
 static TEXT_SEARCH_OUTPUTS: [StaticOutputColumn; 2] = [
+    StaticOutputColumn::new("node_id", GqlType::NodeRef).with_description("Matched node id."),
+    StaticOutputColumn::new("score", GqlType::Float64)
+        .with_description("Higher-is-better BM25 score."),
+];
+static TEXT_SCORE_BATCH_OUTPUTS: [StaticOutputColumn; 3] = [
+    StaticOutputColumn::new("query_index", GqlType::Uint64)
+        .with_description("Zero-based query position."),
     StaticOutputColumn::new("node_id", GqlType::NodeRef).with_description("Matched node id."),
     StaticOutputColumn::new("score", GqlType::Float64)
         .with_description("Higher-is-better BM25 score."),
@@ -58,8 +69,36 @@ pub(super) fn score_signature() -> Vec<ProcedureParameter> {
     .collect()
 }
 
+pub(super) fn score_batch_signature() -> Vec<ProcedureParameter> {
+    [
+        StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
+        StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
+        StaticParameter::new("queries", GqlType::List(Box::new(GqlType::String)), false)
+            .with_description("Full-text query strings."),
+        StaticParameter::new(
+            "nodes",
+            GqlType::List(Box::new(GqlType::List(Box::new(GqlType::NodeRef)))),
+            false,
+        )
+        .with_description("Per-query candidate nodes to score."),
+        StaticParameter::new("k", GqlType::Integer, false)
+            .with_description("Maximum result count per query."),
+    ]
+    .into_iter()
+    .map(StaticParameter::into_parameter)
+    .collect()
+}
+
 pub(super) fn output_columns() -> Vec<ProcedureOutputColumn> {
     TEXT_SEARCH_OUTPUTS
+        .iter()
+        .cloned()
+        .map(StaticOutputColumn::into_output_column)
+        .collect()
+}
+
+pub(super) fn score_batch_output_columns() -> Vec<ProcedureOutputColumn> {
+    TEXT_SCORE_BATCH_OUTPUTS
         .iter()
         .cloned()
         .map(StaticOutputColumn::into_output_column)
@@ -138,11 +177,77 @@ pub(super) fn execute_score(
     })
 }
 
+pub(super) fn execute_score_batch(
+    ctx: &GraphContext<'_>,
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    if args.len() != 5 {
+        return Err(invalid_arg(format!(
+            "{SCORE_BATCH_PROC_NAME} expects 5 arguments"
+        )));
+    }
+
+    let label = string_arg(SCORE_BATCH_PROC_NAME, &args[0], "label")?;
+    let property = string_arg(SCORE_BATCH_PROC_NAME, &args[1], "property")?;
+    let queries = query_list_arg(SCORE_BATCH_PROC_NAME, &args[2])?;
+    let node_sets = node_list_sets_arg(SCORE_BATCH_PROC_NAME, &args[3], "nodes")?;
+    if queries.len() != node_sets.len() {
+        return Err(invalid_arg(format!(
+            "{SCORE_BATCH_PROC_NAME} queries and nodes must have the same length"
+        )));
+    }
+    let k = cardinality_arg(SCORE_BATCH_PROC_NAME, &args[4], "k")?;
+
+    let snapshot = ctx.snapshot();
+    let Some(index) = snapshot.text_index_for(&label, &property) else {
+        return Err(invalid_arg(format!(
+            "{SCORE_BATCH_PROC_NAME} requires a text index for {}.{}; call selene.create_text_index first",
+            label.as_str(),
+            property.as_str()
+        )));
+    };
+
+    let mut rows = Vec::with_capacity(queries.len().saturating_mul(k));
+    for (query_index, (query, nodes)) in queries.iter().zip(node_sets.iter()).enumerate() {
+        let query_index = u64::try_from(query_index)
+            .map_err(|err| query_index_too_large(SCORE_BATCH_PROC_NAME, err))?;
+        let hits = index
+            .search_candidates_checked(query.as_str(), nodes, k, ctx.cancellation_checker())
+            .map_err(text_search_error)?;
+        for hit in hits {
+            rows.push(vec![
+                Value::Uint(query_index),
+                Value::NodeRef(hit.node_id),
+                Value::Float(hit.score),
+            ]);
+        }
+    }
+    Ok(ProcedureResult { rows })
+}
+
 fn query_arg<'a>(proc_name: &'static str, value: &'a Value) -> Result<&'a str, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!("{proc_name} query must be a STRING")));
     };
     Ok(value.as_str())
+}
+
+fn query_list_arg(proc_name: &'static str, value: &Value) -> Result<Vec<IStr>, ProcedureError> {
+    let Value::List(values) = value else {
+        return Err(invalid_arg(format!(
+            "{proc_name} queries must be a LIST<STRING>"
+        )));
+    };
+    let mut queries = Vec::with_capacity(values.len());
+    for (index, value) in values.iter().enumerate() {
+        let Value::String(query) = value else {
+            return Err(invalid_arg(format!(
+                "{proc_name} queries[{index}] must be a STRING"
+            )));
+        };
+        queries.push(query.clone());
+    }
+    Ok(queries)
 }
 
 fn text_search_error(error: TextSearchError) -> ProcedureError {

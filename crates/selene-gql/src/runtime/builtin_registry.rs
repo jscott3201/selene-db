@@ -10,7 +10,7 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 33 platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 34 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
 //! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
 //! `selene.vector_search_nodes_batch`, `selene.vector_score_nodes`,
@@ -33,8 +33,8 @@
 //! `selene.rebuild_recommended_vector_indexes`, `selene.create_vector_index`,
 //! `selene.drop_vector_index`, `selene.create_text_index`,
 //! `selene.drop_text_index`, `selene.text_search_nodes`,
-//! `selene.text_score_nodes`) are registered here,
-//! bringing the total to 52;
+//! `selene.text_score_nodes`, `selene.text_score_nodes_batch`) are registered here,
+//! bringing the total to 53;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -97,8 +97,8 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 33 `selene.*`
-        // platform built-ins (handles 20..=52), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 34 `selene.*`
+        // platform built-ins (handles 20..=53), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
@@ -761,7 +761,7 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=52).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=53).collect::<Vec<_>>());
     }
 
     #[test]

@@ -366,6 +366,174 @@ fn text_score_nodes_uses_registered_text_index() {
 }
 
 #[test]
+fn text_score_nodes_batch_reranks_per_query_candidates_with_index() {
+    let graph = graph(431_111);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("TextDoc");
+    let body = istr("body");
+    let ids = {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let graph_memory = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph graph memory"))),
+            )
+            .expect("text node inserts");
+        let graph_retrieval = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph retrieval"))),
+            )
+            .expect("text node inserts");
+        let memory_notes = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("memory memory notes"))),
+            )
+            .expect("text node inserts");
+        let no_match = mutator
+            .create_node(
+                LabelSet::single(doc),
+                props(&body, Value::String(istr("vector only"))),
+            )
+            .expect("text node inserts");
+        txn.commit().expect("seed commits");
+        [graph_memory, graph_retrieval, memory_notes, no_match]
+    };
+
+    execute_ok(
+        &mut session,
+        "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
+        &registry,
+    );
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![
+            Value::String(istr("graph")),
+            Value::String(istr("memory")),
+        ]),
+    );
+    session.bind_parameter(
+        istr("nodes"),
+        Value::List(vec![
+            node_list(&[ids[0], ids[1], ids[2], ids[3]]),
+            node_list(&[ids[0], ids[2], ids[3]]),
+        ]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.text_score_nodes_batch('TextDoc', 'body', $queries, $nodes, 2) \
+         YIELD query_index, node_id, score",
+        &registry,
+    );
+
+    assert_eq!(uint_column(&table, "query_index"), vec![0, 0, 1, 1]);
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![ids[0], ids[1], ids[2], ids[0]]
+    );
+    let scores = float_column(&table, "score");
+    assert!(scores[0] > scores[1]);
+    assert!(scores[2] > scores[3]);
+}
+
+#[test]
+fn text_score_nodes_batch_rejects_mismatched_batch_lengths() {
+    let graph = graph(431_112);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![
+            Value::String(istr("graph")),
+            Value::String(istr("memory")),
+        ]),
+    );
+    session.bind_parameter(
+        istr("nodes"),
+        Value::List(vec![node_list(&[NodeId::new(1)])]),
+    );
+
+    let err = session
+        .execute_source(
+            "CALL selene.text_score_nodes_batch('TextDoc', 'body', $queries, $nodes, 10)",
+            &registry,
+        )
+        .expect_err("mismatched text-score batch lengths must fail");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("queries and nodes must have the same length")
+    ));
+}
+
+#[test]
+fn text_score_nodes_batch_requires_registered_text_index() {
+    let graph = graph(431_113);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![Value::String(istr("graph"))]),
+    );
+    session.bind_parameter(
+        istr("nodes"),
+        Value::List(vec![node_list(&[NodeId::new(1)])]),
+    );
+
+    let err = session
+        .execute_source(
+            "CALL selene.text_score_nodes_batch('TextDoc', 'body', $queries, $nodes, 10)",
+            &registry,
+        )
+        .expect_err("missing text index must fail");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("requires a text index")
+    ));
+}
+
+#[test]
+fn text_score_nodes_batch_rejects_non_node_candidates() {
+    let graph = graph(431_114);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![Value::String(istr("graph"))]),
+    );
+    session.bind_parameter(
+        istr("nodes"),
+        Value::List(vec![Value::List(vec![Value::Int(1)])]),
+    );
+
+    let err = session
+        .execute_source(
+            "CALL selene.text_score_nodes_batch('TextDoc', 'body', $queries, $nodes, 10)",
+            &registry,
+        )
+        .expect_err("non-node candidates must fail");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("nodes[0][0] must be a NODE")
+    ));
+}
+
+#[test]
 fn text_score_nodes_rejects_non_node_candidates() {
     let graph = graph(431_109);
     let registry = BuiltinProcedureRegistry::new();

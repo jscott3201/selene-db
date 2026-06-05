@@ -791,8 +791,10 @@ required incoming `OmlxSupports` edge and required outgoing `OmlxGroundedBy`
 edge before the same exact rerank. The text-score rows use the same
 GQL-produced roots, expand them through `OmlxSupports` in GQL, then call
 `selene.text_score_nodes` over explicit candidate nodes using a maintained BM25
-text index. The batched rows store each query vector on the query anchor and
-let GQL aggregate per-query root sets. The pure expansion row calls
+text index. The batched rows store each query vector and query text on the query
+anchor and let GQL aggregate per-query root/candidate sets. The text batch row
+calls `selene.text_score_nodes_batch` once for the full 16-query profile after
+GQL expands graph roots to explicit candidates. The pure expansion row calls
 `selene.vector_score_expanded_candidates_batch` once for the full 16-query
 profile; the current/provenance rows call
 `selene.vector_score_candidate_state_expanded_batch` so maintained state,
@@ -886,7 +888,8 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.45 ms | 1.52 ms | Full GQL row over the scaled partial-hint corpus: `MATCH` + `collect_list(root)` derives two roots per query, graph expansion restores the 16-document same-topic set, and all 64 returned top-k hits are on-topic; current-fact precision is lower (`basecurbp8593/8281`) because stale same-topic facts remain eligible. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.45 ms | 1.52 ms | Same full scoring statement through a warmed source-string `PlanCache` session; plan caching is neutral once graph expansion and vector rerank dominate. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_text_score/...q16_k4_r2_c16...precbp10000` | 2.13 ms | 2.28 ms | Full GQL row over the same graph roots and support expansion, but reranks expanded candidates with maintained BM25 via `selene.text_score_nodes`; precision is full, while repeated GQL candidate production plus text scoring is slower than the vector expanded scorer. |
-| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_text_score/...q16_k4_r2_c16...precbp10000` | 2.13 ms | 2.30 ms | Warmed source-string `PlanCache` session for the same text-score row; plan caching is effectively neutral, so the next useful text path is batched/candidate-aware execution rather than source planning. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_text_score/...q16_k4_r2_c16...precbp10000` | 2.13 ms | 2.30 ms | Warmed source-string `PlanCache` session for the same text-score row; plan caching is effectively neutral because repeated GQL candidate production dominates. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_text_score_batch/...q16_k4_r2_c16...precbp10000` | 454.29 µs | 478.81 µs | Single GQL statement builds all 16 query texts and graph-expanded candidate sets, then calls `selene.text_score_nodes_batch` once; preserves full precision while cutting repeated text-score overhead by roughly 4.7-4.8x on the local oMLX profile. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
