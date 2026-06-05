@@ -16,13 +16,14 @@ GitHub state, and local `_goalslogs/` notes for that.
 ## Mission
 
 `selene-db` is a greenfield, embeddable Rust graph database centered on strict
-ISO/IEC 39075:2024 GQL. It is a single native engine:
+ISO/IEC 39075:2024 GQL and agentic-memory-oriented graph retrieval. It is a
+single native engine:
 
 - GQL is the only query and mutation language.
 - Graph storage, graph algorithms, dense vectors, vector indexes, persistence,
   and the native procedure registry live in-tree as one cohesive engine.
 - Non-standard capabilities are exposed through implementation-defined values,
-  indexes, and `CALL selene.*` / `CALL algo.*` procedures, not grammar drift.
+  indexes, and `CALL selene.*` / `CALL algo.*` procedures, never grammar drift.
 - There is no loadable extension pack system.
 - There are no downstream compatibility constraints yet. Large refactors are
   allowed when they improve correctness, performance, or engine cohesion and are
@@ -63,8 +64,8 @@ There is no umbrella crate. Keep dependency direction intentional:
 `selene-core -> selene-graph -> selene-algorithms -> selene-gql`
 
 `selene-persist` depends on `selene-core` and stays below graph semantics.
-`selene-testing` provides fixtures, corpus helpers, and benchmark profiles for
-dev-dependencies.
+`selene-testing` provides fixtures, corpus helpers, local oMLX embedding support,
+and benchmark profiles for dev-dependencies.
 
 | Crate | Owns |
 |---|---|
@@ -73,7 +74,7 @@ dev-dependencies.
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
 | `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |
 | `selene-gql` | Parser, AST, analyzer, planner, optimizer, executor, procedure tiers, and the concrete native `BuiltinProcedureRegistry`. |
-| `selene-testing` | Shared fixtures, graph generators, corpus helpers, benchmark profiles, and snapshot-harness support. |
+| `selene-testing` | Shared fixtures, graph generators, local oMLX corpus/client support, benchmark profiles, and snapshot-harness support. |
 
 ## Query And Procedure Surface
 
@@ -86,7 +87,7 @@ dev-dependencies.
   those tests and docs together when the surface changes.
 - Procedure tiers are load-bearing:
   - graph tier: read-only health, feature status, verify, vector search/score,
-    vector index stats;
+    vector candidate-state discovery/composition, vector index stats;
   - mutation tier: property and vector index create/drop;
   - maintenance tier: vector index rebuild and rebuild recommendation.
 
@@ -123,9 +124,19 @@ Current production vector primitives include:
 - ANN node search and batch ANN search;
 - explicit candidate scoring and batch candidate scoring;
 - one-hop graph-neighbor scoring and batch neighbor scoring;
+- graph-expanded root scoring and batch graph-expanded root scoring;
+- ANN-root graph expansion with exact rerank, plus the batched companion;
 - reusable `VectorCandidateSet` for canonical sorted/deduped `NodeId` sets;
 - candidate-set scoring, batch candidate-set scoring, candidate-set algebra, and
   conversion from vector-search hits;
+- `MaintainedCandidateStateProvider` for named, provider-owned graph-derived
+  candidate sets with generation checks, WAL/snapshot recovery, and discovery
+  through `selene.vector_candidate_states()`;
+- maintained-state scoring, maintained-state + explicit-node algebra, and
+  maintained-state + graph-expanded-root composition;
+- state-gated ANN-root graph expansion when benchmarks prove quality, but avoid
+  adding more ANN/state surfaces by default when real-embedding rows show poor
+  precision;
 - vector index stats, create/drop, rebuild, and recommended rebuild.
 
 Keep compression and alternative ANN ideas out of production until evidence
@@ -146,12 +157,18 @@ composable primitives:
 - `VectorCandidateSet` composition;
 - exact vector scoring over explicit candidates;
 - graph-neighbor vector scoring;
-- maintained or rebuildable active sets when benchmarks justify them;
+- graph-expanded support/provenance/root expansion;
+- maintained or rebuildable active/current/support sets when benchmarks justify
+  them;
 - graph algorithm priors only when they improve candidate coverage, diversity,
   correctness, or latency.
 
 Do not bake one agent-memory policy into the engine. Build reusable graph/vector
-substrate and benchmark product-shaped retrieval rows.
+substrate and benchmark product-shaped retrieval rows. Current local oMLX
+evidence says graph-authored hints and support expansion can restore precision
+where vector-only ANN/exact search fails under ambiguous language; the remaining
+work is better root production, maintained-state ownership, and
+invalidation/recovery, not piling on ANN fallback surfaces.
 
 ## BM25 / Full Text
 
@@ -177,6 +194,9 @@ Expected workload shape is read-heavy but write-relevant, roughly 60% reads and
 - WAL durability is often the write-side cost center. Do not over-optimize
   provider/index maintenance paths when durability dominates.
 - Prefer product-shaped benchmark rows once API boundaries are correct.
+- Treat local oMLX rows as local-only validation. CI must compile those code
+  paths but must not require localhost embedding services or secret `.env`
+  material.
 
 ## Validation
 
@@ -229,6 +249,7 @@ scripts/run-benches.sh --list
 scripts/run-benches.sh --smoke
 scripts/run-benches.sh --profile quick --bench vector_graph_retrieval
 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter vector
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_vector_omlx_query_roots
 scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set --vector-scales 1000
 scripts/run-benches.sh --profile quick --bench vector_index_rebuild --vector-scales 10000
 scripts/run-benches.sh --bench vector_index_rebuild --allocator system
@@ -237,6 +258,19 @@ scripts/run-benches.sh --bench vector_index_rebuild --allocator system
 The runner is Criterion-only. There is no active iai-callgrind/valgrind layer.
 Every committed bench target must be registered in `scripts/run-benches.sh` and
 documented in `BENCHMARKS.md`.
+
+Local oMLX embedding benches are opt-in:
+
+```bash
+set -a; source .env; set +a
+SELENE_OMLX_EMBEDDING_BENCH=1 \
+SELENE_OMLX_CORPUS=scaled_ambiguous_memory \
+SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_vector_omlx_query_roots
+```
+
+Never print or commit the local API key. Keep 8B and larger rows opt-in unless a
+specific PR needs that stress point.
 
 ## CI, Hooks, And PR Flow
 
@@ -320,6 +354,9 @@ Current source, tests, benchmarks, and GitHub state win.
 - Do not describe vectors as externalized or out-of-tree.
 - Do not revive procedure packs, manifest validation, or loadable extensions.
 - Do not add BM25/full-text as a grammar shortcut or dependency-first import.
+- Do not use synthetic vector metrics for real-embedding oMLX rows unless the PR
+  is explicitly testing that metric; cosine is the default semantic benchmark
+  metric.
 - Do not commit `_goalslogs` or any other `_*/` working directory.
 - Do not bypass row-id mapping. External `NodeId`/`EdgeId` are stable; internal
   `RowIndex` is storage position.
