@@ -11,18 +11,18 @@ fn name(segments: &[&str]) -> Vec<IStr> {
 }
 
 #[test]
-fn registers_all_forty_six_procedures() {
+fn registers_all_forty_seven_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        46,
-        "expected 19 algo procedures + 27 platform built-ins"
+        47,
+        "expected 19 algo procedures + 28 platform built-ins"
     );
 }
 
 #[test]
-fn iter_handles_yields_all_twenty_seven_platform_builtins() {
+fn iter_handles_yields_all_twenty_eight_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -47,6 +47,7 @@ fn iter_handles_yields_all_twenty_seven_platform_builtins() {
         ["selene", "vector_score_candidate_state"],
         ["selene", "vector_score_candidate_state_nodes"],
         ["selene", "vector_score_candidate_state_expanded"],
+        ["selene", "vector_score_candidate_state_expanded_batch"],
         ["selene", "vector_candidate_states"],
         ["selene", "vector_score_expanded_candidates"],
         ["selene", "vector_score_expanded_candidates_batch"],
@@ -348,6 +349,64 @@ fn vector_score_candidate_state_expanded_signature_has_state_and_expansion_args(
     assert_eq!(columns[0].ty, crate::GqlType::NodeRef);
     assert_eq!(columns[1].name.as_str(), "distance");
     assert_eq!(columns[1].ty, crate::GqlType::Float64);
+}
+
+#[test]
+fn vector_score_candidate_state_expanded_batch_signature_has_state_and_nested_roots_args() {
+    let registry = BuiltinProcedureRegistry::new();
+    let metadata = registry
+        .lookup(&name(&[
+            "selene",
+            "vector_score_candidate_state_expanded_batch",
+        ]))
+        .expect("vector_score_candidate_state_expanded_batch resolves");
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 6);
+    assert_eq!(arity.maximum, 9);
+
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters.len(), 9);
+    assert_eq!(parameters[0].name.as_str(), "property");
+    assert_eq!(parameters[0].ty, crate::GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "queries");
+    assert_eq!(
+        parameters[1].ty,
+        crate::GqlType::List(Box::new(crate::GqlType::Vector))
+    );
+    assert_eq!(parameters[2].name.as_str(), "state_name");
+    assert_eq!(parameters[2].ty, crate::GqlType::String);
+    assert_eq!(parameters[3].name.as_str(), "roots");
+    assert_eq!(
+        parameters[3].ty,
+        crate::GqlType::List(Box::new(crate::GqlType::List(Box::new(
+            crate::GqlType::NodeRef
+        ))))
+    );
+    assert_eq!(parameters[4].name.as_str(), "edge_label");
+    assert_eq!(parameters[4].ty, crate::GqlType::String);
+    assert_eq!(parameters[5].name.as_str(), "k");
+    assert_eq!(parameters[5].ty, crate::GqlType::Integer);
+    assert_eq!(parameters[6].name.as_str(), "operation");
+    assert_eq!(parameters[6].ty, crate::GqlType::String);
+    assert_eq!(parameters[6].default_doc, Some("intersection"));
+    assert!(parameters[6].default.is_some());
+    assert_eq!(parameters[7].name.as_str(), "direction");
+    assert_eq!(parameters[7].ty, crate::GqlType::String);
+    assert_eq!(parameters[7].default_doc, Some("outgoing"));
+    assert!(parameters[7].default.is_some());
+    assert_eq!(parameters[8].name.as_str(), "metric");
+    assert_eq!(parameters[8].ty, crate::GqlType::String);
+    assert_eq!(parameters[8].default_doc, Some("squared_euclidean"));
+    assert!(parameters[8].default.is_some());
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 3);
+    assert_eq!(columns[0].name.as_str(), "query_index");
+    assert_eq!(columns[0].ty, crate::GqlType::Uint64);
+    assert_eq!(columns[1].name.as_str(), "node_id");
+    assert_eq!(columns[1].ty, crate::GqlType::NodeRef);
+    assert_eq!(columns[2].name.as_str(), "distance");
+    assert_eq!(columns[2].ty, crate::GqlType::Float64);
 }
 
 #[test]

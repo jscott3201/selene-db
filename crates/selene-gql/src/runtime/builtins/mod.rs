@@ -26,6 +26,7 @@
 //!   `selene.vector_score_candidate_state`,
 //!   `selene.vector_score_candidate_state_nodes`,
 //!   `selene.vector_score_candidate_state_expanded`,
+//!   `selene.vector_score_candidate_state_expanded_batch`,
 //!   `selene.vector_candidate_states`,
 //!   `selene.vector_score_expanded_candidates`,
 //!   `selene.vector_score_expanded_candidates_batch`,
@@ -67,6 +68,7 @@ mod vector_common;
 mod vector_index_stats;
 mod vector_score_candidate_state;
 mod vector_score_candidate_state_expanded;
+mod vector_score_candidate_state_expanded_batch;
 mod vector_score_candidate_state_nodes;
 mod vector_score_expanded_candidates;
 mod vector_score_expanded_candidates_batch;

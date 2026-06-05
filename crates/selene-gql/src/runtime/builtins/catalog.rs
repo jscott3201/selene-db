@@ -11,10 +11,11 @@ use super::{
     create_index, create_vector_index, drop_index, drop_vector_index, feature_status, health,
     rebuild_vector_indexes, vector_candidate_states, vector_index_stats,
     vector_score_candidate_state, vector_score_candidate_state_expanded,
-    vector_score_candidate_state_nodes, vector_score_expanded_candidates,
-    vector_score_expanded_candidates_batch, vector_score_neighbors, vector_score_neighbors_batch,
-    vector_score_nodes, vector_score_nodes_batch, vector_search, vector_search_ann,
-    vector_search_ann_batch, vector_search_batch, vector_search_candidate_state_expanded_ann,
+    vector_score_candidate_state_expanded_batch, vector_score_candidate_state_nodes,
+    vector_score_expanded_candidates, vector_score_expanded_candidates_batch,
+    vector_score_neighbors, vector_score_neighbors_batch, vector_score_nodes,
+    vector_score_nodes_batch, vector_search, vector_search_ann, vector_search_ann_batch,
+    vector_search_batch, vector_search_candidate_state_expanded_ann,
     vector_search_expanded_candidates_ann, vector_search_expanded_candidates_ann_batch, verify,
 };
 
@@ -45,6 +46,8 @@ pub(in crate::runtime) enum BuiltinKind {
     VectorScoreCandidateStateNodes,
     /// `selene.vector_score_candidate_state_expanded` — exact scoring for composed maintained state and expanded roots.
     VectorScoreCandidateStateExpanded,
+    /// `selene.vector_score_candidate_state_expanded_batch` — batched exact scoring for composed maintained state and expanded roots.
+    VectorScoreCandidateStateExpandedBatch,
     /// `selene.vector_candidate_states` — maintained candidate-state metadata.
     VectorCandidateStates,
     /// `selene.vector_score_expanded_candidates` — exact scoring for graph-expanded candidates.
@@ -94,7 +97,7 @@ pub(in crate::runtime) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 27] = [
+pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 28] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -240,6 +243,12 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 27] = [
         kind: BuiltinKind::VectorScoreCandidateStateExpanded,
     },
     BuiltinSpec {
+        name: &["selene", "vector_score_candidate_state_expanded_batch"],
+        description: "Batched scoring for maintained candidate-state expanded roots.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::VectorScoreCandidateStateExpandedBatch,
+    },
+    BuiltinSpec {
         name: &["selene", "vector_candidate_states"],
         description: "List maintained graph candidate-state metadata.",
         since_version: "1.1.0",
@@ -300,6 +309,7 @@ impl BuiltinKind {
             | Self::VectorScoreCandidateState
             | Self::VectorScoreCandidateStateNodes
             | Self::VectorScoreCandidateStateExpanded
+            | Self::VectorScoreCandidateStateExpandedBatch
             | Self::VectorCandidateStates
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
@@ -334,6 +344,7 @@ impl BuiltinKind {
             | Self::VectorScoreCandidateState
             | Self::VectorScoreCandidateStateNodes
             | Self::VectorScoreCandidateStateExpanded
+            | Self::VectorScoreCandidateStateExpandedBatch
             | Self::VectorCandidateStates
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
@@ -368,6 +379,9 @@ impl BuiltinKind {
             Self::VectorScoreCandidateStateNodes => vector_score_candidate_state_nodes::signature(),
             Self::VectorScoreCandidateStateExpanded => {
                 vector_score_candidate_state_expanded::signature()
+            }
+            Self::VectorScoreCandidateStateExpandedBatch => {
+                vector_score_candidate_state_expanded_batch::signature()
             }
             Self::VectorCandidateStates => vector_candidate_states::signature(),
             Self::VectorScoreExpandedCandidates => vector_score_expanded_candidates::signature(),
@@ -414,6 +428,9 @@ impl BuiltinKind {
             }
             Self::VectorScoreCandidateStateExpanded => {
                 vector_score_candidate_state_expanded::output_columns()
+            }
+            Self::VectorScoreCandidateStateExpandedBatch => {
+                vector_score_candidate_state_expanded_batch::output_columns()
             }
             Self::VectorCandidateStates => vector_candidate_states::output_columns(),
             Self::VectorScoreExpandedCandidates => {
@@ -474,6 +491,9 @@ impl BuiltinKind {
             Self::VectorScoreCandidateStateExpanded => {
                 vector_score_candidate_state_expanded::execute(ctx, args)
             }
+            Self::VectorScoreCandidateStateExpandedBatch => {
+                vector_score_candidate_state_expanded_batch::execute(ctx, args)
+            }
             Self::VectorCandidateStates => vector_candidate_states::execute(ctx, args),
             Self::VectorScoreExpandedCandidates => {
                 vector_score_expanded_candidates::execute(ctx, args)
@@ -533,6 +553,7 @@ impl BuiltinKind {
             | Self::VectorScoreCandidateState
             | Self::VectorScoreCandidateStateNodes
             | Self::VectorScoreCandidateStateExpanded
+            | Self::VectorScoreCandidateStateExpandedBatch
             | Self::VectorCandidateStates
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
@@ -577,6 +598,7 @@ impl BuiltinKind {
             | Self::VectorScoreCandidateState
             | Self::VectorScoreCandidateStateNodes
             | Self::VectorScoreCandidateStateExpanded
+            | Self::VectorScoreCandidateStateExpandedBatch
             | Self::VectorCandidateStates
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch

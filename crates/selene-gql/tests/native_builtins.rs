@@ -73,7 +73,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 }
 
 #[test]
-fn show_procedures_lists_all_forty_six_procedures() {
+fn show_procedures_lists_all_forty_seven_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -83,8 +83,8 @@ fn show_procedures_lists_all_forty_six_procedures() {
 
     assert_eq!(
         table.row_count(),
-        46,
-        "19 algo procedures + 27 platform built-ins"
+        47,
+        "19 algo procedures + 28 platform built-ins"
     );
     for expected in [
         "selene.health",
@@ -108,6 +108,7 @@ fn show_procedures_lists_all_forty_six_procedures() {
         "selene.vector_score_candidate_state",
         "selene.vector_score_candidate_state_nodes",
         "selene.vector_score_candidate_state_expanded",
+        "selene.vector_score_candidate_state_expanded_batch",
         "selene.vector_candidate_states",
         "selene.vector_index_stats",
         "selene.rebuild_vector_indexes",

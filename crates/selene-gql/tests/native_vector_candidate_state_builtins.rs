@@ -278,6 +278,37 @@ fn vector_score_candidate_state_expanded_intersects_state_with_expanded_roots_by
 }
 
 #[test]
+fn vector_score_candidate_state_expanded_batch_intersects_state_per_query() {
+    let (graph, ids) = candidate_graph();
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![
+            Value::Vector(vector(&[2.2, 0.0])),
+            Value::Vector(vector(&[0.2, 0.0])),
+        ]),
+    );
+    session.bind_parameter(
+        istr("roots"),
+        Value::List(vec![node_list(&[ids[0], ids[1]]), node_list(&[ids[0]])]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_candidate_state_expanded_batch('embedding', $queries, \
+         'active_docs', $roots, 'SUPPORTS', 4) YIELD query_index, node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(uint_column(&table, "query_index"), vec![0, 0, 0, 1, 1]);
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![ids[2], ids[1], ids[0], ids[0], ids[2]]
+    );
+}
+
+#[test]
 fn vector_score_candidate_state_expanded_supports_explicit_set_algebra() {
     let (graph, ids) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
@@ -305,6 +336,37 @@ fn vector_score_candidate_state_expanded_supports_explicit_set_algebra() {
         &registry,
     );
     assert_eq!(node_column(&expanded_difference, "node_id"), vec![ids[4]]);
+}
+
+#[test]
+fn vector_score_candidate_state_expanded_batch_rejects_mismatched_roots() {
+    let (graph, ids) = candidate_graph();
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![
+            Value::Vector(vector(&[0.0, 0.0])),
+            Value::Vector(vector(&[1.0, 0.0])),
+        ]),
+    );
+    session.bind_parameter(istr("roots"), Value::List(vec![node_list(&[ids[0]])]));
+
+    let err = session
+        .execute_source(
+            "CALL selene.vector_score_candidate_state_expanded_batch('embedding', $queries, \
+             'active_docs', $roots, 'SUPPORTS', 3)",
+            &registry,
+        )
+        .expect_err("mismatched query/root batches must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("queries and roots must have the same length")
+    ));
 }
 
 #[test]
@@ -483,6 +545,42 @@ fn vector_score_candidate_state_expanded_surfaces_stale_provider_generation() {
     let err = session
         .execute_source(
             "CALL selene.vector_score_candidate_state_expanded('embedding', $query, \
+             'active_docs', $roots, 'SUPPORTS', 3)",
+            &registry,
+        )
+        .expect_err("stale provider must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::Internal { ref detail },
+            ..
+        } if detail.contains("candidate-state provider error")
+            && detail.contains("stale candidate state")
+    ));
+}
+
+#[test]
+fn vector_score_candidate_state_expanded_batch_surfaces_stale_provider_generation() {
+    let provider = Arc::new(StaleCandidateProvider);
+    let graph = SharedGraph::builder(GraphId::new(330_407))
+        .with_provider(provider as Arc<dyn IndexProvider>)
+        .build()
+        .expect("graph builds");
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![Value::Vector(vector(&[0.0, 0.0]))]),
+    );
+    session.bind_parameter(
+        istr("roots"),
+        Value::List(vec![node_list(&[NodeId::new(1)])]),
+    );
+
+    let err = session
+        .execute_source(
+            "CALL selene.vector_score_candidate_state_expanded_batch('embedding', $queries, \
              'active_docs', $roots, 'SUPPORTS', 3)",
             &registry,
         )
