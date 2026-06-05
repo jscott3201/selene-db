@@ -760,6 +760,12 @@ means every same-topic document receives graph hints. The partial-hint fixture
 also adds `OmlxSupports` edges from graph-hint documents to same-topic support
 facts so rows can compare direct partial hints, graph-expanded hints, and ANN
 union against the same endpoint embeddings.
+The fixture also registers a maintained candidate-state provider named
+`omlx_support_facts` over an explicit `OmlxSupportFact` label. With partial
+graph hints, graph-hint roots are not support facts; with uncapped hints, every
+document remains a support fact. That models provider-maintained support facts
+separately from graph-hint root documents without making the default uncapped
+profile degenerate to an empty state.
 
 The first local corpus is intentionally tiny (16 documents + 4 queries across
 GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
@@ -801,17 +807,22 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_neighbor_ann_union_score/...precbp5625/4843...ann8` | 331.61 µs | 668.26 µs | Same negative fallback result through explicit graph-neighbor candidates. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_score/...c16...precbp10000` | 61.74 µs | 135.29 µs | Two direct graph hints per topic expand through `OmlxSupports` to the full same-topic support set, restoring full precision with the same width as complete graph labels. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_cached_score/...c16...precbp10000` | 58.32 µs | 132.14 µs | Precomputing the same expanded support candidate sets trims query-time graph traversal overhead while preserving full precision. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_state_score/...c14...precbp10000` | 55.15 µs | 119.96 µs | Intersects graph-expanded hints with maintained `omlx_support_facts`, filtering root hint docs while preserving full precision. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_refresh_sets/...q16_c16_totalc256` | 2.97 µs | 3.05 µs | Recomputes every cached support candidate set from graph topology and asserts it matches cached state; refresh cost is small at this hot-scope size. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_cached_r60w40/...r60w40_totalc256` | 3.64 ms | 8.05 ms | Conservative mixed cycle with 60 cached candidate-set scoring reads plus 40 full graph-topology refreshes via the production candidate-expansion API; vector rerank dominates refresh work on this local profile. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_ann_union_score/...precbp5625/4843...ann8` | 371.82 µs (`c22`) | 754.71 µs (`c21`) | ANN union after full graph expansion hurts precision and adds hundreds of microseconds; avoid widening precise graph-expanded candidate sets with ANN by default. |
+| `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `ann_hint_expansion_state_score/...ann8` | 392.51 µs (`precbp5312`, `c44`) | 699.14 µs (`precbp4531`, `c42`) | ANN roots expanded through support edges and intersected with maintained support-fact state still miss too many target facts; avoid adding a batched ANN/state procedure until a workload shows better quality. |
 
 The opt-in `Qwen3-Embedding-8B-4bit-DWQ` local model also works on
 `/v1/embeddings` and returns 4096-dimensional vectors. With
 `SELENE_OMLX_EMBEDDING_MODELS=Qwen3-Embedding-8B-4bit-DWQ`, the cached
 partial-hint expansion row reaches `precbp10000`, `c16`, at 205.26 us on the
-same scaled profile. The conservative cached r60/w40 mixed cycle is 12.52 ms on
-the same 4096-dimensional row. It stays opt-in for now so default local oMLX
-rows remain short and comparable to the earlier two-model baseline.
+same scaled profile, the maintained `omlx_support_facts` state row reaches
+`precbp10000`, `c14`, at 184.50 us, and the ANN-root maintained-state row only
+reaches `precbp5625`, `c42`, at 1.113 ms. The conservative cached r60/w40 mixed
+cycle is 12.52 ms on the same 4096-dimensional row. It stays opt-in for now so
+default local oMLX rows remain short and comparable to the earlier two-model
+baseline.
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it
