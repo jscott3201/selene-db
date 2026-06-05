@@ -440,9 +440,8 @@ impl CandidateState {
             }
             Change::NodeDeleted { id } => {
                 self.node_labels.remove(id);
-                for members in self.members.values_mut() {
-                    members.remove(id);
-                }
+                self.remove_incident_edges(specs, *id);
+                self.recompute_node(specs, *id);
             }
             Change::NodeLabelRemoved { id, label } => {
                 let labels = self
@@ -537,6 +536,26 @@ impl CandidateState {
     fn decrement_edge(&mut self, edge: &TrackedEdge) {
         decrement_count(&mut self.outgoing_counts, (edge.source, edge.label.clone()));
         decrement_count(&mut self.incoming_counts, (edge.target, edge.label.clone()));
+    }
+
+    fn remove_incident_edges(&mut self, specs: &[CandidateStateSpec], node: NodeId) {
+        let incident = self
+            .edges
+            .iter()
+            .filter_map(|(id, edge)| {
+                (edge.source == node || edge.target == node).then_some((*id, edge.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (id, edge) in incident {
+            self.edges.remove(&id);
+            self.decrement_edge(&edge);
+            if edge.source != node {
+                self.recompute_node(specs, edge.source);
+            }
+            if edge.target != node {
+                self.recompute_node(specs, edge.target);
+            }
+        }
     }
 
     fn recompute_node(&mut self, specs: &[CandidateStateSpec], node: NodeId) {
