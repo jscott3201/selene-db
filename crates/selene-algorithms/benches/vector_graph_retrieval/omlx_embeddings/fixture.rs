@@ -2,13 +2,15 @@
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use selene_core::{
     CancellationChecker, GraphId, HnswIndexConfig, LabelSet, NodeId, PropertyMap, Value,
     VectorMetric, VectorValue,
 };
 use selene_graph::{
-    ApproximateVectorSearchOptions, RowIndex, SeleneGraph, SharedGraph, VectorCandidateSet,
+    ApproximateVectorSearchOptions, CandidateStateSpec, IndexProvider,
+    MaintainedCandidateStateProvider, RowIndex, SeleneGraph, SharedGraph, VectorCandidateSet,
     VectorIndexConfig, VectorIndexKind, VectorNeighborDirection, VectorNeighborSearchOptions,
 };
 
@@ -17,11 +19,13 @@ use super::corpus::{CorpusInput, Topic, topic_label};
 use super::{ANN_SEARCH_WIDTH, TOP_K, precision_basis_points};
 
 pub(super) struct OmlxVectorFixture {
+    shared: SharedGraph,
     graph: SeleneGraph,
     label: selene_core::IStr,
     embedding_key: selene_core::IStr,
     dependency_edge: selene_core::IStr,
     support_edge: selene_core::IStr,
+    support_state_name: selene_core::IStr,
     pub(super) dimension: usize,
     documents: Vec<DocumentMeta>,
     topics_by_node: HashMap<NodeId, Topic>,
@@ -51,10 +55,22 @@ impl OmlxVectorFixture {
         );
         let label = istr("OmlxEmbeddingDoc");
         let query_label = istr("OmlxQueryAnchor");
+        let support_fact_label = istr("OmlxSupportFact");
         let dependency_edge = istr("OmlxDependsOn");
         let support_edge = istr("OmlxSupports");
         let embedding_key = istr("embedding");
-        let shared = SharedGraph::new(graph_id_for_model(model));
+        let support_state_name = istr("omlx_support_facts");
+        let support_state_provider = Arc::new(
+            MaintainedCandidateStateProvider::new([CandidateStateSpec::new(
+                support_state_name.clone(),
+            )
+            .require_label(support_fact_label.clone())])
+            .expect("oMLX maintained support state provider is valid"),
+        );
+        let shared = SharedGraph::builder(graph_id_for_model(model))
+            .with_provider(support_state_provider as Arc<dyn IndexProvider>)
+            .build()
+            .expect("oMLX bench graph builds");
         let mut documents = Vec::new();
         let mut query_anchors = Vec::new();
         let mut graph_hint_counts = HashMap::<Topic, usize>::new();
@@ -79,6 +95,9 @@ impl OmlxVectorFixture {
                     let mut labels = LabelSet::single(label.clone());
                     if graph_hint {
                         labels.insert(topic_label(input.topic));
+                    }
+                    if !graph_hint || graph_hint_docs_per_topic.is_none() {
+                        labels.insert(support_fact_label.clone());
                     }
                     let node = mutator
                         .create_node(labels, props)
@@ -179,11 +198,13 @@ impl OmlxVectorFixture {
             .map(|document| (document.node, document.topic))
             .collect();
         Self {
+            shared,
             graph,
             label,
             embedding_key,
             dependency_edge,
             support_edge,
+            support_state_name,
             dimension,
             documents,
             topics_by_node,
@@ -366,6 +387,26 @@ impl OmlxVectorFixture {
         self.candidate_sets_total_precision_from_sets(&self.expanded_hint_sets)
     }
 
+    pub(super) fn topic_hint_expansion_state_total_precision(&self) -> usize {
+        let state = self.maintained_support_state();
+        self.candidate_sets_total_precision(|fixture, query| {
+            state.intersection(&fixture.topic_hint_expansion_set(query))
+        })
+    }
+
+    pub(super) fn ann_hint_expansion_state_total_precision(&self) -> usize {
+        let state = self.maintained_support_state();
+        self.candidate_sets_total_precision(|fixture, query| {
+            let roots = fixture.ann_hit_set(query, super::ANN_UNION_SEED_K);
+            let expanded = fixture.graph.expand_vector_candidate_set(
+                &roots,
+                &fixture.support_edge,
+                VectorNeighborDirection::Outgoing,
+            );
+            state.intersection(&expanded)
+        })
+    }
+
     pub(super) fn topic_hint_expansion_cached_mixed_read_refresh_work(
         &self,
         rounds: usize,
@@ -437,6 +478,28 @@ impl OmlxVectorFixture {
         self.expanded_hint_sets
             .first()
             .map_or(0, VectorCandidateSet::len)
+    }
+
+    pub(super) fn topic_hint_expansion_state_count(&self) -> usize {
+        self.queries.first().map_or(0, |query| {
+            self.maintained_support_state()
+                .intersection(&self.topic_hint_expansion_set(query))
+                .len()
+        })
+    }
+
+    pub(super) fn ann_hint_expansion_state_count(&self) -> usize {
+        self.queries.first().map_or(0, |query| {
+            let roots = self.ann_hit_set(query, super::ANN_UNION_SEED_K);
+            let expanded = self.graph.expand_vector_candidate_set(
+                &roots,
+                &self.support_edge,
+                VectorNeighborDirection::Outgoing,
+            );
+            self.maintained_support_state()
+                .intersection(&expanded)
+                .len()
+        })
     }
 
     pub(super) fn topic_hint_expansion_refresh_count(&self) -> usize {
@@ -533,6 +596,13 @@ impl OmlxVectorFixture {
             )
             .expect("oMLX ANN hit-set search succeeds");
         VectorCandidateSet::from_search_hits(hits)
+    }
+
+    fn maintained_support_state(&self) -> VectorCandidateSet {
+        self.shared
+            .vector_candidate_set(&self.support_state_name)
+            .expect("oMLX maintained support state is generation current")
+            .expect("oMLX maintained support state provider is configured")
     }
 
     fn neighbor_options(&self, k: usize) -> VectorNeighborSearchOptions<'_> {

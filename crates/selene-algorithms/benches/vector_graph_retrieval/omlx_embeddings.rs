@@ -80,6 +80,14 @@ pub(super) fn bench(c: &mut Criterion) {
             fixture.topic_hint_expansion_cached_total_precision(),
             fixture.query_count() * TOP_K,
         );
+        let hint_expansion_state_precision = precision_basis_points(
+            fixture.topic_hint_expansion_state_total_precision(),
+            fixture.query_count() * TOP_K,
+        );
+        let ann_hint_expansion_state_precision = precision_basis_points(
+            fixture.ann_hint_expansion_state_total_precision(),
+            fixture.query_count() * TOP_K,
+        );
         let hint_expansion_refresh_candidates =
             fixture.topic_hint_expansion_refresh_total_candidates();
         let mixed_cycle_elements = MIXED_READS_PER_CYCLE
@@ -270,6 +278,43 @@ pub(super) fn bench(c: &mut Criterion) {
             ),
             |b| {
                 b.iter(|| black_box(fixture.topic_hint_expansion_cached_total_precision()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "topic_hint_expansion_state_score",
+                format!(
+                    "{}_{}_precbp{}_q{}_k{}_c{}_dim{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    hint_expansion_state_precision,
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.topic_hint_expansion_state_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.topic_hint_expansion_state_total_precision()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "ann_hint_expansion_state_score",
+                format!(
+                    "{}_{}_precbp{}_q{}_k{}_c{}_ann{}_dim{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    ann_hint_expansion_state_precision,
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.ann_hint_expansion_state_count(),
+                    ANN_UNION_SEED_K,
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.ann_hint_expansion_state_total_precision()));
             },
         );
         group.throughput(Throughput::Elements(mixed_cycle_elements as u64));
