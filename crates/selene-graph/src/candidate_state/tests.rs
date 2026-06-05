@@ -244,6 +244,46 @@ fn provider_generation_checked_candidate_set_rejects_stale_state() {
 }
 
 #[test]
+fn provider_node_delete_prunes_incident_tracked_edges_without_edge_tombstones() {
+    let (spec, name, doc, _, contradicts) = current_spec();
+    let provider = provider_with(spec);
+    let blocker = NodeId::new(1);
+    let blocked = NodeId::new(2);
+    let edge = EdgeId::new(1);
+
+    provider
+        .on_changes(&[
+            Change::NodeCreated {
+                id: blocker,
+                labels: LabelSet::new(),
+                properties: PropertyMap::new(),
+            },
+            Change::NodeCreated {
+                id: blocked,
+                labels: LabelSet::single(doc),
+                properties: PropertyMap::new(),
+            },
+            Change::EdgeCreated {
+                id: edge,
+                label: contradicts,
+                source: blocker,
+                target: blocked,
+                properties: PropertyMap::new(),
+            },
+        ])
+        .expect("initial changes apply");
+    provider.on_commit_applied(1).expect("watermark advances");
+    assert!(candidate_nodes(&provider, &name).is_empty());
+
+    provider
+        .on_changes(&[Change::NodeDeleted { id: blocker }])
+        .expect("node delete applies");
+    provider.on_commit_applied(2).expect("watermark advances");
+
+    assert_eq!(candidate_nodes(&provider, &name), vec![blocked]);
+}
+
+#[test]
 fn provider_snapshot_and_wal_replay_preserve_delete_reverse_state() {
     let (spec, name, doc, superseded, _) = current_spec();
     let provider = provider_with(spec.clone());
