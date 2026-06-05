@@ -14,7 +14,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use selene_core::{VectorTopK, VectorValue};
 use vector_pq_support::{
     BinaryQuantIndex, BinaryQuantVariant, CorpusProfile, DIMENSION, K, PqCorpus, PqIndex,
-    PqVariant, cluster_count, compact_count, memory_suffix, squared_l2, vector_scales,
+    PqVariant, ScalarQuantIndex, ScalarQuantVariant, cluster_count, compact_count, memory_suffix,
+    squared_l2, vector_scales,
 };
 
 const VARIANTS: [IvfPqVariant; 4] = [
@@ -89,6 +90,41 @@ const BINARY_VARIANTS: [IvfBinaryVariant; 4] = [
         name: "sign_c1024_p1",
         binary: BinaryQuantVariant {
             name: "sign_c1024",
+            candidates: 1024,
+        },
+        probes: 1,
+    },
+];
+
+const SCALAR_CODE_VARIANTS: [IvfScalarCodeVariant; 4] = [
+    IvfScalarCodeVariant {
+        name: "u8code_c64_p1",
+        scalar: ScalarQuantVariant {
+            name: "u8code_c64",
+            candidates: 64,
+        },
+        probes: 1,
+    },
+    IvfScalarCodeVariant {
+        name: "u8code_c256_p1",
+        scalar: ScalarQuantVariant {
+            name: "u8code_c256",
+            candidates: 256,
+        },
+        probes: 1,
+    },
+    IvfScalarCodeVariant {
+        name: "u8code_c256_p2",
+        scalar: ScalarQuantVariant {
+            name: "u8code_c256",
+            candidates: 256,
+        },
+        probes: 2,
+    },
+    IvfScalarCodeVariant {
+        name: "u8code_c1024_p1",
+        scalar: ScalarQuantVariant {
+            name: "u8code_c1024",
             candidates: 1024,
         },
         probes: 1,
@@ -177,6 +213,13 @@ struct IvfBinaryVariant {
     probes: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct IvfScalarCodeVariant {
+    name: &'static str,
+    scalar: ScalarQuantVariant,
+    probes: usize,
+}
+
 fn bench_ivf_pq_candidate_recall(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_ivf_pq_candidate_recall");
     for scale in vector_scales() {
@@ -212,6 +255,36 @@ fn bench_ivf_binary_candidate_recall(c: &mut Criterion) {
     for scale in vector_scales() {
         for variant in BINARY_VARIANTS {
             let fixture = IvfBinaryFixture::build(scale, variant);
+            group.throughput(Throughput::Elements(
+                u64::try_from(fixture.searched_rows()).unwrap_or(u64::MAX),
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    "cluster_l2",
+                    format!(
+                        "{}_d{DIMENSION}_k{K}_recallbp{}_rows{}_{}",
+                        variant.name,
+                        fixture.recall_basis_points(),
+                        compact_count(fixture.searched_rows()),
+                        fixture.memory_suffix()
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(fixture.total_overlap());
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+fn bench_ivf_scalar_code_candidate_recall(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_ivf_scalar_code_candidate_recall");
+    for scale in vector_scales() {
+        for variant in SCALAR_CODE_VARIANTS {
+            let fixture = IvfScalarCodeFixture::build(scale, variant);
             group.throughput(Throughput::Elements(
                 u64::try_from(fixture.searched_rows()).unwrap_or(u64::MAX),
             ));
@@ -416,6 +489,64 @@ impl IvfBinaryFixture {
 }
 
 #[derive(Debug)]
+struct IvfScalarCodeFixture {
+    variant: IvfScalarCodeVariant,
+    corpus: PqCorpus,
+    scalar: ScalarQuantIndex,
+    coarse: CoarsePartition,
+}
+
+impl IvfScalarCodeFixture {
+    fn build(scale: usize, variant: IvfScalarCodeVariant) -> Self {
+        let corpus = PqCorpus::build(scale);
+        let scalar = ScalarQuantIndex::build(&corpus.vectors, variant.scalar);
+        let coarse = CoarsePartition::build(&corpus);
+        Self {
+            variant,
+            corpus,
+            scalar,
+            coarse,
+        }
+    }
+
+    fn total_overlap(&self) -> usize {
+        let mut rows = Vec::new();
+        self.corpus.total_overlap(|query| {
+            self.coarse
+                .candidate_rows(query, self.variant.probes, &mut rows);
+            self.scalar
+                .search_rows_code_l2(&self.corpus.vectors, query, rows.iter().copied(), K)
+        })
+    }
+
+    fn recall_basis_points(&self) -> usize {
+        self.corpus.recall_basis_points(self.total_overlap())
+    }
+
+    fn searched_rows(&self) -> usize {
+        let mut rows = Vec::new();
+        self.corpus
+            .queries
+            .iter()
+            .map(|query| {
+                self.coarse
+                    .candidate_rows(query, self.variant.probes, &mut rows);
+                rows.len()
+            })
+            .sum()
+    }
+
+    fn memory_suffix(&self) -> String {
+        memory_suffix(
+            self.scalar
+                .estimated_bytes()
+                .saturating_add(self.coarse.estimated_bytes()),
+            self.corpus.full_vector_bytes(),
+        )
+    }
+}
+
+#[derive(Debug)]
 struct CoarsePartition {
     centroids: Vec<f32>,
     lists: Vec<Vec<usize>>,
@@ -482,6 +613,7 @@ criterion_group! {
     targets =
         bench_ivf_pq_candidate_recall,
         bench_ivf_binary_candidate_recall,
+        bench_ivf_scalar_code_candidate_recall,
         bench_ivf_overlap_candidate_recall
 }
 criterion_main!(vector_ivf_pq);
