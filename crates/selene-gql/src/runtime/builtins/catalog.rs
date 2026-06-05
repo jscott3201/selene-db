@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     create_index, create_vector_index, drop_index, drop_vector_index, feature_status, health,
-    rebuild_vector_indexes, vector_candidate_states, vector_index_stats,
+    rebuild_vector_indexes, text_search, vector_candidate_states, vector_index_stats,
     vector_score_candidate_state, vector_score_candidate_state_expanded,
     vector_score_candidate_state_expanded_batch, vector_score_candidate_state_nodes,
     vector_score_expanded_candidates, vector_score_expanded_candidates_batch,
@@ -78,6 +78,8 @@ pub(in crate::runtime) enum BuiltinKind {
     CreateVectorIndex,
     /// `selene.drop_vector_index` — mutation-tier vector-index drop.
     DropVectorIndex,
+    /// `selene.text_search_nodes` — exact BM25 text search over node properties.
+    TextSearchNodes,
 }
 
 /// Static descriptor binding a canonical procedure name to its dispatch kind.
@@ -97,7 +99,7 @@ pub(in crate::runtime) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 28] = [
+pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 29] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -266,6 +268,12 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 28] = [
         since_version: "1.1.0",
         kind: BuiltinKind::VectorScoreExpandedCandidatesBatch,
     },
+    BuiltinSpec {
+        name: &["selene", "text_search_nodes"],
+        description: "Exact BM25 full-text search over string node properties.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::TextSearchNodes,
+    },
 ];
 
 impl BuiltinKind {
@@ -318,7 +326,8 @@ impl BuiltinKind {
             | Self::VectorSearchExpandedCandidatesAnn
             | Self::VectorSearchCandidateStateExpandedAnn
             | Self::VectorSearchExpandedCandidatesAnnBatch
-            | Self::VectorIndexStats => ProcedureTier::Graph,
+            | Self::VectorIndexStats
+            | Self::TextSearchNodes => ProcedureTier::Graph,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 ProcedureTier::Maintenance
             }
@@ -353,7 +362,8 @@ impl BuiltinKind {
             | Self::VectorSearchExpandedCandidatesAnn
             | Self::VectorSearchCandidateStateExpandedAnn
             | Self::VectorSearchExpandedCandidatesAnnBatch
-            | Self::VectorIndexStats => ProcedureMutability::Read,
+            | Self::VectorIndexStats
+            | Self::TextSearchNodes => ProcedureMutability::Read,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 ProcedureMutability::MaintenanceWrite
             }
@@ -408,6 +418,7 @@ impl BuiltinKind {
             Self::DropIndex => drop_index::signature(),
             Self::CreateVectorIndex => create_vector_index::signature(),
             Self::DropVectorIndex => drop_vector_index::signature(),
+            Self::TextSearchNodes => text_search::signature(),
         }
     }
 
@@ -458,6 +469,7 @@ impl BuiltinKind {
             Self::DropIndex => drop_index::output_columns(),
             Self::CreateVectorIndex => create_vector_index::output_columns(),
             Self::DropVectorIndex => drop_vector_index::output_columns(),
+            Self::TextSearchNodes => text_search::output_columns(),
         }
     }
 
@@ -513,6 +525,7 @@ impl BuiltinKind {
                 vector_search_expanded_candidates_ann_batch::execute(ctx, args)
             }
             Self::VectorIndexStats => vector_index_stats::execute(ctx, args),
+            Self::TextSearchNodes => text_search::execute(ctx, args),
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
@@ -562,7 +575,8 @@ impl BuiltinKind {
             | Self::VectorSearchExpandedCandidatesAnn
             | Self::VectorSearchCandidateStateExpandedAnn
             | Self::VectorSearchExpandedCandidatesAnnBatch
-            | Self::VectorIndexStats => Err(ProcedureError::TierMismatch {
+            | Self::VectorIndexStats
+            | Self::TextSearchNodes => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Mutation,
             }),
@@ -607,7 +621,8 @@ impl BuiltinKind {
             | Self::VectorSearchExpandedCandidatesAnn
             | Self::VectorSearchCandidateStateExpandedAnn
             | Self::VectorSearchExpandedCandidatesAnnBatch
-            | Self::VectorIndexStats => Err(ProcedureError::TierMismatch {
+            | Self::VectorIndexStats
+            | Self::TextSearchNodes => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Maintenance,
             }),

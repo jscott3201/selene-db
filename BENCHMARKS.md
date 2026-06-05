@@ -156,7 +156,7 @@ dimensions and candidate widths without depending on the localhost oMLX service.
 
 Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
 `vector_ivf_pq`, `vector_ivf_pressure`, `vector_mixed_workload`,
-`bulk_mutation`, `concurrent_read`, `bfs`. The medians below predate CORE-06 (measured at the 128 B `Value`
+`bulk_mutation`, `concurrent_read`, `bfs`, `text_search_bm25`. The medians below predate CORE-06 (measured at the 128 B `Value`
 layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
 (`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten at
 the next full re-baseline. `graph_node_fetch` returns a column ref (no `Value`
@@ -168,7 +168,10 @@ adjacency before scoring. `graph_vector_index_rebuild/*` times the
 maintenance rebuild that reclaims stale ANN entries after vector update/delete
 churn; `graph_vector_index_recommended_rebuild/*` compares recommended-only
 maintenance against full rebuild on a multi-index IVF fixture where only one
-index is above the rebuild threshold. Fixture setup is excluded from the
+index is above the rebuild threshold. `graph_text_bm25_exact/*` is the
+dependency-light full-text correctness oracle: it scans string properties,
+computes query-local BM25 statistics, and returns deterministic top-k text hits.
+Fixture setup is excluded from the
 reported Criterion duration.
 The focused `graph_vector_index_ivf_target_centroid_rebuild/*` group sweeps
 explicit IVF list-count targets on the same rebuild fixture so read-side
@@ -218,6 +221,12 @@ IVF pressure IDs use
 | `graph_bfs` (depth=1) | 106.3 ns | 109.0 ns | 109.6 ns | Depth-1 independent of N. |
 | `graph_bfs` (depth=10) | 11.34 µs | 12.09 µs | 12.18 µs | Mostly traversal cost. |
 | `graph_bfs` (depth=50) | 101.1 µs | 111.1 µs | 113.1 µs | Saturates ~110 µs. |
+
+PR-local quick text baseline:
+
+| Bench | 1k | Notes |
+|---|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 318.30 µs (quick) | Exact BM25 scan over 1,000 string-valued document nodes with Unicode-aware tokenization, query-local document frequencies, and deterministic score/node-id ordering. This is the oracle for future postings-index and hybrid BM25/vector rows. |
 
 PR-local quick vector baseline:
 

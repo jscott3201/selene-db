@@ -75,6 +75,7 @@ selene-graph|concurrent_writers|0
 selene-graph|graph_hub_delete|0
 selene-graph|graph_snapshot_roundtrip|0
 selene-graph|graph_read_under_write|0
+selene-graph|text_search_bm25|0
 selene-persist|wal|0
 selene-persist|snapshot|0
 selene-gql|parse|1
