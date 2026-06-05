@@ -21,6 +21,7 @@ pub(super) fn corpus_label(corpus: CorpusProfile) -> &'static str {
         CorpusProfile::ScaledAmbiguousMemory => "scaled_ambiguous_memory",
         CorpusProfile::CodeAliasMemory => "code_alias_memory",
         CorpusProfile::CodeAliasWideMemory => "code_alias_wide_memory",
+        CorpusProfile::ProjectCodeMemory => "project_code_memory",
     }
 }
 
