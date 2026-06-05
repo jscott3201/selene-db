@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
     Session, StatementOutput,
@@ -32,6 +32,18 @@ fn graph(id: u64) -> SharedGraph {
 
 fn props(key: &IStr, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
+}
+
+fn doc_props(body: &IStr, embedding: &IStr, text: &str, vector: &[f32]) -> PropertyMap {
+    PropertyMap::from_pairs([
+        (body.clone(), Value::String(istr(text))),
+        (embedding.clone(), Value::Vector(vector_value(vector))),
+    ])
+    .expect("test document property map is valid")
+}
+
+fn vector_value(components: &[f32]) -> VectorValue {
+    VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
 fn node_list(nodes: &[NodeId]) -> Value {
@@ -164,6 +176,58 @@ fn text_score_candidate_state_expanded_batch_rejects_mismatched_roots() {
     ));
 }
 
+#[test]
+fn text_state_candidates_feed_vector_batch_rerank() {
+    let graph = graph(431_603);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let (graph_root, memory_root, graph_target, memory_target) = seed_hybrid_graph(&graph);
+    execute_ok(
+        &mut session,
+        "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
+        &registry,
+    );
+    session.bind_parameter(
+        istr("text_queries"),
+        Value::List(vec![
+            Value::String(istr("graph")),
+            Value::String(istr("memory")),
+        ]),
+    );
+    session.bind_parameter(
+        istr("vector_queries"),
+        Value::List(vec![
+            Value::Vector(vector_value(&[1.0, 0.0])),
+            Value::Vector(vector_value(&[0.0, 1.0])),
+        ]),
+    );
+    session.bind_parameter(
+        istr("roots"),
+        Value::List(vec![node_list(&[graph_root]), node_list(&[memory_root])]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "WITH $text_queries AS text_queries, $vector_queries AS vector_queries, $roots AS roots \
+         CALL selene.text_score_candidate_state_expanded_batch( \
+            'TextDoc', 'body', text_queries, 'current_docs', roots, 'SUPPORTS', 2) \
+         YIELD query_index, node_id, score \
+         WITH vector_queries, query_index, collect_list(node_id) AS candidates \
+         GROUP BY vector_queries, query_index ORDER BY query_index \
+         WITH vector_queries, collect_list(candidates) AS candidate_sets \
+         CALL selene.vector_score_nodes_batch('embedding', vector_queries, candidate_sets, 1, 'cosine') \
+         YIELD query_index, node_id, distance \
+         RETURN query_index, node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(uint_column(&table, "query_index"), vec![0, 1]);
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![graph_target, memory_target]
+    );
+}
+
 fn seed_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId) {
     let root = istr("TextRoot");
     let doc = istr("TextDoc");
@@ -219,4 +283,74 @@ fn seed_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId) {
     }
     txn.commit().expect("seed commits");
     (graph_root, memory_root, current_graph, current_memory)
+}
+
+fn seed_hybrid_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId) {
+    let root = istr("TextRoot");
+    let doc = istr("TextDoc");
+    let body = istr("body");
+    let embedding = istr("embedding");
+    let supports = istr("SUPPORTS");
+    let negative = istr("NEGATIVE");
+    let mut txn = graph.begin_write();
+    let mut mutator = txn.mutator();
+    let graph_root = mutator
+        .create_node(LabelSet::single(root.clone()), PropertyMap::new())
+        .expect("graph root inserts");
+    let memory_root = mutator
+        .create_node(LabelSet::single(root), PropertyMap::new())
+        .expect("memory root inserts");
+    let graph_target = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            doc_props(&body, &embedding, "graph current precise", &[1.0, 0.0]),
+        )
+        .expect("precise graph doc inserts");
+    let graph_other = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            doc_props(&body, &embedding, "graph current broad", &[0.25, 0.75]),
+        )
+        .expect("broad graph doc inserts");
+    let graph_stale = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            doc_props(&body, &embedding, "graph stale", &[1.0, 0.0]),
+        )
+        .expect("stale graph doc inserts");
+    let memory_target = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            doc_props(&body, &embedding, "memory current precise", &[0.0, 1.0]),
+        )
+        .expect("precise memory doc inserts");
+    let memory_other = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            doc_props(&body, &embedding, "memory current broad", &[0.75, 0.25]),
+        )
+        .expect("broad memory doc inserts");
+    let memory_stale = mutator
+        .create_node(
+            LabelSet::single(doc),
+            doc_props(&body, &embedding, "memory stale", &[0.0, 1.0]),
+        )
+        .expect("stale memory doc inserts");
+    for target in [graph_target, graph_other, graph_stale] {
+        mutator
+            .create_edge(supports.clone(), graph_root, target, PropertyMap::new())
+            .expect("graph support edge inserts");
+    }
+    for target in [memory_target, memory_other, memory_stale] {
+        mutator
+            .create_edge(supports.clone(), memory_root, target, PropertyMap::new())
+            .expect("memory support edge inserts");
+    }
+    for (stale, replacement) in [(graph_stale, graph_target), (memory_stale, memory_target)] {
+        mutator
+            .create_edge(negative.clone(), stale, replacement, PropertyMap::new())
+            .expect("negative evidence edge inserts");
+    }
+    txn.commit().expect("hybrid seed commits");
+    (graph_root, memory_root, graph_target, memory_target)
 }
