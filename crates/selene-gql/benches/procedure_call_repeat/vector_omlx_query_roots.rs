@@ -6,12 +6,15 @@ use selene_testing::local_omlx::{CorpusProfile, OmlxClient};
 
 #[path = "vector_omlx_query_roots/fixture.rs"]
 mod fixture;
+#[path = "vector_omlx_query_roots/labels.rs"]
+mod labels;
 #[path = "vector_omlx_query_roots/state_batch_rows.rs"]
 mod state_batch_rows;
 #[path = "vector_omlx_query_roots/text_score_rows.rs"]
 mod text_score_rows;
 
 use fixture::{OmlxGqlQueryRootFixture, TOP_K};
+use labels::{append_target_hit, corpus_label, model_id};
 
 const ENABLE_ENV: &str = "SELENE_OMLX_EMBEDDING_BENCH";
 const API_KEY_ENVS: &[&str] = &["SELENE_OMLX_API_KEY", "OMLX_KEY"];
@@ -108,6 +111,19 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
             );
         let batch_precision =
             fixture.gql_batch_precision_basis_points(&registry, Some(Arc::clone(&batch_cache)));
+        let target_hit = fixture.gql_target_hit_basis_points(&registry, Some(Arc::clone(&cache)));
+        let state_target_hit =
+            fixture.gql_state_target_hit_basis_points(&registry, Some(Arc::clone(&state_cache)));
+        let current_state_target_hit = fixture.gql_current_state_target_hit_basis_points(
+            &registry,
+            Some(Arc::clone(&current_state_cache)),
+        );
+        let provenance_state_target_hit = fixture.gql_provenance_state_target_hit_basis_points(
+            &registry,
+            Some(Arc::clone(&provenance_state_cache)),
+        );
+        let batch_target_hit =
+            fixture.gql_batch_target_hit_basis_points(&registry, Some(Arc::clone(&batch_cache)));
         group.throughput(Throughput::Elements((fixture.query_count() * TOP_K) as u64));
         group.bench_function(
             BenchmarkId::new(
@@ -328,16 +344,19 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_cache_query_root_expansion",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_expanded_count(),
-                    fixture.dimension,
-                    precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_expanded_count(),
+                        fixture.dimension,
+                        precision,
+                    ),
+                    target_hit,
                 ),
             ),
             |b| {
@@ -349,16 +368,19 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_session_plan_cache_query_root_expansion",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_expanded_count(),
-                    fixture.dimension,
-                    precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_expanded_count(),
+                        fixture.dimension,
+                        precision,
+                    ),
+                    target_hit,
                 ),
             ),
             |b| {
@@ -373,16 +395,19 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_cache_query_root_state_intersection",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_state_intersection_count(),
-                    fixture.dimension,
-                    state_precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_state_intersection_count(),
+                        fixture.dimension,
+                        state_precision,
+                    ),
+                    state_target_hit,
                 ),
             ),
             |b| {
@@ -397,16 +422,19 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_session_plan_cache_query_root_state_intersection",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_state_intersection_count(),
-                    fixture.dimension,
-                    state_precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_state_intersection_count(),
+                        fixture.dimension,
+                        state_precision,
+                    ),
+                    state_target_hit,
                 ),
             ),
             |b| {
@@ -423,17 +451,20 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_cache_query_root_current_state_intersection",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_current_state_intersection_count(),
-                    fixture.dimension,
-                    current_precision,
-                    current_state_precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_current_state_intersection_count(),
+                        fixture.dimension,
+                        current_precision,
+                        current_state_precision,
+                    ),
+                    current_state_target_hit,
                 ),
             ),
             |b| {
@@ -448,17 +479,20 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_session_plan_cache_query_root_current_state_intersection",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_current_state_intersection_count(),
-                    fixture.dimension,
-                    current_precision,
-                    current_state_precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_current_state_intersection_count(),
+                        fixture.dimension,
+                        current_precision,
+                        current_state_precision,
+                    ),
+                    current_state_target_hit,
                 ),
             ),
             |b| {
@@ -473,17 +507,20 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_cache_query_root_provenance_state_intersection",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_provenance_state_intersection_count(),
-                    fixture.dimension,
-                    current_precision,
-                    provenance_state_precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_provenance_state_intersection_count(),
+                        fixture.dimension,
+                        current_precision,
+                        provenance_state_precision,
+                    ),
+                    provenance_state_target_hit,
                 ),
             ),
             |b| {
@@ -498,17 +535,20 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_session_plan_cache_query_root_provenance_state_intersection",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_provenance_state_intersection_count(),
-                    fixture.dimension,
-                    current_precision,
-                    provenance_state_precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_provenance_state_intersection_count(),
+                        fixture.dimension,
+                        current_precision,
+                        provenance_state_precision,
+                    ),
+                    provenance_state_target_hit,
                 ),
             ),
             |b| {
@@ -523,16 +563,19 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "shared_cache_query_root_expansion_batch",
-                format!(
-                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
-                    model_id,
-                    corpus_label(config.corpus),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.first_query_root_count(),
-                    fixture.first_query_expanded_count(),
-                    fixture.dimension,
-                    batch_precision,
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
+                        model_id,
+                        corpus_label(config.corpus),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.first_query_root_count(),
+                        fixture.first_query_expanded_count(),
+                        fixture.dimension,
+                        batch_precision,
+                    ),
+                    batch_target_hit,
                 ),
             ),
             |b| {
@@ -632,27 +675,4 @@ fn graph_hint_docs_per_topic() -> Option<usize> {
             raw.parse::<usize>()
                 .expect("SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC must be a non-negative integer")
         })
-}
-
-fn model_id(model: &str) -> String {
-    model
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-fn corpus_label(corpus: CorpusProfile) -> &'static str {
-    match corpus {
-        CorpusProfile::Tiny => "tiny",
-        CorpusProfile::AgentMemory => "agent_memory",
-        CorpusProfile::AmbiguousMemory => "ambiguous_memory",
-        CorpusProfile::ScaledAmbiguousMemory => "scaled_ambiguous_memory",
-        CorpusProfile::CodeAliasMemory => "code_alias_memory",
-    }
 }

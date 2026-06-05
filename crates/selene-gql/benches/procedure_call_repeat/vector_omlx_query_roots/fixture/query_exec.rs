@@ -8,6 +8,8 @@ use super::{OmlxGqlQueryRootFixture, TOP_K, istr};
 
 #[path = "query_exec/shape.rs"]
 mod shape;
+#[path = "query_exec/target_hit.rs"]
+mod target_hit;
 
 const QUERY_ROOT_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_expanded_candidates('embedding', $query, roots, 'OmlxSupports', 4, 'outgoing', 'cosine') YIELD node_id, distance RETURN node_id, distance";
 const QUERY_ROOT_STATE_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_candidate_state_expanded('embedding', $query, 'omlx_support_facts', roots, 'OmlxSupports', 4, 'intersection', 'outgoing', 'cosine') YIELD node_id, distance RETURN node_id, distance";
