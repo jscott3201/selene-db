@@ -14,6 +14,8 @@ mod vector_candidate_state;
 mod vector_expanded;
 #[path = "procedure_call_repeat/vector_neighbors.rs"]
 mod vector_neighbors;
+#[path = "procedure_call_repeat/vector_omlx_query_roots.rs"]
+mod vector_omlx_query_roots;
 
 use std::{num::NonZeroUsize, sync::Arc};
 
@@ -627,6 +629,7 @@ criterion_group! {
         vector_ann_expanded::bench_vector_ann_expanded_procedure,
         vector_candidate_state::bench_vector_candidate_state_procedure,
         vector_expanded::bench_vector_expanded_procedure,
+        vector_omlx_query_roots::bench_vector_omlx_query_roots_procedure,
         vector_neighbors::bench_vector_neighbor_procedure
 }
 criterion_main!(procedure_call_repeat_group);
