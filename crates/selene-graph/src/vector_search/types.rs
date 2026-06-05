@@ -243,6 +243,49 @@ impl ApproximateVectorSearchOptions {
     }
 }
 
+/// Tunable options for ANN-root graph expansion followed by exact reranking.
+///
+/// The ANN index supplies up to `root_k` seed nodes under `metric`; those roots
+/// are expanded through `edge_label` in `direction`, and the expanded canonical
+/// candidate set is exact-reranked to the final `k` results.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApproximateVectorExpansionOptions<'a> {
+    /// Edge label used to expand ANN root candidates.
+    pub edge_label: &'a IStr,
+    /// Direction used when walking one-hop graph adjacency from ANN roots.
+    pub direction: VectorNeighborDirection,
+    /// Distance metric requested by the caller.
+    pub metric: VectorMetric,
+    /// Maximum ANN root count before graph expansion.
+    pub root_k: usize,
+    /// Maximum final reranked result count.
+    pub k: usize,
+    /// ANN search-width hint.
+    pub ef_search: usize,
+}
+
+impl<'a> ApproximateVectorExpansionOptions<'a> {
+    /// Construct ANN-root graph-expansion search options.
+    #[must_use]
+    pub const fn new(
+        edge_label: &'a IStr,
+        direction: VectorNeighborDirection,
+        metric: VectorMetric,
+        root_k: usize,
+        k: usize,
+        ef_search: usize,
+    ) -> Self {
+        Self {
+            edge_label,
+            direction,
+            metric,
+            root_k,
+            k,
+            ef_search,
+        }
+    }
+}
+
 /// Error returned by cancellation-aware vector search.
 #[derive(Debug, thiserror::Error)]
 pub enum VectorSearchError {

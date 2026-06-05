@@ -73,8 +73,8 @@ pub use vector_index::{
     VectorIndexRebuildEntry, VectorIndexRebuildReport, VectorIndexValueError,
 };
 pub use vector_search::{
-    ApproximateVectorSearchOptions, VectorCandidateSet, VectorNeighborDirection,
-    VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError,
+    ApproximateVectorExpansionOptions, ApproximateVectorSearchOptions, VectorCandidateSet,
+    VectorNeighborDirection, VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError,
 };
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 

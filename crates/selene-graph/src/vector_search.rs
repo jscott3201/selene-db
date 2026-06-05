@@ -17,8 +17,8 @@ use crate::vector_index::{HnswSearchScratch, VectorIndex, VectorIndexSearchHit};
 #[path = "vector_search/types.rs"]
 mod types;
 pub use types::{
-    ApproximateVectorSearchOptions, VectorCandidateSet, VectorNeighborDirection,
-    VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError,
+    ApproximateVectorExpansionOptions, ApproximateVectorSearchOptions, VectorCandidateSet,
+    VectorNeighborDirection, VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError,
 };
 
 const VECTOR_SEARCH_CANCEL_STRIDE: usize = 1024;
@@ -388,6 +388,97 @@ impl SeleneGraph {
 
         Ok(batch_hits)
     }
+
+    /// Use ANN hits as graph roots, expand them, then exact-rerank candidates.
+    ///
+    /// This composes the HNSW/IVF root-finding path with graph topology:
+    /// approximate search chooses up to `options.root_k` seed nodes from the
+    /// registered ANN index, one-hop graph expansion adds related candidates,
+    /// then the expanded set is exact-reranked by the same vector property and
+    /// metric. The ANN path remains explicit, so missing or metric-mismatched
+    /// indexes return the same errors as
+    /// [`Self::approximate_vector_search_nodes_checked`].
+    pub fn approximate_vector_search_expanded_candidates_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        query: &VectorValue,
+        options: ApproximateVectorExpansionOptions<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        checker.check()?;
+        let root_hits = self.approximate_vector_search_nodes_checked(
+            label,
+            property,
+            query,
+            ApproximateVectorSearchOptions::new(options.metric, options.root_k, options.ef_search),
+            checker,
+        )?;
+        if options.k == 0 || root_hits.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let roots = VectorCandidateSet::from_search_hits(&root_hits);
+        let expanded = self.expand_vector_candidate_set_checked(
+            &roots,
+            options.edge_label,
+            options.direction,
+            checker,
+        )?;
+        self.score_vector_candidate_set_checked(
+            property,
+            query,
+            &expanded,
+            options.metric,
+            options.k,
+            checker,
+        )
+    }
+
+    /// Batch ANN-root graph expansion followed by exact candidate reranking.
+    ///
+    /// The result at each output position corresponds to the query at the same
+    /// input position. ANN roots are produced through one shared
+    /// `(label, property)` index, converted to canonical root sets, expanded
+    /// through `options.edge_label`, then scored by
+    /// [`Self::score_vector_expanded_candidate_sets_batch_checked`].
+    pub fn approximate_vector_search_expanded_candidates_batch_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        queries: &[VectorValue],
+        options: ApproximateVectorExpansionOptions<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        checker.check()?;
+        let root_hits = self.approximate_vector_search_nodes_batch_checked(
+            label,
+            property,
+            queries,
+            ApproximateVectorSearchOptions::new(options.metric, options.root_k, options.ef_search),
+            checker,
+        )?;
+        if options.k == 0 {
+            return Ok(vec![Vec::new(); queries.len()]);
+        }
+
+        let root_sets = root_hits
+            .iter()
+            .map(VectorCandidateSet::from_search_hits)
+            .collect::<Vec<_>>();
+        self.score_vector_expanded_candidate_sets_batch_checked(
+            property,
+            queries,
+            &root_sets,
+            VectorNeighborSearchOptions::new(
+                options.edge_label,
+                options.direction,
+                options.metric,
+                options.k,
+            ),
+            checker,
+        )
+    }
 }
 
 fn should_parallelize_exact_scan(
@@ -547,11 +638,46 @@ impl SharedGraph {
             label, property, queries, options, checker,
         )
     }
+
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::approximate_vector_search_expanded_candidates_checked`].
+    pub fn approximate_vector_search_expanded_candidates_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        query: &VectorValue,
+        options: ApproximateVectorExpansionOptions<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        self.read()
+            .approximate_vector_search_expanded_candidates_checked(
+                label, property, query, options, checker,
+            )
+    }
+
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::approximate_vector_search_expanded_candidates_batch_checked`].
+    pub fn approximate_vector_search_expanded_candidates_batch_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        queries: &[VectorValue],
+        options: ApproximateVectorExpansionOptions<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        self.read()
+            .approximate_vector_search_expanded_candidates_batch_checked(
+                label, property, queries, options, checker,
+            )
+    }
 }
 
 #[cfg(test)]
 #[path = "vector_search/ann_conversion_tests.rs"]
 mod ann_conversion_tests;
+#[cfg(test)]
+#[path = "vector_search/ann_expansion_tests.rs"]
+mod ann_expansion_tests;
 #[cfg(test)]
 #[path = "vector_search/batch_tests.rs"]
 mod batch_tests;
