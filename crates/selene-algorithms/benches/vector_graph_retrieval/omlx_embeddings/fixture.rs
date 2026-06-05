@@ -18,8 +18,8 @@ use self::build_support::{
     topic_hint_expansion_set_for,
 };
 use super::super::support::istr;
-use super::corpus::{CorpusInput, Topic, topic_label};
 use super::{ANN_SEARCH_WIDTH, TOP_K, precision_basis_points};
+use selene_testing::local_omlx::{CorpusInput, Topic, topic_label};
 
 #[path = "fixture/build_support.rs"]
 mod build_support;

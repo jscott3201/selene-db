@@ -1,19 +1,23 @@
-//! Tiny local corpus for oMLX embedding benchmark rows.
+//! Reusable local corpora for oMLX embedding benchmark rows.
 
-use selene_core::IStr;
+use selene_core::{IStr, intern};
 
-use super::super::support::istr;
-
+/// Corpus size and ambiguity profile for local oMLX embedding benchmarks.
 #[derive(Clone, Copy)]
-pub(super) enum CorpusProfile {
+pub enum CorpusProfile {
+    /// Four documents per topic plus one query per topic.
     Tiny,
+    /// Agent-memory-oriented corpus with two queries per topic.
     AgentMemory,
+    /// Corpus with overlapping terminology across topics to stress vector-only retrieval.
     AmbiguousMemory,
+    /// Combined ambiguous + agent-memory corpus for larger local rows.
     ScaledAmbiguousMemory,
 }
 
 impl CorpusProfile {
-    pub(super) fn from_env(env_name: &str) -> Self {
+    /// Resolve a profile from `env_name`, defaulting to [`Self::Tiny`].
+    pub fn from_env(env_name: &str) -> Self {
         match std::env::var(env_name).ok().as_deref() {
             None | Some("") | Some("tiny") => Self::Tiny,
             Some("agent_memory") | Some("memory") => Self::AgentMemory,
@@ -25,7 +29,8 @@ impl CorpusProfile {
         }
     }
 
-    pub(super) fn inputs(self) -> Vec<CorpusInput> {
+    /// Materialize the profile as ordered document and query inputs.
+    pub fn inputs(self) -> Vec<CorpusInput> {
         match self {
             Self::Tiny => tiny_inputs(),
             Self::AgentMemory => agent_memory_inputs(),
@@ -35,28 +40,42 @@ impl CorpusProfile {
     }
 }
 
+/// Topic assigned to a corpus document or query.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(super) enum Topic {
+pub enum Topic {
+    /// ISO GQL and graph-query language behavior.
     Gql,
+    /// Vector storage, search, indexing, and rerank behavior.
     Vector,
+    /// Agentic memory retrieval, provenance, and currentness.
     AgentMemory,
+    /// Rust implementation and benchmark-code behavior.
     Code,
 }
 
+/// One text item sent to the local embedding endpoint.
 #[derive(Clone, Copy)]
-pub(super) struct CorpusInput {
-    pub(super) topic: Topic,
-    pub(super) is_document: bool,
-    pub(super) text: &'static str,
+pub struct CorpusInput {
+    /// Semantic topic used by graph labels and precision checks.
+    pub topic: Topic,
+    /// Whether this item is a searchable document (`true`) or query (`false`).
+    pub is_document: bool,
+    /// Text submitted to the embedding endpoint.
+    pub text: &'static str,
 }
 
-pub(super) fn topic_label(topic: Topic) -> IStr {
+/// Return the graph label used for `topic` in benchmark fixtures.
+pub fn topic_label(topic: Topic) -> IStr {
     match topic {
         Topic::Gql => istr("OmlxTopicGql"),
         Topic::Vector => istr("OmlxTopicVector"),
         Topic::AgentMemory => istr("OmlxTopicAgentMemory"),
         Topic::Code => istr("OmlxTopicCode"),
     }
+}
+
+fn istr(value: &str) -> IStr {
+    intern(value).expect("local oMLX fixture strings fit the interner")
 }
 
 fn tiny_inputs() -> Vec<CorpusInput> {
@@ -348,4 +367,43 @@ fn scaled_ambiguous_memory_inputs() -> Vec<CorpusInput> {
     let mut inputs = ambiguous_memory_inputs();
     inputs.extend(agent_memory_inputs());
     inputs
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::{CorpusProfile, Topic, topic_label};
+
+    #[test]
+    fn tiny_profile_has_four_topics_with_documents_and_queries() {
+        let inputs = CorpusProfile::Tiny.inputs();
+        let document_count = inputs.iter().filter(|input| input.is_document).count();
+        let query_count = inputs.len() - document_count;
+
+        assert_eq!(document_count, 16);
+        assert_eq!(query_count, 4);
+    }
+
+    #[test]
+    fn scaled_ambiguous_profile_combines_ambiguous_and_agent_memory() {
+        let scaled = CorpusProfile::ScaledAmbiguousMemory.inputs();
+        let expected = CorpusProfile::AmbiguousMemory.inputs().len()
+            + CorpusProfile::AgentMemory.inputs().len();
+
+        assert_eq!(scaled.len(), expected);
+    }
+
+    #[test]
+    fn topic_labels_are_distinct() {
+        let labels = [
+            topic_label(Topic::Gql),
+            topic_label(Topic::Vector),
+            topic_label(Topic::AgentMemory),
+            topic_label(Topic::Code),
+        ];
+        let unique = labels.iter().collect::<HashSet<_>>();
+
+        assert_eq!(unique.len(), labels.len());
+    }
 }

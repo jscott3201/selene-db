@@ -19,6 +19,7 @@ workspace = true
 selene-core = { path = "../selene-core", version = "1.1.0" }
 selene-gql = { path = "../selene-gql", version = "1.1.0" }
 selene-graph = { path = "../selene-graph", version = "1.1.0" }
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
