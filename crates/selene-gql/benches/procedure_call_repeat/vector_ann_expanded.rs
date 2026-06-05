@@ -3,23 +3,30 @@ use std::{num::NonZeroUsize, sync::Arc};
 use criterion::{Criterion, Throughput};
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorValue, intern};
 use selene_gql::{BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
-use selene_graph::{SharedGraph, VectorIndexKind};
+use selene_graph::{
+    CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
+    VectorIndexKind,
+};
 
 const ANN_EXPANDED_SOURCE: &str = "CALL selene.vector_search_expanded_candidates_ann('VectorSummary', 'embedding', $query, 2, 'SUPPORTS', 10, 'outgoing', 'squared_euclidean', 64) YIELD node_id, distance";
 const ANN_EXPANDED_BATCH_SOURCE: &str = "CALL selene.vector_search_expanded_candidates_ann_batch('VectorSummary', 'embedding', $queries, 2, 'SUPPORTS', 10, 'outgoing', 'squared_euclidean', 64) YIELD query_index, node_id, distance";
+const ANN_STATE_EXPANDED_SOURCE: &str = "CALL selene.vector_search_candidate_state_expanded_ann('VectorSummary', 'embedding', $query, 'active_facts', 2, 'SUPPORTS', 10, 'intersection', 'outgoing', 'squared_euclidean', 64) YIELD node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
 const VECTOR_DIMENSION: usize = 128;
 const VECTOR_BATCH_QUERIES: usize = 8;
 const VECTOR_EXPANDED_CANDIDATES: usize = 64;
 const VECTOR_EXPANDED_ROOTS: usize = 2;
+const VECTOR_ACTIVE_FACTS: usize = VECTOR_BATCH_QUERIES * VECTOR_EXPANDED_CANDIDATES;
 
 pub(super) fn bench_vector_ann_expanded_procedure(c: &mut Criterion) {
     let registry = BuiltinProcedureRegistry::new();
     let graph = vector_ann_expanded_graph(VECTOR_SCALE, VECTOR_DIMENSION);
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let state_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_ann_expanded_cache(&graph, &registry, Arc::clone(&cache));
     warm_ann_expanded_batch_cache(&graph, &registry, Arc::clone(&batch_cache));
+    warm_ann_state_expanded_cache(&graph, &registry, Arc::clone(&state_cache));
 
     let mut group = c.benchmark_group("procedure_vector_ann_expanded");
     group.throughput(Throughput::Elements(VECTOR_EXPANDED_CANDIDATES as u64));
@@ -57,6 +64,31 @@ pub(super) fn bench_vector_ann_expanded_procedure(c: &mut Criterion) {
             });
         },
     );
+    group.bench_function(
+        "shared_cache_ann_state_expanded_intersection_2root64_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_ann_state_expanded_search(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&state_cache)),
+                    0,
+                ));
+            });
+        },
+    );
+    group.bench_function(
+        "shared_cache_ann_state_expanded_intersection_repeated_8x2root64_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_ann_state_expanded_repeated_batch(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&state_cache)),
+                ));
+            });
+        },
+    );
     group.finish();
 }
 
@@ -84,6 +116,18 @@ fn warm_ann_expanded_batch_cache(
         .expect("warmup batched ANN-expanded vector search executes");
 }
 
+fn warm_ann_state_expanded_cache(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Arc<CallPlanCache>,
+) {
+    let mut session = Session::new(graph).with_call_plan_cache(cache);
+    bind_ann_expanded_inputs_for(&mut session, 0);
+    session
+        .execute_source(ANN_STATE_EXPANDED_SOURCE, registry)
+        .expect("warmup ANN state-expanded vector search executes");
+}
+
 fn execute_vector_ann_expanded_search(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
@@ -104,6 +148,26 @@ fn execute_vector_ann_expanded_search(
     }
 }
 
+fn execute_vector_ann_state_expanded_search(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+    query_index: usize,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    bind_ann_expanded_inputs_for(&mut session, query_index);
+    match session
+        .execute_source(ANN_STATE_EXPANDED_SOURCE, registry)
+        .expect("ANN state-expanded vector search procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
 fn execute_vector_ann_expanded_repeated_batch(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
@@ -112,6 +176,23 @@ fn execute_vector_ann_expanded_repeated_batch(
     let mut rows = 0;
     for query_index in 0..VECTOR_BATCH_QUERIES {
         rows += execute_vector_ann_expanded_search(
+            graph,
+            registry,
+            cache.as_ref().map(Arc::clone),
+            query_index,
+        );
+    }
+    rows
+}
+
+fn execute_vector_ann_state_expanded_repeated_batch(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut rows = 0;
+    for query_index in 0..VECTOR_BATCH_QUERIES {
+        rows += execute_vector_ann_state_expanded_search(
             graph,
             registry,
             cache.as_ref().map(Arc::clone),
@@ -141,7 +222,18 @@ fn execute_vector_ann_expanded_batch(
 }
 
 fn vector_ann_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
-    let graph = SharedGraph::new(GraphId::new(71_006));
+    let active_fact = istr("ActiveVectorFact");
+    let state_name = istr("active_facts");
+    let provider = Arc::new(
+        MaintainedCandidateStateProvider::new([
+            CandidateStateSpec::new(state_name).require_label(active_fact.clone())
+        ])
+        .expect("bench candidate-state spec is valid"),
+    );
+    let graph = SharedGraph::builder(GraphId::new(71_006))
+        .with_provider(provider as Arc<dyn IndexProvider>)
+        .build()
+        .expect("bench graph builds");
     let summary = istr("VectorSummary");
     let fact = istr("VectorFact");
     let embedding_key = istr("embedding");
@@ -165,6 +257,11 @@ fn vector_ann_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
                 );
             }
             for idx in 0..scale {
+                let labels = if idx < VECTOR_ACTIVE_FACTS {
+                    LabelSet::from_iter([fact.clone(), active_fact.clone()])
+                } else {
+                    LabelSet::single(fact.clone())
+                };
                 let props = PropertyMap::from_pairs([(
                     embedding_key.clone(),
                     Value::Vector(vector_value(idx, dimension)),
@@ -172,7 +269,7 @@ fn vector_ann_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
                 .expect("bench fact vector properties are valid");
                 facts.push(
                     mutator
-                        .create_node(LabelSet::single(fact.clone()), props)
+                        .create_node(labels, props)
                         .expect("bench fact node insert succeeds"),
                 );
             }

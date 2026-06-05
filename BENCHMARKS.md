@@ -594,9 +594,11 @@ PR-local quick vector procedure baseline:
 | `procedure_vector_search/shared_cache_hnsw_ann_dim128_k10_1000` | 13.46 µs (quick) | Cached single-query `CALL selene.vector_search_nodes_ann` over the HNSW index; graph-level ANN hit conversion no longer re-heaps index results. |
 | `procedure_vector_search/shared_cache_hnsw_ann_repeated_8x_dim128_k10_1000` | 114.4 µs (quick) | Eight separate cached ANN procedure calls, one short-lived session per query. |
 | `procedure_vector_search/shared_cache_hnsw_ann_batch_8x_dim128_k10_1000` | 108.9 µs (quick) | One cached `CALL selene.vector_search_nodes_ann_batch` over eight query vectors; ~4.5% below repeated single-call latency. |
-| `procedure_vector_ann_expanded/shared_cache_ann_expanded_2root64_dim128_k10_1000` | 15.09 µs (quick) | Cached `CALL selene.vector_search_expanded_candidates_ann`; HNSW supplies two `VectorSummary` roots, graph expansion walks `SUPPORTS`, and exact rerank returns final `VectorFact` candidates. |
-| `procedure_vector_ann_expanded/shared_cache_ann_expanded_repeated_8x2root64_dim128_k10_1000` | 125.01 µs (quick) | Eight separate cached ANN-root graph-expansion calls, one short-lived session per query. |
-| `procedure_vector_ann_expanded/shared_cache_ann_expanded_batch_8x2root64_dim128_k10_1000` | 119.52 µs (quick) | One cached `CALL selene.vector_search_expanded_candidates_ann_batch` over eight query vectors; ~4.4% below repeated ANN-expanded-call latency. |
+| `procedure_vector_ann_expanded/shared_cache_ann_expanded_2root64_dim128_k10_1000` | 14.83 µs (quick) | Cached `CALL selene.vector_search_expanded_candidates_ann`; HNSW supplies two `VectorSummary` roots, graph expansion walks `SUPPORTS`, and exact rerank returns final `VectorFact` candidates. |
+| `procedure_vector_ann_expanded/shared_cache_ann_expanded_repeated_8x2root64_dim128_k10_1000` | 123.41 µs (quick) | Eight separate cached ANN-root graph-expansion calls, one short-lived session per query. |
+| `procedure_vector_ann_expanded/shared_cache_ann_expanded_batch_8x2root64_dim128_k10_1000` | 119.18 µs (quick) | One cached `CALL selene.vector_search_expanded_candidates_ann_batch` over eight query vectors; ~3.4% below repeated ANN-expanded-call latency. |
+| `procedure_vector_ann_expanded/shared_cache_ann_state_expanded_intersection_2root64_dim128_k10_1000` | 15.20 µs (quick) | Cached `CALL selene.vector_search_candidate_state_expanded_ann` using HNSW roots, graph expansion, maintained-state intersection, and exact rerank. |
+| `procedure_vector_ann_expanded/shared_cache_ann_state_expanded_intersection_repeated_8x2root64_dim128_k10_1000` | 127.98 µs (quick) | Eight separate cached ANN-root graph-expansion calls intersected with maintained state before exact rerank. |
 
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05)
 
