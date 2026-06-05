@@ -211,6 +211,10 @@ pub struct VectorCandidateStateInfo {
     pub candidate_count: usize,
     /// Optional node label required for membership.
     pub required_label: Option<IStr>,
+    /// Outgoing edge labels required on the source node.
+    pub require_outgoing: Vec<IStr>,
+    /// Incoming edge labels required on the target node.
+    pub require_incoming: Vec<IStr>,
     /// Outgoing edge labels that disqualify the source node.
     pub exclude_outgoing: Vec<IStr>,
     /// Incoming edge labels that disqualify the target node.

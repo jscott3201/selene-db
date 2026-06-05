@@ -342,7 +342,7 @@ fn vector_candidate_states_lists_maintained_state_metadata() {
         &mut session,
         "CALL selene.vector_candidate_states() \
          YIELD state_name, generation, candidate_count, required_label, \
-               exclude_outgoing, exclude_incoming",
+               require_outgoing, require_incoming, exclude_outgoing, exclude_incoming",
         &registry,
     );
 
@@ -354,6 +354,14 @@ fn vector_candidate_states_lists_maintained_state_metadata() {
     );
     assert_eq!(uint_column(&table, "candidate_count"), vec![4]);
     assert_eq!(string_column(&table, "required_label"), vec!["VectorDoc"]);
+    assert_eq!(
+        string_list_column(&table, "require_outgoing"),
+        vec![Vec::<String>::new()]
+    );
+    assert_eq!(
+        string_list_column(&table, "require_incoming"),
+        vec![Vec::<String>::new()]
+    );
     assert_eq!(
         string_list_column(&table, "exclude_outgoing"),
         vec![vec!["SUPERSEDED_BY".to_owned()]]
