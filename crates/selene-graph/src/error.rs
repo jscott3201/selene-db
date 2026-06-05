@@ -183,6 +183,16 @@ pub enum GraphError {
         observed: String,
     },
 
+    /// A text index already exists for this `(label, property)`.
+    #[error("text index already exists for ({label}, {property})")]
+    #[diagnostic(code(SLENE_G_026))]
+    TextIndexAlreadyExists {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed string property key.
+        property: IStr,
+    },
+
     /// A closed graph mutation violates its bound graph type.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -239,7 +249,8 @@ impl GraphError {
             | Self::VectorIndexInvalidDimension { .. }
             | Self::VectorIndexInvalidHnswConfig { .. }
             | Self::VectorIndexInvalidIvfConfig { .. }
-            | Self::VectorIndexValueRejected { .. } => "22G03",
+            | Self::VectorIndexValueRejected { .. }
+            | Self::TextIndexAlreadyExists { .. } => "22G03",
             Self::TypeViolation(_) => "G2000",
             Self::Core(source) => source.gqlstatus(),
             Self::Durable { .. } => "5GQL0",
@@ -322,6 +333,13 @@ mod tests {
             property: intern("err.property.vector.rejected").unwrap(),
             expected_dimension: 3,
             observed: "VECTOR<4>".to_owned(),
+        },
+        "22G03"
+    )]
+    #[case(
+        GraphError::TextIndexAlreadyExists {
+            label: intern("err.label.text.exists").unwrap(),
+            property: intern("err.property.text.exists").unwrap(),
         },
         "22G03"
     )]
@@ -431,6 +449,10 @@ mod tests {
                 property: prop.clone(),
                 expected_dimension: 3,
                 observed: "VECTOR<4>".to_owned(),
+            },
+            GraphError::TextIndexAlreadyExists {
+                label: lbl.clone(),
+                property: prop.clone(),
             },
             GraphError::Durable {
                 reason: "x".to_owned(),

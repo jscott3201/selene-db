@@ -338,6 +338,44 @@ pub struct VectorSchemaEntry {
     pub name: Option<IStr>,
 }
 
+/// Identity for an entry in the text-index snapshot section.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct TextSchemaKey {
+    /// Node label the text registration applies to.
+    pub label: IStr,
+    /// Text property the registration applies to.
+    pub property: IStr,
+}
+
+/// Persisted shape of a text-index registration.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct TextSchemaEntry {
+    /// Optional explicit catalog name for the text index.
+    pub name: Option<IStr>,
+}
+
 pub(super) fn encode_meta(
     meta: &GraphMeta,
     sequence: u64,
@@ -601,9 +639,46 @@ pub(super) fn decode_vector_schemas(
     Ok(rows)
 }
 
+pub(super) fn encode_text_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
+    let mut rows: Vec<(TextSchemaKey, TextSchemaEntry)> = graph
+        .text_index
+        .iter()
+        .map(|((label, property), entry)| {
+            (
+                TextSchemaKey {
+                    label: label.clone(),
+                    property: property.clone(),
+                },
+                TextSchemaEntry {
+                    name: entry.name.clone(),
+                },
+            )
+        })
+        .collect();
+    rows.sort_by(text_schema_wire_cmp);
+    encode_rkyv(&rows, "CORE/TIDX")
+}
+
+pub(super) fn decode_text_schemas(
+    bytes: &[u8],
+) -> Result<Vec<(TextSchemaKey, TextSchemaEntry)>, crate::ProviderError> {
+    let mut rows: Vec<(TextSchemaKey, TextSchemaEntry)> = decode_rkyv(bytes, "CORE/TIDX")?;
+    rows.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+    validate_sorted_unique(&rows, "CORE/TIDX")?;
+    Ok(rows)
+}
+
 fn vector_schema_wire_cmp(
     lhs: &(VectorSchemaKey, VectorSchemaEntry),
     rhs: &(VectorSchemaKey, VectorSchemaEntry),
+) -> std::cmp::Ordering {
+    (lhs.0.label.as_str(), lhs.0.property.as_str())
+        .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))
+}
+
+fn text_schema_wire_cmp(
+    lhs: &(TextSchemaKey, TextSchemaEntry),
+    rhs: &(TextSchemaKey, TextSchemaEntry),
 ) -> std::cmp::Ordering {
     (lhs.0.label.as_str(), lhs.0.property.as_str())
         .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))

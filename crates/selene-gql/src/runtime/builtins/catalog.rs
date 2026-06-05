@@ -8,14 +8,14 @@ use crate::{
 };
 
 use super::{
-    create_index, create_vector_index, drop_index, drop_vector_index, feature_status, health,
-    rebuild_vector_indexes, text_search, vector_candidate_states, vector_index_stats,
-    vector_score_candidate_state, vector_score_candidate_state_expanded,
-    vector_score_candidate_state_expanded_batch, vector_score_candidate_state_nodes,
-    vector_score_expanded_candidates, vector_score_expanded_candidates_batch,
-    vector_score_neighbors, vector_score_neighbors_batch, vector_score_nodes,
-    vector_score_nodes_batch, vector_search, vector_search_ann, vector_search_ann_batch,
-    vector_search_batch, vector_search_candidate_state_expanded_ann,
+    create_index, create_text_index, create_vector_index, drop_index, drop_text_index,
+    drop_vector_index, feature_status, health, rebuild_vector_indexes, text_index_stats,
+    text_search, vector_candidate_states, vector_index_stats, vector_score_candidate_state,
+    vector_score_candidate_state_expanded, vector_score_candidate_state_expanded_batch,
+    vector_score_candidate_state_nodes, vector_score_expanded_candidates,
+    vector_score_expanded_candidates_batch, vector_score_neighbors, vector_score_neighbors_batch,
+    vector_score_nodes, vector_score_nodes_batch, vector_search, vector_search_ann,
+    vector_search_ann_batch, vector_search_batch, vector_search_candidate_state_expanded_ann,
     vector_search_expanded_candidates_ann, vector_search_expanded_candidates_ann_batch, verify,
 };
 
@@ -66,6 +66,8 @@ pub(in crate::runtime) enum BuiltinKind {
     VectorSearchExpandedCandidatesAnnBatch,
     /// `selene.vector_index_stats` — vector index memory/cardinality stats.
     VectorIndexStats,
+    /// `selene.text_index_stats` — text index memory/cardinality stats.
+    TextIndexStats,
     /// `selene.rebuild_vector_indexes` — vector index derived-state rebuild.
     RebuildVectorIndexes,
     /// `selene.rebuild_recommended_vector_indexes` — recommended vector-index rebuild.
@@ -78,6 +80,10 @@ pub(in crate::runtime) enum BuiltinKind {
     CreateVectorIndex,
     /// `selene.drop_vector_index` — mutation-tier vector-index drop.
     DropVectorIndex,
+    /// `selene.create_text_index` — mutation-tier text-index creation.
+    CreateTextIndex,
+    /// `selene.drop_text_index` — mutation-tier text-index drop.
+    DropTextIndex,
     /// `selene.text_search_nodes` — exact BM25 text search over node properties.
     TextSearchNodes,
 }
@@ -99,7 +105,7 @@ pub(in crate::runtime) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 29] = [
+pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 32] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -149,6 +155,12 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 29] = [
         kind: BuiltinKind::VectorIndexStats,
     },
     BuiltinSpec {
+        name: &["selene", "text_index_stats"],
+        description: "Report text index memory and cardinality statistics.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::TextIndexStats,
+    },
+    BuiltinSpec {
         name: &["selene", "rebuild_vector_indexes"],
         description: "Rebuild vector indexes from primary graph values.",
         since_version: "1.1.0",
@@ -171,6 +183,18 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 29] = [
         description: "Drop a vector index.",
         since_version: "1.1.0",
         kind: BuiltinKind::DropVectorIndex,
+    },
+    BuiltinSpec {
+        name: &["selene", "create_text_index"],
+        description: "Create a text index.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::CreateTextIndex,
+    },
+    BuiltinSpec {
+        name: &["selene", "drop_text_index"],
+        description: "Drop a text index.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::DropTextIndex,
     },
     BuiltinSpec {
         name: &["selene", "vector_search_nodes_ann_batch"],
@@ -327,6 +351,7 @@ impl BuiltinKind {
             | Self::VectorSearchCandidateStateExpandedAnn
             | Self::VectorSearchExpandedCandidatesAnnBatch
             | Self::VectorIndexStats
+            | Self::TextIndexStats
             | Self::TextSearchNodes => ProcedureTier::Graph,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 ProcedureTier::Maintenance
@@ -334,7 +359,9 @@ impl BuiltinKind {
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
-            | Self::DropVectorIndex => ProcedureTier::Mutation,
+            | Self::DropVectorIndex
+            | Self::CreateTextIndex
+            | Self::DropTextIndex => ProcedureTier::Mutation,
         }
     }
 
@@ -363,6 +390,7 @@ impl BuiltinKind {
             | Self::VectorSearchCandidateStateExpandedAnn
             | Self::VectorSearchExpandedCandidatesAnnBatch
             | Self::VectorIndexStats
+            | Self::TextIndexStats
             | Self::TextSearchNodes => ProcedureMutability::Read,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 ProcedureMutability::MaintenanceWrite
@@ -370,7 +398,9 @@ impl BuiltinKind {
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
-            | Self::DropVectorIndex => ProcedureMutability::SchemaWrite,
+            | Self::DropVectorIndex
+            | Self::CreateTextIndex
+            | Self::DropTextIndex => ProcedureMutability::SchemaWrite,
         }
     }
 
@@ -410,6 +440,7 @@ impl BuiltinKind {
                 vector_search_expanded_candidates_ann_batch::signature()
             }
             Self::VectorIndexStats => vector_index_stats::signature(),
+            Self::TextIndexStats => text_index_stats::signature(),
             Self::RebuildVectorIndexes => rebuild_vector_indexes::signature(),
             Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::recommended_signature()
@@ -418,6 +449,8 @@ impl BuiltinKind {
             Self::DropIndex => drop_index::signature(),
             Self::CreateVectorIndex => create_vector_index::signature(),
             Self::DropVectorIndex => drop_vector_index::signature(),
+            Self::CreateTextIndex => create_text_index::signature(),
+            Self::DropTextIndex => drop_text_index::signature(),
             Self::TextSearchNodes => text_search::signature(),
         }
     }
@@ -462,6 +495,7 @@ impl BuiltinKind {
                 vector_search_expanded_candidates_ann_batch::output_columns()
             }
             Self::VectorIndexStats => vector_index_stats::output_columns(),
+            Self::TextIndexStats => text_index_stats::output_columns(),
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::output_columns()
             }
@@ -469,6 +503,8 @@ impl BuiltinKind {
             Self::DropIndex => drop_index::output_columns(),
             Self::CreateVectorIndex => create_vector_index::output_columns(),
             Self::DropVectorIndex => drop_vector_index::output_columns(),
+            Self::CreateTextIndex => create_text_index::output_columns(),
+            Self::DropTextIndex => drop_text_index::output_columns(),
             Self::TextSearchNodes => text_search::output_columns(),
         }
     }
@@ -525,11 +561,14 @@ impl BuiltinKind {
                 vector_search_expanded_candidates_ann_batch::execute(ctx, args)
             }
             Self::VectorIndexStats => vector_index_stats::execute(ctx, args),
+            Self::TextIndexStats => text_index_stats::execute(ctx, args),
             Self::TextSearchNodes => text_search::execute(ctx, args),
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
-            | Self::DropVectorIndex => Err(ProcedureError::TierMismatch {
+            | Self::DropVectorIndex
+            | Self::CreateTextIndex
+            | Self::DropTextIndex => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Mutation,
                 actual: ProcedureTier::Graph,
             }),
@@ -554,6 +593,8 @@ impl BuiltinKind {
             Self::DropIndex => drop_index::execute(ctx, args),
             Self::CreateVectorIndex => create_vector_index::execute(ctx, args),
             Self::DropVectorIndex => drop_vector_index::execute(ctx, args),
+            Self::CreateTextIndex => create_text_index::execute(ctx, args),
+            Self::DropTextIndex => drop_text_index::execute(ctx, args),
             Self::Health
             | Self::FeatureStatus
             | Self::Verify
@@ -576,6 +617,7 @@ impl BuiltinKind {
             | Self::VectorSearchCandidateStateExpandedAnn
             | Self::VectorSearchExpandedCandidatesAnnBatch
             | Self::VectorIndexStats
+            | Self::TextIndexStats
             | Self::TextSearchNodes => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Mutation,
@@ -622,6 +664,7 @@ impl BuiltinKind {
             | Self::VectorSearchCandidateStateExpandedAnn
             | Self::VectorSearchExpandedCandidatesAnnBatch
             | Self::VectorIndexStats
+            | Self::TextIndexStats
             | Self::TextSearchNodes => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Maintenance,
@@ -629,7 +672,9 @@ impl BuiltinKind {
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
-            | Self::DropVectorIndex => Err(ProcedureError::TierMismatch {
+            | Self::DropVectorIndex
+            | Self::CreateTextIndex
+            | Self::DropTextIndex => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Mutation,
                 actual: ProcedureTier::Maintenance,
             }),

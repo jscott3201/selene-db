@@ -58,11 +58,13 @@ pub use composite_typed_index::{
 };
 pub use core_provider::{
     CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_PROVIDER_TAG, CORE_SCMA_SUB,
-    CORE_VIDX_SUB, CoreProvider, DurableState,
+    CORE_TIDX_SUB, CORE_VIDX_SUB, CoreProvider, DurableState,
 };
 pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
-pub use graph::{CompositePropertyIndexEntry, GraphMeta, SeleneGraph, VectorIndexEntry};
+pub use graph::{
+    CompositePropertyIndexEntry, GraphMeta, SeleneGraph, TextIndexEntry, VectorIndexEntry,
+};
 pub use graph_types::{
     DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_RECORD_TYPE_NESTING, NodeTypeDef,
     PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,

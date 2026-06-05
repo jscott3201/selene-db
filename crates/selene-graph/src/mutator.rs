@@ -5,6 +5,7 @@ mod composite_property_index;
 mod factory_reset;
 mod property_index;
 mod remove;
+mod text_index;
 mod vector_index;
 
 use std::collections::BTreeSet;
@@ -80,6 +81,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 row,
             )?;
             crate::vector_index::apply_node_create(&mut graph.vector_index, &labels, &props, row)?;
+            crate::text_index::apply_node_create(&mut graph.text_index, &labels, &props, row, id);
             graph.node_store.labels.push(labels.clone());
             graph.node_store.properties.push(props.clone());
             graph.node_store.row_to_id.push(id);
@@ -234,6 +236,15 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_props,
                 row as u32,
             )?;
+            crate::text_index::apply_node_update(
+                &mut graph.text_index,
+                &old_labels,
+                &old_props,
+                &new_labels,
+                &new_props,
+                row as u32,
+                id,
+            );
             graph.node_store.labels.set(row, labels);
             graph.node_store.properties.set(row, props);
             for label in labels_diff.added.iter().cloned() {
@@ -338,6 +349,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &props,
                 row as u32,
             )?;
+            crate::text_index::apply_node_delete(
+                &mut graph.text_index,
+                &labels,
+                &props,
+                row as u32,
+                id,
+            );
             graph.node_store.alive.remove(row as u32);
             // BRIEF-Item-4a: KEEP the real external id in row_to_id for the now
             // dead row (and keep the id -> row map entry). A deleted id stays

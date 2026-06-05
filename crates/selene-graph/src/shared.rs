@@ -218,6 +218,7 @@ impl SharedGraph {
         crate::property_index::rebuild_property_indexes(&mut graph)?;
         crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
         crate::vector_index::rebuild_vector_indexes(&mut graph)?;
+        crate::text_index::rebuild_text_indexes(&mut graph)?;
         if let Some(type_def) = graph.meta.bound_type.as_deref() {
             // Why: GraphMeta is publicly constructible, so SharedGraph::from_graph
             // can land a malformed bound_type that bypassed builder().bound_to()'s
@@ -622,6 +623,45 @@ impl SharedGraph {
     pub fn drop_vector_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
         let mut txn = self.begin_write();
         txn.mutator().drop_vector_index(label, property)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Register a built-in node text index for `(label, property)`.
+    ///
+    /// The current node columns are scanned under the write lock and the
+    /// published snapshot is updated in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::TextIndexAlreadyExists`] if the pair is already
+    /// registered, or [`GraphError::Inconsistent`] if index construction
+    /// observes corrupt graph columns.
+    pub fn create_text_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+        self.create_text_index_named(label, property, None)
+    }
+
+    /// Register a built-in node text index with optional catalog name.
+    pub fn create_text_index_named(
+        &self,
+        label: IStr,
+        property: IStr,
+        name: Option<IStr>,
+    ) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator()
+            .create_text_index_named(label, property, name)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Drop a built-in node text index.
+    ///
+    /// The operation is idempotent; dropping an absent index succeeds without
+    /// publishing a new snapshot.
+    pub fn drop_text_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator().drop_text_index(label, property)?;
         txn.commit()?;
         Ok(())
     }

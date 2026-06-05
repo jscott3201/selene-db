@@ -1,9 +1,11 @@
 //! `selene.text_search_nodes` native built-in.
 //!
-//! Read-only graph-tier procedure exposing the exact BM25 full-text oracle over
-//! string-valued node properties. This is intentionally a `CALL selene.*`
-//! surface rather than grammar syntax: full-text search is an
-//! implementation-defined engine capability layered on ISO GQL values.
+//! Read-only graph-tier procedure exposing BM25 full-text search over
+//! string-valued node properties. A registered maintained text index is used
+//! when present; otherwise execution falls back to the exact scan oracle. This
+//! is intentionally a `CALL selene.*` surface rather than grammar syntax:
+//! full-text search is an implementation-defined engine capability layered on
+//! ISO GQL values.
 
 use selene_core::Value;
 use selene_graph::{GraphError, TextSearchError};
@@ -58,10 +60,21 @@ pub(super) fn execute(
     let query = query_arg(&args[2])?;
     let k = cardinality_arg(PROC_NAME, &args[3], "k")?;
 
-    let hits = ctx
-        .snapshot()
-        .exact_text_search_nodes_checked(&label, &property, query, k, ctx.cancellation_checker())
-        .map_err(text_search_error)?;
+    let snapshot = ctx.snapshot();
+    let hits = match snapshot.text_index_for(&label, &property) {
+        Some(index) => index
+            .search_checked(query, k, ctx.cancellation_checker())
+            .map_err(text_search_error)?,
+        None => snapshot
+            .exact_text_search_nodes_checked(
+                &label,
+                &property,
+                query,
+                k,
+                ctx.cancellation_checker(),
+            )
+            .map_err(text_search_error)?,
+    };
     Ok(ProcedureResult {
         rows: hits
             .into_iter()

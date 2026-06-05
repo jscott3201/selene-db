@@ -18,6 +18,7 @@ use crate::adjacency::AdjacencyEntry;
 use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
 use crate::store::{EdgeStore, NodeStore, RowIndex};
+use crate::text_index::{TextIndex, TextIndexMemoryUsage, TextIndexStats};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 use crate::vector_index::{VectorIndex, VectorIndexKind, VectorIndexMemoryUsage};
 
@@ -130,6 +131,38 @@ impl VectorIndexEntry {
     }
 }
 
+/// Registered built-in text-index metadata.
+#[derive(Clone, Debug)]
+pub struct TextIndexEntry {
+    /// Index data for the `(label, property)` registration.
+    pub index: Arc<TextIndex>,
+    /// Optional explicit catalog name. `None` means the name is derived at render time.
+    pub name: Option<IStr>,
+}
+
+impl TextIndexEntry {
+    /// Construct a text index entry from the built index and optional name.
+    #[must_use]
+    pub fn new(index: TextIndex, name: Option<IStr>) -> Self {
+        Self {
+            index: Arc::new(index),
+            name,
+        }
+    }
+
+    /// Return aggregate index counters.
+    #[must_use]
+    pub fn stats(&self) -> TextIndexStats {
+        self.index.stats()
+    }
+
+    /// Return an estimated memory usage snapshot for this text index.
+    #[must_use]
+    pub fn memory_usage(&self) -> TextIndexMemoryUsage {
+        self.index.memory_usage()
+    }
+}
+
 /// Owned row returned when iterating composite property-index registrations.
 pub type CompositePropertyIndexEntryRow = (
     IStr,
@@ -146,6 +179,15 @@ pub type VectorIndexEntryRow = (
     u32,
     Option<HnswIndexConfig>,
     Option<IvfIndexConfig>,
+    Option<IStr>,
+);
+
+/// Owned row returned when iterating text-index registrations.
+pub type TextIndexEntryRow = (
+    IStr,
+    IStr,
+    TextIndexStats,
+    TextIndexMemoryUsage,
     Option<IStr>,
 );
 
@@ -197,6 +239,8 @@ pub struct SeleneGraph {
         FxHashMap<(IStr, SmallVec<[IStr; 4]>), CompositePropertyIndexEntry>,
     /// Per-`(label, property)` node vector indexes.
     pub vector_index: FxHashMap<(IStr, IStr), VectorIndexEntry>,
+    /// Per-`(label, property)` node BM25 text indexes.
+    pub text_index: FxHashMap<(IStr, IStr), TextIndexEntry>,
     /// External `NodeId -> RowIndex` lookup (the inverse of
     /// [`NodeStore::row_to_id`]). Replaces the `id.get() - 1` arithmetic so the
     /// external id can stay stable while the row is remapped by compaction
@@ -227,6 +271,7 @@ impl SeleneGraph {
             property_index: FxHashMap::default(),
             composite_property_index: FxHashMap::default(),
             vector_index: FxHashMap::default(),
+            text_index: FxHashMap::default(),
             node_id_to_row: HashMap::new(),
             edge_id_to_row: HashMap::new(),
         }
@@ -455,6 +500,14 @@ impl SeleneGraph {
             .map(|entry| Arc::clone(&entry.index))
     }
 
+    /// Return a clone of the registered text index.
+    #[must_use]
+    pub fn text_index_for(&self, label: &IStr, property: &IStr) -> Option<Arc<TextIndex>> {
+        self.text_index
+            .get(&(label.clone(), property.clone()))
+            .map(|entry| Arc::clone(&entry.index))
+    }
+
     /// Number of distinct `(label, property)` indexes currently registered.
     #[must_use]
     pub fn property_index_count(&self) -> usize {
@@ -471,6 +524,12 @@ impl SeleneGraph {
     #[must_use]
     pub fn vector_index_count(&self) -> usize {
         self.vector_index.len()
+    }
+
+    /// Number of distinct `(label, property)` text indexes currently registered.
+    #[must_use]
+    pub fn text_index_count(&self) -> usize {
+        self.text_index.len()
     }
 
     /// Iterate built-in property indexes as owned `(label, property, kind)` tuples.
@@ -526,6 +585,19 @@ impl SeleneGraph {
                 entry.dimension(),
                 entry.hnsw_config(),
                 entry.ivf_config(),
+                entry.name.clone(),
+            )
+        })
+    }
+
+    /// Iterate built-in text indexes with optional explicit catalog names.
+    pub fn iter_text_index_entries(&self) -> impl Iterator<Item = TextIndexEntryRow> + '_ {
+        self.text_index.iter().map(|((label, property), entry)| {
+            (
+                label.clone(),
+                property.clone(),
+                entry.stats(),
+                entry.memory_usage(),
                 entry.name.clone(),
             )
         })
@@ -619,10 +691,14 @@ mod tests {
         assert_eq!(graph.edge_label_count(), 0);
         assert_eq!(graph.property_index_count(), 0);
         assert_eq!(graph.composite_property_index_count(), 0);
+        assert_eq!(graph.vector_index_count(), 0);
+        assert_eq!(graph.text_index_count(), 0);
         assert!(graph.idx_label.is_empty());
         assert!(graph.idx_edge_label.is_empty());
         assert!(graph.property_index.is_empty());
         assert!(graph.composite_property_index.is_empty());
+        assert!(graph.vector_index.is_empty());
+        assert!(graph.text_index.is_empty());
         assert_eq!(graph.meta.generation, 0);
         assert_eq!(graph.meta.next_node_id, 1);
         assert_eq!(graph.meta.next_edge_id, 1);

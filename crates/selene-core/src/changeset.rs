@@ -515,6 +515,28 @@ pub enum SchemaChange {
         /// Indexed vector property key.
         property: IStr,
     },
+    /// Text property index creation with optional explicit catalog name.
+    ///
+    /// Declared after every existing v1.1 variant so the `postcard`
+    /// discriminants of all earlier variants remain stable.
+    TextIndexCreated {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed string property key.
+        property: IStr,
+        /// Optional explicit catalog name.
+        name: Option<IStr>,
+    },
+    /// Text property index deletion.
+    ///
+    /// Declared after every existing v1.1 variant so the `postcard`
+    /// discriminants of all earlier variants remain stable.
+    TextIndexDropped {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed string property key.
+        property: IStr,
+    },
 }
 
 /// Schema-level vector index algorithm kind.
@@ -614,7 +636,6 @@ fn validate_disjoint<E: serde::de::Error>(
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
     use smallvec::smallvec;
 
     use super::*;
@@ -946,12 +967,12 @@ mod tests {
     fn schema_change_variants_construct() {
         let variants: Vec<_> = SchemaChange::ALL.iter().map(|factory| factory()).collect();
         assert_eq!(variants.len(), SchemaChange::VARIANT_COUNT);
-        assert_eq!(SchemaChange::VARIANT_COUNT, 18);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 20);
     }
 
     #[test]
     fn schema_change_all_covers_every_variant() {
-        assert_eq!(SchemaChange::VARIANT_COUNT, 18);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 20);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in SchemaChange::ALL {
@@ -974,37 +995,8 @@ mod tests {
         assert_eq!(discriminants.len(), SchemaChange::ALL.len());
         assert_eq!(names.len(), SchemaChange::ALL.len());
     }
-
-    proptest! {
-        #[test]
-        fn random_label_diff_preserves_sorted_deduped(raw_added in proptest::collection::vec(0_u8..32, 0..32), raw_removed in proptest::collection::vec(33_u8..64, 0..32)) {
-            let added = raw_added.into_iter().map(|value| {
-                let name = format!("change.diff.{value}");
-                intern(&name).unwrap()
-            });
-            let removed = raw_removed.into_iter().map(|value| {
-                let name = format!("change.diff.{value}");
-                intern(&name).unwrap()
-            });
-            let diff = LabelDiff::new(added, removed).unwrap();
-            prop_assert!(diff.added.windows(2).all(|pair| pair[0] < pair[1]));
-            prop_assert!(diff.removed.windows(2).all(|pair| pair[0] < pair[1]));
-            prop_assert!(diff.added.iter().all(|label| !diff.removed.contains(label)));
-        }
-
-        #[test]
-        fn random_property_diff_preserves_sorted_sets(raw_set in proptest::collection::vec(0_u8..32, 0..32), raw_removed in proptest::collection::vec(33_u8..64, 0..32)) {
-            let set = raw_set.into_iter().map(|value| {
-                let name = format!("change.prop.{value}");
-                (intern(&name).unwrap(), Value::Uint(u64::from(value)))
-            });
-            let removed = raw_removed.into_iter().map(|value| {
-                let name = format!("change.prop.{value}");
-                intern(&name).unwrap()
-            });
-            let diff = PropertyDiff::new(set, removed).unwrap();
-            prop_assert!(diff.set.windows(2).all(|pair| pair[0].0 < pair[1].0));
-            prop_assert!(diff.removed.windows(2).all(|pair| pair[0] < pair[1]));
-        }
-    }
 }
+
+#[cfg(test)]
+#[path = "changeset/proptests.rs"]
+mod proptests;

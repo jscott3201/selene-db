@@ -69,6 +69,16 @@ fn bench_indexed_bm25(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new("registered_topic_query", format!("n{scale}_k10")),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture.registered_index.search(&fixture.query, 10);
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("transient_build_query", format!("n{scale}_k10")),
             &fixture,
             |b, fixture| {
@@ -96,6 +106,7 @@ struct TextFixture {
     property: IStr,
     query: String,
     index: TextIndex,
+    registered_index: Arc<TextIndex>,
 }
 
 impl TextFixture {
@@ -125,16 +136,23 @@ impl TextFixture {
             }
             txn.commit().expect("bench fixture commits");
         }
+        shared
+            .create_text_index(label.clone(), property.clone())
+            .expect("bench text index registers");
         let graph = shared.read();
         let index = graph
             .build_text_index(&label, &property)
             .expect("bench text index builds");
+        let registered_index = graph
+            .text_index_for(&label, &property)
+            .expect("registered bench text index exists");
         Self {
             graph,
             label,
             property,
             query: "gql current retrieval evidence".to_owned(),
             index,
+            registered_index,
         }
     }
 }
