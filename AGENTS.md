@@ -133,7 +133,8 @@ Current production vector primitives include:
   candidate sets with generation checks, WAL/snapshot recovery, and discovery
   through `selene.vector_candidate_states()`;
 - maintained-state scoring, maintained-state + explicit-node algebra, and
-  maintained-state + graph-expanded-root composition;
+  maintained-state + graph-expanded-root composition, including the batched
+  GQL state-expanded root scorer for multi-query graph-root workloads;
 - state-gated ANN-root graph expansion when benchmarks prove quality, but avoid
   adding more ANN/state surfaces by default when real-embedding rows show poor
   precision;
