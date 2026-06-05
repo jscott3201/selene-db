@@ -21,6 +21,7 @@ pub(super) struct QueryAnchor {
 pub(super) struct QueryVector {
     pub(super) anchor: NodeId,
     pub(super) topic: Topic,
+    pub(super) text: &'static str,
     pub(super) vector: VectorValue,
 }
 
