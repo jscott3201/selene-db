@@ -87,9 +87,9 @@ and benchmark profiles for dev-dependencies.
   those tests and docs together when the surface changes.
 - Procedure tiers are load-bearing:
   - graph tier: read-only health, feature status, verify, vector search/score,
-    vector candidate-state discovery/composition, vector index stats, exact BM25
-    text search;
-  - mutation tier: property and vector index create/drop;
+    vector candidate-state discovery/composition, vector index stats, BM25 text
+    search, and candidate text scoring;
+  - mutation tier: property, vector, and text index create/drop;
   - maintenance tier: vector index rebuild and rebuild recommendation.
 
 Keep native procedure APIs policy-neutral. Agentic-memory use cases should be
@@ -180,18 +180,22 @@ BM25/full-text is now a native first slice, not grammar syntax:
   properties and the reusable in-memory `TextIndex` postings primitive.
 - `selene-gql` exposes global search as
   `CALL selene.text_search_nodes(label, property, query, k) YIELD node_id, score`
-  and explicit candidate scoring as
-  `CALL selene.text_score_nodes(label, property, query, nodes, k) YIELD node_id, score`.
-- The exact scan is the correctness oracle and small-corpus path. `TextIndex`
-  reuses that tokenizer/scorer for repeated snapshot queries, but is not yet a
-  durable maintained registration.
+  and explicit candidate scoring as:
+  - `CALL selene.text_score_nodes(label, property, query, nodes, k) YIELD node_id, score`
+  - `CALL selene.text_score_nodes_batch(label, property, queries, nodes, k) YIELD query_index, node_id, score`
+- `selene.create_text_index`, `selene.drop_text_index`, and
+  `selene.text_index_stats` manage durable maintained text-index registrations.
+  Postings are derived in-memory state, maintained through graph mutations, and
+  rebuildable from primary graph values during recovery/compaction.
+- The exact scan is the correctness oracle and small-corpus path. Maintained
+  `TextIndex` lookup is the repeated-query path; candidate-scoped scoring
+  requires a registered text index so read calls do not hide transient postings
+  builds.
 - Keep ISO GQL grammar strict; add future surfaces through native values,
   indexes, and procedures as appropriate.
-- Ground maintained-index design against Tantivy and the old local SeleneDB donor
-  code, but do not dependency-import or copy old code without fresh tests and
-  benchmarks.
-- Define delete/update/WAL/snapshot/rebuild semantics before shipping durable
-  maintained text-index registrations.
+- Ground richer analyzer, segment, or disk-backed designs against Tantivy and
+  the old local SeleneDB donor code, but do not dependency-import or copy old
+  code without fresh tests and benchmarks.
 - Benchmark text-only and hybrid graph/vector/text retrieval against the exact
   BM25 oracle.
 
