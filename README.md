@@ -32,10 +32,10 @@ the engine in-process.
 | Transactions | Strict-serializable writes under one graph write lock with lock-free read snapshots. |
 | Persistence | Graph-blind WAL (`SLDB`), snapshots (`SLSN`), MANIFEST-led recovery, retention pruning, and an append-only audit log substrate. |
 | GQL | ISO-oriented parser, semantic analyzer, planner, optimizer, executor, plan cache, built-in procedure registry, and GQL Flagger enforcement for unsupported constructs. |
-| Procedures | One frozen native `BuiltinProcedureRegistry`: 51 procedures total, including 19 `algo.*` graph algorithms and 32 `selene.*` platform/vector/text procedures. |
+| Procedures | One frozen native `BuiltinProcedureRegistry`: 52 procedures total, including 19 `algo.*` graph algorithms and 33 `selene.*` platform/vector/text procedures. |
 | Graph algorithms | Structural, pathfinding, centrality, and community algorithms exposed through the native Rust API and ISO `CALL algo.*`. |
 | Vectors | `Value::Vector` as a first-class value, exact vector scoring/search, HNSW and IVF indexes, ANN search, batch search, candidate expansion, and candidate-state scoring APIs. |
-| Text search | Native BM25 text indexes over string node properties, global search, candidate-scoped search, and `CALL selene.text_search_nodes`. |
+| Text search | Native BM25 text indexes over string node properties, global search, candidate-scoped scoring, `CALL selene.text_search_nodes`, and `CALL selene.text_score_nodes`. |
 | Safety posture | Workspace-wide `#![forbid(unsafe_code)]`, `missing_docs = "deny"`, rustls-only dependency policy, and a 700 LOC source-file cap. |
 
 ## Workspace Layout
@@ -117,10 +117,11 @@ CALL selene.create_vector_index(...)
 CALL selene.vector_search_nodes_ann(...)
 CALL selene.create_text_index(...)
 CALL selene.text_search_nodes(...)
+CALL selene.text_score_nodes(...)
 CALL algo.pagerank(...)
 ```
 
-The registry currently contains 19 `algo.*` graph algorithm procedures and 32
+The registry currently contains 19 `algo.*` graph algorithm procedures and 33
 `selene.*` platform/vector/text procedures. The registry is native and frozen at
 construction time; it is not a third-party extension mechanism.
 

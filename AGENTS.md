@@ -178,8 +178,10 @@ BM25/full-text is now a native first slice, not grammar syntax:
 
 - `selene-graph` owns the dependency-light exact BM25 scan over `STRING` node
   properties and the reusable in-memory `TextIndex` postings primitive.
-- `selene-gql` exposes it as
-  `CALL selene.text_search_nodes(label, property, query, k) YIELD node_id, score`.
+- `selene-gql` exposes global search as
+  `CALL selene.text_search_nodes(label, property, query, k) YIELD node_id, score`
+  and explicit candidate scoring as
+  `CALL selene.text_score_nodes(label, property, query, nodes, k) YIELD node_id, score`.
 - The exact scan is the correctness oracle and small-corpus path. `TextIndex`
   reuses that tokenizer/scorer for repeated snapshot queries, but is not yet a
   durable maintained registration.
