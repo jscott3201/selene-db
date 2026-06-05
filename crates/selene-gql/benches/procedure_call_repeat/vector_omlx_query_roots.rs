@@ -12,7 +12,7 @@ use selene_gql::{BindingTable, BuiltinProcedureRegistry, CallPlanCache, Session,
 use selene_graph::SharedGraph;
 use selene_testing::local_omlx::{CorpusInput, CorpusProfile, OmlxClient, Topic, topic_label};
 
-const QUERY_ROOT_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_expanded_candidates('embedding', $query, roots, 'OmlxSupports', 4, 'outgoing', 'squared_euclidean') YIELD node_id, distance RETURN node_id, distance";
+const QUERY_ROOT_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_expanded_candidates('embedding', $query, roots, 'OmlxSupports', 4, 'outgoing', 'cosine') YIELD node_id, distance RETURN node_id, distance";
 const ENABLE_ENV: &str = "SELENE_OMLX_EMBEDDING_BENCH";
 const API_KEY_ENVS: &[&str] = &["SELENE_OMLX_API_KEY", "OMLX_KEY"];
 const BASE_URL_ENV: &str = "SELENE_OMLX_BASE_URL";
