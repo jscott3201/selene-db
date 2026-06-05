@@ -154,21 +154,23 @@ fn seed_neighbor_vector_graph(graph: &SharedGraph) -> (NodeId, NodeId, Vec<NodeI
 
 fn seed_expanded_candidate_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId, NodeId) {
     let doc = istr("VectorDoc");
+    let root = istr("VectorRoot");
     let embedding = istr("embedding");
     let other = istr("other");
     let support = istr("SUPPORTS");
     let mentions = istr("MENTIONS");
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
+    let root_labels = || LabelSet::from_iter([doc.clone(), root.clone()]);
     let root_a = mutator
         .create_node(
-            LabelSet::single(doc.clone()),
+            root_labels(),
             props(&embedding, Value::Vector(vector(&[2.0, 0.0]))),
         )
         .expect("root_a inserts");
     let root_b = mutator
         .create_node(
-            LabelSet::single(doc.clone()),
+            root_labels(),
             props(&embedding, Value::Vector(vector(&[8.0, 0.0]))),
         )
         .expect("root_b inserts");
@@ -220,6 +222,30 @@ fn seed_expanded_candidate_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId
         .expect("wrong-label edge inserts");
     txn.commit().expect("seed graph commits");
     (root_a, root_b, outgoing_near, outgoing_far, incoming)
+}
+
+#[test]
+fn vector_score_expanded_candidates_accepts_gql_query_roots() {
+    let graph = graph(330_223);
+    let registry = BuiltinProcedureRegistry::new();
+    let (root_a, root_b, outgoing_near, outgoing_far, _) = seed_expanded_candidate_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[3.2, 0.0])));
+
+    let table = execute_rows(
+        &mut session,
+        "MATCH (root:VectorRoot) \
+         WITH collect_list(root) AS roots \
+         CALL selene.vector_score_expanded_candidates('embedding', $query, roots, 'SUPPORTS', 4) \
+         YIELD node_id, distance \
+         RETURN node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![outgoing_near, root_a, outgoing_far, root_b]
+    );
 }
 
 #[test]

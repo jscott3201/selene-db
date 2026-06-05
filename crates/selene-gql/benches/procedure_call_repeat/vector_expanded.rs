@@ -7,6 +7,7 @@ use selene_graph::SharedGraph;
 
 const EXPANDED_SOURCE: &str = "CALL selene.vector_score_expanded_candidates('embedding', $query, $roots, 'SUPPORTS', 10, 'outgoing', 'squared_euclidean') YIELD node_id, distance";
 const EXPANDED_BATCH_SOURCE: &str = "CALL selene.vector_score_expanded_candidates_batch('embedding', $queries, $roots, 'SUPPORTS', 10, 'outgoing', 'squared_euclidean') YIELD query_index, node_id, distance";
+const EXPANDED_QUERY_ROOTS_SOURCE: &str = "MATCH (root:VectorRoot) WHERE root.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_expanded_candidates('embedding', $query, roots, 'SUPPORTS', 10, 'outgoing', 'squared_euclidean') YIELD node_id, distance RETURN node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
 const VECTOR_DIMENSION: usize = 128;
 const VECTOR_BATCH_QUERIES: usize = 8;
@@ -18,8 +19,10 @@ pub(super) fn bench_vector_expanded_procedure(c: &mut Criterion) {
     let graph = vector_expanded_graph(VECTOR_SCALE, VECTOR_DIMENSION);
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let query_roots_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_expanded_cache(&graph, &registry, Arc::clone(&cache));
     warm_expanded_batch_cache(&graph, &registry, Arc::clone(&batch_cache));
+    warm_expanded_query_roots_cache(&graph, &registry, Arc::clone(&query_roots_cache));
 
     let mut group = c.benchmark_group("procedure_vector_expanded");
     group.throughput(Throughput::Elements(VECTOR_EXPANDED_CANDIDATES as u64));
@@ -57,6 +60,19 @@ pub(super) fn bench_vector_expanded_procedure(c: &mut Criterion) {
             });
         },
     );
+    group.bench_function(
+        "shared_cache_score_expanded_query_roots_2root64_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_expanded_query_roots_score(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&query_roots_cache)),
+                    0,
+                ));
+            });
+        },
+    );
     group.finish();
 }
 
@@ -82,6 +98,18 @@ fn warm_expanded_batch_cache(
     session
         .execute_source(EXPANDED_BATCH_SOURCE, registry)
         .expect("warmup batched vector expanded scoring executes");
+}
+
+fn warm_expanded_query_roots_cache(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Arc<CallPlanCache>,
+) {
+    let mut session = Session::new(graph).with_call_plan_cache(cache);
+    bind_expanded_query_root_inputs_for(&mut session, 0);
+    session
+        .execute_source(EXPANDED_QUERY_ROOTS_SOURCE, registry)
+        .expect("warmup query-root vector expanded scoring executes");
 }
 
 fn execute_vector_expanded_score(
@@ -140,23 +168,54 @@ fn execute_vector_expanded_batch(
     }
 }
 
+fn execute_vector_expanded_query_roots_score(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+    query_index: usize,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    bind_expanded_query_root_inputs_for(&mut session, query_index);
+    match session
+        .execute_source(EXPANDED_QUERY_ROOTS_SOURCE, registry)
+        .expect("query-root vector expanded scoring procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
 fn vector_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
     let graph = SharedGraph::new(GraphId::new(71_004));
     let label = istr("VectorDoc");
+    let root_label = istr("VectorRoot");
     let embedding_key = istr("embedding");
+    let query_index_key = istr("query_index");
     let supports = istr("SUPPORTS");
     {
         let mut txn = graph.begin_write();
         {
             let mut mutator = txn.mutator();
             for idx in 0..scale {
-                let props = PropertyMap::from_pairs([(
+                let root_query_index = root_query_index(idx);
+                let labels = match root_query_index {
+                    Some(_) => LabelSet::from_iter([label.clone(), root_label.clone()]),
+                    None => LabelSet::single(label.clone()),
+                };
+                let mut props = vec![(
                     embedding_key.clone(),
                     Value::Vector(vector_value(idx, dimension)),
-                )])
-                .expect("bench vector properties are valid");
+                )];
+                if let Some(query_index) = root_query_index {
+                    props.push((query_index_key.clone(), Value::Int(query_index as i64)));
+                }
+                let props =
+                    PropertyMap::from_pairs(props).expect("bench vector properties are valid");
                 mutator
-                    .create_node(LabelSet::single(label.clone()), props)
+                    .create_node(labels, props)
                     .expect("bench vector node insert succeeds");
             }
             for query_index in 0..VECTOR_BATCH_QUERIES {
@@ -187,6 +246,14 @@ fn bind_expanded_inputs_for(session: &mut Session<'_>, query_index: usize) {
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
     session.bind_parameter(istr("roots"), expanded_roots(query_index));
+}
+
+fn bind_expanded_query_root_inputs_for(session: &mut Session<'_>, query_index: usize) {
+    session.bind_parameter(
+        istr("query"),
+        Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
+    );
+    session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
 }
 
 fn bind_expanded_batch_inputs(session: &mut Session<'_>) {
@@ -223,6 +290,14 @@ fn expanded_candidate_range(query_index: usize) -> std::ops::Range<usize> {
         (query_index * VECTOR_EXPANDED_CANDIDATES) % max_start
     };
     start..start + VECTOR_EXPANDED_CANDIDATES
+}
+
+fn root_query_index(index: usize) -> Option<usize> {
+    (0..VECTOR_BATCH_QUERIES).find(|query_index| {
+        expanded_candidate_range(*query_index)
+            .take(VECTOR_EXPANDED_ROOTS)
+            .any(|root| root == index)
+    })
 }
 
 fn node_id(index: usize) -> NodeId {
