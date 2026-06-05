@@ -895,9 +895,11 @@ row reaches `precbp10000`, `r2`, `c14`, at 1.47 ms repeated and 1.48 ms
 hot-plan-cache, the negative-evidence current-state row reaches `curbp10000`,
 `r2`, `c13`, at 1.47 ms repeated and 1.46 ms hot-plan-cache, and the GQL
 batched expansion row reaches `precbp10000`, `r2`, `c16`, at 660.94 µs. The
-conservative cached r60/w40 mixed cycle is 12.52 ms on the same
-4096-dimensional row. It stays opt-in for now so default local oMLX rows remain
-short and comparable to the earlier two-model baseline.
+new batched current-state row reaches `curbp10000`, `r2`, `c13`, at 719.86 µs,
+and the batched provenance-state row reaches the same `curbp10000` / `c13`
+shape at 707.24 µs. The conservative cached r60/w40 mixed cycle is 12.52 ms on
+the same 4096-dimensional row. It stays opt-in for now so default local oMLX
+rows remain short and comparable to the earlier two-model baseline.
 
 The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
 `/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it
