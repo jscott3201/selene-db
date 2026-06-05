@@ -118,7 +118,7 @@ impl ExprTypeTable {
 /// The shape key is a span + a structural fingerprint (content dedup: two
 /// `ValueExpr`s with identical structure but different spans get different
 /// keys, and the span disambiguates synthetic default-arg literals that reuse
-/// a call's span — see [`ExprKey`]).
+/// a call's span — see `ExprKey`).
 ///
 /// Parent fingerprinting folds each child's fingerprint rather than re-hashing
 /// the child's raw bytes; a memo created fresh **per `insert` call** caches the

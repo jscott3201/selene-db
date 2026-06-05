@@ -11,18 +11,18 @@ fn name(segments: &[&str]) -> Vec<IStr> {
 }
 
 #[test]
-fn registers_all_forty_one_procedures() {
+fn registers_all_forty_two_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        41,
-        "expected 19 algo procedures + 22 platform built-ins"
+        42,
+        "expected 19 algo procedures + 23 platform built-ins"
     );
 }
 
 #[test]
-fn iter_handles_yields_all_twenty_two_platform_builtins() {
+fn iter_handles_yields_all_twenty_three_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -44,6 +44,7 @@ fn iter_handles_yields_all_twenty_two_platform_builtins() {
         ["selene", "vector_score_nodes_batch"],
         ["selene", "vector_score_neighbors"],
         ["selene", "vector_score_neighbors_batch"],
+        ["selene", "vector_score_candidate_state"],
         ["selene", "vector_score_expanded_candidates"],
         ["selene", "vector_score_expanded_candidates_batch"],
         ["selene", "vector_search_nodes_ann"],
@@ -200,6 +201,39 @@ fn vector_score_expanded_candidates_signature_has_root_expansion_args() {
     assert_eq!(parameters[6].ty, crate::GqlType::String);
     assert_eq!(parameters[6].default_doc, Some("squared_euclidean"));
     assert!(parameters[6].default.is_some());
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].name.as_str(), "node_id");
+    assert_eq!(columns[0].ty, crate::GqlType::NodeRef);
+    assert_eq!(columns[1].name.as_str(), "distance");
+    assert_eq!(columns[1].ty, crate::GqlType::Float64);
+}
+
+#[test]
+fn vector_score_candidate_state_signature_has_state_name_arg() {
+    let registry = BuiltinProcedureRegistry::new();
+    let metadata = registry
+        .lookup(&name(&["selene", "vector_score_candidate_state"]))
+        .expect("vector_score_candidate_state resolves");
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 4);
+    assert_eq!(arity.maximum, 5);
+
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters.len(), 5);
+    assert_eq!(parameters[0].name.as_str(), "property");
+    assert_eq!(parameters[0].ty, crate::GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "query");
+    assert_eq!(parameters[1].ty, crate::GqlType::Vector);
+    assert_eq!(parameters[2].name.as_str(), "state_name");
+    assert_eq!(parameters[2].ty, crate::GqlType::String);
+    assert_eq!(parameters[3].name.as_str(), "k");
+    assert_eq!(parameters[3].ty, crate::GqlType::Integer);
+    assert_eq!(parameters[4].name.as_str(), "metric");
+    assert_eq!(parameters[4].ty, crate::GqlType::String);
+    assert_eq!(parameters[4].default_doc, Some("squared_euclidean"));
+    assert!(parameters[4].default.is_some());
 
     let columns = &metadata.output_schema.columns;
     assert_eq!(columns.len(), 2);

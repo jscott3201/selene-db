@@ -69,6 +69,7 @@ fn provider_tracks_label_and_edge_exclusions_through_commits() {
         candidate_nodes(&provider, &name),
         vec![active, stale, unresolved]
     );
+    assert_eq!(provider.generation(), 1);
     assert!(!provider.contains(&name, non_doc));
 
     let (stale_edge, contradiction_edge) = {
@@ -123,8 +124,38 @@ fn provider_can_rebuild_from_existing_graph_snapshot() {
     let provider = MaintainedCandidateStateProvider::from_graph([spec], shared.read().as_ref())
         .expect("provider rebuild succeeds");
 
+    assert_eq!(provider.generation(), shared.read().meta.generation);
     assert_eq!(candidate_nodes(&provider, &name), vec![active]);
     assert!(!provider.contains(&name, stale));
+}
+
+#[test]
+fn provider_generation_checked_candidate_set_rejects_stale_state() {
+    let (spec, name, doc, _, _) = current_spec();
+    let provider = provider_with(spec);
+    let node = NodeId::new(1);
+    provider
+        .on_changes(&[Change::NodeCreated {
+            id: node,
+            labels: LabelSet::single(doc),
+            properties: PropertyMap::new(),
+        }])
+        .expect("change applies");
+
+    let err = provider
+        .candidate_set_at_generation(&name, 1)
+        .expect_err("watermark has not advanced");
+    assert!(matches!(err, ProviderError::Inconsistent { .. }));
+
+    provider.on_commit_applied(1).expect("watermark advances");
+    assert_eq!(
+        provider
+            .candidate_set_at_generation(&name, 1)
+            .expect("generation matches")
+            .expect("set exists")
+            .into_nodes(),
+        vec![node]
+    );
 }
 
 #[test]
@@ -166,9 +197,52 @@ fn provider_snapshot_and_wal_replay_preserve_delete_reverse_state() {
 
     assert!(!recovered.read().is_edge_alive(stale_edge));
     assert_eq!(
+        recovered_provider.generation(),
+        recovered.read().meta.generation
+    );
+    assert_eq!(
         candidate_nodes(&recovered_provider, &name),
         vec![active, stale]
     );
+}
+
+#[test]
+fn recovery_rebuilds_candidate_state_when_snapshot_section_is_absent() {
+    let (spec, name, doc, superseded, _) = current_spec();
+    let shared = SharedGraph::new(GraphId::new(81_007));
+    let (active, stale) = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let active = mutator
+            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+            .unwrap();
+        let stale = mutator
+            .create_node(LabelSet::single(doc), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(superseded, stale, active, PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        (active, stale)
+    };
+
+    let dir = temp_dir("candidate-state-missing-section");
+    write_snapshot(&dir, &shared, 1);
+
+    let recovered_provider = provider_with(spec);
+    let recovered = SharedGraph::recover_with_providers(
+        &dir,
+        GraphId::new(81_007),
+        vec![recovered_provider.clone() as Arc<dyn IndexProvider>],
+    )
+    .unwrap();
+
+    assert_eq!(
+        recovered_provider.generation(),
+        recovered.read().meta.generation
+    );
+    assert_eq!(candidate_nodes(&recovered_provider, &name), vec![active]);
+    assert!(!recovered_provider.contains(&name, stale));
 }
 
 #[test]
@@ -213,6 +287,10 @@ fn provider_wal_replay_expands_declarative_edge_truncate_from_state() {
     .unwrap();
 
     assert!(!recovered.read().is_edge_alive(stale_edge));
+    assert_eq!(
+        recovered_provider.generation(),
+        recovered.read().meta.generation
+    );
     assert_eq!(
         candidate_nodes(&recovered_provider, &name),
         vec![active, stale]
@@ -259,6 +337,10 @@ fn provider_wal_replay_expands_declarative_node_truncate_from_state() {
     assert!(!recovered.read().is_node_alive(active));
     assert!(!recovered.read().is_node_alive(stale));
     assert!(!recovered.read().is_edge_alive(stale_edge));
+    assert_eq!(
+        recovered_provider.generation(),
+        recovered.read().meta.generation
+    );
     assert!(candidate_nodes(&recovered_provider, &name).is_empty());
 }
 
@@ -298,6 +380,7 @@ fn provider_rejects_snapshot_dangling_tracked_edge() {
     let provider = provider_with(spec.clone());
     let snapshot = CandidateStateSnapshot {
         version: SNAPSHOT_VERSION,
+        generation: 7,
         specs: vec![spec],
         node_labels: vec![(NodeId::new(1), LabelSet::single(doc))],
         edges: vec![(

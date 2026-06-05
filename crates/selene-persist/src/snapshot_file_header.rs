@@ -15,7 +15,7 @@ pub const SNAPSHOT_VERSION_MAJOR: u16 = 1;
 /// sections now persist the explicit external `NodeId` / `EdgeId` per row
 /// instead of synthesizing `row + 1`, and recovery places rows positionally so
 /// a future 4b-compacted snapshot (ids != row+1) round-trips. The version gate
-/// ([`SnapshotFileHeader::read_from`]) rejects any mismatch, so pre-STEP-9
+/// (`SnapshotFileHeader::read_from`) rejects any mismatch, so pre-STEP-9
 /// (minor 0) snapshots are cleanly rejected with [`crate::PersistError::UnsupportedVersion`]
 /// — a clean break, not a dual decoder (deferred to 4c per the D14 amendment).
 ///

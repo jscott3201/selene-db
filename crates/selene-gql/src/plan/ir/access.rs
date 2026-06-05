@@ -76,8 +76,8 @@ pub enum IndexKey {
         /// Optional declared parameter type, per BRIEF-137 `$id :: TYPE`.
         ///
         /// Plan-time typed-incompatibility checks consult this; the runtime
-        /// resolver also runs [`crate::runtime::parameter_type::validate_declared_type`]
-        /// against it before the [`IndexKind`] check.
+        /// resolver also validates the declared type against it before the
+        /// [`IndexKind`] check.
         declared_type: Option<GqlType>,
         /// Source span for diagnostics.
         span: SourceSpan,

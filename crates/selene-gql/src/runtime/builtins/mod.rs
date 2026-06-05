@@ -23,6 +23,7 @@
 //!   `selene.vector_score_nodes`, `selene.vector_score_nodes_batch`,
 //!   `selene.vector_score_neighbors`,
 //!   `selene.vector_score_neighbors_batch`,
+//!   `selene.vector_score_candidate_state`,
 //!   `selene.vector_score_expanded_candidates`,
 //!   `selene.vector_score_expanded_candidates_batch`,
 //!   `selene.vector_search_nodes_ann`, `selene.vector_search_nodes_ann_batch`,
@@ -57,6 +58,7 @@ mod meta;
 mod rebuild_vector_indexes;
 mod vector_common;
 mod vector_index_stats;
+mod vector_score_candidate_state;
 mod vector_score_expanded_candidates;
 mod vector_score_expanded_candidates_batch;
 mod vector_score_neighbors;
@@ -102,6 +104,8 @@ pub(super) enum BuiltinKind {
     VectorScoreNeighbors,
     /// `selene.vector_score_neighbors_batch` — batched exact scoring for one-hop graph neighbors.
     VectorScoreNeighborsBatch,
+    /// `selene.vector_score_candidate_state` — exact scoring for maintained candidate state.
+    VectorScoreCandidateState,
     /// `selene.vector_score_expanded_candidates` — exact scoring for graph-expanded candidates.
     VectorScoreExpandedCandidates,
     /// `selene.vector_score_expanded_candidates_batch` — batched graph-expanded scoring.
@@ -147,7 +151,7 @@ pub(super) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(super) const BUILTIN_SPECS: [BuiltinSpec; 22] = [
+pub(super) const BUILTIN_SPECS: [BuiltinSpec; 23] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -269,6 +273,12 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 22] = [
         kind: BuiltinKind::VectorScoreNeighborsBatch,
     },
     BuiltinSpec {
+        name: &["selene", "vector_score_candidate_state"],
+        description: "Score a maintained graph candidate-state set by a vector property.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::VectorScoreCandidateState,
+    },
+    BuiltinSpec {
         name: &["selene", "vector_score_expanded_candidates"],
         description: "Score graph-expanded node candidates by a vector property.",
         since_version: "1.1.0",
@@ -320,6 +330,7 @@ impl BuiltinKind {
             | Self::VectorScoreNodesBatch
             | Self::VectorScoreNeighbors
             | Self::VectorScoreNeighborsBatch
+            | Self::VectorScoreCandidateState
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
             | Self::VectorSearchNodesAnn
@@ -349,6 +360,7 @@ impl BuiltinKind {
             | Self::VectorScoreNodesBatch
             | Self::VectorScoreNeighbors
             | Self::VectorScoreNeighborsBatch
+            | Self::VectorScoreCandidateState
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
             | Self::VectorSearchNodesAnn
@@ -377,6 +389,7 @@ impl BuiltinKind {
             Self::VectorScoreNodesBatch => vector_score_nodes_batch::signature(),
             Self::VectorScoreNeighbors => vector_score_neighbors::signature(),
             Self::VectorScoreNeighborsBatch => vector_score_neighbors_batch::signature(),
+            Self::VectorScoreCandidateState => vector_score_candidate_state::signature(),
             Self::VectorScoreExpandedCandidates => vector_score_expanded_candidates::signature(),
             Self::VectorScoreExpandedCandidatesBatch => {
                 vector_score_expanded_candidates_batch::signature()
@@ -412,6 +425,7 @@ impl BuiltinKind {
             Self::VectorScoreNodesBatch => vector_score_nodes_batch::output_columns(),
             Self::VectorScoreNeighbors => vector_score_neighbors::output_columns(),
             Self::VectorScoreNeighborsBatch => vector_score_neighbors_batch::output_columns(),
+            Self::VectorScoreCandidateState => vector_score_candidate_state::output_columns(),
             Self::VectorScoreExpandedCandidates => {
                 vector_score_expanded_candidates::output_columns()
             }
@@ -460,6 +474,7 @@ impl BuiltinKind {
             Self::VectorScoreNodesBatch => vector_score_nodes_batch::execute(ctx, args),
             Self::VectorScoreNeighbors => vector_score_neighbors::execute(ctx, args),
             Self::VectorScoreNeighborsBatch => vector_score_neighbors_batch::execute(ctx, args),
+            Self::VectorScoreCandidateState => vector_score_candidate_state::execute(ctx, args),
             Self::VectorScoreExpandedCandidates => {
                 vector_score_expanded_candidates::execute(ctx, args)
             }
@@ -512,6 +527,7 @@ impl BuiltinKind {
             | Self::VectorScoreNodesBatch
             | Self::VectorScoreNeighbors
             | Self::VectorScoreNeighborsBatch
+            | Self::VectorScoreCandidateState
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
             | Self::VectorSearchNodesAnn
@@ -551,6 +567,7 @@ impl BuiltinKind {
             | Self::VectorScoreNodesBatch
             | Self::VectorScoreNeighbors
             | Self::VectorScoreNeighborsBatch
+            | Self::VectorScoreCandidateState
             | Self::VectorScoreExpandedCandidates
             | Self::VectorScoreExpandedCandidatesBatch
             | Self::VectorSearchNodesAnn

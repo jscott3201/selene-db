@@ -2,7 +2,7 @@
 //!
 //! # Value coercion
 //!
-//! [`typed_key`] is the single `Value`→`TypedKey` coercion shared by every
+//! `typed_key` is the single `Value`→`TypedKey` coercion shared by every
 //! write-side (`insert`, `remove`) and read/diff-side (`lookup_eq`, the
 //! per-type closures in `lookup_range`, and `values_share_key`) caller. With
 //! the global string interner removed there is one string space, so a `STRING`
@@ -10,7 +10,7 @@
 //! `admit`/`lookup` split (which existed only to handle the now-deleted
 //! `Value::ExternalString` asymmetry) is collapsed to this one fallible
 //! coercion. Kind mismatch (e.g. a `Value::Bool` against any index) and NaN
-//! still raise [`TypedIndexValueError`]; a kind-mismatched read returns `None`
+//! still raise `TypedIndexValueError`; a kind-mismatched read returns `None`
 //! to the caller so it drops to a runtime scan.
 //!
 //! The same collapse is mirrored in [`crate::composite_typed_index`] for

@@ -207,6 +207,7 @@ fn recover_snapshot_only_routes_sections() {
     assert_eq!(outcome.applied_snapshot_seq, 12);
     assert_eq!(outcome.last_wal_seq, 12);
     assert_eq!(outcome.providers_invoked, vec![*b"CORE", *b"DEMO"]);
+    assert_eq!(outcome.snapshot_providers_invoked, vec![*b"CORE", *b"DEMO"]);
     assert_eq!(
         core.events(),
         vec![Event::Section {
@@ -255,6 +256,7 @@ fn recover_wal_only_no_snapshot() {
     let outcome = recover(&dir, &registry(std::slice::from_ref(&core))).unwrap();
     assert_eq!(outcome.applied_snapshot_seq, 0);
     assert_eq!(outcome.last_wal_seq, 3);
+    assert_eq!(outcome.snapshot_providers_invoked, Vec::<[u8; 4]>::new());
     assert_eq!(outcome.wal_changes_applied, 3);
     assert_eq!(
         core.events(),
@@ -283,6 +285,7 @@ fn recover_snapshot_and_wal_streams_only_post_snapshot_changes() {
     let outcome = recover(&dir, &registry(std::slice::from_ref(&core))).unwrap();
     assert_eq!(outcome.applied_snapshot_seq, 100);
     assert_eq!(outcome.last_wal_seq, 103);
+    assert_eq!(outcome.snapshot_providers_invoked, vec![*b"CORE"]);
     assert_eq!(outcome.wal_changes_applied, 3);
     assert_eq!(
         core.events(),
