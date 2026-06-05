@@ -9,6 +9,7 @@ const QUERY_ROOT_TEXT_SCORE_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:Oml
 const QUERY_ROOT_TEXT_SCORE_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) MATCH (root)-[:OmlxSupports]->(candidate:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query_text AS query_text, collect_list(candidate) AS candidates GROUP BY anchor.query_index, anchor.query_text ORDER BY query_index WITH collect_list(query_text) AS queries, collect_list(candidates) AS candidate_sets CALL selene.text_score_nodes_batch('OmlxEmbeddingDoc', 'body', queries, candidate_sets, 4) YIELD query_index, node_id, score RETURN query_index, node_id, score";
 const QUERY_ROOT_CURRENT_STATE_TEXT_SCORE_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query_text AS query_text, collect_list(root) AS roots GROUP BY anchor.query_index, anchor.query_text ORDER BY query_index WITH collect_list(query_text) AS queries, collect_list(roots) AS root_sets CALL selene.text_score_candidate_state_expanded_batch('OmlxEmbeddingDoc', 'body', queries, 'omlx_current_support_facts', root_sets, 'OmlxSupports', 4) YIELD query_index, node_id, score RETURN query_index, node_id, score";
 const QUERY_ROOT_CURRENT_STATE_TEXT_VECTOR_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query AS vector_query, anchor.query_text AS text_query, collect_list(root) AS roots GROUP BY anchor.query_index, anchor.query, anchor.query_text ORDER BY query_index WITH collect_list(vector_query) AS vector_queries, collect_list(text_query) AS text_queries, collect_list(roots) AS root_sets CALL selene.text_score_candidate_state_expanded_batch('OmlxEmbeddingDoc', 'body', text_queries, 'omlx_current_support_facts', root_sets, 'OmlxSupports', 4) YIELD query_index, node_id, score WITH vector_queries, query_index, collect_list(node_id) AS candidates GROUP BY vector_queries, query_index ORDER BY query_index WITH vector_queries, collect_list(candidates) AS candidate_sets CALL selene.vector_score_nodes_batch('embedding', vector_queries, candidate_sets, 4, 'cosine') YIELD query_index, node_id, distance RETURN query_index, node_id, distance";
+const QUERY_ROOT_VECTOR_TEXT_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query AS vector_query, anchor.query_text AS text_query, collect_list(root) AS roots GROUP BY anchor.query_index, anchor.query, anchor.query_text ORDER BY query_index WITH collect_list(vector_query) AS vector_queries, collect_list(text_query) AS text_queries, collect_list(roots) AS root_sets CALL selene.vector_score_expanded_candidates_batch('embedding', vector_queries, root_sets, 'OmlxSupports', 4, 'outgoing', 'cosine') YIELD query_index, node_id, distance WITH text_queries, query_index, collect_list(node_id) AS candidates GROUP BY text_queries, query_index ORDER BY query_index WITH text_queries, collect_list(candidates) AS candidate_sets CALL selene.text_score_nodes_batch('OmlxEmbeddingDoc', 'body', text_queries, candidate_sets, 4) YIELD query_index, node_id, score RETURN query_index, node_id, score";
 
 impl OmlxGqlQueryRootFixture {
     pub(crate) fn warm_query_root_text_score_cache(
@@ -41,6 +42,14 @@ impl OmlxGqlQueryRootFixture {
         cache: Arc<CallPlanCache>,
     ) {
         self.execute_current_state_text_vector_batch_query(registry, Some(cache));
+    }
+
+    pub(crate) fn warm_query_root_vector_text_batch_cache(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Arc<CallPlanCache>,
+    ) {
+        self.execute_vector_text_batch_query(registry, Some(cache));
     }
 
     pub(crate) fn warm_query_root_text_score_session(
@@ -236,6 +245,39 @@ impl OmlxGqlQueryRootFixture {
         self.target_hit_basis_points(self.batch_target_hit_count(&table))
     }
 
+    pub(crate) fn gql_vector_text_batch_precision_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        let table = self.execute_vector_text_batch_query(registry, cache);
+        precision_basis_points(
+            self.text_score_batch_precision(&table),
+            self.query_count() * TOP_K,
+        )
+    }
+
+    pub(crate) fn gql_vector_text_batch_current_precision_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        let table = self.execute_vector_text_batch_query(registry, cache);
+        precision_basis_points(
+            self.text_score_batch_current_precision(&table),
+            self.query_count() * TOP_K,
+        )
+    }
+
+    pub(crate) fn gql_vector_text_batch_target_hit_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> Option<usize> {
+        let table = self.execute_vector_text_batch_query(registry, cache);
+        self.target_hit_basis_points(self.batch_target_hit_count(&table))
+    }
+
     pub(crate) fn execute_text_score_batch_query(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -284,6 +326,24 @@ impl OmlxGqlQueryRootFixture {
         match session
             .execute_source(QUERY_ROOT_CURRENT_STATE_TEXT_VECTOR_BATCH_SOURCE, registry)
             .expect("oMLX GQL current-state text/vector procedure executes")
+        {
+            StatementOutput::Rows(table) => table,
+            other => panic!("unexpected output: {other:?}"),
+        }
+    }
+
+    pub(crate) fn execute_vector_text_batch_query(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> BindingTable {
+        let mut session = Session::new(&self.graph);
+        if let Some(cache) = cache {
+            session = session.with_call_plan_cache(cache);
+        }
+        match session
+            .execute_source(QUERY_ROOT_VECTOR_TEXT_BATCH_SOURCE, registry)
+            .expect("oMLX GQL vector/text procedure executes")
         {
             StatementOutput::Rows(table) => table,
             other => panic!("unexpected output: {other:?}"),
