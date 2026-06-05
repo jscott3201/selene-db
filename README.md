@@ -126,6 +126,7 @@ CALL selene.create_text_index(...)
 CALL selene.text_search_nodes(...)
 CALL selene.text_score_nodes(...)
 CALL selene.text_score_nodes_batch(...)
+CALL selene.text_score_candidate_state_expanded_batch(...)
 CALL algo.pagerank(...)
 ```
 
@@ -158,6 +159,7 @@ which makes it useful for hybrid retrieval:
 - BM25 over a whole label/property corpus;
 - BM25 rerank over graph-expanded or vector-derived candidates;
 - batched BM25 rerank over per-query candidate sets;
+- maintained-state plus graph-expanded BM25 batch scoring;
 - vector rerank over BM25 roots;
 - graph algorithms as priors or rerank features for retrieval experiments.
 

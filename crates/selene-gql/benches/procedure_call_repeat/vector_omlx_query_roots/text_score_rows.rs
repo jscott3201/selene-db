@@ -20,8 +20,14 @@ pub(super) fn bench_text_score_rows(
 ) {
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let current_state_batch_cache =
+        Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     fixture.warm_query_root_text_score_cache(registry, Arc::clone(&cache));
     fixture.warm_query_root_text_score_batch_cache(registry, Arc::clone(&batch_cache));
+    fixture.warm_query_root_current_state_text_score_batch_cache(
+        registry,
+        Arc::clone(&current_state_batch_cache),
+    );
     let quality = TextScoreQuality {
         precision: fixture
             .gql_text_score_precision_basis_points(registry, Some(Arc::clone(&cache))),
@@ -35,6 +41,17 @@ pub(super) fn bench_text_score_rows(
             registry,
             Some(Arc::clone(&batch_cache)),
         ),
+    };
+    let current_state_batch_quality = TextScoreQuality {
+        precision: fixture.gql_current_state_text_score_batch_precision_basis_points(
+            registry,
+            Some(Arc::clone(&current_state_batch_cache)),
+        ),
+        current_precision: fixture
+            .gql_current_state_text_score_batch_current_precision_basis_points(
+                registry,
+                Some(Arc::clone(&current_state_batch_cache)),
+            ),
     };
     let mut plan_session = fixture.reusable_plan_cache_session();
     fixture.warm_query_root_text_score_session(&mut plan_session, registry);
@@ -56,6 +73,15 @@ pub(super) fn bench_text_score_rows(
         batch_quality,
         batch_cache,
     );
+    bench_current_state_batch(
+        group,
+        registry,
+        fixture,
+        model_id,
+        corpus_label,
+        current_state_batch_quality,
+        current_state_batch_cache,
+    );
     bench_plan_cache_session(
         group,
         registry,
@@ -64,6 +90,41 @@ pub(super) fn bench_text_score_rows(
         corpus_label,
         quality,
         plan_session,
+    );
+}
+
+fn bench_current_state_batch(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    registry: &BuiltinProcedureRegistry,
+    fixture: &OmlxGqlQueryRootFixture,
+    model_id: &str,
+    corpus_label: &str,
+    quality: TextScoreQuality,
+    cache: Arc<CallPlanCache>,
+) {
+    group.bench_function(
+        BenchmarkId::new(
+            "shared_cache_query_root_current_state_text_score_batch",
+            row_label_with_candidate_count(
+                fixture,
+                model_id,
+                corpus_label,
+                quality,
+                fixture.first_query_current_state_intersection_count(),
+            ),
+        ),
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(
+                    fixture
+                        .execute_current_state_text_score_batch_query(
+                            registry,
+                            Some(Arc::clone(&cache)),
+                        )
+                        .row_count(),
+                );
+            });
+        },
     );
 }
 
@@ -147,6 +208,22 @@ fn row_label(
     corpus_label: &str,
     quality: TextScoreQuality,
 ) -> String {
+    row_label_with_candidate_count(
+        fixture,
+        model_id,
+        corpus_label,
+        quality,
+        fixture.first_query_expanded_count(),
+    )
+}
+
+fn row_label_with_candidate_count(
+    fixture: &OmlxGqlQueryRootFixture,
+    model_id: &str,
+    corpus_label: &str,
+    quality: TextScoreQuality,
+    candidate_count: usize,
+) -> String {
     format!(
         "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}_curbp{}",
         model_id,
@@ -154,7 +231,7 @@ fn row_label(
         fixture.query_count(),
         TOP_K,
         fixture.first_query_root_count(),
-        fixture.first_query_expanded_count(),
+        candidate_count,
         fixture.dimension,
         quality.precision,
         quality.current_precision,

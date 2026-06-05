@@ -94,6 +94,8 @@ pub(in crate::runtime) enum BuiltinKind {
     TextScoreNodes,
     /// `selene.text_score_nodes_batch` — batched BM25 scoring for explicit node candidates.
     TextScoreNodesBatch,
+    /// `selene.text_score_candidate_state_expanded_batch` — batched BM25 scoring for maintained state composed with expanded roots.
+    TextScoreCandidateStateExpandedBatch,
 }
 
 impl BuiltinKind {
@@ -150,7 +152,8 @@ impl BuiltinKind {
             | Self::TextIndexStats
             | Self::TextSearchNodes
             | Self::TextScoreNodes
-            | Self::TextScoreNodesBatch => ProcedureTier::Graph,
+            | Self::TextScoreNodesBatch
+            | Self::TextScoreCandidateStateExpandedBatch => ProcedureTier::Graph,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 ProcedureTier::Maintenance
             }
@@ -191,7 +194,8 @@ impl BuiltinKind {
             | Self::TextIndexStats
             | Self::TextSearchNodes
             | Self::TextScoreNodes
-            | Self::TextScoreNodesBatch => ProcedureMutability::Read,
+            | Self::TextScoreNodesBatch
+            | Self::TextScoreCandidateStateExpandedBatch => ProcedureMutability::Read,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 ProcedureMutability::MaintenanceWrite
             }
@@ -254,6 +258,9 @@ impl BuiltinKind {
             Self::TextSearchNodes => text_search::signature(),
             Self::TextScoreNodes => text_search::score_signature(),
             Self::TextScoreNodesBatch => text_search::score_batch_signature(),
+            Self::TextScoreCandidateStateExpandedBatch => {
+                text_search::score_state_expanded_batch_signature()
+            }
         }
     }
 
@@ -308,7 +315,9 @@ impl BuiltinKind {
             Self::CreateTextIndex => create_text_index::output_columns(),
             Self::DropTextIndex => drop_text_index::output_columns(),
             Self::TextSearchNodes | Self::TextScoreNodes => text_search::output_columns(),
-            Self::TextScoreNodesBatch => text_search::score_batch_output_columns(),
+            Self::TextScoreNodesBatch | Self::TextScoreCandidateStateExpandedBatch => {
+                text_search::score_batch_output_columns()
+            }
         }
     }
 
@@ -368,6 +377,9 @@ impl BuiltinKind {
             Self::TextSearchNodes => text_search::execute(ctx, args),
             Self::TextScoreNodes => text_search::execute_score(ctx, args),
             Self::TextScoreNodesBatch => text_search::execute_score_batch(ctx, args),
+            Self::TextScoreCandidateStateExpandedBatch => {
+                text_search::execute_score_state_expanded_batch(ctx, args)
+            }
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
@@ -425,7 +437,8 @@ impl BuiltinKind {
             | Self::TextIndexStats
             | Self::TextSearchNodes
             | Self::TextScoreNodes
-            | Self::TextScoreNodesBatch => Err(ProcedureError::TierMismatch {
+            | Self::TextScoreNodesBatch
+            | Self::TextScoreCandidateStateExpandedBatch => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Mutation,
             }),
@@ -474,7 +487,8 @@ impl BuiltinKind {
             | Self::TextIndexStats
             | Self::TextSearchNodes
             | Self::TextScoreNodes
-            | Self::TextScoreNodesBatch => Err(ProcedureError::TierMismatch {
+            | Self::TextScoreNodesBatch
+            | Self::TextScoreCandidateStateExpandedBatch => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Maintenance,
             }),
