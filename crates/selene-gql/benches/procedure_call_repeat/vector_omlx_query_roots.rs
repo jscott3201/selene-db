@@ -2,7 +2,7 @@ use std::{hint::black_box, num::NonZeroUsize, sync::Arc};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use selene_gql::{BuiltinProcedureRegistry, CallPlanCache};
-use selene_testing::local_omlx::{CorpusProfile, OmlxClient};
+use selene_testing::local_omlx::EmbeddingBenchConfig;
 
 #[path = "vector_omlx_query_roots/fixture.rs"]
 mod fixture;
@@ -16,35 +16,20 @@ mod text_score_rows;
 use fixture::{OmlxGqlQueryRootFixture, TOP_K};
 use labels::{append_target_hit, corpus_label, model_id};
 
-const ENABLE_ENV: &str = "SELENE_OMLX_EMBEDDING_BENCH";
-const API_KEY_ENVS: &[&str] = &["SELENE_OMLX_API_KEY", "OMLX_KEY"];
-const BASE_URL_ENV: &str = "SELENE_OMLX_BASE_URL";
-const MODELS_ENV: &str = "SELENE_OMLX_EMBEDDING_MODELS";
-const CORPUS_ENV: &str = "SELENE_OMLX_CORPUS";
-const BATCH_SIZE_ENV: &str = "SELENE_OMLX_EMBEDDING_BATCH_SIZE";
-const GRAPH_HINT_DOCS_PER_TOPIC_ENV: &str = "SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC";
-const DEFAULT_BASE_URL: &str = "http://127.0.0.1:7700/v1";
-const DEFAULT_MODELS: &[&str] = &[
-    "Qwen3-Embedding-0.6B-4bit-DWQ",
-    "Qwen3-Embedding-4B-4bit-DWQ",
-];
-const DEFAULT_EMBEDDING_BATCH_SIZE: usize = 64;
-
 pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
-    let Some(config) = OmlxBenchConfig::from_env() else {
+    let Some(config) = EmbeddingBenchConfig::from_env() else {
         return;
     };
-    let client = OmlxClient::new(config.base_url, config.api_key, config.batch_size);
     let inputs = config.corpus.inputs();
     let registry = BuiltinProcedureRegistry::new();
     let mut group = c.benchmark_group("procedure_vector_omlx_query_roots");
-    for model in config.models {
-        let model_id = model_id(&model);
-        let vectors = client
-            .embed(&model, &inputs)
-            .expect("local oMLX embedding request succeeds");
+    for model in &config.models {
+        let model_id = model_id(model);
+        let vectors = config
+            .embed(model, &inputs)
+            .expect("embedding request succeeds");
         let fixture = OmlxGqlQueryRootFixture::build(
-            &model,
+            model,
             &inputs,
             vectors,
             config.graph_hint_docs_per_topic,
@@ -603,76 +588,4 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         );
     }
     group.finish();
-}
-
-struct OmlxBenchConfig {
-    base_url: String,
-    api_key: String,
-    models: Vec<String>,
-    corpus: CorpusProfile,
-    batch_size: usize,
-    graph_hint_docs_per_topic: Option<usize>,
-}
-
-impl OmlxBenchConfig {
-    fn from_env() -> Option<Self> {
-        if std::env::var(ENABLE_ENV).ok().as_deref() != Some("1") {
-            return None;
-        }
-        let api_key = API_KEY_ENVS
-            .iter()
-            .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
-            .expect("SELENE_OMLX_API_KEY or OMLX_KEY must be set for local oMLX benches");
-        let base_url = std::env::var(BASE_URL_ENV).unwrap_or_else(|_| DEFAULT_BASE_URL.to_owned());
-        let models = std::env::var(MODELS_ENV)
-            .ok()
-            .map(|raw| {
-                raw.split(',')
-                    .map(str::trim)
-                    .filter(|part| !part.is_empty())
-                    .map(ToOwned::to_owned)
-                    .collect::<Vec<_>>()
-            })
-            .filter(|models| !models.is_empty())
-            .unwrap_or_else(|| {
-                DEFAULT_MODELS
-                    .iter()
-                    .map(|model| (*model).to_owned())
-                    .collect()
-            });
-        Some(Self {
-            base_url,
-            api_key,
-            models,
-            corpus: CorpusProfile::from_env(CORPUS_ENV),
-            batch_size: embedding_batch_size(),
-            graph_hint_docs_per_topic: graph_hint_docs_per_topic(),
-        })
-    }
-}
-
-fn embedding_batch_size() -> usize {
-    std::env::var(BATCH_SIZE_ENV)
-        .ok()
-        .map(|raw| {
-            let batch_size = raw
-                .parse::<usize>()
-                .expect("SELENE_OMLX_EMBEDDING_BATCH_SIZE must be a positive integer");
-            assert!(
-                batch_size > 0,
-                "SELENE_OMLX_EMBEDDING_BATCH_SIZE must be greater than zero"
-            );
-            batch_size
-        })
-        .unwrap_or(DEFAULT_EMBEDDING_BATCH_SIZE)
-}
-
-fn graph_hint_docs_per_topic() -> Option<usize> {
-    std::env::var(GRAPH_HINT_DOCS_PER_TOPIC_ENV)
-        .ok()
-        .filter(|raw| !raw.is_empty())
-        .map(|raw| {
-            raw.parse::<usize>()
-                .expect("SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC must be a non-negative integer")
-        })
 }

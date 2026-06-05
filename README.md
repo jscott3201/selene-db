@@ -40,7 +40,7 @@ There is no umbrella facade crate. Use the layers directly.
 | [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, retention pruning, and audit log files. It stays below graph semantics. |
 | [`selene-algorithms`](crates/selene-algorithms) | Native graph algorithms, projection catalogs, free functions, and the `GraphAlgorithms` convenience trait. |
 | [`selene-gql`](crates/selene-gql) | GQL grammar, AST, analysis, planning, optimization, execution, procedure traits, and the built-in procedure registry. |
-| [`selene-testing`](crates/selene-testing) | Test fixtures, graph generators, benchmark corpora, local oMLX embedding helpers, and snapshot-harness utilities. |
+| [`selene-testing`](crates/selene-testing) | Test fixtures, graph generators, benchmark corpora, opt-in local/remote embedding helpers, and snapshot-harness utilities. |
 
 The intended dependency direction is:
 
@@ -300,14 +300,14 @@ scripts/run-benches.sh --profile quick --bench text_search_bm25
 scripts/run-benches.sh --bench vector_index_rebuild --allocator system
 ```
 
-Local oMLX embedding rows are opt-in and require an ignored `.env` file plus a
-local OpenAI-compatible embedding endpoint:
+Local embedding rows are opt-in and require an ignored `.env` file plus either
+a local OpenAI-compatible oMLX endpoint or an OpenRouter embedding key:
 
 ```bash
 set -a; source .env; set +a
-SELENE_OMLX_EMBEDDING_BENCH=1 \
-SELENE_OMLX_CORPUS=scaled_ambiguous_memory \
-SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_CORPUS=scaled_ambiguous_memory \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter query_root
 ```
 

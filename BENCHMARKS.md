@@ -754,19 +754,31 @@ ANN or compressed pre-scoring.
 | `graph_vector_retrieval/graph_expand_pagerank/...covbp9435_curbp4838_precbp9516` | 358.0 µs | 794.8 µs (`covbp8203_curbp4335_precbp8828`) | PageRank on top of raw expansion adds cost without current-valid uplift on this fixture; keep as a guardrail before promoting algorithm-prior policies. |
 | `graph_vector_retrieval/exact_graph_oracle/...covbp10000_curbp10000_precbp10000` | 1.414 ms | 22.2 ms | Exact vector search plus validity-aware expansion reaches the fixture oracle, but it is far slower at 10k and only suitable as a research bound. |
 
-Local-only oMLX embedding rows are disabled unless
-`SELENE_OMLX_EMBEDDING_BENCH=1` is set. They call the developer's localhost
-OpenAI-compatible endpoint and therefore are **not** expected to run in CI.
-Use the ignored `.env` key only through the shell environment; do not commit or
-print it:
+Local-only embedding rows are disabled unless `SELENE_EMBEDDING_BENCH=1` (or
+the legacy `SELENE_OMLX_EMBEDDING_BENCH=1`) is set. They call the developer's
+local oMLX OpenAI-compatible endpoint by default, or OpenRouter when
+`SELENE_EMBEDDING_PROVIDER=openrouter` is set, and therefore are **not**
+expected to run in CI. Use ignored `.env` keys only through the shell
+environment; do not commit or print them:
 
 ```bash
 set -a; source .env; set +a
-SELENE_OMLX_EMBEDDING_BENCH=1 \
-SELENE_OMLX_CORPUS=tiny \
-SELENE_OMLX_EMBEDDING_BATCH_SIZE=64 \
-SELENE_OMLX_EMBEDDING_MODELS=Qwen3-Embedding-0.6B-4bit-DWQ,Qwen3-Embedding-4B-4bit-DWQ \
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_CORPUS=tiny \
+SELENE_EMBEDDING_BATCH_SIZE=64 \
+SELENE_EMBEDDING_MODELS=Qwen3-Embedding-0.6B-4bit-DWQ,Qwen3-Embedding-4B-4bit-DWQ \
 scripts/run-benches.sh --profile quick --bench vector_graph_retrieval --filter graph_vector_omlx_embedding_pressure --vector-scales 1000
+```
+
+OpenRouter Codestral Embed rows use the same corpora and benchmark surfaces:
+
+```bash
+set -a; source .env; set +a
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_PROVIDER=openrouter \
+SELENE_EMBEDDING_CORPUS=code_alias_memory \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter query_root_current_state_intersection_batch
 ```
 
 The GQL query-root rows use the same local oMLX corpus but exercise the full
@@ -806,17 +818,17 @@ full 16-query profile; the current/provenance vector rows call
 graph-expanded roots, and exact rerank stay inside one procedure boundary:
 
 ```bash
-SELENE_OMLX_EMBEDDING_BENCH=1 \
-SELENE_OMLX_CORPUS=scaled_ambiguous_memory \
-SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_CORPUS=scaled_ambiguous_memory \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_vector_omlx_query_roots
 ```
 
-Embedding requests are chunked by `SELENE_OMLX_EMBEDDING_BATCH_SIZE` (default:
-64, matching the current local oMLX embedding setting). Profiles above that
-size preserve input order across multiple POSTs and fail if any response chunk
-does not return exactly one vector per input.
-`SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=N` caps graph-authored topic labels and
+Embedding requests are chunked by `SELENE_EMBEDDING_BATCH_SIZE` (or legacy
+`SELENE_OMLX_EMBEDDING_BATCH_SIZE`; default: 64). Profiles above that size
+preserve input order across multiple POSTs and fail if any response chunk does
+not return exactly one vector per input.
+`SELENE_GRAPH_HINT_DOCS_PER_TOPIC=N` caps graph-authored topic labels and
 `OmlxDependsOn` edges to the first `N` same-topic documents per topic; unset
 means every same-topic document receives graph hints. The partial-hint fixture
 also adds `OmlxSupports` edges from graph-hint documents to same-topic support
@@ -906,6 +918,8 @@ retrieved, not only whether the result was in the right broad topic:
 | `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_current_state_text_vector_batch/...q8_k4_r2_c6...precbp5000_curbp5000_hitbp8750` | 553.96 µs | 1.0504 ms | Exact vector rerank after the same BM25/state candidate producer does not improve target hits on this profile and adds dimension-sensitive cost. |
 | `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_expansion_batch/...q8_k4_r2_c9...precbp10000_hitbp8750` | 178.74 µs | 257.01 µs | Plain graph-expanded vector scoring is faster than maintained-state vector scoring, but it still misses one expected target and does not apply the current-state gate. |
 | `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_current_state_intersection_batch/...q8_k4_r2_c6...basecurbp8125_curbp10000_hitbp10000` | 210.17 µs | 287.61 µs | Batched graph-root vector scoring through maintained current state recovers all expected code/alias targets. This is slower than BM25/state but fixes the missing-target case without adding a fusion API. |
+| `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_expansion_batch/...q8_k4_r2_c9...dim1536_precbp10000_hitbp8750` | 211.05 µs | - | OpenRouter Codestral Embed 2505 through the same code-alias corpus. Plain graph-expanded vector scoring again misses one expected target. |
+| `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_current_state_intersection_batch/...q8_k4_r2_c6...dim1536_basecurbp7812_curbp10000_hitbp10000` | 211.95 µs | - | Maintained current-state vector scoring recovers all expected code-alias targets with effectively the same latency as plain expansion on this profile. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
@@ -950,6 +964,15 @@ the batched provenance-state row reaches the same
 cycle is 12.52 ms on the same 4096-dimensional row. It stays opt-in for now so
 default local oMLX rows remain short and comparable to the earlier two-model
 baseline.
+
+OpenRouter `mistralai/codestral-embed-2505` is available through
+`SELENE_EMBEDDING_PROVIDER=openrouter` and returns 1536-dimensional vectors. On
+the same target-aware `code_alias_memory` profile, the plain graph-expanded
+batch row reaches `precbp10000` / `hitbp8750`, `r2`, `c9`, at 211.05 us, while
+the maintained current-state vector batch reaches `hitbp10000`,
+`basecurbp7812` / `curbp10000`, `r2`, `c6`, at 211.95 us. This keeps the
+current-state conclusion intact for the code-specialized embedding model:
+state composition, not model choice alone, recovers the missing target.
 
 The locally listed `jina-code-embeddings-1.5b-mlx` model is not currently
 available from `/v1/embeddings` in oMLX; the endpoint returns HTTP 400 and
