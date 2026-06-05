@@ -23,6 +23,7 @@ pub(super) fn corpus_label(corpus: CorpusProfile) -> &'static str {
         CorpusProfile::CodeAliasWideMemory => "code_alias_wide_memory",
         CorpusProfile::ProjectCodeMemory => "project_code_memory",
         CorpusProfile::ProjectCodeAliasMemory => "project_code_alias_memory",
+        CorpusProfile::ProjectSourceCodeMemory => "project_source_code_memory",
     }
 }
 
