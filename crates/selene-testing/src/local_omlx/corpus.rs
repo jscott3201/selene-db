@@ -1,10 +1,10 @@
-//! Reusable local corpora for oMLX embedding benchmark rows.
+//! Reusable corpora for opt-in embedding benchmark rows.
 
 use selene_core::{IStr, intern};
 
 mod code_alias;
 
-/// Corpus size and ambiguity profile for local oMLX embedding benchmarks.
+/// Corpus size and ambiguity profile for local embedding benchmarks.
 #[derive(Clone, Copy)]
 pub enum CorpusProfile {
     /// Four documents per topic plus one query per topic.
@@ -22,15 +22,21 @@ pub enum CorpusProfile {
 impl CorpusProfile {
     /// Resolve a profile from `env_name`, defaulting to [`Self::Tiny`].
     pub fn from_env(env_name: &str) -> Self {
-        match std::env::var(env_name).ok().as_deref() {
-            None | Some("") | Some("tiny") => Self::Tiny,
-            Some("agent_memory") | Some("memory") => Self::AgentMemory,
-            Some("ambiguous_memory") | Some("ambiguous") => Self::AmbiguousMemory,
-            Some("scaled_ambiguous_memory") | Some("scaled_ambiguous") => {
-                Self::ScaledAmbiguousMemory
-            }
-            Some("code_alias_memory") | Some("code_alias") => Self::CodeAliasMemory,
-            Some(other) => panic!("unsupported SELENE_OMLX_CORPUS value: {other}"),
+        std::env::var(env_name)
+            .ok()
+            .as_deref()
+            .map_or(Self::Tiny, Self::from_value)
+    }
+
+    /// Resolve a profile from an environment value.
+    pub fn from_value(value: &str) -> Self {
+        match value {
+            "" | "tiny" => Self::Tiny,
+            "agent_memory" | "memory" => Self::AgentMemory,
+            "ambiguous_memory" | "ambiguous" => Self::AmbiguousMemory,
+            "scaled_ambiguous_memory" | "scaled_ambiguous" => Self::ScaledAmbiguousMemory,
+            "code_alias_memory" | "code_alias" => Self::CodeAliasMemory,
+            other => panic!("unsupported embedding corpus value: {other}"),
         }
     }
 
@@ -83,7 +89,7 @@ pub fn topic_label(topic: Topic) -> IStr {
 }
 
 fn istr(value: &str) -> IStr {
-    intern(value).expect("local oMLX fixture strings fit the interner")
+    intern(value).expect("local embedding fixture strings fit the interner")
 }
 
 fn tiny_inputs() -> Vec<CorpusInput> {
@@ -445,6 +451,22 @@ mod tests {
                 .iter()
                 .all(|target| document_keys.contains(target))
         );
+    }
+
+    #[test]
+    fn parses_corpus_profile_values() {
+        assert!(matches!(
+            CorpusProfile::from_value("tiny"),
+            CorpusProfile::Tiny
+        ));
+        assert!(matches!(
+            CorpusProfile::from_value("code_alias"),
+            CorpusProfile::CodeAliasMemory
+        ));
+        assert!(matches!(
+            CorpusProfile::from_value("scaled_ambiguous_memory"),
+            CorpusProfile::ScaledAmbiguousMemory
+        ));
     }
 
     #[test]

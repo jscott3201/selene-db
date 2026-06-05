@@ -1,12 +1,69 @@
-//! Minimal local HTTP client for oMLX embedding benchmarks.
+//! Minimal embedding clients for opt-in benchmark setup.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use selene_core::VectorValue;
 
 use super::corpus::CorpusInput;
+
+/// Embedding provider used by opt-in benchmark helpers.
+#[derive(Clone, Copy)]
+pub enum EmbeddingProvider {
+    /// Local oMLX OpenAI-compatible HTTP endpoint.
+    Omlx,
+    /// OpenRouter HTTPS embeddings endpoint.
+    OpenRouter,
+}
+
+impl EmbeddingProvider {
+    /// Resolve a provider from `env_name`, defaulting to local oMLX.
+    pub fn from_env(env_name: &str) -> Self {
+        match std::env::var(env_name).ok().as_deref() {
+            None | Some("") | Some("omlx") => Self::Omlx,
+            Some("openrouter") => Self::OpenRouter,
+            Some(other) => panic!("unsupported SELENE_EMBEDDING_PROVIDER value: {other}"),
+        }
+    }
+}
+
+/// Embedding client selected by benchmark configuration.
+pub enum EmbeddingClient {
+    /// Local oMLX client.
+    Omlx(OmlxClient),
+    /// OpenRouter client.
+    OpenRouter(OpenRouterClient),
+}
+
+impl EmbeddingClient {
+    /// Build a local oMLX embedding client.
+    pub fn omlx(base_url: String, api_key: String, batch_size: usize) -> Self {
+        Self::Omlx(OmlxClient::new(base_url, api_key, batch_size))
+    }
+
+    /// Build an OpenRouter embedding client.
+    pub fn openrouter(
+        base_url: String,
+        api_key: String,
+        batch_size: usize,
+        referer: Option<String>,
+        title: Option<String>,
+    ) -> Self {
+        Self::OpenRouter(OpenRouterClient::new(
+            base_url, api_key, batch_size, referer, title,
+        ))
+    }
+
+    /// Embed every corpus input with `model`, preserving input order.
+    pub fn embed(&self, model: &str, inputs: &[CorpusInput]) -> Result<Vec<VectorValue>, String> {
+        match self {
+            Self::Omlx(client) => client.embed(model, inputs),
+            Self::OpenRouter(client) => client.embed(model, inputs),
+        }
+    }
+}
 
 /// Minimal HTTP client for local oMLX embedding endpoints.
 ///
@@ -60,20 +117,135 @@ impl OmlxClient {
         let response = self
             .endpoint
             .post_json("/embeddings", &self.api_key, &body)?;
-        parse_embedding_response(model, inputs.len(), &response)
+        parse_embedding_response("oMLX", model, inputs.len(), &response)
+    }
+}
+
+/// Minimal curl-backed OpenRouter embeddings client.
+///
+/// This is used only by opt-in local benchmark setup before Criterion timing
+/// starts. Using `curl` keeps the benchmark support path dependency-light while
+/// still relying on a mature TLS implementation instead of hand-rolled HTTPS.
+pub struct OpenRouterClient {
+    endpoint: String,
+    api_key: String,
+    batch_size: usize,
+    referer: String,
+    title: String,
+}
+
+impl OpenRouterClient {
+    /// Build an OpenRouter embedding client.
+    pub fn new(
+        base_url: String,
+        api_key: String,
+        batch_size: usize,
+        referer: Option<String>,
+        title: Option<String>,
+    ) -> Self {
+        assert!(
+            batch_size > 0,
+            "OpenRouter embedding batch size must be non-zero"
+        );
+        let endpoint = format!("{}/embeddings", base_url.trim_end_matches('/'));
+        Self {
+            endpoint,
+            api_key,
+            batch_size,
+            referer: referer
+                .unwrap_or_else(|| "https://github.com/jscott3201/selene-db".to_owned()),
+            title: title.unwrap_or_else(|| "selene-db local benchmarks".to_owned()),
+        }
+    }
+
+    /// Embed every corpus input with `model`, preserving input order.
+    pub fn embed(&self, model: &str, inputs: &[CorpusInput]) -> Result<Vec<VectorValue>, String> {
+        let mut vectors = Vec::with_capacity(inputs.len());
+        for chunk in inputs.chunks(self.batch_size) {
+            vectors.extend(self.embed_chunk(model, chunk)?);
+        }
+        if vectors.len() != inputs.len() {
+            return Err(format!(
+                "OpenRouter embedding response for {model} returned {} vectors for {} inputs",
+                vectors.len(),
+                inputs.len()
+            ));
+        }
+        Ok(vectors)
+    }
+
+    fn embed_chunk(&self, model: &str, inputs: &[CorpusInput]) -> Result<Vec<VectorValue>, String> {
+        let body = serde_json::json!({
+            "model": model,
+            "input": inputs.iter().map(|input| input.text).collect::<Vec<_>>(),
+            "encoding_format": "float",
+        })
+        .to_string();
+        let response = self.post_json(&body)?;
+        parse_embedding_response("OpenRouter", model, inputs.len(), &response)
+    }
+
+    fn post_json(&self, body: &str) -> Result<Vec<u8>, String> {
+        let script = r#"curl -sS --fail-with-body --connect-timeout 30 --max-time 180 \
+  -H "Authorization: Bearer ${OPENROUTER_API_KEY:?}" \
+  -H "Content-Type: application/json" \
+  -H "HTTP-Referer: ${SELENE_OPENROUTER_HTTP_REFERER:?}" \
+  -H "X-OpenRouter-Title: ${SELENE_OPENROUTER_TITLE:?}" \
+  --data-binary @- \
+  "${SELENE_OPENROUTER_EMBEDDING_URL:?}""#;
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .env("OPENROUTER_API_KEY", &self.api_key)
+            .env("SELENE_OPENROUTER_HTTP_REFERER", &self.referer)
+            .env("SELENE_OPENROUTER_TITLE", &self.title)
+            .env("SELENE_OPENROUTER_EMBEDDING_URL", &self.endpoint)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("spawn OpenRouter curl request failed: {err}"))?;
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "OpenRouter curl stdin was not piped".to_owned())?
+            .write_all(body.as_bytes())
+            .map_err(|err| format!("write OpenRouter request body failed: {err}"))?;
+        let output = child
+            .wait_with_output()
+            .map_err(|err| format!("wait for OpenRouter curl request failed: {err}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let detail = if stdout.trim().is_empty() {
+                stderr.as_ref()
+            } else {
+                stdout.as_ref()
+            };
+            return Err(format!(
+                "OpenRouter embedding request failed with curl status {}: {}",
+                output
+                    .status
+                    .code()
+                    .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
+                detail.chars().take(240).collect::<String>()
+            ));
+        }
+        Ok(output.stdout)
     }
 }
 
 fn parse_embedding_response(
+    source: &str,
     model: &str,
     expected_count: usize,
     response: &[u8],
 ) -> Result<Vec<VectorValue>, String> {
     let json: serde_json::Value = serde_json::from_slice(response)
-        .map_err(|err| format!("oMLX embedding response is not JSON: {err}"))?;
+        .map_err(|err| format!("{source} embedding response is not JSON: {err}"))?;
     let Some(data) = json.get("data").and_then(|value| value.as_array()) else {
         return Err(format!(
-            "oMLX embedding response for {model} has no data array: {}",
+            "{source} embedding response for {model} has no data array: {}",
             truncate_json(&json)
         ));
     };
@@ -81,7 +253,7 @@ fn parse_embedding_response(
         .iter()
         .map(|item| {
             let Some(values) = item.get("embedding").and_then(|value| value.as_array()) else {
-                return Err("oMLX embedding item has no embedding array".to_owned());
+                return Err(format!("{source} embedding item has no embedding array"));
             };
             let components = values
                 .iter()
@@ -89,16 +261,16 @@ fn parse_embedding_response(
                     value
                         .as_f64()
                         .map(|component| component as f32)
-                        .ok_or_else(|| "oMLX embedding component is not numeric".to_owned())
+                        .ok_or_else(|| format!("{source} embedding component is not numeric"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             VectorValue::new(components)
-                .map_err(|err| format!("oMLX embedding vector failed validation: {err}"))
+                .map_err(|err| format!("{source} embedding vector failed validation: {err}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     if vectors.len() != expected_count {
         return Err(format!(
-            "oMLX embedding response for {model} returned {} vectors for {expected_count} inputs",
+            "{source} embedding response for {model} returned {} vectors for {expected_count} inputs",
             vectors.len()
         ));
     }
@@ -247,4 +419,35 @@ fn find_crlf(bytes: &[u8], start: usize) -> Option<usize> {
 
 fn truncate_json(json: &serde_json::Value) -> String {
     json.to_string().chars().take(240).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_openai_style_embedding_response() {
+        let body = br#"{
+            "data": [
+                {"embedding": [0.25, -1.5]},
+                {"embedding": [2.0, 3.5]}
+            ]
+        }"#;
+
+        let vectors = parse_embedding_response("test", "model", 2, body).expect("response parses");
+
+        assert_eq!(vectors.len(), 2);
+        assert_eq!(vectors[0].dimension(), 2);
+        assert_eq!(vectors[0].as_slice(), &[0.25, -1.5]);
+        assert_eq!(vectors[1].as_slice(), &[2.0, 3.5]);
+    }
+
+    #[test]
+    fn rejects_embedding_response_count_mismatch() {
+        let body = br#"{"data": [{"embedding": [1.0]}]}"#;
+
+        let err = parse_embedding_response("test", "model", 2, body).unwrap_err();
+
+        assert!(err.contains("returned 1 vectors for 2 inputs"));
+    }
 }

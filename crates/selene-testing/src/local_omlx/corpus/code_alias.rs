@@ -1,4 +1,4 @@
-//! Target-aware local oMLX corpus for code and symbol alias retrieval rows.
+//! Target-aware local embedding corpus for code and symbol alias retrieval rows.
 
 use super::{CorpusInput, Topic};
 
@@ -143,7 +143,7 @@ pub(super) fn inputs() -> Vec<CorpusInput> {
                     None,
                 ),
                 (
-                    "The oMLX client posts embedding JSON with a blocking TcpStream.",
+                    "The embedding client posts JSON without adding async dependencies.",
                     None,
                 ),
                 (
