@@ -132,7 +132,8 @@ round-trip cost at common embedding dimensions. The `core_vector_distance/*`
 and `core_vector_exact_top_k/*` rows are exact-search oracle baselines for the
 future ANN layer; current kernels use safe `wide::f64x4` accumulation over the
 existing `f64` score semantics, so these rows are the SIMD/Rayon improvement
-tripwire.
+tripwire. The `cosine_omlx_*` exact-top-k rows pin product-shaped local embedding
+dimensions and candidate widths without depending on the localhost oMLX service.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -147,6 +148,9 @@ tripwire.
 | `core_vector_distance/negative_inner_product/128/768/1536` | 15.7 ns / 114.0 ns / 240.6 ns (quick) | Max-inner-product adapter (`-dot`) with lower-is-better ordering; previous `f64x2` row was 21.1 ns / 194 ns / 421 ns. |
 | `core_vector_exact_top_k/squared_euclidean_2048x128_k10` | ~42.0 µs (quick) | Exhaustive exact-search oracle over 2,048 candidates using a bounded max-heap (`O(n log k)`); previous `f64x2` row was 49.4 µs. |
 | `core_vector_exact_top_k/cosine_2048x128_k10` | 54.8 µs (quick) | Bound-query cosine exact top-k over 2,048 candidates; the unbound comparison row is 65.2 µs. |
+| `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x1024_k10` | 12.2 µs / 47.6 µs / 188.3 µs / 750.7 µs (quick) | Product-shaped cosine rerank envelope for the 1024-dim local embedding model. |
+| `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x2560_k10` | 29.6 µs / 116.6 µs / 465.1 µs / 1.856 ms (quick) | Product-shaped cosine rerank envelope for the 2560-dim local embedding model. |
+| `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x4096_k10` | 47.0 µs / 185.5 µs / 739.3 µs / 2.959 ms (quick) | Product-shaped cosine rerank envelope for the 4096-dim local embedding model. |
 
 ## §2 selene-graph — read hot paths
 

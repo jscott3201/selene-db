@@ -25,6 +25,8 @@ const N: usize = 1_024;
 const VECTOR_DIMS: &[usize] = &[128, 768, 1536];
 const EXACT_TOP_K_CANDIDATES: usize = 2_048;
 const EXACT_TOP_K: usize = 10;
+const OMLX_EXACT_TOP_K_DIMS: &[usize] = &[1024, 2560, 4096];
+const OMLX_EXACT_TOP_K_CANDIDATES: &[usize] = &[64, 256, 1024, 4096];
 
 // Profile-aware criterion config WITHOUT a selene-testing dep (that crate
 // depends on selene-core, so importing BenchProfile here would cycle).
@@ -245,6 +247,37 @@ fn bench_vector_exact_top_k(c: &mut Criterion) {
             top_k.into_hits()
         });
     });
+
+    for &dim in OMLX_EXACT_TOP_K_DIMS {
+        let query = VectorValue::new(vector_components_seeded(dim, 0)).expect("query is valid");
+        let max_candidate_count = OMLX_EXACT_TOP_K_CANDIDATES
+            .last()
+            .copied()
+            .expect("candidate widths are non-empty");
+        let candidates: Vec<VectorValue> = (0..max_candidate_count)
+            .map(|idx| {
+                VectorValue::new(vector_components_seeded(dim, idx + 1)).expect("valid vector")
+            })
+            .collect();
+        let candidate_refs: Vec<(usize, &VectorValue)> = candidates.iter().enumerate().collect();
+        for &candidate_count in OMLX_EXACT_TOP_K_CANDIDATES {
+            group.throughput(Throughput::Elements(candidate_count as u64));
+            group.bench_function(format!("cosine_omlx_{candidate_count}x{dim}_k10"), |b| {
+                b.iter(|| {
+                    exact_vector_top_k(
+                        VectorMetric::Cosine,
+                        black_box(&query),
+                        candidate_refs
+                            .iter()
+                            .take(black_box(candidate_count))
+                            .map(|(key, vector)| (black_box(*key), black_box(*vector))),
+                        black_box(EXACT_TOP_K),
+                    )
+                    .expect("all dimensions match")
+                });
+            });
+        }
+    }
 
     group.finish();
 }
