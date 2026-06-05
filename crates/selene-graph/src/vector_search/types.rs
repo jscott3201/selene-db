@@ -40,6 +40,11 @@ impl VectorCandidateSet {
         Self { nodes }
     }
 
+    pub(crate) fn from_canonical_nodes(nodes: Vec<NodeId>) -> Self {
+        debug_assert!(nodes.windows(2).all(|pair| pair[0] < pair[1]));
+        Self { nodes }
+    }
+
     /// Build a canonical candidate set from vector-search hits.
     #[must_use]
     pub fn from_search_hits<I, H>(hits: I) -> Self

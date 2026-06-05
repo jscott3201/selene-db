@@ -182,10 +182,7 @@ impl RecoveryProvider for IndexRecoveryProvider {
     }
 
     fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
-        for change in changes {
-            self.provider.on_change(change).map_err(recovery_error)?;
-        }
-        Ok(())
+        self.provider.on_changes(changes).map_err(recovery_error)
     }
 }
 
