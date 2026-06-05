@@ -653,5 +653,6 @@ fn corpus_label(corpus: CorpusProfile) -> &'static str {
         CorpusProfile::AgentMemory => "agent_memory",
         CorpusProfile::AmbiguousMemory => "ambiguous_memory",
         CorpusProfile::ScaledAmbiguousMemory => "scaled_ambiguous_memory",
+        CorpusProfile::CodeAliasMemory => "code_alias_memory",
     }
 }

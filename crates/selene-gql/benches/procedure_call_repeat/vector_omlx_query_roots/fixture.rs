@@ -5,6 +5,7 @@ use std::{
 };
 
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_gql::BindingTable;
 use selene_graph::{
     CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
 };
@@ -23,6 +24,7 @@ pub(super) struct OmlxGqlQueryRootFixture {
     documents: Vec<DocumentMeta>,
     topics_by_node: HashMap<NodeId, Topic>,
     current_by_node: HashMap<NodeId, bool>,
+    target_by_node: HashMap<NodeId, &'static str>,
     queries: Vec<QueryVector>,
 }
 
@@ -117,6 +119,7 @@ impl OmlxGqlQueryRootFixture {
                         graph_hint,
                         support_fact,
                         current_fact,
+                        target_key: input.target_key,
                     });
                 }
                 for source in documents.iter().filter(|document| document.graph_hint) {
@@ -220,6 +223,7 @@ impl OmlxGqlQueryRootFixture {
                         topic: input.topic,
                         text: input.text,
                         vector,
+                        target_key: input.target_key,
                     }
                 })
             })
@@ -236,12 +240,17 @@ impl OmlxGqlQueryRootFixture {
             .iter()
             .map(|document| (document.node, document.current_fact))
             .collect();
+        let target_by_node = documents
+            .iter()
+            .filter_map(|document| document.target_key.map(|target| (document.node, target)))
+            .collect();
         Self {
             graph,
             dimension,
             documents,
             topics_by_node,
             current_by_node,
+            target_by_node,
             queries,
         }
     }
@@ -305,6 +314,63 @@ impl OmlxGqlQueryRootFixture {
     pub(super) fn first_query_provenance_state_intersection_count(&self) -> usize {
         self.first_query_current_state_intersection_count()
     }
+
+    pub(super) fn target_hit_basis_points(&self, hits: usize) -> Option<usize> {
+        let target_queries = self
+            .queries
+            .iter()
+            .filter(|query| query.target_key.is_some())
+            .count();
+        (target_queries > 0).then(|| basis_points(hits, target_queries))
+    }
+
+    pub(super) fn target_hit_count(&self, query_index: usize, table: &BindingTable) -> usize {
+        let Some(expected) = self
+            .queries
+            .get(query_index)
+            .and_then(|query| query.target_key)
+        else {
+            return 0;
+        };
+        let node_column = table
+            .column_index(istr("node_id"))
+            .expect("node_id column exists");
+        table.iter().any(|row| match row.get(node_column) {
+            Some(Value::NodeRef(node)) => self.target_by_node.get(node) == Some(&expected),
+            _ => false,
+        }) as usize
+    }
+
+    pub(super) fn batch_target_hit_count(&self, table: &BindingTable) -> usize {
+        let query_column = table
+            .column_index(istr("query_index"))
+            .expect("query_index column exists");
+        let node_column = table
+            .column_index(istr("node_id"))
+            .expect("node_id column exists");
+        let mut hits = vec![false; self.queries.len()];
+        for row in table.iter() {
+            let (Some(Value::Uint(query_index)), Some(Value::NodeRef(node))) =
+                (row.get(query_column), row.get(node_column))
+            else {
+                continue;
+            };
+            let Ok(query_index) = usize::try_from(*query_index) else {
+                continue;
+            };
+            let Some(expected) = self
+                .queries
+                .get(query_index)
+                .and_then(|query| query.target_key)
+            else {
+                continue;
+            };
+            if self.target_by_node.get(node) == Some(&expected) {
+                hits[query_index] = true;
+            }
+        }
+        hits.into_iter().filter(|hit| *hit).count()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -314,12 +380,14 @@ struct DocumentMeta {
     graph_hint: bool,
     support_fact: bool,
     current_fact: bool,
+    target_key: Option<&'static str>,
 }
 
 struct QueryVector {
     topic: Topic,
     text: &'static str,
     vector: VectorValue,
+    target_key: Option<&'static str>,
 }
 
 fn graph_id_for_model(model: &str) -> GraphId {
@@ -353,4 +421,11 @@ fn is_negative_evidence_document(text: &str) -> bool {
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("bench string interns")
+}
+
+fn basis_points(numerator: usize, denominator: usize) -> usize {
+    numerator
+        .saturating_mul(10_000)
+        .checked_div(denominator)
+        .unwrap_or(10_000)
 }

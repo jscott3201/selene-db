@@ -2,6 +2,8 @@
 
 use selene_core::{IStr, intern};
 
+mod code_alias;
+
 /// Corpus size and ambiguity profile for local oMLX embedding benchmarks.
 #[derive(Clone, Copy)]
 pub enum CorpusProfile {
@@ -13,6 +15,8 @@ pub enum CorpusProfile {
     AmbiguousMemory,
     /// Combined ambiguous + agent-memory corpus for larger local rows.
     ScaledAmbiguousMemory,
+    /// Code and symbol alias corpus with per-query target facts.
+    CodeAliasMemory,
 }
 
 impl CorpusProfile {
@@ -25,6 +29,7 @@ impl CorpusProfile {
             Some("scaled_ambiguous_memory") | Some("scaled_ambiguous") => {
                 Self::ScaledAmbiguousMemory
             }
+            Some("code_alias_memory") | Some("code_alias") => Self::CodeAliasMemory,
             Some(other) => panic!("unsupported SELENE_OMLX_CORPUS value: {other}"),
         }
     }
@@ -36,6 +41,7 @@ impl CorpusProfile {
             Self::AgentMemory => agent_memory_inputs(),
             Self::AmbiguousMemory => ambiguous_memory_inputs(),
             Self::ScaledAmbiguousMemory => scaled_ambiguous_memory_inputs(),
+            Self::CodeAliasMemory => code_alias::inputs(),
         }
     }
 }
@@ -62,6 +68,8 @@ pub struct CorpusInput {
     pub is_document: bool,
     /// Text submitted to the embedding endpoint.
     pub text: &'static str,
+    /// Optional document key or query target key for target-hit benchmark rows.
+    pub target_key: Option<&'static str>,
 }
 
 /// Return the graph label used for `topic` in benchmark fixtures.
@@ -122,6 +130,7 @@ fn tiny_inputs() -> Vec<CorpusInput> {
             topic,
             is_document: true,
             text,
+            target_key: None,
         }));
     }
     inputs.extend([
@@ -129,21 +138,25 @@ fn tiny_inputs() -> Vec<CorpusInput> {
             topic: Topic::Gql,
             is_document: false,
             text: "How does GQL execute graph pattern matching and procedure calls?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Vector,
             is_document: false,
             text: "Which vector index should rerank embedding candidates in memory?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::AgentMemory,
             is_document: false,
             text: "Find current task memory while ignoring contradicted facts.",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Code,
             is_document: false,
             text: "Where is the Rust batch vector candidate scoring API implemented?",
+            target_key: None,
         },
     ]);
     inputs
@@ -209,6 +222,7 @@ fn agent_memory_inputs() -> Vec<CorpusInput> {
             topic,
             is_document: true,
             text,
+            target_key: None,
         }));
     }
     inputs.extend([
@@ -216,41 +230,49 @@ fn agent_memory_inputs() -> Vec<CorpusInput> {
             topic: Topic::Gql,
             is_document: false,
             text: "How can GQL retrieve active agent memories through graph procedures?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Gql,
             is_document: false,
             text: "Which graph patterns connect a task to supporting memory evidence?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Vector,
             is_document: false,
             text: "How should vector candidates be reranked after graph filtering?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Vector,
             is_document: false,
             text: "When does ANN help compared with exact scoring over graph candidates?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::AgentMemory,
             is_document: false,
             text: "Find current preferences and ignore superseded or contradictory facts.",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::AgentMemory,
             is_document: false,
             text: "Retrieve session-scoped agent memory with provenance and recency hints.",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Code,
             is_document: false,
             text: "Where does the Rust benchmark derive graph candidate sets?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Code,
             is_document: false,
             text: "Which code path converts row indexes back to stable node ids?",
+            target_key: None,
         },
     ]);
     inputs
@@ -316,6 +338,7 @@ fn ambiguous_memory_inputs() -> Vec<CorpusInput> {
             topic,
             is_document: true,
             text,
+            target_key: None,
         }));
     }
     inputs.extend([
@@ -323,41 +346,49 @@ fn ambiguous_memory_inputs() -> Vec<CorpusInput> {
             topic: Topic::Gql,
             is_document: false,
             text: "Which graph query filters current candidate facts before scoring?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Gql,
             is_document: false,
             text: "How does GQL traversal find supporting evidence for a recalled fact?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Vector,
             is_document: false,
             text: "Which embedding search returns semantic candidates before reranking?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Vector,
             is_document: false,
             text: "How can vector ranking retrieve stale facts without graph filtering?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::AgentMemory,
             is_document: false,
             text: "Which memory graph candidates are current for this session request?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::AgentMemory,
             is_document: false,
             text: "How do dependency hints keep recalled agent memories stable?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Code,
             is_document: false,
             text: "Which Rust fixture function scores candidate nodes in a batch?",
+            target_key: None,
         },
         CorpusInput {
             topic: Topic::Code,
             is_document: false,
             text: "How do stable benchmark IDs keep candidate rows comparable?",
+            target_key: None,
         },
     ]);
     inputs
@@ -392,6 +423,28 @@ mod tests {
             + CorpusProfile::AgentMemory.inputs().len();
 
         assert_eq!(scaled.len(), expected);
+    }
+
+    #[test]
+    fn code_alias_profile_targets_existing_documents() {
+        let inputs = CorpusProfile::CodeAliasMemory.inputs();
+        let document_keys = inputs
+            .iter()
+            .filter(|input| input.is_document)
+            .filter_map(|input| input.target_key)
+            .collect::<HashSet<_>>();
+        let query_targets = inputs
+            .iter()
+            .filter(|input| !input.is_document)
+            .map(|input| input.target_key.expect("code alias query has target"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(query_targets.len(), 8);
+        assert!(
+            query_targets
+                .iter()
+                .all(|target| document_keys.contains(target))
+        );
     }
 
     #[test]

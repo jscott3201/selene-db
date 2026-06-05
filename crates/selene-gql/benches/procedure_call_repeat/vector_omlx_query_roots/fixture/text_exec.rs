@@ -131,6 +131,24 @@ impl OmlxGqlQueryRootFixture {
         precision_basis_points(total_precision, self.query_count() * TOP_K)
     }
 
+    pub(crate) fn gql_text_score_target_hit_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> Option<usize> {
+        let hits = (0..self.query_count())
+            .map(|query_index| {
+                let table = self.execute_text_score_query(
+                    query_index,
+                    registry,
+                    cache.as_ref().map(Arc::clone),
+                );
+                self.target_hit_count(query_index, &table)
+            })
+            .sum();
+        self.target_hit_basis_points(hits)
+    }
+
     pub(crate) fn gql_text_score_batch_current_precision_basis_points(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -141,6 +159,15 @@ impl OmlxGqlQueryRootFixture {
             self.text_score_batch_current_precision(&table),
             self.query_count() * TOP_K,
         )
+    }
+
+    pub(crate) fn gql_text_score_batch_target_hit_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> Option<usize> {
+        let table = self.execute_text_score_batch_query(registry, cache);
+        self.target_hit_basis_points(self.batch_target_hit_count(&table))
     }
 
     pub(crate) fn gql_current_state_text_score_batch_precision_basis_points(
@@ -167,6 +194,15 @@ impl OmlxGqlQueryRootFixture {
         )
     }
 
+    pub(crate) fn gql_current_state_text_score_batch_target_hit_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> Option<usize> {
+        let table = self.execute_current_state_text_score_batch_query(registry, cache);
+        self.target_hit_basis_points(self.batch_target_hit_count(&table))
+    }
+
     pub(crate) fn gql_current_state_text_vector_batch_precision_basis_points(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -189,6 +225,15 @@ impl OmlxGqlQueryRootFixture {
             self.text_score_batch_current_precision(&table),
             self.query_count() * TOP_K,
         )
+    }
+
+    pub(crate) fn gql_current_state_text_vector_batch_target_hit_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> Option<usize> {
+        let table = self.execute_current_state_text_vector_batch_query(registry, cache);
+        self.target_hit_basis_points(self.batch_target_hit_count(&table))
     }
 
     pub(crate) fn execute_text_score_batch_query(
