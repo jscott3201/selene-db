@@ -8,6 +8,8 @@ use selene_testing::local_omlx::{CorpusProfile, OmlxClient};
 mod fixture;
 #[path = "vector_omlx_query_roots/state_batch_rows.rs"]
 mod state_batch_rows;
+#[path = "vector_omlx_query_roots/text_score_rows.rs"]
+mod text_score_rows;
 
 use fixture::{OmlxGqlQueryRootFixture, TOP_K};
 
@@ -548,6 +550,13 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
             &model_id,
             corpus_label(config.corpus),
             current_precision,
+        );
+        text_score_rows::bench_text_score_rows(
+            &mut group,
+            &registry,
+            &fixture,
+            &model_id,
+            corpus_label(config.corpus),
         );
     }
     group.finish();

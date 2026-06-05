@@ -788,10 +788,13 @@ documents containing stale/superseded/contradictory wording have an outgoing
 `OmlxNegativeEvidence` edge and are excluded from current support state. The
 provenance-required row uses `omlx_provenance_current_support_facts`, adding a
 required incoming `OmlxSupports` edge and required outgoing `OmlxGroundedBy`
-edge before the same exact rerank. The batched rows store each query vector on
-the query anchor and let GQL aggregate per-query root sets. The pure expansion
-row calls `selene.vector_score_expanded_candidates_batch` once for the full
-16-query profile; the current/provenance rows call
+edge before the same exact rerank. The text-score rows use the same
+GQL-produced roots, expand them through `OmlxSupports` in GQL, then call
+`selene.text_score_nodes` over explicit candidate nodes using a maintained BM25
+text index. The batched rows store each query vector on the query anchor and
+let GQL aggregate per-query root sets. The pure expansion row calls
+`selene.vector_score_expanded_candidates_batch` once for the full 16-query
+profile; the current/provenance rows call
 `selene.vector_score_candidate_state_expanded_batch` so maintained state,
 graph-expanded roots, and exact rerank stay inside one procedure boundary:
 
@@ -882,6 +885,8 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_materialize_batch/...q16_r2_totalr32...` | 78.85 µs | 77.95 µs | Single GQL statement materializes all 16 root sets; aggregation adds ~11 µs over batched root-row traversal before vector scoring enters the path. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.45 ms | 1.52 ms | Full GQL row over the scaled partial-hint corpus: `MATCH` + `collect_list(root)` derives two roots per query, graph expansion restores the 16-document same-topic set, and all 64 returned top-k hits are on-topic; current-fact precision is lower (`basecurbp8593/8281`) because stale same-topic facts remain eligible. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.45 ms | 1.52 ms | Same full scoring statement through a warmed source-string `PlanCache` session; plan caching is neutral once graph expansion and vector rerank dominate. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_text_score/...q16_k4_r2_c16...precbp10000` | 2.13 ms | 2.28 ms | Full GQL row over the same graph roots and support expansion, but reranks expanded candidates with maintained BM25 via `selene.text_score_nodes`; precision is full, while repeated GQL candidate production plus text scoring is slower than the vector expanded scorer. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_text_score/...q16_k4_r2_c16...precbp10000` | 2.13 ms | 2.30 ms | Warmed source-string `PlanCache` session for the same text-score row; plan caching is effectively neutral, so the next useful text path is batched/candidate-aware execution rather than source planning. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |

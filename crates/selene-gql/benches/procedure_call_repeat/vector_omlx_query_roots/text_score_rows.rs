@@ -1,0 +1,106 @@
+use std::{num::NonZeroUsize, sync::Arc};
+
+use criterion::{BenchmarkGroup, BenchmarkId, measurement::WallTime};
+use selene_gql::{BuiltinProcedureRegistry, CallPlanCache};
+
+use super::fixture::{OmlxGqlQueryRootFixture, TOP_K};
+
+pub(super) fn bench_text_score_rows(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    registry: &BuiltinProcedureRegistry,
+    fixture: &OmlxGqlQueryRootFixture,
+    model_id: &str,
+    corpus_label: &str,
+) {
+    let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    fixture.warm_query_root_text_score_cache(registry, Arc::clone(&cache));
+    let precision =
+        fixture.gql_text_score_precision_basis_points(registry, Some(Arc::clone(&cache)));
+    let mut plan_session = fixture.reusable_plan_cache_session();
+    fixture.warm_query_root_text_score_session(&mut plan_session, registry);
+    bench_shared_cache(
+        group,
+        registry,
+        fixture,
+        model_id,
+        corpus_label,
+        precision,
+        cache,
+    );
+    bench_plan_cache_session(
+        group,
+        registry,
+        fixture,
+        model_id,
+        corpus_label,
+        precision,
+        plan_session,
+    );
+}
+
+fn bench_shared_cache(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    registry: &BuiltinProcedureRegistry,
+    fixture: &OmlxGqlQueryRootFixture,
+    model_id: &str,
+    corpus_label: &str,
+    precision: usize,
+    cache: Arc<CallPlanCache>,
+) {
+    group.bench_function(
+        BenchmarkId::new(
+            "shared_cache_query_root_text_score",
+            row_label(fixture, model_id, corpus_label, precision),
+        ),
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(
+                    fixture.execute_all_text_score_queries(registry, Some(Arc::clone(&cache))),
+                );
+            });
+        },
+    );
+}
+
+fn bench_plan_cache_session(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    registry: &BuiltinProcedureRegistry,
+    fixture: &OmlxGqlQueryRootFixture,
+    model_id: &str,
+    corpus_label: &str,
+    precision: usize,
+    mut session: selene_gql::Session<'_>,
+) {
+    group.bench_function(
+        BenchmarkId::new(
+            "shared_session_plan_cache_query_root_text_score",
+            row_label(fixture, model_id, corpus_label, precision),
+        ),
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(
+                    fixture.execute_all_text_score_queries_in_session(&mut session, registry),
+                );
+            });
+        },
+    );
+}
+
+fn row_label(
+    fixture: &OmlxGqlQueryRootFixture,
+    model_id: &str,
+    corpus_label: &str,
+    precision: usize,
+) -> String {
+    format!(
+        "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}",
+        model_id,
+        corpus_label,
+        fixture.query_count(),
+        TOP_K,
+        fixture.first_query_root_count(),
+        fixture.first_query_expanded_count(),
+        fixture.dimension,
+        precision,
+    )
+}
