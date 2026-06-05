@@ -92,6 +92,8 @@ pub(in crate::runtime) enum BuiltinKind {
     TextSearchNodes,
     /// `selene.text_score_nodes` — BM25 scoring for explicit node candidates.
     TextScoreNodes,
+    /// `selene.text_score_nodes_batch` — batched BM25 scoring for explicit node candidates.
+    TextScoreNodesBatch,
 }
 
 impl BuiltinKind {
@@ -147,7 +149,8 @@ impl BuiltinKind {
             | Self::VectorIndexStats
             | Self::TextIndexStats
             | Self::TextSearchNodes
-            | Self::TextScoreNodes => ProcedureTier::Graph,
+            | Self::TextScoreNodes
+            | Self::TextScoreNodesBatch => ProcedureTier::Graph,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 ProcedureTier::Maintenance
             }
@@ -187,7 +190,8 @@ impl BuiltinKind {
             | Self::VectorIndexStats
             | Self::TextIndexStats
             | Self::TextSearchNodes
-            | Self::TextScoreNodes => ProcedureMutability::Read,
+            | Self::TextScoreNodes
+            | Self::TextScoreNodesBatch => ProcedureMutability::Read,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 ProcedureMutability::MaintenanceWrite
             }
@@ -249,6 +253,7 @@ impl BuiltinKind {
             Self::DropTextIndex => drop_text_index::signature(),
             Self::TextSearchNodes => text_search::signature(),
             Self::TextScoreNodes => text_search::score_signature(),
+            Self::TextScoreNodesBatch => text_search::score_batch_signature(),
         }
     }
 
@@ -303,6 +308,7 @@ impl BuiltinKind {
             Self::CreateTextIndex => create_text_index::output_columns(),
             Self::DropTextIndex => drop_text_index::output_columns(),
             Self::TextSearchNodes | Self::TextScoreNodes => text_search::output_columns(),
+            Self::TextScoreNodesBatch => text_search::score_batch_output_columns(),
         }
     }
 
@@ -361,6 +367,7 @@ impl BuiltinKind {
             Self::TextIndexStats => text_index_stats::execute(ctx, args),
             Self::TextSearchNodes => text_search::execute(ctx, args),
             Self::TextScoreNodes => text_search::execute_score(ctx, args),
+            Self::TextScoreNodesBatch => text_search::execute_score_batch(ctx, args),
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
@@ -417,7 +424,8 @@ impl BuiltinKind {
             | Self::VectorIndexStats
             | Self::TextIndexStats
             | Self::TextSearchNodes
-            | Self::TextScoreNodes => Err(ProcedureError::TierMismatch {
+            | Self::TextScoreNodes
+            | Self::TextScoreNodesBatch => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Mutation,
             }),
@@ -465,7 +473,8 @@ impl BuiltinKind {
             | Self::VectorIndexStats
             | Self::TextIndexStats
             | Self::TextSearchNodes
-            | Self::TextScoreNodes => Err(ProcedureError::TierMismatch {
+            | Self::TextScoreNodes
+            | Self::TextScoreNodesBatch => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Maintenance,
             }),

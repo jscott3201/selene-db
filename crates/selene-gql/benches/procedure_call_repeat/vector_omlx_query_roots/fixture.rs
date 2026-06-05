@@ -57,6 +57,7 @@ impl OmlxGqlQueryRootFixture {
         let embedding_key = istr("embedding");
         let body_key = istr("body");
         let query_key = istr("query");
+        let query_text_key = istr("query_text");
         let query_index_key = istr("query_index");
         let support_state_provider = Arc::new(
             MaintainedCandidateStateProvider::new([
@@ -178,6 +179,7 @@ impl OmlxGqlQueryRootFixture {
                     let props = PropertyMap::from_pairs([
                         (query_index_key.clone(), Value::Int(query_index as i64)),
                         (query_key.clone(), Value::Vector(vector.clone())),
+                        (query_text_key.clone(), Value::String(istr(input.text))),
                     ])
                     .expect("oMLX GQL bench query properties fit");
                     let anchor = mutator

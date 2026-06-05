@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_52_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_53_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 52);
+    assert_eq!(procedures.len(), 53);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 52);
+    assert_eq!(table.row_count(), 53);
 
     let names = column_strings(&table, "name");
     let descriptions = column_strings(&table, "description");
@@ -148,6 +148,11 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
     assert!(names.iter().any(|name| name == "selene.drop_text_index"));
     assert!(names.iter().any(|name| name == "selene.text_search_nodes"));
     assert!(names.iter().any(|name| name == "selene.text_score_nodes"));
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.text_score_nodes_batch")
+    );
     assert!(
         names
             .iter()
@@ -263,6 +268,42 @@ fn text_score_nodes_metadata_has_node_candidates() {
     assert_eq!(columns[0].ty, GqlType::NodeRef);
     assert_eq!(columns[1].name.as_str(), "score");
     assert_eq!(columns[1].ty, GqlType::Float64);
+}
+
+#[test]
+fn text_score_nodes_batch_metadata_has_nested_node_candidates() {
+    let registry = full_registry();
+    let name = [istr("selene"), istr("text_score_nodes_batch")];
+    let metadata = registry
+        .lookup(&name)
+        .expect("text_score_nodes_batch resolves");
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 5);
+    assert_eq!(arity.maximum, 5);
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters[0].name.as_str(), "label");
+    assert_eq!(parameters[0].ty, GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "property");
+    assert_eq!(parameters[1].ty, GqlType::String);
+    assert_eq!(parameters[2].name.as_str(), "queries");
+    assert_eq!(parameters[2].ty, GqlType::List(Box::new(GqlType::String)));
+    assert_eq!(parameters[3].name.as_str(), "nodes");
+    assert_eq!(
+        parameters[3].ty,
+        GqlType::List(Box::new(GqlType::List(Box::new(GqlType::NodeRef))))
+    );
+    assert_eq!(parameters[4].name.as_str(), "k");
+    assert_eq!(parameters[4].ty, GqlType::Integer);
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 3);
+    assert_eq!(columns[0].name.as_str(), "query_index");
+    assert_eq!(columns[0].ty, GqlType::Uint64);
+    assert_eq!(columns[1].name.as_str(), "node_id");
+    assert_eq!(columns[1].ty, GqlType::NodeRef);
+    assert_eq!(columns[2].name.as_str(), "score");
+    assert_eq!(columns[2].ty, GqlType::Float64);
 }
 
 #[test]
