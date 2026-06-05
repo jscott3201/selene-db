@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-//! Criterion benches for exact BM25 text search.
+//! Criterion benches for exact and indexed BM25 text search.
 
 #[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
-use selene_graph::{SeleneGraph, SharedGraph};
+use selene_graph::{SeleneGraph, SharedGraph, TextIndex};
 use selene_testing::BenchProfile;
 
 const TOPICS: [&str; 8] = [
@@ -53,11 +53,49 @@ fn bench_exact_bm25(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_indexed_bm25(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_text_bm25_indexed");
+    for &scale in BenchProfile::from_env().scales() {
+        let fixture = TextFixture::build(scale);
+        group.throughput(Throughput::Elements(scale as u64));
+        group.bench_with_input(
+            BenchmarkId::new("prebuilt_topic_query", format!("n{scale}_k10")),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture.index.search(&fixture.query, 10);
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("transient_build_query", format!("n{scale}_k10")),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture
+                        .graph
+                        .indexed_text_search_nodes(
+                            &fixture.label,
+                            &fixture.property,
+                            &fixture.query,
+                            10,
+                        )
+                        .expect("indexed BM25 search succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 struct TextFixture {
     graph: Arc<SeleneGraph>,
     label: IStr,
     property: IStr,
     query: String,
+    index: TextIndex,
 }
 
 impl TextFixture {
@@ -87,11 +125,16 @@ impl TextFixture {
             }
             txn.commit().expect("bench fixture commits");
         }
+        let graph = shared.read();
+        let index = graph
+            .build_text_index(&label, &property)
+            .expect("bench text index builds");
         Self {
-            graph: shared.read(),
+            graph,
             label,
             property,
             query: "gql current retrieval evidence".to_owned(),
+            index,
         }
     }
 }
@@ -103,6 +146,6 @@ fn props(key: &IStr, value: Value) -> PropertyMap {
 criterion_group! {
     name = text_search;
     config = common::criterion_config();
-    targets = bench_exact_bm25
+    targets = bench_exact_bm25, bench_indexed_bm25
 }
 criterion_main!(text_search);
