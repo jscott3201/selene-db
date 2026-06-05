@@ -10,6 +10,7 @@ use selene_graph::{
 const CANDIDATE_STATE_SOURCE: &str = "CALL selene.vector_score_candidate_state('embedding', $query, 'active_docs', 10, 'squared_euclidean') YIELD node_id, distance";
 const CANDIDATE_STATE_NODES_SOURCE: &str = "CALL selene.vector_score_candidate_state_nodes('embedding', $query, 'active_docs', $nodes, 10, $operation, 'squared_euclidean') YIELD node_id, distance";
 const CANDIDATE_STATE_EXPANDED_SOURCE: &str = "CALL selene.vector_score_candidate_state_expanded('embedding', $query, 'active_docs', $roots, $edge_label, 10, $operation, 'outgoing', 'squared_euclidean') YIELD node_id, distance";
+const CANDIDATE_STATE_EXPANDED_BATCH_SOURCE: &str = "CALL selene.vector_score_candidate_state_expanded_batch('embedding', $queries, 'active_docs', $roots, $edge_label, 10, $operation, 'outgoing', 'squared_euclidean') YIELD query_index, node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
 const VECTOR_DIMENSION: usize = 128;
 const VECTOR_BATCH_QUERIES: usize = 8;
@@ -86,9 +87,12 @@ pub(super) fn bench_vector_candidate_state_procedure(c: &mut Criterion) {
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let nodes_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let expanded_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let expanded_batch_cache =
+        Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_candidate_state_cache(&graph, &registry, Arc::clone(&cache));
     warm_candidate_state_nodes_cache(&graph, &registry, Arc::clone(&nodes_cache));
     warm_candidate_state_expanded_cache(&graph, &registry, Arc::clone(&expanded_cache));
+    warm_candidate_state_expanded_batch_cache(&graph, &registry, Arc::clone(&expanded_batch_cache));
 
     let mut group = c.benchmark_group("procedure_vector_candidate_state");
     group.throughput(Throughput::Elements(
@@ -202,6 +206,19 @@ pub(super) fn bench_vector_candidate_state_procedure(c: &mut Criterion) {
         },
     );
     group.bench_function(
+        "shared_cache_score_candidate_state_expanded_intersection_batch_8x64_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_candidate_state_expanded_batch_score(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&expanded_batch_cache)),
+                    CandidateStateExpandedFixture::Intersection64,
+                ));
+            });
+        },
+    );
+    group.bench_function(
         "shared_cache_score_candidate_state_expanded_union_128_dim128_k10_1000",
         |b| {
             b.iter(|| {
@@ -276,6 +293,21 @@ fn warm_candidate_state_expanded_cache(
         .expect("warmup vector candidate-state expanded scoring executes");
 }
 
+fn warm_candidate_state_expanded_batch_cache(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Arc<CallPlanCache>,
+) {
+    let mut session = Session::new(graph).with_call_plan_cache(cache);
+    bind_candidate_state_expanded_batch_inputs_for(
+        &mut session,
+        CandidateStateExpandedFixture::Intersection64,
+    );
+    session
+        .execute_source(CANDIDATE_STATE_EXPANDED_BATCH_SOURCE, registry)
+        .expect("warmup batched vector candidate-state expanded scoring executes");
+}
+
 fn execute_vector_candidate_state_score(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
@@ -332,6 +364,26 @@ fn execute_vector_candidate_state_expanded_score(
     match session
         .execute_source(CANDIDATE_STATE_EXPANDED_SOURCE, registry)
         .expect("vector candidate-state expanded scoring procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+fn execute_vector_candidate_state_expanded_batch_score(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+    fixture: CandidateStateExpandedFixture,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    bind_candidate_state_expanded_batch_inputs_for(&mut session, fixture);
+    match session
+        .execute_source(CANDIDATE_STATE_EXPANDED_BATCH_SOURCE, registry)
+        .expect("batched vector candidate-state expanded scoring procedure executes")
     {
         StatementOutput::Rows(table) => table.row_count(),
         other => panic!("unexpected output: {other:?}"),
@@ -492,6 +544,29 @@ fn bind_candidate_state_expanded_inputs_for(
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
     session.bind_parameter(istr("roots"), fixture.roots());
+    session.bind_parameter(
+        istr("edge_label"),
+        Value::String(istr(fixture.edge_label())),
+    );
+    session.bind_parameter(istr("operation"), Value::String(istr(fixture.operation())));
+}
+
+fn bind_candidate_state_expanded_batch_inputs_for(
+    session: &mut Session<'_>,
+    fixture: CandidateStateExpandedFixture,
+) {
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(
+            (0..VECTOR_BATCH_QUERIES)
+                .map(|query_index| Value::Vector(vector_value(query_index, VECTOR_DIMENSION)))
+                .collect(),
+        ),
+    );
+    session.bind_parameter(
+        istr("roots"),
+        Value::List((0..VECTOR_BATCH_QUERIES).map(|_| fixture.roots()).collect()),
+    );
     session.bind_parameter(
         istr("edge_label"),
         Value::String(istr(fixture.edge_label())),

@@ -14,6 +14,8 @@ const QUERY_ROOT_STATE_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDepe
 const QUERY_ROOT_CURRENT_STATE_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_candidate_state_expanded('embedding', $query, 'omlx_current_support_facts', roots, 'OmlxSupports', 4, 'intersection', 'outgoing', 'cosine') YIELD node_id, distance RETURN node_id, distance";
 const QUERY_ROOT_PROVENANCE_STATE_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index WITH collect_list(root) AS roots CALL selene.vector_score_candidate_state_expanded('embedding', $query, 'omlx_provenance_current_support_facts', roots, 'OmlxSupports', 4, 'intersection', 'outgoing', 'cosine') YIELD node_id, distance RETURN node_id, distance";
 const QUERY_ROOT_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query AS query, collect_list(root) AS roots GROUP BY anchor.query_index, anchor.query ORDER BY query_index WITH collect_list(query) AS queries, collect_list(roots) AS root_sets CALL selene.vector_score_expanded_candidates_batch('embedding', queries, root_sets, 'OmlxSupports', 4, 'outgoing', 'cosine') YIELD query_index, node_id, distance RETURN query_index, node_id, distance";
+const QUERY_ROOT_CURRENT_STATE_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query AS query, collect_list(root) AS roots GROUP BY anchor.query_index, anchor.query ORDER BY query_index WITH collect_list(query) AS queries, collect_list(roots) AS root_sets CALL selene.vector_score_candidate_state_expanded_batch('embedding', queries, 'omlx_current_support_facts', root_sets, 'OmlxSupports', 4, 'intersection', 'outgoing', 'cosine') YIELD query_index, node_id, distance RETURN query_index, node_id, distance";
+const QUERY_ROOT_PROVENANCE_STATE_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query AS query, collect_list(root) AS roots GROUP BY anchor.query_index, anchor.query ORDER BY query_index WITH collect_list(query) AS queries, collect_list(roots) AS root_sets CALL selene.vector_score_candidate_state_expanded_batch('embedding', queries, 'omlx_provenance_current_support_facts', root_sets, 'OmlxSupports', 4, 'intersection', 'outgoing', 'cosine') YIELD query_index, node_id, distance RETURN query_index, node_id, distance";
 
 impl OmlxGqlQueryRootFixture {
     pub(crate) fn warm_query_root_cache(
@@ -54,6 +56,22 @@ impl OmlxGqlQueryRootFixture {
         cache: Arc<CallPlanCache>,
     ) {
         self.execute_batch_query(registry, Some(cache));
+    }
+
+    pub(crate) fn warm_query_root_current_state_batch_cache(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Arc<CallPlanCache>,
+    ) {
+        self.execute_current_state_batch_query(registry, Some(cache));
+    }
+
+    pub(crate) fn warm_query_root_provenance_state_batch_cache(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Arc<CallPlanCache>,
+    ) {
+        self.execute_provenance_state_batch_query(registry, Some(cache));
     }
 
     pub(crate) fn warm_query_root_expansion_session(
@@ -353,6 +371,30 @@ impl OmlxGqlQueryRootFixture {
         precision_basis_points(self.batch_precision(&table), self.query_count() * TOP_K)
     }
 
+    pub(crate) fn gql_current_state_batch_current_precision_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        let table = self.execute_current_state_batch_query(registry, cache);
+        precision_basis_points(
+            self.batch_current_precision(&table),
+            self.query_count() * TOP_K,
+        )
+    }
+
+    pub(crate) fn gql_provenance_state_batch_current_precision_basis_points(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> usize {
+        let table = self.execute_provenance_state_batch_query(registry, cache);
+        precision_basis_points(
+            self.batch_current_precision(&table),
+            self.query_count() * TOP_K,
+        )
+    }
+
     fn execute_query(
         &self,
         query_index: usize,
@@ -472,14 +514,52 @@ impl OmlxGqlQueryRootFixture {
         registry: &BuiltinProcedureRegistry,
         cache: Option<Arc<CallPlanCache>>,
     ) -> BindingTable {
+        self.execute_batch_source_query(
+            registry,
+            cache,
+            QUERY_ROOT_BATCH_SOURCE,
+            "oMLX GQL batched query-root vector procedure executes",
+        )
+    }
+
+    pub(crate) fn execute_current_state_batch_query(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> BindingTable {
+        self.execute_batch_source_query(
+            registry,
+            cache,
+            QUERY_ROOT_CURRENT_STATE_BATCH_SOURCE,
+            "oMLX GQL batched current-state query-root vector procedure executes",
+        )
+    }
+
+    pub(crate) fn execute_provenance_state_batch_query(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+    ) -> BindingTable {
+        self.execute_batch_source_query(
+            registry,
+            cache,
+            QUERY_ROOT_PROVENANCE_STATE_BATCH_SOURCE,
+            "oMLX GQL batched provenance-state query-root vector procedure executes",
+        )
+    }
+
+    fn execute_batch_source_query(
+        &self,
+        registry: &BuiltinProcedureRegistry,
+        cache: Option<Arc<CallPlanCache>>,
+        source: &str,
+        expected: &'static str,
+    ) -> BindingTable {
         let mut session = Session::new(&self.graph);
         if let Some(cache) = cache {
             session = session.with_call_plan_cache(cache);
         }
-        match session
-            .execute_source(QUERY_ROOT_BATCH_SOURCE, registry)
-            .expect("oMLX GQL batched query-root vector procedure executes")
-        {
+        match session.execute_source(source, registry).expect(expected) {
             StatementOutput::Rows(table) => table,
             other => panic!("unexpected output: {other:?}"),
         }
@@ -543,6 +623,32 @@ impl OmlxGqlQueryRootFixture {
                 self.topics_by_node
                     .get(node)
                     .is_some_and(|hit_topic| hit_topic == topic)
+            })
+            .count()
+    }
+
+    fn batch_current_precision(&self, table: &BindingTable) -> usize {
+        let query_column = table
+            .column_index(istr("query_index"))
+            .expect("query_index column exists");
+        let node_column = table
+            .column_index(istr("node_id"))
+            .expect("node_id column exists");
+        table
+            .iter()
+            .filter_map(|row| match (row.get(query_column), row.get(node_column)) {
+                (Some(Value::Uint(query_index)), Some(Value::NodeRef(node))) => {
+                    let query_index = usize::try_from(*query_index).ok()?;
+                    let topic = self.queries.get(query_index)?.topic;
+                    Some((topic, *node))
+                }
+                _ => None,
+            })
+            .filter(|(topic, node)| {
+                self.topics_by_node
+                    .get(node)
+                    .is_some_and(|hit_topic| hit_topic == topic)
+                    && self.current_by_node.get(node).copied().unwrap_or(false)
             })
             .count()
     }

@@ -580,13 +580,14 @@ PR-local quick vector procedure baseline:
 | `procedure_vector_search/shared_cache_score_nodes_repeated_8x64_dim128_k10_1000` | 45.4 µs (quick) | Eight separate cached candidate-score procedure calls, one short-lived session per query. |
 | `procedure_vector_search/shared_cache_score_nodes_batch_8x64_dim128_k10_1000` | 43.0 µs (quick) | One cached `CALL selene.vector_score_nodes_batch` over eight query vectors and eight 64-node candidate sets; ~5% below repeated single-call latency. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_64_dim128_k10_1000` | 3.97 µs (quick) | Cached `CALL selene.vector_score_candidate_state` over one maintained 64-node candidate set; avoids caller-side node-list construction and validates the generation-checked provider path. |
-| `procedure_vector_candidate_state/shared_cache_score_candidate_state_repeated_8x64_dim128_k10_1000` | 32.75 µs (quick) | Eight separate cached maintained candidate-state score calls, one short-lived session per query; faster than explicit-node repeated scoring, with a batched maintained-state scorer still unimplemented. |
+| `procedure_vector_candidate_state/shared_cache_score_candidate_state_repeated_8x64_dim128_k10_1000` | 32.75 µs (quick) | Eight separate cached maintained candidate-state score calls, one short-lived session per query; faster than explicit-node repeated scoring. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_nodes_intersection_64_dim128_k10_1000` | 4.86 µs (quick) | Cached `CALL selene.vector_score_candidate_state_nodes` intersecting a maintained 64-node state with a 64-node explicit candidate list before exact rerank. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_nodes_intersection_repeated_8x64_dim128_k10_1000` | 39.65 µs (quick) | Eight separate cached maintained-state + explicit-node intersection calls, one short-lived session per query. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_nodes_union_128_dim128_k10_1000` | 8.20 µs (quick) | Cached maintained-state + explicit-node union producing 128 canonical candidates before exact rerank. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_nodes_state_difference_32_dim128_k10_1000` | 3.04 µs (quick) | Cached maintained-state minus explicit-node candidates, leaving 32 candidates before exact rerank. |
-| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_64_dim128_k10_1000` | 4.85 µs (quick) | Cached `CALL selene.vector_score_candidate_state_expanded` expanding two graph roots through `SUPPORTS`, intersecting with maintained state, and exact-reranking 64 canonical candidates. |
-| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_repeated_8x64_dim128_k10_1000` | 39.75 µs (quick) | Eight separate cached maintained-state + graph-expanded intersection calls, one short-lived session per query. |
+| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_64_dim128_k10_1000` | 4.88 µs (quick) | Cached `CALL selene.vector_score_candidate_state_expanded` expanding two graph roots through `SUPPORTS`, intersecting with maintained state, and exact-reranking 64 canonical candidates. |
+| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_repeated_8x64_dim128_k10_1000` | 39.69 µs (quick) | Eight separate cached maintained-state + graph-expanded intersection calls, one short-lived session per query. |
+| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64_dim128_k10_1000` | 36.83 µs (quick) | One cached `CALL selene.vector_score_candidate_state_expanded_batch` over eight query/root-set pairs; composes maintained state with graph-expanded roots in one procedure call, ~7% below repeated expanded-state latency. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_union_128_dim128_k10_1000` | 8.25 µs (quick) | Cached maintained-state + graph-expanded union producing 128 canonical candidates before exact rerank. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_state_difference_32_dim128_k10_1000` | 3.13 µs (quick) | Cached maintained-state minus graph-expanded candidates, leaving 32 candidates before exact rerank. |
 | `procedure_vector_neighbors/shared_cache_score_neighbors_64_dim128_k10_1000` | 4.60 µs (quick) | Cached `CALL selene.vector_score_neighbors` over one 64-neighbor graph-derived candidate set. |
@@ -774,10 +775,12 @@ documents containing stale/superseded/contradictory wording have an outgoing
 `OmlxNegativeEvidence` edge and are excluded from current support state. The
 provenance-required row uses `omlx_provenance_current_support_facts`, adding a
 required incoming `OmlxSupports` edge and required outgoing `OmlxGroundedBy`
-edge before the same exact rerank. The batched row stores each query vector on
-the query anchor, lets GQL aggregate per-query root sets, then calls
-`selene.vector_score_expanded_candidates_batch` once for the full 16-query
-profile:
+edge before the same exact rerank. The batched rows store each query vector on
+the query anchor and let GQL aggregate per-query root sets. The pure expansion
+row calls `selene.vector_score_expanded_candidates_batch` once for the full
+16-query profile; the current/provenance rows call
+`selene.vector_score_candidate_state_expanded_batch` so maintained state,
+graph-expanded roots, and exact rerank stay inside one procedure boundary:
 
 ```bash
 SELENE_OMLX_EMBEDDING_BENCH=1 \
@@ -873,6 +876,8 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_provenance_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.67 ms | 1.64 ms | Intersects expanded roots with `omlx_provenance_current_support_facts`, requiring both incoming support and outgoing provenance edges while preserving the same candidate width and full current precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_provenance_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.60 ms | 1.63 ms | Warmed full-plan-cache provenance-state scorer; positive edge-evidence checks add modest overhead versus exclusion-only current state on this quick local pass. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/...q16_k4_r2_c16...precbp10000` | 312.49 µs | 528.84 µs | Single GQL statement builds all 16 query vectors and root sets from graph rows, then calls the batched expanded scorer once; avoids repeated statement/session overhead while preserving full topic precision. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 284.24 µs | 491.37 µs | Single GQL statement builds all 16 query vectors/root sets, then calls the batched maintained-state expanded scorer once; restores full current precision while avoiding repeated session/procedure overhead. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_provenance_state_intersection_batch/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 294.60 µs | 496.62 µs | Batched provenance-gated current-state scorer; required support/provenance edge checks add little overhead once the 16-query shape is inside one procedure call. |
 
 The opt-in `Qwen3-Embedding-8B-4bit-DWQ` local model also works on
 `/v1/embeddings` and returns 4096-dimensional vectors. With

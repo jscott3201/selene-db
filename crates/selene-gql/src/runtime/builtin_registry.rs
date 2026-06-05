@@ -10,7 +10,7 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 27 platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 28 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
 //! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
 //! `selene.vector_search_nodes_batch`, `selene.vector_score_nodes`,
@@ -19,6 +19,7 @@
 //! `selene.vector_score_candidate_state`,
 //! `selene.vector_score_candidate_state_nodes`,
 //! `selene.vector_score_candidate_state_expanded`,
+//! `selene.vector_score_candidate_state_expanded_batch`,
 //! `selene.vector_candidate_states`,
 //! `selene.vector_score_expanded_candidates`,
 //! `selene.vector_score_expanded_candidates_batch`,
@@ -30,7 +31,7 @@
 //! `selene.vector_index_stats`,
 //! `selene.rebuild_vector_indexes`,
 //! `selene.rebuild_recommended_vector_indexes`, `selene.create_vector_index`,
-//! `selene.drop_vector_index`) are registered here, bringing the total to 46;
+//! `selene.drop_vector_index`) are registered here, bringing the total to 47;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -93,8 +94,8 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 27 `selene.*`
-        // platform built-ins (handles 20..=46), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 28 `selene.*`
+        // platform built-ins (handles 20..=47), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
@@ -281,6 +282,7 @@ mod tests {
             &["selene", "vector_score_candidate_state"][..],
             &["selene", "vector_score_candidate_state_nodes"][..],
             &["selene", "vector_score_candidate_state_expanded"][..],
+            &["selene", "vector_score_candidate_state_expanded_batch"][..],
             &["selene", "vector_candidate_states"][..],
             &["selene", "vector_score_expanded_candidates"][..],
             &["selene", "vector_score_expanded_candidates_batch"][..],
@@ -756,7 +758,7 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=46).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=47).collect::<Vec<_>>());
     }
 
     #[test]
