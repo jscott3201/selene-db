@@ -268,7 +268,8 @@ impl TextIndex {
         let mut len = 0_u32;
         for token in tokenize(text) {
             len = len.saturating_add(1);
-            *counts.entry(token).or_insert(0) += 1;
+            let count = counts.entry(token).or_insert(0);
+            *count = count.saturating_add(1);
         }
         if len == 0 {
             return;
