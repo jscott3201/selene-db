@@ -24,6 +24,8 @@ use crate::text_search::{
     unique_query_terms,
 };
 
+#[path = "text_index/candidate.rs"]
+mod candidate;
 /// In-memory BM25 postings index for one node `(label, property)` pair.
 #[derive(Clone, Debug)]
 pub struct TextIndex {

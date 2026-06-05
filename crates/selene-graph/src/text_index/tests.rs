@@ -1,7 +1,11 @@
-use selene_core::{GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern};
+use selene_core::{
+    CancellationChecker, CancellationToken, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff,
+    PropertyMap, Value, intern,
+};
 
 use super::*;
 use crate::SharedGraph;
+use crate::text_search::TextSearchError;
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
@@ -212,6 +216,17 @@ fn text_index_empty_query_and_zero_k_are_empty() {
 
     assert!(index.search("!!!", 10).is_empty());
     assert!(index.search("graph", 0).is_empty());
+    assert!(
+        index
+            .search_candidates("graph", &[NodeId::new(1)], 0)
+            .is_empty()
+    );
+    assert!(
+        index
+            .search_candidates("!!!", &[NodeId::new(1)], 10)
+            .is_empty()
+    );
+    assert!(index.search_candidates("graph", &[], 10).is_empty());
 }
 
 #[test]
@@ -238,4 +253,116 @@ fn shared_graph_indexed_text_search_matches_exact() {
             .exact_text_search_nodes(&doc, &body, "graph retrieval", 10)
             .unwrap()
     );
+}
+
+#[test]
+fn text_index_candidate_search_matches_global_filter() {
+    let graph = SharedGraph::new(GraphId::new(433_006));
+    let doc = istr("TextCandidateDoc");
+    let body = istr("body");
+    let keep_a;
+    let keep_b;
+    let reject;
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        keep_a = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph memory graph"))),
+            )
+            .unwrap();
+        reject = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph memory memory"))),
+            )
+            .unwrap();
+        keep_b = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph retrieval"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    let index = graph.build_text_index(&doc, &body).unwrap();
+    let candidates = [keep_a, keep_b];
+    let candidate_set = std::collections::HashSet::<_>::from(candidates);
+    let filtered_global = index
+        .search("graph memory", 10)
+        .into_iter()
+        .filter(|hit| candidate_set.contains(&hit.node_id))
+        .collect::<Vec<_>>();
+
+    let scoped = index.search_candidates("graph memory", &candidates, 10);
+
+    assert_eq!(scoped, filtered_global);
+    assert_eq!(
+        scoped.iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
+        vec![keep_a, keep_b]
+    );
+    assert!(!scoped.iter().any(|hit| hit.node_id == reject));
+}
+
+#[test]
+fn text_index_candidate_search_dedups_and_ignores_unindexed_nodes() {
+    let graph = SharedGraph::new(GraphId::new(433_007));
+    let doc = istr("TextCandidateDedupDoc");
+    let body = istr("body");
+    let indexed;
+    let non_string;
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        indexed = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("needle current memory"))),
+            )
+            .unwrap();
+        non_string = mutator
+            .create_node(LabelSet::single(doc.clone()), props(&body, Value::Int(7)))
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    let index = graph.build_text_index(&doc, &body).unwrap();
+
+    let hits = index.search_candidates(
+        "needle",
+        &[indexed, indexed, non_string, NodeId::new(999_999)],
+        10,
+    );
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].node_id, indexed);
+}
+
+#[test]
+fn text_index_candidate_search_checked_observes_cancelled_token() {
+    let graph = SharedGraph::new(GraphId::new(433_008));
+    let doc = istr("TextCandidateCancelDoc");
+    let body = istr("body");
+    let indexed;
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        indexed = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph memory"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    let index = graph.build_text_index(&doc, &body).unwrap();
+    let token = CancellationToken::new();
+    token.cancel();
+    let checker = CancellationChecker::new(Some(&token), None);
+
+    let err = index
+        .search_candidates_checked("graph", &[indexed], 10, checker)
+        .expect_err("cancelled token should stop candidate search");
+
+    assert!(matches!(err, TextSearchError::Cancelled));
 }

@@ -33,12 +33,14 @@ const HYBRID_FACTS_PER_TOPIC: usize = 8;
 const HYBRID_RESULT_K: usize = 8;
 const HYBRID_DIMENSION: usize = 64;
 
-const HYBRID_STRATEGIES: [HybridStrategy; 5] = [
+const HYBRID_STRATEGIES: [HybridStrategy; 7] = [
     HybridStrategy::VectorOnly,
     HybridStrategy::Bm25TopicCurrent,
     HybridStrategy::Bm25TopicCurrentVector,
     HybridStrategy::GraphTopicBm25Current,
     HybridStrategy::GraphTopicBm25CurrentVector,
+    HybridStrategy::GraphTopicBm25CurrentScoped,
+    HybridStrategy::GraphTopicBm25CurrentScopedVector,
 ];
 
 fn bench_exact_bm25(c: &mut Criterion) {
@@ -214,6 +216,8 @@ enum HybridStrategy {
     Bm25TopicCurrentVector,
     GraphTopicBm25Current,
     GraphTopicBm25CurrentVector,
+    GraphTopicBm25CurrentScoped,
+    GraphTopicBm25CurrentScopedVector,
 }
 
 impl HybridStrategy {
@@ -224,6 +228,10 @@ impl HybridStrategy {
             Self::Bm25TopicCurrentVector => "bm25_topic_current_vector_rerank",
             Self::GraphTopicBm25Current => "graph_topic_bm25_current",
             Self::GraphTopicBm25CurrentVector => "graph_topic_bm25_current_vector_rerank",
+            Self::GraphTopicBm25CurrentScoped => "graph_topic_bm25_current_scoped",
+            Self::GraphTopicBm25CurrentScopedVector => {
+                "graph_topic_bm25_current_scoped_vector_rerank"
+            }
         }
     }
 }
@@ -404,6 +412,15 @@ impl HybridFixture {
                 let candidates = self.graph_topic_bm25_candidates(query);
                 self.vector_rerank(query, &candidates, HYBRID_RESULT_K)
             }
+            HybridStrategy::GraphTopicBm25CurrentScoped => self
+                .graph_topic_bm25_scoped_candidates(query)
+                .into_iter()
+                .take(HYBRID_RESULT_K)
+                .collect(),
+            HybridStrategy::GraphTopicBm25CurrentScopedVector => {
+                let candidates = self.graph_topic_bm25_scoped_candidates(query);
+                self.vector_rerank(query, &candidates, HYBRID_RESULT_K)
+            }
         }
     }
 
@@ -431,7 +448,7 @@ impl HybridFixture {
     }
 
     fn graph_topic_bm25_candidates(&self, query: &HybridQuery) -> Vec<NodeId> {
-        let topic_nodes = self.topic_candidates(query);
+        let topic_nodes = HashSet::<_>::from_iter(self.topic_candidates(query));
         self.bm25_hits(&query.current_text, self.bm25_width)
             .into_iter()
             .filter(|node| topic_nodes.contains(node))
@@ -439,8 +456,18 @@ impl HybridFixture {
             .collect()
     }
 
-    fn topic_candidates(&self, query: &HybridQuery) -> HashSet<NodeId> {
-        self.graph
+    fn graph_topic_bm25_scoped_candidates(&self, query: &HybridQuery) -> Vec<NodeId> {
+        let topic_nodes = self.topic_candidates(query);
+        self.text_index
+            .search_candidates(&query.current_text, &topic_nodes, self.topic_current_width)
+            .into_iter()
+            .map(|hit| hit.node_id)
+            .collect()
+    }
+
+    fn topic_candidates(&self, query: &HybridQuery) -> Vec<NodeId> {
+        let mut candidates: Vec<NodeId> = self
+            .graph
             .incoming_edges(query.topic_node)
             .map(|entry| {
                 entry
@@ -448,7 +475,9 @@ impl HybridFixture {
                     .map(|edge| edge.neighbor)
                     .collect()
             })
-            .unwrap_or_default()
+            .unwrap_or_default();
+        candidates.sort_unstable();
+        candidates
     }
 
     fn vector_rerank(&self, query: &HybridQuery, candidates: &[NodeId], k: usize) -> Vec<NodeId> {
