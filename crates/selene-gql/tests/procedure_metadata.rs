@@ -276,7 +276,7 @@ fn vector_candidate_states_metadata_has_descriptor_columns() {
     assert_eq!(arity.minimum, 0);
     assert_eq!(arity.maximum, 0);
     let columns = &metadata.output_schema.columns;
-    assert_eq!(columns.len(), 6);
+    assert_eq!(columns.len(), 8);
     assert_eq!(columns[0].name.as_str(), "state_name");
     assert_eq!(columns[0].ty, GqlType::String);
     assert_eq!(columns[1].name.as_str(), "generation");
@@ -285,10 +285,14 @@ fn vector_candidate_states_metadata_has_descriptor_columns() {
     assert_eq!(columns[2].ty, GqlType::Uint64);
     assert_eq!(columns[3].name.as_str(), "required_label");
     assert_eq!(columns[3].ty, GqlType::String);
-    assert_eq!(columns[4].name.as_str(), "exclude_outgoing");
+    assert_eq!(columns[4].name.as_str(), "require_outgoing");
     assert_eq!(columns[4].ty, GqlType::List(Box::new(GqlType::String)));
-    assert_eq!(columns[5].name.as_str(), "exclude_incoming");
+    assert_eq!(columns[5].name.as_str(), "require_incoming");
     assert_eq!(columns[5].ty, GqlType::List(Box::new(GqlType::String)));
+    assert_eq!(columns[6].name.as_str(), "exclude_outgoing");
+    assert_eq!(columns[6].ty, GqlType::List(Box::new(GqlType::String)));
+    assert_eq!(columns[7].name.as_str(), "exclude_incoming");
+    assert_eq!(columns[7].ty, GqlType::List(Box::new(GqlType::String)));
 }
 
 #[test]

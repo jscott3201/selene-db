@@ -10,6 +10,9 @@ use selene_persist::{
 use super::*;
 use crate::SharedGraph;
 
+#[path = "required_edges_tests.rs"]
+mod required_edges_tests;
+
 fn label(name: &str) -> IStr {
     intern(name).unwrap()
 }
@@ -142,6 +145,8 @@ fn shared_graph_lists_generation_checked_candidate_state_metadata() {
     assert_eq!(info.generation, shared.read().meta.generation);
     assert_eq!(info.candidate_count, 1);
     assert_eq!(info.required_label, Some(label("MemoryFact")));
+    assert_eq!(info.require_outgoing, Vec::<IStr>::new());
+    assert_eq!(info.require_incoming, Vec::<IStr>::new());
     assert_eq!(info.exclude_outgoing, vec![superseded]);
     assert_eq!(info.exclude_incoming, vec![contradicts]);
 }
@@ -535,6 +540,8 @@ fn provider_canonicalizes_public_spec_label_vectors() {
     let spec = CandidateStateSpec {
         name: name.clone(),
         required_label: Some(doc.clone()),
+        require_outgoing: Vec::new(),
+        require_incoming: Vec::new(),
         exclude_outgoing: vec![other, superseded.clone(), superseded.clone()],
         exclude_incoming: Vec::new(),
     };

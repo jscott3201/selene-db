@@ -35,6 +35,10 @@ pub struct CandidateStateSpec {
     pub name: IStr,
     /// Optional node label required for membership.
     pub required_label: Option<IStr>,
+    /// Outgoing edge labels required on the source node.
+    pub require_outgoing: Vec<IStr>,
+    /// Incoming edge labels required on the target node.
+    pub require_incoming: Vec<IStr>,
     /// Outgoing edge labels that disqualify the source node.
     pub exclude_outgoing: Vec<IStr>,
     /// Incoming edge labels that disqualify the target node.
@@ -48,6 +52,8 @@ impl CandidateStateSpec {
         Self {
             name,
             required_label: None,
+            require_outgoing: Vec::new(),
+            require_incoming: Vec::new(),
             exclude_outgoing: Vec::new(),
             exclude_incoming: Vec::new(),
         }
@@ -57,6 +63,20 @@ impl CandidateStateSpec {
     #[must_use]
     pub fn require_label(mut self, label: IStr) -> Self {
         self.required_label = Some(label);
+        self
+    }
+
+    /// Require an outgoing edge carrying `label`.
+    #[must_use]
+    pub fn require_outgoing(mut self, label: IStr) -> Self {
+        insert_sorted_unique(&mut self.require_outgoing, label);
+        self
+    }
+
+    /// Require an incoming edge carrying `label`.
+    #[must_use]
+    pub fn require_incoming(mut self, label: IStr) -> Self {
+        insert_sorted_unique(&mut self.require_incoming, label);
         self
     }
 
@@ -90,6 +110,8 @@ impl MaintainedCandidateStateProvider {
     pub fn new(specs: impl IntoIterator<Item = CandidateStateSpec>) -> Result<Self, ProviderError> {
         let mut specs = specs.into_iter().collect::<Vec<_>>();
         for spec in &mut specs {
+            canonicalize_labels(&mut spec.require_outgoing);
+            canonicalize_labels(&mut spec.require_incoming);
             canonicalize_labels(&mut spec.exclude_outgoing);
             canonicalize_labels(&mut spec.exclude_incoming);
         }
@@ -233,6 +255,8 @@ impl MaintainedCandidateStateProvider {
                 generation,
                 candidate_count: state.members.get(&spec.name).map_or(0, BTreeSet::len),
                 required_label: spec.required_label.clone(),
+                require_outgoing: spec.require_outgoing.clone(),
+                require_incoming: spec.require_incoming.clone(),
                 exclude_outgoing: spec.exclude_outgoing.clone(),
                 exclude_incoming: spec.exclude_incoming.clone(),
             })
@@ -566,6 +590,14 @@ impl CandidateState {
                     .as_ref()
                     .is_none_or(|required| labels.contains(required))
                     && spec
+                        .require_outgoing
+                        .iter()
+                        .all(|label| has_count(&self.outgoing_counts, node, label))
+                    && spec
+                        .require_incoming
+                        .iter()
+                        .all(|label| has_count(&self.incoming_counts, node, label))
+                    && spec
                         .exclude_outgoing
                         .iter()
                         .all(|label| !has_count(&self.outgoing_counts, node, label))
@@ -606,7 +638,9 @@ fn empty_members(specs: &[CandidateStateSpec]) -> BTreeMap<IStr, BTreeSet<NodeId
 
 fn watches_label(specs: &[CandidateStateSpec], label: &IStr) -> bool {
     specs.iter().any(|spec| {
-        spec.exclude_outgoing.binary_search(label).is_ok()
+        spec.require_outgoing.binary_search(label).is_ok()
+            || spec.require_incoming.binary_search(label).is_ok()
+            || spec.exclude_outgoing.binary_search(label).is_ok()
             || spec.exclude_incoming.binary_search(label).is_ok()
     })
 }

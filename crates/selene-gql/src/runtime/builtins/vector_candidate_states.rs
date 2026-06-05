@@ -30,6 +30,10 @@ pub(super) fn output_columns() -> Vec<ProcedureOutputColumn> {
             .with_description("Current candidate node count."),
         StaticOutputColumn::new("required_label", GqlType::String)
             .with_description("Required node label, or NULL when unconstrained."),
+        StaticOutputColumn::new("require_outgoing", GqlType::List(Box::new(GqlType::String)))
+            .with_description("Outgoing edge labels required on the source node."),
+        StaticOutputColumn::new("require_incoming", GqlType::List(Box::new(GqlType::String)))
+            .with_description("Incoming edge labels required on the target node."),
         StaticOutputColumn::new("exclude_outgoing", GqlType::List(Box::new(GqlType::String)))
             .with_description("Outgoing edge labels that disqualify the source node."),
         StaticOutputColumn::new("exclude_incoming", GqlType::List(Box::new(GqlType::String)))
@@ -64,6 +68,8 @@ fn info_into_values(info: VectorCandidateStateInfo) -> Vec<Value> {
         Value::Uint(info.generation),
         Value::Uint(usize_to_u64_saturating(info.candidate_count)),
         optional_string(info.required_label),
+        string_list(info.require_outgoing),
+        string_list(info.require_incoming),
         string_list(info.exclude_outgoing),
         string_list(info.exclude_incoming),
     ]
