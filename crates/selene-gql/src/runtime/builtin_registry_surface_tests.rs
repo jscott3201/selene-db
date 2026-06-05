@@ -11,18 +11,18 @@ fn name(segments: &[&str]) -> Vec<IStr> {
 }
 
 #[test]
-fn registers_all_thirty_nine_procedures() {
+fn registers_all_forty_one_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        39,
-        "expected 19 algo procedures + 20 platform built-ins"
+        41,
+        "expected 19 algo procedures + 22 platform built-ins"
     );
 }
 
 #[test]
-fn iter_handles_yields_all_twenty_platform_builtins() {
+fn iter_handles_yields_all_twenty_two_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -48,6 +48,8 @@ fn iter_handles_yields_all_twenty_platform_builtins() {
         ["selene", "vector_score_expanded_candidates_batch"],
         ["selene", "vector_search_nodes_ann"],
         ["selene", "vector_search_nodes_ann_batch"],
+        ["selene", "vector_search_expanded_candidates_ann"],
+        ["selene", "vector_search_expanded_candidates_ann_batch"],
         ["selene", "vector_index_stats"],
         ["selene", "rebuild_vector_indexes"],
         ["selene", "rebuild_recommended_vector_indexes"],
@@ -60,6 +62,60 @@ fn iter_handles_yields_all_twenty_platform_builtins() {
             "SHOW PROCEDURES must list {expected:?}"
         );
     }
+}
+
+#[test]
+fn vector_search_expanded_candidates_ann_batch_signature_exposes_root_and_final_k() {
+    let registry = BuiltinProcedureRegistry::new();
+    let metadata = registry
+        .lookup(&name(&[
+            "selene",
+            "vector_search_expanded_candidates_ann_batch",
+        ]))
+        .expect("vector_search_expanded_candidates_ann_batch resolves");
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 6);
+    assert_eq!(arity.maximum, 9);
+
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters.len(), 9);
+    assert_eq!(parameters[0].name.as_str(), "label");
+    assert_eq!(parameters[0].ty, crate::GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "property");
+    assert_eq!(parameters[1].ty, crate::GqlType::String);
+    assert_eq!(parameters[2].name.as_str(), "queries");
+    assert_eq!(
+        parameters[2].ty,
+        crate::GqlType::List(Box::new(crate::GqlType::Vector))
+    );
+    assert_eq!(parameters[3].name.as_str(), "root_k");
+    assert_eq!(parameters[3].ty, crate::GqlType::Integer);
+    assert_eq!(parameters[4].name.as_str(), "edge_label");
+    assert_eq!(parameters[4].ty, crate::GqlType::String);
+    assert_eq!(parameters[5].name.as_str(), "k");
+    assert_eq!(parameters[5].ty, crate::GqlType::Integer);
+    assert_eq!(parameters[6].name.as_str(), "direction");
+    assert_eq!(parameters[6].ty, crate::GqlType::String);
+    assert_eq!(parameters[6].default_doc, Some("outgoing"));
+    assert!(parameters[6].default.is_some());
+    assert_eq!(parameters[7].name.as_str(), "metric");
+    assert_eq!(parameters[7].ty, crate::GqlType::String);
+    assert_eq!(parameters[7].default_doc, Some("squared_euclidean"));
+    assert!(parameters[7].default.is_some());
+    assert_eq!(parameters[8].name.as_str(), "ef_search");
+    assert_eq!(parameters[8].ty, crate::GqlType::Integer);
+    assert_eq!(parameters[8].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+    assert!(parameters[8].nullable);
+    assert!(parameters[8].default.is_some());
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 3);
+    assert_eq!(columns[0].name.as_str(), "query_index");
+    assert_eq!(columns[0].ty, crate::GqlType::Uint64);
+    assert_eq!(columns[1].name.as_str(), "node_id");
+    assert_eq!(columns[1].ty, crate::GqlType::NodeRef);
+    assert_eq!(columns[2].name.as_str(), "distance");
+    assert_eq!(columns[2].ty, crate::GqlType::Float64);
 }
 
 #[test]

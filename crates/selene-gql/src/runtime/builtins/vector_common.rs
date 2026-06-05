@@ -253,6 +253,34 @@ pub(super) fn vector_search_error(
     }
 }
 
+/// Map ANN vector graph/search errors through the GQL procedure boundary.
+pub(super) fn approximate_vector_search_error(
+    proc_name: &'static str,
+    error: VectorSearchError,
+    graph_context: &'static str,
+    batch_mismatch: BatchMismatch,
+) -> ProcedureError {
+    match error {
+        VectorSearchError::Graph(error) => graph_error(error, graph_context),
+        VectorSearchError::Cancelled => ProcedureError::Cancelled,
+        VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        VectorSearchError::BatchLengthMismatch { .. } => match batch_mismatch {
+            BatchMismatch::InvalidArgument => invalid_arg(format!("{error}")),
+            BatchMismatch::Internal(prefix) => ProcedureError::Internal {
+                detail: format!("{prefix}: {error}"),
+            },
+        },
+        VectorSearchError::ApproximateIndexMissing => {
+            invalid_arg(format!("{proc_name} requires a matching ANN vector index"))
+        }
+        VectorSearchError::ApproximateMetricMismatch { indexed, requested } => {
+            invalid_arg(format!(
+                "{proc_name} requested {requested:?}, but the ANN vector index uses {indexed:?}"
+            ))
+        }
+    }
+}
+
 /// Construct an invalid-argument procedure error.
 pub(super) fn invalid_arg(detail: impl Into<String>) -> ProcedureError {
     ProcedureError::InvalidArgument {
