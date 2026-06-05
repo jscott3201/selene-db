@@ -43,6 +43,13 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
             config.graph_hint_docs_per_topic,
         );
         let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+        let anchor_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+        let anchor_batch_cache =
+            Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+        let root_rows_cache =
+            Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+        let root_rows_batch_cache =
+            Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         let root_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         let root_batch_cache =
             Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
@@ -50,6 +57,10 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         let current_state_cache =
             Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+        fixture.warm_query_anchor_lookup_cache(&registry, Arc::clone(&anchor_cache));
+        fixture.warm_query_anchor_lookup_batch_cache(&registry, Arc::clone(&anchor_batch_cache));
+        fixture.warm_query_root_rows_cache(&registry, Arc::clone(&root_rows_cache));
+        fixture.warm_query_root_rows_batch_cache(&registry, Arc::clone(&root_rows_batch_cache));
         fixture.warm_query_root_materialize_cache(&registry, Arc::clone(&root_cache));
         fixture.warm_query_root_materialize_batch_cache(&registry, Arc::clone(&root_batch_cache));
         fixture.warm_query_root_cache(&registry, Arc::clone(&cache));
@@ -68,6 +79,92 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         let batch_precision =
             fixture.gql_batch_precision_basis_points(&registry, Some(Arc::clone(&batch_cache)));
         group.throughput(Throughput::Elements((fixture.query_count() * TOP_K) as u64));
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_cache_query_anchor_lookup",
+                format!(
+                    "{}_{}_q{}_anchors{}_dim{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    fixture.query_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_anchor_lookup_queries(
+                        &registry,
+                        Some(Arc::clone(&anchor_cache)),
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_cache_query_anchor_lookup_batch",
+                format!(
+                    "{}_{}_q{}_anchors{}_dim{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    fixture.query_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_anchor_lookup_batch_count(
+                        &registry,
+                        Some(Arc::clone(&anchor_batch_cache)),
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_cache_query_root_rows",
+                format!(
+                    "{}_{}_q{}_r{}_totalr{}_dim{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    fixture.first_query_root_count(),
+                    fixture.query_count() * fixture.first_query_root_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_root_rows_queries(
+                        &registry,
+                        Some(Arc::clone(&root_rows_cache)),
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_cache_query_root_rows_batch",
+                format!(
+                    "{}_{}_q{}_r{}_totalr{}_dim{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    fixture.first_query_root_count(),
+                    fixture.query_count() * fixture.first_query_root_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_root_rows_batch_count(
+                        &registry,
+                        Some(Arc::clone(&root_rows_batch_cache)),
+                    ));
+                });
+            },
+        );
         group.bench_function(
             BenchmarkId::new(
                 "shared_cache_query_root_materialize",
