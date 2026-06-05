@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_45_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_46_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 45);
+    assert_eq!(procedures.len(), 46);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 45);
+    assert_eq!(table.row_count(), 46);
 
     let names = column_strings(&table, "name");
     let descriptions = column_strings(&table, "description");
@@ -147,6 +147,11 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
         names
             .iter()
             .any(|name| name == "selene.vector_search_expanded_candidates_ann")
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.vector_search_candidate_state_expanded_ann")
     );
     assert!(
         names
@@ -364,6 +369,61 @@ fn vector_score_candidate_state_expanded_metadata_has_expansion_and_composition_
     assert_eq!(parameters[8].ty, GqlType::String);
     assert_eq!(parameters[8].default_doc, Some("squared_euclidean"));
     assert!(parameters[8].default.is_some());
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].name.as_str(), "node_id");
+    assert_eq!(columns[0].ty, GqlType::NodeRef);
+    assert_eq!(columns[1].name.as_str(), "distance");
+    assert_eq!(columns[1].ty, GqlType::Float64);
+}
+
+#[test]
+fn vector_search_candidate_state_expanded_ann_metadata_has_state_and_ann_args() {
+    let registry = full_registry();
+    let name = [
+        istr("selene"),
+        istr("vector_search_candidate_state_expanded_ann"),
+    ];
+    let metadata = registry
+        .lookup(&name)
+        .expect("vector_search_candidate_state_expanded_ann resolves");
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 7);
+    assert_eq!(arity.maximum, 11);
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters[0].name.as_str(), "label");
+    assert_eq!(parameters[0].ty, GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "property");
+    assert_eq!(parameters[1].ty, GqlType::String);
+    assert_eq!(parameters[2].name.as_str(), "query");
+    assert_eq!(parameters[2].ty, GqlType::Vector);
+    assert_eq!(parameters[3].name.as_str(), "state_name");
+    assert_eq!(parameters[3].ty, GqlType::String);
+    assert_eq!(parameters[4].name.as_str(), "root_k");
+    assert_eq!(parameters[4].ty, GqlType::Integer);
+    assert_eq!(parameters[5].name.as_str(), "edge_label");
+    assert_eq!(parameters[5].ty, GqlType::String);
+    assert_eq!(parameters[6].name.as_str(), "k");
+    assert_eq!(parameters[6].ty, GqlType::Integer);
+    assert_eq!(parameters[7].name.as_str(), "operation");
+    assert_eq!(parameters[7].ty, GqlType::String);
+    assert_eq!(parameters[7].default_doc, Some("intersection"));
+    assert!(parameters[7].default.is_some());
+    assert_eq!(parameters[8].name.as_str(), "direction");
+    assert_eq!(parameters[8].ty, GqlType::String);
+    assert_eq!(parameters[8].default_doc, Some("outgoing"));
+    assert!(parameters[8].default.is_some());
+    assert_eq!(parameters[9].name.as_str(), "metric");
+    assert_eq!(parameters[9].ty, GqlType::String);
+    assert_eq!(parameters[9].default_doc, Some("squared_euclidean"));
+    assert!(parameters[9].default.is_some());
+    assert_eq!(parameters[10].name.as_str(), "ef_search");
+    assert_eq!(parameters[10].ty, GqlType::Integer);
+    assert!(parameters[10].nullable);
+    assert_eq!(parameters[10].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+    assert!(parameters[10].default.is_some());
 
     let columns = &metadata.output_schema.columns;
     assert_eq!(columns.len(), 2);
