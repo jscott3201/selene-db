@@ -15,7 +15,8 @@ use selene_core::{
     CancellationChecker, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
     VectorValue, intern,
 };
-use selene_graph::{ApproximateVectorSearchOptions, VectorIndexKind};
+use selene_graph::VectorNeighborDirection;
+use selene_graph::{ApproximateVectorSearchOptions, VectorCandidateSet, VectorIndexKind};
 use selene_graph::{SeleneGraph, SharedGraph, TextIndex, VectorNodeSearchHit};
 use selene_testing::BenchProfile;
 
@@ -35,7 +36,7 @@ const HYBRID_RESULT_K: usize = 8;
 const HYBRID_DIMENSION: usize = 64;
 const HYBRID_ANN_SEARCH_WIDTH: usize = 64;
 
-const HYBRID_STRATEGIES: [HybridStrategy; 12] = [
+const HYBRID_STRATEGIES: [HybridStrategy; 13] = [
     HybridStrategy::VectorOnly,
     HybridStrategy::VectorBm25Current,
     HybridStrategy::VectorBm25CurrentVector,
@@ -44,6 +45,7 @@ const HYBRID_STRATEGIES: [HybridStrategy; 12] = [
     HybridStrategy::AnnBm25CurrentVector,
     HybridStrategy::Bm25TopicCurrent,
     HybridStrategy::Bm25TopicCurrentVector,
+    HybridStrategy::Bm25TopicCurrentGraphExpandVector,
     HybridStrategy::GraphTopicBm25Current,
     HybridStrategy::GraphTopicBm25CurrentVector,
     HybridStrategy::GraphTopicBm25CurrentScoped,
@@ -226,6 +228,7 @@ enum HybridStrategy {
     AnnBm25CurrentVector,
     Bm25TopicCurrent,
     Bm25TopicCurrentVector,
+    Bm25TopicCurrentGraphExpandVector,
     GraphTopicBm25Current,
     GraphTopicBm25CurrentVector,
     GraphTopicBm25CurrentScoped,
@@ -243,6 +246,9 @@ impl HybridStrategy {
             Self::AnnBm25CurrentVector => "ann_bm25_current_vector_rerank",
             Self::Bm25TopicCurrent => "bm25_topic_current",
             Self::Bm25TopicCurrentVector => "bm25_topic_current_vector_rerank",
+            Self::Bm25TopicCurrentGraphExpandVector => {
+                "bm25_topic_current_graph_expand_vector_rerank"
+            }
             Self::GraphTopicBm25Current => "graph_topic_bm25_current",
             Self::GraphTopicBm25CurrentVector => "graph_topic_bm25_current_vector_rerank",
             Self::GraphTopicBm25CurrentScoped => "graph_topic_bm25_current_scoped",
@@ -450,6 +456,10 @@ impl HybridFixture {
                     self.bm25_hits(&query.topic_current_text, self.topic_current_width);
                 self.vector_rerank(query, &candidates, HYBRID_RESULT_K)
             }
+            HybridStrategy::Bm25TopicCurrentGraphExpandVector => {
+                let candidates = self.bm25_topic_graph_expanded_candidates(query);
+                self.vector_rerank(query, &candidates, HYBRID_RESULT_K)
+            }
             HybridStrategy::GraphTopicBm25Current => self
                 .graph_topic_bm25_candidates(query)
                 .into_iter()
@@ -554,6 +564,28 @@ impl HybridFixture {
             .search_candidates(&query.current_text, &topic_nodes, self.topic_current_width)
             .into_iter()
             .map(|hit| hit.node_id)
+            .collect()
+    }
+
+    fn bm25_topic_graph_expanded_candidates(&self, query: &HybridQuery) -> Vec<NodeId> {
+        let roots = VectorCandidateSet::from_nodes(
+            self.bm25_hits(&query.topic_current_text, HYBRID_RESULT_K),
+        );
+        let topics = self.graph.expand_vector_candidate_set(
+            &roots,
+            &self.topic_edge,
+            VectorNeighborDirection::Outgoing,
+        );
+        self.graph
+            .expand_vector_candidate_set(
+                &topics,
+                &self.topic_edge,
+                VectorNeighborDirection::Incoming,
+            )
+            .as_nodes()
+            .iter()
+            .copied()
+            .filter(|node| self.metadata.contains_key(node))
             .collect()
     }
 
