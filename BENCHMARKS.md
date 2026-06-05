@@ -920,6 +920,9 @@ retrieved, not only whether the result was in the right broad topic:
 | `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_current_state_intersection_batch/...q8_k4_r2_c6...basecurbp8125_curbp10000_hitbp10000` | 210.17 µs | 287.61 µs | Batched graph-root vector scoring through maintained current state recovers all expected code/alias targets. This is slower than BM25/state but fixes the missing-target case without adding a fusion API. |
 | `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_expansion_batch/...q8_k4_r2_c9...dim1536_precbp10000_hitbp8750` | 211.05 µs | - | OpenRouter Codestral Embed 2505 through the same code-alias corpus. Plain graph-expanded vector scoring again misses one expected target. |
 | `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_current_state_intersection_batch/...q8_k4_r2_c6...dim1536_basecurbp7812_curbp10000_hitbp10000` | 211.95 µs | - | Maintained current-state vector scoring recovers all expected code-alias targets with effectively the same latency as plain expansion on this profile. |
+| `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_provenance_state_intersection_batch/...q8_k4_r2_c6...dim1536_basecurbp7812_curbp10000_hitbp10000` | 212.38 µs | - | Provenance-gated current-state vector scoring preserves the same target quality as the current-state vector batch with negligible extra latency on this code-alias fixture. |
+| `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_current_state_text_score_batch/...q8_k4_r2_c6...dim1536_precbp5000_curbp5000_hitbp8750` | 136.79 µs | - | Maintained current-state BM25 remains the fastest Codestral-backed code-alias row, but sparse lexical matches still miss one expected target. |
+| `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_current_state_text_vector_batch/...q8_k4_r2_c6...dim1536_precbp5000_curbp5000_hitbp8750` | 706.33 µs | - | Vector rerank after the BM25/current-state candidate pass keeps the same seven-of-eight target hit shape and adds substantial dimension-sensitive cost. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
@@ -970,9 +973,14 @@ OpenRouter `mistralai/codestral-embed-2505` is available through
 the same target-aware `code_alias_memory` profile, the plain graph-expanded
 batch row reaches `precbp10000` / `hitbp8750`, `r2`, `c9`, at 211.05 us, while
 the maintained current-state vector batch reaches `hitbp10000`,
-`basecurbp7812` / `curbp10000`, `r2`, `c6`, at 211.95 us. This keeps the
+`basecurbp7812` / `curbp10000`, `r2`, `c6`, at 211.95 us. Provenance-gated
+current-state scoring keeps the same target quality at 212.38 us. Maintained
+BM25 over the same graph-expanded current set is faster at 136.79 us but still
+misses one expected code/alias target, and vector rerank after that BM25 pass
+does not improve target hits while costing 706.33 us. This keeps the
 current-state conclusion intact for the code-specialized embedding model:
-state composition, not model choice alone, recovers the missing target.
+state composition, not model choice alone, recovers the missing target; BM25 is
+the fast lexical path only when its candidate producer is target-complete.
 
 The locally listed `jina-code-embeddings-1.5b-mlx` model is not currently
 available from `/v1/embeddings` in oMLX; the endpoint returns HTTP 400 and
