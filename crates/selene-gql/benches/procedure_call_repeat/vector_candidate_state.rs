@@ -1,17 +1,47 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{Criterion, Throughput};
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorValue, intern};
+use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
 use selene_gql::{BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
 use selene_graph::{
     CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
 };
 
 const CANDIDATE_STATE_SOURCE: &str = "CALL selene.vector_score_candidate_state('embedding', $query, 'active_docs', 10, 'squared_euclidean') YIELD node_id, distance";
+const CANDIDATE_STATE_NODES_SOURCE: &str = "CALL selene.vector_score_candidate_state_nodes('embedding', $query, 'active_docs', $nodes, 10, $operation, 'squared_euclidean') YIELD node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
 const VECTOR_DIMENSION: usize = 128;
 const VECTOR_BATCH_QUERIES: usize = 8;
 const VECTOR_CANDIDATE_STATE_CANDIDATES: usize = 64;
+const VECTOR_CANDIDATE_STATE_HALF_CANDIDATES: usize = 32;
+
+#[derive(Clone, Copy)]
+enum CandidateStateNodeFixture {
+    Intersection64,
+    Union128,
+    StateDifference32,
+}
+
+impl CandidateStateNodeFixture {
+    fn operation(self) -> &'static str {
+        match self {
+            Self::Intersection64 => "intersection",
+            Self::Union128 => "union",
+            Self::StateDifference32 => "state_difference",
+        }
+    }
+
+    fn nodes(self) -> Value {
+        match self {
+            Self::Intersection64 => node_list(0, VECTOR_CANDIDATE_STATE_CANDIDATES),
+            Self::Union128 => node_list(
+                VECTOR_CANDIDATE_STATE_CANDIDATES,
+                VECTOR_CANDIDATE_STATE_CANDIDATES,
+            ),
+            Self::StateDifference32 => node_list(0, VECTOR_CANDIDATE_STATE_HALF_CANDIDATES),
+        }
+    }
+}
 
 pub(super) fn bench_vector_candidate_state_procedure(c: &mut Criterion) {
     let registry = BuiltinProcedureRegistry::new();
@@ -21,7 +51,9 @@ pub(super) fn bench_vector_candidate_state_procedure(c: &mut Criterion) {
         VECTOR_CANDIDATE_STATE_CANDIDATES,
     );
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let nodes_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_candidate_state_cache(&graph, &registry, Arc::clone(&cache));
+    warm_candidate_state_nodes_cache(&graph, &registry, Arc::clone(&nodes_cache));
 
     let mut group = c.benchmark_group("procedure_vector_candidate_state");
     group.throughput(Throughput::Elements(
@@ -52,6 +84,61 @@ pub(super) fn bench_vector_candidate_state_procedure(c: &mut Criterion) {
             });
         },
     );
+    group.bench_function(
+        "shared_cache_score_candidate_state_nodes_intersection_64_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_candidate_state_nodes_score(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&nodes_cache)),
+                    0,
+                    CandidateStateNodeFixture::Intersection64,
+                ));
+            });
+        },
+    );
+    group.bench_function(
+        "shared_cache_score_candidate_state_nodes_intersection_repeated_8x64_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_candidate_state_nodes_repeated_batch(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&nodes_cache)),
+                    CandidateStateNodeFixture::Intersection64,
+                ));
+            });
+        },
+    );
+    group.bench_function(
+        "shared_cache_score_candidate_state_nodes_union_128_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_candidate_state_nodes_score(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&nodes_cache)),
+                    0,
+                    CandidateStateNodeFixture::Union128,
+                ));
+            });
+        },
+    );
+    group.bench_function(
+        "shared_cache_score_candidate_state_nodes_state_difference_32_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_candidate_state_nodes_score(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&nodes_cache)),
+                    0,
+                    CandidateStateNodeFixture::StateDifference32,
+                ));
+            });
+        },
+    );
     group.finish();
 }
 
@@ -65,6 +152,22 @@ fn warm_candidate_state_cache(
     session
         .execute_source(CANDIDATE_STATE_SOURCE, registry)
         .expect("warmup vector candidate-state scoring executes");
+}
+
+fn warm_candidate_state_nodes_cache(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Arc<CallPlanCache>,
+) {
+    let mut session = Session::new(graph).with_call_plan_cache(cache);
+    bind_candidate_state_node_inputs_for(
+        &mut session,
+        0,
+        CandidateStateNodeFixture::Intersection64,
+    );
+    session
+        .execute_source(CANDIDATE_STATE_NODES_SOURCE, registry)
+        .expect("warmup vector candidate-state node-composition scoring executes");
 }
 
 fn execute_vector_candidate_state_score(
@@ -87,6 +190,27 @@ fn execute_vector_candidate_state_score(
     }
 }
 
+fn execute_vector_candidate_state_nodes_score(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+    query_index: usize,
+    fixture: CandidateStateNodeFixture,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    bind_candidate_state_node_inputs_for(&mut session, query_index, fixture);
+    match session
+        .execute_source(CANDIDATE_STATE_NODES_SOURCE, registry)
+        .expect("vector candidate-state node-composition scoring procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
 fn execute_vector_candidate_state_repeated_batch(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
@@ -99,6 +223,25 @@ fn execute_vector_candidate_state_repeated_batch(
             registry,
             cache.as_ref().map(Arc::clone),
             query_index,
+        );
+    }
+    rows
+}
+
+fn execute_vector_candidate_state_nodes_repeated_batch(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+    fixture: CandidateStateNodeFixture,
+) -> usize {
+    let mut rows = 0;
+    for query_index in 0..VECTOR_BATCH_QUERIES {
+        rows += execute_vector_candidate_state_nodes_score(
+            graph,
+            registry,
+            cache.as_ref().map(Arc::clone),
+            query_index,
+            fixture,
         );
     }
     rows
@@ -154,6 +297,27 @@ fn bind_candidate_state_inputs_for(session: &mut Session<'_>, query_index: usize
         istr("query"),
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
+}
+
+fn bind_candidate_state_node_inputs_for(
+    session: &mut Session<'_>,
+    query_index: usize,
+    fixture: CandidateStateNodeFixture,
+) {
+    session.bind_parameter(
+        istr("query"),
+        Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
+    );
+    session.bind_parameter(istr("nodes"), fixture.nodes());
+    session.bind_parameter(istr("operation"), Value::String(istr(fixture.operation())));
+}
+
+fn node_list(start: usize, len: usize) -> Value {
+    Value::List(
+        (start..start + len)
+            .map(|idx| Value::NodeRef(NodeId::new((idx + 1) as u64)))
+            .collect(),
+    )
 }
 
 fn vector_value(seed: usize, dimension: usize) -> VectorValue {
