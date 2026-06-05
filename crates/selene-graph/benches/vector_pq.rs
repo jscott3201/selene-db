@@ -71,6 +71,21 @@ const SCALAR_VARIANTS: [ScalarQuantVariant; 3] = [
     },
 ];
 
+const SCALAR_CODE_VARIANTS: [ScalarQuantVariant; 3] = [
+    ScalarQuantVariant {
+        name: "u8code_c64",
+        candidates: 64,
+    },
+    ScalarQuantVariant {
+        name: "u8code_c256",
+        candidates: 256,
+    },
+    ScalarQuantVariant {
+        name: "u8code_c1024",
+        candidates: 1024,
+    },
+];
+
 const BINARY_VARIANTS: [BinaryQuantVariant; 4] = [
     BinaryQuantVariant {
         name: "sign_c32",
@@ -140,6 +155,35 @@ fn bench_scalar_quant_candidate_recall(c: &mut Criterion) {
                 |b| {
                     b.iter(|| {
                         std::hint::black_box(fixture.total_overlap());
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+fn bench_scalar_code_quant_candidate_recall(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_scalar_code_quant_candidate_recall");
+    for scale in vector_scales() {
+        for variant in SCALAR_CODE_VARIANTS {
+            let fixture = ScalarQuantFixture::build(scale, variant);
+            group.throughput(Throughput::Elements(
+                (fixture.corpus.scale * fixture.corpus.queries.len()) as u64,
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    "cluster_l2",
+                    format!(
+                        "{}_d{DIMENSION}_k{K}_recallbp{}_{}",
+                        variant.name,
+                        fixture.code_recall_basis_points(),
+                        fixture.memory_suffix()
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(fixture.code_total_overlap());
                     });
                 },
             );
@@ -231,8 +275,19 @@ impl ScalarQuantFixture {
             .total_overlap(|query| self.index.search_all(&self.corpus.vectors, query, K))
     }
 
+    fn code_total_overlap(&self) -> usize {
+        self.corpus.total_overlap(|query| {
+            self.index
+                .search_all_code_l2(&self.corpus.vectors, query, K)
+        })
+    }
+
     fn recall_basis_points(&self) -> usize {
         self.corpus.recall_basis_points(self.total_overlap())
+    }
+
+    fn code_recall_basis_points(&self) -> usize {
+        self.corpus.recall_basis_points(self.code_total_overlap())
     }
 
     fn memory_suffix(&self) -> String {
@@ -313,6 +368,32 @@ impl ScalarQuantIndex {
         hits.into_iter().map(|hit| hit.key).collect()
     }
 
+    fn search_all_code_l2(
+        &self,
+        vectors: &[VectorValue],
+        query: &VectorValue,
+        k: usize,
+    ) -> Vec<usize> {
+        let query_codes = encode_scalar_query(query, &self.mins, &self.scales);
+        let mut candidates = VectorTopK::new(self.variant.candidates.max(k));
+        for row in 0..vectors.len() {
+            candidates.push_distance(row, self.code_distance(row, &query_codes));
+        }
+        let candidate_ids = candidates
+            .into_hits()
+            .into_iter()
+            .map(|hit| hit.key)
+            .collect::<Vec<_>>();
+        let hits = exact_vector_top_k(
+            VectorMetric::SquaredEuclidean,
+            query,
+            candidate_ids.iter().map(|&row| (row, &vectors[row])),
+            k,
+        )
+        .expect("scalar-code benchmark vectors have matching dimensions");
+        hits.into_iter().map(|hit| hit.key).collect()
+    }
+
     fn estimated_bytes(&self) -> usize {
         self.codes.len().saturating_add(
             self.mins
@@ -335,6 +416,16 @@ impl ScalarQuantIndex {
                 delta * delta
             })
             .sum()
+    }
+
+    fn code_distance(&self, row: usize, query_codes: &[u8]) -> f64 {
+        let code_offset = row * DIMENSION;
+        let mut distance = 0u32;
+        for (dim, query_code) in query_codes.iter().enumerate() {
+            let delta = u32::from(self.codes[code_offset + dim].abs_diff(*query_code));
+            distance += delta * delta;
+        }
+        f64::from(distance)
     }
 }
 
@@ -369,12 +460,25 @@ fn encode_scalar_vectors(vectors: &[VectorValue], mins: &[f32], scales: &[f32]) 
     codes
 }
 
+fn encode_scalar_query(query: &VectorValue, mins: &[f32], scales: &[f32]) -> Vec<u8> {
+    query
+        .as_slice()
+        .iter()
+        .enumerate()
+        .map(|(dim, value)| {
+            let scaled = ((*value - mins[dim]) / scales[dim]).round();
+            scaled.clamp(0.0, 255.0) as u8
+        })
+        .collect()
+}
+
 criterion_group! {
     name = vector_pq;
     config = common::criterion_config();
     targets =
         bench_pq_candidate_recall,
         bench_scalar_quant_candidate_recall,
+        bench_scalar_code_quant_candidate_recall,
         bench_binary_quant_candidate_recall
 }
 criterion_main!(vector_pq);
