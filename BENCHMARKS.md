@@ -812,6 +812,18 @@ In that comparison run, the companion medians were 146.35 us for
 current-state BM25, 222.94 us for current-state vector scoring, and 224.65 us
 for plain graph-expanded vector scoring.
 
+The wider 16-query code/alias profile uses the same benchmark row family:
+
+```bash
+set -a; source .env; set +a
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_PROVIDER=openrouter \
+SELENE_EMBEDDING_CORPUS=code_alias_wide_memory \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat \
+  --filter 'query_root_current_state_text_score_batch|query_root_current_state_text_vector_batch|query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch|query_root_vector_text_batch'
+```
+
 The GQL query-root rows use the same local oMLX corpus but exercise the full
 query pipeline. The materialization rows isolate `MATCH` plus
 `WITH collect_list(root)` root production before any vector procedure runs; the
@@ -890,9 +902,11 @@ shape but deliberately overlaps vocabulary across topics to stress vector-only
 retrieval. `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` combines both 40-input
 profiles into 64 documents + 16 queries, crossing the default batch size as a
 64+16 request pair. `SELENE_OMLX_CORPUS=code_alias_memory` adds a smaller
-target-aware code/alias profile; it keeps topic/current precision metrics but
-also records `hitbp` so rows can show whether the expected symbol/fact was
-retrieved, not only whether the result was in the right broad topic:
+target-aware code/alias profile; `SELENE_OMLX_CORPUS=code_alias_wide_memory`
+extends that shape to 16 target queries. Both keep topic/current precision
+metrics but also record `hitbp` so rows can show whether the expected
+symbol/fact was retrieved, not only whether the result was in the right broad
+topic:
 
 | oMLX row | Qwen3 0.6B / 1024 dim | Qwen3 4B / 2560 dim | Notes |
 |---|---:|---:|---|
@@ -955,6 +969,12 @@ retrieved, not only whether the result was in the right broad topic:
 | `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_current_state_text_score_batch/...q8_k4_r2_c6...dim1536_precbp5000_curbp5000_hitbp8750` | 136.79 µs | - | Maintained current-state BM25 remains the fastest Codestral-backed code-alias row, but sparse lexical matches still miss one expected target. |
 | `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_current_state_text_vector_batch/...q8_k4_r2_c6...dim1536_precbp5000_curbp5000_hitbp8750` | 706.33 µs | - | Vector rerank after the BM25/current-state candidate pass keeps the same seven-of-eight target hit shape and adds substantial dimension-sensitive cost. |
 | `SELENE_EMBEDDING_PROVIDER=openrouter` `mistralai/codestral-embed-2505` `shared_cache_query_root_vector_text_batch/...q8_k4_r2_c4...dim1536_precbp6562_curbp5312_hitbp8750` | 327.96 µs | - | Reverse-order fusion: vector-expanded top-k candidates feed `selene.text_score_nodes_batch`. It is slower than maintained BM25 and current-state vector baselines on the same run, while keeping the same seven-of-eight target hit shape and lowering topic/current precision. |
+| `SELENE_EMBEDDING_CORPUS=code_alias_wide_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_score_batch/...q16_k4_r2_c8...dim1536_precbp6250_curbp6250_hitbp8750` | 171.51 µs | - | Wider 16-query Codestral code/alias profile. BM25/current-state remains fastest but finds 14 of 16 expected target facts. |
+| `SELENE_EMBEDDING_CORPUS=code_alias_wide_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_vector_batch/...q16_k4_r2_c8...dim1536_precbp6250_curbp6250_hitbp8750` | 2.6202 ms | - | Vector rerank after BM25/current-state keeps the same target-hit and precision shape while adding substantial cost. |
+| `SELENE_EMBEDDING_CORPUS=code_alias_wide_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_expansion_batch/...q16_k4_r2_c11...dim1536_precbp10000_hitbp9375` | 344.60 µs | - | Plain graph-expanded vector scoring finds 15 of 16 expected targets and keeps full broad-topic precision, but has no current-state gate. |
+| `SELENE_EMBEDDING_CORPUS=code_alias_wide_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c8...dim1536_basecurbp7968_curbp10000_hitbp8750` | 331.99 µs | - | Maintained current-state vector scoring restores current precision but drops to the same 14-of-16 target-hit shape as BM25/current-state on this wider profile. |
+| `SELENE_EMBEDDING_CORPUS=code_alias_wide_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_provenance_state_intersection_batch/...q16_k4_r2_c8...dim1536_basecurbp7968_curbp10000_hitbp8750` | 346.01 µs | - | Provenance-required current state preserves the same quality shape as exclusion-only current state with modest extra cost. |
+| `SELENE_EMBEDDING_CORPUS=code_alias_wide_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_vector_text_batch/...q16_k4_r2_c4...dim1536_precbp7031_curbp5781_hitbp9375` | 522.62 µs | - | Vector-first BM25 finds 15 of 16 expected targets like plain vector scoring, but loses broad/current precision and costs more than current-state vector scoring. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
@@ -1016,6 +1036,13 @@ current-state conclusion intact for the code-specialized embedding model:
 state composition, not model choice alone, recovers the missing target; BM25 is
 the fast lexical path only when its candidate producer is target-complete, and
 vector-first BM25 pruning is not a win on this corpus.
+On the wider `code_alias_wide_memory` profile, target-hit splits further:
+current-state BM25 and current-state vector rows find 14 of 16 targets
+(`hitbp8750`), while plain vector expansion and vector-first BM25 find 15 of 16
+(`hitbp9375`). That extra target comes with a currentness/precision tradeoff:
+vector-first BM25 falls to `precbp7031` / `curbp5781` and costs 522.62 us, so
+the better follow-up is richer graph state/corpus analysis rather than a fused
+procedure.
 
 The locally listed `jina-code-embeddings-1.5b-mlx` model is not currently
 available from `/v1/embeddings` in oMLX; the endpoint returns HTTP 400 and
