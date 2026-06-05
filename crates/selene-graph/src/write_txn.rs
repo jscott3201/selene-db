@@ -662,7 +662,7 @@ pub(crate) fn publish_appended(
     let fanout: &[Change] = fanout_changes.as_deref().unwrap_or(&changes);
     {
         let _fanout_guard = crate::reentry::FanoutGuard::enter();
-        notify_providers(providers, fanout);
+        crate::provider_fanout::notify_providers(providers, fanout);
     }
 
     // (4) Metrics + outcome.
@@ -682,79 +682,6 @@ pub(crate) fn publish_appended(
         next_node_id,
         next_edge_id,
         warnings,
-    }
-}
-
-/// Fan out committed changes to every registered provider, swallowing
-/// returned errors and panics so a misbehaving provider can never abort or
-/// crash the writer thread after the snapshot has already published.
-///
-/// Each iteration first reads the provider's tag through its own unwind
-/// boundary so a panic in `provider_tag()` is logged with the sentinel
-/// `<unknown>` tag and the provider is **skipped for this change** —
-/// matching the original "single combined unwind" behavior where a tag
-/// panic short-circuited `on_change`. When the tag is read successfully it
-/// is reused in both the error-return and panic branches of `on_change` so
-/// operators can attribute failures to the faulty provider.
-#[tracing::instrument(
-    name = "selene.graph.notify_providers",
-    skip(providers, changes),
-    fields(provider_count = providers.len(), change_count = changes.len())
-)]
-fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
-    for provider in providers {
-        for change in changes {
-            // First boundary: cache the provider tag for logging. If
-            // `provider_tag()` itself panics, log with the sentinel tag and
-            // skip `on_change` — the provider is in an inconsistent state
-            // and we should not invoke further side effects on it.
-            let tag = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                provider.provider_tag()
-            })) {
-                Ok(tag) => tag,
-                Err(payload) => {
-                    let payload = crate::panic_payload::describe(&payload);
-                    tracing::error!(
-                        provider_tag = %SENTINEL_PROVIDER_TAG,
-                        ?change,
-                        payload = %payload,
-                        "index provider provider_tag() panicked after graph commit; \
-                         skipping on_change for this change",
-                    );
-                    continue;
-                }
-            };
-
-            // Second boundary: invoke `on_change`. The cached tag is
-            // available for both the error-return and panic branches.
-            // AssertUnwindSafe: provider interior state may be left
-            // half-updated by a panic. The engine's contract is that the
-            // graph commit succeeded; provider drift is logged but not
-            // catastrophic.
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                provider.on_change(change)
-            }));
-            match outcome {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    tracing::error!(
-                        provider_tag = %tag,
-                        error = %error,
-                        ?change,
-                        "index provider on_change failed after graph commit; continuing",
-                    );
-                }
-                Err(panic_payload) => {
-                    let payload = crate::panic_payload::describe(&panic_payload);
-                    tracing::error!(
-                        provider_tag = %tag,
-                        ?change,
-                        payload = %payload,
-                        "index provider on_change panicked after graph commit; continuing",
-                    );
-                }
-            }
-        }
     }
 }
 
@@ -798,22 +725,18 @@ fn expand_truncates_for_fanout(
     Some(view)
 }
 
-/// Sentinel value emitted on the `provider_tag` field when the provider's
-/// own `provider_tag()` method panicked, so log filters keyed on the field
-/// name still match.
-const SENTINEL_PROVIDER_TAG: &str = "<unknown>";
-
 /// Test-only seam to drive a panic from inside [`publish_appended`] (Stage 3) on
 /// a chosen publish ordinal, so the committer's multi-member publish-panic
 /// poison-and-drain branch can be exercised deterministically.
 ///
 /// This is the *only* way to reach that branch from a test: a misbehaving
-/// [`IndexProvider`]'s `on_change` panic is swallowed by [`notify_providers`]'
-/// per-callback `catch_unwind`, and `snapshot.store` does not panic, so without
-/// this hook the Stage-3 panic path is unreachable through the public API. The
-/// counter is keyed on the committer thread (the sole `publish_appended` caller),
-/// so "panic on the Nth publish of this run" is deterministic. Compiled only
-/// under `cfg(test)`; production builds have no injection point and no overhead.
+/// [`IndexProvider`]'s `on_change` panic is swallowed by
+/// [`crate::provider_fanout::notify_providers`]'s per-callback `catch_unwind`,
+/// and `snapshot.store` does not panic, so without this hook the Stage-3 panic
+/// path is unreachable through the public API. The counter is keyed on the
+/// committer thread (the sole `publish_appended` caller), so "panic on the Nth
+/// publish of this run" is deterministic. Compiled only under `cfg(test)`;
+/// production builds have no injection point and no overhead.
 #[cfg(test)]
 pub(crate) mod publish_panic_inject {
     use std::cell::Cell;

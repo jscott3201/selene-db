@@ -1,10 +1,10 @@
 //! Stateful provider protocol for engine-owned derived state.
 //!
 //! `IndexProvider` is the engine-internal hook through which the CORE storage
-//! provider (and the recovery-side replay providers) participate in snapshot
-//! bootstrap and per-commit mutation observation. selene-db is a single native
-//! engine with no loadable extensions: the only production implementor is
-//! [`crate::CoreProvider`].
+//! provider, maintained candidate-state providers, and recovery-side replay
+//! providers participate in snapshot bootstrap and per-commit mutation
+//! observation. selene-db is a single native engine with no loadable
+//! extensions; providers are first-party engine internals, not loadable packs.
 
 use std::fmt;
 
@@ -16,7 +16,7 @@ use selene_core::Change;
 /// - `CORE` is reserved for engine-owned snapshot sections.
 /// - `META`/`NODE`/`EDGE`/`SCMA` are reserved sub-tags under `CORE`, not
 ///   provider tags.
-/// - First-party extension allocations include `TIMS`, `GRPR`.
+/// - First-party provider allocations include `CSET`, `TIMS`, `GRPR`.
 /// - Other ASCII uppercase 4-byte sequences are provider-allocated.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProviderTag(
@@ -94,6 +94,33 @@ pub trait IndexProvider: Send + Sync + 'static {
     /// and continue after these errors because the graph snapshot has already
     /// been published.
     fn on_change(&self, change: &Change) -> Result<(), ProviderError>;
+
+    /// Return true when this provider wants one callback per committed change batch.
+    ///
+    /// The default is `false`, preserving per-change panic/error isolation for
+    /// simple observers. Providers that maintain state whose invariants span
+    /// several changes in one commit can opt in and override [`Self::on_changes`]
+    /// to apply the batch under one internal lock.
+    fn handles_change_batches(&self) -> bool {
+        false
+    }
+
+    /// Observe all changes from one committed mutation batch.
+    ///
+    /// The default delegates to [`Self::on_change`] in order. Live fanout calls
+    /// this method only when [`Self::handles_change_batches`] returns true;
+    /// recovery may call it for all providers because no concurrent readers can
+    /// observe recovery-side intermediate state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] for provider-local failures.
+    fn on_changes(&self, changes: &[Change]) -> Result<(), ProviderError> {
+        for change in changes {
+            self.on_change(change)?;
+        }
+        Ok(())
+    }
 
     /// Provider-owned snapshot subsection tags.
     ///

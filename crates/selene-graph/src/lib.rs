@@ -12,6 +12,7 @@
 #![deny(missing_docs)]
 
 pub mod adjacency;
+pub mod candidate_state;
 pub mod chunked_vec;
 pub(crate) mod committer;
 pub(crate) mod committer_batch;
@@ -29,6 +30,7 @@ pub mod index_provider;
 pub mod mutator;
 pub(crate) mod panic_payload;
 pub(crate) mod property_index;
+pub(crate) mod provider_fanout;
 mod recover;
 pub(crate) mod reentry;
 pub mod shared;
@@ -40,6 +42,10 @@ pub mod vector_search;
 pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
+pub use candidate_state::{
+    CANDIDATE_STATE_PROVIDER_TAG, CANDIDATE_STATE_SUB, CandidateStateSpec,
+    MaintainedCandidateStateProvider,
+};
 pub use chunked_vec::ChunkedVec;
 pub use committer_batch::CommitBatching;
 pub use compaction::{CompactedCore, CompactionReport, compact_core};

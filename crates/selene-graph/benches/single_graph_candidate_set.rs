@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use criterion::{BenchmarkId, Criterion, Throughput};
 use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 use selene_graph::{
-    AdjacencyEdge, AdjacencyEntry, SeleneGraph, SharedGraph, VectorCandidateSet,
+    AdjacencyEdge, AdjacencyEntry, CandidateStateSpec, IndexProvider,
+    MaintainedCandidateStateProvider, SeleneGraph, SharedGraph, VectorCandidateSet,
     VectorNeighborDirection, VectorNodeSearchHit,
 };
 
@@ -12,6 +15,8 @@ const VECTOR_CANDIDATE_ASYM_SMALL_SET: usize = 8;
 const VECTOR_CANDIDATE_ASYM_LARGE_SET: usize = 1024;
 const ADJACENCY_LABEL_MATCHING_EDGES: usize = 64;
 const ADJACENCY_LABEL_NOISE_LABELS: usize = 8;
+const CANDIDATE_STATE_ACTIVE_NODES: usize = 512;
+const CANDIDATE_STATE_STALE_NODES: usize = 512;
 
 pub(super) fn bench_vector_candidate_set(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_vector_candidate_set");
@@ -57,6 +62,41 @@ pub(super) fn bench_vector_candidate_set(c: &mut Criterion) {
         |b| b.iter(|| std::hint::black_box(adjacency.scan_count())),
     );
     bench_candidate_set_algebra(&mut group);
+    group.finish();
+    bench_candidate_state(c);
+}
+
+fn bench_candidate_state(c: &mut Criterion) {
+    let fixture = MaintainedCandidateStateFixture::build(
+        CANDIDATE_STATE_ACTIVE_NODES,
+        CANDIDATE_STATE_STALE_NODES,
+    );
+    let mut group = c.benchmark_group("graph_vector_candidate_state");
+    group.throughput(Throughput::Elements(fixture.total_nodes() as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            fixture.bench_id("maintained_active"),
+            fixture.active_nodes(),
+        ),
+        |b| {
+            b.iter(|| {
+                let candidates = fixture.maintained_candidate_set();
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.bench_function(
+        BenchmarkId::new(
+            fixture.bench_id("dynamic_active_scan"),
+            fixture.active_nodes(),
+        ),
+        |b| {
+            b.iter(|| {
+                let candidates = fixture.dynamic_candidate_set();
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
     group.finish();
 }
 
@@ -190,6 +230,99 @@ fn adjacency_edge(label: IStr, edge_id: u64) -> AdjacencyEdge {
         label,
         neighbor: NodeId::new(10_000 + edge_id),
         edge_id: EdgeId::new(edge_id),
+    }
+}
+
+struct MaintainedCandidateStateFixture {
+    graph: SeleneGraph,
+    provider: Arc<MaintainedCandidateStateProvider>,
+    set_name: IStr,
+    superseded: IStr,
+    docs: Vec<NodeId>,
+    active_count: usize,
+    stale_count: usize,
+}
+
+impl MaintainedCandidateStateFixture {
+    fn build(active_count: usize, stale_count: usize) -> Self {
+        let set_name = intern("current").expect("bench set name is valid");
+        let doc_label = intern("MemoryFact").expect("bench label is valid");
+        let superseded = intern("SUPERSEDED_BY").expect("bench edge label is valid");
+        let spec = CandidateStateSpec::new(set_name.clone())
+            .require_label(doc_label.clone())
+            .exclude_outgoing(superseded.clone());
+        let provider = Arc::new(
+            MaintainedCandidateStateProvider::new([spec]).expect("bench provider is valid"),
+        );
+        let shared = SharedGraph::builder(GraphId::new(21_000 + active_count as u64))
+            .with_provider(provider.clone() as Arc<dyn IndexProvider>)
+            .build()
+            .expect("bench graph builds");
+        let docs = {
+            let mut txn = shared.begin_write();
+            let mut mutator = txn.mutator();
+            let mut active = Vec::with_capacity(active_count);
+            let mut stale = Vec::with_capacity(stale_count);
+            for _ in 0..active_count {
+                active.push(
+                    mutator
+                        .create_node(LabelSet::single(doc_label.clone()), PropertyMap::new())
+                        .expect("bench active node insert succeeds"),
+                );
+            }
+            for idx in 0..stale_count {
+                let node = mutator
+                    .create_node(LabelSet::single(doc_label.clone()), PropertyMap::new())
+                    .expect("bench stale node insert succeeds");
+                let target = active[idx % active.len()];
+                mutator
+                    .create_edge(superseded.clone(), node, target, PropertyMap::new())
+                    .expect("bench stale edge insert succeeds");
+                stale.push(node);
+            }
+            txn.commit()
+                .expect("bench candidate-state fixture commit succeeds");
+            active.into_iter().chain(stale).collect::<Vec<_>>()
+        };
+        Self {
+            graph: shared.read().as_ref().clone(),
+            provider,
+            set_name,
+            superseded,
+            docs,
+            active_count,
+            stale_count,
+        }
+    }
+
+    fn maintained_candidate_set(&self) -> VectorCandidateSet {
+        self.provider
+            .candidate_set(&self.set_name)
+            .expect("bench set is configured")
+    }
+
+    fn dynamic_candidate_set(&self) -> VectorCandidateSet {
+        VectorCandidateSet::from_nodes(self.docs.iter().copied().filter(|node| {
+            self.graph
+                .outgoing_edges(*node)
+                .is_none_or(|entry| entry.iter_label(&self.superseded).next().is_none())
+        }))
+    }
+
+    fn bench_id(&self, prefix: &str) -> String {
+        format!(
+            "{prefix}_c{}_total{}",
+            self.active_count,
+            self.total_nodes()
+        )
+    }
+
+    const fn active_nodes(&self) -> usize {
+        self.active_count
+    }
+
+    const fn total_nodes(&self) -> usize {
+        self.active_count + self.stale_count
     }
 }
 
