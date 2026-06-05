@@ -110,10 +110,11 @@ pub enum Change {
     /// walking the recovered store ("replay walks store"), marking dead every
     /// alive node with `label` and every alive edge incident to such a node, so
     /// the recovered state is byte-identical to `MATCH (n:L) DETACH DELETE n`.
-    /// Derived-state index providers never receive this declarative variant; the
-    /// producing side expands it into per-row `NodeDeleted`/`EdgeDeleted`
-    /// tombstones on both the runtime and recovery paths so derived state is
-    /// reclaimed without leaks.
+    /// Live commit fan-out substitutes the change with staged per-row
+    /// `NodeDeleted`/`EdgeDeleted` tombstones when the mutator captured them
+    /// during execution. WAL/recovery replay carries this persisted declarative
+    /// variant, so provider-owned derived state must either handle it directly
+    /// or rebuild from the recovered graph snapshot before serving reads.
     NodesOfTypeTruncated {
         /// Node label whose instances (and incident edges) were removed.
         label: IStr,
@@ -122,8 +123,11 @@ pub enum Change {
     ///
     /// The edge-type counterpart to [`Change::NodesOfTypeTruncated`]
     /// (`TRUNCATE EDGE TYPE :L`). Carries only the label (O(1) WAL); recovery
-    /// re-derives the affected edges from the recovered store. Index providers
-    /// receive per-row `EdgeDeleted` tombstones, never this declarative variant.
+    /// re-derives the affected edges from the recovered store. Live commit
+    /// fan-out substitutes the change with staged per-row `EdgeDeleted`
+    /// tombstones when execution captured them; WAL/recovery replay carries
+    /// this persisted declarative variant, so providers must handle it directly
+    /// or rebuild before serving reads.
     EdgesOfTypeTruncated {
         /// Edge label whose instances were removed.
         label: IStr,
@@ -140,12 +144,13 @@ pub enum Change {
     /// the recovered store ("replay walks store"), marking dead every alive node
     /// and edge, and forces the recovered `bound_type` to `None`, so the
     /// recovered state is byte-identical to `MATCH (n) DETACH DELETE n` followed
-    /// by a full schema drop. Derived-state index providers never receive this
-    /// declarative variant; the producing side expands it into per-row
-    /// `NodeDeleted`/`EdgeDeleted` tombstones on both the runtime and recovery
-    /// paths so derived state is reclaimed without leaks. The MANIFEST epoch and
-    /// WAL archive lineage are untouched: a factory-reset is one committed WAL
-    /// entry on top of the existing snapshot, not a file-level wipe.
+    /// by a full schema drop. Live commit fan-out substitutes the change with
+    /// staged per-row `NodeDeleted`/`EdgeDeleted` tombstones when execution
+    /// captured them. WAL/recovery replay carries this persisted declarative
+    /// variant, so providers must handle it directly or rebuild before serving
+    /// reads. The MANIFEST epoch and WAL archive lineage are untouched: a
+    /// factory-reset is one committed WAL entry on top of the existing snapshot,
+    /// not a file-level wipe.
     GraphReset {},
 }
 

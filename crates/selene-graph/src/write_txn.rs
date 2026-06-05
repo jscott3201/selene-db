@@ -133,7 +133,7 @@ pub struct WriteTxn<'g> {
     ///
     /// BRIEF-150 / deletion-reclamation audit Item 11. The WAL/changeset carries
     /// only the O(1) declarative `NodesOfTypeTruncated`/`EdgesOfTypeTruncated`
-    /// change, but index-provider fan-out must observe the same per-row
+    /// change, but live index-provider fan-out must observe the same per-row
     /// `NodeDeleted`/`EdgeDeleted` multiset a `MATCH (n:L) DETACH DELETE n` would
     /// emit (so derived state is reclaimed without leaks). The mutator
     /// snapshots the matched ids while it still holds the store and stages their
@@ -706,8 +706,9 @@ fn expand_truncates_for_fanout(
         match change {
             // BRIEF-152: GraphReset is fanned out as its staged per-row
             // tombstones too, alongside the BRIEF-150 truncate variants, so
-            // index providers reclaim derived state for every wiped node/edge and
-            // never see the bare declarative reset they could not expand.
+            // live index providers reclaim derived state for every wiped
+            // node/edge without seeing the bare declarative reset on the commit
+            // path. WAL recovery still replays the persisted declarative change.
             Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }
             | Change::GraphReset { .. } => {

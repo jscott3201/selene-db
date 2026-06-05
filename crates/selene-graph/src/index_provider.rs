@@ -52,6 +52,19 @@ impl fmt::Display for SubTag {
 /// providers use interior mutability for owned state. The engine guarantees
 /// serialized calls per graph.
 ///
+/// ## Change-shape contract
+///
+/// Runtime commit fan-out observes the post-commit graph snapshot. When a
+/// mutation stages per-row tombstone expansions for
+/// [`Change::NodesOfTypeTruncated`], [`Change::EdgesOfTypeTruncated`], or
+/// [`Change::GraphReset`], live fan-out receives the expanded
+/// `NodeDeleted`/`EdgeDeleted` view instead of the persisted declarative change.
+/// WAL replay is different: recovery drives providers with the exact committed
+/// `Change` payloads after CORE applies them. Providers whose derived state
+/// depends on deleted rows must therefore handle the declarative truncate/reset
+/// variants or rebuild their state from the recovered graph before serving
+/// reads.
+///
 /// ## Re-entrancy contract
 ///
 /// `on_change` MUST NOT initiate a write transaction on the same graph,
