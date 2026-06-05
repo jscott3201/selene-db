@@ -755,12 +755,14 @@ The GQL query-root rows use the same local oMLX corpus but exercise the full
 query pipeline. The materialization rows isolate `MATCH` plus
 `WITH collect_list(root)` root production before any vector procedure runs; the
 shape-pressure rows split that further into anchor lookup, root-row traversal,
-and root-list aggregation. The reused-session rows compare that shape against a
-long-lived session with and without the existing source-string `PlanCache`. The
-scoring row derives `OmlxDependsOn` graph-hint roots, passes them into
-`selene.vector_score_expanded_candidates`, and the procedure expands roots
-through `OmlxSupports` before exact scoring. Its maintained-state companion
-uses the same GQL-produced roots with
+and root-list aggregation. The reused-session rows compare root-only and
+full-scoring shapes against a long-lived session with and without the existing
+source-string `PlanCache`: plan caching collapses repeated root-only query
+production, while full scoring is effectively neutral because vector rerank is
+the dominant work. The scoring row derives `OmlxDependsOn` graph-hint roots,
+passes them into `selene.vector_score_expanded_candidates`, and the procedure
+expands roots through `OmlxSupports` before exact scoring. Its maintained-state
+companion uses the same GQL-produced roots with
 `selene.vector_score_candidate_state_expanded`, intersecting expanded roots
 with the provider-maintained `omlx_support_facts` set. The negative-evidence
 state row uses the same procedure over `omlx_current_support_facts`, where
@@ -843,20 +845,23 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_cached_r60w40/...r60w40_totalc256` | 3.64 ms | 8.05 ms | Conservative mixed cycle with 60 cached candidate-set scoring reads plus 40 full graph-topology refreshes via the production candidate-expansion API; vector rerank dominates refresh work on this local profile. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `topic_hint_expansion_ann_union_score/...precbp5625/4843...ann8` | 371.82 µs (`c22`) | 754.71 µs (`c21`) | ANN union after full graph expansion hurts precision and adds hundreds of microseconds; avoid widening precise graph-expanded candidate sets with ANN by default. |
 | `SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2` `ann_hint_expansion_state_score/...ann8` | 392.51 µs (`precbp5312`, `c44`) | 699.14 µs (`precbp4531`, `c42`) | ANN roots expanded through support edges and intersected with maintained support-fact state still miss too many target facts; avoid adding a batched ANN/state procedure until a workload shows better quality. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_anchor_lookup/...q16_anchors16...` | 495.39 µs | 494.73 µs | Repeated per-query lookup of one `OmlxQueryAnchor` by `query_index`, creating a fresh `Session` for each query. |
-| `procedure_vector_omlx_query_roots/shared_session_query_anchor_lookup/...q16_anchors16...` | 500.88 µs | 492.26 µs | Reuses one session but does not enable `PlanCache`; this is effectively neutral versus fresh sessions. |
-| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_anchor_lookup/...q16_anchors16...` | 38.54 µs | 38.94 µs | Reuses one hot source-string `PlanCache` session; parse/analyze/plan are skipped for repeated parameterized root-shape queries. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_anchor_lookup_batch/...q16_anchors16...` | 41.97 µs | 41.74 µs | Single GQL statement returns all 16 query anchors ordered by `query_index`; this is the lower bound for batched root-shape execution. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_rows/...q16_r2_totalr32...` | 581.57 µs | 574.95 µs | Repeated per-query `OmlxDependsOn` traversal returns two root rows per query without `collect_list` aggregation. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_rows_batch/...q16_r2_totalr32...` | 55.17 µs | 55.17 µs | Single statement returns all 32 root rows; edge traversal adds ~13 µs over batched anchor lookup on this fixture. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_materialize/...q16_r2_totalr32...` | 720.51 µs | 717.21 µs | Repeated per-query GQL root production: `MATCH` + `collect_list(root)` materializes two roots for each of 16 query anchors, without vector procedure dispatch or scoring. |
-| `procedure_vector_omlx_query_roots/shared_session_query_root_materialize/...q16_r2_totalr32...` | 716.88 µs | 716.11 µs | Reuses one session for the same materialization source, again showing little benefit without `PlanCache`. |
-| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_materialize/...q16_r2_totalr32...` | 53.34 µs | 53.71 µs | Reuses one hot `PlanCache` session for the materialization source, making repeated root production competitive with the batched root-row shape. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_materialize_batch/...q16_r2_totalr32...` | 66.32 µs | 66.39 µs | Single GQL statement materializes all 16 root sets; aggregation adds ~11 µs over batched root-row traversal before vector scoring enters the path. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.26 ms | 1.34 ms | Full GQL row over the scaled partial-hint corpus: `MATCH` + `collect_list(root)` derives two roots per query, graph expansion restores the 16-document same-topic set, and all 64 returned top-k hits are on-topic; current-fact precision is lower (`basecurbp8593/8281`) because stale same-topic facts remain eligible. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.37 ms | 1.43 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.36 ms | 1.42 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/...q16_k4_r2_c16...precbp10000` | 300.08 µs | 517.58 µs | Single GQL statement builds all 16 query vectors and root sets from graph rows, then calls the batched expanded scorer once; avoids repeated statement/session overhead while preserving full topic precision. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_anchor_lookup/...q16_anchors16...` | 703.69 µs | 691.54 µs | Repeated per-query lookup of one `OmlxQueryAnchor` by `query_index`, creating a fresh `Session` for each query. |
+| `procedure_vector_omlx_query_roots/shared_session_query_anchor_lookup/...q16_anchors16...` | 697.91 µs | 684.55 µs | Reuses one session but does not enable `PlanCache`; this is effectively neutral versus fresh sessions. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_anchor_lookup/...q16_anchors16...` | 38.46 µs | 38.95 µs | Reuses one hot source-string `PlanCache` session; parse/analyze/plan are skipped for repeated parameterized root-shape queries. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_anchor_lookup_batch/...q16_anchors16...` | 54.73 µs | 54.58 µs | Single GQL statement returns all 16 query anchors ordered by `query_index`; this is the lower bound for batched root-shape execution. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_rows/...q16_r2_totalr32...` | 789.15 µs | 786.71 µs | Repeated per-query `OmlxDependsOn` traversal returns two root rows per query without `collect_list` aggregation. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_rows_batch/...q16_r2_totalr32...` | 67.73 µs | 67.55 µs | Single statement returns all 32 root rows; edge traversal adds ~13 µs over batched anchor lookup on this fixture. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_materialize/...q16_r2_totalr32...` | 918.45 µs | 918.35 µs | Repeated per-query GQL root production: `MATCH` + `collect_list(root)` materializes two roots for each of 16 query anchors, without vector procedure dispatch or scoring. |
+| `procedure_vector_omlx_query_roots/shared_session_query_root_materialize/...q16_r2_totalr32...` | 912.40 µs | 917.28 µs | Reuses one session for the same materialization source, again showing little benefit without `PlanCache`. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_materialize/...q16_r2_totalr32...` | 52.96 µs | 53.70 µs | Reuses one hot `PlanCache` session for the materialization source, making repeated root production competitive with the batched root-row shape. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_materialize_batch/...q16_r2_totalr32...` | 78.85 µs | 77.95 µs | Single GQL statement materializes all 16 root sets; aggregation adds ~11 µs over batched root-row traversal before vector scoring enters the path. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.45 ms | 1.52 ms | Full GQL row over the scaled partial-hint corpus: `MATCH` + `collect_list(root)` derives two roots per query, graph expansion restores the 16-document same-topic set, and all 64 returned top-k hits are on-topic; current-fact precision is lower (`basecurbp8593/8281`) because stale same-topic facts remain eligible. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.45 ms | 1.52 ms | Same full scoring statement through a warmed source-string `PlanCache` session; plan caching is neutral once graph expansion and vector rerank dominate. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.55 ms | 1.60 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.56 ms | 1.62 ms | Warmed full-plan-cache current-state scorer; still dominated by graph expansion plus vector rerank. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/...q16_k4_r2_c16...precbp10000` | 312.49 µs | 528.84 µs | Single GQL statement builds all 16 query vectors and root sets from graph rows, then calls the batched expanded scorer once; avoids repeated statement/session overhead while preserving full topic precision. |
 
 The opt-in `Qwen3-Embedding-8B-4bit-DWQ` local model also works on
 `/v1/embeddings` and returns 4096-dimensional vectors. With
@@ -865,14 +870,15 @@ partial-hint expansion row reaches `precbp10000`, `c16`, at 205.26 us on the
 same scaled profile, the maintained `omlx_support_facts` state row reaches
 `precbp10000`, `c14`, at 184.50 us, and the ANN-root maintained-state row only
 reaches `precbp5625`, `c42`, at 1.113 ms. The full GQL query-root expansion row
-looks up anchors at 862.89 us repeated / 38.30 us hot-plan-cache / 62.18 us
-batched, returns root rows at 924.62 us repeated / 74.82 us batched,
-materializes roots at 1.06 ms repeated / 52.67 us hot-plan-cache / 86.73 us
-batched, reaches `precbp10000`, `r2`, `c16`, at 1.72 ms but only
-`basecurbp8437`, the GQL maintained-state intersection row reaches
-`precbp10000`, `r2`, `c14`, at 1.82 ms, the negative-evidence current-state row
-reaches `curbp10000`, `r2`, `c13`, at 1.80 ms, and the GQL batched expansion
-row reaches `precbp10000`, `r2`, `c16`, at 684.07 µs. The
+looks up anchors at 477.65 us repeated / 38.66 us hot-plan-cache / 40.96 us
+batched, returns root rows at 568.42 us repeated / 54.44 us batched,
+materializes roots at 708.65 us repeated / 52.94 us hot-plan-cache / 65.45 us
+batched, reaches `precbp10000`, `r2`, `c16`, at 1.39 ms repeated and 1.38 ms
+hot-plan-cache but only `basecurbp8437`, the GQL maintained-state intersection
+row reaches `precbp10000`, `r2`, `c14`, at 1.47 ms repeated and 1.48 ms
+hot-plan-cache, the negative-evidence current-state row reaches `curbp10000`,
+`r2`, `c13`, at 1.47 ms repeated and 1.46 ms hot-plan-cache, and the GQL
+batched expansion row reaches `precbp10000`, `r2`, `c16`, at 660.94 µs. The
 conservative cached r60/w40 mixed cycle is 12.52 ms on the same
 4096-dimensional row. It stays opt-in for now so default local oMLX rows remain
 short and comparable to the earlier two-model baseline.
