@@ -147,6 +147,46 @@ fn shared_graph_lists_generation_checked_candidate_state_metadata() {
 }
 
 #[test]
+fn shared_graph_resolves_generation_checked_candidate_state_set() {
+    let (spec, name, doc, superseded, _) = current_spec();
+    let provider = provider_with(spec);
+    let shared = SharedGraph::builder(GraphId::new(81_017))
+        .with_provider(provider as Arc<dyn IndexProvider>)
+        .build()
+        .unwrap();
+
+    let (active, stale) = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let active = mutator
+            .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+            .unwrap();
+        let stale = mutator
+            .create_node(LabelSet::single(doc), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(superseded, stale, active, PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        (active, stale)
+    };
+
+    let set = shared
+        .vector_candidate_set(&name)
+        .unwrap()
+        .expect("candidate state exists");
+
+    assert_eq!(set.as_nodes(), &[active]);
+    assert!(!set.as_nodes().contains(&stale));
+    assert!(
+        shared
+            .vector_candidate_set(&label("missing"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn provider_can_rebuild_from_existing_graph_snapshot() {
     let (spec, name, doc, superseded, _) = current_spec();
     let shared = SharedGraph::new(GraphId::new(81_002));

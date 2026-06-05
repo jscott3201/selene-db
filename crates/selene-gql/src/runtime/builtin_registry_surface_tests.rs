@@ -11,18 +11,18 @@ fn name(segments: &[&str]) -> Vec<IStr> {
 }
 
 #[test]
-fn registers_all_forty_three_procedures() {
+fn registers_all_forty_four_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        43,
-        "expected 19 algo procedures + 24 platform built-ins"
+        44,
+        "expected 19 algo procedures + 25 platform built-ins"
     );
 }
 
 #[test]
-fn iter_handles_yields_all_twenty_four_platform_builtins() {
+fn iter_handles_yields_all_twenty_five_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -45,6 +45,7 @@ fn iter_handles_yields_all_twenty_four_platform_builtins() {
         ["selene", "vector_score_neighbors"],
         ["selene", "vector_score_neighbors_batch"],
         ["selene", "vector_score_candidate_state"],
+        ["selene", "vector_score_candidate_state_nodes"],
         ["selene", "vector_candidate_states"],
         ["selene", "vector_score_expanded_candidates"],
         ["selene", "vector_score_expanded_candidates_batch"],

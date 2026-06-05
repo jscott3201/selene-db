@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_43_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_44_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 43);
+    assert_eq!(procedures.len(), 44);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 43);
+    assert_eq!(table.row_count(), 44);
 
     let names = column_strings(&table, "name");
     let descriptions = column_strings(&table, "description");
@@ -182,6 +182,11 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
         names
             .iter()
             .any(|name| name == "selene.vector_score_candidate_state")
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.vector_score_candidate_state_nodes")
     );
     assert!(
         names
@@ -274,4 +279,43 @@ fn vector_candidate_states_metadata_has_descriptor_columns() {
     assert_eq!(columns[4].ty, GqlType::List(Box::new(GqlType::String)));
     assert_eq!(columns[5].name.as_str(), "exclude_incoming");
     assert_eq!(columns[5].ty, GqlType::List(Box::new(GqlType::String)));
+}
+
+#[test]
+fn vector_score_candidate_state_nodes_metadata_has_composition_args() {
+    let registry = full_registry();
+    let name = [istr("selene"), istr("vector_score_candidate_state_nodes")];
+    let metadata = registry
+        .lookup(&name)
+        .expect("vector_score_candidate_state_nodes resolves");
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 5);
+    assert_eq!(arity.maximum, 7);
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters[0].name.as_str(), "property");
+    assert_eq!(parameters[0].ty, GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "query");
+    assert_eq!(parameters[1].ty, GqlType::Vector);
+    assert_eq!(parameters[2].name.as_str(), "state_name");
+    assert_eq!(parameters[2].ty, GqlType::String);
+    assert_eq!(parameters[3].name.as_str(), "nodes");
+    assert_eq!(parameters[3].ty, GqlType::List(Box::new(GqlType::NodeRef)));
+    assert_eq!(parameters[4].name.as_str(), "k");
+    assert_eq!(parameters[4].ty, GqlType::Integer);
+    assert_eq!(parameters[5].name.as_str(), "operation");
+    assert_eq!(parameters[5].ty, GqlType::String);
+    assert_eq!(parameters[5].default_doc, Some("intersection"));
+    assert!(parameters[5].default.is_some());
+    assert_eq!(parameters[6].name.as_str(), "metric");
+    assert_eq!(parameters[6].ty, GqlType::String);
+    assert_eq!(parameters[6].default_doc, Some("squared_euclidean"));
+    assert!(parameters[6].default.is_some());
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].name.as_str(), "node_id");
+    assert_eq!(columns[0].ty, GqlType::NodeRef);
+    assert_eq!(columns[1].name.as_str(), "distance");
+    assert_eq!(columns[1].ty, GqlType::Float64);
 }
