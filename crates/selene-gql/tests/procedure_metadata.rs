@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_47_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_48_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 47);
+    assert_eq!(procedures.len(), 48);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 47);
+    assert_eq!(table.row_count(), 48);
 
     let names = column_strings(&table, "name");
     let descriptions = column_strings(&table, "description");
@@ -143,6 +143,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
         .expect("selene.health is registered");
     assert_eq!(descriptions[health], "Report basic graph health counters.");
     assert!(names.iter().any(|name| name == "selene.vector_index_stats"));
+    assert!(names.iter().any(|name| name == "selene.text_search_nodes"));
     assert!(
         names
             .iter()

@@ -1,4 +1,4 @@
-//! Shared helpers for native vector built-ins.
+//! Shared helpers for native vector and text-search built-ins.
 
 use std::num::TryFromIntError;
 

@@ -37,6 +37,7 @@ pub(crate) mod reentry;
 pub mod shared;
 mod shared_snapshot;
 pub mod store;
+pub mod text_search;
 pub mod type_validator;
 pub mod typed_index;
 pub mod vector_index;
@@ -75,6 +76,7 @@ pub use selene_core::{HnswIndexConfig, IvfIndexConfig};
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
 pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
+pub use text_search::{TextSearchError, TextSearchHit};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
 pub use vector_index::{

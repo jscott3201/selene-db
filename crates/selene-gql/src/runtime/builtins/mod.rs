@@ -14,7 +14,8 @@
 //! candidate vector scoring, expanded-candidate vector scoring, batched
 //! expanded-candidate vector scoring, approximate vector-search, batched
 //! approximate vector-search, ANN-expanded vector-search, batched ANN-expanded
-//! vector-search, vector-index stats, and vector-index procedures are new
+//! vector-search, vector-index stats, vector-index procedures, and exact BM25
+//! text-search are new
 //! native engine functionality on the same concrete built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
@@ -34,7 +35,7 @@
 //!   `selene.vector_search_expanded_candidates_ann`,
 //!   `selene.vector_search_candidate_state_expanded_ann`,
 //!   `selene.vector_search_expanded_candidates_ann_batch`,
-//!   and `selene.vector_index_stats` are read-only graph-tier
+//!   `selene.vector_index_stats`, and `selene.text_search_nodes` are read-only graph-tier
 //!   ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]); they never
 //!   mutate and never re-enter `begin_write`.
 //! - `selene.create_index`, `selene.drop_index`, `selene.create_vector_index`,
@@ -62,6 +63,7 @@ mod feature_status;
 mod health;
 mod meta;
 mod rebuild_vector_indexes;
+mod text_search;
 mod vector_candidate_state_common;
 mod vector_candidate_states;
 mod vector_common;
