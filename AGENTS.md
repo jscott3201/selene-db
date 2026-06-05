@@ -183,6 +183,7 @@ BM25/full-text is now a native first slice, not grammar syntax:
   and explicit candidate scoring as:
   - `CALL selene.text_score_nodes(label, property, query, nodes, k) YIELD node_id, score`
   - `CALL selene.text_score_nodes_batch(label, property, queries, nodes, k) YIELD query_index, node_id, score`
+  - `CALL selene.text_score_candidate_state_expanded_batch(label, property, queries, state_name, roots, edge_label, k, operation?, direction?) YIELD query_index, node_id, score`
 - `selene.create_text_index`, `selene.drop_text_index`, and
   `selene.text_index_stats` manage durable maintained text-index registrations.
   Postings are derived in-memory state, maintained through graph mutations, and
@@ -190,7 +191,8 @@ BM25/full-text is now a native first slice, not grammar syntax:
 - The exact scan is the correctness oracle and small-corpus path. Maintained
   `TextIndex` lookup is the repeated-query path; candidate-scoped scoring
   requires a registered text index so read calls do not hide transient postings
-  builds.
+  builds. State-expanded BM25 scoring composes maintained candidate state with
+  graph-expanded roots before text scoring.
 - Keep ISO GQL grammar strict; add future surfaces through native values,
   indexes, and procedures as appropriate.
 - Ground richer analyzer, segment, or disk-backed designs against Tantivy and

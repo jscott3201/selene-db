@@ -794,9 +794,12 @@ GQL-produced roots, expand them through `OmlxSupports` in GQL, then call
 text index. The batched rows store each query vector and query text on the query
 anchor and let GQL aggregate per-query root/candidate sets. The text batch row
 calls `selene.text_score_nodes_batch` once for the full 16-query profile after
-GQL expands graph roots to explicit candidates. The pure expansion row calls
+GQL expands graph roots to explicit candidates. The current-state text batch row
+calls `selene.text_score_candidate_state_expanded_batch` once for the same
+profile, keeping maintained-state composition, graph expansion, and BM25
+scoring inside one procedure boundary. The pure expansion row calls
 `selene.vector_score_expanded_candidates_batch` once for the full 16-query
-profile; the current/provenance rows call
+profile; the current/provenance vector rows call
 `selene.vector_score_candidate_state_expanded_batch` so maintained state,
 graph-expanded roots, and exact rerank stay inside one procedure boundary:
 
@@ -890,6 +893,7 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_text_score/...q16_k4_r2_c16...precbp10000_curbp9218` | 2.16 ms | 2.22 ms | Full GQL row over the same graph roots and support expansion, but reranks expanded candidates with maintained BM25 via `selene.text_score_nodes`; topic precision is full, while current-fact precision is partial because BM25 still admits some stale same-topic facts. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_text_score/...q16_k4_r2_c16...precbp10000_curbp9218` | 2.19 ms | 2.23 ms | Warmed source-string `PlanCache` session for the same text-score row; plan caching is effectively neutral because repeated GQL candidate production dominates. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_text_score_batch/...q16_k4_r2_c16...precbp10000_curbp9218` | 472.70 µs | 474.70 µs | Single GQL statement builds all 16 query texts and graph-expanded candidate sets, then calls `selene.text_score_nodes_batch` once; preserves full topic precision while exposing the same currentness gap as the repeated text scorer. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_text_score_batch/...q16_k4_r2_c13...precbp10000_curbp10000` | 180.19 µs | 182.71 µs | Single GQL statement builds all 16 query texts and root sets, then calls `selene.text_score_candidate_state_expanded_batch`; maintained current-state composition restores full current precision and avoids explicit candidate materialization. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
@@ -916,9 +920,11 @@ row reaches `precbp10000`, `r2`, `c14`, at 1.47 ms repeated and 1.48 ms
 hot-plan-cache, the negative-evidence current-state row reaches `curbp10000`,
 `r2`, `c13`, at 1.47 ms repeated and 1.46 ms hot-plan-cache, and the GQL
 batched text-score row reaches `precbp10000` / `curbp9218`, `r2`, `c16`, at
-476.29 us, while the GQL batched expansion row reaches `precbp10000`, `r2`, `c16`, at
-660.94 µs. The new batched current-state row reaches `curbp10000`, `r2`, `c13`,
-at 719.86 µs, and the batched provenance-state row reaches the same
+476.29 us. The GQL current-state BM25 expanded batch row reaches
+`precbp10000` / `curbp10000`, `r2`, `c13`, at 185.55 us, while the GQL batched
+expansion row reaches `precbp10000`, `r2`, `c16`, at 660.94 µs. The vector
+batched current-state row reaches `curbp10000`, `r2`, `c13`, at 719.86 µs, and
+the batched provenance-state row reaches the same
 `curbp10000` / `c13` shape at 707.24 µs. The conservative cached r60/w40 mixed
 cycle is 12.52 ms on the same 4096-dimensional row. It stays opt-in for now so
 default local oMLX rows remain short and comparable to the earlier two-model
