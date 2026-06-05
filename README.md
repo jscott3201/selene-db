@@ -4,41 +4,29 @@
 ISO/IEC 39075:2024 GQL, strict in-process transactions, native graph
 algorithms, first-class dense vectors, and BM25 text search.
 
-The project is greenfield and library-first. There is no database server,
-wire protocol, auth layer, cloud control plane, extension loader, or procedure
-pack system in this repository. Applications link the crates they need, own the
-network and security boundary, and run the engine in process.
+It is library-first. There is no database server, wire protocol, auth layer,
+cloud control plane, extension loader, or procedure-pack system in this
+repository. Applications link the crates they need, own the network/security
+boundary, and run the engine in process.
 
-## What This Project Is
+The north star is ISO GQL conformance plus pragmatic native retrieval features
+for local graph and agentic-memory workloads. Non-standard capabilities are
+exposed through implementation-defined values, indexes, and `CALL` procedures,
+not by extending the GQL grammar.
 
-`selene-db` is a single native graph engine:
+## Current Shape
 
-- GQL is the query and mutation language.
-- The storage engine is an in-memory property graph with copy-on-write
-  snapshots and one mutation funnel.
-- Persistence is built from graph-blind WAL and snapshot providers.
-- Graph algorithms are mandatory engine code, exposed as Rust APIs and through
-  ISO `CALL algo.*`.
-- Vectors and BM25 are native engine features because the primary workloads are
-  retrieval, agentic memory, and graph-backed AI systems.
-
-The north star is ISO GQL conformance plus pragmatic native retrieval features.
-Non-standard capabilities are exposed through implementation-defined procedure
-hooks, not by extending the GQL grammar.
-
-## Engine Surface
-
-| Area | Current shape |
+| Area | Current engine surface |
 | --- | --- |
-| Storage | In-memory property graph with `ArcSwap` read snapshots, `parking_lot` write serialization, `imbl` copy-on-write maps, Roaring label indexes, typed indexes, composite indexes, stable external node/edge IDs, and dense internal row indexes. |
-| Transactions | Strict-serializable behavior: one writer at a time per graph, lock-free immutable reader snapshots, rollback by non-publication, and provider fanout under the write lock. |
-| Persistence | Graph-blind WAL (`SLDB`), snapshots (`SLSN`), MANIFEST-led recovery, retention pruning, and an append-only audit log substrate. |
-| GQL | ISO-oriented parser, semantic analyzer, planner, optimizer, executor, plan cache, parameter binding, built-in procedure registry, and GQL Flagger checks for unsupported syntax. |
-| Procedures | One native `BuiltinProcedureRegistry` for platform procedures, vector search/scoring, BM25 search/scoring, index metadata, and `algo.*` graph algorithms. |
-| Algorithms | Structural, pathfinding, centrality, and community algorithms via `selene-algorithms` and `CALL algo.*`. |
-| Vectors | `Value::Vector` as a real value variant, exact scoring/search, HNSW indexes, IVF indexes, ANN batch search, graph-expanded candidate scoring, maintained candidate state, and index memory/rebuild accounting. |
-| Text | Maintained BM25 text indexes over string node properties, global text search, candidate-scoped BM25 scoring, and text index stats. |
-| Safety | Workspace-wide `#![forbid(unsafe_code)]`, `missing_docs = "deny"`, rustls-only dependency posture, source file-size gates, secret scans, license checks, fuzz targets, and benchmark hygiene checks. |
+| GQL | ISO-oriented parser, analyzer, planner, optimizer, executor, parameter binding, source-string plan cache, and feature-status reporting. |
+| Storage | In-memory property graph with stable external node/edge IDs, dense internal row indexes, copy-on-write snapshots, Roaring label indexes, typed property indexes, composite indexes, and one mutation funnel. |
+| Transactions | One writer per graph, immutable reader snapshots, rollback by non-publication, and provider fanout under the write lock. |
+| Persistence | Graph-blind WAL, snapshots, MANIFEST-led recovery, retention pruning, and audit-log primitives. |
+| Procedures | A fixed native `BuiltinProcedureRegistry` for platform procedures, vector search/scoring, BM25 search/scoring, index metadata, maintenance, and `algo.*` graph algorithms. |
+| Algorithms | Structural, pathfinding, centrality, and community algorithms through `selene-algorithms` plus GQL `CALL algo.*` adapters. |
+| Vectors | `Value::Vector`, finite `f32` vector storage, exact search/scoring, HNSW and IVF indexes, batched ANN/exact search, graph-expanded scoring, maintained candidate state, and index rebuild/accounting APIs. |
+| Text | Durable BM25 text-index registrations over string node properties, exact scan fallback for global search, maintained postings, candidate-scoped scoring, batched scoring, state-expanded scoring, and text-index stats. |
+| Safety | Workspace-wide `#![forbid(unsafe_code)]`, `missing_docs = "deny"`, rustls-only dependency posture, file-size gates, secret scans, license checks, fuzz targets, and benchmark hygiene checks. |
 
 ## Workspace Crates
 
@@ -46,15 +34,21 @@ There is no umbrella crate. Use the layers directly.
 
 | Crate | Owns |
 | --- | --- |
-| [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, IDs, `IStr`, property maps, label sets, schema metadata, codecs, origins, and changesets. |
-| [`selene-graph`](crates/selene-graph) | The graph runtime: storage, transactions, mutation funnel, indexes, vector search, BM25 text search, candidate state, graph type validation, compaction, and recovery providers. |
-| [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, retention pruning, and audit log files. This crate stays below graph semantics. |
+| [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, IDs, `IStr`, labels, property maps, schema metadata, codecs, origins, and changesets. |
+| [`selene-graph`](crates/selene-graph) | Graph storage, transactions, mutation funnel, property/composite/vector/text indexes, exact and ANN vector search, BM25 search, maintained candidate state, graph type validation, compaction, and recovery providers. |
+| [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, retention pruning, and audit log files. It stays below graph semantics. |
 | [`selene-algorithms`](crates/selene-algorithms) | Native graph algorithms, projection catalogs, free functions, and the `GraphAlgorithms` convenience trait. |
 | [`selene-gql`](crates/selene-gql) | GQL grammar, AST, analysis, planning, optimization, execution, procedure traits, and the built-in registry. |
-| [`selene-testing`](crates/selene-testing) | Test fixtures, synthetic graph generators, benchmark corpora, and pure-mirror snapshot harness utilities. |
+| [`selene-testing`](crates/selene-testing) | Test fixtures, graph generators, benchmark corpora, local oMLX embedding helpers, and snapshot-harness utilities. |
 
-Dependency direction stays narrow: `core -> graph -> algorithms -> gql`, with
-`persist` graph-blind and `testing` used only from tests and benchmarks.
+The intended dependency direction is narrow:
+
+```text
+selene-core -> selene-graph -> selene-algorithms -> selene-gql
+```
+
+`selene-persist` depends on `selene-core` and remains graph-blind.
+`selene-testing` is for tests and benchmarks.
 
 ## Quickstart
 
@@ -67,7 +61,7 @@ selene-graph = { path = "../selene-db/crates/selene-graph" }
 selene-gql = { path = "../selene-db/crates/selene-gql" }
 ```
 
-Create a graph, write through the transaction funnel, and query through GQL:
+Create a graph, write through the mutation funnel, and query with GQL:
 
 ```rust
 use selene_core::{GraphId, LabelSet, PropertyMap, Value, intern};
@@ -81,11 +75,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let name = intern("name")?;
 
     let mut tx = graph.begin_write();
-    let props = PropertyMap::from_pairs([(
-        name,
-        Value::String(intern("Ada")?),
-    )])?;
-    tx.mutator().create_node(LabelSet::single(person), props)?;
+    {
+        let props = PropertyMap::from_pairs([(
+            name,
+            Value::String(intern("Ada")?),
+        )])?;
+        tx.mutator().create_node(LabelSet::single(person), props)?;
+    }
     tx.commit()?;
 
     let registry = BuiltinProcedureRegistry::new();
@@ -105,121 +101,186 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 For a longer walk through graph creation, transactions, parameters, and
-persistence wiring, start with [docs/getting-started.md](docs/getting-started.md)
-and [docs/embedding-guide.md](docs/embedding-guide.md).
+persistence wiring, start with [Getting Started](docs/getting-started.md) and
+the [Embedding Guide](docs/embedding-guide.md).
 
 ## GQL And Procedures
 
-GQL is the only engine query language. The parser rejects SQL, Cypher, SPARQL,
-and other grammar drift instead of accepting them as aliases.
+GQL is the only query and mutation language. The parser rejects SQL, Cypher,
+SPARQL, and other grammar drift instead of accepting them as aliases.
 
-Native engine capabilities outside mandatory ISO syntax use ISO `CALL`:
+Native engine features outside mandatory ISO syntax use ISO `CALL`:
 
 ```gql
 CALL selene.health()
 CALL selene.feature_status()
+CALL selene.verify()
+
 CALL selene.create_index(...)
 CALL selene.create_vector_index(...)
-CALL selene.vector_search_nodes_ann(...)
-CALL selene.vector_score_expanded_candidates(...)
 CALL selene.create_text_index(...)
+CALL selene.vector_index_stats()
+CALL selene.text_index_stats()
+
+CALL selene.vector_search_nodes(...)
+CALL selene.vector_search_nodes_ann(...)
+CALL selene.vector_score_nodes(...)
+CALL selene.vector_score_expanded_candidates(...)
+CALL selene.vector_score_candidate_state_expanded_batch(...)
+CALL selene.vector_candidate_states()
+
 CALL selene.text_search_nodes(...)
 CALL selene.text_score_nodes(...)
 CALL selene.text_score_nodes_batch(...)
 CALL selene.text_score_candidate_state_expanded_batch(...)
+
 CALL algo.pagerank(...)
+CALL algo.shortest_path(...)
+CALL algo.weakly_connected_components(...)
 ```
 
-The production registry is `BuiltinProcedureRegistry`. It is native engine
-code, fixed at construction time, and not a third-party extension mechanism.
-Tests can still inject alternate `ProcedureRegistry` implementations where the
-planner or executor needs an artificial procedure surface.
+`BuiltinProcedureRegistry` is native engine code fixed at construction time. It
+is not a third-party extension mechanism. Tests can still inject alternate
+`ProcedureRegistry` implementations where analyzer or executor behavior needs an
+artificial procedure surface.
 
-## Vectors, Text, And Graph Retrieval
+## Retrieval Stack
 
 Vectors are first-class values. A node property can hold `Value::Vector`, and
-the graph layer can maintain vector indexes over a label/property pair. Exact
-search remains the correctness oracle; ANN surfaces provide HNSW and IVF search
-paths for retrieval workloads.
+the graph layer can maintain vector indexes over `(label, property)`:
 
-The vector stack includes:
-
-- flat/exact top-k node search and explicit candidate scoring;
-- HNSW and IVF approximate indexes;
-- batch search and batch scoring;
+- flat exact scan;
+- HNSW approximate search;
+- IVF approximate search;
+- exact scoring over explicit candidate sets;
+- batched exact and ANN search;
 - graph-expanded candidate scoring from root nodes;
-- maintained candidate state for recurring candidate sets;
-- index stats, memory accounting, and rebuild maintenance APIs.
+- maintained candidate state for recurring graph-derived candidate sets;
+- index stats, memory accounting, rebuild, and recommended rebuild procedures.
 
-Text search is native BM25 over string node properties. Maintained text indexes
-are durable registrations with rebuildable in-memory postings. The surface
-supports global search plus single-query and batched candidate-scoped scoring,
-which makes it useful for hybrid retrieval:
+Text search is native BM25 over string node properties. A maintained text index
+is a durable graph registration with rebuildable in-memory postings. The text
+surface supports:
 
-- BM25 over a whole label/property corpus;
-- BM25 rerank over graph-expanded or vector-derived candidates;
-- batched BM25 rerank over per-query candidate sets;
+- global BM25 search by label/property;
+- exact candidate-scoped BM25 scoring;
+- batched candidate-scoped BM25 scoring;
 - maintained-state plus graph-expanded BM25 batch scoring;
-- vector rerank over BM25 roots;
-- graph algorithms as priors or rerank features for retrieval experiments.
+- text-index stats, create, and drop procedures.
 
-The intended working set is in-memory, read-heavy, and local-engine sized rather
-than cloud service sized. Disk-backed vector indexes are research scope, not a
-requirement for the current release line.
+Graph algorithms are retrieval primitives too. The current product-shaped
+benchmark direction is to compose graph-derived roots and candidate state with
+vector and BM25 scoring rather than hard-code one memory policy into the engine.
+
+## Persistence
+
+Persistence is graph-blind below the provider boundary:
+
+- WAL records graph changes and provider sections.
+- Snapshots store graph and provider state.
+- MANIFEST recovery selects the live snapshot/WAL set.
+- Retention pruning removes old snapshots and WAL archives.
+- Providers rebuild derived vector/text/index state from primary graph values
+  during recovery and compaction.
+
+The public crates are allocator-agnostic. Benchmark binaries use mimalloc by
+default so allocator A/B rows can be measured without changing library behavior.
 
 ## ISO GQL Posture
 
 `selene-db` targets ISO/IEC 39075:2024 minimum conformance plus a curated set of
-optional features. The feature register in `selene-core` is the implementation
-source of truth for optional feature status.
+optional features. The feature register in `selene-core` is the
+implementation-visible source of truth for optional feature status.
 
 Important boundaries:
 
-- Mandatory ISO scalar types are `STRING`, `BOOLEAN`, `INT`, and `FLOAT`.
+- Mandatory scalar types currently include `STRING`, `BOOLEAN`, `INT`, and
+  `FLOAT`.
+- Vectors are implementation-defined values, not ISO grammar extensions.
 - Open and closed graph modes are supported.
-- Default isolation is serializable; the engine implements strict-serializable
-  behavior for a single graph instance.
+- Default isolation is serializable for a single graph instance.
 - ISO GQL does not define a wire format, so this repository does not ship one.
 - Auth, tenancy, network policy, and deployment topology are embedder concerns.
-- Non-standard syntax must be rejected or flagged; implementation-defined
-  features live behind native procedures.
 
 ## Development
 
-The common local validation set is:
+The workspace uses a pinned stable Rust toolchain; read
+[`rust-toolchain.toml`](rust-toolchain.toml) for the active version.
+
+Common validation for code changes:
 
 ```bash
 cargo fmt --all --check
+cargo check --workspace --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo nextest run --workspace --locked --all-features --profile default
 cargo test --workspace --locked --all-features --doc
+cargo doc --workspace --no-deps --locked
 cargo deny check bans licenses sources
 cargo audit -d /private/tmp/selene-advisory-db
 bash .github/scripts/check-file-size.sh
 bash .github/scripts/check-no-secrets.sh
 bash .github/scripts/check-thirdparty-current.sh
+bash .github/scripts/check-no-rowid-arith.sh
+bash .github/scripts/check-no-version-locked-feature-error.sh
+bash .github/scripts/check-bench-invocation.sh
+bash .github/scripts/check-benchmarks-doc.sh .
+git diff --check
 ```
 
-Benchmarks run through the serialized helper, not `cargo bench --workspace`:
+Docs-only changes can use the relevant subset, but formatting, file-size,
+secret scan, benchmark-doc checks, and `git diff --check` should stay cheap and
+green.
+
+Install local hooks once per clone:
 
 ```bash
-scripts/run-benches.sh --profile quick --layer criterion
-scripts/run-benches.sh --profile full --layer criterion
-scripts/run-benches.sh --profile quick --layer iai
+scripts/install-hooks.sh
 ```
 
-Useful docs:
+## Benchmarks
 
-- [Getting started](docs/getting-started.md)
-- [Embedding guide](docs/embedding-guide.md)
-- [GQL reference](docs/gql-reference.md)
+Benchmarks run through the serialized helper. Do not run
+`cargo bench --workspace`; Cargo can execute bench binaries concurrently and
+pollute wall-clock medians.
+
+Useful commands:
+
+```bash
+scripts/run-benches.sh --list
+scripts/run-benches.sh --smoke
+scripts/run-benches.sh --profile quick --bench vector_graph_retrieval
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter vector
+scripts/run-benches.sh --profile quick --bench text_search_bm25
+scripts/run-benches.sh --bench vector_index_rebuild --allocator system
+```
+
+Local oMLX embedding rows are opt-in and require the developer's local
+OpenAI-compatible embedding endpoint plus ignored `.env` credentials:
+
+```bash
+set -a; source .env; set +a
+SELENE_OMLX_EMBEDDING_BENCH=1 \
+SELENE_OMLX_CORPUS=scaled_ambiguous_memory \
+SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter query_root
+```
+
+See [BENCHMARKS.md](BENCHMARKS.md) for registered bench targets, commands, and
+current local evidence.
+
+## Project Docs
+
+- [Getting Started](docs/getting-started.md)
+- [Embedding Guide](docs/embedding-guide.md)
+- [GQL Reference](docs/gql-reference.md)
 - [Architecture](docs/architecture.md)
-- [Graph algorithms](docs/graph-algorithms.md)
-- [Persistence and recovery](docs/persistence-and-recovery.md)
+- [Graph Algorithms](docs/graph-algorithms.md)
+- [Persistence And Recovery](docs/persistence-and-recovery.md)
 - [Observability](docs/observability.md)
 - [Performance](docs/performance.md)
 - [Contributing](docs/contributing.md)
-- [Benchmark registry](BENCHMARKS.md)
+- [Benchmark Registry](BENCHMARKS.md)
 
 ## Platform Support
 
