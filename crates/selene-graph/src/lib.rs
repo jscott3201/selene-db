@@ -34,6 +34,7 @@ pub(crate) mod provider_fanout;
 mod recover;
 pub(crate) mod reentry;
 pub mod shared;
+mod shared_snapshot;
 pub mod store;
 pub mod type_validator;
 pub mod typed_index;

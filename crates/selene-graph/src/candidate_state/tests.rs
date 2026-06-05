@@ -4,8 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{Change, GraphId, HlcTimestamp, Origin, PropertyMap, intern};
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
-    WalConfig, WalWriter, snapshot_path,
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig, WalWriter,
 };
 
 use super::*;
@@ -154,7 +153,7 @@ fn provider_snapshot_and_wal_replay_preserve_delete_reverse_state() {
     assert_eq!(candidate_nodes(&provider, &name), vec![active]);
 
     let dir = temp_dir("candidate-state");
-    write_snapshot_all_providers(&dir, &shared, 1);
+    write_snapshot(&dir, &shared, 1);
     append_wal(&dir, 1, &[Change::EdgeDeleted { id: stale_edge }]);
 
     let recovered_provider = provider_with(spec);
@@ -198,7 +197,7 @@ fn provider_wal_replay_expands_declarative_edge_truncate_from_state() {
     assert_eq!(candidate_nodes(&provider, &name), vec![active]);
 
     let dir = temp_dir("candidate-state-edge-truncate");
-    write_snapshot_all_providers(&dir, &shared, 1);
+    write_snapshot(&dir, &shared, 1);
     append_wal(
         &dir,
         1,
@@ -246,7 +245,7 @@ fn provider_wal_replay_expands_declarative_node_truncate_from_state() {
     assert_eq!(candidate_nodes(&provider, &name), vec![active]);
 
     let dir = temp_dir("candidate-state-node-truncate");
-    write_snapshot_all_providers(&dir, &shared, 1);
+    write_snapshot(&dir, &shared, 1);
     append_wal(&dir, 1, &[Change::NodesOfTypeTruncated { label: doc }]);
 
     let recovered_provider = provider_with(spec);
@@ -370,24 +369,16 @@ fn temp_dir(name: &str) -> PathBuf {
     dir
 }
 
-fn write_snapshot_all_providers(dir: &Path, shared: &SharedGraph, sequence: u64) {
-    let mut builder = SnapshotBuilder::new(SnapshotConfig {
-        dir: dir.to_path_buf(),
-        sequence,
-        compression: SectionCompression::None,
-        fsync: false,
-    });
-    for provider in shared.index_providers() {
-        for sub in provider.declared_sub_tags() {
-            let bytes = provider.write_section(*sub).unwrap();
-            builder
-                .add_section(provider.provider_tag().0, sub.0, bytes)
-                .unwrap();
-        }
-    }
-    let outcome = builder.finalize().unwrap();
+fn write_snapshot(dir: &Path, shared: &SharedGraph, sequence: u64) {
+    let outcome = shared
+        .write_snapshot(SnapshotConfig {
+            dir: dir.to_path_buf(),
+            sequence,
+            compression: SectionCompression::None,
+            fsync: false,
+        })
+        .unwrap();
     assert_eq!(outcome.snapshot_seq, sequence);
-    assert!(snapshot_path(dir, sequence).exists());
 }
 
 fn append_wal(dir: &Path, snapshot_seq: u64, changes: &[Change]) {

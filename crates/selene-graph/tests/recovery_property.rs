@@ -20,13 +20,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use proptest::prelude::*;
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Record, Value, intern};
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
-    WalConfig,
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig,
 };
 
-use selene_graph::{
-    CORE_PROVIDER_TAG, CommitBatching, ProviderTag, SeleneGraph, SharedGraph, TypedIndexKind,
-};
+use selene_graph::{CommitBatching, SeleneGraph, SharedGraph, TypedIndexKind};
 
 use funnel_harness::{Oracle, apply_op, arb_op, assert_snapshot_matches_oracle};
 
@@ -57,27 +54,19 @@ fn wal_backed_graph(dir: &Path, graph_id: GraphId, batching: CommitBatching) -> 
         .unwrap()
 }
 
-/// Persist a `CORE/*` snapshot of `shared`'s live state at `sequence`, mirroring
-/// the production CORE provider's section writes (same path the recover_tests
-/// `write_snapshot` helper exercises). Used by the snapshot-mid-stream arm so
-/// recovery must reconcile the snapshot base with the post-snapshot WAL tail.
+/// Persist a snapshot of `shared`'s live state at `sequence`.
+///
+/// Used by the snapshot-mid-stream arm so recovery must reconcile the snapshot
+/// base with the post-snapshot WAL tail.
 fn write_core_snapshot(dir: &Path, shared: &SharedGraph, sequence: u64) {
-    let provider = shared
-        .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
-        .expect("core provider registered");
-    let mut builder = SnapshotBuilder::new(SnapshotConfig {
-        dir: dir.to_path_buf(),
-        sequence,
-        compression: SectionCompression::None,
-        fsync: false,
-    });
-    for sub in provider.declared_sub_tags() {
-        let bytes = provider.write_section(*sub).unwrap();
-        builder
-            .add_section(CORE_PROVIDER_TAG, sub.0, bytes)
-            .unwrap();
-    }
-    let outcome = builder.finalize().unwrap();
+    let outcome = shared
+        .write_snapshot(SnapshotConfig {
+            dir: dir.to_path_buf(),
+            sequence,
+            compression: SectionCompression::None,
+            fsync: false,
+        })
+        .unwrap();
     assert_eq!(outcome.snapshot_seq, sequence);
 }
 
