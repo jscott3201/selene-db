@@ -207,13 +207,14 @@ pub(super) fn execute_score_batch(
         )));
     };
 
-    let mut rows = Vec::with_capacity(queries.len().saturating_mul(k));
+    let mut rows = Vec::new();
     for (query_index, (query, nodes)) in queries.iter().zip(node_sets.iter()).enumerate() {
         let query_index = u64::try_from(query_index)
             .map_err(|err| query_index_too_large(SCORE_BATCH_PROC_NAME, err))?;
         let hits = index
             .search_candidates_checked(query.as_str(), nodes, k, ctx.cancellation_checker())
             .map_err(text_search_error)?;
+        rows.reserve(hits.len());
         for hit in hits {
             rows.push(vec![
                 Value::Uint(query_index),
