@@ -837,6 +837,19 @@ scripts/run-benches.sh --profile quick --bench procedure_call_repeat \
   --filter 'query_root_current_state_text_score_batch|query_root_current_state_text_vector_batch|query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch|query_root_vector_text_batch'
 ```
 
+The project-code alias profile keeps real module/symbol names but adds
+natural-language decoys around the same concepts:
+
+```bash
+set -a; source .env; set +a
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_PROVIDER=openrouter \
+SELENE_EMBEDDING_CORPUS=project_code_alias_memory \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat \
+  --filter 'query_root_current_state_text_score_batch|query_root_current_state_text_vector_batch|query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch|query_root_vector_text_batch'
+```
+
 The GQL query-root rows use the same local oMLX corpus but exercise the full
 query pipeline. The materialization rows isolate `MATCH` plus
 `WITH collect_list(root)` root production before any vector procedure runs; the
@@ -994,6 +1007,12 @@ topic:
 | `SELENE_EMBEDDING_CORPUS=project_code_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c6...dim1536_basecurbp10000_curbp10000_hitbp10000` | 306.32 µs | - | Maintained current-state vector scoring keeps full current precision and all expected targets, about 1.8x slower than BM25/current-state on this profile. |
 | `SELENE_EMBEDDING_CORPUS=project_code_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_provenance_state_intersection_batch/...q16_k4_r2_c6...dim1536_basecurbp10000_curbp10000_hitbp10000` | 307.69 µs | - | Provenance-required current state preserves the same quality shape as current state with negligible extra cost. |
 | `SELENE_EMBEDDING_CORPUS=project_code_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_vector_text_batch/...q16_k4_r2_c4...dim1536_precbp8750_curbp8750_hitbp10000` | 486.06 µs | - | Vector-first BM25 finds all expected targets after pruning to top-k vector candidates, but lowers broad/current precision and remains slower than either BM25/current-state or current-state vector scoring. |
+| `SELENE_EMBEDDING_CORPUS=project_code_alias_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_score_batch/...q16_k4_r2_c8...dim1536_precbp9218_curbp9218_hitbp9375` | 170.28 µs | - | Harder source-shaped alias profile with lexical decoys. BM25/current-state remains fastest but misses one expected target. |
+| `SELENE_EMBEDDING_CORPUS=project_code_alias_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_vector_batch/...q16_k4_r2_c8...dim1536_precbp9218_curbp9218_hitbp9375` | 3.1401 ms | - | Vector rerank after BM25/current-state keeps the same 15-of-16 target-hit shape because the missing target is not in the lexical candidate set. |
+| `SELENE_EMBEDDING_CORPUS=project_code_alias_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_expansion_batch/...q16_k4_r2_c10...dim1536_precbp10000_hitbp8750` | 318.59 µs | - | Plain graph-expanded vector scoring keeps full broad-topic precision but finds only 14 of 16 expected alias targets. |
+| `SELENE_EMBEDDING_CORPUS=project_code_alias_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c8...dim1536_basecurbp9687_curbp10000_hitbp10000` | 314.32 µs | - | Maintained current-state vector scoring recovers all expected alias targets and restores full current precision. |
+| `SELENE_EMBEDDING_CORPUS=project_code_alias_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_provenance_state_intersection_batch/...q16_k4_r2_c8...dim1536_basecurbp9687_curbp10000_hitbp10000` | 314.61 µs | - | Provenance-required current state preserves the current-state vector quality with negligible extra cost. |
+| `SELENE_EMBEDDING_CORPUS=project_code_alias_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_vector_text_batch/...q16_k4_r2_c4...dim1536_precbp8906_curbp8593_hitbp8750` | 495.39 µs | - | Vector-first BM25 is again negative: it misses two targets, lowers current precision, and is slower than both BM25/current-state and current-state vector scoring. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
@@ -1071,6 +1090,14 @@ vector scoring restores full broad/current precision at 306.32 us. Vector-first
 BM25 keeps `hitbp10000`, but drops to `precbp8750` / `curbp8750` and costs
 486.06 us, so it remains a negative default-fusion result even on a corpus where
 vector roots are target-complete.
+
+On the harder `project_code_alias_memory` profile, lexical decoys create the
+target-quality gap the positive control lacked. BM25/current-state is still
+fastest but finds 15 of 16 targets (`hitbp9375`, 170.28 us), and vector rerank
+after those BM25 candidates cannot recover the missing target. Current-state
+vector scoring reaches `hitbp10000` and `curbp10000` at 314.32 us, making it
+the quality path for this source-alias fixture. Vector-first BM25 stays
+negative: `hitbp8750`, `curbp8593`, and 495.39 us.
 
 The locally listed `jina-code-embeddings-1.5b-mlx` model is not currently
 available from `/v1/embeddings` in oMLX; the endpoint returns HTTP 400 and
