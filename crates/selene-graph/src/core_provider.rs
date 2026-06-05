@@ -18,7 +18,7 @@ use selene_persist::{
 use crate::core_provider::recovery_state::RecoveryState;
 use crate::core_provider::sections::{
     encode_composite_schemas, encode_edges, encode_graph_types, encode_meta, encode_nodes,
-    encode_schemas, encode_vector_schemas,
+    encode_schemas, encode_text_schemas, encode_vector_schemas,
 };
 use crate::durable_provider::DurableProvider;
 use crate::error::GraphResult;
@@ -41,6 +41,8 @@ pub const CORE_SCMA_SUB: [u8; 4] = *b"SCMA";
 pub const CORE_CPIX_SUB: [u8; 4] = *b"CPIX";
 /// Core vector-index schema subsection tag under [`CORE_PROVIDER_TAG`].
 pub const CORE_VIDX_SUB: [u8; 4] = *b"VIDX";
+/// Core text-index schema subsection tag under [`CORE_PROVIDER_TAG`].
+pub const CORE_TIDX_SUB: [u8; 4] = *b"TIDX";
 
 const CORE_SUB_TAGS: &[SubTag] = &[
     SubTag(CORE_GTYP_SUB),
@@ -50,6 +52,7 @@ const CORE_SUB_TAGS: &[SubTag] = &[
     SubTag(CORE_SCMA_SUB),
     SubTag(CORE_CPIX_SUB),
     SubTag(CORE_VIDX_SUB),
+    SubTag(CORE_TIDX_SUB),
 ];
 
 /// Shared provider implementation for live snapshots and recovery replay.
@@ -246,6 +249,7 @@ impl CoreProvider {
             CORE_SCMA_SUB => encode_schemas(&graph),
             CORE_CPIX_SUB => encode_composite_schemas(&graph),
             CORE_VIDX_SUB => encode_vector_schemas(&graph),
+            CORE_TIDX_SUB => encode_text_schemas(&graph),
             _ => Err(invalid_sub_tag(sub_tag)),
         }
     }

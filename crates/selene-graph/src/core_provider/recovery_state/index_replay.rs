@@ -14,7 +14,7 @@ use selene_core::{
 use smallvec::SmallVec;
 
 use crate::graph::{
-    CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, VectorIndexEntry,
+    CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, TextIndexEntry, VectorIndexEntry,
 };
 use crate::typed_index::TypedIndex;
 use crate::typed_index::TypedIndexKind;
@@ -91,6 +91,27 @@ pub(super) enum PendingVectorIndex {
         /// Indexed node label.
         label: IStr,
         /// Indexed vector property key.
+        property: IStr,
+    },
+}
+
+/// A distilled, replayable text-index intent from the WAL.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PendingTextIndex {
+    /// Register a text index for `(label, property)`.
+    Create {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed text property key.
+        property: IStr,
+        /// Optional explicit catalog name.
+        name: Option<IStr>,
+    },
+    /// Drop the text index registration for `(label, property)`.
+    Drop {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed text property key.
         property: IStr,
     },
 }
@@ -286,6 +307,56 @@ pub(super) fn replay_vector_index_changes(
                 graph
                     .vector_index
                     .remove(&(label.clone(), property.clone()));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Distill a text-index `SchemaChange` into a replayable intent, or `None`
+/// when the change is not a text-index change.
+pub(super) fn pending_text_index_change(change: &SchemaChange) -> Option<PendingTextIndex> {
+    match change {
+        SchemaChange::TextIndexCreated {
+            label,
+            property,
+            name,
+        } => Some(PendingTextIndex::Create {
+            label: label.clone(),
+            property: property.clone(),
+            name: name.clone(),
+        }),
+        SchemaChange::TextIndexDropped { label, property } => Some(PendingTextIndex::Drop {
+            label: label.clone(),
+            property: property.clone(),
+        }),
+        _ => None,
+    }
+}
+
+/// Replay post-snapshot WAL text-index intents against the registration set
+/// only; the downstream `rebuild_text_indexes` pass fills postings once.
+pub(super) fn replay_text_index_changes(
+    graph: &mut SeleneGraph,
+    changes: &[PendingTextIndex],
+) -> crate::GraphResult<()> {
+    for change in changes {
+        match change {
+            PendingTextIndex::Create {
+                label,
+                property,
+                name,
+            } => {
+                graph.text_index.insert(
+                    (label.clone(), property.clone()),
+                    TextIndexEntry::new(
+                        crate::TextIndex::empty(label.clone(), property.clone()),
+                        name.clone(),
+                    ),
+                );
+            }
+            PendingTextIndex::Drop { label, property } => {
+                graph.text_index.remove(&(label.clone(), property.clone()));
             }
         }
     }

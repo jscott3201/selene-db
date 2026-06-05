@@ -41,6 +41,9 @@ mod record_recovery;
 #[path = "recover_tests/vector_recovery.rs"]
 mod vector_recovery;
 
+#[path = "recover_tests/text_recovery.rs"]
+mod text_recovery;
+
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

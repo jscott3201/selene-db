@@ -1,20 +1,22 @@
 //! Reusable BM25 postings indexes over graph node string properties.
 //!
-//! `TextIndex` is an in-memory snapshot artifact: it is built from one
-//! `(label, property)` pair and can answer repeated BM25 queries without scanning
-//! every matching node. The exact scorer in [`crate::text_search`] remains the
+//! `TextIndex` is an in-memory maintained artifact for one `(label, property)`
+//! pair. Durable state stores only the registration; postings are derived from
+//! primary node rows at registration, recovery, compaction, and commit-time
+//! maintenance. The exact scorer in [`crate::text_search`] remains the
 //! correctness oracle; this module reuses the same tokenizer, IDF formula, and
 //! top-k ordering.
 
+use std::collections::BTreeSet;
 use std::mem::size_of;
 
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 
-use selene_core::{CancellationChecker, IStr, NodeId, Value};
+use selene_core::{CancellationChecker, IStr, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::error::{GraphError, GraphResult};
-use crate::graph::SeleneGraph;
+use crate::graph::{SeleneGraph, TextIndexEntry};
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
 use crate::text_search::{
@@ -29,6 +31,7 @@ pub struct TextIndex {
     property: IStr,
     rows: RoaringBitmap,
     document_lengths: FxHashMap<NodeId, u32>,
+    document_terms: FxHashMap<NodeId, Vec<String>>,
     postings: FxHashMap<String, Vec<TextPosting>>,
     total_document_len: u64,
     posting_count: usize,
@@ -91,6 +94,7 @@ impl TextIndex {
             property,
             rows: RoaringBitmap::new(),
             document_lengths: FxHashMap::default(),
+            document_terms: FxHashMap::default(),
             postings: FxHashMap::default(),
             total_document_len: 0,
             posting_count: 0,
@@ -154,6 +158,17 @@ impl TextIndex {
             .document_lengths
             .capacity()
             .saturating_mul(size_of::<(NodeId, u32)>());
+        let mut document_term_bytes = self
+            .document_terms
+            .capacity()
+            .saturating_mul(size_of::<(NodeId, Vec<String>)>());
+        for terms in self.document_terms.values() {
+            document_term_bytes = document_term_bytes
+                .saturating_add(terms.capacity().saturating_mul(size_of::<String>()));
+            for term in terms {
+                document_term_bytes = document_term_bytes.saturating_add(term.capacity());
+            }
+        }
         let mut posting_bytes = 0usize;
         let mut term_bytes = 0usize;
         for (term, postings) in &self.postings {
@@ -168,6 +183,7 @@ impl TextIndex {
         let estimated_index_bytes = size_of::<Self>()
             .saturating_add(row_bitmap_bytes)
             .saturating_add(document_length_bytes)
+            .saturating_add(document_term_bytes)
             .saturating_add(terms_table_bytes)
             .saturating_add(term_bytes)
             .saturating_add(posting_bytes);
@@ -179,6 +195,7 @@ impl TextIndex {
             row_bitmap_bytes,
             row_bitmap_serialized_bytes,
             document_length_bytes,
+            document_term_bytes,
             terms_table_bytes,
             term_bytes,
             posting_bytes,
@@ -263,7 +280,8 @@ impl TextIndex {
         Ok(top_k.into_hits())
     }
 
-    fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
+    pub(crate) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
+        self.remove_document(row, node_id);
         let mut counts: FxHashMap<String, u32> = FxHashMap::default();
         let mut len = 0_u32;
         for token in tokenize(text) {
@@ -278,12 +296,52 @@ impl TextIndex {
         self.rows.insert(row);
         self.document_lengths.insert(node_id, len);
         self.total_document_len = self.total_document_len.saturating_add(u64::from(len));
+        let mut terms = Vec::with_capacity(counts.len());
         for (term, term_count) in counts {
-            self.postings.entry(term).or_default().push(TextPosting {
-                node_id,
-                term_count,
-            });
-            self.posting_count = self.posting_count.saturating_add(1);
+            let postings = self.postings.entry(term.clone()).or_default();
+            match postings.binary_search_by_key(&node_id, |posting| posting.node_id) {
+                Ok(index) => {
+                    postings[index].term_count = term_count;
+                }
+                Err(index) => {
+                    postings.insert(
+                        index,
+                        TextPosting {
+                            node_id,
+                            term_count,
+                        },
+                    );
+                    self.posting_count = self.posting_count.saturating_add(1);
+                }
+            }
+            terms.push(term);
+        }
+        self.document_terms.insert(node_id, terms);
+    }
+
+    pub(crate) fn remove_document(&mut self, row: u32, node_id: NodeId) {
+        self.rows.remove(row);
+        let Some(length) = self.document_lengths.remove(&node_id) else {
+            return;
+        };
+        self.total_document_len = self.total_document_len.saturating_sub(u64::from(length));
+        let Some(terms) = self.document_terms.remove(&node_id) else {
+            return;
+        };
+        for term in terms {
+            let remove_term = if let Some(postings) = self.postings.get_mut(&term) {
+                let before = postings.len();
+                postings.retain(|posting| posting.node_id != node_id);
+                self.posting_count = self
+                    .posting_count
+                    .saturating_sub(before.saturating_sub(postings.len()));
+                postings.is_empty()
+            } else {
+                false
+            };
+            if remove_term {
+                self.postings.remove(&term);
+            }
         }
     }
 
@@ -291,6 +349,14 @@ impl TextIndex {
         for postings in self.postings.values_mut() {
             postings.sort_by_key(|posting| posting.node_id);
         }
+    }
+
+    pub(crate) fn rows_eq(&self, reference: &Self) -> bool {
+        self.rows == reference.rows
+            && self.document_lengths == reference.document_lengths
+            && self.total_document_len == reference.total_document_len
+            && self.posting_count == reference.posting_count
+            && self.postings == reference.postings
     }
 }
 
@@ -326,6 +392,8 @@ pub struct TextIndexMemoryUsage {
     pub row_bitmap_serialized_bytes: usize,
     /// Estimated bytes for the document-length map.
     pub document_length_bytes: usize,
+    /// Estimated bytes for per-document term lists used by commit maintenance.
+    pub document_term_bytes: usize,
     /// Estimated bytes for the postings hash table.
     pub terms_table_bytes: usize,
     /// Estimated bytes for term string buffers.
@@ -398,6 +466,213 @@ impl SharedGraph {
     ) -> GraphResult<Vec<TextSearchHit>> {
         self.read()
             .indexed_text_search_nodes(label, property, query, k)
+    }
+}
+
+type TextIndexMap = FxHashMap<(IStr, IStr), TextIndexEntry>;
+
+pub(crate) fn apply_node_create(
+    indexes: &mut TextIndexMap,
+    labels: &LabelSet,
+    props: &PropertyMap,
+    row: u32,
+    node_id: NodeId,
+) {
+    for label in labels.iter() {
+        for (property, value) in props.iter() {
+            insert_commit(
+                indexes,
+                label.clone(),
+                property.clone(),
+                value,
+                row,
+                node_id,
+            );
+        }
+    }
+}
+
+pub(crate) fn apply_node_delete(
+    indexes: &mut TextIndexMap,
+    labels: &LabelSet,
+    props: &PropertyMap,
+    row: u32,
+    node_id: NodeId,
+) {
+    for label in labels.iter() {
+        for (property, value) in props.iter() {
+            remove_commit(
+                indexes,
+                label.clone(),
+                property.clone(),
+                value,
+                row,
+                node_id,
+            );
+        }
+    }
+}
+
+pub(crate) fn apply_node_update(
+    indexes: &mut TextIndexMap,
+    old_labels: &LabelSet,
+    old_props: &PropertyMap,
+    new_labels: &LabelSet,
+    new_props: &PropertyMap,
+    row: u32,
+    node_id: NodeId,
+) {
+    let candidates = candidate_keys(indexes, old_labels, old_props, new_labels, new_props);
+    for (label, property) in candidates {
+        match (
+            indexable_text(old_labels, old_props, &label, &property),
+            indexable_text(new_labels, new_props, &label, &property),
+        ) {
+            (Some(old_text), Some(new_text)) if old_text == new_text => {}
+            (Some(_), Some(new_text)) => {
+                insert_commit(
+                    indexes,
+                    label.clone(),
+                    property.clone(),
+                    new_text,
+                    row,
+                    node_id,
+                );
+            }
+            (Some(old_text), None) => {
+                remove_commit(
+                    indexes,
+                    label.clone(),
+                    property.clone(),
+                    old_text,
+                    row,
+                    node_id,
+                );
+            }
+            (None, Some(new_text)) => {
+                insert_commit(
+                    indexes,
+                    label.clone(),
+                    property.clone(),
+                    new_text,
+                    row,
+                    node_id,
+                );
+            }
+            (None, None) => {}
+        }
+    }
+}
+
+pub(crate) fn rebuild_text_indexes(graph: &mut SeleneGraph) -> GraphResult<()> {
+    let registrations: Vec<((IStr, IStr), Option<IStr>)> = graph
+        .text_index
+        .iter()
+        .map(|(key, entry)| (key.clone(), entry.name.clone()))
+        .collect();
+    graph.text_index.clear();
+    for ((label, property), name) in registrations {
+        let index = TextIndex::build(graph, label.clone(), property.clone())?;
+        graph
+            .text_index
+            .insert((label, property), TextIndexEntry::new(index, name));
+    }
+    Ok(())
+}
+
+fn candidate_keys(
+    indexes: &TextIndexMap,
+    old_labels: &LabelSet,
+    old_props: &PropertyMap,
+    new_labels: &LabelSet,
+    new_props: &PropertyMap,
+) -> BTreeSet<(IStr, IStr)> {
+    if indexes.is_empty() {
+        return BTreeSet::new();
+    }
+    let mut labels: BTreeSet<IStr> = BTreeSet::new();
+    labels.extend(old_labels.iter().cloned());
+    labels.extend(new_labels.iter().cloned());
+
+    let mut properties: BTreeSet<IStr> = BTreeSet::new();
+    properties.extend(old_props.keys().cloned());
+    properties.extend(new_props.keys().cloned());
+
+    let mut candidates = BTreeSet::new();
+    for label in &labels {
+        for property in &properties {
+            let key = (label.clone(), property.clone());
+            if indexes.contains_key(&key) {
+                candidates.insert(key);
+            }
+        }
+    }
+    candidates
+}
+
+fn indexable_text<'a>(
+    labels: &LabelSet,
+    props: &'a PropertyMap,
+    label: &IStr,
+    property: &IStr,
+) -> Option<&'a str> {
+    if !labels.contains(label) {
+        return None;
+    }
+    match props.get(property) {
+        Some(Value::String(text)) => Some(text.as_str()),
+        _ => None,
+    }
+}
+
+fn insert_commit(
+    indexes: &mut TextIndexMap,
+    label: IStr,
+    property: IStr,
+    value: impl TextValue,
+    row: u32,
+    node_id: NodeId,
+) {
+    let Some(text) = value.text() else {
+        return;
+    };
+    if let Some(entry) = indexes.get_mut(&(label, property)) {
+        std::sync::Arc::make_mut(&mut entry.index).insert_document(row, node_id, text);
+    }
+}
+
+fn remove_commit(
+    indexes: &mut TextIndexMap,
+    label: IStr,
+    property: IStr,
+    value: impl TextValue,
+    row: u32,
+    node_id: NodeId,
+) {
+    if value.text().is_none() {
+        return;
+    }
+    if let Some(entry) = indexes.get_mut(&(label, property)) {
+        std::sync::Arc::make_mut(&mut entry.index).remove_document(row, node_id);
+    }
+}
+
+trait TextValue {
+    fn text(&self) -> Option<&str>;
+}
+
+impl TextValue for &Value {
+    fn text(&self) -> Option<&str> {
+        match self {
+            Value::String(text) => Some(text.as_str()),
+            _ => None,
+        }
+    }
+}
+
+impl TextValue for &str {
+    fn text(&self) -> Option<&str> {
+        Some(self)
     }
 }
 

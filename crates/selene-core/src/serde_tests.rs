@@ -365,6 +365,15 @@ fn schema_change_postcard_round_trip() {
             label: node_label.clone(),
             property: istr("serde.schema.embedding"),
         },
+        SchemaChange::TextIndexCreated {
+            label: node_label.clone(),
+            property: istr("serde.schema.body"),
+            name: Some(istr("serde.schema.text.index.name")),
+        },
+        SchemaChange::TextIndexDropped {
+            label: node_label.clone(),
+            property: istr("serde.schema.body"),
+        },
         SchemaChange::NodeTypeAddedV2 {
             graph_type: graph_type_id,
             label: istr("serde.schema.node.v2"),

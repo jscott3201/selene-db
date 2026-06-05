@@ -189,6 +189,7 @@ fn text_index_reports_stats_and_memory() {
     assert_eq!(stats.total_document_len, 6);
     assert_eq!(usage.documents, stats.documents);
     assert_eq!(usage.distinct_terms, stats.distinct_terms);
+    assert!(usage.document_term_bytes > 0);
     assert!(usage.estimated_index_bytes >= usage.posting_bytes);
 }
 

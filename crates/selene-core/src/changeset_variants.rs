@@ -200,6 +200,15 @@ impl SchemaChange {
             label: changeset_variant_istr("schema.all.node"),
             property: changeset_variant_istr("schema.all.vector"),
         },
+        || Self::TextIndexCreated {
+            label: changeset_variant_istr("schema.all.node"),
+            property: changeset_variant_istr("schema.all.text"),
+            name: Some(changeset_variant_istr("schema.all.text.index")),
+        },
+        || Self::TextIndexDropped {
+            label: changeset_variant_istr("schema.all.node"),
+            property: changeset_variant_istr("schema.all.text"),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -227,6 +236,8 @@ impl SchemaChange {
             Self::CompositePropertyIndexDropped { .. } => "CompositePropertyIndexDropped",
             Self::VectorIndexCreated { .. } => "VectorIndexCreated",
             Self::VectorIndexDropped { .. } => "VectorIndexDropped",
+            Self::TextIndexCreated { .. } => "TextIndexCreated",
+            Self::TextIndexDropped { .. } => "TextIndexDropped",
         }
     }
 }

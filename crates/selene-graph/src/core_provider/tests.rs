@@ -29,6 +29,8 @@ mod cpix;
 mod durable_state;
 #[path = "tests/gtyp.rs"]
 mod gtyp;
+#[path = "tests/tidx.rs"]
+mod tidx;
 
 fn prop(name: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()

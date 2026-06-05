@@ -1,6 +1,7 @@
 use selene_core::{
-    Change, EdgeTypeDefV1, GraphId, GraphType, LabelSet, NodeTypeDefV1, NodeTypeRef, RecordTypeDef,
-    RecordTypeId, SchemaChange, SchemaPropertyIndexKind, intern,
+    Change, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, LabelSet, NodeTypeDef, NodeTypeDefV1,
+    NodeTypeRef, RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
+    SchemaVectorIndexKind, intern,
 };
 use smallvec::smallvec;
 
@@ -38,8 +39,14 @@ const SCHEMA_CHANGE_INTENT: &[SchemaChangeIntent] = &[
     schema_intent!(apply intent_property_index_created),
     schema_intent!(apply intent_property_index_dropped),
     schema_intent!(apply intent_property_index_created_named),
+    schema_intent!(apply intent_node_type_added_v2),
+    schema_intent!(apply intent_edge_type_added_v2),
     schema_intent!(apply intent_composite_property_index_created),
     schema_intent!(apply intent_composite_property_index_dropped),
+    schema_intent!(apply intent_vector_index_created),
+    schema_intent!(apply intent_vector_index_dropped),
+    schema_intent!(apply intent_text_index_created),
+    schema_intent!(apply intent_text_index_dropped),
 ];
 
 fn intent_graph_created() -> SchemaChange {
@@ -141,6 +148,25 @@ fn intent_property_index_created_named() -> SchemaChange {
     }
 }
 
+fn intent_node_type_added_v2() -> SchemaChange {
+    let label = intern("IntentNodeV2").unwrap();
+    SchemaChange::NodeTypeAddedV2 {
+        graph_type: test_graph_type_id(),
+        label: label.clone(),
+        def: NodeTypeDef::new(LabelSet::single(label)),
+    }
+}
+
+fn intent_edge_type_added_v2() -> SchemaChange {
+    let label = intern("INTENT_EDGE_V2").unwrap();
+    let endpoint = intern("IntentNode").unwrap();
+    SchemaChange::EdgeTypeAddedV2 {
+        graph_type: test_graph_type_id(),
+        label: label.clone(),
+        def: EdgeTypeDef::new(label, NodeTypeRef(endpoint.clone()), NodeTypeRef(endpoint)),
+    }
+}
+
 fn intent_composite_property_index_created() -> SchemaChange {
     SchemaChange::CompositePropertyIndexCreated {
         label: intern("IntentCompositeIndexedNode").unwrap(),
@@ -166,6 +192,40 @@ fn intent_composite_property_index_dropped() -> SchemaChange {
     }
 }
 
+fn intent_vector_index_created() -> SchemaChange {
+    SchemaChange::VectorIndexCreated {
+        label: intern("IntentVectorIndexedNode").unwrap(),
+        property: intern("intentEmbedding").unwrap(),
+        kind: SchemaVectorIndexKind::Flat,
+        dimension: 3,
+        name: Some(intern("intent_vector_index").unwrap()),
+        hnsw_config: None,
+        ivf_config: None,
+    }
+}
+
+fn intent_vector_index_dropped() -> SchemaChange {
+    SchemaChange::VectorIndexDropped {
+        label: intern("IntentVectorIndexedNode").unwrap(),
+        property: intern("intentEmbedding").unwrap(),
+    }
+}
+
+fn intent_text_index_created() -> SchemaChange {
+    SchemaChange::TextIndexCreated {
+        label: intern("IntentTextIndexedNode").unwrap(),
+        property: intern("intentBody").unwrap(),
+        name: Some(intern("intent_text_index").unwrap()),
+    }
+}
+
+fn intent_text_index_dropped() -> SchemaChange {
+    SchemaChange::TextIndexDropped {
+        label: intern("IntentTextIndexedNode").unwrap(),
+        property: intern("intentBody").unwrap(),
+    }
+}
+
 fn drive_handler_and_observe(change: SchemaChange) -> Intent {
     let mut state = super::super::RecoveryState::new();
     let result = state.apply_change(&Change::SchemaChanged {
@@ -177,7 +237,9 @@ fn drive_handler_and_observe(change: SchemaChange) -> Intent {
         Ok(())
             if !state.pending_schema_changes.is_empty()
                 || !state.pending_property_index_changes.is_empty()
-                || !state.pending_composite_property_index_changes.is_empty() =>
+                || !state.pending_composite_property_index_changes.is_empty()
+                || !state.pending_vector_index_changes.is_empty()
+                || !state.pending_text_index_changes.is_empty() =>
         {
             Intent::Apply
         }
@@ -194,7 +256,7 @@ fn drive_handler_and_observe(change: SchemaChange) -> Intent {
 #[test]
 fn recovery_intent_table_covers_every_schema_change_variant() {
     let mut seen = std::collections::BTreeSet::new();
-    assert_eq!(SCHEMA_CHANGE_INTENT.len(), 14);
+    assert_eq!(SCHEMA_CHANGE_INTENT.len(), SchemaChange::VARIANT_COUNT);
 
     for (factory, expected_intent) in SCHEMA_CHANGE_INTENT {
         let change = factory();

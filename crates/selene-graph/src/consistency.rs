@@ -7,7 +7,8 @@
 //! recovery path (`crate::shared::rebuild_derived_state` +
 //! `crate::property_index::rebuild_property_indexes` +
 //! `crate::composite_property_index::rebuild_composite_property_indexes` +
-//! `crate::vector_index::rebuild_vector_indexes`). A
+//! `crate::vector_index::rebuild_vector_indexes` +
+//! `crate::text_index::rebuild_text_indexes`). A
 //! bug in either path corrupts query results silently — the engine keeps
 //! answering, just with wrong rows.
 //!
@@ -48,7 +49,8 @@ impl SeleneGraph {
     ///    skip-aware policy.
     /// 4. **Vector row-set indexes** match a fresh lenient re-build, same
     ///    skip-aware policy.
-    /// 5. **Store integrity / alive-set parity**: per-store columns share one
+    /// 5. **Text BM25 indexes** match a fresh re-build from string properties.
+    /// 6. **Store integrity / alive-set parity**: per-store columns share one
     ///    length and every alive row index is in range. Dead rows are
     ///    permitted holes (D11) and are only asserted absent from derived
     ///    state, never from the columns. The snapshot's `meta.next_*_id`
@@ -57,7 +59,7 @@ impl SeleneGraph {
     ///    fields after a `from_graph` / recovery load (the real allocator
     ///    floor is enforced separately by `IdAllocator::from_meta_with_floors`),
     ///    so they are not a derived-index invariant.
-    /// 6. **Adjacency** matches a re-derivation from alive edges in both
+    /// 7. **Adjacency** matches a re-derivation from alive edges in both
     ///    directions, with no present-but-empty entry.
     ///
     /// # Errors
@@ -70,6 +72,7 @@ impl SeleneGraph {
         self.check_property_indexes()?;
         self.check_composite_property_indexes()?;
         self.check_vector_indexes()?;
+        self.check_text_indexes()?;
         self.check_adjacency()?;
         Ok(())
     }
@@ -231,7 +234,26 @@ impl SeleneGraph {
         Ok(())
     }
 
-    /// Family (6): in/out adjacency.
+    /// Family (5): BM25 text indexes.
+    fn check_text_indexes(&self) -> Result<(), String> {
+        for ((label, property), entry) in &self.text_index {
+            let reference = crate::TextIndex::build(self, label.clone(), property.clone())
+                .map_err(|err| {
+                    format!("failed to re-derive text index ({label}, {property}): {err}")
+                })?;
+            if !entry.index.rows_eq(&reference) {
+                return Err(format!(
+                    "text index ({label}, {property}) drifted from a fresh re-derivation \
+                     (maintained documents {}, reference documents {})",
+                    entry.index.document_count(),
+                    reference.document_count(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Family (7): in/out adjacency.
     fn check_adjacency(&self) -> Result<(), String> {
         let mut out_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();
         let mut in_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();

@@ -8,15 +8,17 @@ use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
     CompositeSchemaEntry, CompositeSchemaKey, EdgeRow, MetaPayload, NodeRow, SchemaEntry,
-    SchemaKey, VectorSchemaEntry, VectorSchemaKey, decode_composite_schemas, decode_edges,
-    decode_graph_types, decode_meta, decode_nodes, decode_schemas, decode_vector_schemas,
+    SchemaKey, TextSchemaEntry, TextSchemaKey, VectorSchemaEntry, VectorSchemaKey,
+    decode_composite_schemas, decode_edges, decode_graph_types, decode_meta, decode_nodes,
+    decode_schemas, decode_text_schemas, decode_vector_schemas,
 };
 use crate::core_provider::{
     CORE_CPIX_SUB, CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB,
-    CORE_VIDX_SUB, inconsistent, invalid_payload,
+    CORE_TIDX_SUB, CORE_VIDX_SUB, inconsistent, invalid_payload,
 };
 use crate::graph::{
-    CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph, VectorIndexEntry,
+    CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph, TextIndexEntry,
+    VectorIndexEntry,
 };
 use crate::graph_types::GraphTypeDef;
 use crate::typed_index::TypedIndex;
@@ -26,10 +28,11 @@ mod materialize;
 mod schema_replay;
 
 use index_replay::{
-    PendingCompositeIndex, PendingIndex, PendingVectorIndex,
+    PendingCompositeIndex, PendingIndex, PendingTextIndex, PendingVectorIndex,
     pending_composite_property_index_change, pending_property_index_change,
-    pending_vector_index_change, replay_composite_property_index_changes,
-    replay_property_index_changes, replay_vector_index_changes,
+    pending_text_index_change, pending_vector_index_change,
+    replay_composite_property_index_changes, replay_property_index_changes,
+    replay_text_index_changes, replay_vector_index_changes,
 };
 use materialize::{insert_edge_row, insert_node_row};
 
@@ -42,6 +45,7 @@ pub(crate) struct RecoveryState {
     pending_property_index_changes: Vec<PendingIndex>,
     pending_composite_property_index_changes: Vec<PendingCompositeIndex>,
     pending_vector_index_changes: Vec<PendingVectorIndex>,
+    pending_text_index_changes: Vec<PendingTextIndex>,
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
     /// BRIEF-Item-4a STEP 9: the snapshot row (= section position) each
@@ -56,6 +60,7 @@ pub(crate) struct RecoveryState {
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     vector_schemas: Vec<(VectorSchemaKey, VectorSchemaEntry)>,
+    text_schemas: Vec<(TextSchemaKey, TextSchemaEntry)>,
     sequence: u64,
     /// Set once a [`Change::GraphReset`] (BRIEF-152, audit Item 10) is replayed.
     ///
@@ -136,6 +141,9 @@ impl RecoveryState {
             }
             CORE_VIDX_SUB => {
                 self.vector_schemas = decode_vector_schemas(bytes)?;
+            }
+            CORE_TIDX_SUB => {
+                self.text_schemas = decode_text_schemas(bytes)?;
             }
             _ => {
                 return Err(invalid_payload(format!("unknown CORE sub-tag {sub_tag}")));
@@ -285,6 +293,7 @@ impl RecoveryState {
                 self.pending_property_index_changes.clear();
                 self.pending_composite_property_index_changes.clear();
                 self.pending_vector_index_changes.clear();
+                self.pending_text_index_changes.clear();
             }
             Change::SchemaChanged { change, .. } => match change {
                 SchemaChange::NodeTypeAdded { .. }
@@ -313,6 +322,11 @@ impl RecoveryState {
                     let pending = pending_vector_index_change(change)
                         .expect("vector-index variants map to pending recovery intent");
                     self.pending_vector_index_changes.push(pending);
+                }
+                SchemaChange::TextIndexCreated { .. } | SchemaChange::TextIndexDropped { .. } => {
+                    let pending = pending_text_index_change(change)
+                        .expect("text-index variants map to pending recovery intent");
+                    self.pending_text_index_changes.push(pending);
                 }
                 SchemaChange::GraphCreated { .. }
                 | SchemaChange::GraphDropped { .. }
@@ -538,6 +552,12 @@ impl RecoveryState {
                 ),
             );
         }
+        for (key, entry) in self.text_schemas {
+            graph.text_index.insert(
+                (key.label.clone(), key.property.clone()),
+                TextIndexEntry::new(crate::TextIndex::empty(key.label, key.property), entry.name),
+            );
+        }
         // Apply the post-snapshot WAL index intents to the registration set
         // only. `into_graph` deliberately does NOT rebuild index contents or
         // re-validate the closed-graph state here: the single rebuild + validate
@@ -550,6 +570,7 @@ impl RecoveryState {
             &self.pending_composite_property_index_changes,
         )?;
         replay_vector_index_changes(&mut graph, &self.pending_vector_index_changes)?;
+        replay_text_index_changes(&mut graph, &self.pending_text_index_changes)?;
         Ok(graph)
     }
 }
