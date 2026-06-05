@@ -19,6 +19,10 @@ fn props(key: &IStr, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
+fn node_list(nodes: &[NodeId]) -> Value {
+    Value::List(nodes.iter().copied().map(Value::NodeRef).collect())
+}
+
 fn rows(output: StatementOutput) -> BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
@@ -216,6 +220,144 @@ fn create_text_index_commits_and_stats_reports_bm25_state() {
     assert_eq!(uint_column(&table, "total_document_len"), vec![6]);
     assert!(uint_column(&table, "document_term_bytes")[0] > 0);
     assert!(uint_column(&table, "estimated_index_bytes")[0] > 0);
+}
+
+#[test]
+fn text_score_nodes_reranks_explicit_candidates_without_index() {
+    let graph = graph(431_107);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("TextDoc");
+    let body = istr("body");
+    let ids = {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let top_global = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph graph graph graph memory"))),
+            )
+            .expect("text node inserts");
+        let weak = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph retrieval"))),
+            )
+            .expect("text node inserts");
+        let strong = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("graph graph notes"))),
+            )
+            .expect("text node inserts");
+        let non_string = mutator
+            .create_node(LabelSet::single(doc.clone()), props(&body, Value::Int(7)))
+            .expect("non-string node inserts");
+        let no_match = mutator
+            .create_node(
+                LabelSet::single(doc),
+                props(&body, Value::String(istr("vector retrieval"))),
+            )
+            .expect("text node inserts");
+        txn.commit().expect("seed commits");
+        [top_global, weak, strong, non_string, no_match]
+    };
+
+    session.bind_parameter(
+        istr("nodes"),
+        Value::List(vec![
+            Value::NodeRef(ids[1]),
+            Value::NodeRef(ids[2]),
+            Value::NodeRef(ids[2]),
+            Value::NodeRef(ids[3]),
+            Value::NodeRef(NodeId::new(999)),
+            Value::NodeRef(ids[4]),
+        ]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.text_score_nodes('TextDoc', 'body', 'graph', $nodes, 3) \
+         YIELD node_id, score",
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id"), vec![ids[2], ids[1]]);
+    assert!(!node_column(&table, "node_id").contains(&ids[0]));
+}
+
+#[test]
+fn text_score_nodes_uses_registered_text_index() {
+    let graph = graph(431_108);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("TextDoc");
+    let body = istr("body");
+    let ids = {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let first = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("agent graph memory"))),
+            )
+            .expect("text node inserts");
+        let second = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(istr("agent graph graph memory"))),
+            )
+            .expect("text node inserts");
+        let third = mutator
+            .create_node(
+                LabelSet::single(doc),
+                props(&body, Value::String(istr("agent vector retrieval"))),
+            )
+            .expect("text node inserts");
+        txn.commit().expect("seed commits");
+        [first, second, third]
+    };
+
+    execute_ok(
+        &mut session,
+        "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
+        &registry,
+    );
+    session.bind_parameter(istr("nodes"), node_list(&[ids[0], ids[1], ids[2]]));
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.text_score_nodes('TextDoc', 'body', 'graph memory', $nodes, 2) \
+         YIELD node_id, score",
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id"), vec![ids[1], ids[0]]);
+    let scores = float_column(&table, "score");
+    assert!(scores[0] > scores[1]);
+}
+
+#[test]
+fn text_score_nodes_rejects_non_node_candidates() {
+    let graph = graph(431_109);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("nodes"), Value::List(vec![Value::Int(1)]));
+
+    let err = session
+        .execute_source(
+            "CALL selene.text_score_nodes('TextDoc', 'body', 'graph', $nodes, 10)",
+            &registry,
+        )
+        .expect_err("non-node candidates must fail");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("nodes[0] must be a NODE")
+    ));
 }
 
 #[test]

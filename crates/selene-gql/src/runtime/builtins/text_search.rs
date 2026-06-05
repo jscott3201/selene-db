@@ -1,21 +1,23 @@
-//! `selene.text_search_nodes` native built-in.
+//! `selene.text_search_nodes` and `selene.text_score_nodes` native built-ins.
 //!
 //! Read-only graph-tier procedure exposing BM25 full-text search over
 //! string-valued node properties. A registered maintained text index is used
-//! when present; otherwise execution falls back to the exact scan oracle. This
-//! is intentionally a `CALL selene.*` surface rather than grammar syntax:
-//! full-text search is an implementation-defined engine capability layered on
-//! ISO GQL values.
+//! when present; otherwise global search falls back to the exact scan oracle and
+//! candidate-scoped scoring falls back to a transient snapshot index. These are
+//! intentionally `CALL selene.*` surfaces rather than grammar syntax: full-text
+//! search is an implementation-defined engine capability layered on ISO GQL
+//! values.
 
 use selene_core::Value;
 use selene_graph::{GraphError, TextSearchError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
-use super::vector_common::{cardinality_arg, invalid_arg, string_arg};
+use super::vector_common::{cardinality_arg, invalid_arg, node_list_arg, string_arg};
 use crate::procedure_registry::ProcedureError;
 use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, ProcedureResult};
 
 const PROC_NAME: &str = "selene.text_search_nodes";
+const SCORE_PROC_NAME: &str = "selene.text_score_nodes";
 
 static TEXT_SEARCH_PARAMS: [StaticParameter; 4] = [
     StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
@@ -39,6 +41,22 @@ pub(super) fn signature() -> Vec<ProcedureParameter> {
         .collect()
 }
 
+pub(super) fn score_signature() -> Vec<ProcedureParameter> {
+    [
+        StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
+        StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
+        StaticParameter::new("query", GqlType::String, false)
+            .with_description("Full-text query string."),
+        StaticParameter::new("nodes", GqlType::List(Box::new(GqlType::NodeRef)), false)
+            .with_description("Candidate nodes to score."),
+        StaticParameter::new("k", GqlType::Integer, false)
+            .with_description("Maximum result count."),
+    ]
+    .into_iter()
+    .map(StaticParameter::into_parameter)
+    .collect()
+}
+
 pub(super) fn output_columns() -> Vec<ProcedureOutputColumn> {
     TEXT_SEARCH_OUTPUTS
         .iter()
@@ -57,7 +75,7 @@ pub(super) fn execute(
 
     let label = string_arg(PROC_NAME, &args[0], "label")?;
     let property = string_arg(PROC_NAME, &args[1], "property")?;
-    let query = query_arg(&args[2])?;
+    let query = query_arg(PROC_NAME, &args[2])?;
     let k = cardinality_arg(PROC_NAME, &args[3], "k")?;
 
     let snapshot = ctx.snapshot();
@@ -83,9 +101,48 @@ pub(super) fn execute(
     })
 }
 
-fn query_arg(value: &Value) -> Result<&str, ProcedureError> {
+pub(super) fn execute_score(
+    ctx: &GraphContext<'_>,
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    if args.len() != 5 {
+        return Err(invalid_arg(format!(
+            "{SCORE_PROC_NAME} expects 5 arguments"
+        )));
+    }
+
+    let label = string_arg(SCORE_PROC_NAME, &args[0], "label")?;
+    let property = string_arg(SCORE_PROC_NAME, &args[1], "property")?;
+    let query = query_arg(SCORE_PROC_NAME, &args[2])?;
+    let nodes = node_list_arg(SCORE_PROC_NAME, &args[3], "nodes")?;
+    let k = cardinality_arg(SCORE_PROC_NAME, &args[4], "k")?;
+
+    let snapshot = ctx.snapshot();
+    let hits = match snapshot.text_index_for(&label, &property) {
+        Some(index) => index
+            .search_candidates_checked(query, &nodes, k, ctx.cancellation_checker())
+            .map_err(text_search_error)?,
+        None => {
+            let index = snapshot
+                .build_text_index(&label, &property)
+                .map_err(|error| text_search_error(TextSearchError::Graph(error)))?;
+            index
+                .search_candidates_checked(query, &nodes, k, ctx.cancellation_checker())
+                .map_err(text_search_error)?
+        }
+    };
+
+    Ok(ProcedureResult {
+        rows: hits
+            .into_iter()
+            .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Float(hit.score)])
+            .collect(),
+    })
+}
+
+fn query_arg<'a>(proc_name: &'static str, value: &'a Value) -> Result<&'a str, ProcedureError> {
     let Value::String(value) = value else {
-        return Err(invalid_arg(format!("{PROC_NAME} query must be a STRING")));
+        return Err(invalid_arg(format!("{proc_name} query must be a STRING")));
     };
     Ok(value.as_str())
 }
