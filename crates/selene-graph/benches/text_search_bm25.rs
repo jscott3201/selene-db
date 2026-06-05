@@ -15,6 +15,7 @@ use selene_core::{
     CancellationChecker, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
     VectorValue, intern,
 };
+use selene_graph::{ApproximateVectorSearchOptions, VectorIndexKind};
 use selene_graph::{SeleneGraph, SharedGraph, TextIndex, VectorNodeSearchHit};
 use selene_testing::BenchProfile;
 
@@ -32,11 +33,15 @@ const STATES: [&str; 4] = ["current", "stale", "draft", "verified"];
 const HYBRID_FACTS_PER_TOPIC: usize = 8;
 const HYBRID_RESULT_K: usize = 8;
 const HYBRID_DIMENSION: usize = 64;
+const HYBRID_ANN_SEARCH_WIDTH: usize = 64;
 
-const HYBRID_STRATEGIES: [HybridStrategy; 9] = [
+const HYBRID_STRATEGIES: [HybridStrategy; 12] = [
     HybridStrategy::VectorOnly,
     HybridStrategy::VectorBm25Current,
     HybridStrategy::VectorBm25CurrentVector,
+    HybridStrategy::AnnOnly,
+    HybridStrategy::AnnBm25Current,
+    HybridStrategy::AnnBm25CurrentVector,
     HybridStrategy::Bm25TopicCurrent,
     HybridStrategy::Bm25TopicCurrentVector,
     HybridStrategy::GraphTopicBm25Current,
@@ -216,6 +221,9 @@ enum HybridStrategy {
     VectorOnly,
     VectorBm25Current,
     VectorBm25CurrentVector,
+    AnnOnly,
+    AnnBm25Current,
+    AnnBm25CurrentVector,
     Bm25TopicCurrent,
     Bm25TopicCurrentVector,
     GraphTopicBm25Current,
@@ -230,6 +238,9 @@ impl HybridStrategy {
             Self::VectorOnly => "vector_only",
             Self::VectorBm25Current => "vector_bm25_current_filter",
             Self::VectorBm25CurrentVector => "vector_bm25_current_vector_rerank",
+            Self::AnnOnly => "ann_only",
+            Self::AnnBm25Current => "ann_bm25_current_filter",
+            Self::AnnBm25CurrentVector => "ann_bm25_current_vector_rerank",
             Self::Bm25TopicCurrent => "bm25_topic_current",
             Self::Bm25TopicCurrentVector => "bm25_topic_current_vector_rerank",
             Self::GraphTopicBm25Current => "graph_topic_bm25_current",
@@ -326,6 +337,14 @@ impl HybridFixture {
         shared
             .create_text_index(label.clone(), body_key.clone())
             .expect("hybrid text index registers");
+        shared
+            .create_vector_index(
+                label.clone(),
+                embedding_key.clone(),
+                VectorIndexKind::HnswCosine,
+                u32::try_from(HYBRID_DIMENSION).expect("hybrid dimension fits u32"),
+            )
+            .expect("hybrid ANN index registers");
         let graph = shared.read();
         let text_index = graph
             .text_index_for(&label, &body_key)
@@ -413,6 +432,16 @@ impl HybridFixture {
                 let candidates = self.vector_bm25_current_candidates(query);
                 self.vector_rerank(query, &candidates, HYBRID_RESULT_K)
             }
+            HybridStrategy::AnnOnly => self.ann_hits(query, HYBRID_RESULT_K),
+            HybridStrategy::AnnBm25Current => self
+                .ann_bm25_current_candidates(query)
+                .into_iter()
+                .take(HYBRID_RESULT_K)
+                .collect(),
+            HybridStrategy::AnnBm25CurrentVector => {
+                let candidates = self.ann_bm25_current_candidates(query);
+                self.vector_rerank(query, &candidates, HYBRID_RESULT_K)
+            }
             HybridStrategy::Bm25TopicCurrent => {
                 self.bm25_hits(&query.topic_current_text, HYBRID_RESULT_K)
             }
@@ -457,9 +486,41 @@ impl HybridFixture {
             .collect()
     }
 
+    fn ann_hits(&self, query: &HybridQuery, k: usize) -> Vec<NodeId> {
+        self.graph
+            .approximate_vector_search_nodes_checked(
+                &self.label,
+                &self.embedding_key,
+                &query.vector,
+                ApproximateVectorSearchOptions::new(
+                    VectorMetric::Cosine,
+                    k,
+                    HYBRID_ANN_SEARCH_WIDTH,
+                ),
+                CancellationChecker::disabled(),
+            )
+            .expect("hybrid ANN vector search succeeds")
+            .into_iter()
+            .map(vector_hit_node)
+            .collect()
+    }
+
     fn bm25_hits(&self, query: &str, k: usize) -> Vec<NodeId> {
         self.text_index
             .search(query, k)
+            .into_iter()
+            .map(|hit| hit.node_id)
+            .collect()
+    }
+
+    fn ann_bm25_current_candidates(&self, query: &HybridQuery) -> Vec<NodeId> {
+        let ann_nodes = self.ann_hits(query, self.vector_candidate_width);
+        self.text_index
+            .search_candidates(
+                &query.current_filter_text,
+                &ann_nodes,
+                self.vector_candidate_width,
+            )
             .into_iter()
             .map(|hit| hit.node_id)
             .collect()
