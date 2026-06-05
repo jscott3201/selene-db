@@ -9,8 +9,9 @@ use selene_core::{
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, CandidateStateSpec, IndexProvider,
-    MaintainedCandidateStateProvider, RowIndex, SeleneGraph, SharedGraph, VectorCandidateSet,
-    VectorIndexConfig, VectorIndexKind, VectorNeighborDirection, VectorNeighborSearchOptions,
+    MaintainedCandidateStateProvider, RowIndex, SeleneGraph, SharedGraph, TextIndex,
+    VectorCandidateSet, VectorIndexConfig, VectorIndexKind, VectorNeighborDirection,
+    VectorNeighborSearchOptions,
 };
 
 use self::build_support::{
@@ -21,6 +22,7 @@ use super::super::support::istr;
 use super::{ANN_SEARCH_WIDTH, TOP_K, precision_basis_points};
 use selene_testing::local_omlx::{CorpusInput, Topic, topic_label};
 
+mod bm25;
 #[path = "fixture/build_support.rs"]
 mod build_support;
 
@@ -32,6 +34,7 @@ pub(super) struct OmlxVectorFixture {
     dependency_edge: selene_core::IStr,
     support_edge: selene_core::IStr,
     support_state_name: selene_core::IStr,
+    text_index: Arc<TextIndex>,
     pub(super) dimension: usize,
     documents: Vec<DocumentMeta>,
     topics_by_node: HashMap<NodeId, Topic>,
@@ -64,6 +67,7 @@ impl OmlxVectorFixture {
         let support_fact_label = istr("OmlxSupportFact");
         let dependency_edge = istr("OmlxDependsOn");
         let support_edge = istr("OmlxSupports");
+        let body_key = istr("body");
         let embedding_key = istr("embedding");
         let support_state_name = istr("omlx_support_facts");
         let support_state_provider = Arc::new(
@@ -88,10 +92,10 @@ impl OmlxVectorFixture {
                     if !input.is_document {
                         continue;
                     }
-                    let props = PropertyMap::from_pairs([(
-                        embedding_key.clone(),
-                        Value::Vector(vector.clone()),
-                    )])
+                    let props = PropertyMap::from_pairs([
+                        (body_key.clone(), Value::String(istr(input.text))),
+                        (embedding_key.clone(), Value::Vector(vector.clone())),
+                    ])
                     .expect("oMLX bench document properties fit");
                     let graph_hint = admits_graph_hint(
                         &mut graph_hint_counts,
@@ -170,6 +174,9 @@ impl OmlxVectorFixture {
             }
             txn.commit().expect("oMLX bench graph commits");
         }
+        shared
+            .create_text_index(label.clone(), body_key.clone())
+            .expect("oMLX bench text index registers");
         let mut query_anchors = query_anchors.into_iter();
         let queries: Vec<QueryVector> = inputs
             .iter()
@@ -183,6 +190,7 @@ impl OmlxVectorFixture {
                     QueryVector {
                         anchor: anchor.node,
                         topic: input.topic,
+                        text: input.text,
                         vector,
                     }
                 })
@@ -193,6 +201,9 @@ impl OmlxVectorFixture {
             "oMLX bench consumed every query anchor"
         );
         let graph = shared.read().as_ref().clone();
+        let text_index = graph
+            .text_index_for(&label, &body_key)
+            .expect("oMLX bench text index exists");
         let expanded_hint_sets = queries
             .iter()
             .map(|query| {
@@ -211,6 +222,7 @@ impl OmlxVectorFixture {
             dependency_edge,
             support_edge,
             support_state_name,
+            text_index,
             dimension,
             documents,
             topics_by_node,
