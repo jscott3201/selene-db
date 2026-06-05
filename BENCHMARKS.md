@@ -175,6 +175,9 @@ computes query-local BM25 statistics, and returns deterministic top-k text hits.
 the oracle: `prebuilt_*` is the repeated-query path, while `transient_*` includes
 index construction so build cost stays visible. Fixture setup is excluded from
 the reported Criterion duration.
+`graph_snapshot_read_loops/*` amortizes thread setup over many
+`SharedGraph::read()` calls so the ArcSwap snapshot hot path is visible; the
+older `graph_concurrent_reads` row remains a legacy spawn/join smoke row.
 The focused `graph_vector_index_ivf_target_centroid_rebuild/*` group sweeps
 explicit IVF list-count targets on the same rebuild fixture so read-side
 candidate pressure can be compared against write-side retrain/reassignment cost.
@@ -221,7 +224,9 @@ IVF pressure IDs use
 | `graph_mutation_commit_batch` (10) | 336.7 µs | 307.6 µs | 446.9 µs | Batched commit, 10 ops. |
 | `graph_mutation_commit_batch` (100) | 408.2 µs | 420.8 µs | 552.7 µs | Batched commit, 100 ops. |
 | `graph_mutation_commit_batch` (1000) | 952.4 µs | 1.053 ms | 1.226 ms | Batched commit, 1000 ops. |
-| `graph_concurrent_reads` | 74.6 µs | 71.7 µs | 71.8 µs | ArcSwap snapshot read; flat above 10k. |
+| `graph_concurrent_reads` | 74.6 µs | 71.7 µs | 71.8 µs | Legacy row: 10 scoped threads with one snapshot read each; dominated by spawn/join. |
+| `graph_snapshot_read_loops/single_thread` | 334.14 µs | 336.52 µs | 337.36 µs | 100k snapshot reads per sample, about 3.34-3.37 ns/read; scale-flat. |
+| `graph_snapshot_read_loops/parallel_threads8` | 15.508 ms | 11.209 ms | 10.955 ms | 8 threads x 20k reads per sample, about 69-97 ns/read including scoped thread setup and contention. |
 | `graph_bfs` (depth=1) | 106.3 ns | 109.0 ns | 109.6 ns | Depth-1 independent of N. |
 | `graph_bfs` (depth=10) | 11.34 µs | 12.09 µs | 12.18 µs | Mostly traversal cost. |
 | `graph_bfs` (depth=50) | 101.1 µs | 111.1 µs | 113.1 µs | Saturates ~110 µs. |
