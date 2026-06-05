@@ -1,71 +1,73 @@
 # selene-db
 
-`selene-db` is an embeddable Rust property graph engine built around ISO/IEC
-39075:2024 GQL, native graph algorithms, first-class vectors, and BM25 text
-search.
+`selene-db` is an embeddable Rust property graph engine built around
+ISO/IEC 39075:2024 GQL, strict in-process transactions, native graph
+algorithms, first-class dense vectors, and BM25 text search.
 
-The project is greenfield and library-first. There is no server, no transport
-layer, no auth layer, and no loadable extension or procedure-pack system.
-Embedders link the workspace crates, own their application boundary, and run
-the engine in-process.
+The project is greenfield and library-first. There is no database server,
+wire protocol, auth layer, cloud control plane, extension loader, or procedure
+pack system in this repository. Applications link the crates they need, own the
+network and security boundary, and run the engine in process.
 
-## What It Is
+## What This Project Is
 
-- **Strict ISO GQL engine.** Parser, semantic analyzer, planner, optimizer, and
-  row executor are centered on ISO/IEC 39075:2024 GQL. Non-standard grammar is
-  rejected rather than accepted as Cypher, SQL, or SPARQL drift.
-- **Single native graph engine.** The graph store, persistence layer, procedure
-  registry, algorithms, vector indexes, and text indexes are cohesive engine
-  features, not optional plug-ins.
-- **Agentic-memory substrate.** Vectors and BM25 are native because real users
-  are using the graph for retrieval, memory, and agentic AI workloads, while ISO
-  GQL remains the query-language contract.
-- **Embeddable Rust workspace.** The public surface is crates, not a hosted
-  service. Applications choose their own network, tenancy, auth, and deployment
-  model.
+`selene-db` is a single native graph engine:
 
-## Current Surface
+- GQL is the query and mutation language.
+- The storage engine is an in-memory property graph with copy-on-write
+  snapshots and one mutation funnel.
+- Persistence is built from graph-blind WAL and snapshot providers.
+- Graph algorithms are mandatory engine code, exposed as Rust APIs and through
+  ISO `CALL algo.*`.
+- Vectors and BM25 are native engine features because the primary workloads are
+  retrieval, agentic memory, and graph-backed AI systems.
 
-| Area | Current implementation |
+The north star is ISO GQL conformance plus pragmatic native retrieval features.
+Non-standard capabilities are exposed through implementation-defined procedure
+hooks, not by extending the GQL grammar.
+
+## Engine Surface
+
+| Area | Current shape |
 | --- | --- |
-| Graph storage | In-memory property graph with copy-on-write snapshots, `ArcSwap`, `parking_lot::RwLock`, `imbl`, Roaring label indexes, typed indexes, composite indexes, and one mutation funnel. |
-| Transactions | Strict-serializable writes under one graph write lock with lock-free read snapshots. |
+| Storage | In-memory property graph with `ArcSwap` read snapshots, `parking_lot` write serialization, `imbl` copy-on-write maps, Roaring label indexes, typed indexes, composite indexes, stable external node/edge IDs, and dense internal row indexes. |
+| Transactions | Strict-serializable behavior: one writer at a time per graph, lock-free immutable reader snapshots, rollback by non-publication, and provider fanout under the write lock. |
 | Persistence | Graph-blind WAL (`SLDB`), snapshots (`SLSN`), MANIFEST-led recovery, retention pruning, and an append-only audit log substrate. |
-| GQL | ISO-oriented parser, semantic analyzer, planner, optimizer, executor, plan cache, built-in procedure registry, and GQL Flagger enforcement for unsupported constructs. |
-| Procedures | One frozen native `BuiltinProcedureRegistry`: 52 procedures total, including 19 `algo.*` graph algorithms and 33 `selene.*` platform/vector/text procedures. |
-| Graph algorithms | Structural, pathfinding, centrality, and community algorithms exposed through the native Rust API and ISO `CALL algo.*`. |
-| Vectors | `Value::Vector` as a first-class value, exact vector scoring/search, HNSW and IVF indexes, ANN search, batch search, candidate expansion, and candidate-state scoring APIs. |
-| Text search | Native BM25 text indexes over string node properties, global search, candidate-scoped scoring, `CALL selene.text_search_nodes`, and `CALL selene.text_score_nodes`. |
-| Safety posture | Workspace-wide `#![forbid(unsafe_code)]`, `missing_docs = "deny"`, rustls-only dependency policy, and a 700 LOC source-file cap. |
+| GQL | ISO-oriented parser, semantic analyzer, planner, optimizer, executor, plan cache, parameter binding, built-in procedure registry, and GQL Flagger checks for unsupported syntax. |
+| Procedures | One native `BuiltinProcedureRegistry` for platform procedures, vector search/scoring, BM25 search/scoring, index metadata, and `algo.*` graph algorithms. |
+| Algorithms | Structural, pathfinding, centrality, and community algorithms via `selene-algorithms` and `CALL algo.*`. |
+| Vectors | `Value::Vector` as a real value variant, exact scoring/search, HNSW indexes, IVF indexes, ANN batch search, graph-expanded candidate scoring, maintained candidate state, and index memory/rebuild accounting. |
+| Text | Maintained BM25 text indexes over string node properties, global text search, candidate-scoped BM25 scoring, and text index stats. |
+| Safety | Workspace-wide `#![forbid(unsafe_code)]`, `missing_docs = "deny"`, rustls-only dependency posture, source file-size gates, secret scans, license checks, fuzz targets, and benchmark hygiene checks. |
 
-## Workspace Layout
+## Workspace Crates
 
-| Crate | Purpose |
+There is no umbrella crate. Use the layers directly.
+
+| Crate | Owns |
 | --- | --- |
-| [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, `IStr`, `PropertyMap`, `LabelSet`, schema types, codecs, origins, and changesets. |
-| [`selene-graph`](crates/selene-graph) | Storage engine, mutation funnel, graph type binding, label/typed/composite indexes, vector indexes, BM25 text indexes, candidate state, and recovery providers. |
-| [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, pruning, and audit log files. This crate stays graph-blind. |
-| [`selene-algorithms`](crates/selene-algorithms) | Mandatory graph algorithm crate with projection catalogs, free functions, and the `GraphAlgorithms` convenience trait. |
-| [`selene-gql`](crates/selene-gql) | GQL grammar, AST, analysis, planning, optimization, execution, and the native built-in procedure registry. |
-| [`selene-testing`](crates/selene-testing) | Test fixtures, synthetic graph generators, and pure-mirror snapshot-harness DSLs for crate integration tests. |
+| [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, IDs, `IStr`, property maps, label sets, schema metadata, codecs, origins, and changesets. |
+| [`selene-graph`](crates/selene-graph) | The graph runtime: storage, transactions, mutation funnel, indexes, vector search, BM25 text search, candidate state, graph type validation, compaction, and recovery providers. |
+| [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, retention pruning, and audit log files. This crate stays below graph semantics. |
+| [`selene-algorithms`](crates/selene-algorithms) | Native graph algorithms, projection catalogs, free functions, and the `GraphAlgorithms` convenience trait. |
+| [`selene-gql`](crates/selene-gql) | GQL grammar, AST, analysis, planning, optimization, execution, procedure traits, and the built-in registry. |
+| [`selene-testing`](crates/selene-testing) | Test fixtures, synthetic graph generators, benchmark corpora, and pure-mirror snapshot harness utilities. |
 
-Dependency direction is intentionally narrow: `core -> graph -> algorithms ->
-gql`, with `persist` below graph storage and `testing` used as a dev-dependency.
-There is no umbrella crate.
+Dependency direction stays narrow: `core -> graph -> algorithms -> gql`, with
+`persist` graph-blind and `testing` used only from tests and benchmarks.
 
 ## Quickstart
 
-Add the crates you need as path dependencies while the project is private:
+While the repository is private and unpublished, depend on crates by path:
 
 ```toml
 [dependencies]
-selene-core = { path = "path/to/selene-db/crates/selene-core" }
-selene-graph = { path = "path/to/selene-db/crates/selene-graph" }
-selene-gql = { path = "path/to/selene-db/crates/selene-gql" }
+selene-core = { path = "../selene-db/crates/selene-core" }
+selene-graph = { path = "../selene-db/crates/selene-graph" }
+selene-gql = { path = "../selene-db/crates/selene-gql" }
 ```
 
-Create a graph, insert a node through the native write API, then query it with
-GQL:
+Create a graph, write through the transaction funnel, and query through GQL:
 
 ```rust
 use selene_core::{GraphId, LabelSet, PropertyMap, Value, intern};
@@ -79,17 +81,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let name = intern("name")?;
 
     let mut tx = graph.begin_write();
-    let mut props = PropertyMap::new();
-    props.set(name, Value::String(intern("Ada")?))?;
+    let props = PropertyMap::from_pairs([(
+        name,
+        Value::String(intern("Ada")?),
+    )])?;
     tx.mutator().create_node(LabelSet::single(person), props)?;
     tx.commit()?;
 
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let output = session.execute_source("MATCH (p:Person) RETURN p.name", &registry)?;
+    let output = session.execute_source(
+        "MATCH (p:Person) RETURN p.name AS name",
+        &registry,
+    )?;
 
     let StatementOutput::Rows(rows) = output else {
-        panic!("query should return rows");
+        panic!("MATCH ... RETURN should return rows");
     };
     assert_eq!(rows.row_count(), 1);
 
@@ -97,17 +104,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-See [docs/getting-started.md](docs/getting-started.md) and
-[docs/embedding-guide.md](docs/embedding-guide.md) for a longer embedding walk
-through.
+For a longer walk through graph creation, transactions, parameters, and
+persistence wiring, start with [docs/getting-started.md](docs/getting-started.md)
+and [docs/embedding-guide.md](docs/embedding-guide.md).
 
-## GQL And Native Procedures
+## GQL And Procedures
 
-GQL is the only query and mutation language. Native engine capabilities that
-sit outside mandatory ISO syntax are exposed through ISO `CALL`, not through
-grammar extensions.
+GQL is the only engine query language. The parser rejects SQL, Cypher, SPARQL,
+and other grammar drift instead of accepting them as aliases.
 
-Examples of the current built-in surface:
+Native engine capabilities outside mandatory ISO syntax use ISO `CALL`:
 
 ```gql
 CALL selene.health()
@@ -115,51 +121,62 @@ CALL selene.feature_status()
 CALL selene.create_index(...)
 CALL selene.create_vector_index(...)
 CALL selene.vector_search_nodes_ann(...)
+CALL selene.vector_score_expanded_candidates(...)
 CALL selene.create_text_index(...)
 CALL selene.text_search_nodes(...)
 CALL selene.text_score_nodes(...)
 CALL algo.pagerank(...)
 ```
 
-The registry currently contains 19 `algo.*` graph algorithm procedures and 33
-`selene.*` platform/vector/text procedures. The registry is native and frozen at
-construction time; it is not a third-party extension mechanism.
+The production registry is `BuiltinProcedureRegistry`. It is native engine
+code, fixed at construction time, and not a third-party extension mechanism.
+Tests can still inject alternate `ProcedureRegistry` implementations where the
+planner or executor needs an artificial procedure surface.
 
-## Vectors And Text Search
+## Vectors, Text, And Graph Retrieval
 
-Vectors are real engine values, not sidecar metadata. A node property can hold a
-`Value::Vector`, and the graph layer can maintain exact and approximate indexes
-over vector-bearing properties.
+Vectors are first-class values. A node property can hold `Value::Vector`, and
+the graph layer can maintain vector indexes over a label/property pair. Exact
+search remains the correctness oracle; ANN surfaces provide HNSW and IVF search
+paths for retrieval workloads.
 
-The vector surface includes:
+The vector stack includes:
 
-- Exact top-k scoring and search.
-- HNSW and IVF indexes for approximate nearest-neighbor search.
-- Batch search and scoring calls.
-- Candidate-scoped search and graph-expanded candidate scoring.
-- Index memory accounting and rebuild procedures.
+- flat/exact top-k node search and explicit candidate scoring;
+- HNSW and IVF approximate indexes;
+- batch search and batch scoring;
+- graph-expanded candidate scoring from root nodes;
+- maintained candidate state for recurring candidate sets;
+- index stats, memory accounting, and rebuild maintenance APIs.
 
 Text search is native BM25 over string node properties. It supports global
-search and candidate-scoped search, which is useful for hybrid retrieval paths
-such as graph-filtered BM25, BM25 reranking over vector roots, and vector rerank
-over text or graph candidates.
+search and candidate-scoped scoring, which makes it useful for hybrid retrieval:
+
+- BM25 over a whole label/property corpus;
+- BM25 rerank over graph-expanded or vector-derived candidates;
+- vector rerank over BM25 roots;
+- graph algorithms as priors or rerank features for retrieval experiments.
+
+The intended working set is in-memory, read-heavy, and local-engine sized rather
+than cloud service sized. Disk-backed vector indexes are research scope, not a
+requirement for the current release line.
 
 ## ISO GQL Posture
 
-`selene-db` targets minimum ISO/IEC 39075:2024 conformance plus a curated set of
-optional features. The feature register in `selene-core` is the source of truth
-for supported optional features, and the GQL Flagger rejects unsupported or
-non-standard constructs at parse time.
+`selene-db` targets ISO/IEC 39075:2024 minimum conformance plus a curated set of
+optional features. The feature register in `selene-core` is the implementation
+source of truth for optional feature status.
 
 Important boundaries:
 
 - Mandatory ISO scalar types are `STRING`, `BOOLEAN`, `INT`, and `FLOAT`.
 - Open and closed graph modes are supported.
-- Default isolation is serializable; the implementation provides
-  strict-serializable behavior.
-- No wire format is specified by ISO GQL, and this repo intentionally does not
-  ship one.
-- Auth, tenancy, and network policy are embedder responsibilities.
+- Default isolation is serializable; the engine implements strict-serializable
+  behavior for a single graph instance.
+- ISO GQL does not define a wire format, so this repository does not ship one.
+- Auth, tenancy, network policy, and deployment topology are embedder concerns.
+- Non-standard syntax must be rejected or flagged; implementation-defined
+  features live behind native procedures.
 
 ## Development
 
@@ -185,11 +202,7 @@ scripts/run-benches.sh --profile full --layer criterion
 scripts/run-benches.sh --profile quick --layer iai
 ```
 
-See [BENCHMARKS.md](BENCHMARKS.md), [docs/performance.md](docs/performance.md),
-and [docs/contributing.md](docs/contributing.md) for current benchmark and
-workflow details.
-
-## Documentation
+Useful docs:
 
 - [Getting started](docs/getting-started.md)
 - [Embedding guide](docs/embedding-guide.md)
@@ -200,6 +213,7 @@ workflow details.
 - [Observability](docs/observability.md)
 - [Performance](docs/performance.md)
 - [Contributing](docs/contributing.md)
+- [Benchmark registry](BENCHMARKS.md)
 
 ## Platform Support
 
