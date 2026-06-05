@@ -175,11 +175,46 @@ pub trait IndexProvider: Send + Sync + 'static {
         Ok(None)
     }
 
+    /// Return provider-owned vector candidate-state descriptors at `generation`.
+    ///
+    /// Providers that do not own named vector candidate state return an empty
+    /// vector. A provider that owns candidate state but cannot prove the
+    /// requested generation should return an error instead of exposing stale
+    /// metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when provider metadata is stale or internally
+    /// inconsistent.
+    fn vector_candidate_state_infos(
+        &self,
+        _generation: u64,
+    ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
+        Ok(Vec::new())
+    }
+
     /// Provider-owned snapshot subsection tags.
     ///
     /// Empty means the provider consumes mutation events but owns no persisted
     /// snapshot state.
     fn declared_sub_tags(&self) -> &[SubTag];
+}
+
+/// Metadata for one provider-owned vector candidate state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VectorCandidateStateInfo {
+    /// Stable set name used by callers to retrieve candidates.
+    pub name: IStr,
+    /// Graph generation the descriptor was derived from.
+    pub generation: u64,
+    /// Number of nodes currently in the candidate set.
+    pub candidate_count: usize,
+    /// Optional node label required for membership.
+    pub required_label: Option<IStr>,
+    /// Outgoing edge labels that disqualify the source node.
+    pub exclude_outgoing: Vec<IStr>,
+    /// Incoming edge labels that disqualify the target node.
+    pub exclude_incoming: Vec<IStr>,
 }
 
 /// Errors returned by [`IndexProvider`] implementations.

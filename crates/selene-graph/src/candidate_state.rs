@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId};
 
-use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
+use crate::index_provider::{
+    IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
+};
 use crate::store::RowIndex;
 use crate::{SeleneGraph, VectorCandidateSet};
 
@@ -206,6 +208,37 @@ impl MaintainedCandidateStateProvider {
         }))
     }
 
+    /// Return generation-checked metadata for every configured candidate set.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when this provider has not applied every
+    /// mutation through `generation`.
+    pub fn candidate_state_infos_at_generation(
+        &self,
+        generation: u64,
+    ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
+        let state = self.state.lock();
+        if state.generation != generation {
+            return Err(inconsistent(format!(
+                "candidate-state generation {} does not match graph generation {generation}",
+                state.generation
+            )));
+        }
+        Ok(self
+            .specs
+            .iter()
+            .map(|spec| VectorCandidateStateInfo {
+                name: spec.name.clone(),
+                generation,
+                candidate_count: state.members.get(&spec.name).map_or(0, BTreeSet::len),
+                required_label: spec.required_label.clone(),
+                exclude_outgoing: spec.exclude_outgoing.clone(),
+                exclude_incoming: spec.exclude_incoming.clone(),
+            })
+            .collect())
+    }
+
     /// Return true when `node` is currently a member of the named set.
     #[must_use]
     pub fn contains(&self, name: &IStr, node: NodeId) -> bool {
@@ -326,6 +359,13 @@ impl IndexProvider for MaintainedCandidateStateProvider {
         generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
         self.candidate_set_at_generation(name, generation)
+    }
+
+    fn vector_candidate_state_infos(
+        &self,
+        generation: u64,
+    ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
+        self.candidate_state_infos_at_generation(generation)
     }
 
     fn declared_sub_tags(&self) -> &[SubTag] {

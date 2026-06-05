@@ -5,8 +5,8 @@ use std::{rc::Rc, sync::Arc};
 use selene_core::{BindingTableId, CancellationChecker, IStr};
 use selene_graph::{
     CANDIDATE_STATE_PROVIDER_TAG, GraphResult, IndexProvider, Mutator, ProviderError, ProviderTag,
-    SeleneGraph, SharedGraph, VectorCandidateSet, VectorIndexMaintenancePolicy,
-    VectorIndexRebuildReport,
+    SeleneGraph, SharedGraph, VectorCandidateSet, VectorCandidateStateInfo,
+    VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
 };
 
 use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureTier};
@@ -73,6 +73,22 @@ impl<'a> GraphContext<'a> {
             return Ok(None);
         };
         provider.vector_candidate_set(name, self.snapshot.meta.generation)
+    }
+
+    /// List maintained vector candidate-state descriptors for this snapshot generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when the candidate-state provider is present
+    /// but cannot prove it has applied through the graph snapshot generation.
+    pub fn vector_candidate_state_infos(
+        &self,
+    ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
+        let Some(provider) = self.index_provider_by_tag(ProviderTag(CANDIDATE_STATE_PROVIDER_TAG))
+        else {
+            return Ok(Vec::new());
+        };
+        provider.vector_candidate_state_infos(self.snapshot.meta.generation)
     }
 
     /// Build the cancellation checker visible to this procedure call.

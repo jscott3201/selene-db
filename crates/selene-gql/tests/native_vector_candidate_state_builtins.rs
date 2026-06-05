@@ -12,6 +12,7 @@ use selene_gql::{
 use selene_graph::{
     CANDIDATE_STATE_PROVIDER_TAG, CandidateStateSpec, IndexProvider,
     MaintainedCandidateStateProvider, ProviderError, ProviderTag, SharedGraph, SubTag,
+    VectorCandidateStateInfo,
 };
 
 fn istr(value: &str) -> IStr {
@@ -56,6 +57,55 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
         .map(|row| match row.values().get(index) {
             Some(Value::NodeRef(value)) => *value,
             other => panic!("expected node ref in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
+fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
+    let index = table
+        .column_index(istr(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::String(value)) => value.as_str().to_owned(),
+            Some(Value::Null) => "NULL".to_owned(),
+            other => panic!("expected string in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
+fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
+    let index = table
+        .column_index(istr(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::Uint(value)) => *value,
+            other => panic!("expected uint in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
+fn string_list_column(table: &BindingTable, name: &str) -> Vec<Vec<String>> {
+    let index = table
+        .column_index(istr(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::List(values)) => values
+                .iter()
+                .map(|value| match value {
+                    Value::String(value) => value.as_str().to_owned(),
+                    other => panic!("expected string list item in {name}, got {other:?}"),
+                })
+                .collect(),
+            other => panic!("expected list in {name}, got {other:?}"),
         })
         .collect()
 }
@@ -113,6 +163,53 @@ fn vector_score_candidate_state_reranks_maintained_set() {
 }
 
 #[test]
+fn vector_candidate_states_lists_maintained_state_metadata() {
+    let (graph, _) = candidate_graph();
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_candidate_states() \
+         YIELD state_name, generation, candidate_count, required_label, \
+               exclude_outgoing, exclude_incoming",
+        &registry,
+    );
+
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(string_column(&table, "state_name"), vec!["active_docs"]);
+    assert_eq!(
+        uint_column(&table, "generation"),
+        vec![graph.read().meta.generation]
+    );
+    assert_eq!(uint_column(&table, "candidate_count"), vec![4]);
+    assert_eq!(string_column(&table, "required_label"), vec!["VectorDoc"]);
+    assert_eq!(
+        string_list_column(&table, "exclude_outgoing"),
+        vec![vec!["SUPERSEDED_BY".to_owned()]]
+    );
+    assert_eq!(
+        string_list_column(&table, "exclude_incoming"),
+        vec![Vec::<String>::new()]
+    );
+}
+
+#[test]
+fn vector_candidate_states_returns_no_rows_without_provider() {
+    let graph = SharedGraph::new(GraphId::new(330_403));
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_candidate_states() YIELD state_name",
+        &registry,
+    );
+
+    assert_eq!(table.row_count(), 0);
+}
+
+#[test]
 fn vector_score_candidate_state_rejects_unknown_set() {
     let (graph, _) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
@@ -163,6 +260,30 @@ fn vector_score_candidate_state_surfaces_stale_provider_generation() {
     ));
 }
 
+#[test]
+fn vector_candidate_states_surfaces_stale_provider_generation() {
+    let provider = Arc::new(StaleCandidateProvider);
+    let graph = SharedGraph::builder(GraphId::new(330_404))
+        .with_provider(provider as Arc<dyn IndexProvider>)
+        .build()
+        .expect("graph builds");
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let err = session
+        .execute_source("CALL selene.vector_candidate_states()", &registry)
+        .expect_err("stale provider must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::Internal { ref detail },
+            ..
+        } if detail.contains("candidate-state provider error")
+            && detail.contains("stale candidate state")
+    ));
+}
+
 struct StaleCandidateProvider;
 
 impl IndexProvider for StaleCandidateProvider {
@@ -187,6 +308,15 @@ impl IndexProvider for StaleCandidateProvider {
         _name: &IStr,
         _generation: u64,
     ) -> Result<Option<selene_graph::VectorCandidateSet>, ProviderError> {
+        Err(ProviderError::Inconsistent {
+            reason: "stale candidate state".to_owned(),
+        })
+    }
+
+    fn vector_candidate_state_infos(
+        &self,
+        _generation: u64,
+    ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
         Err(ProviderError::Inconsistent {
             reason: "stale candidate state".to_owned(),
         })
