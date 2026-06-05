@@ -125,6 +125,7 @@ CALL selene.vector_score_expanded_candidates(...)
 CALL selene.create_text_index(...)
 CALL selene.text_search_nodes(...)
 CALL selene.text_score_nodes(...)
+CALL selene.text_score_nodes_batch(...)
 CALL algo.pagerank(...)
 ```
 
@@ -149,11 +150,14 @@ The vector stack includes:
 - maintained candidate state for recurring candidate sets;
 - index stats, memory accounting, and rebuild maintenance APIs.
 
-Text search is native BM25 over string node properties. It supports global
-search and candidate-scoped scoring, which makes it useful for hybrid retrieval:
+Text search is native BM25 over string node properties. Maintained text indexes
+are durable registrations with rebuildable in-memory postings. The surface
+supports global search plus single-query and batched candidate-scoped scoring,
+which makes it useful for hybrid retrieval:
 
 - BM25 over a whole label/property corpus;
 - BM25 rerank over graph-expanded or vector-derived candidates;
+- batched BM25 rerank over per-query candidate sets;
 - vector rerank over BM25 roots;
 - graph algorithms as priors or rerank features for retrieval experiments.
 
