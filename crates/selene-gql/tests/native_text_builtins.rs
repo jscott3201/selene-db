@@ -223,7 +223,7 @@ fn create_text_index_commits_and_stats_reports_bm25_state() {
 }
 
 #[test]
-fn text_score_nodes_reranks_explicit_candidates_without_index() {
+fn text_score_nodes_reranks_explicit_candidates_with_index() {
     let graph = graph(431_107);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -263,6 +263,11 @@ fn text_score_nodes_reranks_explicit_candidates_without_index() {
         [top_global, weak, strong, non_string, no_match]
     };
 
+    execute_ok(
+        &mut session,
+        "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
+        &registry,
+    );
     session.bind_parameter(
         istr("nodes"),
         Value::List(vec![
@@ -287,8 +292,31 @@ fn text_score_nodes_reranks_explicit_candidates_without_index() {
 }
 
 #[test]
-fn text_score_nodes_uses_registered_text_index() {
+fn text_score_nodes_requires_registered_text_index() {
     let graph = graph(431_108);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("nodes"), node_list(&[NodeId::new(1)]));
+
+    let err = session
+        .execute_source(
+            "CALL selene.text_score_nodes('TextDoc', 'body', 'graph', $nodes, 10)",
+            &registry,
+        )
+        .expect_err("missing text index must fail");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("requires a text index")
+    ));
+}
+
+#[test]
+fn text_score_nodes_uses_registered_text_index() {
+    let graph = graph(431_110);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     let doc = istr("TextDoc");

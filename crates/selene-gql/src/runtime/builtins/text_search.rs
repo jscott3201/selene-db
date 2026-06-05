@@ -2,8 +2,9 @@
 //!
 //! Read-only graph-tier procedure exposing BM25 full-text search over
 //! string-valued node properties. A registered maintained text index is used
-//! when present; otherwise global search falls back to the exact scan oracle and
-//! candidate-scoped scoring falls back to a transient snapshot index. These are
+//! when present; otherwise global search falls back to the exact scan oracle.
+//! Candidate-scoped scoring requires a registered text index so a read call does
+//! not unexpectedly build a full transient postings index. These are
 //! intentionally `CALL selene.*` surfaces rather than grammar syntax: full-text
 //! search is an implementation-defined engine capability layered on ISO GQL
 //! values.
@@ -118,19 +119,16 @@ pub(super) fn execute_score(
     let k = cardinality_arg(SCORE_PROC_NAME, &args[4], "k")?;
 
     let snapshot = ctx.snapshot();
-    let hits = match snapshot.text_index_for(&label, &property) {
-        Some(index) => index
-            .search_candidates_checked(query, &nodes, k, ctx.cancellation_checker())
-            .map_err(text_search_error)?,
-        None => {
-            let index = snapshot
-                .build_text_index(&label, &property)
-                .map_err(|error| text_search_error(TextSearchError::Graph(error)))?;
-            index
-                .search_candidates_checked(query, &nodes, k, ctx.cancellation_checker())
-                .map_err(text_search_error)?
-        }
+    let Some(index) = snapshot.text_index_for(&label, &property) else {
+        return Err(invalid_arg(format!(
+            "{SCORE_PROC_NAME} requires a text index for {}.{}; call selene.create_text_index first",
+            label.as_str(),
+            property.as_str()
+        )));
     };
+    let hits = index
+        .search_candidates_checked(query, &nodes, k, ctx.cancellation_checker())
+        .map_err(text_search_error)?;
 
     Ok(ProcedureResult {
         rows: hits
