@@ -12,6 +12,8 @@ use selene_testing::local_omlx::{CorpusInput, Topic, topic_label};
 
 #[path = "fixture/query_exec.rs"]
 mod query_exec;
+#[path = "fixture/text_exec.rs"]
+mod text_exec;
 
 pub(super) const TOP_K: usize = 4;
 
@@ -53,6 +55,7 @@ impl OmlxGqlQueryRootFixture {
         let negative_evidence_edge = istr("OmlxNegativeEvidence");
         let provenance_edge = istr("OmlxGroundedBy");
         let embedding_key = istr("embedding");
+        let body_key = istr("body");
         let query_key = istr("query");
         let query_index_key = istr("query_index");
         let support_state_provider = Arc::new(
@@ -85,10 +88,10 @@ impl OmlxGqlQueryRootFixture {
                     if !input.is_document {
                         continue;
                     }
-                    let props = PropertyMap::from_pairs([(
-                        embedding_key.clone(),
-                        Value::Vector(vector.clone()),
-                    )])
+                    let props = PropertyMap::from_pairs([
+                        (embedding_key.clone(), Value::Vector(vector.clone())),
+                        (body_key.clone(), Value::String(istr(input.text))),
+                    ])
                     .expect("oMLX GQL bench document properties fit");
                     let graph_hint = admits_graph_hint(
                         &mut graph_hint_counts,
@@ -198,6 +201,9 @@ impl OmlxGqlQueryRootFixture {
             }
             txn.commit().expect("oMLX GQL bench graph commits");
         }
+        graph
+            .create_text_index(doc_label.clone(), body_key)
+            .expect("oMLX GQL bench text index registers");
         let mut query_anchors = query_anchors.into_iter();
         let queries = inputs
             .iter()
@@ -210,6 +216,7 @@ impl OmlxGqlQueryRootFixture {
                     debug_assert_eq!(anchor_topic, input.topic);
                     QueryVector {
                         topic: input.topic,
+                        text: input.text,
                         vector,
                     }
                 })
@@ -309,6 +316,7 @@ struct DocumentMeta {
 
 struct QueryVector {
     topic: Topic,
+    text: &'static str,
     vector: VectorValue,
 }
 
