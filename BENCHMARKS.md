@@ -179,8 +179,9 @@ The focused `graph_vector_index_ivf_target_centroid_rebuild/*` group sweeps
 explicit IVF list-count targets on the same rebuild fixture so read-side
 candidate pressure can be compared against write-side retrain/reassignment cost.
 `vector_pq` is a benchmark-only quantized candidate generator for
-compression/recall research: PQ, scalar u8, and packed binary sign codes
-produce short candidate sets, then full-fidelity vectors are exact reranked.
+compression/recall research: PQ, dequantized scalar u8, scalar u8 code-space
+distance, and packed binary sign codes produce short candidate sets, then
+full-fidelity vectors are exact reranked.
 `vector_ivf_pq` adds a coarse synthetic IVF-style partition ahead of PQ and
 binary scorers so future work can compare standalone full-code scans against
 candidate-producer plus compression layering. `vector_ivf_pressure` uses the
@@ -290,6 +291,9 @@ PR-local scalar quantization spot-check:
 | `graph_scalar_quant_candidate_recall/cluster_l2/u8_c64_d128_k10_recallbp10000_m12501-full50000` | 79.90 ms (quick) | Benchmark-only per-dimension u8 scalar quantization over 100k 128-dim vectors and 16 queries. Compressed storage is ~12.2 MiB vs ~48.8 MiB full vectors, and 64 exact-rerank candidates reach 10000 bp recall on this clustered fixture. |
 | `graph_scalar_quant_candidate_recall/cluster_l2/u8_c256_d128_k10_recallbp10000_m12501-full50000` | 81.00 ms (quick) | Wider rerank has no recall upside on this corpus and adds a small exact-rerank cost. The full compressed scan remains the dominant cost. |
 | `graph_scalar_quant_candidate_recall/cluster_l2/u8_c1024_d128_k10_recallbp10000_m12501-full50000` | 85.35 ms (quick) | High-candidate anchor for comparison with PQ. Scalar quantization is simple and training-free, but standalone row-wise dequantized scoring is much slower than PQ and IVF+PQ candidate generation without SIMD/block scoring. |
+| `graph_scalar_code_quant_candidate_recall/cluster_l2/u8code_c64_d128_k10_recallbp10000_m12501-full50000` | 20.49 ms (quick) | Ranks by integer L2 over per-dimension u8 codes, then exact-reranks full vectors. It keeps scalar u8's full recall and storage shape while avoiding row-wise dequantization, but remains slower than packed binary and standalone PQ full-recall rows. |
+| `graph_scalar_code_quant_candidate_recall/cluster_l2/u8code_c256_d128_k10_recallbp10000_m12501-full50000` | 21.41 ms (quick) | Wider rerank has no recall upside and adds modest exact-rerank cost; c64 is the scalar code-space knee on this fixture. |
+| `graph_scalar_code_quant_candidate_recall/cluster_l2/u8code_c1024_d128_k10_recallbp10000_m12501-full50000` | 24.96 ms (quick) | High-candidate scalar code-space anchor. This narrows scalar's cost gap versus dequantized scoring by roughly 4x, but still does not beat simpler packed binary sign-code filtering. |
 
 PR-local binary quantization spot-check:
 
