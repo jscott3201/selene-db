@@ -47,6 +47,48 @@ impl OmlxGqlQueryRootFixture {
         self.execute_batch_query(registry, Some(cache));
     }
 
+    pub(crate) fn warm_query_root_expansion_session(
+        &self,
+        session: &mut Session<'_>,
+        registry: &BuiltinProcedureRegistry,
+    ) {
+        self.execute_query_source_in_session(
+            session,
+            QUERY_ROOT_SOURCE,
+            0,
+            registry,
+            "oMLX GQL query-root vector procedure executes",
+        );
+    }
+
+    pub(crate) fn warm_query_root_state_session(
+        &self,
+        session: &mut Session<'_>,
+        registry: &BuiltinProcedureRegistry,
+    ) {
+        self.execute_query_source_in_session(
+            session,
+            QUERY_ROOT_STATE_SOURCE,
+            0,
+            registry,
+            "oMLX GQL query-root state vector procedure executes",
+        );
+    }
+
+    pub(crate) fn warm_query_root_current_state_session(
+        &self,
+        session: &mut Session<'_>,
+        registry: &BuiltinProcedureRegistry,
+    ) {
+        self.execute_query_source_in_session(
+            session,
+            QUERY_ROOT_CURRENT_STATE_SOURCE,
+            0,
+            registry,
+            "oMLX GQL query-root current-state vector procedure executes",
+        );
+    }
+
     pub(crate) fn execute_all_queries(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -56,6 +98,25 @@ impl OmlxGqlQueryRootFixture {
             .map(|query_index| {
                 self.execute_query(query_index, registry, cache.as_ref().map(Arc::clone))
                     .row_count()
+            })
+            .sum()
+    }
+
+    pub(crate) fn execute_all_queries_in_session(
+        &self,
+        session: &mut Session<'_>,
+        registry: &BuiltinProcedureRegistry,
+    ) -> usize {
+        (0..self.queries.len())
+            .map(|query_index| {
+                self.execute_query_source_in_session(
+                    session,
+                    QUERY_ROOT_SOURCE,
+                    query_index,
+                    registry,
+                    "oMLX GQL query-root vector procedure executes",
+                )
+                .row_count()
             })
             .sum()
     }
@@ -73,6 +134,25 @@ impl OmlxGqlQueryRootFixture {
             .sum()
     }
 
+    pub(crate) fn execute_all_state_queries_in_session(
+        &self,
+        session: &mut Session<'_>,
+        registry: &BuiltinProcedureRegistry,
+    ) -> usize {
+        (0..self.queries.len())
+            .map(|query_index| {
+                self.execute_query_source_in_session(
+                    session,
+                    QUERY_ROOT_STATE_SOURCE,
+                    query_index,
+                    registry,
+                    "oMLX GQL query-root state vector procedure executes",
+                )
+                .row_count()
+            })
+            .sum()
+    }
+
     pub(crate) fn execute_all_current_state_queries(
         &self,
         registry: &BuiltinProcedureRegistry,
@@ -84,6 +164,25 @@ impl OmlxGqlQueryRootFixture {
                     query_index,
                     registry,
                     cache.as_ref().map(Arc::clone),
+                )
+                .row_count()
+            })
+            .sum()
+    }
+
+    pub(crate) fn execute_all_current_state_queries_in_session(
+        &self,
+        session: &mut Session<'_>,
+        registry: &BuiltinProcedureRegistry,
+    ) -> usize {
+        (0..self.queries.len())
+            .map(|query_index| {
+                self.execute_query_source_in_session(
+                    session,
+                    QUERY_ROOT_CURRENT_STATE_SOURCE,
+                    query_index,
+                    registry,
+                    "oMLX GQL query-root current-state vector procedure executes",
                 )
                 .row_count()
             })
@@ -244,6 +343,26 @@ impl OmlxGqlQueryRootFixture {
             .execute_source(QUERY_ROOT_CURRENT_STATE_SOURCE, registry)
             .expect("oMLX GQL query-root current-state vector procedure executes")
         {
+            StatementOutput::Rows(table) => table,
+            other => panic!("unexpected output: {other:?}"),
+        }
+    }
+
+    fn execute_query_source_in_session(
+        &self,
+        session: &mut Session<'_>,
+        source: &str,
+        query_index: usize,
+        registry: &BuiltinProcedureRegistry,
+        expected: &'static str,
+    ) -> BindingTable {
+        let query = self
+            .queries
+            .get(query_index)
+            .expect("oMLX GQL bench query index is valid");
+        session.bind_parameter(istr("query"), Value::Vector(query.vector.clone()));
+        session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
+        match session.execute_source(source, registry).expect(expected) {
             StatementOutput::Rows(table) => table,
             other => panic!("unexpected output: {other:?}"),
         }
