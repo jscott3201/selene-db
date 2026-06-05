@@ -27,6 +27,10 @@ fn props(key: &IStr, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
+fn node_list(nodes: &[NodeId]) -> Value {
+    Value::List(nodes.iter().copied().map(Value::NodeRef).collect())
+}
+
 fn rows(output: StatementOutput) -> BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
@@ -163,6 +167,92 @@ fn vector_score_candidate_state_reranks_maintained_set() {
 }
 
 #[test]
+fn vector_score_candidate_state_nodes_intersects_state_with_nodes_by_default() {
+    let (graph, ids) = candidate_graph();
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[2.2, 0.0])));
+    session.bind_parameter(istr("nodes"), node_list(&[ids[0], ids[2], ids[4]]));
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_candidate_state_nodes('embedding', $query, \
+         'active_docs', $nodes, 3) YIELD node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id"), vec![ids[2], ids[0]]);
+}
+
+#[test]
+fn vector_score_candidate_state_nodes_supports_explicit_set_algebra() {
+    let (graph, ids) = candidate_graph();
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session.bind_parameter(istr("union_query"), Value::Vector(vector(&[4.2, 0.0])));
+    session.bind_parameter(istr("union_nodes"), node_list(&[ids[4]]));
+    let union = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_candidate_state_nodes('embedding', $union_query, \
+         'active_docs', $union_nodes, 5, 'union') YIELD node_id, distance",
+        &registry,
+    );
+    assert_eq!(
+        node_column(&union, "node_id"),
+        vec![ids[4], ids[3], ids[2], ids[1], ids[0]]
+    );
+
+    session.bind_parameter(istr("state_diff_query"), Value::Vector(vector(&[0.2, 0.0])));
+    session.bind_parameter(istr("state_diff_nodes"), node_list(&[ids[2], ids[3]]));
+    let state_difference = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_candidate_state_nodes('embedding', $state_diff_query, \
+         'active_docs', $state_diff_nodes, 5, 'state_difference') YIELD node_id, distance",
+        &registry,
+    );
+    assert_eq!(
+        node_column(&state_difference, "node_id"),
+        vec![ids[0], ids[1]]
+    );
+
+    session.bind_parameter(istr("nodes_diff_query"), Value::Vector(vector(&[4.2, 0.0])));
+    session.bind_parameter(istr("nodes_diff_nodes"), node_list(&[ids[2], ids[4]]));
+    let nodes_difference = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_candidate_state_nodes('embedding', $nodes_diff_query, \
+         'active_docs', $nodes_diff_nodes, 5, 'nodes_difference') YIELD node_id, distance",
+        &registry,
+    );
+    assert_eq!(node_column(&nodes_difference, "node_id"), vec![ids[4]]);
+}
+
+#[test]
+fn vector_score_candidate_state_nodes_rejects_unknown_operation() {
+    let (graph, ids) = candidate_graph();
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(istr("nodes"), node_list(&[ids[0]]));
+
+    let err = session
+        .execute_source(
+            "CALL selene.vector_score_candidate_state_nodes('embedding', $query, \
+             'active_docs', $nodes, 3, 'xor')",
+            &registry,
+        )
+        .expect_err("unknown operation must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("operation must be intersection")
+    ));
+}
+
+#[test]
 fn vector_candidate_states_lists_maintained_state_metadata() {
     let (graph, _) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
@@ -246,6 +336,36 @@ fn vector_score_candidate_state_surfaces_stale_provider_generation() {
     let err = session
         .execute_source(
             "CALL selene.vector_score_candidate_state('embedding', $query, 'active_docs', 3)",
+            &registry,
+        )
+        .expect_err("stale provider must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::Internal { ref detail },
+            ..
+        } if detail.contains("candidate-state provider error")
+            && detail.contains("stale candidate state")
+    ));
+}
+
+#[test]
+fn vector_score_candidate_state_nodes_surfaces_stale_provider_generation() {
+    let provider = Arc::new(StaleCandidateProvider);
+    let graph = SharedGraph::builder(GraphId::new(330_405))
+        .with_provider(provider as Arc<dyn IndexProvider>)
+        .build()
+        .expect("graph builds");
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(istr("nodes"), node_list(&[NodeId::new(1)]));
+
+    let err = session
+        .execute_source(
+            "CALL selene.vector_score_candidate_state_nodes('embedding', $query, \
+             'active_docs', $nodes, 3)",
             &registry,
         )
         .expect_err("stale provider must error");
