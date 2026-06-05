@@ -1,12 +1,11 @@
 //! Graph fixture built from local oMLX endpoint embeddings.
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use selene_core::{
-    CancellationChecker, GraphId, HnswIndexConfig, LabelSet, NodeId, PropertyMap, Value,
-    VectorMetric, VectorValue,
+    CancellationChecker, HnswIndexConfig, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
+    VectorValue,
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, CandidateStateSpec, IndexProvider,
@@ -14,9 +13,16 @@ use selene_graph::{
     VectorIndexConfig, VectorIndexKind, VectorNeighborDirection, VectorNeighborSearchOptions,
 };
 
+use self::build_support::{
+    DocumentMeta, QueryAnchor, QueryVector, admits_graph_hint, graph_id_for_model,
+    topic_hint_expansion_set_for,
+};
 use super::super::support::istr;
 use super::corpus::{CorpusInput, Topic, topic_label};
 use super::{ANN_SEARCH_WIDTH, TOP_K, precision_basis_points};
+
+#[path = "fixture/build_support.rs"]
+mod build_support;
 
 pub(super) struct OmlxVectorFixture {
     shared: SharedGraph,
@@ -626,57 +632,4 @@ impl OmlxVectorFixture {
             })
             .count()
     }
-}
-
-fn topic_hint_expansion_set_for(
-    graph: &SeleneGraph,
-    dependency_edge: &selene_core::IStr,
-    support_edge: &selene_core::IStr,
-    anchor: NodeId,
-) -> VectorCandidateSet {
-    let roots = graph.vector_neighbor_candidates(
-        anchor,
-        dependency_edge,
-        VectorNeighborDirection::Outgoing,
-    );
-    graph.expand_vector_candidate_set(&roots, support_edge, VectorNeighborDirection::Outgoing)
-}
-
-struct DocumentMeta {
-    node: NodeId,
-    topic: Topic,
-    graph_hint: bool,
-}
-
-struct QueryAnchor {
-    node: NodeId,
-    topic: Topic,
-}
-
-struct QueryVector {
-    anchor: NodeId,
-    topic: Topic,
-    vector: VectorValue,
-}
-
-fn graph_id_for_model(model: &str) -> GraphId {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    model.hash(&mut hasher);
-    GraphId::new(97_000 + hasher.finish() % 1_000)
-}
-
-fn admits_graph_hint(
-    graph_hint_counts: &mut HashMap<Topic, usize>,
-    topic: Topic,
-    graph_hint_docs_per_topic: Option<usize>,
-) -> bool {
-    let Some(limit) = graph_hint_docs_per_topic else {
-        return true;
-    };
-    let count = graph_hint_counts.entry(topic).or_insert(0);
-    if *count >= limit {
-        return false;
-    }
-    *count += 1;
-    true
 }
