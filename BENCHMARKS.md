@@ -904,6 +904,7 @@ retrieved, not only whether the result was in the right broad topic:
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_text_vector_batch/...q16_k4_r2_c13...precbp10000_curbp10000` | 2.3434 ms | 5.3866 ms | Current-state BM25 batch produces top-k candidates, then `selene.vector_score_nodes_batch` reranks them. Quality stays full, but the extra vector pass is much slower on this fixture; do not recommend text/vector fusion here without a quality gap. |
 | `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_current_state_text_score_batch/...q8_k4_r2_c6...precbp5000_curbp5000_hitbp8750` | 144.57 µs | 145.39 µs | Target-aware code/alias profile. Sparse BM25 emits fewer than `k=4` rows per query, but seven of eight expected target facts appear in top-k; broad topic/current precision alone would miss this target-level signal. |
 | `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_current_state_text_vector_batch/...q8_k4_r2_c6...precbp5000_curbp5000_hitbp8750` | 553.96 µs | 1.0504 ms | Exact vector rerank after the same BM25/state candidate producer does not improve target hits on this profile and adds dimension-sensitive cost. |
+| `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_expansion_batch/...q8_k4_r2_c9...precbp10000_hitbp8750` | 178.74 µs | 257.01 µs | Plain graph-expanded vector scoring is faster than maintained-state vector scoring, but it still misses one expected target and does not apply the current-state gate. |
 | `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_current_state_intersection_batch/...q8_k4_r2_c6...basecurbp8125_curbp10000_hitbp10000` | 210.17 µs | 287.61 µs | Batched graph-root vector scoring through maintained current state recovers all expected code/alias targets. This is slower than BM25/state but fixes the missing-target case without adding a fusion API. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
@@ -938,8 +939,10 @@ after that BM25 current-state candidate pass keeps the same quality but costs
 660.94 µs remains a better vector path. On the target-aware
 `code_alias_memory` profile, current-state BM25 batch reaches `hitbp8750` at
 135.41 us, while adding vector rerank keeps the same `hitbp8750` and costs
-1.5738 ms. The vector current-state batch row reaches `hitbp10000`,
-`basecurbp8125` / `curbp10000`, `r2`, `c6`, at 345.56 us, making it the better
+1.5738 ms. The plain graph-expanded vector batch reaches `precbp10000` and
+`hitbp8750`, `r2`, `c9`, at 336.08 us; the maintained vector current-state
+batch row reaches `hitbp10000`, `basecurbp8125` / `curbp10000`, `r2`, `c6`, at
+345.56 us, making maintained current-state composition the better
 target-quality path for that code/alias profile. The vector
 batched current-state row reaches `curbp10000`, `r2`, `c13`, at 719.86 µs, and
 the batched provenance-state row reaches the same
@@ -949,9 +952,9 @@ default local oMLX rows remain short and comparable to the earlier two-model
 baseline.
 
 The locally listed `jina-code-embeddings-1.5b-mlx` model is not currently
-available from `/v1/embeddings` in oMLX (`404 not found` on the status-only
-smoke), so it is not part of these rows until it is exposed as an embedding
-model.
+available from `/v1/embeddings` in oMLX; the endpoint returns HTTP 400 and
+reports it as an LLM model for `/v1/chat/completions`, so it is not part of
+these rows until it is exposed as an embedding model.
 
 Component-pressure rows pool the query component with additional graph
 components before exact vector scoring. Quality remains perfect on this clean
