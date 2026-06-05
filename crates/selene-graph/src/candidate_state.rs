@@ -1,10 +1,10 @@
 //! Maintained graph-derived candidate sets.
 //!
 //! This module owns small, policy-neutral maintained node sets for graph/vector
-//! retrieval. A set can require a node label and can exclude nodes that have at
-//! least one outgoing or incoming edge with configured labels. That is enough to
-//! model active/current/unresolved memory subsets without hard-coding those
-//! application labels into the engine.
+//! retrieval. A set can require node labels, require incoming/outgoing edge
+//! evidence, and exclude nodes that have disqualifying incoming/outgoing edges.
+//! That is enough to model active/current/unresolved memory subsets without
+//! hard-coding those application labels into the engine.
 
 use std::collections::{BTreeMap, BTreeSet};
 

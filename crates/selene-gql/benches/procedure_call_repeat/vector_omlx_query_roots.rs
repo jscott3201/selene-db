@@ -56,6 +56,8 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         let state_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         let current_state_cache =
             Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+        let provenance_state_cache =
+            Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
         fixture.warm_query_anchor_lookup_cache(&registry, Arc::clone(&anchor_cache));
         fixture.warm_query_anchor_lookup_batch_cache(&registry, Arc::clone(&anchor_batch_cache));
@@ -66,6 +68,8 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         fixture.warm_query_root_cache(&registry, Arc::clone(&cache));
         fixture.warm_query_root_state_cache(&registry, Arc::clone(&state_cache));
         fixture.warm_query_root_current_state_cache(&registry, Arc::clone(&current_state_cache));
+        fixture
+            .warm_query_root_provenance_state_cache(&registry, Arc::clone(&provenance_state_cache));
         fixture.warm_query_root_batch_cache(&registry, Arc::clone(&batch_cache));
         let mut anchor_session = fixture.reusable_session();
         let mut anchor_plan_session = fixture.reusable_plan_cache_session();
@@ -79,6 +83,11 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         fixture.warm_query_root_state_session(&mut state_plan_session, &registry);
         let mut current_state_plan_session = fixture.reusable_plan_cache_session();
         fixture.warm_query_root_current_state_session(&mut current_state_plan_session, &registry);
+        let mut provenance_state_plan_session = fixture.reusable_plan_cache_session();
+        fixture.warm_query_root_provenance_state_session(
+            &mut provenance_state_plan_session,
+            &registry,
+        );
         let precision = fixture.gql_precision_basis_points(&registry, Some(Arc::clone(&cache)));
         let current_precision =
             fixture.gql_current_precision_basis_points(&registry, Some(Arc::clone(&cache)));
@@ -88,6 +97,11 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
             &registry,
             Some(Arc::clone(&current_state_cache)),
         );
+        let provenance_state_precision = fixture
+            .gql_provenance_state_current_precision_basis_points(
+                &registry,
+                Some(Arc::clone(&provenance_state_cache)),
+            );
         let batch_precision =
             fixture.gql_batch_precision_basis_points(&registry, Some(Arc::clone(&batch_cache)));
         group.throughput(Throughput::Elements((fixture.query_count() * TOP_K) as u64));
@@ -447,6 +461,56 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
                 b.iter(|| {
                     black_box(fixture.execute_all_current_state_queries_in_session(
                         &mut current_state_plan_session,
+                        &registry,
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_cache_query_root_provenance_state_intersection",
+                format!(
+                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.first_query_root_count(),
+                    fixture.first_query_provenance_state_intersection_count(),
+                    fixture.dimension,
+                    current_precision,
+                    provenance_state_precision,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_provenance_state_queries(
+                        &registry,
+                        Some(Arc::clone(&provenance_state_cache)),
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_session_plan_cache_query_root_provenance_state_intersection",
+                format!(
+                    "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    TOP_K,
+                    fixture.first_query_root_count(),
+                    fixture.first_query_provenance_state_intersection_count(),
+                    fixture.dimension,
+                    current_precision,
+                    provenance_state_precision,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_provenance_state_queries_in_session(
+                        &mut provenance_state_plan_session,
                         &registry,
                     ));
                 });

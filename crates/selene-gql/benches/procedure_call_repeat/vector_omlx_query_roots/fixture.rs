@@ -47,9 +47,11 @@ impl OmlxGqlQueryRootFixture {
         let doc_label = istr("OmlxEmbeddingDoc");
         let query_label = istr("OmlxQueryAnchor");
         let support_fact_label = istr("OmlxSupportFact");
+        let provenance_label = istr("OmlxEvidenceSource");
         let dependency_edge = istr("OmlxDependsOn");
         let support_edge = istr("OmlxSupports");
         let negative_evidence_edge = istr("OmlxNegativeEvidence");
+        let provenance_edge = istr("OmlxGroundedBy");
         let embedding_key = istr("embedding");
         let query_key = istr("query");
         let query_index_key = istr("query_index");
@@ -59,6 +61,11 @@ impl OmlxGqlQueryRootFixture {
                     .require_label(support_fact_label.clone()),
                 CandidateStateSpec::new(istr("omlx_current_support_facts"))
                     .require_label(support_fact_label.clone())
+                    .exclude_outgoing(negative_evidence_edge.clone()),
+                CandidateStateSpec::new(istr("omlx_provenance_current_support_facts"))
+                    .require_label(support_fact_label.clone())
+                    .require_incoming(support_edge.clone())
+                    .require_outgoing(provenance_edge.clone())
                     .exclude_outgoing(negative_evidence_edge.clone()),
             ])
             .expect("oMLX GQL maintained support state provider is valid"),
@@ -139,6 +146,25 @@ impl OmlxGqlQueryRootFixture {
                             PropertyMap::new(),
                         )
                         .expect("oMLX GQL bench negative-evidence edge inserts");
+                }
+                for document in documents
+                    .iter()
+                    .filter(|document| document.support_fact && document.current_fact)
+                {
+                    let provenance = mutator
+                        .create_node(
+                            LabelSet::single(provenance_label.clone()),
+                            PropertyMap::new(),
+                        )
+                        .expect("oMLX GQL bench provenance node inserts");
+                    mutator
+                        .create_edge(
+                            provenance_edge.clone(),
+                            document.node,
+                            provenance,
+                            PropertyMap::new(),
+                        )
+                        .expect("oMLX GQL bench provenance edge inserts");
                 }
                 for (query_index, (input, vector)) in inputs
                     .iter()
@@ -265,6 +291,10 @@ impl OmlxGqlQueryRootFixture {
                     .count()
             }
         })
+    }
+
+    pub(super) fn first_query_provenance_state_intersection_count(&self) -> usize {
+        self.first_query_current_state_intersection_count()
     }
 }
 

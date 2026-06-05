@@ -772,9 +772,12 @@ with the provider-maintained `omlx_support_facts` set. The negative-evidence
 state row uses the same procedure over `omlx_current_support_facts`, where
 documents containing stale/superseded/contradictory wording have an outgoing
 `OmlxNegativeEvidence` edge and are excluded from current support state. The
-batched row stores each query vector on the query anchor, lets GQL aggregate
-per-query root sets, then calls `selene.vector_score_expanded_candidates_batch`
-once for the full 16-query profile:
+provenance-required row uses `omlx_provenance_current_support_facts`, adding a
+required incoming `OmlxSupports` edge and required outgoing `OmlxGroundedBy`
+edge before the same exact rerank. The batched row stores each query vector on
+the query anchor, lets GQL aggregate per-query root sets, then calls
+`selene.vector_score_expanded_candidates_batch` once for the full 16-query
+profile:
 
 ```bash
 SELENE_OMLX_EMBEDDING_BENCH=1 \
@@ -796,9 +799,11 @@ union against the same endpoint embeddings.
 The fixture also registers a maintained candidate-state provider named
 `omlx_support_facts` over an explicit `OmlxSupportFact` label, plus
 `omlx_current_support_facts` over the same label with outgoing
-`OmlxNegativeEvidence` edges as exclusions. With partial graph hints,
-graph-hint roots are not support facts; with uncapped hints, every document
-remains a support fact. That models provider-maintained support facts
+`OmlxNegativeEvidence` edges as exclusions, and
+`omlx_provenance_current_support_facts` over the same current-state rules plus
+required incoming support and outgoing provenance edges. With partial graph
+hints, graph-hint roots are not support facts; with uncapped hints, every
+document remains a support fact. That models provider-maintained support facts
 separately from graph-hint root documents without making the default uncapped
 profile degenerate to an empty state. `curbp{basis points}` records current
 support precision, while `basecurbp` records the direct graph-expanded row's
@@ -863,8 +868,10 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_expansion/...q16_k4_r2_c16...precbp10000` | 1.45 ms | 1.52 ms | Same full scoring statement through a warmed source-string `PlanCache` session; plan caching is neutral once graph expansion and vector rerank dominate. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
-| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.55 ms | 1.60 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
-| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.56 ms | 1.62 ms | Warmed full-plan-cache current-state scorer; still dominated by graph expansion plus vector rerank. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.35 ms | 1.41 ms | Warmed full-plan-cache current-state scorer; still dominated by graph expansion plus vector rerank. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_provenance_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.67 ms | 1.64 ms | Intersects expanded roots with `omlx_provenance_current_support_facts`, requiring both incoming support and outgoing provenance edges while preserving the same candidate width and full current precision. |
+| `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_provenance_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.60 ms | 1.63 ms | Warmed full-plan-cache provenance-state scorer; positive edge-evidence checks add modest overhead versus exclusion-only current state on this quick local pass. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/...q16_k4_r2_c16...precbp10000` | 312.49 µs | 528.84 µs | Single GQL statement builds all 16 query vectors and root sets from graph rows, then calls the batched expanded scorer once; avoids repeated statement/session overhead while preserving full topic precision. |
 
 The opt-in `Qwen3-Embedding-8B-4bit-DWQ` local model also works on
