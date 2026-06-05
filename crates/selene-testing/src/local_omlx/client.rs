@@ -8,14 +8,24 @@ use selene_core::VectorValue;
 
 use super::corpus::CorpusInput;
 
-pub(super) struct OmlxClient {
+/// Minimal HTTP client for local oMLX embedding endpoints.
+///
+/// The client deliberately uses `TcpStream` instead of an HTTP runtime so
+/// benchmark crates can opt into local embeddings without pulling in async or
+/// networking dependencies.
+pub struct OmlxClient {
     endpoint: HttpEndpoint,
     api_key: String,
     batch_size: usize,
 }
 
 impl OmlxClient {
-    pub(super) fn new(base_url: String, api_key: String, batch_size: usize) -> Self {
+    /// Build a client for `base_url`, using `api_key` and chunking requests by
+    /// `batch_size`.
+    ///
+    /// `base_url` must be an `http://` local endpoint. `batch_size` must be
+    /// greater than zero.
+    pub fn new(base_url: String, api_key: String, batch_size: usize) -> Self {
         let endpoint = HttpEndpoint::parse(&base_url).expect("valid local oMLX HTTP base URL");
         assert!(batch_size > 0, "oMLX embedding batch size must be non-zero");
         Self {
@@ -25,11 +35,8 @@ impl OmlxClient {
         }
     }
 
-    pub(super) fn embed(
-        &self,
-        model: &str,
-        inputs: &[CorpusInput],
-    ) -> Result<Vec<VectorValue>, String> {
+    /// Embed every corpus input with `model`, preserving input order.
+    pub fn embed(&self, model: &str, inputs: &[CorpusInput]) -> Result<Vec<VectorValue>, String> {
         let mut vectors = Vec::with_capacity(inputs.len());
         for chunk in inputs.chunks(self.batch_size) {
             vectors.extend(self.embed_chunk(model, chunk)?);

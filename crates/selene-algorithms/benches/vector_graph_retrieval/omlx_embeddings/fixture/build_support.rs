@@ -5,8 +5,7 @@ use std::hash::{Hash, Hasher};
 
 use selene_core::{GraphId, IStr, NodeId, VectorValue};
 use selene_graph::{SeleneGraph, VectorCandidateSet, VectorNeighborDirection};
-
-use super::super::corpus::Topic;
+use selene_testing::local_omlx::Topic;
 
 pub(super) struct DocumentMeta {
     pub(super) node: NodeId,

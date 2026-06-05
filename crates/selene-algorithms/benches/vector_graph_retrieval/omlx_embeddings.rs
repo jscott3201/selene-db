@@ -3,13 +3,12 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
+use selene_testing::local_omlx::{CorpusProfile, OmlxClient};
 
 use crate::common::scale_label;
 
-use self::{client::OmlxClient, corpus::CorpusProfile, fixture::OmlxVectorFixture};
+use self::fixture::OmlxVectorFixture;
 
-mod client;
-mod corpus;
 mod fixture;
 
 const ENABLE_ENV: &str = "SELENE_OMLX_EMBEDDING_BENCH";
