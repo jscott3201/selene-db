@@ -17,6 +17,8 @@ pub enum CorpusProfile {
     ScaledAmbiguousMemory,
     /// Code and symbol alias corpus with per-query target facts.
     CodeAliasMemory,
+    /// Wider code and symbol alias corpus with more target-hit queries.
+    CodeAliasWideMemory,
 }
 
 impl CorpusProfile {
@@ -36,6 +38,7 @@ impl CorpusProfile {
             "ambiguous_memory" | "ambiguous" => Self::AmbiguousMemory,
             "scaled_ambiguous_memory" | "scaled_ambiguous" => Self::ScaledAmbiguousMemory,
             "code_alias_memory" | "code_alias" => Self::CodeAliasMemory,
+            "code_alias_wide_memory" | "code_alias_wide" => Self::CodeAliasWideMemory,
             other => panic!("unsupported embedding corpus value: {other}"),
         }
     }
@@ -48,6 +51,7 @@ impl CorpusProfile {
             Self::AmbiguousMemory => ambiguous_memory_inputs(),
             Self::ScaledAmbiguousMemory => scaled_ambiguous_memory_inputs(),
             Self::CodeAliasMemory => code_alias::inputs(),
+            Self::CodeAliasWideMemory => code_alias::wide_inputs(),
         }
     }
 }
@@ -454,6 +458,28 @@ mod tests {
     }
 
     #[test]
+    fn wide_code_alias_profile_extends_target_queries() {
+        let inputs = CorpusProfile::CodeAliasWideMemory.inputs();
+        let document_keys = inputs
+            .iter()
+            .filter(|input| input.is_document)
+            .filter_map(|input| input.target_key)
+            .collect::<HashSet<_>>();
+        let query_targets = inputs
+            .iter()
+            .filter(|input| !input.is_document)
+            .map(|input| input.target_key.expect("wide code alias query has target"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(query_targets.len(), 16);
+        assert!(
+            query_targets
+                .iter()
+                .all(|target| document_keys.contains(target))
+        );
+    }
+
+    #[test]
     fn parses_corpus_profile_values() {
         assert!(matches!(
             CorpusProfile::from_value("tiny"),
@@ -462,6 +488,10 @@ mod tests {
         assert!(matches!(
             CorpusProfile::from_value("code_alias"),
             CorpusProfile::CodeAliasMemory
+        ));
+        assert!(matches!(
+            CorpusProfile::from_value("code_alias_wide"),
+            CorpusProfile::CodeAliasWideMemory
         ));
         assert!(matches!(
             CorpusProfile::from_value("scaled_ambiguous_memory"),

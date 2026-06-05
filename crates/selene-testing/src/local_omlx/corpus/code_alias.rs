@@ -220,3 +220,119 @@ pub(super) fn inputs() -> Vec<CorpusInput> {
     ]);
     inputs
 }
+
+pub(super) fn wide_inputs() -> Vec<CorpusInput> {
+    let mut inputs = inputs();
+    for (topic, docs) in [
+        (
+            Topic::Gql,
+            &[
+                (
+                    "OPTIONAL MATCH keeps graph rows even when an optional edge is absent.",
+                    Some("gql-optional-match"),
+                ),
+                (
+                    "GROUP BY with collect_list roots prepares a batched procedure call.",
+                    Some("gql-group-collect"),
+                ),
+            ][..],
+        ),
+        (
+            Topic::Vector,
+            &[
+                (
+                    "Cosine distance compares embedding direction after normalization.",
+                    Some("vector-cosine-metric"),
+                ),
+                (
+                    "ef_search widens HNSW query exploration before exact rerank.",
+                    Some("vector-ef-search"),
+                ),
+            ][..],
+        ),
+        (
+            Topic::AgentMemory,
+            &[
+                (
+                    "A replacement edge marks an older memory preference as superseded.",
+                    Some("memory-replacement-edge"),
+                ),
+                (
+                    "A provenance link records the evidence source for a remembered fact.",
+                    Some("memory-provenance-link"),
+                ),
+            ][..],
+        ),
+        (
+            Topic::Code,
+            &[
+                (
+                    "apply_patch changes files through structured hunks instead of shell redirection.",
+                    Some("code-apply-patch"),
+                ),
+                (
+                    "scripts/run-benches.sh runs Criterion targets sequentially to reduce timing noise.",
+                    Some("code-bench-runner"),
+                ),
+            ][..],
+        ),
+    ] {
+        inputs.extend(docs.iter().map(|(text, target_key)| CorpusInput {
+            topic,
+            is_document: true,
+            text,
+            target_key: *target_key,
+        }));
+    }
+    inputs.extend([
+        CorpusInput {
+            topic: Topic::Gql,
+            is_document: false,
+            text: "Which pattern keeps a row when an optional relationship is missing?",
+            target_key: Some("gql-optional-match"),
+        },
+        CorpusInput {
+            topic: Topic::Gql,
+            is_document: false,
+            text: "Which grouping step batches roots before a procedure call?",
+            target_key: Some("gql-group-collect"),
+        },
+        CorpusInput {
+            topic: Topic::Vector,
+            is_document: false,
+            text: "Which metric scores embedding direction instead of raw magnitude?",
+            target_key: Some("vector-cosine-metric"),
+        },
+        CorpusInput {
+            topic: Topic::Vector,
+            is_document: false,
+            text: "Which HNSW query setting increases exploration breadth?",
+            target_key: Some("vector-ef-search"),
+        },
+        CorpusInput {
+            topic: Topic::AgentMemory,
+            is_document: false,
+            text: "Which graph link says an older memory should not be recalled?",
+            target_key: Some("memory-replacement-edge"),
+        },
+        CorpusInput {
+            topic: Topic::AgentMemory,
+            is_document: false,
+            text: "Which link stores the evidence source for a memory fact?",
+            target_key: Some("memory-provenance-link"),
+        },
+        CorpusInput {
+            topic: Topic::Code,
+            is_document: false,
+            text: "Which edit path changes files without shell redirection?",
+            target_key: Some("code-apply-patch"),
+        },
+        CorpusInput {
+            topic: Topic::Code,
+            is_document: false,
+            text: "Which script prevents Criterion bench targets from running concurrently?",
+            target_key: Some("code-bench-runner"),
+        },
+    ]);
+    inputs
+}
