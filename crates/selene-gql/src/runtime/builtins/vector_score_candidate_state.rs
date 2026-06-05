@@ -5,9 +5,9 @@
 //! generation-checked against the statement snapshot before scoring.
 
 use selene_core::{Value, VectorMetric};
-use selene_graph::ProviderError;
 
 use super::meta::{StaticOutputColumn, StaticParameter};
+use super::vector_candidate_state_common::candidate_state_error;
 use super::vector_common::{
     BatchMismatch, cardinality_arg, invalid_arg, metric_arg, query_arg, string_arg,
     vector_search_error,
@@ -72,7 +72,7 @@ pub(super) fn execute(
 
     let candidates = ctx
         .vector_candidate_set(&state_name)
-        .map_err(candidate_state_error)?
+        .map_err(|error| candidate_state_error(PROC_NAME, error))?
         .ok_or_else(|| {
             invalid_arg(format!(
                 "{PROC_NAME} unknown maintained candidate-state set '{}'",
@@ -106,10 +106,4 @@ pub(super) fn execute(
         .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Float(hit.distance)])
         .collect();
     Ok(ProcedureResult { rows })
-}
-
-fn candidate_state_error(error: ProviderError) -> ProcedureError {
-    ProcedureError::Internal {
-        detail: format!("candidate-state provider error during {PROC_NAME}: {error}"),
-    }
 }
