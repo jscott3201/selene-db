@@ -3,7 +3,7 @@
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use selene_testing::local_omlx::EmbeddingBenchConfig;
+use selene_testing::local_omlx::{EmbeddingBenchConfig, EmbeddingProvider};
 
 use crate::common::scale_label;
 
@@ -87,28 +87,30 @@ pub(super) fn bench(c: &mut Criterion) {
             * fixture.query_count()
             * fixture.topic_hint_expansion_cached_count()
             + MIXED_REFRESHES_PER_CYCLE * hint_expansion_refresh_candidates;
-        group.throughput(Throughput::Elements(inputs.len() as u64));
-        group.bench_function(
-            BenchmarkId::new(
-                "embed_batch",
-                format!(
-                    "{}_docs{}_batch{}_dim{}",
-                    model_id,
-                    inputs.len(),
-                    config.batch_size,
-                    fixture.dimension
+        if matches!(config.provider, EmbeddingProvider::Omlx) {
+            group.throughput(Throughput::Elements(inputs.len() as u64));
+            group.bench_function(
+                BenchmarkId::new(
+                    "embed_batch",
+                    format!(
+                        "{}_docs{}_batch{}_dim{}",
+                        model_id,
+                        inputs.len(),
+                        config.batch_size,
+                        fixture.dimension
+                    ),
                 ),
-            ),
-            |b| {
-                b.iter(|| {
-                    black_box(
-                        config
-                            .embed(model, &inputs)
-                            .expect("embedding request succeeds"),
-                    );
-                });
-            },
-        );
+                |b| {
+                    b.iter(|| {
+                        black_box(
+                            config
+                                .embed(model, &inputs)
+                                .expect("embedding request succeeds"),
+                        );
+                    });
+                },
+            );
+        }
         group.throughput(Throughput::Elements((fixture.query_count() * TOP_K) as u64));
         group.bench_function(
             BenchmarkId::new(
