@@ -26,6 +26,14 @@ pub(super) fn bench_state_batch_rows(
             registry,
             Some(Arc::clone(&provenance_cache)),
         );
+    let current_target_hit = fixture.gql_current_state_batch_target_hit_basis_points(
+        registry,
+        Some(Arc::clone(&current_cache)),
+    );
+    let provenance_target_hit = fixture.gql_provenance_state_batch_target_hit_basis_points(
+        registry,
+        Some(Arc::clone(&provenance_cache)),
+    );
     bench_current_state_batch(
         group,
         registry,
@@ -34,6 +42,7 @@ pub(super) fn bench_state_batch_rows(
         corpus_label,
         current_precision,
         current_state_precision,
+        current_target_hit,
         current_cache,
     );
     bench_provenance_state_batch(
@@ -44,6 +53,7 @@ pub(super) fn bench_state_batch_rows(
         corpus_label,
         current_precision,
         provenance_state_precision,
+        provenance_target_hit,
         provenance_cache,
     );
 }
@@ -60,6 +70,7 @@ fn bench_current_state_batch(
     corpus_label: &str,
     current_precision: usize,
     state_precision: usize,
+    target_hit: Option<usize>,
     cache: Arc<CallPlanCache>,
 ) {
     group.bench_function(
@@ -71,6 +82,7 @@ fn bench_current_state_batch(
                 corpus_label,
                 current_precision,
                 state_precision,
+                target_hit,
             ),
         ),
         |b| {
@@ -95,6 +107,7 @@ fn bench_provenance_state_batch(
     corpus_label: &str,
     current_precision: usize,
     state_precision: usize,
+    target_hit: Option<usize>,
     cache: Arc<CallPlanCache>,
 ) {
     group.bench_function(
@@ -106,6 +119,7 @@ fn bench_provenance_state_batch(
                 corpus_label,
                 current_precision,
                 state_precision,
+                target_hit,
             ),
         ),
         |b| {
@@ -125,8 +139,9 @@ fn row_label(
     corpus_label: &str,
     current_precision: usize,
     state_precision: usize,
+    target_hit: Option<usize>,
 ) -> String {
-    format!(
+    let mut label = format!(
         "{}_{}_q{}_k{}_r{}_c{}_dim{}_basecurbp{}_curbp{}",
         model_id,
         corpus_label,
@@ -137,5 +152,9 @@ fn row_label(
         fixture.dimension,
         current_precision,
         state_precision,
-    )
+    );
+    if let Some(target_hit) = target_hit {
+        label.push_str(&format!("_hitbp{target_hit}"));
+    }
+    label
 }
