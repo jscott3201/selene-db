@@ -33,8 +33,10 @@ const HYBRID_FACTS_PER_TOPIC: usize = 8;
 const HYBRID_RESULT_K: usize = 8;
 const HYBRID_DIMENSION: usize = 64;
 
-const HYBRID_STRATEGIES: [HybridStrategy; 7] = [
+const HYBRID_STRATEGIES: [HybridStrategy; 9] = [
     HybridStrategy::VectorOnly,
+    HybridStrategy::VectorBm25Current,
+    HybridStrategy::VectorBm25CurrentVector,
     HybridStrategy::Bm25TopicCurrent,
     HybridStrategy::Bm25TopicCurrentVector,
     HybridStrategy::GraphTopicBm25Current,
@@ -212,6 +214,8 @@ impl TextFixture {
 #[derive(Clone, Copy)]
 enum HybridStrategy {
     VectorOnly,
+    VectorBm25Current,
+    VectorBm25CurrentVector,
     Bm25TopicCurrent,
     Bm25TopicCurrentVector,
     GraphTopicBm25Current,
@@ -224,6 +228,8 @@ impl HybridStrategy {
     const fn name(self) -> &'static str {
         match self {
             Self::VectorOnly => "vector_only",
+            Self::VectorBm25Current => "vector_bm25_current_filter",
+            Self::VectorBm25CurrentVector => "vector_bm25_current_vector_rerank",
             Self::Bm25TopicCurrent => "bm25_topic_current",
             Self::Bm25TopicCurrentVector => "bm25_topic_current_vector_rerank",
             Self::GraphTopicBm25Current => "graph_topic_bm25_current",
@@ -246,6 +252,7 @@ struct HybridFixture {
     queries: Vec<HybridQuery>,
     metadata: HashMap<NodeId, HybridMeta>,
     bm25_width: usize,
+    vector_candidate_width: usize,
     topic_current_width: usize,
 }
 
@@ -334,6 +341,7 @@ impl HybridFixture {
                     topic_node: topic_nodes[topic],
                     topic_current_text: format!("{name} current evidence"),
                     current_text: "current evidence".to_owned(),
+                    current_filter_text: "current".to_owned(),
                     vector: hybrid_vector(topic, fact, 0),
                 }
             })
@@ -348,6 +356,7 @@ impl HybridFixture {
             queries,
             metadata,
             bm25_width: scale,
+            vector_candidate_width: HYBRID_FACTS_PER_TOPIC * duplicates.div_ceil(2),
             topic_current_width: HYBRID_FACTS_PER_TOPIC * duplicates.div_ceil(2),
         }
     }
@@ -395,6 +404,15 @@ impl HybridFixture {
     fn select(&self, query: &HybridQuery, strategy: HybridStrategy) -> Vec<NodeId> {
         match strategy {
             HybridStrategy::VectorOnly => self.vector_hits(query, HYBRID_RESULT_K),
+            HybridStrategy::VectorBm25Current => self
+                .vector_bm25_current_candidates(query)
+                .into_iter()
+                .take(HYBRID_RESULT_K)
+                .collect(),
+            HybridStrategy::VectorBm25CurrentVector => {
+                let candidates = self.vector_bm25_current_candidates(query);
+                self.vector_rerank(query, &candidates, HYBRID_RESULT_K)
+            }
             HybridStrategy::Bm25TopicCurrent => {
                 self.bm25_hits(&query.topic_current_text, HYBRID_RESULT_K)
             }
@@ -442,6 +460,19 @@ impl HybridFixture {
     fn bm25_hits(&self, query: &str, k: usize) -> Vec<NodeId> {
         self.text_index
             .search(query, k)
+            .into_iter()
+            .map(|hit| hit.node_id)
+            .collect()
+    }
+
+    fn vector_bm25_current_candidates(&self, query: &HybridQuery) -> Vec<NodeId> {
+        let vector_nodes = self.vector_hits(query, self.vector_candidate_width);
+        self.text_index
+            .search_candidates(
+                &query.current_filter_text,
+                &vector_nodes,
+                self.vector_candidate_width,
+            )
             .into_iter()
             .map(|hit| hit.node_id)
             .collect()
@@ -503,6 +534,7 @@ struct HybridQuery {
     topic_node: NodeId,
     topic_current_text: String,
     current_text: String,
+    current_filter_text: String,
     vector: VectorValue,
 }
 
