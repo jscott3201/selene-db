@@ -7,25 +7,16 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
 mod single_graph_ann_recall;
+mod single_graph_candidate_set;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{
-    GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorMetric, VectorValue, intern,
-};
-use selene_graph::{
-    SeleneGraph, SharedGraph, VectorCandidateSet, VectorIndexKind, VectorIndexMemoryUsage,
-    VectorNeighborDirection, VectorNodeSearchHit,
-};
+use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue, intern};
+use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind, VectorIndexMemoryUsage};
 use selene_testing::BenchProfile;
 use single_graph_ann_recall::{ANN_RECALL_PROFILES, AnnRecallFixture};
 
 const ANN_RECALL_K: usize = 10;
 const ANN_RECALL_QUERIES: usize = 16;
-const VECTOR_CANDIDATE_NEIGHBORS: usize = 64;
-const VECTOR_CANDIDATE_ALGEBRA_SET: usize = 256;
-const VECTOR_CANDIDATE_ALGEBRA_OVERLAP: usize = 128;
-const VECTOR_CANDIDATE_ASYM_SMALL_SET: usize = 8;
-const VECTOR_CANDIDATE_ASYM_LARGE_SET: usize = 1024;
 
 fn bench_node_fetch(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_node_fetch");
@@ -183,99 +174,6 @@ fn bench_exact_vector_scan(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_vector_candidate_set(c: &mut Criterion) {
-    let mut group = c.benchmark_group("graph_vector_candidate_set");
-    for scale in vector_scan_scales() {
-        let fixture = VectorCandidateFixture::build(scale, 128, VECTOR_CANDIDATE_NEIGHBORS);
-        group.throughput(Throughput::Elements(fixture.candidate_count() as u64));
-        group.bench_with_input(
-            BenchmarkId::new(
-                format!(
-                    "neighbor_candidates_depends_on_k{}",
-                    fixture.candidate_count()
-                ),
-                fixture.scale(),
-            ),
-            &fixture,
-            |b, fixture| {
-                b.iter(|| {
-                    let candidates = fixture.graph().vector_neighbor_candidates(
-                        fixture.anchor(),
-                        fixture.edge_label(),
-                        VectorNeighborDirection::Outgoing,
-                    );
-                    std::hint::black_box(candidates.len());
-                });
-            },
-        );
-    }
-    let fixture = VectorCandidateAlgebraFixture::build(
-        VECTOR_CANDIDATE_ALGEBRA_SET,
-        VECTOR_CANDIDATE_ALGEBRA_OVERLAP,
-    );
-    group.throughput(Throughput::Elements(fixture.set_width() as u64));
-    group.bench_function(
-        BenchmarkId::new(
-            fixture.bench_id("set_intersection"),
-            fixture.overlap_width(),
-        ),
-        |b| {
-            b.iter(|| {
-                let candidates = fixture.left().intersection(fixture.right());
-                std::hint::black_box(candidates.len());
-            });
-        },
-    );
-    let asymmetric_fixture = VectorCandidateAlgebraFixture::build_asymmetric(
-        VECTOR_CANDIDATE_ASYM_SMALL_SET,
-        VECTOR_CANDIDATE_ASYM_LARGE_SET,
-    );
-    group.throughput(Throughput::Elements(asymmetric_fixture.left_width() as u64));
-    group.bench_function(
-        BenchmarkId::new(
-            asymmetric_fixture.bench_id("set_intersection"),
-            asymmetric_fixture.overlap_width(),
-        ),
-        |b| {
-            b.iter(|| {
-                let candidates = asymmetric_fixture
-                    .left()
-                    .intersection(asymmetric_fixture.right());
-                std::hint::black_box(candidates.len());
-            });
-        },
-    );
-    group.throughput(Throughput::Elements(fixture.set_width() as u64));
-    group.bench_function(
-        BenchmarkId::new(fixture.bench_id("set_union"), fixture.overlap_width()),
-        |b| {
-            b.iter(|| {
-                let candidates = fixture.left().union(fixture.right());
-                std::hint::black_box(candidates.len());
-            });
-        },
-    );
-    group.bench_function(
-        BenchmarkId::new(fixture.bench_id("set_difference"), fixture.overlap_width()),
-        |b| {
-            b.iter(|| {
-                let candidates = fixture.left().difference(fixture.right());
-                std::hint::black_box(candidates.len());
-            });
-        },
-    );
-    group.bench_function(
-        BenchmarkId::new(fixture.bench_id("from_search_hits"), fixture.set_width()),
-        |b| {
-            b.iter(|| {
-                let candidates = VectorCandidateSet::from_search_hits(fixture.hits());
-                std::hint::black_box(candidates.len());
-            });
-        },
-    );
-    group.finish();
-}
-
 fn bench_ann_recall(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_ann_recall_validation");
     for scale in vector_scan_scales() {
@@ -348,168 +246,6 @@ fn vector_scan_scales() -> Vec<usize> {
             (!scales.is_empty()).then_some(scales)
         })
         .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
-}
-
-#[derive(Clone, Debug)]
-struct VectorCandidateAlgebraFixture {
-    left: VectorCandidateSet,
-    right: VectorCandidateSet,
-    hits: Vec<VectorNodeSearchHit>,
-    left_width: usize,
-    right_width: usize,
-    overlap_width: usize,
-}
-
-impl VectorCandidateAlgebraFixture {
-    fn build(set_width: usize, overlap_width: usize) -> Self {
-        let overlap_width = overlap_width.min(set_width);
-        let right_start = set_width - overlap_width + 1;
-        let left_nodes = (1..=set_width)
-            .map(|id| NodeId::new(id as u64))
-            .collect::<Vec<_>>();
-        let right_nodes = (right_start..right_start + set_width)
-            .map(|id| NodeId::new(id as u64))
-            .collect::<Vec<_>>();
-        let hits = right_nodes
-            .iter()
-            .enumerate()
-            .map(|(offset, node_id)| VectorNodeSearchHit {
-                node_id: *node_id,
-                distance: offset as f64,
-            })
-            .collect::<Vec<_>>();
-        Self {
-            left: VectorCandidateSet::from_nodes(left_nodes),
-            right: VectorCandidateSet::from_nodes(right_nodes),
-            hits,
-            left_width: set_width,
-            right_width: set_width,
-            overlap_width,
-        }
-    }
-
-    fn build_asymmetric(left_width: usize, right_width: usize) -> Self {
-        let overlap_width = left_width.min(right_width);
-        let left_nodes = (1..=left_width)
-            .map(|id| NodeId::new(id as u64 * 64))
-            .collect::<Vec<_>>();
-        let right_nodes = (1..=right_width)
-            .map(|id| NodeId::new(id as u64))
-            .collect::<Vec<_>>();
-        Self {
-            left: VectorCandidateSet::from_nodes(left_nodes),
-            right: VectorCandidateSet::from_nodes(right_nodes),
-            hits: Vec::new(),
-            left_width,
-            right_width,
-            overlap_width,
-        }
-    }
-
-    fn bench_id(&self, prefix: &str) -> String {
-        format!(
-            "{prefix}_l{}_r{}_o{}",
-            self.left_width, self.right_width, self.overlap_width
-        )
-    }
-
-    const fn left(&self) -> &VectorCandidateSet {
-        &self.left
-    }
-
-    const fn right(&self) -> &VectorCandidateSet {
-        &self.right
-    }
-
-    fn hits(&self) -> &[VectorNodeSearchHit] {
-        &self.hits
-    }
-
-    const fn set_width(&self) -> usize {
-        self.left_width
-    }
-
-    const fn left_width(&self) -> usize {
-        self.left_width
-    }
-
-    const fn overlap_width(&self) -> usize {
-        self.overlap_width
-    }
-}
-
-#[derive(Clone, Debug)]
-struct VectorCandidateFixture {
-    scale: usize,
-    candidate_count: usize,
-    graph: SeleneGraph,
-    anchor: NodeId,
-    edge_label: IStr,
-}
-
-impl VectorCandidateFixture {
-    fn build(scale: usize, dimension: usize, target_candidates: usize) -> Self {
-        let scale = scale.max(target_candidates.max(1));
-        let anchor_label = intern("VectorAnchor").expect("bench label is valid");
-        let doc_label = intern("VectorDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
-        let edge_label = intern("DEPENDS_ON").expect("bench edge label is valid");
-        let shared = SharedGraph::new(GraphId::new(19_000 + scale as u64));
-        let (anchor, candidate_count) = {
-            let mut txn = shared.begin_write();
-            let mut mutator = txn.mutator();
-            let anchor = mutator
-                .create_node(LabelSet::single(anchor_label), PropertyMap::new())
-                .expect("bench anchor insert succeeds");
-            let mut first_nodes = Vec::with_capacity(target_candidates);
-            for idx in 0..scale {
-                let vector = Value::Vector(vector_value(idx, dimension));
-                let props = PropertyMap::from_pairs([(embedding_key.clone(), vector)])
-                    .expect("bench vector properties are valid");
-                let node = mutator
-                    .create_node(LabelSet::single(doc_label.clone()), props)
-                    .expect("bench vector node insert succeeds");
-                if first_nodes.len() < target_candidates {
-                    first_nodes.push(node);
-                }
-            }
-            for node in &first_nodes {
-                mutator
-                    .create_edge(edge_label.clone(), anchor, *node, PropertyMap::new())
-                    .expect("bench candidate edge insert succeeds");
-            }
-            txn.commit()
-                .expect("bench candidate fixture commit succeeds");
-            (anchor, first_nodes.len())
-        };
-        Self {
-            scale,
-            candidate_count,
-            graph: shared.read().as_ref().clone(),
-            anchor,
-            edge_label,
-        }
-    }
-
-    const fn graph(&self) -> &SeleneGraph {
-        &self.graph
-    }
-
-    const fn scale(&self) -> usize {
-        self.scale
-    }
-
-    const fn candidate_count(&self) -> usize {
-        self.candidate_count
-    }
-
-    const fn anchor(&self) -> NodeId {
-        self.anchor
-    }
-
-    const fn edge_label(&self) -> &IStr {
-        &self.edge_label
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -657,6 +393,6 @@ criterion_group! {
     config = common::criterion_config();
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
         bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
-        bench_vector_candidate_set, bench_ann_recall
+        single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall
 }
 criterion_main!(graph_reads);

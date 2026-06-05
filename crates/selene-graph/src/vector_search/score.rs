@@ -447,24 +447,14 @@ impl SeleneGraph {
             VectorNeighborDirection::Outgoing | VectorNeighborDirection::Both
         ) && let Some(entry) = self.outgoing_edges(anchor)
         {
-            candidates.extend(
-                entry
-                    .iter()
-                    .filter(|edge| &edge.label == edge_label)
-                    .map(|edge| edge.neighbor),
-            );
+            candidates.extend(entry.iter_label(edge_label).map(|edge| edge.neighbor));
         }
         if matches!(
             direction,
             VectorNeighborDirection::Incoming | VectorNeighborDirection::Both
         ) && let Some(entry) = self.incoming_edges(anchor)
         {
-            candidates.extend(
-                entry
-                    .iter()
-                    .filter(|edge| &edge.label == edge_label)
-                    .map(|edge| edge.neighbor),
-            );
+            candidates.extend(entry.iter_label(edge_label).map(|edge| edge.neighbor));
         }
         VectorCandidateSet::from_nodes(candidates)
     }
@@ -515,24 +505,14 @@ impl SeleneGraph {
                 VectorNeighborDirection::Outgoing | VectorNeighborDirection::Both
             ) && let Some(entry) = self.outgoing_edges(root)
             {
-                candidates.extend(
-                    entry
-                        .iter()
-                        .filter(|edge| &edge.label == edge_label)
-                        .map(|edge| edge.neighbor),
-                );
+                candidates.extend(entry.iter_label(edge_label).map(|edge| edge.neighbor));
             }
             if matches!(
                 direction,
                 VectorNeighborDirection::Incoming | VectorNeighborDirection::Both
             ) && let Some(entry) = self.incoming_edges(root)
             {
-                candidates.extend(
-                    entry
-                        .iter()
-                        .filter(|edge| &edge.label == edge_label)
-                        .map(|edge| edge.neighbor),
-                );
+                candidates.extend(entry.iter_label(edge_label).map(|edge| edge.neighbor));
             }
         }
         Ok(VectorCandidateSet::from_nodes(candidates))
