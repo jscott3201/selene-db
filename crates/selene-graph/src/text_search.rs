@@ -17,7 +17,7 @@ use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
 
-const TEXT_SEARCH_CANCEL_STRIDE: usize = 1024;
+pub(crate) const TEXT_SEARCH_CANCEL_STRIDE: usize = 1024;
 const BM25_K1: f64 = 1.2;
 const BM25_B: f64 = 0.75;
 
@@ -209,13 +209,23 @@ impl SharedGraph {
 }
 
 #[derive(Debug)]
-struct DocumentStats {
-    node_id: NodeId,
+pub(crate) struct DocumentStats {
+    pub(crate) node_id: NodeId,
     len: u32,
-    term_counts: Vec<u32>,
+    pub(crate) term_counts: Vec<u32>,
 }
 
-fn unique_query_terms(query: &str) -> Vec<String> {
+impl DocumentStats {
+    pub(crate) fn zero(node_id: NodeId, len: u32, query_term_count: usize) -> Self {
+        Self {
+            node_id,
+            len,
+            term_counts: vec![0; query_term_count],
+        }
+    }
+}
+
+pub(crate) fn unique_query_terms(query: &str) -> Vec<String> {
     let terms: BTreeSet<_> = tokenize(query).into_iter().collect();
     terms.into_iter().collect()
 }
@@ -236,7 +246,7 @@ fn document_stats(node_id: NodeId, text: &str, query_terms: &[String]) -> Option
     })
 }
 
-fn tokenize(text: &str) -> Vec<String> {
+pub(crate) fn tokenize(text: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     for ch in text.chars() {
@@ -252,7 +262,7 @@ fn tokenize(text: &str) -> Vec<String> {
     tokens
 }
 
-fn bm25_score(
+pub(crate) fn bm25_score(
     doc: &DocumentStats,
     document_frequencies: &[u32],
     corpus_len: f64,
@@ -276,20 +286,20 @@ fn bm25_score(
 }
 
 #[derive(Debug)]
-struct TextTopK {
+pub(crate) struct TextTopK {
     k: usize,
     heap: BinaryHeap<TextHeapEntry>,
 }
 
 impl TextTopK {
-    fn new(k: usize) -> Self {
+    pub(crate) fn new(k: usize) -> Self {
         Self {
             k,
             heap: BinaryHeap::new(),
         }
     }
 
-    fn push(&mut self, node_id: NodeId, score: f64) {
+    pub(crate) fn push(&mut self, node_id: NodeId, score: f64) {
         debug_assert!(score.is_finite(), "BM25 scores must be finite");
         if self.k == 0 {
             return;
@@ -308,7 +318,7 @@ impl TextTopK {
         }
     }
 
-    fn into_hits(self) -> Vec<TextSearchHit> {
+    pub(crate) fn into_hits(self) -> Vec<TextSearchHit> {
         let mut hits: Vec<_> = self
             .heap
             .into_iter()

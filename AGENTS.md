@@ -70,7 +70,7 @@ and benchmark profiles for dev-dependencies.
 | Crate | Owns |
 |---|---|
 | `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, vector metrics/top-k helpers, `IStr`, schema/value types, feature register, property maps, codecs, and changesets. |
-| `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, recovery provider, compaction, and graph type enforcement. |
+| `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, reusable BM25 postings indexes, recovery provider, compaction, and graph type enforcement. |
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
 | `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |
 | `selene-gql` | Parser, AST, analyzer, planner, optimizer, executor, procedure tiers, and the concrete native `BuiltinProcedureRegistry`. |
@@ -177,19 +177,19 @@ invalidation/recovery, not piling on ANN fallback surfaces.
 BM25/full-text is now a native first slice, not grammar syntax:
 
 - `selene-graph` owns the dependency-light exact BM25 scan over `STRING` node
-  properties.
+  properties and the reusable in-memory `TextIndex` postings primitive.
 - `selene-gql` exposes it as
   `CALL selene.text_search_nodes(label, property, query, k) YIELD node_id, score`.
-- The exact scan is the correctness oracle and small-corpus path for any future
-  maintained postings index, Tantivy-backed provider, or hybrid text/vector
-  procedure.
+- The exact scan is the correctness oracle and small-corpus path. `TextIndex`
+  reuses that tokenizer/scorer for repeated snapshot queries, but is not yet a
+  durable maintained registration.
 - Keep ISO GQL grammar strict; add future surfaces through native values,
   indexes, and procedures as appropriate.
 - Ground maintained-index design against Tantivy and the old local SeleneDB donor
   code, but do not dependency-import or copy old code without fresh tests and
   benchmarks.
-- Define delete/update/WAL/snapshot/rebuild semantics before shipping maintained
-  text-index state.
+- Define delete/update/WAL/snapshot/rebuild semantics before shipping durable
+  maintained text-index registrations.
 - Benchmark text-only and hybrid graph/vector/text retrieval against the exact
   BM25 oracle.
 
@@ -365,8 +365,8 @@ Current source, tests, benchmarks, and GitHub state win.
 
 - Do not describe vectors as externalized or out-of-tree.
 - Do not revive procedure packs, manifest validation, or loadable extensions.
-- Do not treat the exact BM25 scan as a maintained postings index; it is the
-  oracle and small-corpus path.
+- Do not treat the exact BM25 scan or transient `TextIndex` builds as durable
+  maintained text-index registrations.
 - Do not add BM25/full-text as a grammar shortcut or dependency-first import.
 - Do not use synthetic vector metrics for real-embedding oMLX rows unless the PR
   is explicitly testing that metric; cosine is the default semantic benchmark
