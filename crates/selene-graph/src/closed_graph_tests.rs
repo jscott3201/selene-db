@@ -7,14 +7,12 @@ use selene_core::{
     PropertyMap, PropertyValueType, Value, intern,
 };
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
-    WalConfig, WalWriter,
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig, WalWriter,
 };
 
 use crate::{
-    CORE_PROVIDER_TAG, EdgeEndpointDef, EntityId, GraphError, GraphTypeDef, NodeTypeDef,
-    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph,
-    TypeViolation, ValidationMode,
+    EdgeEndpointDef, EntityId, GraphError, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
+    PropertyElementType, PropertyTypeDef, SharedGraph, TypeViolation, ValidationMode,
 };
 
 #[path = "closed_graph_tests/immutable.rs"]
@@ -87,22 +85,14 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 fn write_snapshot(dir: &Path, shared: &SharedGraph, sequence: u64) {
-    let provider = shared
-        .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
-        .expect("core provider is registered");
-    let mut builder = SnapshotBuilder::new(SnapshotConfig {
-        dir: dir.to_path_buf(),
-        sequence,
-        compression: SectionCompression::None,
-        fsync: false,
-    });
-    for sub in provider.declared_sub_tags() {
-        let bytes = provider.write_section(*sub).unwrap();
-        builder
-            .add_section(CORE_PROVIDER_TAG, sub.0, bytes)
-            .unwrap();
-    }
-    builder.finalize().unwrap();
+    shared
+        .write_snapshot(SnapshotConfig {
+            dir: dir.to_path_buf(),
+            sequence,
+            compression: SectionCompression::None,
+            fsync: false,
+        })
+        .unwrap();
 }
 
 fn append_wal(dir: &Path, snapshot_seq: u64, changes: &[Change]) {
