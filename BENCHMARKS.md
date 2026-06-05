@@ -833,7 +833,9 @@ document remains a support fact. That models provider-maintained support facts
 separately from graph-hint root documents without making the default uncapped
 profile degenerate to an empty state. `curbp{basis points}` records current
 support precision, while `basecurbp` records the direct graph-expanded row's
-current precision before negative-evidence filtering.
+current precision before negative-evidence filtering. Target-aware local
+profiles also add `hitbp{basis points}`, which records how many queries had
+their expected target document in the returned top-k set.
 
 The first local corpus is intentionally tiny (16 documents + 4 queries across
 GQL, vector-index, agent-memory, and Rust-code topics). It validates that real
@@ -844,7 +846,10 @@ larger local corpus work. `SELENE_OMLX_CORPUS=agent_memory` expands that to
 shape but deliberately overlaps vocabulary across topics to stress vector-only
 retrieval. `SELENE_OMLX_CORPUS=scaled_ambiguous_memory` combines both 40-input
 profiles into 64 documents + 16 queries, crossing the default batch size as a
-64+16 request pair:
+64+16 request pair. `SELENE_OMLX_CORPUS=code_alias_memory` adds a smaller
+target-aware code/alias profile; it keeps topic/current precision metrics but
+also records `hitbp` so rows can show whether the expected symbol/fact was
+retrieved, not only whether the result was in the right broad topic:
 
 | oMLX row | Qwen3 0.6B / 1024 dim | Qwen3 4B / 2560 dim | Notes |
 |---|---:|---:|---|
@@ -897,6 +902,8 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_text_score_batch/...q16_k4_r2_c16...precbp10000_curbp9218` | 472.70 µs | 474.70 µs | Single GQL statement builds all 16 query texts and graph-expanded candidate sets, then calls `selene.text_score_nodes_batch` once; preserves full topic precision while exposing the same currentness gap as the repeated text scorer. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_text_score_batch/...q16_k4_r2_c13...precbp10000_curbp10000` | 180.19 µs | 182.71 µs | Single GQL statement builds all 16 query texts and root sets, then calls `selene.text_score_candidate_state_expanded_batch`; maintained current-state composition restores full current precision and avoids explicit candidate materialization. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_text_vector_batch/...q16_k4_r2_c13...precbp10000_curbp10000` | 2.3434 ms | 5.3866 ms | Current-state BM25 batch produces top-k candidates, then `selene.vector_score_nodes_batch` reranks them. Quality stays full, but the extra vector pass is much slower on this fixture; do not recommend text/vector fusion here without a quality gap. |
+| `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_current_state_text_score_batch/...q8_k4_r2_c6...precbp5000_curbp5000_hitbp8750` | 144.57 µs | 145.39 µs | Target-aware code/alias profile. Sparse BM25 emits fewer than `k=4` rows per query, but seven of eight expected target facts appear in top-k; broad topic/current precision alone would miss this target-level signal. |
+| `SELENE_OMLX_CORPUS=code_alias_memory` `shared_cache_query_root_current_state_text_vector_batch/...q8_k4_r2_c6...precbp5000_curbp5000_hitbp8750` | 553.96 µs | 1.0504 ms | Exact vector rerank after the same BM25/state candidate producer does not improve target hits on this profile and adds dimension-sensitive cost. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
@@ -927,7 +934,10 @@ batched text-score row reaches `precbp10000` / `curbp9218`, `r2`, `c16`, at
 `precbp10000` / `curbp10000`, `r2`, `c13`, at 185.55 us. Adding vector rerank
 after that BM25 current-state candidate pass keeps the same quality but costs
 8.6352 ms, so the GQL batched expansion row at `precbp10000`, `r2`, `c16`, and
-660.94 µs remains a better vector path. The vector
+660.94 µs remains a better vector path. On the target-aware
+`code_alias_memory` profile, current-state BM25 batch reaches `hitbp8750` at
+135.41 us, while adding vector rerank keeps the same `hitbp8750` and costs
+1.5738 ms. The vector
 batched current-state row reaches `curbp10000`, `r2`, `c13`, at 719.86 µs, and
 the batched provenance-state row reaches the same
 `curbp10000` / `c13` shape at 707.24 µs. The conservative cached r60/w40 mixed
@@ -935,9 +945,10 @@ cycle is 12.52 ms on the same 4096-dimensional row. It stays opt-in for now so
 default local oMLX rows remain short and comparable to the earlier two-model
 baseline.
 
-The loaded `jina-code-embeddings-1.5b-mlx` model currently returns HTTP 400 on
-`/v1/embeddings` in oMLX, so it is not part of these vector-index rows until it
-is exposed as an embedding model.
+The locally listed `jina-code-embeddings-1.5b-mlx` model is not currently
+available from `/v1/embeddings` in oMLX (`404 not found` on the status-only
+smoke), so it is not part of these rows until it is exposed as an embedding
+model.
 
 Component-pressure rows pool the query component with additional graph
 components before exact vector scoring. Quality remains perfect on this clean

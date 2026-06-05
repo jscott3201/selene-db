@@ -9,6 +9,7 @@ use super::fixture::{OmlxGqlQueryRootFixture, TOP_K};
 struct TextScoreQuality {
     precision: usize,
     current_precision: usize,
+    target_hit: Option<usize>,
 }
 
 pub(super) fn bench_text_score_rows(
@@ -39,6 +40,8 @@ pub(super) fn bench_text_score_rows(
             .gql_text_score_precision_basis_points(registry, Some(Arc::clone(&cache))),
         current_precision: fixture
             .gql_text_score_current_precision_basis_points(registry, Some(Arc::clone(&cache))),
+        target_hit: fixture
+            .gql_text_score_target_hit_basis_points(registry, Some(Arc::clone(&cache))),
     };
     let batch_quality = TextScoreQuality {
         precision: fixture
@@ -47,6 +50,8 @@ pub(super) fn bench_text_score_rows(
             registry,
             Some(Arc::clone(&batch_cache)),
         ),
+        target_hit: fixture
+            .gql_text_score_batch_target_hit_basis_points(registry, Some(Arc::clone(&batch_cache))),
     };
     let current_state_batch_quality = TextScoreQuality {
         precision: fixture.gql_current_state_text_score_batch_precision_basis_points(
@@ -58,6 +63,10 @@ pub(super) fn bench_text_score_rows(
                 registry,
                 Some(Arc::clone(&current_state_batch_cache)),
             ),
+        target_hit: fixture.gql_current_state_text_score_batch_target_hit_basis_points(
+            registry,
+            Some(Arc::clone(&current_state_batch_cache)),
+        ),
     };
     let current_state_text_vector_batch_quality = TextScoreQuality {
         precision: fixture.gql_current_state_text_vector_batch_precision_basis_points(
@@ -69,6 +78,10 @@ pub(super) fn bench_text_score_rows(
                 registry,
                 Some(Arc::clone(&current_state_text_vector_batch_cache)),
             ),
+        target_hit: fixture.gql_current_state_text_vector_batch_target_hit_basis_points(
+            registry,
+            Some(Arc::clone(&current_state_text_vector_batch_cache)),
+        ),
     };
     let mut plan_session = fixture.reusable_plan_cache_session();
     fixture.warm_query_root_text_score_session(&mut plan_session, registry);
@@ -285,7 +298,7 @@ fn row_label_with_candidate_count(
     quality: TextScoreQuality,
     candidate_count: usize,
 ) -> String {
-    format!(
+    let mut label = format!(
         "{}_{}_q{}_k{}_r{}_c{}_dim{}_precbp{}_curbp{}",
         model_id,
         corpus_label,
@@ -296,5 +309,9 @@ fn row_label_with_candidate_count(
         fixture.dimension,
         quality.precision,
         quality.current_precision,
-    )
+    );
+    if let Some(target_hit) = quality.target_hit {
+        label.push_str(&format!("_hitbp{target_hit}"));
+    }
+    label
 }
