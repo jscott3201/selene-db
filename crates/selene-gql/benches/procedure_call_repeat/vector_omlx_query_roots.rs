@@ -67,6 +67,12 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
         fixture.warm_query_root_state_cache(&registry, Arc::clone(&state_cache));
         fixture.warm_query_root_current_state_cache(&registry, Arc::clone(&current_state_cache));
         fixture.warm_query_root_batch_cache(&registry, Arc::clone(&batch_cache));
+        let mut anchor_session = fixture.reusable_session();
+        let mut anchor_plan_session = fixture.reusable_plan_cache_session();
+        fixture.warm_anchor_lookup_session(&mut anchor_plan_session, &registry);
+        let mut root_materialize_session = fixture.reusable_session();
+        let mut root_materialize_plan_session = fixture.reusable_plan_cache_session();
+        fixture.warm_root_materialize_session(&mut root_materialize_plan_session, &registry);
         let precision = fixture.gql_precision_basis_points(&registry, Some(Arc::clone(&cache)));
         let current_precision =
             fixture.gql_current_precision_basis_points(&registry, Some(Arc::clone(&cache)));
@@ -96,6 +102,48 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
                     black_box(fixture.execute_all_anchor_lookup_queries(
                         &registry,
                         Some(Arc::clone(&anchor_cache)),
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_session_query_anchor_lookup",
+                format!(
+                    "{}_{}_q{}_anchors{}_dim{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    fixture.query_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_anchor_lookup_queries_in_session(
+                        &mut anchor_session,
+                        &registry,
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_session_plan_cache_query_anchor_lookup",
+                format!(
+                    "{}_{}_q{}_anchors{}_dim{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    fixture.query_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_anchor_lookup_queries_in_session(
+                        &mut anchor_plan_session,
+                        &registry,
                     ));
                 });
             },
@@ -183,6 +231,50 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
                     black_box(fixture.execute_all_root_materialize_queries(
                         &registry,
                         Some(Arc::clone(&root_cache)),
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_session_query_root_materialize",
+                format!(
+                    "{}_{}_q{}_r{}_totalr{}_dim{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    fixture.first_query_root_count(),
+                    fixture.query_count() * fixture.first_query_root_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_root_materialize_queries_in_session(
+                        &mut root_materialize_session,
+                        &registry,
+                    ));
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "shared_session_plan_cache_query_root_materialize",
+                format!(
+                    "{}_{}_q{}_r{}_totalr{}_dim{}",
+                    model_id,
+                    corpus_label(config.corpus),
+                    fixture.query_count(),
+                    fixture.first_query_root_count(),
+                    fixture.query_count() * fixture.first_query_root_count(),
+                    fixture.dimension,
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    black_box(fixture.execute_all_root_materialize_queries_in_session(
+                        &mut root_materialize_plan_session,
+                        &registry,
                     ));
                 });
             },
