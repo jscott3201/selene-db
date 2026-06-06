@@ -425,7 +425,8 @@ PR-local mixed vector read/write spot-check:
 ## §3 selene-graph — write pipeline & concurrency
 
 Bench bins: `write_txn_lifecycle`, `provider_fanout`, `bound_type_validation`,
-`concurrent_writers`, `graph_hub_delete`, `graph_read_under_write`.
+`concurrent_writers`, `graph_hub_delete`, `graph_read_under_write`,
+`graph_mixed_workload`.
 
 ### §3a Write-pipeline microbenches
 
@@ -457,6 +458,7 @@ fixture** (the headline scale); `empty_commit` shows the scale axis.
 | `bound_type_validation/bound_commit_simple` | 10k / 50k / 100k | 304 / 250 / 350 µs | Typed-commit validation delta (small). |
 | `bound_type_validation/bound_commit_rich` | 10k / 50k / 100k | 1.01 / 1.14 / 1.67 ms | Wider type-graph validation delta. |
 | `bound_type_validation/bound_schema_change` | 10k / 50k / 100k | 2.92 / 18.6 / 39.3 ms | Full graph-state revalidation; scales with N. |
+| `graph_mixed_workload/point_read_update_r60w40` | 10k / 50k / 100k | 9.196 / 11.027 / 16.597 ms | One scalar cycle: 60 snapshot point reads interleaved with 40 non-indexed property-update commits. Fixture clone/setup excluded; no vector index or WAL. |
 
 ### §3b `graph_hub_delete` — high-degree hub deletion (GRAPH-05 ✓ shipped)
 
