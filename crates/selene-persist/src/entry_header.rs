@@ -12,7 +12,7 @@ pub const MAX_WAL_ENTRY_BYTES: usize = 256 * 1024 * 1024;
 /// Maximum caller-defined principal bytes per WAL entry.
 pub const MAX_PRINCIPAL_BYTES: usize = 4096;
 /// Payloads at or above this encoded length are zstd-compressed.
-pub const COMPRESS_THRESHOLD: usize = 128;
+pub const COMPRESS_THRESHOLD: usize = 4_096;
 /// Header flag bit indicating that the on-disk payload is zstd-compressed.
 pub const FLAG_PAYLOAD_COMPRESSED: u8 = 0b0000_0001;
 

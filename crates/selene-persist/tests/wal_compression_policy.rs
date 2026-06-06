@@ -55,7 +55,7 @@ fn open_with_compression_applies_payload_policy() {
 }
 
 #[test]
-fn default_open_keeps_legacy_compression_policy() {
+fn default_open_uses_configured_compression_threshold() {
     let path = temp_path("compression-default");
     let changes = byte_changes(COMPRESS_THRESHOLD * 4);
     {

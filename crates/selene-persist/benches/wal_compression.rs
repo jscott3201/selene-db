@@ -16,12 +16,12 @@ struct CompressionPolicy {
 
 const COMPRESSION_POLICIES: [CompressionPolicy; 3] = [
     CompressionPolicy {
-        name: "current128",
-        compression: WalCompression::zstd(COMPRESS_THRESHOLD),
+        name: "threshold128",
+        compression: WalCompression::zstd(128),
     },
     CompressionPolicy {
-        name: "threshold4096",
-        compression: WalCompression::zstd(4_096),
+        name: "default4096",
+        compression: WalCompression::zstd(COMPRESS_THRESHOLD),
     },
     CompressionPolicy {
         name: "disabled",

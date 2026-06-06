@@ -380,48 +380,83 @@ mod tests {
     }
 
     #[test]
-    fn compression_threshold_boundary_is_inclusive_at_128() {
+    fn compression_threshold_boundary_is_inclusive_at_default() {
         // The `>= COMPRESS_THRESHOLD` gate in encode_changes keys on the encoded
         // (postcard) length, not the raw byte-buffer length. Grow the byte buffer
-        // one at a time until the encoded length crosses 127 -> 128, then assert
-        // exactly-127 stays uncompressed and exactly-128 compresses. This pins the
-        // off-by-one (`>` vs `>=`) the codec tests far from the boundary can't.
-        assert_eq!(COMPRESS_THRESHOLD, 128);
+        // one at a time until the encoded length crosses threshold - 1 ->
+        // threshold, then assert the boundary. This pins the off-by-one (`>` vs
+        // `>=`) the codec tests far from the boundary can't.
+        assert_eq!(COMPRESS_THRESHOLD, 4_096);
 
         let encoded_len = |buf_len: usize| -> usize {
             let changes = vec![change(vec![0_u8; buf_len])];
             postcard::to_stdvec(&changes).unwrap().len()
         };
 
-        // Find a buffer whose encoded length is exactly 127, and the +1 buffer.
-        let mut buf_at_127 = None;
+        let find_buf_len = |target_len: usize| -> usize {
+            for buf_len in 0..(target_len + 512) {
+                if encoded_len(buf_len) == target_len {
+                    return buf_len;
+                }
+            }
+            panic!("a buffer encoding to exactly {target_len} bytes exists");
+        };
+
+        let below_len = COMPRESS_THRESHOLD - 1;
+        let buf_below = find_buf_len(below_len);
+        let buf_at = find_buf_len(COMPRESS_THRESHOLD);
+        assert_eq!(
+            encoded_len(buf_below),
+            below_len,
+            "below-threshold encoded payload"
+        );
+        assert_eq!(
+            encoded_len(buf_at),
+            COMPRESS_THRESHOLD,
+            "threshold-byte encoded payload"
+        );
+
+        let below_threshold = vec![change(vec![0_u8; buf_below])];
+        let enc_below = encode_changes(&below_threshold).unwrap();
+        assert_eq!(
+            enc_below.flags, 0,
+            "below-threshold encoded payload stays uncompressed"
+        );
+        assert_eq!(
+            decode_changes(&enc_below.bytes, false).unwrap(),
+            below_threshold
+        );
+
+        let at_threshold = vec![change(vec![0_u8; buf_at])];
+        let enc_at = encode_changes(&at_threshold).unwrap();
+        assert_eq!(
+            enc_at.flags, FLAG_PAYLOAD_COMPRESSED,
+            "threshold-byte encoded payload is compressed (>= threshold)"
+        );
+        assert_eq!(decode_changes(&enc_at.bytes, true).unwrap(), at_threshold);
+    }
+
+    #[test]
+    fn old_128_byte_payload_stays_uncompressed_by_default() {
+        let encoded_len = |buf_len: usize| -> usize {
+            let changes = vec![change(vec![0_u8; buf_len])];
+            postcard::to_stdvec(&changes).unwrap().len()
+        };
+        let mut buf_at_128 = None;
         for buf_len in 0..512 {
-            if encoded_len(buf_len) == 127 {
-                buf_at_127 = Some(buf_len);
+            if encoded_len(buf_len) == 128 {
+                buf_at_128 = Some(buf_len);
                 break;
             }
         }
-        let buf_127 = buf_at_127.expect("a buffer encoding to exactly 127 bytes exists");
-        // postcard encodes Bytes length as a varint; below 128 the length byte is
-        // one byte, so +1 raw byte == +1 encoded byte at this boundary.
-        assert_eq!(encoded_len(buf_127), 127, "127-byte encoded payload");
-        assert_eq!(encoded_len(buf_127 + 1), 128, "128-byte encoded payload");
-
-        let at_127 = vec![change(vec![0_u8; buf_127])];
-        let enc_127 = encode_changes(&at_127).unwrap();
-        assert_eq!(
-            enc_127.flags, 0,
-            "127-byte encoded payload stays uncompressed"
-        );
-        assert_eq!(decode_changes(&enc_127.bytes, false).unwrap(), at_127);
-
-        let at_128 = vec![change(vec![0_u8; buf_127 + 1])];
+        let buf_128 = buf_at_128.expect("a buffer encoding to exactly 128 bytes exists");
+        let at_128 = vec![change(vec![0_u8; buf_128])];
         let enc_128 = encode_changes(&at_128).unwrap();
         assert_eq!(
-            enc_128.flags, FLAG_PAYLOAD_COMPRESSED,
-            "128-byte encoded payload is compressed (>= threshold)"
+            enc_128.flags, 0,
+            "128-byte encoded payload stays uncompressed after the threshold increase"
         );
-        assert_eq!(decode_changes(&enc_128.bytes, true).unwrap(), at_128);
+        assert_eq!(decode_changes(&enc_128.bytes, false).unwrap(), at_128);
     }
 
     #[test]
