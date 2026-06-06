@@ -216,9 +216,9 @@ JSON is a first-class value for structured agent payloads and metadata:
 - `JSON` participates in GQL typed parameters, typed predicates, and casts;
 - closed graph schemas can declare canonical JSON defaults with a string literal
   such as `payload :: JSON DEFAULT '{"kind":"episodic"}'`;
-- scalar functions provide parse/stringify/type, array/object shape
-  introspection, bounded path selectors, existence checks, and recursive
-  containment;
+- scalar functions provide parse/stringify/type, array/object construction,
+  array/object shape introspection, bounded path selectors, existence checks,
+  and recursive containment;
 - `selene.json_contains_nodes` turns JSON metadata predicates into graph node
   candidates for vector/text reranking.
 

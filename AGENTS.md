@@ -189,9 +189,13 @@ JSON is native engine data for agentic workloads:
 - `selene-gql` exposes `JSON` as an implementation-defined type name with typed
   parameters, `IS TYPED JSON`, `CAST(<string> AS JSON)`, `CAST(<json> AS
   STRING)`, and scalar functions `json`, `json_parse`, `json_stringify`,
-  `json_type`, `json_array_length`, `json_object_keys`, `json_contains`,
-  `json_get`, `json_get_text`, `json_get_path`, `json_get_path_text`, and
-  `json_has_path`.
+  `json_type`, `json_array`, `json_object`, `json_array_length`,
+  `json_object_keys`, `json_contains`, `json_get`, `json_get_text`,
+  `json_get_path`, `json_get_path_text`, and `json_has_path`.
+- `json_array` and `json_object` construct JSON through the scalar-function
+  surface. They convert SQL null/bool/string/i64/u64/finite-float/list/JSON
+  values to JSON; wider exact numerics, temporal values, bytes, graph
+  references, vectors, and records need explicit user-side conversion first.
 - JSON equality is value equality. JSON is not an order-comparable family; range
   comparisons must reject rather than inventing nested document order.
 - `json_get` is a shallow object-key / array-index selector; it is not JSONPath.
