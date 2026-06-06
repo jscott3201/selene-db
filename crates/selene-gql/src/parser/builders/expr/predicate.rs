@@ -283,24 +283,32 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         // section18.10 <field type>: a braced `RECORD { a :: INT }` is a closed record
         // type; bare `RECORD` (no fields) is the open record type. Field names are
         // user-controlled; interning them applies the per-string byte cap (IL013).
-        let fields = pair
+        let mut fields = Vec::new();
+        for field in pair
             .into_inner()
             .filter(|child| child.as_rule() == Rule::record_field_type)
-            .map(|field| {
-                let field_span = span(&field);
-                let mut children = field.into_inner();
-                let name_pair = children.next().ok_or_else(|| {
-                    ParserError::syntax("record field type is missing name", field_span, None)
-                })?;
-                let type_pair = children.next().ok_or_else(|| {
-                    ParserError::syntax("record field type is missing type", field_span, None)
-                })?;
-                Ok((
-                    intern_pair(name_pair)?,
-                    build_type_name_with_depth(type_pair, depth + 1)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, ParserError>>()?;
+        {
+            let field_span = span(&field);
+            let mut children = field.into_inner();
+            let name_pair = children.next().ok_or_else(|| {
+                ParserError::syntax("record field type is missing name", field_span, None)
+            })?;
+            let type_pair = children.next().ok_or_else(|| {
+                ParserError::syntax("record field type is missing type", field_span, None)
+            })?;
+            let name = intern_pair(name_pair)?;
+            if fields
+                .iter()
+                .any(|(existing_name, _)| existing_name == &name)
+            {
+                return Err(ParserError::syntax(
+                    format!("duplicate record field type name: {}", name.as_str()),
+                    field_span,
+                    Some("each closed RECORD type field name must be declared once".into()),
+                ));
+            }
+            fields.push((name, build_type_name_with_depth(type_pair, depth + 1)?));
+        }
         return Ok(if fields.is_empty() {
             GqlType::Record(RecordType::Open)
         } else {
