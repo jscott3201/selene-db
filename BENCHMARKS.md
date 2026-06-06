@@ -631,9 +631,23 @@ scale-independent (single-query CPU).
 | `gql_analyze_corpus/m5c` | 21.98 µs | Semantic analysis. |
 | `gql_plan_optimize_corpus/m5c` | 48.13 µs | Planner/optimizer end-to-end. |
 | `gql_plan_ir_clone/representative` | 164.0 ns | IR-clone hot path. |
-| `gql_expression_eval/*` (9 cases) | 180–245 ns | Scalar eval: predicates, scalar fns, CASE, list access, binary ops. |
+| `gql_expression_eval/*` (16 cases) | 180–245 ns, plus JSON rows below | Scalar eval: predicates, scalar fns, CASE, list access, binary ops, and runtime-parameter JSON scalar functions. |
 | `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
+
+PR-local quick JSON expression baseline. These rows bind `Value::Json` payloads
+as runtime parameters, so the timed body measures expression execution and
+JSON scalar work, not JSON text parsing during `json(...)`.
+
+| Bench | Median | Notes |
+|---|---:|---|
+| `gql_expression_eval/json/parse_type` | 151.83 ns (quick) | `json_type($payload)` over a prebound agent-memory metadata document. |
+| `gql_expression_eval/json/nested_get_path_text` | 215.31 ns (quick) | Nested object/array path selector returning an episodic fact title. |
+| `gql_expression_eval/json/has_path_miss` | 210.55 ns (quick) | Same nested selector shape returning a deterministic missing-path boolean. |
+| `gql_expression_eval/json/contains_nested` | 189.99 ns (quick) | Recursive containment against a prebound candidate object/array subset. |
+| `gql_expression_eval/json/construct_metadata` | 596.09 ns (quick) | Builds a nested JSON metadata document from scalar runtime parameters. |
+| `gql_expression_eval/json/merge_patch_metadata` | 351.87 ns (quick) | Applies an RFC 7396 merge patch to a prebound metadata document. |
+| `gql_expression_eval/json/patch_metadata` | 472.89 ns (quick) | Applies a three-operation RFC 6902 JSON Patch to a prebound metadata document. |
 
 PR-local quick vector procedure baseline:
 
