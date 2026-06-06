@@ -34,10 +34,12 @@ use super::uuid_fns::parse_uuid_string;
 
 mod decimal;
 mod float;
+mod signed;
 mod signed128;
 mod unsigned;
 
 use float::{FloatTarget, cast_to_float};
+use signed::{SignedIntegerTarget, cast_to_signed_integer};
 use signed128::cast_to_int128;
 use unsigned::{UnsignedIntegerTarget, cast_to_unsigned_integer};
 
@@ -143,79 +145,6 @@ pub(super) fn eval_cast(
             span,
         }),
     }
-}
-
-fn cast_to_integer(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    // Per ISO §20.8 Table 4 the integer target is `EN`; every numeric source
-    // family (`EN`/`UN`/`AN`) is a `Y` cell. Exact-integer sources widen to
-    // their natural intermediate (`u64`/`i128`/`u128`) with an explicit i64
-    // range check — never a silent narrow-through-`i64` (which would corrupt
-    // `Uint(u64::MAX)`/`Int128`/`Uint128` out-of-range values). A boolean
-    // source is Table-4 `N` (no boolean→numeric cast) → 22G03.
-    match value {
-        Value::Int(v) => Ok(Value::Int(v)),
-        Value::Uint(v) => decimal::u64_to_int(v, span),
-        Value::Int128(v) => decimal::i128_to_int(v, span),
-        Value::Uint128(v) => decimal::u128_to_int(v, span),
-        Value::Float(f) => float_to_integer(f, span),
-        Value::Float32(f) => float_to_integer(f64::from(f), span),
-        Value::Decimal(d) => decimal::decimal_to_int(d, span),
-        Value::String(s) => string_to_integer(s.as_str(), span),
-        Value::Bool(_) => Err(non_iso_combination(
-            "CAST from BOOLEAN to a numeric type is not a valid type combination",
-            span,
-        )),
-        _ => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "CAST source not supported for INTEGER target",
-            span,
-        }),
-    }
-}
-
-#[derive(Clone, Copy)]
-enum SignedIntegerTarget {
-    I8,
-    I16,
-    I32,
-    I64,
-}
-
-impl SignedIntegerTarget {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::I8 => "INT8",
-            Self::I16 => "INT16",
-            Self::I32 => "INT32",
-            Self::I64 => "INTEGER",
-        }
-    }
-
-    fn contains(self, value: i64) -> bool {
-        match self {
-            Self::I8 => i8::try_from(value).is_ok(),
-            Self::I16 => i16::try_from(value).is_ok(),
-            Self::I32 => i32::try_from(value).is_ok(),
-            Self::I64 => true,
-        }
-    }
-}
-
-fn cast_to_signed_integer(
-    value: Value,
-    target: SignedIntegerTarget,
-    span: SourceSpan,
-) -> Result<Value, ExecutorError> {
-    let Value::Int(value) = cast_to_integer(value, span)? else {
-        unreachable!("cast_to_integer returns Value::Int on success");
-    };
-    if target.contains(value) {
-        return Ok(Value::Int(value));
-    }
-    Err(ExecutorError::data_exception(
-        DataExceptionSubclass::NumericValueOutOfRange,
-        format!("INTEGER value exceeds {} range during CAST", target.name()),
-        span,
-    ))
 }
 
 fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -407,48 +336,11 @@ fn record_fields_do_not_match(span: SourceSpan) -> ExecutorError {
     )
 }
 
-fn float_to_integer(f: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
-    if f.is_nan() {
-        return Err(ExecutorError::data_exception(
-            DataExceptionSubclass::InvalidCharacterValueForCast,
-            "CAST of NaN to INTEGER has no representable image",
-            span,
-        ));
-    }
-    // §22.4 — truncate toward zero (Q4). Rust `as` saturates rather than
-    // wrapping, so an explicit range check enforces the 22003 contract
-    // before the conversion: any |f| > i64::MAX as f64 would silently land
-    // at i64::MAX/MIN otherwise.
-    #[allow(clippy::cast_precision_loss)]
-    let max = i64::MAX as f64;
-    #[allow(clippy::cast_precision_loss)]
-    let min = i64::MIN as f64;
-    if !f.is_finite() || f >= max || f <= min {
-        return Err(ExecutorError::data_exception(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "FLOAT value exceeds INTEGER range during CAST",
-            span,
-        ));
-    }
-    let truncated = f.trunc();
-    #[allow(clippy::cast_possible_truncation)]
-    Ok(Value::Int(truncated as i64))
-}
-
-fn string_to_integer(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    // Trim whitespace per ecosystem precedent (Postgres/Neo4j/SQLite); see
-    // BRIEF-135a §O Q2-deviation.
-    text.trim()
-        .parse::<i64>()
-        .map(Value::Int)
-        .map_err(|_| invalid_character(text, "INTEGER", span))
-}
-
 fn string_to_boolean(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
     // ISO §20.8 GR4(q) defers C→BO to the §21.2 boolean-literal rules, which
     // are case-insensitive (`TRUE`/`True`/`true`, `FALSE`/`False`/`false`).
     // Trim leading/trailing whitespace consistent with the numeric GR4(g)(ii)
-    // truncating-whitespace rule already applied by `string_to_integer`.
+    // truncating-whitespace rule used by string-to-integer casts.
     match text.trim().to_ascii_lowercase().as_str() {
         "true" => Ok(Value::Bool(true)),
         "false" => Ok(Value::Bool(false)),

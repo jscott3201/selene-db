@@ -178,6 +178,30 @@ fn cast_to_signed_integer_width_checks_range() {
 }
 
 #[test]
+fn cast_string_to_signed_integer_checks_parse_and_range() {
+    assert_eq!(
+        first_value("RETURN CAST('9223372036854775807' AS INTEGER) AS v"),
+        Value::Int(i64::MAX)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('-9223372036854775808' AS INTEGER) AS v"),
+        Value::Int(i64::MIN)
+    );
+
+    for source in [
+        "RETURN CAST('9223372036854775808' AS INTEGER) AS v",
+        "RETURN CAST('-9223372036854775809' AS INTEGER) AS v",
+        "RETURN CAST('9223372036854775808' AS INT8) AS v",
+    ] {
+        assert_eq!(first_status(source), "22003", "{source}");
+    }
+    assert_eq!(
+        first_status("RETURN CAST('not-a-number' AS INTEGER) AS v"),
+        "22018"
+    );
+}
+
+#[test]
 fn cast_to_int128_accepts_wide_numeric_sources() {
     assert_eq!(
         bind_and_eval(Value::Int128(i128::MIN), "RETURN CAST($p AS INT128) AS p"),
