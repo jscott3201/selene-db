@@ -18,8 +18,8 @@
 //!   source/target combination, e.g. boolean ↔ numeric (Table 4 `N`), which
 //!   ISO does not define a `CAST` for.
 //! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
-//!   currently implemented explicit-cast scope (NODE / EDGE / PATH source, the
-//!   temporal / bytes families, or any cast whose target is `NULL` /
+//!   currently implemented explicit-cast scope (NODE / EDGE / PATH source,
+//!   bytes sources, temporal targets, or any cast whose target is `NULL` /
 //!   `NOTHING`).
 
 use selene_core::{Record, Value};
@@ -190,6 +190,12 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
         Value::Decimal(d) => decimal::decimal_to_string(&d),
         Value::String(s) => s.as_str().to_owned(),
         Value::Uuid(v) => v.to_string(),
+        Value::ZonedDateTime(v) => format!("{}{}", v.datetime(), v.offset()),
+        Value::LocalDateTime(v) => v.to_string(),
+        Value::Date(v) => v.to_string(),
+        Value::ZonedTime(v) => format!("{}{}", v.time(), v.offset()),
+        Value::LocalTime(v) => v.to_string(),
+        Value::Duration(v) => v.to_string(),
         _ => {
             return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST source not supported for STRING target",
