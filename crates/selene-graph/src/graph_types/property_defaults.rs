@@ -1,6 +1,6 @@
 //! Persistable default-value descriptors for closed graph property declarations.
 
-use selene_core::{DbString, JsonValue, Value, db_string};
+use selene_core::{DbString, JsonValue, Value, VectorValue, db_string};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, GraphResult};
@@ -58,6 +58,8 @@ pub enum PropertyDefaultValue {
     Uint128(u128),
     /// Fixed-precision decimal default, stored as canonical decimal text.
     Decimal(DbString),
+    /// Dense vector default, stored as canonical IEEE 754 binary32 bits.
+    Vector(Vec<u32>),
 }
 
 impl PropertyDefaultValue {
@@ -153,6 +155,14 @@ impl PropertyDefaultValue {
                     }
                 })?)
             }
+            Self::Vector(bits) => {
+                let components = bits.iter().copied().map(f32::from_bits).collect::<Vec<_>>();
+                Value::Vector(VectorValue::new(components).map_err(|err| {
+                    GraphError::Inconsistent {
+                        reason: format!("persisted VECTOR property default is invalid: {err}"),
+                    }
+                })?)
+            }
         })
     }
 
@@ -189,6 +199,14 @@ impl PropertyDefaultValue {
             Value::Bytes(value) => Some(Self::Bytes(value.to_vec())),
             Value::Uuid(value) => db_string(&value.to_string()).ok().map(Self::Uuid),
             Value::Json(value) => db_string(&value.to_canonical_string()).ok().map(Self::Json),
+            Value::Vector(value) => Some(Self::Vector(
+                value
+                    .as_slice()
+                    .iter()
+                    .copied()
+                    .map(canonical_f32_bits)
+                    .collect(),
+            )),
             _ => None,
         }
     }

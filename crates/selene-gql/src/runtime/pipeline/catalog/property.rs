@@ -28,6 +28,8 @@ fn property_def(
     property: &PlannedTypePropertyDef,
     allow_inline_indexed: bool,
 ) -> Result<PropertyTypeDef, ExecutorError> {
+    let (value_type, list_element_type, record_field_types) =
+        gql_type_to_property_value_type(&property.gql_type)?;
     let mut required = false;
     let mut default = None;
     let mut default_span = property.span;
@@ -36,7 +38,7 @@ fn property_def(
         match constraint {
             PlannedTypePropertyConstraint::NotNull(_) => required = true,
             PlannedTypePropertyConstraint::Default(project, span) => {
-                default = Some(property_default_value(project, *span)?);
+                default = Some(property_default_value(project, value_type, *span)?);
                 default_span = *span;
             }
             PlannedTypePropertyConstraint::Immutable(_) => immutable = true,
@@ -59,8 +61,6 @@ fn property_def(
             PlannedTypePropertyConstraint::Indexed { .. } => {}
         }
     }
-    let (value_type, list_element_type, record_field_types) =
-        gql_type_to_property_value_type(&property.gql_type)?;
     let default = default
         .map(|default| coerce_property_default_value(value_type, default, default_span))
         .transpose()?;

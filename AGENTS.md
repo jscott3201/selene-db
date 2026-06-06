@@ -106,6 +106,8 @@ Vectors are first-class engine data:
 - `CAST(<LIST<numeric>> AS VECTOR)` is the native GQL producer for finite `f32`
   vector values; keep vector-literal grammar out unless a later spec/design
   decision explicitly earns it.
+- `VECTOR` property defaults accept numeric list literals and persist as
+  canonical `PropertyDefaultValue::Vector` component bits.
 - `MAX_VECTOR_DIMENSION` is `u16::MAX`.
 - Supported metrics are lower-is-better `squared_euclidean`, `cosine`, and
   `negative_inner_product`.

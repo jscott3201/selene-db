@@ -196,6 +196,71 @@ fn json_default_property_constraint_rejects_invalid_json_string() {
 }
 
 #[test]
+fn vector_default_property_constraint_accepts_numeric_list_literal() {
+    let graph = empty_closed_graph(3738);
+    let plan = planned("CREATE NODE TYPE :Doc (embedding :: VECTOR DEFAULT [1.0, -0.0, 2])");
+
+    run_write(&graph, &plan)
+        .expect("VECTOR default constraint executes")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(PropertyDefaultValue::Vector(vec![
+            1.0_f32.to_bits(),
+            0.0_f32.to_bits(),
+            2.0_f32.to_bits(),
+        ]))
+    );
+}
+
+#[test]
+fn vector_default_property_constraint_rejects_empty_list() {
+    let graph = empty_closed_graph(3739);
+    let plan = planned("CREATE NODE TYPE :Doc (embedding :: VECTOR DEFAULT [])");
+
+    let err = run_write(&graph, &plan).expect_err("empty VECTOR default rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("VECTOR DEFAULT must be a non-empty")
+    ));
+}
+
+#[test]
+fn vector_default_property_constraint_rejects_non_numeric_element() {
+    let graph = empty_closed_graph(3740);
+    let plan = planned("CREATE NODE TYPE :Doc (embedding :: VECTOR DEFAULT ['x'])");
+
+    let err = run_write(&graph, &plan).expect_err("non-numeric VECTOR default rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("VECTOR DEFAULT list elements must be numeric literals")
+    ));
+}
+
+#[test]
+fn vector_default_property_constraint_rejects_out_of_range_component() {
+    let graph = empty_closed_graph(3741);
+    let plan = planned("CREATE NODE TYPE :Doc (embedding :: VECTOR DEFAULT [1.0e9999])");
+
+    let err = run_write(&graph, &plan).expect_err("out-of-range VECTOR default rejected");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("VECTOR DEFAULT component must be finite")
+    ));
+}
+
+#[test]
 fn float_default_property_constraint_accepts_float_literal() {
     let graph = empty_closed_graph(3724);
     let plan = planned(
