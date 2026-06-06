@@ -177,12 +177,10 @@ fn push_docs(
     topic: Topic,
     docs: &[(&'static str, Option<&'static str>)],
 ) {
-    inputs.extend(docs.iter().map(|(text, target_key)| CorpusInput {
-        topic,
-        is_document: true,
-        text,
-        target_key: *target_key,
-    }));
+    inputs.extend(
+        docs.iter()
+            .map(|(text, target_key)| CorpusInput::document(topic, *text, *target_key)),
+    );
 }
 
 fn queries() -> [CorpusInput; 8] {
@@ -231,10 +229,5 @@ fn queries() -> [CorpusInput; 8] {
 }
 
 fn query(topic: Topic, text: &'static str, target_key: &'static str) -> CorpusInput {
-    CorpusInput {
-        topic,
-        is_document: false,
-        text,
-        target_key: Some(target_key),
-    }
+    CorpusInput::query(topic, text, Some(target_key))
 }

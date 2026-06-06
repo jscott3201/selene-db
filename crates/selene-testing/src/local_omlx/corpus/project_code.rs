@@ -154,110 +154,92 @@ pub(super) fn inputs() -> Vec<CorpusInput> {
             ][..],
         ),
     ] {
-        inputs.extend(docs.iter().map(|(text, target_key)| CorpusInput {
-            topic,
-            is_document: true,
-            text,
-            target_key: *target_key,
-        }));
+        inputs.extend(
+            docs.iter()
+                .map(|(text, target_key)| CorpusInput::document(topic, *text, *target_key)),
+        );
     }
     inputs.extend([
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which runtime session API caches parsed source statements for repeated GQL execution?",
-            target_key: Some("gql-session-plan-cache"),
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which cache stores reusable execution plans for native CALL procedures?",
-            target_key: Some("gql-call-plan-cache"),
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which catalog dispatches BuiltinKind entries to selene procedure implementations?",
-            target_key: Some("gql-builtin-catalog"),
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which GQL built-in batches BM25 over maintained state and expanded roots?",
-            target_key: Some("gql-text-state-batch"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which core value variant stores first-class embedding vectors?",
-            target_key: Some("vector-value-type"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Where are cosine and negative inner product vector metrics scored?",
-            target_key: Some("vector-core-metrics"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which graph type canonicalizes candidate NodeId sets for vector scoring?",
-            target_key: Some("vector-candidate-set"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which graph API scores batched query vectors after expanding root sets?",
-            target_key: Some("vector-expanded-batch"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which provider owns maintained graph-derived memory candidate sets?",
-            target_key: Some("memory-state-provider"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which candidate-state rule removes memories with outgoing negative evidence?",
-            target_key: Some("memory-exclude-outgoing"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which candidate-state rules require incoming or outgoing provenance edges?",
-            target_key: Some("memory-required-edges"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which vector procedure composes maintained memory state with expanded graph roots?",
-            target_key: Some("memory-vector-state-batch"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which local embedding client sends OpenRouter setup requests through curl?",
-            target_key: Some("code-openrouter-client"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which config module reads the embedding provider and corpus environment variables?",
-            target_key: Some("code-embedding-config"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which script keeps Criterion benchmark binaries from running at the same time?",
-            target_key: Some("code-run-benches"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which script checks that benchmark targets are represented in BENCHMARKS.md?",
-            target_key: Some("code-bench-doc-check"),
-        },
+        query(
+            Topic::Gql,
+            "Which runtime session API caches parsed source statements for repeated GQL execution?",
+            "gql-session-plan-cache",
+        ),
+        query(
+            Topic::Gql,
+            "Which cache stores reusable execution plans for native CALL procedures?",
+            "gql-call-plan-cache",
+        ),
+        query(
+            Topic::Gql,
+            "Which catalog dispatches BuiltinKind entries to selene procedure implementations?",
+            "gql-builtin-catalog",
+        ),
+        query(
+            Topic::Gql,
+            "Which GQL built-in batches BM25 over maintained state and expanded roots?",
+            "gql-text-state-batch",
+        ),
+        query(
+            Topic::Vector,
+            "Which core value variant stores first-class embedding vectors?",
+            "vector-value-type",
+        ),
+        query(
+            Topic::Vector,
+            "Where are cosine and negative inner product vector metrics scored?",
+            "vector-core-metrics",
+        ),
+        query(
+            Topic::Vector,
+            "Which graph type canonicalizes candidate NodeId sets for vector scoring?",
+            "vector-candidate-set",
+        ),
+        query(
+            Topic::Vector,
+            "Which graph API scores batched query vectors after expanding root sets?",
+            "vector-expanded-batch",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which provider owns maintained graph-derived memory candidate sets?",
+            "memory-state-provider",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which candidate-state rule removes memories with outgoing negative evidence?",
+            "memory-exclude-outgoing",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which candidate-state rules require incoming or outgoing provenance edges?",
+            "memory-required-edges",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which vector procedure composes maintained memory state with expanded graph roots?",
+            "memory-vector-state-batch",
+        ),
+        query(
+            Topic::Code,
+            "Which local embedding client sends OpenRouter setup requests through curl?",
+            "code-openrouter-client",
+        ),
+        query(
+            Topic::Code,
+            "Which config module reads the embedding provider and corpus environment variables?",
+            "code-embedding-config",
+        ),
+        query(
+            Topic::Code,
+            "Which script keeps Criterion benchmark binaries from running at the same time?",
+            "code-run-benches",
+        ),
+        query(
+            Topic::Code,
+            "Which script checks that benchmark targets are represented in BENCHMARKS.md?",
+            "code-bench-doc-check",
+        ),
     ]);
     inputs
 }
@@ -446,110 +428,96 @@ pub(super) fn alias_inputs() -> Vec<CorpusInput> {
             ][..],
         ),
     ] {
-        inputs.extend(docs.iter().map(|(text, target_key)| CorpusInput {
-            topic,
-            is_document: true,
-            text,
-            target_key: *target_key,
-        }));
+        inputs.extend(
+            docs.iter()
+                .map(|(text, target_key)| CorpusInput::document(topic, *text, *target_key)),
+        );
     }
     inputs.extend([
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "What should repeated root lookup execution enable to avoid rebuilding statement plans?",
-            target_key: Some("gql-source-plan-cache"),
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Where are native procedure argument shapes remembered for reusable CALL execution?",
-            target_key: Some("gql-call-plan-cache"),
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which runtime table sends a selene procedure name to implementation code?",
-            target_key: Some("gql-builtin-dispatch"),
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which procedure ranks text after maintained memory state is intersected with expanded roots?",
-            target_key: Some("gql-state-text-batch"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which value type lets a graph node carry embedding data directly?",
-            target_key: Some("vector-value-variant"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Where do distance choices become lower-is-better semantic scores?",
-            target_key: Some("vector-metric-dispatch"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which structure cleans duplicate node identifiers before exact reranking?",
-            target_key: Some("vector-candidate-canonical"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which API expands graph roots once while scoring many query embeddings?",
-            target_key: Some("vector-expanded-batch-api"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which component owns named active memory candidate sets?",
-            target_key: Some("memory-state-owner"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which rule removes memories with disqualifying negative evidence links?",
-            target_key: Some("memory-negative-edge-filter"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which rules keep only memories with incoming and outgoing evidence links?",
-            target_key: Some("memory-provenance-rules"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which batch procedure combines current memory state with expanded roots before vector scoring?",
-            target_key: Some("memory-state-vector-batch"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which helper sends remote embedding setup requests through the command-line HTTP tool?",
-            target_key: Some("code-openrouter-curl"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which configuration reads provider, corpus, model, batch, and graph hint environment settings?",
-            target_key: Some("code-embedding-env-config"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which script prevents multiple Criterion binaries from timing concurrently?",
-            target_key: Some("code-sequential-runner"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which guard forces new benchmark targets to be written in the benchmark guide?",
-            target_key: Some("code-benchmark-doc-guard"),
-        },
+        query(
+            Topic::Gql,
+            "What should repeated root lookup execution enable to avoid rebuilding statement plans?",
+            "gql-source-plan-cache",
+        ),
+        query(
+            Topic::Gql,
+            "Where are native procedure argument shapes remembered for reusable CALL execution?",
+            "gql-call-plan-cache",
+        ),
+        query(
+            Topic::Gql,
+            "Which runtime table sends a selene procedure name to implementation code?",
+            "gql-builtin-dispatch",
+        ),
+        query(
+            Topic::Gql,
+            "Which procedure ranks text after maintained memory state is intersected with expanded roots?",
+            "gql-state-text-batch",
+        ),
+        query(
+            Topic::Vector,
+            "Which value type lets a graph node carry embedding data directly?",
+            "vector-value-variant",
+        ),
+        query(
+            Topic::Vector,
+            "Where do distance choices become lower-is-better semantic scores?",
+            "vector-metric-dispatch",
+        ),
+        query(
+            Topic::Vector,
+            "Which structure cleans duplicate node identifiers before exact reranking?",
+            "vector-candidate-canonical",
+        ),
+        query(
+            Topic::Vector,
+            "Which API expands graph roots once while scoring many query embeddings?",
+            "vector-expanded-batch-api",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which component owns named active memory candidate sets?",
+            "memory-state-owner",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which rule removes memories with disqualifying negative evidence links?",
+            "memory-negative-edge-filter",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which rules keep only memories with incoming and outgoing evidence links?",
+            "memory-provenance-rules",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which batch procedure combines current memory state with expanded roots before vector scoring?",
+            "memory-state-vector-batch",
+        ),
+        query(
+            Topic::Code,
+            "Which helper sends remote embedding setup requests through the command-line HTTP tool?",
+            "code-openrouter-curl",
+        ),
+        query(
+            Topic::Code,
+            "Which configuration reads provider, corpus, model, batch, and graph hint environment settings?",
+            "code-embedding-env-config",
+        ),
+        query(
+            Topic::Code,
+            "Which script prevents multiple Criterion binaries from timing concurrently?",
+            "code-sequential-runner",
+        ),
+        query(
+            Topic::Code,
+            "Which guard forces new benchmark targets to be written in the benchmark guide?",
+            "code-benchmark-doc-guard",
+        ),
     ]);
     inputs
+}
+
+fn query(topic: Topic, text: &'static str, target_key: &'static str) -> CorpusInput {
+    CorpusInput::query(topic, text, Some(target_key))
 }

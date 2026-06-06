@@ -161,62 +161,52 @@ pub(super) fn inputs() -> Vec<CorpusInput> {
             ][..],
         ),
     ] {
-        inputs.extend(docs.iter().map(|(text, target_key)| CorpusInput {
-            topic,
-            is_document: true,
-            text,
-            target_key: *target_key,
-        }));
+        inputs.extend(
+            docs.iter()
+                .map(|(text, target_key)| CorpusInput::document(topic, *text, *target_key)),
+        );
     }
     inputs.extend([
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which reusable query compiler avoids reparsing a statement string?",
-            target_key: Some("gql-plan-cache"),
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Where does built-in procedure metadata get resolved?",
-            target_key: Some("gql-procedure-registry"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which vector routine reranks many caller-provided graph ids?",
-            target_key: Some("vector-batch-score"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which ANN path grows nearest-neighbor roots through support topology?",
-            target_key: Some("vector-ann-expanded"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which maintained set removes contradicted memories before recall?",
-            target_key: Some("memory-current-state"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which state keeps only memories with grounding evidence?",
-            target_key: Some("memory-provenance-state"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which helper turns internal storage slots into external node ids?",
-            target_key: Some("code-rowid-map"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Where do benchmark names carry quality measurements?",
-            target_key: Some("code-bench-label"),
-        },
+        query(
+            Topic::Gql,
+            "Which reusable query compiler avoids reparsing a statement string?",
+            "gql-plan-cache",
+        ),
+        query(
+            Topic::Gql,
+            "Where does built-in procedure metadata get resolved?",
+            "gql-procedure-registry",
+        ),
+        query(
+            Topic::Vector,
+            "Which vector routine reranks many caller-provided graph ids?",
+            "vector-batch-score",
+        ),
+        query(
+            Topic::Vector,
+            "Which ANN path grows nearest-neighbor roots through support topology?",
+            "vector-ann-expanded",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which maintained set removes contradicted memories before recall?",
+            "memory-current-state",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which state keeps only memories with grounding evidence?",
+            "memory-provenance-state",
+        ),
+        query(
+            Topic::Code,
+            "Which helper turns internal storage slots into external node ids?",
+            "code-rowid-map",
+        ),
+        query(
+            Topic::Code,
+            "Where do benchmark names carry quality measurements?",
+            "code-bench-label",
+        ),
     ]);
     inputs
 }
@@ -277,62 +267,56 @@ pub(super) fn wide_inputs() -> Vec<CorpusInput> {
             ][..],
         ),
     ] {
-        inputs.extend(docs.iter().map(|(text, target_key)| CorpusInput {
-            topic,
-            is_document: true,
-            text,
-            target_key: *target_key,
-        }));
+        inputs.extend(
+            docs.iter()
+                .map(|(text, target_key)| CorpusInput::document(topic, *text, *target_key)),
+        );
     }
     inputs.extend([
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which pattern keeps a row when an optional relationship is missing?",
-            target_key: Some("gql-optional-match"),
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which grouping step batches roots before a procedure call?",
-            target_key: Some("gql-group-collect"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which metric scores embedding direction instead of raw magnitude?",
-            target_key: Some("vector-cosine-metric"),
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which HNSW query setting increases exploration breadth?",
-            target_key: Some("vector-ef-search"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which graph link says an older memory should not be recalled?",
-            target_key: Some("memory-replacement-edge"),
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which link stores the evidence source for a memory fact?",
-            target_key: Some("memory-provenance-link"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which edit path changes files without shell redirection?",
-            target_key: Some("code-apply-patch"),
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which script prevents Criterion bench targets from running concurrently?",
-            target_key: Some("code-bench-runner"),
-        },
+        query(
+            Topic::Gql,
+            "Which pattern keeps a row when an optional relationship is missing?",
+            "gql-optional-match",
+        ),
+        query(
+            Topic::Gql,
+            "Which grouping step batches roots before a procedure call?",
+            "gql-group-collect",
+        ),
+        query(
+            Topic::Vector,
+            "Which metric scores embedding direction instead of raw magnitude?",
+            "vector-cosine-metric",
+        ),
+        query(
+            Topic::Vector,
+            "Which HNSW query setting increases exploration breadth?",
+            "vector-ef-search",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which graph link says an older memory should not be recalled?",
+            "memory-replacement-edge",
+        ),
+        query(
+            Topic::AgentMemory,
+            "Which link stores the evidence source for a memory fact?",
+            "memory-provenance-link",
+        ),
+        query(
+            Topic::Code,
+            "Which edit path changes files without shell redirection?",
+            "code-apply-patch",
+        ),
+        query(
+            Topic::Code,
+            "Which script prevents Criterion bench targets from running concurrently?",
+            "code-bench-runner",
+        ),
     ]);
     inputs
+}
+
+fn query(topic: Topic, text: &'static str, target_key: &'static str) -> CorpusInput {
+    CorpusInput::query(topic, text, Some(target_key))
 }
