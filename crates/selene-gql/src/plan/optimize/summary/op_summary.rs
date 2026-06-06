@@ -37,7 +37,9 @@ pub(super) fn mutation_summary(mutation: &MutationOp) -> String {
         MutationOp::RemoveLabel { label, .. } => {
             format!("op=RemoveLabel(label={})", label.as_str())
         }
-        MutationOp::DeleteTarget { mode, .. } => format!("op=DeleteTarget(mode={mode:?})"),
+        MutationOp::DeleteTargets { mode, targets, .. } => {
+            format!("op=DeleteTargets(mode={mode:?}, targets={})", targets.len())
+        }
     }
 }
 

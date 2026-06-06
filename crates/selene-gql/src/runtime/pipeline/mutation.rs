@@ -1,5 +1,7 @@
 //! Mutation pipeline operator.
 
+use std::collections::BTreeSet;
+
 use smallvec::SmallVec;
 
 use selene_core::{
@@ -7,8 +9,8 @@ use selene_core::{
 };
 
 use crate::{
-    BindingTableColumn, BindingTableSchema, DeleteMode, EdgeDirection, ElementKind,
-    InsertEndpointRef, LabelExpr, MutationOp, ProjectExpr, PropertyInit, SourceSpan,
+    BindingTableColumn, BindingTableSchema, DeleteMode, DeleteTargetPlan, EdgeDirection,
+    ElementKind, InsertEndpointRef, LabelExpr, MutationOp, ProjectExpr, PropertyInit, SourceSpan,
     SubqueryRegistry,
     analyze::ExprIdLookup,
     runtime::{
@@ -137,13 +139,12 @@ pub(super) fn execute(
             table,
             ctx,
         ),
-        MutationOp::DeleteTarget {
-            element,
-            target_column_index,
+        MutationOp::DeleteTargets {
+            targets,
             mode,
             span,
             ..
-        } => execute_delete_target(*element, *target_column_index, *mode, *span, table, ctx),
+        } => execute_delete_targets(targets, *mode, *span, table, ctx),
     }
 }
 
@@ -394,54 +395,101 @@ fn execute_remove_label(
     Ok(table)
 }
 
-fn execute_delete_target(
-    element: ElementKind,
-    target_column_index: u32,
+fn execute_delete_targets(
+    targets: &[DeleteTargetPlan],
     mode: DeleteMode,
     span: SourceSpan,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    let mut nodes = BTreeSet::new();
+    let mut edges = BTreeSet::new();
     let mut rows_since_check = 0;
     for row in table.rows() {
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
-        match element {
-            ElementKind::Node => {
-                if let Some(id) = target_node(row, target_column_index, span)? {
-                    if matches!(mode, DeleteMode::Bare | DeleteMode::NoDetach)
-                        && ctx.snapshot().node_has_incident_edges(id)
+        for target in targets {
+            match target.element {
+                ElementKind::Node => {
+                    if let Some(id) = target_node(row, target.target_column_index, span)?
+                        && ctx.snapshot().is_node_alive(id)
                     {
-                        return Err(ExecutorError::DependentObjectStillExists {
-                            message: "cannot delete node with incident edges (use DETACH DELETE)"
-                                .to_owned(),
-                            span,
-                        });
+                        nodes.insert(id);
+                        if matches!(mode, DeleteMode::Detach) {
+                            add_incident_edges(ctx, id, &mut edges);
+                        }
                     }
-                    ctx.mutator()?
-                        .delete_node(id)
-                        .map_err(|source| graph_mutation(source, span))?;
                 }
-            }
-            ElementKind::Edge => {
-                if let Some(id) = target_edge(row, target_column_index, span)? {
-                    ctx.mutator()?
-                        .delete_edge(id)
-                        .map_err(|source| graph_mutation(source, span))?;
+                ElementKind::Edge => {
+                    if let Some(id) = target_edge(row, target.target_column_index, span)?
+                        && ctx.snapshot().is_edge_alive(id)
+                    {
+                        edges.insert(id);
+                    }
                 }
-            }
-            ElementKind::Path => {
-                // DELETE of a path target is ISO-legal but not yet implemented; 42N01.
-                return Err(ExecutorError::FeatureNotSupportedYet {
-                    feature: "DELETE path target",
-                    span,
-                });
-            }
-            ElementKind::Alias => {
-                return Err(unsupported_target(element));
+                ElementKind::Path | ElementKind::Alias => {
+                    return Err(unsupported_target(target.element));
+                }
             }
         }
     }
+    if matches!(mode, DeleteMode::Bare | DeleteMode::NoDetach) {
+        ensure_delete_nodes_detached(&nodes, &edges, span, ctx)?;
+    }
+    for node in nodes {
+        if ctx.snapshot().is_node_alive(node) {
+            ctx.mutator()?
+                .delete_node(node)
+                .map_err(|source| graph_mutation(source, span))?;
+        }
+    }
+    for edge in edges {
+        if ctx.snapshot().is_edge_alive(edge) {
+            ctx.mutator()?
+                .delete_edge(edge)
+                .map_err(|source| graph_mutation(source, span))?;
+        }
+    }
     Ok(table)
+}
+
+fn add_incident_edges(ctx: &TxContext<'_, '_>, node: NodeId, edges: &mut BTreeSet<EdgeId>) {
+    if let Some(entry) = ctx.snapshot().outgoing_edges(node) {
+        edges.extend(entry.iter().map(|edge| edge.edge_id));
+    }
+    if let Some(entry) = ctx.snapshot().incoming_edges(node) {
+        edges.extend(entry.iter().map(|edge| edge.edge_id));
+    }
+}
+
+fn ensure_delete_nodes_detached(
+    nodes: &BTreeSet<NodeId>,
+    edges: &BTreeSet<EdgeId>,
+    span: SourceSpan,
+    ctx: &TxContext<'_, '_>,
+) -> Result<(), ExecutorError> {
+    for node in nodes {
+        if incident_edge_outside_delete_set(ctx, *node, edges) {
+            return Err(ExecutorError::DependentObjectStillExists {
+                message: "cannot delete node with incident edges (use DETACH DELETE)".to_owned(),
+                span,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn incident_edge_outside_delete_set(
+    ctx: &TxContext<'_, '_>,
+    node: NodeId,
+    edges: &BTreeSet<EdgeId>,
+) -> bool {
+    ctx.snapshot()
+        .outgoing_edges(node)
+        .is_some_and(|entry| entry.iter().any(|edge| !edges.contains(&edge.edge_id)))
+        || ctx
+            .snapshot()
+            .incoming_edges(node)
+            .is_some_and(|entry| entry.iter().any(|edge| !edges.contains(&edge.edge_id)))
 }
 
 fn property_map(

@@ -54,16 +54,17 @@ pub use crate::flagger::{FeatureUse, feature_walk};
 pub use crate::parser::{parse, parse_many, parse_with_source};
 pub use crate::plan::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
-    BuildSide, CatalogOp, CompositeIndexHandle, EdgeMatch, EmptyIndexCatalog, ExecutionPlan,
-    FilterPredicate, FilterPredicateKind, HiddenBindingId, HopContributor, ImplDefinedCaps,
-    IndexCatalog, IndexHandle, IndexKey, IndexKind, IndexTarget, InsertEndpointRef, InsertSiteId,
-    JoinTree, LimitAmount, LiveIndexCatalog, MutationOp, NodeIdOrdering, NodeOrEdgeScan,
-    OptimizeContext, OrderAccess, OrderKey, OuterBindingRef, PathContributor, PathPlan,
-    PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery, PlannedTableSubquery,
-    PlannedTableSubqueryYield, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
-    PlannedYieldItem, PlannerError, ProjectExpr, PropertyInit, RepeatEdgeMatch, Rule, ScanAccess,
-    ScanKind, SessionOp, SubqueryBody, SubqueryKind, SubqueryRegistry, TailBinding, Transformed,
-    TxOp, TypedIndexBounds, TypedIndexLookup, YieldKind, optimize, plan,
+    BuildSide, CatalogOp, CompositeIndexHandle, DeleteTargetPlan, EdgeMatch, EmptyIndexCatalog,
+    ExecutionPlan, FilterPredicate, FilterPredicateKind, HiddenBindingId, HopContributor,
+    ImplDefinedCaps, IndexCatalog, IndexHandle, IndexKey, IndexKind, IndexTarget,
+    InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, LiveIndexCatalog, MutationOp,
+    NodeIdOrdering, NodeOrEdgeScan, OptimizeContext, OrderAccess, OrderKey, OuterBindingRef,
+    PathContributor, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
+    PlannedTableSubquery, PlannedTableSubqueryYield, PlannedTypePropertyConstraint,
+    PlannedTypePropertyDef, PlannedYieldItem, PlannerError, ProjectExpr, PropertyInit,
+    RepeatEdgeMatch, Rule, ScanAccess, ScanKind, SessionOp, SubqueryBody, SubqueryKind,
+    SubqueryRegistry, TailBinding, Transformed, TxOp, TypedIndexBounds, TypedIndexLookup,
+    YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureArity, ProcedureDefaultValue, ProcedureError, ProcedureHandle,

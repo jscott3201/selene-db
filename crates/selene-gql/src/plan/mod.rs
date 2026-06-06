@@ -17,14 +17,14 @@ pub mod optimize;
 pub use error::PlannerError;
 pub use ir::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
-    BuildSide, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind,
-    HiddenBindingId, HopContributor, ImplDefinedCaps, IndexKey, InsertEndpointRef, InsertSiteId,
-    JoinTree, LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey,
-    OuterBindingRef, PathContributor, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
-    PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
-    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
-    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SessionOp, SubqueryBody, SubqueryKind,
-    SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
+    BuildSide, CatalogOp, DeleteTargetPlan, EdgeMatch, ExecutionPlan, FilterPredicate,
+    FilterPredicateKind, HiddenBindingId, HopContributor, ImplDefinedCaps, IndexKey,
+    InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeIdOrdering,
+    NodeOrEdgeScan, OrderAccess, OrderKey, OuterBindingRef, PathContributor, PathPlan, PatternPlan,
+    PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery, PlannedTableSubquery,
+    PlannedTableSubqueryYield, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
+    PlannedYieldItem, ProjectExpr, PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SessionOp,
+    SubqueryBody, SubqueryKind, SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::{plan, plan_with_caps};
 pub use optimize::{

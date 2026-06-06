@@ -369,7 +369,7 @@ fn walk_mutation_exprs(
         MutationOp::SetLabel { .. }
         | MutationOp::RemoveProperty { .. }
         | MutationOp::RemoveLabel { .. }
-        | MutationOp::DeleteTarget { .. } => false,
+        | MutationOp::DeleteTargets { .. } => false,
     }
 }
 

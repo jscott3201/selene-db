@@ -436,7 +436,7 @@ fn collect_subqueries_in_mutation(
         MutationOp::SetLabel { .. }
         | MutationOp::RemoveProperty { .. }
         | MutationOp::RemoveLabel { .. }
-        | MutationOp::DeleteTarget { .. } => {}
+        | MutationOp::DeleteTargets { .. } => {}
     }
     Ok(())
 }

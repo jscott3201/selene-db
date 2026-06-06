@@ -23,7 +23,7 @@ pub use filter::{
     Aggregate, AggregateArg, FilterPredicate, FilterPredicateKind, LimitAmount, OrderKey,
     ProjectExpr,
 };
-pub use mutation::{InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
+pub use mutation::{DeleteTargetPlan, InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
 pub use session::SessionOp;
 pub use subquery::{
     OuterBindingRef, PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
