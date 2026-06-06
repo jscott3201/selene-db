@@ -93,7 +93,7 @@ impl OmlxGqlQueryRootFixture {
                     }
                     let props = PropertyMap::from_pairs([
                         (embedding_key.clone(), Value::Vector(vector.clone())),
-                        (body_key.clone(), Value::String(istr(input.text))),
+                        (body_key.clone(), Value::String(istr(input.text()))),
                     ])
                     .expect("oMLX GQL bench document properties fit");
                     let graph_hint = admits_graph_hint(
@@ -109,7 +109,7 @@ impl OmlxGqlQueryRootFixture {
                     if support_fact {
                         labels.insert(support_fact_label.clone());
                     }
-                    let current_fact = !is_negative_evidence_document(input.text);
+                    let current_fact = !is_negative_evidence_document(input.text());
                     let node = mutator
                         .create_node(labels, props)
                         .expect("oMLX GQL bench document node inserts");
@@ -182,7 +182,7 @@ impl OmlxGqlQueryRootFixture {
                     let props = PropertyMap::from_pairs([
                         (query_index_key.clone(), Value::Int(query_index as i64)),
                         (query_key.clone(), Value::Vector(vector.clone())),
-                        (query_text_key.clone(), Value::String(istr(input.text))),
+                        (query_text_key.clone(), Value::String(istr(input.text()))),
                     ])
                     .expect("oMLX GQL bench query properties fit");
                     let anchor = mutator
@@ -221,7 +221,7 @@ impl OmlxGqlQueryRootFixture {
                     debug_assert_eq!(anchor_topic, input.topic);
                     QueryVector {
                         topic: input.topic,
-                        text: input.text,
+                        text: input.text().to_owned(),
                         vector,
                         target_key: input.target_key,
                     }
@@ -385,7 +385,7 @@ struct DocumentMeta {
 
 struct QueryVector {
     topic: Topic,
-    text: &'static str,
+    text: String,
     vector: VectorValue,
     target_key: Option<&'static str>,
 }

@@ -26,6 +26,7 @@ pub(super) fn corpus_label(corpus: CorpusProfile) -> &'static str {
         CorpusProfile::ProjectSourceCodeMemory => "project_source_code_memory",
         CorpusProfile::ProjectSourceChunkMemory => "project_source_chunk_memory",
         CorpusProfile::ProjectSourceFileMemory => "project_source_file_memory",
+        CorpusProfile::ProjectWorkspaceSourceMemory => "project_workspace_source_memory",
     }
 }
 

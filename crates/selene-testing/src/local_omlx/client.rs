@@ -111,7 +111,7 @@ impl OmlxClient {
     fn embed_chunk(&self, model: &str, inputs: &[CorpusInput]) -> Result<Vec<VectorValue>, String> {
         let body = serde_json::json!({
             "model": model,
-            "input": inputs.iter().map(|input| input.text).collect::<Vec<_>>(),
+            "input": inputs.iter().map(CorpusInput::text).collect::<Vec<_>>(),
         })
         .to_string();
         let response = self
@@ -177,7 +177,7 @@ impl OpenRouterClient {
     fn embed_chunk(&self, model: &str, inputs: &[CorpusInput]) -> Result<Vec<VectorValue>, String> {
         let body = serde_json::json!({
             "model": model,
-            "input": inputs.iter().map(|input| input.text).collect::<Vec<_>>(),
+            "input": inputs.iter().map(CorpusInput::text).collect::<Vec<_>>(),
             "encoding_format": "float",
         })
         .to_string();

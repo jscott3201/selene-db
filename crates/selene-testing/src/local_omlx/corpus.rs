@@ -7,6 +7,10 @@ mod project_code;
 mod source_chunks;
 mod source_code;
 mod source_files;
+mod workspace_source;
+
+#[cfg(test)]
+mod tests;
 
 /// Corpus size and ambiguity profile for local embedding benchmarks.
 #[derive(Clone, Copy)]
@@ -33,6 +37,8 @@ pub enum CorpusProfile {
     ProjectSourceChunkMemory,
     /// File-level corpus with selected real selene-db source files.
     ProjectSourceFileMemory,
+    /// Live workspace-source corpus extracted from current selene-db files.
+    ProjectWorkspaceSourceMemory,
 }
 
 impl CorpusProfile {
@@ -68,6 +74,9 @@ impl CorpusProfile {
             "project_source_file_memory" | "project_source_file" | "selene_source_file" => {
                 Self::ProjectSourceFileMemory
             }
+            "project_workspace_source_memory"
+            | "project_workspace_source"
+            | "selene_workspace_source" => Self::ProjectWorkspaceSourceMemory,
             other => panic!("unsupported embedding corpus value: {other}"),
         }
     }
@@ -86,6 +95,7 @@ impl CorpusProfile {
             Self::ProjectSourceCodeMemory => source_code::inputs(),
             Self::ProjectSourceChunkMemory => source_chunks::inputs(),
             Self::ProjectSourceFileMemory => source_files::inputs(),
+            Self::ProjectWorkspaceSourceMemory => workspace_source::inputs(),
         }
     }
 }
@@ -104,16 +114,47 @@ pub enum Topic {
 }
 
 /// One text item sent to the local embedding endpoint.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct CorpusInput {
     /// Semantic topic used by graph labels and precision checks.
     pub topic: Topic,
     /// Whether this item is a searchable document (`true`) or query (`false`).
     pub is_document: bool,
     /// Text submitted to the embedding endpoint.
-    pub text: &'static str,
+    pub text: String,
     /// Optional document key or query target key for target-hit benchmark rows.
     pub target_key: Option<&'static str>,
+}
+
+impl CorpusInput {
+    /// Build a searchable document input.
+    pub fn document(
+        topic: Topic,
+        text: impl Into<String>,
+        target_key: Option<&'static str>,
+    ) -> Self {
+        Self {
+            topic,
+            is_document: true,
+            text: text.into(),
+            target_key,
+        }
+    }
+
+    /// Build a query input.
+    pub fn query(topic: Topic, text: impl Into<String>, target_key: Option<&'static str>) -> Self {
+        Self {
+            topic,
+            is_document: false,
+            text: text.into(),
+            target_key,
+        }
+    }
+
+    /// Borrow the text submitted to the embedding endpoint.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
 }
 
 /// Return the graph label used for `topic` in benchmark fixtures.
@@ -170,38 +211,33 @@ fn tiny_inputs() -> Vec<CorpusInput> {
             ][..],
         ),
     ] {
-        inputs.extend(texts.iter().map(|text| CorpusInput {
-            topic,
-            is_document: true,
-            text,
-            target_key: None,
-        }));
+        inputs.extend(
+            texts
+                .iter()
+                .map(|text| CorpusInput::document(topic, *text, None)),
+        );
     }
     inputs.extend([
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "How does GQL execute graph pattern matching and procedure calls?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which vector index should rerank embedding candidates in memory?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Find current task memory while ignoring contradicted facts.",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Where is the Rust batch vector candidate scoring API implemented?",
-            target_key: None,
-        },
+        CorpusInput::query(
+            Topic::Gql,
+            "How does GQL execute graph pattern matching and procedure calls?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Vector,
+            "Which vector index should rerank embedding candidates in memory?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::AgentMemory,
+            "Find current task memory while ignoring contradicted facts.",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Code,
+            "Where is the Rust batch vector candidate scoring API implemented?",
+            None,
+        ),
     ]);
     inputs
 }
@@ -262,62 +298,53 @@ fn agent_memory_inputs() -> Vec<CorpusInput> {
             ][..],
         ),
     ] {
-        inputs.extend(texts.iter().map(|text| CorpusInput {
-            topic,
-            is_document: true,
-            text,
-            target_key: None,
-        }));
+        inputs.extend(
+            texts
+                .iter()
+                .map(|text| CorpusInput::document(topic, *text, None)),
+        );
     }
     inputs.extend([
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "How can GQL retrieve active agent memories through graph procedures?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which graph patterns connect a task to supporting memory evidence?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "How should vector candidates be reranked after graph filtering?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "When does ANN help compared with exact scoring over graph candidates?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Find current preferences and ignore superseded or contradictory facts.",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Retrieve session-scoped agent memory with provenance and recency hints.",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Where does the Rust benchmark derive graph candidate sets?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which code path converts row indexes back to stable node ids?",
-            target_key: None,
-        },
+        CorpusInput::query(
+            Topic::Gql,
+            "How can GQL retrieve active agent memories through graph procedures?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Gql,
+            "Which graph patterns connect a task to supporting memory evidence?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Vector,
+            "How should vector candidates be reranked after graph filtering?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Vector,
+            "When does ANN help compared with exact scoring over graph candidates?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::AgentMemory,
+            "Find current preferences and ignore superseded or contradictory facts.",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::AgentMemory,
+            "Retrieve session-scoped agent memory with provenance and recency hints.",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Code,
+            "Where does the Rust benchmark derive graph candidate sets?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Code,
+            "Which code path converts row indexes back to stable node ids?",
+            None,
+        ),
     ]);
     inputs
 }
@@ -378,62 +405,53 @@ fn ambiguous_memory_inputs() -> Vec<CorpusInput> {
             ][..],
         ),
     ] {
-        inputs.extend(texts.iter().map(|text| CorpusInput {
-            topic,
-            is_document: true,
-            text,
-            target_key: None,
-        }));
+        inputs.extend(
+            texts
+                .iter()
+                .map(|text| CorpusInput::document(topic, *text, None)),
+        );
     }
     inputs.extend([
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "Which graph query filters current candidate facts before scoring?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Gql,
-            is_document: false,
-            text: "How does GQL traversal find supporting evidence for a recalled fact?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "Which embedding search returns semantic candidates before reranking?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Vector,
-            is_document: false,
-            text: "How can vector ranking retrieve stale facts without graph filtering?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "Which memory graph candidates are current for this session request?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::AgentMemory,
-            is_document: false,
-            text: "How do dependency hints keep recalled agent memories stable?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "Which Rust fixture function scores candidate nodes in a batch?",
-            target_key: None,
-        },
-        CorpusInput {
-            topic: Topic::Code,
-            is_document: false,
-            text: "How do stable benchmark IDs keep candidate rows comparable?",
-            target_key: None,
-        },
+        CorpusInput::query(
+            Topic::Gql,
+            "Which graph query filters current candidate facts before scoring?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Gql,
+            "How does GQL traversal find supporting evidence for a recalled fact?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Vector,
+            "Which embedding search returns semantic candidates before reranking?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Vector,
+            "How can vector ranking retrieve stale facts without graph filtering?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::AgentMemory,
+            "Which memory graph candidates are current for this session request?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::AgentMemory,
+            "How do dependency hints keep recalled agent memories stable?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Code,
+            "Which Rust fixture function scores candidate nodes in a batch?",
+            None,
+        ),
+        CorpusInput::query(
+            Topic::Code,
+            "How do stable benchmark IDs keep candidate rows comparable?",
+            None,
+        ),
     ]);
     inputs
 }
@@ -442,268 +460,4 @@ fn scaled_ambiguous_memory_inputs() -> Vec<CorpusInput> {
     let mut inputs = ambiguous_memory_inputs();
     inputs.extend(agent_memory_inputs());
     inputs
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::{CorpusProfile, Topic, topic_label};
-
-    #[test]
-    fn tiny_profile_has_four_topics_with_documents_and_queries() {
-        let inputs = CorpusProfile::Tiny.inputs();
-        let document_count = inputs.iter().filter(|input| input.is_document).count();
-        let query_count = inputs.len() - document_count;
-
-        assert_eq!(document_count, 16);
-        assert_eq!(query_count, 4);
-    }
-
-    #[test]
-    fn scaled_ambiguous_profile_combines_ambiguous_and_agent_memory() {
-        let scaled = CorpusProfile::ScaledAmbiguousMemory.inputs();
-        let expected = CorpusProfile::AmbiguousMemory.inputs().len()
-            + CorpusProfile::AgentMemory.inputs().len();
-
-        assert_eq!(scaled.len(), expected);
-    }
-
-    #[test]
-    fn code_alias_profile_targets_existing_documents() {
-        let inputs = CorpusProfile::CodeAliasMemory.inputs();
-        let document_keys = inputs
-            .iter()
-            .filter(|input| input.is_document)
-            .filter_map(|input| input.target_key)
-            .collect::<HashSet<_>>();
-        let query_targets = inputs
-            .iter()
-            .filter(|input| !input.is_document)
-            .map(|input| input.target_key.expect("code alias query has target"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(query_targets.len(), 8);
-        assert!(
-            query_targets
-                .iter()
-                .all(|target| document_keys.contains(target))
-        );
-    }
-
-    #[test]
-    fn wide_code_alias_profile_extends_target_queries() {
-        let inputs = CorpusProfile::CodeAliasWideMemory.inputs();
-        let document_keys = inputs
-            .iter()
-            .filter(|input| input.is_document)
-            .filter_map(|input| input.target_key)
-            .collect::<HashSet<_>>();
-        let query_targets = inputs
-            .iter()
-            .filter(|input| !input.is_document)
-            .map(|input| input.target_key.expect("wide code alias query has target"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(query_targets.len(), 16);
-        assert!(
-            query_targets
-                .iter()
-                .all(|target| document_keys.contains(target))
-        );
-    }
-
-    #[test]
-    fn project_code_profile_targets_existing_documents() {
-        let inputs = CorpusProfile::ProjectCodeMemory.inputs();
-        let document_keys = inputs
-            .iter()
-            .filter(|input| input.is_document)
-            .filter_map(|input| input.target_key)
-            .collect::<HashSet<_>>();
-        let query_targets = inputs
-            .iter()
-            .filter(|input| !input.is_document)
-            .map(|input| input.target_key.expect("project code query has target"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(query_targets.len(), 16);
-        assert!(
-            query_targets
-                .iter()
-                .all(|target| document_keys.contains(target))
-        );
-    }
-
-    #[test]
-    fn project_code_alias_profile_targets_existing_documents() {
-        let inputs = CorpusProfile::ProjectCodeAliasMemory.inputs();
-        let document_keys = inputs
-            .iter()
-            .filter(|input| input.is_document)
-            .filter_map(|input| input.target_key)
-            .collect::<HashSet<_>>();
-        let query_targets = inputs
-            .iter()
-            .filter(|input| !input.is_document)
-            .map(|input| {
-                input
-                    .target_key
-                    .expect("project code alias query has target")
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(query_targets.len(), 16);
-        assert!(
-            query_targets
-                .iter()
-                .all(|target| document_keys.contains(target))
-        );
-    }
-
-    #[test]
-    fn project_source_code_profile_targets_existing_documents() {
-        let inputs = CorpusProfile::ProjectSourceCodeMemory.inputs();
-        let document_keys = inputs
-            .iter()
-            .filter(|input| input.is_document)
-            .filter_map(|input| input.target_key)
-            .collect::<HashSet<_>>();
-        let query_targets = inputs
-            .iter()
-            .filter(|input| !input.is_document)
-            .map(|input| {
-                input
-                    .target_key
-                    .expect("project source code query has target")
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(query_targets.len(), 16);
-        assert!(
-            query_targets
-                .iter()
-                .all(|target| document_keys.contains(target))
-        );
-    }
-
-    #[test]
-    fn project_source_file_profile_targets_existing_documents() {
-        let inputs = CorpusProfile::ProjectSourceFileMemory.inputs();
-        let document_keys = inputs
-            .iter()
-            .filter(|input| input.is_document)
-            .filter_map(|input| input.target_key)
-            .collect::<HashSet<_>>();
-        let query_targets = inputs
-            .iter()
-            .filter(|input| !input.is_document)
-            .map(|input| {
-                input
-                    .target_key
-                    .expect("project source file query has target")
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(query_targets.len(), 8);
-        assert!(
-            query_targets
-                .iter()
-                .all(|target| document_keys.contains(target))
-        );
-    }
-
-    #[test]
-    fn project_source_chunk_profile_targets_existing_documents() {
-        let inputs = CorpusProfile::ProjectSourceChunkMemory.inputs();
-        let document_keys = inputs
-            .iter()
-            .filter(|input| input.is_document)
-            .filter_map(|input| input.target_key)
-            .collect::<HashSet<_>>();
-        let query_targets = inputs
-            .iter()
-            .filter(|input| !input.is_document)
-            .map(|input| {
-                input
-                    .target_key
-                    .expect("project source chunk query has target")
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(query_targets.len(), 16);
-        assert!(
-            query_targets
-                .iter()
-                .all(|target| document_keys.contains(target))
-        );
-    }
-
-    #[test]
-    fn project_source_chunk_profile_keeps_graph_roots_target_free() {
-        let inputs = CorpusProfile::ProjectSourceChunkMemory.inputs();
-        for topic in [Topic::Gql, Topic::Vector, Topic::AgentMemory, Topic::Code] {
-            let roots = inputs
-                .iter()
-                .filter(|input| input.is_document && input.topic == topic)
-                .take(2)
-                .collect::<Vec<_>>();
-
-            assert_eq!(roots.len(), 2);
-            assert!(roots.iter().all(|root| root.target_key.is_none()));
-        }
-    }
-
-    #[test]
-    fn parses_corpus_profile_values() {
-        assert!(matches!(
-            CorpusProfile::from_value("tiny"),
-            CorpusProfile::Tiny
-        ));
-        assert!(matches!(
-            CorpusProfile::from_value("code_alias"),
-            CorpusProfile::CodeAliasMemory
-        ));
-        assert!(matches!(
-            CorpusProfile::from_value("code_alias_wide"),
-            CorpusProfile::CodeAliasWideMemory
-        ));
-        assert!(matches!(
-            CorpusProfile::from_value("selene_project_code"),
-            CorpusProfile::ProjectCodeMemory
-        ));
-        assert!(matches!(
-            CorpusProfile::from_value("selene_project_code_alias"),
-            CorpusProfile::ProjectCodeAliasMemory
-        ));
-        assert!(matches!(
-            CorpusProfile::from_value("selene_source_code"),
-            CorpusProfile::ProjectSourceCodeMemory
-        ));
-        assert!(matches!(
-            CorpusProfile::from_value("selene_source_chunk"),
-            CorpusProfile::ProjectSourceChunkMemory
-        ));
-        assert!(matches!(
-            CorpusProfile::from_value("selene_source_file"),
-            CorpusProfile::ProjectSourceFileMemory
-        ));
-        assert!(matches!(
-            CorpusProfile::from_value("scaled_ambiguous_memory"),
-            CorpusProfile::ScaledAmbiguousMemory
-        ));
-    }
-
-    #[test]
-    fn topic_labels_are_distinct() {
-        let labels = [
-            topic_label(Topic::Gql),
-            topic_label(Topic::Vector),
-            topic_label(Topic::AgentMemory),
-            topic_label(Topic::Code),
-        ];
-        let unique = labels.iter().collect::<HashSet<_>>();
-
-        assert_eq!(unique.len(), labels.len());
-    }
 }

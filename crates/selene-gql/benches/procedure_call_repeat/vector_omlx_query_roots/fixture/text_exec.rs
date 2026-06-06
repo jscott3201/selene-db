@@ -374,7 +374,7 @@ impl OmlxGqlQueryRootFixture {
             .get(query_index)
             .expect("oMLX GQL bench query index is valid");
         session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
-        session.bind_parameter(istr("query_text"), Value::String(istr(query.text)));
+        session.bind_parameter(istr("query_text"), Value::String(istr(&query.text)));
         match session
             .execute_source(QUERY_ROOT_TEXT_SCORE_SOURCE, registry)
             .expect("oMLX GQL query-root text scoring procedure executes")
