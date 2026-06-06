@@ -25,6 +25,8 @@ use keywords::{fmt_match_mode, fmt_path_mode, fmt_path_selector, fmt_set_op};
 use preflight::validate_formattable;
 use type_name::fmt_type;
 
+pub(crate) use type_name::fmt_type as format_gql_type;
+
 /// Format a read-side statement as GQL source.
 ///
 /// # Errors
