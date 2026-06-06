@@ -199,6 +199,9 @@ fn inherit_call_parameter_declarations(call: &mut ProcedureCall, declarations: &
     for arg in &mut call.args {
         inherit_value_parameter_declarations(arg, declarations);
     }
+    if let Some(filter) = &mut call.yield_filter {
+        inherit_value_parameter_declarations(filter, declarations);
+    }
 }
 
 fn inherit_match_clause_parameter_declarations(

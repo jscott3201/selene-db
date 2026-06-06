@@ -303,12 +303,14 @@ fn parse_top_level_call_variants() {
     );
     assert_eq!(call.args.len(), 2);
     assert_eq!(call.yield_items.len(), 1);
+    assert!(call.yield_filter.is_none());
 
     let Statement::Call(call) = parse("CALL pkg.cleanup()").expect("CALL without YIELD parses")
     else {
         panic!("expected top-level CALL");
     };
     assert!(call.yield_items.is_empty());
+    assert!(call.yield_filter.is_none());
 }
 
 #[test]
@@ -324,6 +326,18 @@ fn parse_call_yield_star_alias_and_quoted_segment() {
         call.yield_items[1].alias.clone().expect("alias").as_str(),
         "alias"
     );
+}
+
+#[test]
+fn parse_call_yield_where_filter() {
+    let Statement::Call(call) =
+        parse("CALL pkg.rank() YIELD score AS s WHERE s >= 0").expect("CALL parses")
+    else {
+        panic!("expected top-level CALL");
+    };
+
+    assert_eq!(call.yield_items.len(), 1);
+    assert!(call.yield_filter.is_some());
 }
 
 #[test]

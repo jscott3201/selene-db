@@ -263,6 +263,28 @@ fn read_tier_procedure_yields_rows() {
 }
 
 #[test]
+fn read_tier_procedure_yield_where_filters_projected_rows() {
+    let registry = registry_one(
+        &["pkg", "scores"],
+        ProcedureMutability::Read,
+        ProcedureTier::Graph,
+        vec![output("score", GqlType::Integer)],
+        Behavior::Return(vec![vec![Value::Int(7)], vec![Value::Int(10)]]),
+    );
+
+    let table = rows(
+        execute(
+            "CALL pkg.scores() YIELD score WHERE score >= 10",
+            &graph(3918),
+            &registry,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(column_values(&table, "score"), vec![Value::Int(10)]);
+}
+
+#[test]
 fn procedure_returning_zero_rows_drops_input_row() {
     let registry = registry_one(
         &["pkg", "empty"],

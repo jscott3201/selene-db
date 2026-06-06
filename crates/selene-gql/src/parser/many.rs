@@ -443,6 +443,9 @@ fn rebase_call(call: &mut ProcedureCall, offset: usize) {
     for item in &mut call.yield_items {
         rebase_span(&mut item.span, offset);
     }
+    if let Some(filter) = &mut call.yield_filter {
+        rebase_value(filter, offset);
+    }
 }
 
 fn rebase_inline_call(call: &mut InlineProcedureCall, offset: usize) {
