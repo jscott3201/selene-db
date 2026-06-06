@@ -80,7 +80,8 @@ show_procedures  = { ^"SHOW" ~ ^"PROCEDURES" }
 
 type_prop_def_list = { type_prop_def ~ ("," ~ type_prop_def)* }
 type_prop_def      = { ident ~ "::" ~ type_name ~ type_prop_constraint* }
-type_prop_constraint = { ^"NOT" ~ ^"NULL" | ^"DEFAULT" ~ literal | ^"IMMUTABLE" | ^"UNIQUE" | ^"INDEXED" ~ (^"AS" ~ ident)? }
+type_prop_constraint = { ^"NOT" ~ ^"NULL" | ^"DEFAULT" ~ default_value | ^"IMMUTABLE" | ^"UNIQUE" | ^"INDEXED" ~ (^"AS" ~ ident)? }
+default_value = _{ record_constructor | literal }
 edge_endpoint_clause = { ^"FROM" ~ label_list ~ ^"TO" ~ label_list }
 label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
 

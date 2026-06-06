@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, fmt};
 use selene_core::{DbString, LabelSet, PropertyValueType, Value};
 use serde::{Deserialize, Serialize};
 
-pub use property_defaults::PropertyDefaultValue;
+pub use property_defaults::{PropertyDefaultRecordField, PropertyDefaultValue};
 use record_types::validate_record_field_types;
 pub use record_types::{RecordFieldType, RecordFieldTypeDef, RecordFieldTypes};
 
@@ -688,3 +688,7 @@ fn ensure_endpoint_index(
 #[cfg(test)]
 #[path = "graph_types_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "graph_types_property_default_tests.rs"]
+mod property_default_tests;

@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::{PropertyDefaultRecordField, RecordFieldType, RecordFieldTypeDef, RecordFieldTypes};
+
 #[test]
 fn recover_closed_wal_only_replays_catalog_ddl() {
     let dir = temp_dir("closed-schema-wal-only");
@@ -87,6 +89,31 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
             Box::new(PropertyDefaultValue::String(db_string("beta").unwrap())),
         ]),
     )];
+    let record_defaults = [(
+        db_string("config").unwrap(),
+        RecordFieldTypes(vec![
+            RecordFieldTypeDef {
+                name: db_string("host").unwrap(),
+                field_type: RecordFieldType::Scalar(selene_core::PropertyValueType::String),
+                required: true,
+            },
+            RecordFieldTypeDef {
+                name: db_string("port").unwrap(),
+                field_type: RecordFieldType::Scalar(selene_core::PropertyValueType::Int),
+                required: true,
+            },
+        ]),
+        PropertyDefaultValue::Record(vec![
+            PropertyDefaultRecordField {
+                name: db_string("host").unwrap(),
+                value: Box::new(PropertyDefaultValue::String(db_string("h").unwrap())),
+            },
+            PropertyDefaultRecordField {
+                name: db_string("port").unwrap(),
+                value: Box::new(PropertyDefaultValue::Integer(1)),
+            },
+        ]),
+    )];
     let changes = {
         let mut txn = shared.begin_write();
         let mut properties = base_properties(&serial, &payload, &device_id, &score, &small_score);
@@ -114,6 +141,17 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 default: Some(default.clone()),
                 immutable: false,
                 record_field_types: None,
+            }
+        }));
+        properties.extend(record_defaults.iter().map(|(name, field_types, default)| {
+            PropertyTypeDef {
+                name: name.clone(),
+                value_type: selene_core::PropertyValueType::RecordTyped,
+                list_element_type: None,
+                required: false,
+                default: Some(default.clone()),
+                immutable: false,
+                record_field_types: Some(field_types.clone()),
             }
         }));
         txn.mutator()
@@ -177,6 +215,13 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         let property = &graph_type.node_types[0].properties[list_start + offset];
         assert_eq!(&property.name, name);
         assert_eq!(property.list_element_type.as_ref(), Some(element_type));
+        assert_eq!(property.default.as_ref(), Some(default));
+    }
+    let record_start = list_start + list_defaults.len();
+    for (offset, (name, field_types, default)) in record_defaults.iter().enumerate() {
+        let property = &graph_type.node_types[0].properties[record_start + offset];
+        assert_eq!(&property.name, name);
+        assert_eq!(property.record_field_types.as_ref(), Some(field_types));
         assert_eq!(property.default.as_ref(), Some(default));
     }
     let _ = fs::remove_dir_all(dir);

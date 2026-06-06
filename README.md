@@ -143,7 +143,11 @@ defaults. Scalar defaults cover the implemented value families, `JSON` defaults
 canonicalize from JSON string images, `VECTOR` defaults use numeric list
 literals, and `LIST<T>` defaults use recursively validated list literals such as
 `tags :: LIST<STRING> DEFAULT ['agentic', 'memory']` or
-`embeddings :: LIST<VECTOR> DEFAULT [[1, 0], [0, 1]]`.
+`embeddings :: LIST<VECTOR> DEFAULT [[1, 0], [0, 1]]`. Closed and open
+`RECORD` properties can use record-constructor defaults such as
+`config :: RECORD{host :: STRING, port :: INTEGER} DEFAULT RECORD{host: 'h', port: 1}`,
+with nested field validation for lists, vectors, JSON fields, and nested
+records.
 
 ## Native Retrieval
 
