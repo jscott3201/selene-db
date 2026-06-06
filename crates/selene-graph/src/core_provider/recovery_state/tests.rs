@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use selene_core::{
-    Change, EdgeTypeDefV1, GraphId, GraphTypeId, LabelSet, NodeId, NodeTypeDefV1, NodeTypeRef,
-    PredefinedValueType, PropertyDefV1, PropertyMap, SchemaChange, SchemaPropertyIndexKind, Value,
-    ValueType, ValueTypeCardinality, db_string,
+    Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, LabelSet, NodeId, NodeTypeDefV1,
+    NodeTypeRef, PredefinedValueType, PropertyDefV1, PropertyMap, SchemaChange,
+    SchemaPropertyIndexKind, Value, ValueType, ValueTypeCardinality, VectorValue, db_string,
 };
 use selene_persist::RecoveryProvider;
 use smallvec::smallvec;
@@ -102,6 +102,10 @@ fn core_string_property(name: &str, required: bool) -> PropertyDefV1 {
 
 fn props(pairs: impl IntoIterator<Item = (selene_core::DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
+}
+
+fn vector(values: &[f32]) -> Value {
+    Value::Vector(VectorValue::new(values.to_vec()).unwrap())
 }
 
 #[test]
@@ -311,6 +315,83 @@ fn wal_replay_restores_property_index_created_after_node_state() {
         .nodes_with_property_eq(&label, &property, &Value::Int(42))
         .unwrap();
     assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
+}
+
+#[test]
+fn wal_replay_delete_clears_dead_node_payload() {
+    let provider = CoreProvider::new_for_recovery();
+    let id = NodeId::new(1);
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::NodeCreated {
+            id,
+            labels: LabelSet::single(db_string("WalPayloadNode").unwrap()),
+            properties: props([(db_string("embedding").unwrap(), vector(&[1.0, 2.0, 3.0]))]),
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(provider.as_ref(), &Change::NodeDeleted { id }).unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    let row = recovered
+        .row_for_node_id(id)
+        .expect("deleted id stays mapped")
+        .get() as usize;
+    assert!(!recovered.is_node_alive(id));
+    assert_eq!(recovered.node_store.row_to_id.get(row).copied(), Some(id));
+    assert!(recovered.node_store.labels.get(row).unwrap().is_empty());
+    assert!(recovered.node_store.properties.get(row).unwrap().is_empty());
+}
+
+#[test]
+fn wal_replay_delete_clears_dead_edge_payload() {
+    let provider = CoreProvider::new_for_recovery();
+    let source = NodeId::new(1);
+    let target = NodeId::new(2);
+    let edge = EdgeId::new(1);
+    for id in [source, target] {
+        RecoveryProvider::on_change(
+            provider.as_ref(),
+            &Change::NodeCreated {
+                id,
+                labels: LabelSet::new(),
+                properties: PropertyMap::new(),
+            },
+        )
+        .unwrap();
+    }
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::EdgeCreated {
+            id: edge,
+            label: db_string("WalPayloadEdge").unwrap(),
+            source,
+            target,
+            properties: props([(db_string("embedding").unwrap(), vector(&[4.0, 5.0, 6.0]))]),
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(provider.as_ref(), &Change::EdgeDeleted { id: edge }).unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    let row = recovered
+        .row_for_edge_id(edge)
+        .expect("deleted id stays mapped")
+        .get() as usize;
+    assert!(recovered.is_node_alive(source));
+    assert!(recovered.is_node_alive(target));
+    assert!(!recovered.is_edge_alive(edge));
+    assert_eq!(recovered.edge_store.row_to_id.get(row).copied(), Some(edge));
+    assert_eq!(recovered.edge_store.label.get(row).unwrap().as_str(), "");
+    assert_eq!(
+        recovered.edge_store.source.get(row).copied(),
+        Some(NodeId::TOMBSTONE)
+    );
+    assert_eq!(
+        recovered.edge_store.target.get(row).copied(),
+        Some(NodeId::TOMBSTONE)
+    );
+    assert!(recovered.edge_store.properties.get(row).unwrap().is_empty());
 }
 
 #[test]

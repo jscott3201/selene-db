@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use selene_core::{Change, EdgeId, GraphId, NodeId, PropertyDiff, PropertyMap, SchemaChange};
+use selene_core::{
+    Change, DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
+    db_string,
+};
 use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
@@ -196,7 +199,7 @@ impl RecoveryState {
             }
             Change::NodeDeleted { id } => {
                 let row = require_live_node(&mut self.nodes, *id)?;
-                row.alive = false;
+                clear_node_row(row);
             }
             Change::EdgeCreated {
                 id,
@@ -233,7 +236,7 @@ impl RecoveryState {
             }
             Change::EdgeDeleted { id } => {
                 let row = require_live_edge(&mut self.edges, *id)?;
-                row.alive = false;
+                clear_edge_row(row);
             }
             Change::NodePropertyRemoved { id, property } => {
                 let row = require_live_node(&mut self.nodes, *id)?;
@@ -255,8 +258,8 @@ impl RecoveryState {
                 let mut truncated_nodes = std::collections::BTreeSet::new();
                 for (id, row) in self.nodes.iter_mut() {
                     if row.alive && row.labels.contains(label) {
-                        row.alive = false;
                         truncated_nodes.insert(*id);
+                        clear_node_row(row);
                     }
                 }
                 for row in self.edges.values_mut() {
@@ -264,14 +267,14 @@ impl RecoveryState {
                         && (truncated_nodes.contains(&row.source)
                             || truncated_nodes.contains(&row.target))
                     {
-                        row.alive = false;
+                        clear_edge_row(row);
                     }
                 }
             }
             Change::EdgesOfTypeTruncated { label } => {
                 for row in self.edges.values_mut() {
                     if row.alive && row.label == *label {
-                        row.alive = false;
+                        clear_edge_row(row);
                     }
                 }
             }
@@ -280,12 +283,8 @@ impl RecoveryState {
                 // position and mark it dead — identical to the runtime mutator,
                 // which carries no ids in the declarative change ("replay walks
                 // the store"). Wipes ALL nodes/edges incl untyped ones.
-                for row in self.nodes.values_mut() {
-                    row.alive = false;
-                }
-                for row in self.edges.values_mut() {
-                    row.alive = false;
-                }
+                self.nodes.values_mut().for_each(clear_node_row);
+                self.edges.values_mut().for_each(clear_edge_row);
                 // A reset moots every prior schema/index intent in the WAL up to
                 // this point, and forces the recovered graph open.
                 self.schema_reset_to_open = true;
@@ -618,6 +617,24 @@ fn require_live_edge(
         )));
     }
     Ok(row)
+}
+
+fn clear_node_row(row: &mut NodeRow) {
+    row.labels = LabelSet::new();
+    row.properties = PropertyMap::new();
+    row.alive = false;
+}
+
+fn clear_edge_row(row: &mut EdgeRow) {
+    row.label = dead_edge_label();
+    row.source = NodeId::TOMBSTONE;
+    row.target = NodeId::TOMBSTONE;
+    row.properties = PropertyMap::new();
+    row.alive = false;
+}
+
+fn dead_edge_label() -> DbString {
+    db_string("").expect("empty edge tombstone label is always within the string cap")
 }
 
 fn apply_property_diff(
