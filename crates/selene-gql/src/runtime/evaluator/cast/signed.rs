@@ -7,7 +7,9 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::{decimal, invalid_character, non_iso_combination};
+use super::{
+    decimal, invalid_character, non_iso_combination, numeric_text::normalize_signed_numeric_text,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum SignedIntegerTarget {
@@ -106,13 +108,12 @@ fn float_to_integer(value: f64, span: SourceSpan) -> Result<Value, ExecutorError
 }
 
 fn string_to_integer(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let trimmed = text.trim();
-    match trimmed.parse::<i64>() {
+    let normalized = normalize_signed_numeric_text(text, "INTEGER", span)?;
+    match normalized.parse::<i64>() {
         Ok(value) => Ok(Value::Int(value)),
-        Err(_) if signed_integer_literal_overflows_i64(trimmed) => Err(signed_out_of_range(
-            span,
-            "STRING value exceeds INTEGER range during CAST",
-        )),
+        Err(_) if signed_integer_literal_overflows_i64(normalized.as_ref()) => Err(
+            signed_out_of_range(span, "STRING value exceeds INTEGER range during CAST"),
+        ),
         Err(_) => Err(invalid_character(text, "INTEGER", span)),
     }
 }

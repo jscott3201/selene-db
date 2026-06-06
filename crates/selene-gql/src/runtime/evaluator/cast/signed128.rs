@@ -8,7 +8,7 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::{invalid_character, non_iso_combination};
+use super::{invalid_character, non_iso_combination, numeric_text::normalize_signed_numeric_text};
 
 const I128_MAX_EXCLUSIVE_UPPER_BOUND: f64 = 170_141_183_460_469_231_731_687_303_715_884_105_728.0;
 const I128_MIN_INCLUSIVE_LOWER_BOUND: f64 = -170_141_183_460_469_231_731_687_303_715_884_105_728.0;
@@ -67,10 +67,12 @@ fn decimal_to_int128(
 }
 
 fn string_to_int128(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let trimmed = text.trim();
-    match trimmed.parse::<i128>() {
+    let normalized = normalize_signed_numeric_text(text, "INT128", span)?;
+    match normalized.parse::<i128>() {
         Ok(value) => Ok(Value::Int128(value)),
-        Err(_) if integer_literal_overflows_i128(trimmed) => Err(int128_out_of_range(span)),
+        Err(_) if integer_literal_overflows_i128(normalized.as_ref()) => {
+            Err(int128_out_of_range(span))
+        }
         Err(_) => Err(invalid_character(text, "INT128", span)),
     }
 }
