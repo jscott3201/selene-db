@@ -549,6 +549,25 @@ the contiguous `Vec` + `write_all` path remains the baseline.
 |---|---:|---:|---:|---:|---|
 | `persist_wal_body_size_no_fsync` | 12.5 ms | 8.42 ms | 7.22 ms | 13.1 ms | Equal total work; U-shaped in packing; vectored write rejected. |
 
+#### `persist_wal_payload_shape_*` — scalar / JSON / vector payloads
+
+These rows keep the WAL format unchanged and isolate payload shape for the
+future WAL/compression overhaul. Quick profile writes/replays 1k changes as ten
+100-change entries with `SyncPolicy::OnFlushOnly`; setup is outside the replay
+timed body. The JSON fixture models an agent-memory metadata document, and the
+vector fixtures use 128-dim and 768-dim first-class `Value::Vector` payloads.
+
+Command:
+
+```bash
+scripts/run-benches.sh --profile quick --bench wal --filter payload_shape
+```
+
+| Bench | scalar i64 | JSON metadata | vector128 | vector768 | Notes |
+|---|---:|---:|---:|---:|---|
+| `persist_wal_payload_shape_no_fsync` | 1.084 ms | 1.677 ms | 1.826 ms | 2.185 ms | Append path only; no fsync in timed body. |
+| `persist_wal_payload_shape_replay` | 1.433 ms | 2.870 ms | 2.514 ms | 2.908 ms | Reader open + checksum + optional decompression + postcard decode. |
+
 #### `persist_wal_sync_sweep` — sync-policy sweep
 
 Append + explicit `flush()` across sync policies. The fsync-frequent policies

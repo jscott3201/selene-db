@@ -231,6 +231,58 @@ fn bench_wal_body_size_no_fsync(c: &mut Criterion) {
     group.finish();
 }
 
+fn payload_shape_total() -> usize {
+    match BenchProfile::from_env() {
+        BenchProfile::Quick => 1_000,
+        _ => 10_000,
+    }
+}
+
+fn payload_shape_batch_size() -> usize {
+    100
+}
+
+fn bench_wal_payload_shape_no_fsync(c: &mut Criterion) {
+    let mut group = c.benchmark_group("persist_wal_payload_shape_no_fsync");
+    let total = payload_shape_total();
+    let batch_size = payload_shape_batch_size();
+    let entries = total.div_ceil(batch_size);
+    for &shape in common::payload_shapes() {
+        group.throughput(Throughput::Elements(total as u64));
+        group.bench_function(BenchmarkId::new(shape.name(), total), |b| {
+            b.iter_batched(
+                || {
+                    let dir = common::TempDir::new("wal-payload-shape");
+                    let writer = WalWriter::open(
+                        &dir.path().join(DEFAULT_WAL_FILE_NAME),
+                        WalConfig {
+                            sync_policy: SyncPolicy::OnFlushOnly,
+                            snapshot_seq: 0,
+                        },
+                    )
+                    .expect("wal opens");
+                    (dir, writer, common::changes_with_payload(batch_size, shape))
+                },
+                |(_dir, mut writer, changes)| {
+                    for idx in 0..entries {
+                        writer
+                            .append(
+                                HlcTimestamp::new(idx as u64 + 1, 0),
+                                Origin::Local,
+                                None,
+                                &changes,
+                            )
+                            .expect("append succeeds");
+                    }
+                    std::hint::black_box(writer.last_sequence());
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 fn bench_wal_sync_policy_sweep(c: &mut Criterion) {
     let mut group = c.benchmark_group("persist_wal_sync_sweep");
     for (name, sync_policy) in [
@@ -296,6 +348,49 @@ fn sync_sweep_scales(sync_policy: SyncPolicy) -> Vec<usize> {
     scales
 }
 
+fn bench_wal_payload_shape_replay(c: &mut Criterion) {
+    let mut group = c.benchmark_group("persist_wal_payload_shape_replay");
+    let total = payload_shape_total();
+    let batch_size = payload_shape_batch_size();
+    let entries = total.div_ceil(batch_size);
+    for &shape in common::payload_shapes() {
+        group.throughput(Throughput::Elements(total as u64));
+        group.bench_function(BenchmarkId::new(shape.name(), total), |b| {
+            b.iter_batched(
+                || {
+                    let dir = common::TempDir::new("wal-payload-shape-replay");
+                    common::write_wal_with_payload(
+                        dir.path(),
+                        entries,
+                        batch_size,
+                        shape,
+                        0,
+                        SyncPolicy::OnFlushOnly,
+                    );
+                    dir
+                },
+                |dir| {
+                    let reader = WalReader::open(&dir.path().join(DEFAULT_WAL_FILE_NAME))
+                        .expect("wal reads");
+                    let total = reader
+                        .iterate(|_| true)
+                        .expect("wal iterates")
+                        .map(|view| {
+                            view.expect("entry reads")
+                                .body()
+                                .expect("body decodes")
+                                .len()
+                        })
+                        .sum::<usize>();
+                    std::hint::black_box(total);
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 fn bench_wal_replay(c: &mut Criterion) {
     let mut group = c.benchmark_group("persist_wal_replay");
     for &scale in common::scales() {
@@ -334,6 +429,7 @@ criterion_group! {
     config = common::criterion_config();
     targets = bench_wal_append_single, bench_wal_append_batch_1000,
         bench_wal_append_single_no_fsync, bench_wal_append_batch_1000_no_fsync,
-        bench_wal_body_size_no_fsync, bench_wal_sync_policy_sweep, bench_wal_replay
+        bench_wal_body_size_no_fsync, bench_wal_payload_shape_no_fsync,
+        bench_wal_sync_policy_sweep, bench_wal_payload_shape_replay, bench_wal_replay
 }
 criterion_main!(wal_group);
