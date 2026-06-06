@@ -236,7 +236,7 @@ JSON is a first-class value for structured agent payloads and metadata:
   such as `payload :: JSON DEFAULT '{"kind":"episodic"}'`;
 - scalar functions provide parse/stringify/type, array/object construction,
   array/object shape introspection, bounded path selectors, existence checks,
-  and recursive containment;
+  recursive containment, and RFC 7396 merge-patch updates;
 - `selene.json_contains_nodes` turns JSON metadata predicates into graph node
   candidates for vector/text reranking.
 

@@ -143,6 +143,27 @@ pub(super) fn eval_json_contains(
     Ok(Value::Bool(target.contains(&candidate)))
 }
 
+pub(super) fn eval_json_merge_patch(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let mut args = args.into_iter();
+    let target = args.next().expect("arity checked");
+    let patch = args.next().expect("arity checked");
+    if matches!(target, Value::Null) || matches!(patch, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let Value::Json(target) = target else {
+        return data_exception("json_merge_patch target is not JSON", span);
+    };
+    let Value::Json(patch) = patch else {
+        return data_exception("json_merge_patch patch is not JSON", span);
+    };
+    target.merge_patch(&patch).map(Value::Json).map_err(|err| {
+        data_exception_value(format!("JSON merge patch result is invalid: {err}"), span)
+    })
+}
+
 pub(super) fn eval_json_get(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
     let Some(value) = select_json_path(&args, "json_get", span)? else {
         return Ok(Value::Null);
