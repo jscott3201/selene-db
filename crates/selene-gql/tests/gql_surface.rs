@@ -196,31 +196,63 @@ fn compaction_procedures_execute_through_call_surface() {
 
     let before = execute_rows(
         &mut session,
-        "CALL selene.compaction_stats() YIELD reclaimable_rows, dense",
+        "CALL selene.compaction_stats() \
+         YIELD reclaimable_rows, reclaimable_row_basis_points, \
+               compaction_recommended, dense",
         &registry,
     );
     assert_eq!(column_uints(&before, "reclaimable_rows"), vec![3]);
+    assert_eq!(
+        column_uints(&before, "reclaimable_row_basis_points"),
+        vec![6_000]
+    );
+    assert_eq!(column_bools(&before, "compaction_recommended"), vec![false]);
     assert_eq!(column_bools(&before, "dense"), vec![false]);
 
     let compact = execute_rows(
         &mut session,
         "CALL selene.compact() \
-         YIELD before_reclaimable_rows, reclaimed_nodes, reclaimed_edges, \
-               after_reclaimable_rows, after_dense",
+         YIELD before_reclaimable_rows, before_reclaimable_row_basis_points, \
+               before_compaction_recommended, reclaimed_nodes, reclaimed_edges, \
+               after_reclaimable_rows, after_reclaimable_row_basis_points, \
+               after_compaction_recommended, after_dense",
         &registry,
     );
     assert_eq!(column_uints(&compact, "before_reclaimable_rows"), vec![3]);
+    assert_eq!(
+        column_uints(&compact, "before_reclaimable_row_basis_points"),
+        vec![6_000]
+    );
+    assert_eq!(
+        column_bools(&compact, "before_compaction_recommended"),
+        vec![false]
+    );
     assert_eq!(column_uints(&compact, "reclaimed_nodes"), vec![1]);
     assert_eq!(column_uints(&compact, "reclaimed_edges"), vec![2]);
     assert_eq!(column_uints(&compact, "after_reclaimable_rows"), vec![0]);
+    assert_eq!(
+        column_uints(&compact, "after_reclaimable_row_basis_points"),
+        vec![0]
+    );
+    assert_eq!(
+        column_bools(&compact, "after_compaction_recommended"),
+        vec![false]
+    );
     assert_eq!(column_bools(&compact, "after_dense"), vec![true]);
 
     let after = execute_rows(
         &mut session,
-        "CALL selene.compaction_stats() YIELD reclaimable_rows, dense",
+        "CALL selene.compaction_stats() \
+         YIELD reclaimable_rows, reclaimable_row_basis_points, \
+               compaction_recommended, dense",
         &registry,
     );
     assert_eq!(column_uints(&after, "reclaimable_rows"), vec![0]);
+    assert_eq!(
+        column_uints(&after, "reclaimable_row_basis_points"),
+        vec![0]
+    );
+    assert_eq!(column_bools(&after, "compaction_recommended"), vec![false]);
     assert_eq!(column_bools(&after, "dense"), vec![true]);
 }
 

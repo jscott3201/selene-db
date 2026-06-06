@@ -47,6 +47,17 @@ use crate::graph::{
 use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::typed_index::TypedIndex;
 
+const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
+
+/// Minimum dead node+edge rows before compaction recommendation can fire.
+///
+/// Compaction rebuilds the whole live graph, so tiny amounts of row churn should
+/// remain explicit caller policy rather than default maintenance advice.
+pub const COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS: u64 = 1_024;
+
+/// Minimum dead-row ratio, scaled by 10,000, for compaction advice.
+pub const COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_BASIS_POINTS: u64 = 2_500;
+
 /// What CORE reclaimed during a compaction pass.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CompactionReport {
@@ -119,6 +130,28 @@ impl CompactionStats {
     #[must_use]
     pub const fn is_dense(self) -> bool {
         self.reclaimable_nodes == 0 && self.reclaimable_edges == 0
+    }
+
+    /// Return reclaimable rows divided by allocated rows, scaled by 10,000.
+    #[must_use]
+    pub fn reclaimable_row_basis_points(self) -> u64 {
+        let allocated = self.allocated_rows();
+        if allocated == 0 {
+            return 0;
+        }
+        let scaled = u128::from(self.reclaimable_rows()) * u128::from(BASIS_POINTS_DENOMINATOR);
+        (scaled / u128::from(allocated)) as u64
+    }
+
+    /// Return true when current row-space pressure merits maintenance compaction.
+    ///
+    /// The recommendation is diagnostic only: reads and writes never compact
+    /// automatically, and callers still decide when to run maintenance.
+    #[must_use]
+    pub fn compaction_recommended(self) -> bool {
+        self.reclaimable_rows() >= COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS
+            && self.reclaimable_row_basis_points()
+                >= COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_BASIS_POINTS
     }
 }
 

@@ -18,7 +18,7 @@ use crate::{
 const STATS_PROC_NAME: &str = "selene.compaction_stats";
 const COMPACT_PROC_NAME: &str = "selene.compact";
 
-static STATS_OUTPUTS: [StaticOutputColumn; 10] = [
+static STATS_OUTPUTS: [StaticOutputColumn; 12] = [
     StaticOutputColumn::new("allocated_nodes", GqlType::Uint64)
         .with_description("Allocated node rows, including live and dead rows."),
     StaticOutputColumn::new("live_nodes", GqlType::Uint64).with_description("Alive node rows."),
@@ -35,11 +35,15 @@ static STATS_OUTPUTS: [StaticOutputColumn; 10] = [
         .with_description("Alive node plus edge rows."),
     StaticOutputColumn::new("reclaimable_rows", GqlType::Uint64)
         .with_description("Dead node plus edge rows reclaimable by compaction."),
+    StaticOutputColumn::new("reclaimable_row_basis_points", GqlType::Uint64)
+        .with_description("Reclaimable rows divided by allocated rows, scaled by 10,000."),
+    StaticOutputColumn::new("compaction_recommended", GqlType::Boolean)
+        .with_description("Whether row-space diagnostics recommend maintenance compaction."),
     StaticOutputColumn::new("dense", GqlType::Boolean)
         .with_description("Whether no dead rows remain to compact."),
 ];
 
-static COMPACT_OUTPUTS: [StaticOutputColumn; 22] = [
+static COMPACT_OUTPUTS: [StaticOutputColumn; 26] = [
     StaticOutputColumn::new("before_allocated_nodes", GqlType::Uint64)
         .with_description("Allocated node rows before compaction."),
     StaticOutputColumn::new("before_live_nodes", GqlType::Uint64)
@@ -58,6 +62,11 @@ static COMPACT_OUTPUTS: [StaticOutputColumn; 22] = [
         .with_description("Alive node plus edge rows before compaction."),
     StaticOutputColumn::new("before_reclaimable_rows", GqlType::Uint64)
         .with_description("Dead node plus edge rows reclaimable before compaction."),
+    StaticOutputColumn::new("before_reclaimable_row_basis_points", GqlType::Uint64)
+        .with_description("Before-compaction reclaimable row ratio scaled by 10,000."),
+    StaticOutputColumn::new("before_compaction_recommended", GqlType::Boolean).with_description(
+        "Whether row-space diagnostics recommended compaction before maintenance.",
+    ),
     StaticOutputColumn::new("before_dense", GqlType::Boolean)
         .with_description("Whether the graph was dense before compaction."),
     StaticOutputColumn::new("reclaimed_nodes", GqlType::Uint64)
@@ -82,6 +91,11 @@ static COMPACT_OUTPUTS: [StaticOutputColumn; 22] = [
         .with_description("Alive node plus edge rows after compaction."),
     StaticOutputColumn::new("after_reclaimable_rows", GqlType::Uint64)
         .with_description("Dead node plus edge rows reclaimable after compaction."),
+    StaticOutputColumn::new("after_reclaimable_row_basis_points", GqlType::Uint64)
+        .with_description("After-compaction reclaimable row ratio scaled by 10,000."),
+    StaticOutputColumn::new("after_compaction_recommended", GqlType::Boolean).with_description(
+        "Whether row-space diagnostics still recommend compaction after maintenance.",
+    ),
     StaticOutputColumn::new("after_dense", GqlType::Boolean)
         .with_description("Whether the graph is dense after compaction."),
 ];
@@ -167,6 +181,8 @@ fn compaction_stats_values(stats: CompactionStats) -> Vec<Value> {
         Value::Uint(stats.allocated_rows()),
         Value::Uint(stats.live_rows()),
         Value::Uint(stats.reclaimable_rows()),
+        Value::Uint(stats.reclaimable_row_basis_points()),
+        Value::Bool(stats.compaction_recommended()),
         Value::Bool(stats.is_dense()),
     ]
 }

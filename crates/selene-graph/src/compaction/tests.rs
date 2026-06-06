@@ -11,7 +11,10 @@ use std::collections::HashSet;
 
 use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, db_string};
 
-use super::compact_core;
+use super::{
+    COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_BASIS_POINTS,
+    COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS, CompactionStats, compact_core,
+};
 use crate::error::GraphError;
 use crate::store::RowIndex;
 use crate::{AdjacencyEntry, CompactionReport, SeleneGraph, SharedGraph};
@@ -265,6 +268,53 @@ fn compaction_of_empty_graph_is_a_clean_noop() {
     assert_eq!(compacted.graph.meta.next_node_id, before.meta.next_node_id);
     // An empty compacted graph is still a valid publishable graph.
     let _ = SharedGraph::from_graph(compacted.graph);
+}
+
+#[test]
+fn compaction_stats_reclaimable_ratio_uses_allocated_rows() {
+    let stats = CompactionStats {
+        allocated_nodes: 800,
+        live_nodes: 600,
+        reclaimable_nodes: 200,
+        allocated_edges: 200,
+        live_edges: 100,
+        reclaimable_edges: 100,
+    };
+
+    assert_eq!(stats.allocated_rows(), 1_000);
+    assert_eq!(stats.reclaimable_rows(), 300);
+    assert_eq!(stats.reclaimable_row_basis_points(), 3_000);
+}
+
+#[test]
+fn compaction_recommendation_requires_dead_row_floor_and_ratio() {
+    let below_floor = CompactionStats {
+        allocated_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS * 2,
+        live_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS + 1,
+        reclaimable_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS - 1,
+        ..CompactionStats::default()
+    };
+    let below_ratio = CompactionStats {
+        allocated_nodes: 100_000,
+        live_nodes: 100_000 - COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS,
+        reclaimable_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS,
+        ..CompactionStats::default()
+    };
+    let recommended = CompactionStats {
+        allocated_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS * 4,
+        live_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS * 3,
+        reclaimable_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS,
+        ..CompactionStats::default()
+    };
+
+    assert_eq!(CompactionStats::default().reclaimable_row_basis_points(), 0);
+    assert!(!below_floor.compaction_recommended());
+    assert!(!below_ratio.compaction_recommended());
+    assert_eq!(
+        recommended.reclaimable_row_basis_points(),
+        COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_BASIS_POINTS
+    );
+    assert!(recommended.compaction_recommended());
 }
 
 #[test]

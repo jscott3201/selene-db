@@ -64,6 +64,8 @@ fn compaction_stats_reports_reclaimable_rows() {
             Value::Uint(5),
             Value::Uint(2),
             Value::Uint(3),
+            Value::Uint(6_000),
+            Value::Bool(false),
             Value::Bool(false),
         ]
     );
@@ -94,6 +96,8 @@ fn compact_reports_before_reclaimed_and_after_stats() {
             Value::Uint(5),
             Value::Uint(2),
             Value::Uint(3),
+            Value::Uint(6_000),
+            Value::Bool(false),
             Value::Bool(false),
             Value::Uint(1),
             Value::Uint(2),
@@ -106,6 +110,8 @@ fn compact_reports_before_reclaimed_and_after_stats() {
             Value::Uint(2),
             Value::Uint(2),
             Value::Uint(0),
+            Value::Uint(0),
+            Value::Bool(false),
             Value::Bool(true),
         ]
     );
