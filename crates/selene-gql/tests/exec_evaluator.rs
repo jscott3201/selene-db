@@ -611,6 +611,23 @@ fn property_access_on_list_target_is_data_exception() {
 }
 
 #[test]
+fn property_exists_on_list_target_is_data_exception() {
+    let list = ValueExpr::ListLiteral {
+        items: vec![record_lit(vec![("foo", int_lit(1))])],
+        span: span(),
+    };
+    let expr = ValueExpr::PropertyExists {
+        target: Box::new(list),
+        key: db_string("foo").unwrap(),
+        span: span(),
+    };
+
+    let err = eval_result(&expr).expect_err("PROPERTY_EXISTS rejects list targets");
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
 fn property_access_on_integer_target_is_data_exception() {
     // `(123).foo` — a scalar target is likewise a 22G03 runtime type error.
     let err = eval_result(&property_access_expr(int_lit(123), "foo"))

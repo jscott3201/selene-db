@@ -44,9 +44,8 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
             ValueExpr::Parameter { declared_type, .. } => declared_type
                 .clone()
                 .map_or(AnalyzedType::Dynamic, AnalyzedType::Resolved),
-            ValueExpr::PropertyAccess { target, span, .. } => {
-                let target_id = bind_value_expr(ctx, target)?;
-                reject_group_variable_property_access(ctx.expr_type(target_id), *span)?;
+            ValueExpr::PropertyAccess { target, .. } => {
+                bind_value_expr(ctx, target)?;
                 AnalyzedType::Dynamic
             }
             ValueExpr::ListAccess { target, index, .. } => {
@@ -126,7 +125,7 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
             }
             ValueExpr::PropertyExists { target, span, .. } => {
                 let target_id = bind_value_expr(ctx, target)?;
-                reject_group_variable_property_access(ctx.expr_type(target_id), *span)?;
+                reject_group_variable_property_exists(ctx.expr_type(target_id), *span)?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
             ValueExpr::Case {
@@ -550,7 +549,7 @@ fn value_shape_error(message: &'static str, span: crate::SourceSpan) -> Analysis
     }
 }
 
-fn reject_group_variable_property_access(
+fn reject_group_variable_property_exists(
     ty: &AnalyzedType,
     span: crate::SourceSpan,
 ) -> Result<(), AnalysisError> {
@@ -562,10 +561,10 @@ fn reject_group_variable_property_access(
         crate::GqlType::NodeRef | crate::GqlType::EdgeRef
     ) {
         return Err(AnalysisError::NotImplemented {
-            message: "group-variable property access is not supported".into(),
+            message: "PROPERTY_EXISTS over graph-element lists is not supported".into(),
             span,
             hint: Some(
-                "return the group variable as a list, or unnest it before accessing element properties"
+                "project the group-variable property list first, or unnest it before checking property existence"
                     .into(),
             ),
         });

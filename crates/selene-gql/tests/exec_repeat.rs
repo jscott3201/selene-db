@@ -28,6 +28,23 @@ fn edge_lists_for(table: &selene_gql::BindingTable, name: &str) -> Vec<Option<Ve
         .collect()
 }
 
+fn int_lists_for(table: &selene_gql::BindingTable, name: &str) -> Vec<Vec<Option<i64>>> {
+    exec_common::column_values(table, name)
+        .into_iter()
+        .map(|value| match value {
+            Value::List(items) => items
+                .into_iter()
+                .map(|item| match item {
+                    Value::Int(value) => Some(value),
+                    Value::Null => None,
+                    other => panic!("expected integer or null in property list, got {other:?}"),
+                })
+                .collect(),
+            other => panic!("expected property list, got {other:?}"),
+        })
+        .collect()
+}
+
 #[test]
 fn bounded_repeat_emits_paths_across_hop_range() {
     let fixture = ExecFixture::build();
@@ -42,6 +59,39 @@ fn bounded_repeat_emits_paths_across_hop_range() {
     assert_eq!(
         edge_lists_for(&table, "r"),
         vec![Some(vec![1]), Some(vec![1, 2]), Some(vec![2])]
+    );
+}
+
+#[test]
+fn group_variable_property_access_emits_ordered_property_lists() {
+    let fixture = ExecFixture::build();
+    let plan = planned(
+        "MATCH (a:Person)-[r:KNOWS*1..2]->(b) \
+         RETURN r.score AS scores, r.missing AS missing",
+    );
+
+    let table = execute_plan(&fixture, &plan).expect("repeat property projection executes");
+
+    assert_eq!(
+        int_lists_for(&table, "scores"),
+        vec![vec![Some(1)], vec![Some(1), Some(2)], vec![Some(2)]]
+    );
+    assert_eq!(
+        int_lists_for(&table, "missing"),
+        vec![vec![None], vec![None, None], vec![None]]
+    );
+}
+
+#[test]
+fn zero_hop_group_variable_property_access_emits_empty_list() {
+    let fixture = ExecFixture::build();
+    let plan = planned("MATCH (a:Person)-[r:KNOWS*0..1]->(b) RETURN r.score AS scores");
+
+    let table = execute_plan(&fixture, &plan).expect("zero-hop property projection executes");
+
+    assert_eq!(
+        int_lists_for(&table, "scores"),
+        vec![vec![], vec![Some(1)], vec![], vec![Some(2)], vec![]]
     );
 }
 

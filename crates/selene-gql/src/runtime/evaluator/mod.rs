@@ -240,43 +240,70 @@ pub(super) fn property_access(
 ) -> Result<Value, ExecutorError> {
     match target {
         Value::Null => Ok(Value::Null),
-        Value::NodeRef(id) => Ok(property_from_node(*id, key, ctx)),
-        Value::EdgeRef(id) => Ok(property_from_edge(*id, key, ctx)),
+        Value::NodeRef(id) => Ok(property_from_node(*id, &key, ctx)),
+        Value::EdgeRef(id) => Ok(property_from_edge(*id, &key, ctx)),
         Value::Record(record) => Ok(record_field(record, key)),
+        Value::List(items) => property_list_access(items, &key, span, ctx),
         // A non-element / non-record target (reachable when analysis types the
         // target as Dynamic, e.g. `[1,2,3].foo` or `(123).foo`) is a runtime
         // type error, not an internal-invariant break. `Value::RecordTyped`
         // stays fail-closed here (catalog-bound, no inline-name index).
         _ => Err(ExecutorError::data_exception(
             crate::runtime::DataExceptionSubclass::InvalidValueType,
-            "property access target is not a node, edge, or record".to_owned(),
+            "property access target is not a node, edge, record, or list".to_owned(),
             span,
         )),
     }
 }
 
+fn property_list_access(
+    items: &[Value],
+    key: &selene_core::DbString,
+    span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Value, ExecutorError> {
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        let value = match item {
+            Value::Null => Value::Null,
+            Value::NodeRef(id) => property_from_node(*id, key, ctx),
+            Value::EdgeRef(id) => property_from_edge(*id, key, ctx),
+            Value::Record(record) => record_field(record, key.clone()),
+            _ => {
+                return Err(ExecutorError::data_exception(
+                    crate::runtime::DataExceptionSubclass::InvalidValueType,
+                    "property access list item is not a node, edge, record, or null".to_owned(),
+                    span,
+                ));
+            }
+        };
+        values.push(value);
+    }
+    Ok(Value::List(values))
+}
+
 fn property_from_node(
     id: NodeId,
-    key: selene_core::DbString,
+    key: &selene_core::DbString,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Value {
     ctx.tx
         .snapshot()
         .node_properties(id)
-        .and_then(|properties| properties.get(&key))
+        .and_then(|properties| properties.get(key))
         .cloned()
         .unwrap_or(Value::Null)
 }
 
 fn property_from_edge(
     id: EdgeId,
-    key: selene_core::DbString,
+    key: &selene_core::DbString,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Value {
     ctx.tx
         .snapshot()
         .edge_properties(id)
-        .and_then(|properties| properties.get(&key))
+        .and_then(|properties| properties.get(key))
         .cloned()
         .unwrap_or(Value::Null)
 }

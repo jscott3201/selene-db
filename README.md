@@ -134,6 +134,15 @@ YIELD feature_id, feature_name, status, rationale
 RETURN feature_id, status
 ```
 
+Quantified edge bindings are list-valued. Projecting a property from one of
+those bindings returns a path-ordered list of property values, with `NULL` for
+missing element properties:
+
+```gql
+MATCH (p:Person)-[r:KNOWS*1..3]->(friend)
+RETURN r.score AS path_scores
+```
+
 Native procedures are part of the engine, not loadable extensions. Tests can
 inject alternate `ProcedureRegistry` implementations, but production code uses
 the in-tree `BuiltinProcedureRegistry`.
