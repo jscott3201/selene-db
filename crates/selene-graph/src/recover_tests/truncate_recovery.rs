@@ -127,3 +127,43 @@ fn recovery_of_edge_type_truncate_matches_expanded_form() {
     let _ = std::fs::remove_dir_all(dir_a);
     let _ = std::fs::remove_dir_all(dir_b);
 }
+
+#[test]
+fn recovery_of_graph_reset_matches_expanded_form() {
+    let dir_a = temp_dir("trec-reset-declarative");
+    let mut changes_a = base_creates();
+    changes_a.push(Change::GraphReset {});
+    append_wal(&dir_a, 0, &changes_a);
+    let recovered_a = SharedGraph::recover(&dir_a, GraphId::new(7)).unwrap();
+
+    let dir_b = temp_dir("trec-reset-expanded");
+    let mut changes_b = base_creates();
+    for id in 1_u64..=4 {
+        changes_b.push(Change::NodeDeleted {
+            id: NodeId::new(id),
+        });
+    }
+    for id in 1_u64..=5 {
+        changes_b.push(Change::EdgeDeleted {
+            id: EdgeId::new(id),
+        });
+    }
+    append_wal(&dir_b, 0, &changes_b);
+    let recovered_b = SharedGraph::recover(&dir_b, GraphId::new(7)).unwrap();
+
+    assert_same_observable_state(&recovered_a.read(), &recovered_b.read());
+    let g = recovered_a.read();
+    assert_eq!(g.node_count(), 0, "graph reset wipes every node");
+    assert_eq!(g.edge_count(), 0, "graph reset wipes every edge");
+    assert!(
+        g.nodes_with_label(&db_string("trec.Keep").unwrap())
+            .is_none(),
+        "label indexes are cleared for reset nodes"
+    );
+    assert!(
+        g.edges_with_label(&db_string("trec.E1").unwrap()).is_none(),
+        "edge-label indexes are cleared for reset edges"
+    );
+    let _ = std::fs::remove_dir_all(dir_a);
+    let _ = std::fs::remove_dir_all(dir_b);
+}
