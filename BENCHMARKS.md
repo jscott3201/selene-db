@@ -870,6 +870,22 @@ scripts/run-benches.sh --profile quick --bench procedure_call_repeat \
   --filter 'query_root_current_state_text_score_batch|query_root_current_state_text_vector_batch|query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch|query_root_vector_text_batch'
 ```
 
+The project source-chunk profile uses target-aware implementation snippets from
+current selene-db modules. The first two documents per topic are non-target
+graph-root hints, so `SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2` keeps targets in the
+expanded support set:
+
+```bash
+set -a; source .env; set +a
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_PROVIDER=openrouter \
+SELENE_EMBEDDING_CORPUS=project_source_chunk_memory \
+SELENE_EMBEDDING_BATCH_SIZE=4 \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat \
+  --filter 'query_root_current_state_text_score_batch|query_root_current_state_text_vector_batch|query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch|query_root_vector_text_batch'
+```
+
 The project source-file profile embeds selected real selene-db files as
 file-level documents. Use a smaller setup batch size for external providers so
 full-file inputs are sent in conservative chunks:
@@ -966,12 +982,13 @@ profiles into 64 documents + 16 queries, crossing the default batch size as a
 target-aware code/alias profile; `SELENE_OMLX_CORPUS=code_alias_wide_memory`
 extends that shape to 16 target queries.
 `SELENE_OMLX_CORPUS=project_code_memory`,
-`project_code_alias_memory`, `project_source_code_memory`, and
-`project_source_file_memory` use current selene-db module names, snippets, or
-selected full files to stress code/source retrieval. These target-aware
-profiles keep topic/current precision metrics but also record `hitbp` so rows
-can show whether the expected symbol/fact/file was retrieved, not only whether
-the result was in the right broad topic:
+`project_code_alias_memory`, `project_source_code_memory`,
+`project_source_chunk_memory`, and `project_source_file_memory` use current
+selene-db module names, implementation snippets, or selected full files to
+stress code/source retrieval. These target-aware profiles keep topic/current
+precision metrics but also record `hitbp` so rows can show whether the
+expected symbol/fact/file was retrieved, not only whether the result was in the
+right broad topic:
 
 | oMLX row | Qwen3 0.6B / 1024 dim | Qwen3 4B / 2560 dim | Notes |
 |---|---:|---:|---|
@@ -1058,6 +1075,12 @@ the result was in the right broad topic:
 | `SELENE_EMBEDDING_CORPUS=project_source_code_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c6...dim1536_basecurbp8906_curbp10000_hitbp10000` | 328.21 µs | - | Maintained current-state vector scoring restores full current precision and remains target-complete on real source excerpts. |
 | `SELENE_EMBEDDING_CORPUS=project_source_code_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_provenance_state_intersection_batch/...q16_k4_r2_c6...dim1536_basecurbp8906_curbp10000_hitbp10000` | 330.03 µs | - | Provenance-required current state preserves the current-state vector quality with negligible extra cost. |
 | `SELENE_EMBEDDING_CORPUS=project_source_code_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_vector_text_batch/...q16_k4_r2_c4...dim1536_precbp9531_curbp8593_hitbp9375` | 527.43 µs | - | Vector-first BM25 misses one target, lowers current precision, and remains slower than both BM25/current-state and current-state vector scoring. |
+| `SELENE_EMBEDDING_CORPUS=project_source_chunk_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_score_batch/...q16_k4_r2_c6...dim1536_precbp9375_curbp9375_hitbp10000` | 193.15 µs | - | Source-chunk profile with target-aware implementation snippets. Maintained BM25/current-state is fastest and target-complete, but has one broad/current miss across 64 returned rows. |
+| `SELENE_EMBEDDING_CORPUS=project_source_chunk_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_vector_batch/...q16_k4_r2_c6...dim1536_precbp9375_curbp9375_hitbp10000` | 3.2712 ms | - | Vector rerank after BM25/current-state keeps the same target/precision shape and adds a large exact-vector pass. |
+| `SELENE_EMBEDDING_CORPUS=project_source_chunk_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_expansion_batch/...q16_k4_r2_c8...dim1536_precbp10000_hitbp10000` | 333.57 µs | - | Plain graph-expanded vector scoring reaches full target and broad-topic precision, but does not apply maintained current-state semantics. |
+| `SELENE_EMBEDDING_CORPUS=project_source_chunk_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c6...dim1536_basecurbp9687_curbp10000_hitbp10000` | 328.45 µs | - | Maintained current-state vector scoring is target-complete and restores full current precision at about 1.7x BM25/current-state latency. |
+| `SELENE_EMBEDDING_CORPUS=project_source_chunk_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_provenance_state_intersection_batch/...q16_k4_r2_c6...dim1536_basecurbp9687_curbp10000_hitbp10000` | 331.10 µs | - | Provenance-required current state preserves the current-state vector quality with minimal extra cost. |
+| `SELENE_EMBEDDING_CORPUS=project_source_chunk_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_vector_text_batch/...q16_k4_r2_c4...dim1536_precbp9843_curbp9531_hitbp10000` | 523.56 µs | - | Vector-first BM25 is target-complete and has better broad precision than BM25/current-state on this chunk profile, but it remains slower than current-state vector and less current-precise. |
 | `SELENE_EMBEDDING_CORPUS=project_source_file_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_score_batch/...q8_k4_r2_c4...dim1536_precbp9375_curbp9375_hitbp10000` | 142.50 µs | - | File-level source corpus with selected real selene-db files. Maintained BM25/current-state is target-complete and fastest, with one broad/current miss across 32 returned rows. |
 | `SELENE_EMBEDDING_CORPUS=project_source_file_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_vector_batch/...q8_k4_r2_c4...dim1536_precbp9375_curbp9375_hitbp10000` | 1.0473 ms | - | Vector rerank after BM25/current-state preserves quality but adds a large exact-vector pass even at q8/c4. |
 | `SELENE_EMBEDDING_CORPUS=project_source_file_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_expansion_batch/...q8_k4_r2_c6...dim1536_precbp10000_hitbp10000` | 210.97 µs | - | Plain graph-expanded vector scoring is target-complete and full topic precision, but has no current-state gate. |
@@ -1158,6 +1181,16 @@ restores `curbp10000` at 328.21 us, while plain graph-expanded vector and
 vector-first BM25 both miss one target (`hitbp9375`). The conclusion remains
 compositional: use maintained graph state plus the scoring primitive that wins
 the corpus, and do not add a fused vector-first BM25 API from these rows.
+
+On the `project_source_chunk_memory` profile, target-aware implementation
+snippets keep all measured paths target-complete after the graph-root layout is
+kept target-free. BM25/current-state is still fastest (`hitbp10000`,
+193.15 us) but has one broad/current miss. Current-state vector scoring
+restores `curbp10000` at 328.45 us. Vector-first BM25 is also target-complete
+and improves broad precision (`precbp9843`) over BM25/current-state, but it
+costs 523.56 us and remains below current-state vector on current precision.
+This is useful A/B evidence for chunked code retrieval, not a reason to add a
+fused vector-first text API.
 
 On the `project_source_file_memory` profile, selected real project files are
 embedded as whole file-level documents. BM25/current-state remains the fastest
