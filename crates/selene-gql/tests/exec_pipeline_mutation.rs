@@ -8,7 +8,7 @@ use selene_gql::{
     EdgeDirection, EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, GqlType,
     MutationOp, PipelineOp, TxContext, analyze, execute_pattern, execute_pipeline, parse, plan,
 };
-use selene_graph::{CommitOutcome, SharedGraph};
+use selene_graph::{CommitOutcome, GraphError, SharedGraph};
 
 use exec_common::{column_values, db_string, props};
 
@@ -488,6 +488,41 @@ fn delete_edge_removes_edge_only() {
     let snapshot = graph.read();
     assert_eq!(snapshot.node_count(), 2);
     assert_eq!(snapshot.edge_count(), 0);
+}
+
+#[test]
+fn repeated_delete_of_same_binding_is_noop_after_first_delete() {
+    let graph = graph_with_person("Alice");
+    let plan = planned("MATCH (n:Person) DETACH DELETE n DETACH DELETE n FINISH");
+
+    let (_, outcome) = run_write(&graph, &plan).expect("write executes");
+
+    assert_eq!(outcome.changes.len(), 1);
+    assert_eq!(graph.read().node_count(), 0);
+}
+
+#[test]
+fn set_after_delete_of_same_binding_errors_atomically() {
+    let graph = graph_with_person("Alice");
+    let plan = planned("MATCH (n:Person) DETACH DELETE n SET n.age = 31 FINISH");
+
+    let err = run_write(&graph, &plan).expect_err("stale binding update rejects");
+
+    assert!(matches!(
+        err,
+        ExecutorError::GraphMutation {
+            source: GraphError::NodeNotAlive { id },
+            ..
+        } if id == NodeId::new(1)
+    ));
+    let snapshot = graph.read();
+    assert!(snapshot.is_node_alive(NodeId::new(1)));
+    assert_eq!(
+        snapshot
+            .node_properties(NodeId::new(1))
+            .and_then(|props| props.get(&db_string("age"))),
+        Some(&Value::Int(30))
+    );
 }
 
 #[test]
