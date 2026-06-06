@@ -104,7 +104,7 @@ fn default_registry_exposes_non_empty_metadata_for_all_54_procedures() {
 }
 
 #[test]
-fn show_procedures_exposes_six_columns_and_zero_arg_description() {
+fn show_procedures_exposes_signature_outputs_and_descriptions() {
     let graph = SharedGraph::new(GraphId::new(120_001));
     let registry = full_registry();
     let mut session = Session::new(&graph);
@@ -136,12 +136,17 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
     assert_eq!(table.row_count(), 54);
 
     let names = column_strings(&table, "name");
+    let signatures = column_strings(&table, "signature");
     let descriptions = column_strings(&table, "description");
     let health = names
         .iter()
         .position(|name| name == "selene.health")
         .expect("selene.health is registered");
     assert_eq!(descriptions[health], "Report basic graph health counters.");
+    assert_eq!(
+        signatures[health],
+        "selene.health() YIELD graph_id: UINT64, node_count: UINT64, edge_count: UINT64, schema_bound: BOOLEAN"
+    );
     assert!(names.iter().any(|name| name == "selene.vector_index_stats"));
     assert!(names.iter().any(|name| name == "selene.text_index_stats"));
     assert!(names.iter().any(|name| name == "selene.create_text_index"));
@@ -222,6 +227,20 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
         names
             .iter()
             .any(|name| name == "selene.vector_candidate_states")
+    );
+    let candidate_states = names
+        .iter()
+        .position(|name| name == "selene.vector_candidate_states")
+        .expect("selene.vector_candidate_states is registered");
+    assert_eq!(
+        signatures[candidate_states],
+        concat!(
+            "selene.vector_candidate_states() YIELD state_name: STRING, ",
+            "generation: UINT64, candidate_count: UINT64, ",
+            "required_label: STRING?, require_outgoing: LIST<STRING>, ",
+            "require_incoming: LIST<STRING>, exclude_outgoing: LIST<STRING>, ",
+            "exclude_incoming: LIST<STRING>"
+        )
     );
     let rebuild = names
         .iter()
