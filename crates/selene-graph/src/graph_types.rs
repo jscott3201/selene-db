@@ -598,6 +598,8 @@ pub enum PropertyDefaultValue {
     String(DbString),
     /// Byte-string default.
     Bytes(Vec<u8>),
+    /// Canonical UUID text default.
+    Uuid(DbString),
     /// Canonical JSON text default.
     Json(DbString),
 }
@@ -607,8 +609,8 @@ impl PropertyDefaultValue {
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::Inconsistent`] if a persisted JSON default no
-    /// longer parses as valid JSON.
+    /// Returns [`GraphError::Inconsistent`] if a persisted UUID/JSON default no
+    /// longer parses as a valid value.
     pub fn to_value(&self) -> GraphResult<Value> {
         Ok(match self {
             Self::Null => Value::Null,
@@ -616,6 +618,16 @@ impl PropertyDefaultValue {
             Self::Integer(value) => Value::Int(*value),
             Self::String(value) => Value::String(value.clone()),
             Self::Bytes(value) => Value::Bytes(value.clone().into()),
+            Self::Uuid(value) => {
+                Value::Uuid(
+                    value
+                        .as_str()
+                        .parse()
+                        .map_err(|err| GraphError::Inconsistent {
+                            reason: format!("persisted UUID property default is invalid: {err}"),
+                        })?,
+                )
+            }
             Self::Json(value) => {
                 Value::Json(JsonValue::parse_str(value.as_str()).map_err(|err| {
                     GraphError::Inconsistent {
@@ -635,6 +647,7 @@ impl PropertyDefaultValue {
             Value::Int(value) => Some(Self::Integer(*value)),
             Value::String(value) => Some(Self::String(value.clone())),
             Value::Bytes(value) => Some(Self::Bytes(value.to_vec())),
+            Value::Uuid(value) => db_string(&value.to_string()).ok().map(Self::Uuid),
             Value::Json(value) => db_string(&value.to_canonical_string()).ok().map(Self::Json),
             _ => None,
         }

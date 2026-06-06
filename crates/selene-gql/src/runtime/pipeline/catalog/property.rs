@@ -98,12 +98,17 @@ fn property_default_value(
         Literal::Integer(value, _) => Ok(PropertyDefaultValue::Integer(*value)),
         Literal::String(value, _) => Ok(PropertyDefaultValue::String(value.clone())),
         Literal::Bytes(value, _) => Ok(PropertyDefaultValue::Bytes(value.to_vec())),
+        Literal::Uuid(value, _) => db_string(&value.to_string())
+            .map(PropertyDefaultValue::Uuid)
+            .map_err(|err| {
+                ExecutorError::data_exception(
+                    DataExceptionSubclass::DataException,
+                    format!("UUID DEFAULT value is invalid: {err}"),
+                    span,
+                )
+            }),
         Literal::Float(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "floating-point DEFAULT literals",
-            span,
-        }),
-        Literal::Uuid(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "UUID DEFAULT literals",
             span,
         }),
         Literal::ZonedDateTime(_, _)
@@ -389,6 +394,9 @@ pub(super) fn render_property_default_value(
             Ok(render_string_literal(value.as_str()))
         }
         PropertyDefaultValue::Bytes(value) => Ok(render_byte_string_literal(value)),
+        PropertyDefaultValue::Uuid(value) => {
+            Ok(format!("UUID {}", render_string_literal(value.as_str())))
+        }
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "unsupported property default value in catalog DDL rendering",
         }),

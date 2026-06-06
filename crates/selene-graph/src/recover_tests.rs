@@ -280,6 +280,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     let sensor = db_string("Sensor").unwrap();
     let serial = db_string("serial").unwrap();
     let payload = db_string("payload").unwrap();
+    let device_id = db_string("device_id").unwrap();
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -302,6 +303,17 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                         list_element_type: None,
                         required: false,
                         default: Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE])),
+                        immutable: false,
+                        record_field_types: None,
+                    },
+                    PropertyTypeDef {
+                        name: device_id.clone(),
+                        value_type: selene_core::PropertyValueType::Uuid,
+                        list_element_type: None,
+                        required: false,
+                        default: Some(PropertyDefaultValue::Uuid(
+                            db_string("018f1b6d-7b89-7cc0-9f40-2c6f8d4df101").unwrap(),
+                        )),
                         immutable: false,
                         record_field_types: None,
                     },
@@ -342,6 +354,13 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     assert_eq!(
         graph_type.node_types[0].properties[1].default,
         Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE]))
+    );
+    assert_eq!(graph_type.node_types[0].properties[2].name, device_id);
+    assert_eq!(
+        graph_type.node_types[0].properties[2].default,
+        Some(PropertyDefaultValue::Uuid(
+            db_string("018f1b6d-7b89-7cc0-9f40-2c6f8d4df101").unwrap()
+        ))
     );
     let _ = fs::remove_dir_all(dir);
 }
