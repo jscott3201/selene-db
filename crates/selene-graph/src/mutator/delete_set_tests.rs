@@ -139,6 +139,41 @@ fn delete_elements_rejects_missing_node_ids() {
 }
 
 #[test]
+fn delete_elements_rejects_mixed_missing_node_without_partial_delete() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let mut txn = shared.begin_write();
+    let (alive, peer) = {
+        let mut mutator = txn.mutator();
+        let alive = empty_node(&mut mutator);
+        let peer = empty_node(&mut mutator);
+        let err = mutator
+            .delete_elements(set([alive, NodeId::new(99)]), set([]))
+            .expect_err("missing node id is rejected before mutation");
+        assert!(matches!(
+            err,
+            GraphError::NodeNotFound { id } if id == NodeId::new(99)
+        ));
+        assert!(
+            mutator.read().is_node_alive(alive),
+            "live node remains alive inside the failed transaction"
+        );
+        (alive, peer)
+    };
+
+    let outcome = txn.commit().expect("failed delete did not poison txn");
+    assert!(
+        outcome
+            .changes
+            .iter()
+            .all(|change| !matches!(change, Change::NodeDeleted { .. })),
+        "no partial delete change was staged"
+    );
+    let snapshot = shared.read();
+    assert!(snapshot.is_node_alive(alive));
+    assert!(snapshot.is_node_alive(peer));
+}
+
+#[test]
 fn delete_elements_rejects_missing_edge_ids() {
     let shared = SharedGraph::new(GraphId::new(1));
     let mut txn = shared.begin_write();
@@ -150,4 +185,82 @@ fn delete_elements_rejects_missing_edge_ids() {
         err,
         GraphError::EdgeNotFound { id } if id == EdgeId::new(99)
     ));
+}
+
+#[test]
+fn delete_elements_rejects_mixed_missing_edge_without_partial_delete() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let mut txn = shared.begin_write();
+    let (a, b, edge_id) = {
+        let mut mutator = txn.mutator();
+        let a = empty_node(&mut mutator);
+        let b = empty_node(&mut mutator);
+        let edge_id = edge(&mut mutator, a, b);
+        let err = mutator
+            .delete_elements(set([]), set([edge_id, EdgeId::new(99)]))
+            .expect_err("missing edge id is rejected before mutation");
+        assert!(matches!(
+            err,
+            GraphError::EdgeNotFound { id } if id == EdgeId::new(99)
+        ));
+        assert!(
+            mutator.read().is_edge_alive(edge_id),
+            "live edge remains alive inside the failed transaction"
+        );
+        (a, b, edge_id)
+    };
+
+    let outcome = txn.commit().expect("failed delete did not poison txn");
+    assert!(
+        outcome
+            .changes
+            .iter()
+            .all(|change| !matches!(change, Change::EdgeDeleted { .. })),
+        "no partial edge delete change was staged"
+    );
+    let snapshot = shared.read();
+    assert!(snapshot.is_node_alive(a));
+    assert!(snapshot.is_node_alive(b));
+    assert!(snapshot.is_edge_alive(edge_id));
+}
+
+#[test]
+fn delete_elements_rejects_missing_edge_without_partial_node_cascade() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let mut txn = shared.begin_write();
+    let (a, b, edge_id) = {
+        let mut mutator = txn.mutator();
+        let a = empty_node(&mut mutator);
+        let b = empty_node(&mut mutator);
+        let edge_id = edge(&mut mutator, a, b);
+        let err = mutator
+            .delete_elements(set([a]), set([EdgeId::new(99)]))
+            .expect_err("missing explicit edge id is rejected before node cascade");
+        assert!(matches!(
+            err,
+            GraphError::EdgeNotFound { id } if id == EdgeId::new(99)
+        ));
+        assert!(
+            mutator.read().is_node_alive(a),
+            "node remains alive inside the failed transaction"
+        );
+        assert!(
+            mutator.read().is_edge_alive(edge_id),
+            "incident edge remains alive inside the failed transaction"
+        );
+        (a, b, edge_id)
+    };
+
+    let outcome = txn.commit().expect("failed delete did not poison txn");
+    assert!(
+        outcome.changes.iter().all(|change| !matches!(
+            change,
+            Change::NodeDeleted { .. } | Change::EdgeDeleted { .. }
+        )),
+        "no partial node cascade was staged"
+    );
+    let snapshot = shared.read();
+    assert!(snapshot.is_node_alive(a));
+    assert!(snapshot.is_node_alive(b));
+    assert!(snapshot.is_edge_alive(edge_id));
 }
