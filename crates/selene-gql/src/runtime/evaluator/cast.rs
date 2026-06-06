@@ -47,7 +47,12 @@ pub(super) fn eval_cast(
     target_type: &GqlType,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    // Target-level rejections evaluated up-front.
+    // §22 universal: NULL casts to NULL regardless of target.
+    if matches!(value, Value::Null) {
+        return Ok(Value::Null);
+    }
+
+    // Target-level rejections for non-NULL source values.
     match target_type {
         GqlType::Null => {
             return Err(ExecutorError::FeatureNotSupportedYet {
@@ -62,11 +67,6 @@ pub(super) fn eval_cast(
             });
         }
         _ => {}
-    }
-
-    // §22 universal: NULL casts to NULL regardless of target.
-    if matches!(value, Value::Null) {
-        return Ok(Value::Null);
     }
 
     // A RECORD target is handled before the generic source-rejection block: per ISO §20.8
