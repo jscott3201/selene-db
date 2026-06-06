@@ -1750,6 +1750,7 @@ dependencies = [
  "selene-core",
  "selene-testing",
  "serde",
+ "serde_json",
  "thiserror",
  "tracing",
  "uuid",

@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use criterion::Criterion;
-use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, db_string};
+use selene_core::{
+    Change, HlcTimestamp, JsonValue, LabelSet, NodeId, Origin, PropertyMap, Value, VectorValue,
+    db_string,
+};
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
     WalConfig, WalWriter, snapshot_path,
@@ -76,6 +79,56 @@ pub(crate) fn changes(count: usize) -> Vec<Change> {
         .collect()
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum PayloadShape {
+    ScalarInt,
+    JsonMetadata,
+    Vector128,
+    Vector768,
+}
+
+impl PayloadShape {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::ScalarInt => "scalar_i64",
+            Self::JsonMetadata => "json_metadata",
+            Self::Vector128 => "vector128",
+            Self::Vector768 => "vector768",
+        }
+    }
+
+    fn value(self, idx: usize) -> Value {
+        match self {
+            Self::ScalarInt => Value::Int(idx as i64),
+            Self::JsonMetadata => json_metadata_value(idx),
+            Self::Vector128 => vector_value(idx, 128),
+            Self::Vector768 => vector_value(idx, 768),
+        }
+    }
+}
+
+pub(crate) fn payload_shapes() -> &'static [PayloadShape] {
+    &[
+        PayloadShape::ScalarInt,
+        PayloadShape::JsonMetadata,
+        PayloadShape::Vector128,
+        PayloadShape::Vector768,
+    ]
+}
+
+pub(crate) fn changes_with_payload(count: usize, shape: PayloadShape) -> Vec<Change> {
+    let label = db_string("bench.persist.node").expect("fixture string fits");
+    let key = db_string("bench.persist.payload").expect("fixture string fits");
+    (0..count)
+        .map(|idx| Change::NodeCreated {
+            id: NodeId::new(idx as u64 + 1),
+            labels: LabelSet::single(label.clone()),
+            properties: PropertyMap::from_pairs([(key.clone(), shape.value(idx))])
+                .expect("fixture properties fit"),
+        })
+        .collect()
+}
+
 pub(crate) fn write_wal(dir: &Path, entries: usize, batch_size: usize, snapshot_seq: u64) {
     let path = dir.join(DEFAULT_WAL_FILE_NAME);
     let mut writer = WalWriter::open(
@@ -87,6 +140,37 @@ pub(crate) fn write_wal(dir: &Path, entries: usize, batch_size: usize, snapshot_
     )
     .expect("wal opens");
     let payload = changes(batch_size);
+    for idx in 0..entries {
+        writer
+            .append(
+                HlcTimestamp::new(idx as u64 + 1, 0),
+                Origin::Local,
+                None,
+                &payload,
+            )
+            .expect("wal append succeeds");
+    }
+    writer.flush().expect("wal flush succeeds");
+}
+
+pub(crate) fn write_wal_with_payload(
+    dir: &Path,
+    entries: usize,
+    batch_size: usize,
+    shape: PayloadShape,
+    snapshot_seq: u64,
+    sync_policy: SyncPolicy,
+) {
+    let path = dir.join(DEFAULT_WAL_FILE_NAME);
+    let mut writer = WalWriter::open(
+        &path,
+        WalConfig {
+            sync_policy,
+            snapshot_seq,
+        },
+    )
+    .expect("wal opens");
+    let payload = changes_with_payload(batch_size, shape);
     for idx in 0..entries {
         writer
             .append(
@@ -123,4 +207,39 @@ pub(crate) fn write_snapshot(dir: &Path, sequence: u64, bytes: usize) -> PathBuf
     }
     builder.finalize().expect("snapshot write succeeds");
     snapshot_path(dir, sequence)
+}
+
+fn json_metadata_value(idx: usize) -> Value {
+    let value = serde_json::json!({
+        "kind": "episodic",
+        "topic": format!("topic-{}", idx % 32),
+        "session": format!("session-{}", idx / 64),
+        "importance": (idx % 100) as u64,
+        "source": {
+            "tool": "omlx",
+            "model": "Qwen3-Embedding-0.6B-4bit-DWQ"
+        },
+        "tags": [
+            format!("tag-{}", idx % 7),
+            format!("bucket-{}", idx % 13)
+        ],
+        "metrics": {
+            "confidence": (idx % 1000) as f64 / 1000.0,
+            "retrievals": idx % 17
+        }
+    });
+    Value::Json(JsonValue::new(value).expect("fixture JSON is valid"))
+}
+
+fn vector_value(idx: usize, dim: usize) -> Value {
+    let components: Vec<f32> = (0..dim)
+        .map(|component| {
+            let mixed = idx
+                .wrapping_mul(31)
+                .wrapping_add(component.wrapping_mul(17))
+                % 2048;
+            mixed as f32 / 2048.0
+        })
+        .collect();
+    Value::Vector(VectorValue::new(components).expect("fixture vector is valid"))
 }
