@@ -25,13 +25,11 @@
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source,
 //!   bytes sources, or any cast whose target is `NULL` / `NOTHING`).
 
-use selene_core::{Record, Value};
-use smallvec::SmallVec;
+use selene_core::Value;
 
 use crate::{
-    GqlType, RecordType, SourceSpan,
+    GqlType, SourceSpan,
     runtime::{DataExceptionSubclass, EvalCtx, ExecutorError},
-    temporal_parse,
 };
 
 use super::uuid_fns::parse_uuid_string;
@@ -39,13 +37,17 @@ use super::uuid_fns::parse_uuid_string;
 mod decimal;
 mod float;
 mod numeric_text;
+mod record;
 mod signed;
 mod signed128;
+mod temporal;
 mod unsigned;
 
 use float::{FloatTarget, cast_to_float};
+use record::cast_to_record;
 use signed::{SignedIntegerTarget, cast_to_signed_integer};
 use signed128::cast_to_int128;
+use temporal::cast_to_temporal;
 use unsigned::{UnsignedIntegerTarget, cast_to_unsigned_integer};
 
 /// Evaluate an explicit CAST.
@@ -237,96 +239,6 @@ fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> 
     }
 }
 
-fn cast_to_temporal(
-    value: Value,
-    target_type: &GqlType,
-    span: SourceSpan,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Value, ExecutorError> {
-    match (value, target_type) {
-        (Value::ZonedDateTime(value), GqlType::ZonedDateTime) => Ok(Value::ZonedDateTime(value)),
-        (Value::ZonedDateTime(value), GqlType::LocalDateTime) => {
-            Ok(Value::LocalDateTime(value.datetime()))
-        }
-        (Value::ZonedDateTime(value), GqlType::Date) => Ok(Value::Date(value.datetime().date())),
-        (Value::ZonedDateTime(value), GqlType::ZonedTime) => {
-            let text = format!("{}{}", value.time(), value.offset());
-            temporal_parse::parse_zoned_time(&text)
-                .map(|value| Value::ZonedTime(Box::new(value)))
-                .map_err(|error| invalid_datetime_format(error, span))
-        }
-        (Value::LocalDateTime(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(value)),
-        (Value::LocalDateTime(value), GqlType::Date) => Ok(Value::Date(value.date())),
-        (Value::LocalDateTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value.time())),
-        (Value::LocalDateTime(value), GqlType::ZonedDateTime) => {
-            zoned_from_local_datetime(value, ctx, span)
-                .map(|value| Value::ZonedDateTime(Box::new(value)))
-        }
-        (Value::Date(value), GqlType::Date) => Ok(Value::Date(value)),
-        (Value::Date(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(
-            value.to_datetime(jiff::civil::Time::midnight()),
-        )),
-        (Value::Date(value), GqlType::ZonedDateTime) => {
-            zoned_from_local_datetime(value.to_datetime(jiff::civil::Time::midnight()), ctx, span)
-                .map(|value| Value::ZonedDateTime(Box::new(value)))
-        }
-        (Value::ZonedTime(value), GqlType::ZonedTime) => Ok(Value::ZonedTime(value)),
-        (Value::ZonedTime(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(
-            current_session_date(ctx).to_datetime(value.time()),
-        )),
-        (Value::ZonedTime(value), GqlType::ZonedDateTime) => {
-            let datetime = current_session_date(ctx).to_datetime(value.time());
-            zoned_from_datetime_and_zone(datetime, value.offset().to_time_zone(), span)
-                .map(|value| Value::ZonedDateTime(Box::new(value)))
-        }
-        (Value::LocalTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value)),
-        (Value::LocalTime(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(
-            current_session_date(ctx).to_datetime(value),
-        )),
-        (Value::LocalTime(value), GqlType::ZonedDateTime) => {
-            let datetime = current_session_date(ctx).to_datetime(value);
-            zoned_from_local_datetime(datetime, ctx, span)
-                .map(|value| Value::ZonedDateTime(Box::new(value)))
-        }
-        (Value::LocalTime(value), GqlType::ZonedTime) => {
-            zoned_from_local_time(value, ctx, span).map(|value| Value::ZonedTime(Box::new(value)))
-        }
-        (Value::Duration(value), GqlType::Duration) => Ok(Value::Duration(value)),
-        (Value::String(value), GqlType::ZonedDateTime) => {
-            temporal_parse::parse_zoned_datetime(value.as_str().trim())
-                .map(|value| Value::ZonedDateTime(Box::new(value)))
-                .map_err(|error| invalid_datetime_format(error, span))
-        }
-        (Value::String(value), GqlType::LocalDateTime) => {
-            temporal_parse::parse_local_datetime(value.as_str().trim())
-                .map(Value::LocalDateTime)
-                .map_err(|error| invalid_datetime_format(error, span))
-        }
-        (Value::String(value), GqlType::Date) => temporal_parse::parse_date(value.as_str().trim())
-            .map(Value::Date)
-            .map_err(|error| invalid_datetime_format(error, span)),
-        (Value::String(value), GqlType::ZonedTime) => {
-            temporal_parse::parse_zoned_time(value.as_str().trim())
-                .map(|value| Value::ZonedTime(Box::new(value)))
-                .map_err(|error| invalid_datetime_format(error, span))
-        }
-        (Value::String(value), GqlType::LocalTime) => {
-            temporal_parse::parse_local_time(value.as_str().trim())
-                .map(Value::LocalTime)
-                .map_err(|error| invalid_datetime_format(error, span))
-        }
-        (Value::String(value), GqlType::Duration) => {
-            temporal_parse::parse_duration(value.as_str().trim())
-                .map(|value| Value::Duration(Box::new(value)))
-                .map_err(|error| invalid_duration_format(error, span))
-        }
-        (_, target) => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: cast_to_type_feature(target),
-            span,
-        }),
-    }
-}
-
 fn cast_to_list(
     value: Value,
     element_type: &GqlType,
@@ -351,99 +263,11 @@ fn cast_to_list(
     Ok(Value::List(out))
 }
 
-/// CAST a record value to a record target type per ISO/IEC 39075:2024 §20.8.
-///
-/// - An **open** record target (`RecordType::Open`) returns the source record unchanged
-///   (GR4(e)(ii) identity).
-/// - A **closed** record target re-casts each declared field. Per GR4(e)(i), for the named
-///   `Value::Record` form each declared target field is resolved by name in the source:
-///   a target field with no matching source field raises `22G0U` "record fields do not
-///   match", and source fields not named by the target are dropped. Each resolved field's
-///   value is recursively re-cast to the declared field type. (A `Value::RecordTyped` source
-///   is rejected — see the fail-closed note below.)
-///
-/// The result is emitted as the open named `Value::Record` form, matching the §20.18
-/// record-constructor output so cast results are indistinguishable from record literals
-/// downstream (and validate identically against a closed-graph RECORD property).
-fn cast_to_record(
-    value: Value,
-    target: &RecordType,
-    span: SourceSpan,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Value, ExecutorError> {
-    match target {
-        RecordType::Open => match value {
-            Value::Record(_) | Value::RecordTyped(_) => Ok(value),
-            _ => Err(non_record_source_cast(span)),
-        },
-        RecordType::Closed(fields) => {
-            let mut out: SmallVec<[(selene_core::IStr, Value); 4]> =
-                SmallVec::with_capacity(fields.len());
-            match value {
-                Value::Record(record) => {
-                    let Record::Open(source_fields) = *record else {
-                        return Err(non_record_source_cast(span));
-                    };
-                    for (name, ty) in fields {
-                        let Some((_, source_value)) =
-                            source_fields.iter().find(|(field, _)| field == name)
-                        else {
-                            return Err(record_fields_do_not_match(span));
-                        };
-                        let source_value = source_value.clone();
-                        let casted = stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
-                            eval_cast(source_value, ty, span, ctx)
-                        })?;
-                        out.push((name.clone(), casted));
-                    }
-                }
-                // Fail-closed. SR12's closed→closed projection is by field NAME, but a
-                // `Value::RecordTyped` source is catalog-bound (a `type_id` + positional
-                // slots, no inline names), so name-keyed projection needs to resolve
-                // `type_id` through the named-record-type catalog. That catalog is unbuilt
-                // (`GraphTypeDef.record_types` is never populated) and its resolution
-                // semantics are undesigned, so rather than project positionally (name-blind,
-                // plausibly wrong) we reject. Unreached today: no production read path
-                // materializes `Value::RecordTyped` (records surface as
-                // `Value::Record(Record::Open)`, handled name-keyed above). Name-keyed
-                // projection lands with the future RecordTyped read-path producer brief.
-                Value::RecordTyped(_) => {
-                    return Err(ExecutorError::FeatureNotSupportedYet {
-                        feature: "CAST of a catalog-bound RECORD (RecordTyped) source value",
-                        span,
-                    });
-                }
-                _ => return Err(non_record_source_cast(span)),
-            }
-            Ok(Value::Record(Box::new(Record::Open(out))))
-        }
-    }
-}
-
 /// An invalid ISO §20.8 Table-4 source/target combination (a `N` cell) →
 /// `22G03` datatype mismatch. Used for the boolean↔numeric cells ISO does not
 /// define a `CAST` for.
 fn non_iso_combination(message: &'static str, span: SourceSpan) -> ExecutorError {
     ExecutorError::data_exception(DataExceptionSubclass::InvalidValueType, message, span)
-}
-
-fn non_record_source_cast(span: SourceSpan) -> ExecutorError {
-    // ISO §20.8 Table 4: a non-record source to a record target is an invalid type
-    // combination (`N`) → 22G03 datatype mismatch.
-    ExecutorError::data_exception(
-        DataExceptionSubclass::InvalidValueType,
-        "CAST to RECORD requires a record source value",
-        span,
-    )
-}
-
-fn record_fields_do_not_match(span: SourceSpan) -> ExecutorError {
-    // ISO §20.8 GR4(e): the source record fields do not match the target RECORD type.
-    ExecutorError::data_exception(
-        DataExceptionSubclass::RecordFieldsDoNotMatch,
-        "source record fields do not match the target RECORD type",
-        span,
-    )
 }
 
 fn string_to_boolean(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -464,47 +288,6 @@ fn invalid_character(text: &str, target: &str, span: SourceSpan) -> ExecutorErro
         format!("STRING value `{text}` is not a valid {target}"),
         span,
     )
-}
-
-fn invalid_datetime_format(message: String, span: SourceSpan) -> ExecutorError {
-    ExecutorError::data_exception(DataExceptionSubclass::InvalidDatetimeFormat, message, span)
-}
-
-fn invalid_duration_format(message: String, span: SourceSpan) -> ExecutorError {
-    ExecutorError::data_exception(DataExceptionSubclass::InvalidDurationFormat, message, span)
-}
-
-fn zoned_from_local_datetime(
-    value: jiff::civil::DateTime,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-    span: SourceSpan,
-) -> Result<jiff::Zoned, ExecutorError> {
-    zoned_from_datetime_and_zone(value, ctx.tx.session_time_zone().clone(), span)
-}
-
-fn zoned_from_datetime_and_zone(
-    value: jiff::civil::DateTime,
-    zone: jiff::tz::TimeZone,
-    span: SourceSpan,
-) -> Result<jiff::Zoned, ExecutorError> {
-    value
-        .to_zoned(zone)
-        .map_err(|error| invalid_datetime_format(format!("invalid ZONED DATETIME: {error}"), span))
-}
-
-fn zoned_from_local_time(
-    value: jiff::civil::Time,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-    span: SourceSpan,
-) -> Result<jiff::Zoned, ExecutorError> {
-    let anchor = jiff::civil::Date::constant(1970, 1, 1).to_datetime(value);
-    zoned_from_local_datetime(anchor, ctx, span)
-}
-
-fn current_session_date(ctx: &EvalCtx<'_, '_, '_, '_>) -> jiff::civil::Date {
-    jiff::Timestamp::now()
-        .to_zoned(ctx.tx.session_time_zone().clone())
-        .date()
 }
 
 fn format_float(f: f64) -> String {
@@ -547,6 +330,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::RecordType;
     use selene_core::GraphId;
     use selene_graph::SeleneGraph;
 

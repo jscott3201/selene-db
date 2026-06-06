@@ -221,7 +221,14 @@ fn cast_between_deterministic_temporal_instants() {
             Value::ZonedDateTime(Box::new(zoned_datetime.parse().unwrap())),
             "LOCAL DATETIME"
         ),
-        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+        Value::LocalDateTime("2026-05-07T08:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        cast_bound(
+            Value::ZonedDateTime(Box::new(zoned_datetime.parse().unwrap())),
+            "LOCAL TIME"
+        ),
+        Value::LocalTime("08:34:56".parse().unwrap())
     );
 
     let Value::ZonedTime(value) = cast_bound(
@@ -312,12 +319,17 @@ fn cast_times_to_datetimes_use_current_session_date() {
     let zoned_time = Value::ZonedTime(Box::new(
         "1970-01-01T08:09:10-07:00[Etc/GMT+7]".parse().unwrap(),
     ));
+    let Value::LocalTime(value) = cast_bound(zoned_time.clone(), "LOCAL TIME") else {
+        panic!("expected local time");
+    };
+    assert_eq!(value.to_string(), "01:09:10");
+
     let (value, before, after) =
         cast_bound_with_date_window(&mut session, zoned_time.clone(), "LOCAL DATETIME");
     let Value::LocalDateTime(value) = value else {
         panic!("expected local datetime");
     };
-    assert_eq!(value.time().to_string(), "08:09:10");
+    assert_eq!(value.time().to_string(), "01:09:10");
     assert_current_date_window(value.date(), before, after);
 
     let (value, before, after) =
