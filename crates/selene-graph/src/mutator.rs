@@ -15,7 +15,7 @@ use std::sync::Arc;
 use roaring::RoaringBitmap;
 use selene_core::{
     Change, DbString, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    SchemaChange,
+    SchemaChange, db_string,
 };
 
 use crate::adjacency::{AdjacencyEdge, AdjacencyEntry};
@@ -357,6 +357,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 row as u32,
                 id,
             );
+            graph.node_store.labels.set(row, LabelSet::new());
+            graph.node_store.properties.set(row, PropertyMap::new());
             graph.node_store.alive.remove(row as u32);
             // BRIEF-Item-4a: KEEP the real external id in row_to_id for the now
             // dead row (and keep the id -> row map entry). A deleted id stays
@@ -573,6 +575,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // lookup no-ops and only the neighbor side is touched.
         remove_edge_from_adjacency(&mut graph.adjacency_out, source, id);
         remove_edge_from_adjacency(&mut graph.adjacency_in, target, id);
+        graph.edge_store.label.set(row, db_string("")?);
+        graph.edge_store.source.set(row, NodeId::TOMBSTONE);
+        graph.edge_store.target.set(row, NodeId::TOMBSTONE);
+        graph.edge_store.properties.set(row, PropertyMap::new());
         Ok(())
     }
 
@@ -856,3 +862,6 @@ mod hub_delete_tests;
 
 #[cfg(test)]
 mod delete_set_tests;
+
+#[cfg(test)]
+mod payload_clear_tests;
