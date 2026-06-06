@@ -18,6 +18,26 @@ fn cast_bound(value: Value, target: &str) -> Value {
     table.rows()[0].values()[0].clone()
 }
 
+fn cast_bound_in_zone(value: Value, target: &str, zone: &str) -> Value {
+    let graph = SharedGraph::new(GraphId::new(13_811));
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            &format!("SESSION SET TIME ZONE '{zone}'"),
+            &EmptyProcedureRegistry,
+        )
+        .expect("set session time zone");
+    session.bind_parameter(intern("p").expect("intern param"), value);
+    let source = format!("RETURN CAST($p AS {target}) AS v");
+    let output = session
+        .execute_source(&source, &EmptyProcedureRegistry)
+        .expect("temporal cast succeeds");
+    let StatementOutput::Rows(table) = output else {
+        panic!("temporal cast produced non-row output");
+    };
+    table.rows()[0].values()[0].clone()
+}
+
 fn cast_bound_to_string(value: Value) -> String {
     let Value::String(value) = cast_bound(value, "STRING") else {
         panic!("temporal string cast did not return STRING");
@@ -170,6 +190,54 @@ fn cast_between_deterministic_temporal_instants() {
     };
     assert_eq!(value.time().to_string(), "12:34:56");
     assert_eq!(value.offset().to_string(), "-04");
+}
+
+#[test]
+fn cast_local_temporals_to_zoned_use_session_time_zone() {
+    let Value::ZonedDateTime(value) = cast_bound_in_zone(
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap()),
+        "ZONED DATETIME",
+        "+05:30",
+    ) else {
+        panic!("expected zoned datetime");
+    };
+    assert_eq!(value.datetime().to_string(), "2026-05-07T12:34:56");
+    assert_eq!(value.offset().seconds(), 5 * 3600 + 30 * 60);
+
+    let Value::ZonedDateTime(value) = cast_bound_in_zone(
+        Value::Date("2026-05-07".parse().unwrap()),
+        "ZONED DATETIME",
+        "-04:00",
+    ) else {
+        panic!("expected zoned datetime");
+    };
+    assert_eq!(value.datetime().to_string(), "2026-05-07T00:00:00");
+    assert_eq!(value.offset().seconds(), -4 * 3600);
+
+    let Value::ZonedTime(value) = cast_bound_in_zone(
+        Value::LocalTime("12:34:56".parse().unwrap()),
+        "ZONED TIME",
+        "+02:30",
+    ) else {
+        panic!("expected zoned time");
+    };
+    assert_eq!(value.time().to_string(), "12:34:56");
+    assert_eq!(value.offset().seconds(), 2 * 3600 + 30 * 60);
+}
+
+#[test]
+fn cast_list_elements_preserve_session_time_zone() {
+    let value = Value::List(vec![Value::LocalDateTime(
+        "2026-05-07T12:34:56".parse().unwrap(),
+    )]);
+    let Value::List(values) = cast_bound_in_zone(value, "LIST<ZONED DATETIME>", "+01:15") else {
+        panic!("expected list");
+    };
+    let [Value::ZonedDateTime(value)] = values.as_slice() else {
+        panic!("expected one zoned datetime");
+    };
+    assert_eq!(value.datetime().to_string(), "2026-05-07T12:34:56");
+    assert_eq!(value.offset().seconds(), 3600 + 15 * 60);
 }
 
 #[test]

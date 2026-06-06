@@ -153,7 +153,7 @@ pub fn evaluate(
             span,
         } => {
             let evaluated = evaluate(value, binding, schema, ctx)?;
-            cast::eval_cast(evaluated, target_type, *span)
+            cast::eval_cast(evaluated, target_type, *span, ctx)
         }
     }
 }
