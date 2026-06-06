@@ -14,6 +14,7 @@ pub mod parser;
 pub mod plan;
 pub mod procedure_registry;
 pub mod runtime;
+mod temporal_parse;
 
 pub use crate::analyze::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl,

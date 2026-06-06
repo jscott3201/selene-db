@@ -11,6 +11,8 @@
 //! - `22018` (`InvalidCharacterValueForCast`) — strict-parse failure
 //!   (string→numeric/boolean/decimal) and NaN→integer/decimal (per ISO §20.8,
 //!   NaN has no representable exact image).
+//! - `22007` (`InvalidDatetimeFormat`) — strict-parse failure for
+//!   string→date/time/datetime/duration casts.
 //! - `22003` (`NumericValueOutOfRange`) — overflow on numeric→numeric,
 //!   float→integer, or any widening/Decimal conversion that loses a leading
 //!   significant digit (the value does not fit the target's range).
@@ -19,8 +21,8 @@
 //!   ISO does not define a `CAST` for.
 //! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source,
-//!   bytes sources, temporal targets, or any cast whose target is `NULL` /
-//!   `NOTHING`).
+//!   bytes sources, cross-temporal conversions, or any cast whose target is
+//!   `NULL` / `NOTHING`).
 
 use selene_core::{Record, Value};
 use smallvec::SmallVec;
@@ -28,6 +30,7 @@ use smallvec::SmallVec;
 use crate::{
     GqlType, RecordType, SourceSpan,
     runtime::{DataExceptionSubclass, ExecutorError},
+    temporal_parse,
 };
 
 use super::uuid_fns::parse_uuid_string;
@@ -140,6 +143,12 @@ pub(super) fn eval_cast(
         GqlType::Boolean => cast_to_boolean(value, span),
         GqlType::String => cast_to_string(value, span),
         GqlType::Uuid => cast_to_uuid(value, span),
+        GqlType::ZonedDateTime
+        | GqlType::LocalDateTime
+        | GqlType::Date
+        | GqlType::ZonedTime
+        | GqlType::LocalTime
+        | GqlType::Duration => cast_to_temporal(value, target_type, span),
         GqlType::List(element_type) => cast_to_list(value, element_type, span),
         other => Err(ExecutorError::FeatureNotSupportedYet {
             feature: cast_to_type_feature(other),
@@ -221,6 +230,51 @@ fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> 
         Value::String(s) => parse_uuid_string(s.as_str(), span).map(Value::Uuid),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for UUID target",
+            span,
+        }),
+    }
+}
+
+fn cast_to_temporal(
+    value: Value,
+    target_type: &GqlType,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match (value, target_type) {
+        (Value::ZonedDateTime(value), GqlType::ZonedDateTime) => Ok(Value::ZonedDateTime(value)),
+        (Value::LocalDateTime(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(value)),
+        (Value::Date(value), GqlType::Date) => Ok(Value::Date(value)),
+        (Value::ZonedTime(value), GqlType::ZonedTime) => Ok(Value::ZonedTime(value)),
+        (Value::LocalTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value)),
+        (Value::Duration(value), GqlType::Duration) => Ok(Value::Duration(value)),
+        (Value::String(value), GqlType::ZonedDateTime) => {
+            temporal_parse::parse_zoned_datetime(value.as_str())
+                .map(|value| Value::ZonedDateTime(Box::new(value)))
+                .map_err(|error| invalid_datetime_format(error, span))
+        }
+        (Value::String(value), GqlType::LocalDateTime) => {
+            temporal_parse::parse_local_datetime(value.as_str())
+                .map(Value::LocalDateTime)
+                .map_err(|error| invalid_datetime_format(error, span))
+        }
+        (Value::String(value), GqlType::Date) => temporal_parse::parse_date(value.as_str())
+            .map(Value::Date)
+            .map_err(|error| invalid_datetime_format(error, span)),
+        (Value::String(value), GqlType::ZonedTime) => {
+            temporal_parse::parse_zoned_time(value.as_str())
+                .map(|value| Value::ZonedTime(Box::new(value)))
+                .map_err(|error| invalid_datetime_format(error, span))
+        }
+        (Value::String(value), GqlType::LocalTime) => {
+            temporal_parse::parse_local_time(value.as_str())
+                .map(Value::LocalTime)
+                .map_err(|error| invalid_datetime_format(error, span))
+        }
+        (Value::String(value), GqlType::Duration) => temporal_parse::parse_duration(value.as_str())
+            .map(|value| Value::Duration(Box::new(value)))
+            .map_err(|error| invalid_datetime_format(error, span)),
+        (_, target) => Err(ExecutorError::FeatureNotSupportedYet {
+            feature: cast_to_type_feature(target),
             span,
         }),
     }
@@ -361,6 +415,10 @@ fn invalid_character(text: &str, target: &str, span: SourceSpan) -> ExecutorErro
         format!("STRING value `{text}` is not a valid {target}"),
         span,
     )
+}
+
+fn invalid_datetime_format(message: String, span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(DataExceptionSubclass::InvalidDatetimeFormat, message, span)
 }
 
 fn format_float(f: f64) -> String {
