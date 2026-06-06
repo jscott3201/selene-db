@@ -617,6 +617,43 @@ microsecond-scale zstd work on many small writes, but this benchmark is only a
 codec threshold surface; an actual WAL format or policy change still needs
 end-to-end append/replay and recovery evidence.
 
+#### `persist_wal_payload_compression_policy_*` — real writer policy sweep
+
+End-to-end companion to the codec threshold sweep. These rows use the real
+`WalWriter::open_with_compression` path added after the codec-only baseline, so
+append rows include postcard serialization, policy selection, optional zstd,
+header framing, checksum, and file writes with `SyncPolicy::OnFlushOnly`.
+Replay rows build a WAL file with the selected policy in setup, then time
+reader iteration, checksum, optional decompression, and postcard decode.
+
+Command:
+
+```bash
+scripts/run-benches.sh --profile quick --bench wal --filter compression_policy
+```
+
+Quick profile on 2026-06-06. `total=1000` changes. `batch` is changes per WAL
+entry. `current128` is the production default, `threshold4096` avoids
+single-record JSON/vector compression, and `disabled` leaves every payload
+uncompressed.
+
+| Payload / batch | append current128 | append 4096 | append disabled | replay current128 | replay 4096 | replay disabled | Signal |
+|---|---:|---:|---:|---:|---:|---:|---|
+| scalar i64 / b10 | 1.70 ms | 1.33 ms | 1.51 ms | 1.36 ms | 1.21 ms | 1.17 ms | Raised threshold avoids compressing small scalar batches. |
+| JSON metadata / b1 | 6.53 ms | 2.77 ms | 2.59 ms | 3.17 ms | 1.51 ms | 1.35 ms | Single JSON records are over-compressed at current128. |
+| JSON metadata / b10 | 2.38 ms | 2.04 ms | 2.02 ms | 2.21 ms | 2.28 ms | 2.24 ms | Append improves; replay is noise-level. |
+| vector128 / b1 | 7.36 ms | 2.74 ms | 2.61 ms | 2.48 ms | 1.03 ms | 993 us | Single 128-dim vectors are over-compressed at current128. |
+| vector128 / b100 | 1.69 ms | 1.75 ms | 1.51 ms | 2.24 ms | 2.03 ms | 1.84 ms | Large vector batches need size/latency trade-off work. |
+| vector768 / b1 | 10.54 ms | 3.85 ms | 3.77 ms | 4.65 ms | 1.64 ms | 1.55 ms | Single 768-dim vectors strongly favor no compression. |
+| vector768 / b100 | 1.84 ms | 2.11 ms | 2.20 ms | 2.88 ms | 2.93 ms | 2.58 ms | Current compression can help large append bytes; replay still favors no decompression. |
+
+Decision signal: a higher threshold such as 4096 bytes looks clearly better
+for small scalar/JSON/vector writes and preserves compressed large batches.
+Disabling compression entirely is not an obvious global win because large vector
+append rows can benefit from compressed writes. The next production decision
+needs file-size ratios and a durability-inclusive row before changing the
+default policy.
+
 #### `persist_wal_sync_sweep` — sync-policy sweep
 
 Append + explicit `flush()` across sync policies. The fsync-frequent policies
