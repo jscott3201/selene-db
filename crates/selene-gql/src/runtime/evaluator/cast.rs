@@ -33,9 +33,11 @@ use crate::{
 use super::uuid_fns::parse_uuid_string;
 
 mod decimal;
+mod float;
 mod signed128;
 mod unsigned;
 
+use float::{FloatTarget, cast_to_float};
 use signed128::cast_to_int128;
 use unsigned::{UnsignedIntegerTarget, cast_to_unsigned_integer};
 
@@ -129,7 +131,8 @@ pub(super) fn eval_cast(
         GqlType::Uint32 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U32, span),
         GqlType::Uint64 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U64, span),
         GqlType::Uint128 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U128, span),
-        GqlType::Float | GqlType::Float64 | GqlType::Float32 => cast_to_float(value, span),
+        GqlType::Float | GqlType::Float64 => cast_to_float(value, FloatTarget::F64, span),
+        GqlType::Float32 => cast_to_float(value, FloatTarget::F32, span),
         GqlType::Decimal => decimal::numeric_to_decimal(value, span),
         GqlType::Boolean => cast_to_boolean(value, span),
         GqlType::String => cast_to_string(value, span),
@@ -213,39 +216,6 @@ fn cast_to_signed_integer(
         format!("INTEGER value exceeds {} range during CAST", target.name()),
         span,
     ))
-}
-
-fn cast_to_float(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    // Per ISO §20.8 Table 4 the float target is `AN`; every numeric source is
-    // a `Y` cell (GR4i). An `AN` target spans the whole exact-numeric range, so
-    // no widening overflows — loss of least-significant precision is permitted
-    // (round/truncate, IA005), and the conversion never raises 22003 (a
-    // boolean source is Table-4 `N` → 22G03).
-    match value {
-        Value::Float(f) => Ok(Value::Float(f)),
-        // Exact-integer → f64 is lossy above 2^53, but ISO §20.8 GR4i does not
-        // require a lossless guarantee here (IA005 round/truncate). Convert
-        // directly through the widest intermediate.
-        #[allow(clippy::cast_precision_loss)]
-        Value::Int(v) => Ok(Value::Float(v as f64)),
-        #[allow(clippy::cast_precision_loss)]
-        Value::Uint(v) => Ok(Value::Float(v as f64)),
-        #[allow(clippy::cast_precision_loss)]
-        Value::Int128(v) => Ok(Value::Float(v as f64)),
-        #[allow(clippy::cast_precision_loss)]
-        Value::Uint128(v) => Ok(Value::Float(v as f64)),
-        Value::Float32(f) => Ok(Value::Float(f64::from(f))),
-        Value::Decimal(d) => decimal::decimal_to_float(d, span),
-        Value::String(s) => string_to_float(s.as_str(), span),
-        Value::Bool(_) => Err(non_iso_combination(
-            "CAST from BOOLEAN to a numeric type is not a valid type combination",
-            span,
-        )),
-        _ => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "CAST source not supported for FLOAT target",
-            span,
-        }),
-    }
 }
 
 fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -472,15 +442,6 @@ fn string_to_integer(text: &str, span: SourceSpan) -> Result<Value, ExecutorErro
         .parse::<i64>()
         .map(Value::Int)
         .map_err(|_| invalid_character(text, "INTEGER", span))
-}
-
-fn string_to_float(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    // Trim whitespace per ecosystem precedent (Postgres/Neo4j/SQLite); see
-    // BRIEF-135a §O Q2-deviation.
-    text.trim()
-        .parse::<f64>()
-        .map(Value::Float)
-        .map_err(|_| invalid_character(text, "FLOAT", span))
 }
 
 fn string_to_boolean(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
