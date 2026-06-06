@@ -4,6 +4,7 @@ use selene_core::{IStr, intern};
 
 mod code_alias;
 mod project_code;
+mod project_migration;
 mod source_chunks;
 mod source_code;
 mod source_files;
@@ -39,6 +40,8 @@ pub enum CorpusProfile {
     ProjectSourceFileMemory,
     /// Live workspace-source corpus extracted from current selene-db files.
     ProjectWorkspaceSourceMemory,
+    /// Legacy-alias corpus mapping archived/prototype terms to current engine surfaces.
+    ProjectMigrationMemory,
 }
 
 impl CorpusProfile {
@@ -77,6 +80,9 @@ impl CorpusProfile {
             "project_workspace_source_memory"
             | "project_workspace_source"
             | "selene_workspace_source" => Self::ProjectWorkspaceSourceMemory,
+            "project_migration_memory" | "project_migration" | "selene_project_migration" => {
+                Self::ProjectMigrationMemory
+            }
             other => panic!("unsupported embedding corpus value: {other}"),
         }
     }
@@ -96,6 +102,7 @@ impl CorpusProfile {
             Self::ProjectSourceChunkMemory => source_chunks::inputs(),
             Self::ProjectSourceFileMemory => source_files::inputs(),
             Self::ProjectWorkspaceSourceMemory => workspace_source::inputs(),
+            Self::ProjectMigrationMemory => project_migration::inputs(),
         }
     }
 }

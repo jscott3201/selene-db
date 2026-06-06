@@ -907,6 +907,20 @@ scripts/run-benches.sh --profile quick --bench procedure_call_repeat \
   --filter 'query_root_current_state_text_score_batch|query_root_current_state_text_vector_batch|query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch|query_root_vector_text_batch'
 ```
 
+The project migration profile uses archived/prototype terminology as query
+aliases, current first-class engine surfaces as target documents, and stale
+decoy documents that maintained current-state should exclude:
+
+```bash
+set -a; source .env; set +a
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_PROVIDER=openrouter \
+SELENE_EMBEDDING_CORPUS=project_migration_memory \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat \
+  --filter 'query_root_current_state_text_score_batch|query_root_current_state_text_vector_batch|query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch|query_root_vector_text_batch'
+```
+
 The GQL query-root rows use the same local oMLX corpus but exercise the full
 query pipeline. The materialization rows isolate `MATCH` plus
 `WITH collect_list(root)` root production before any vector procedure runs; the
@@ -994,7 +1008,9 @@ selene-db module names, implementation snippets, or selected full files to
 stress code/source retrieval. `project_workspace_source_memory` reads the
 current checkout at benchmark setup time and extracts small line-numbered
 windows around named source symbols, so it can feed live project code into
-local embedding rows without committing more stale snippets. These
+local embedding rows without committing more stale snippets.
+`project_migration_memory` uses stale archived/prototype wording as query and
+decoy pressure while targeting current engine files and procedures. These
 target-aware profiles keep topic/current precision metrics but also record
 `hitbp` so rows can show whether the expected symbol/fact/file was retrieved,
 not only whether the result was in the right broad topic:
@@ -1102,6 +1118,12 @@ not only whether the result was in the right broad topic:
 | `SELENE_EMBEDDING_CORPUS=project_workspace_source_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c4...dim1536_basecurbp10000_curbp10000_hitbp10000` | 301.24 µs | - | Maintained current-state vector scoring keeps full target/current precision, about 1.75x slower than BM25/current-state on this live-source profile. |
 | `SELENE_EMBEDDING_CORPUS=project_workspace_source_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_provenance_state_intersection_batch/...q16_k4_r2_c4...dim1536_basecurbp10000_curbp10000_hitbp10000` | 302.39 µs | - | Provenance-required current state preserves the current-state vector quality with negligible extra cost. |
 | `SELENE_EMBEDDING_CORPUS=project_workspace_source_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_vector_text_batch/...q16_k4_r2_c4...dim1536_precbp10000_curbp10000_hitbp10000` | 492.16 µs | - | Vector-first BM25 is full-quality on live source windows, but still slower than current-state vector scoring and much slower than BM25/current-state. |
+| `SELENE_EMBEDDING_CORPUS=project_migration_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_score_batch/...q16_k4_r2_c4...dim1536_precbp9531_curbp9531_hitbp10000` | 170.21 µs | - | Legacy-alias migration profile with stale archived decoys. BM25/current-state is fastest and target-complete, but still has one broad/current miss across 64 returned rows. |
+| `SELENE_EMBEDDING_CORPUS=project_migration_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_text_vector_batch/...q16_k4_r2_c4...dim1536_precbp9531_curbp9531_hitbp10000` | 3.1982 ms | - | Vector rerank after BM25/current-state preserves the same quality shape and adds a large exact-vector pass. |
+| `SELENE_EMBEDDING_CORPUS=project_migration_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_expansion_batch/...q16_k4_r2_c8...dim1536_precbp10000_hitbp10000` | 307.72 µs | - | Plain graph-expanded vector scoring is target-complete and full broad-topic precision, but has no maintained current-state gate. |
+| `SELENE_EMBEDDING_CORPUS=project_migration_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c4...dim1536_basecurbp8125_curbp10000_hitbp10000` | 295.29 µs | - | Maintained current-state vector scoring filters stale migration decoys, restores full current precision, and keeps all expected targets. |
+| `SELENE_EMBEDDING_CORPUS=project_migration_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_provenance_state_intersection_batch/...q16_k4_r2_c4...dim1536_basecurbp8125_curbp10000_hitbp10000` | 295.72 µs | - | Provenance-required current state preserves the current-state vector quality with negligible extra cost. |
+| `SELENE_EMBEDDING_CORPUS=project_migration_memory` `SELENE_EMBEDDING_PROVIDER=openrouter` `shared_cache_query_root_vector_text_batch/...q16_k4_r2_c4...dim1536_precbp10000_curbp8125_hitbp10000` | 493.91 µs | - | Vector-first BM25 is target-complete but admits stale/current-invalid hits, so it is slower and less current-precise than maintained current-state vector scoring. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.55 ms | 1.62 ms | Same GQL-produced roots, then `selene.vector_score_candidate_state_expanded` intersects graph expansion with maintained `omlx_support_facts`, filtering root hint docs while preserving topic precision. |
 | `procedure_vector_omlx_query_roots/shared_session_plan_cache_query_root_state_intersection/...q16_k4_r2_c14...precbp10000` | 1.56 ms | 1.61 ms | Warmed full-plan-cache support-state scorer; unchanged within local noise versus the fresh-session row. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection/...q16_k4_r2_c13...basecurbp8593/8281_curbp10000` | 1.34 ms | 1.41 ms | Intersects the same expanded roots with maintained `omlx_current_support_facts`, excluding graph-authored negative evidence and restoring full current-fact precision with one fewer first-query candidate. |
@@ -1216,6 +1238,16 @@ Current-state vector scoring restores full broad/current precision at
 that reverse order, but it is still slower than current-state vector scoring
 and much slower than BM25/current-state. Keep it as evidence for corpus-shaped
 A/B testing, not production API promotion.
+
+On the `project_migration_memory` profile, queries use archived/prototype
+terminology while current target documents cite first-class engine surfaces and
+stale decoys model old-code drift. BM25/current-state is still fastest and
+target-complete (`hitbp10000`, 170.21 us), but has one broad/current miss.
+Current-state vector scoring restores full current precision at 295.29 us, and
+vector-first BM25 is target-complete but current-imprecise
+(`curbp8125`, 493.91 us). This reinforces graph-maintained current state as the
+right correction for old-code drift; vector-first text remains a benchmarked
+composition choice, not a default API.
 
 The locally listed `jina-code-embeddings-1.5b-mlx` model is not currently
 available from `/v1/embeddings` in oMLX; the endpoint returns HTTP 400 and
