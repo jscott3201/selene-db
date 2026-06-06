@@ -614,6 +614,8 @@ pub enum ConditionClause {
     InlineWhere,
     /// `FILTER`.
     Filter,
+    /// `CALL ... YIELD ... WHERE`.
+    YieldWhere,
     /// `HAVING`.
     Having,
     /// `WITH ... WHERE`.
@@ -628,6 +630,7 @@ impl std::fmt::Display for ConditionClause {
             Self::MatchWhere => "MATCH WHERE",
             Self::InlineWhere => "inline WHERE",
             Self::Filter => "FILTER",
+            Self::YieldWhere => "YIELD WHERE",
             Self::Having => "HAVING",
             Self::WithWhere => "WITH WHERE",
             Self::CaseWhen => "CASE WHEN",

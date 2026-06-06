@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, first_child,
-    not_implemented, span, unexpected_pair,
+    Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, first_child, span,
+    unexpected_pair,
 };
 
 pub(super) fn build_top_level_call(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -94,6 +94,7 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
     let mut name = None;
     let mut args = Vec::new();
     let mut yield_items = Vec::new();
+    let mut yield_filter = None;
 
     for child in pair.into_inner() {
         match child.as_rule() {
@@ -107,10 +108,7 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
             }
             Rule::yield_clause => yield_items = build_yield_items(child)?,
             Rule::yield_filter => {
-                return Err(not_implemented(
-                    &child,
-                    "YIELD WHERE filters are not yet supported",
-                ));
+                yield_filter = Some(expr::build_value_expr(first_child(child)?)?);
             }
             _ => return Err(unexpected_pair(child, "unexpected procedure-call child")),
         }
@@ -123,6 +121,7 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
         .expect("grammar guarantees >= 1: qualified_name"),
         args,
         yield_items,
+        yield_filter,
         span: source_span,
     })
 }

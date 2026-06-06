@@ -89,6 +89,19 @@ fn mixed_yield_star_and_alias_matches_analyzer_order() {
 }
 
 #[test]
+fn top_level_call_yield_where_lowers_to_filter_after_call() {
+    let registry = registry();
+    let plan = plan_one("CALL pkg.all() YIELD outB WHERE outB >= 2", &registry);
+    let [PipelineOp::Call(call), PipelineOp::Filter(filter)] = plan.pipeline.as_slice() else {
+        panic!("expected call followed by filter");
+    };
+
+    assert_eq!(call.yield_schema.len(), 1);
+    assert_eq!(filter.ty, AnalyzedType::Resolved(GqlType::Boolean));
+    assert_eq!(plan.output_schema.columns.len(), 1);
+}
+
+#[test]
 fn in_pipeline_call_extends_visible_columns() {
     let registry = registry();
     let plan = plan_one("MATCH (n) CALL pkg.all() YIELD outA RETURN *", &registry);

@@ -37,11 +37,17 @@ pub(crate) fn lower_top_level_call(
         }
     }
     let columns = planned.yield_schema.clone();
-    let next_pipeline_op_id = crate::PipelineOpId::new(1);
+    let mut pipeline = vec![PipelineOp::Call(planned)];
+    if let Some(filter) = &call.yield_filter {
+        pipeline.push(PipelineOp::Filter(expr::filter_predicate(
+            filter, analyzed,
+        )?));
+    }
+    let next_pipeline_op_id = crate::PipelineOpId::new(pipeline.len() as u32);
     Ok(ExecutionPlan {
         category: analyzed.category,
         pattern_plan: None,
-        pipeline: vec![PipelineOp::Call(planned)],
+        pipeline,
         output_schema: BindingTableSchema { columns },
         impl_defined_caps: ImplDefinedCaps::default(),
         expr_ids: analyzed.expr_ids.clone(),

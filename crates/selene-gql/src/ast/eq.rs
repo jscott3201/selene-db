@@ -301,6 +301,9 @@ fn scrub_call(call: &mut ProcedureCall) {
     for item in &mut call.yield_items {
         item.span = SourceSpan::default();
     }
+    if let Some(filter) = &mut call.yield_filter {
+        scrub_value(filter);
+    }
 }
 
 fn scrub_inline_call(call: &mut InlineProcedureCall) {

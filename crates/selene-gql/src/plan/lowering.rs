@@ -340,6 +340,11 @@ fn lower_query_pipeline(
                 let planned = call::plan_call(call, registry, analyzed)?;
                 visible.extend(planned.yield_schema.clone());
                 ops.push(PipelineOp::Call(planned));
+                if let Some(filter) = &call.yield_filter {
+                    ops.push(PipelineOp::Filter(expr::filter_predicate(
+                        filter, analyzed,
+                    )?));
+                }
             }
             PipelineStatement::CallSubquery(call) => {
                 let planned = lower_call_subquery(call, registry, analyzed, max_quantifier)?;
