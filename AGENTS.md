@@ -213,8 +213,9 @@ JSON is native engine data for agentic workloads:
   parameters, `IS TYPED JSON`, `CAST(<string> AS JSON)`, `CAST(<json> AS
   STRING)`, and scalar functions `json`, `json_parse`, `json_stringify`,
   `json_type`, `json_array`, `json_object`, `json_array_length`,
-  `json_object_keys`, `json_contains`, `json_get`, `json_get_text`,
-  `json_get_path`, `json_get_path_text`, and `json_has_path`.
+  `json_object_keys`, `json_contains`, `json_merge_patch`, `json_get`,
+  `json_get_text`, `json_get_path`, `json_get_path_text`, and
+  `json_has_path`.
 - `json_array` and `json_object` construct JSON through the scalar-function
   surface. They convert SQL null/bool/string/i64/u64/finite-float/list/JSON
   values to JSON; wider exact numerics, temporal values, bytes, graph
@@ -231,6 +232,10 @@ JSON is native engine data for agentic workloads:
   candidates require matching contained keys, array candidates require each
   candidate element to be contained by some target element, and scalar candidates
   match by value or by membership in a target array.
+- `json_merge_patch(target, patch)` applies RFC 7396 object merge-patch
+  semantics copy-on-write. It removes object members whose patch value is JSON
+  null, recursively merges object members, and replaces the target for
+  non-object patches.
 - `selene.json_contains_nodes(label, property, candidate, k)` is the exact
   graph-tier candidate producer for JSON-valued node properties. It is the
   correctness oracle before maintained JSON/path indexes exist.

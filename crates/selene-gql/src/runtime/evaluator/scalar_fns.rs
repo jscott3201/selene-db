@@ -303,6 +303,10 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
             span,
         ),
+        "json_merge_patch" => json_fns::eval_json_merge_patch(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
         "json_get" => json_fns::eval_json_get(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
             span,

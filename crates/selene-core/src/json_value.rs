@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::Value as SerdeJsonValue;
+use serde_json::{Map as SerdeJsonMap, Value as SerdeJsonValue};
 
 use crate::{CoreError, CoreResult, db_string::MAX_DB_STRING_BYTES};
 
@@ -79,6 +79,21 @@ impl JsonValue {
     #[must_use]
     pub fn contains(&self, candidate: &Self) -> bool {
         json_contains_value(self.as_serde(), candidate.as_serde())
+    }
+
+    /// Return the result of applying an RFC 7396 JSON Merge Patch document.
+    ///
+    /// The operation is copy-on-write: this value and `patch` are left
+    /// unchanged, and the merged result is validated as a fresh [`JsonValue`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the usual value-limit errors if the merged result exceeds engine
+    /// caps.
+    pub fn merge_patch(&self, patch: &Self) -> CoreResult<Self> {
+        let mut target = self.as_serde().clone();
+        merge_patch_value(&mut target, patch.as_serde());
+        Self::new(target)
     }
 }
 
@@ -188,6 +203,29 @@ fn json_contains_value(target: &SerdeJsonValue, candidate: &SerdeJsonValue) -> b
     }
 }
 
+fn merge_patch_value(target: &mut SerdeJsonValue, patch: &SerdeJsonValue) {
+    let SerdeJsonValue::Object(patch) = patch else {
+        *target = patch.clone();
+        return;
+    };
+
+    if !target.is_object() {
+        *target = SerdeJsonValue::Object(SerdeJsonMap::new());
+    }
+    let target = target
+        .as_object_mut()
+        .expect("target was normalized to object");
+
+    for (key, value) in patch {
+        if value.is_null() {
+            target.remove(key);
+        } else {
+            let entry = target.entry(key.clone()).or_insert(SerdeJsonValue::Null);
+            merge_patch_value(entry, value);
+        }
+    }
+}
+
 fn write_json_canonical(value: &SerdeJsonValue, output: &mut String) {
     match value {
         SerdeJsonValue::Null => output.push_str("null"),
@@ -254,5 +292,37 @@ mod tests {
         assert!(!target.contains(
             &JsonValue::new(serde_json::json!({"memory": {"kind": "semantic"}})).unwrap()
         ));
+    }
+
+    #[test]
+    fn merge_patch_matches_rfc7396_core_cases() {
+        for (target, patch, expected) in [
+            (r#"{"a":"b"}"#, r#"{"a":"c"}"#, r#"{"a":"c"}"#),
+            (r#"{"a":"b"}"#, r#"{"b":"c"}"#, r#"{"a":"b","b":"c"}"#),
+            (r#"{"a":"b"}"#, r#"{"a":null}"#, r#"{}"#),
+            (r#"{"a":"b","b":"c"}"#, r#"{"a":null}"#, r#"{"b":"c"}"#),
+            (r#"{"a":["b"]}"#, r#"{"a":"c"}"#, r#"{"a":"c"}"#),
+            (r#"{"a":"c"}"#, r#"{"a":["b"]}"#, r#"{"a":["b"]}"#),
+            (
+                r#"{"a":{"b":"c"}}"#,
+                r#"{"a":{"b":"d","c":null}}"#,
+                r#"{"a":{"b":"d"}}"#,
+            ),
+            (r#"{"a":[{"b":"c"}]}"#, r#"{"a":[1]}"#, r#"{"a":[1]}"#),
+            (r#"["a","b"]"#, r#"["c","d"]"#, r#"["c","d"]"#),
+            (r#"{"a":"b"}"#, r#"["c"]"#, r#"["c"]"#),
+            (r#"{"a":"foo"}"#, r#"null"#, r#"null"#),
+            (r#"{"a":"foo"}"#, r#""bar""#, r#""bar""#),
+            (r#"{"e":null}"#, r#"{"a":1}"#, r#"{"a":1,"e":null}"#),
+        ] {
+            let target = JsonValue::parse_str(target).expect("target JSON parses");
+            let patch = JsonValue::parse_str(patch).expect("patch JSON parses");
+            let expected = JsonValue::parse_str(expected).expect("expected JSON parses");
+
+            assert_eq!(
+                target.merge_patch(&patch).expect("merge patch succeeds"),
+                expected
+            );
+        }
     }
 }
