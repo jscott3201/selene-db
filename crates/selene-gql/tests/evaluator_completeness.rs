@@ -423,6 +423,43 @@ fn predicate_completion_covers_all_different_and_same() {
 }
 
 #[test]
+fn dynamic_reference_ordering_uses_stable_ids() {
+    let left = db_string("left");
+    let right = db_string("right");
+    let lt = ValueExpr::BinaryOp {
+        op: BinaryOp::Lt,
+        lhs: Box::new(var(left.clone())),
+        rhs: Box::new(var(right.clone())),
+        span: span(),
+    };
+    assert_eq!(
+        eval_with_binding(
+            &lt,
+            Binding::new([
+                Value::NodeRef(NodeId::new(1)),
+                Value::NodeRef(NodeId::new(2))
+            ]),
+            vec![left.clone(), right.clone()],
+        )
+        .expect("NodeRef ordering evaluates"),
+        Value::Bool(true)
+    );
+
+    assert_eq!(
+        eval_with_binding(
+            &lt,
+            Binding::new([
+                Value::EdgeRef(EdgeId::new(5)),
+                Value::EdgeRef(EdgeId::new(3))
+            ]),
+            vec![left, right],
+        )
+        .expect("EdgeRef ordering evaluates"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
 fn is_predicates_and_property_exists_use_graph_snapshot() {
     let fixture = ExecFixture::build();
     let node = db_string("node");

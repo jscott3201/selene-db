@@ -92,8 +92,6 @@ pub(crate) fn gql_equal_non_null(lhs: &Value, rhs: &Value) -> Option<bool> {
 }
 
 /// Compare non-null values for predicate ordering.
-///
-/// TODO(BRIEF-followup): NodeRef/EdgeRef/Uuid predicate ordering awaits analyzer policy.
 pub(crate) fn compare_non_null(lhs: &Value, rhs: &Value) -> Option<Ordering> {
     debug_assert!(!matches!(lhs, Value::Null));
     debug_assert!(!matches!(rhs, Value::Null));
@@ -139,6 +137,9 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::ZonedTime(lhs), Value::ZonedTime(rhs)) => lhs.cmp(rhs),
         (Value::Duration(_), Value::Duration(_)) => duration_key(lhs).cmp(&duration_key(rhs)),
         (Value::Bytes(lhs), Value::Bytes(rhs)) => lhs.as_ref().cmp(rhs.as_ref()),
+        (Value::Uuid(lhs), Value::Uuid(rhs)) => lhs.cmp(rhs),
+        (Value::NodeRef(lhs), Value::NodeRef(rhs)) => lhs.cmp(rhs),
+        (Value::EdgeRef(lhs), Value::EdgeRef(rhs)) => lhs.cmp(rhs),
         (Value::List(lhs), Value::List(rhs)) => return list_compare(lhs, rhs),
         (Value::Record(lhs), Value::Record(rhs)) => return record_compare(lhs, rhs),
         (Value::RecordTyped(lhs), Value::RecordTyped(rhs)) => {

@@ -242,6 +242,31 @@ fn compare_non_null_bytes_lex() {
 }
 
 #[test]
+fn compare_non_null_orders_uuid_and_references() {
+    assert_eq!(
+        compare_non_null(
+            &Value::Uuid("00000000-0000-0000-0000-000000000001".parse().unwrap()),
+            &Value::Uuid("00000000-0000-0000-0000-000000000002".parse().unwrap()),
+        ),
+        Some(Ordering::Less)
+    );
+    assert_eq!(
+        compare_non_null(
+            &Value::NodeRef(NodeId::new(1)),
+            &Value::NodeRef(NodeId::new(2))
+        ),
+        Some(Ordering::Less)
+    );
+    assert_eq!(
+        compare_non_null(
+            &Value::EdgeRef(EdgeId::new(2)),
+            &Value::EdgeRef(EdgeId::new(1))
+        ),
+        Some(Ordering::Greater)
+    );
+}
+
+#[test]
 fn compare_non_null_decimal_lt() {
     assert_eq!(
         compare_non_null(

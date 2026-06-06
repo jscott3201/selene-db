@@ -151,6 +151,18 @@ fn uuid_literal_executes_as_uuid_value() {
 }
 
 #[test]
+fn uuid_literals_are_order_comparable() {
+    assert_eq!(
+        single_value(
+            "RETURN UUID '00000000-0000-0000-0000-000000000001' \
+             < UUID '00000000-0000-0000-0000-000000000002' AS value",
+            "value",
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn is_typed_uuid_matches_uuid_values() {
     assert_eq!(
         single_value(
