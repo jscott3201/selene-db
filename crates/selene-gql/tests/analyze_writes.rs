@@ -1,6 +1,6 @@
 //! Analyzer write-set and statement-category tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     AnalysisError, AnalyzedStatement, BindingId, DeleteMode, ElementKind, EmptyProcedureRegistry,
     GqlStatus, GqlType, LabelExpr, MutationWriteSet, ProcedureMutability, ProcedureOutputColumn,
@@ -25,8 +25,8 @@ fn write_set(analyzed: &AnalyzedStatement) -> &MutationWriteSet {
     analyzed.write_set.as_ref().expect("mutation write-set")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test strings fit interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test strings fit DB string cap")
 }
 
 fn label_name(label_expr: &Option<LabelExpr>) -> &str {
@@ -36,7 +36,7 @@ fn label_name(label_expr: &Option<LabelExpr>) -> &str {
     label.as_str()
 }
 
-fn property_names(keys: &[IStr]) -> Vec<&str> {
+fn property_names(keys: &[DbString]) -> Vec<&str> {
     keys.iter().map(|key| key.as_str()).collect()
 }
 
@@ -81,9 +81,12 @@ fn span_text(source: &str, span: SourceSpan) -> &str {
 
 fn registry_with_mutability(mutability: ProcedureMutability) -> MockProcedureRegistry {
     MockProcedureRegistry::new().with_procedure_mutability(
-        vec![istr("pkg"), istr("proc")],
+        vec![db_string("pkg"), db_string("proc")],
         Vec::new(),
-        vec![ProcedureOutputColumn::new(istr("result"), GqlType::String)],
+        vec![ProcedureOutputColumn::new(
+            db_string("result"),
+            GqlType::String,
+        )],
         mutability,
     )
 }

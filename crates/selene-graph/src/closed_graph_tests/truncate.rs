@@ -23,18 +23,23 @@ fn truncate_under_closed_graph_keeps_bound_type() {
         let mut m = txn.mutator();
         let alice = m
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("Alice"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("Alice"))),
             )
             .unwrap();
         let bob = m
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("Bob"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("Bob"))),
             )
             .unwrap();
-        m.create_edge(istr("KNOWS"), alice, bob, prop("since", Value::Int(2020)))
-            .unwrap();
+        m.create_edge(
+            db_string("KNOWS"),
+            alice,
+            bob,
+            prop("since", Value::Int(2020)),
+        )
+        .unwrap();
         (alice, bob)
     };
     txn.commit().unwrap();
@@ -49,7 +54,7 @@ fn truncate_under_closed_graph_keeps_bound_type() {
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
-        m.truncate_node_type(istr("Person")).unwrap();
+        m.truncate_node_type(db_string("Person")).unwrap();
     }
     txn.commit()
         .expect("truncate under a closed graph commits — it removes instances, not the type");
@@ -65,7 +70,7 @@ fn truncate_under_closed_graph_keeps_bound_type() {
         assert!(!read.is_node_alive(alice));
         assert!(!read.is_node_alive(bob));
         assert!(
-            read.nodes_with_label(&istr("Person")).is_none(),
+            read.nodes_with_label(&db_string("Person")).is_none(),
             "Person label bucket cleared after truncate"
         );
     }
@@ -80,8 +85,8 @@ fn truncate_under_closed_graph_keeps_bound_type() {
     {
         let mut m = txn.mutator();
         m.create_node(
-            LabelSet::single(istr("Person")),
-            prop("name", Value::String(istr("Carol"))),
+            LabelSet::single(db_string("Person")),
+            prop("name", Value::String(db_string("Carol"))),
         )
         .unwrap();
     }

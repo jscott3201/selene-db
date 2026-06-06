@@ -16,7 +16,7 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use selene_core::{Change, GraphId, HlcTimestamp, IStr, LabelSet, PropertyMap, intern};
+use selene_core::{Change, DbString, GraphId, HlcTimestamp, LabelSet, PropertyMap};
 
 use crate::committer_batch::CommitBatching;
 use crate::durable_provider::DurableProvider;
@@ -24,8 +24,8 @@ use crate::error::GraphError;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 use crate::{SeleneGraph, SharedGraph};
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -225,7 +225,7 @@ fn t1_off_equals_brief1_fsync_count() {
     for idx in 0..3 {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("L")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("L")), PropertyMap::new())
             .unwrap();
         let outcome = txn.commit().expect("commit ok");
         assert_eq!(outcome.generation, idx + 1);
@@ -236,7 +236,7 @@ fn t1_off_equals_brief1_fsync_count() {
     // A schema DDL (property index create) — also a Work::Commit through the
     // same one-append-one-flush path.
     shared
-        .create_property_index(istr("L"), istr("k"), crate::TypedIndexKind::I64)
+        .create_property_index(db_string("L"), db_string("k"), crate::TypedIndexKind::I64)
         .expect("index create ok");
 
     // After 3 commits + 1 DDL: 4 writes, 4 flushes, strictly interleaved
@@ -286,14 +286,14 @@ fn t1b_reverse_order_seal_pair_off_one_flush_each() {
     let mut txn_a = shared.begin_write();
     txn_a
         .mutator()
-        .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("A")), PropertyMap::new())
         .unwrap();
     let sealed_a = txn_a.seal(None, None).expect("A seals");
 
     let mut txn_b = shared.begin_write();
     txn_b
         .mutator()
-        .create_node(LabelSet::single(istr("B")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("B")), PropertyMap::new())
         .unwrap();
     let sealed_b = txn_b.seal(None, None).expect("B seals");
 
@@ -346,9 +346,9 @@ fn t2_on_path_groups_fsyncs() {
                     let mut txn = shared.begin_write();
                     txn.mutator()
                         .create_node(
-                            LabelSet::single(istr("N")),
+                            LabelSet::single(db_string("N")),
                             PropertyMap::from_pairs([(
-                                istr("k"),
+                                db_string("k"),
                                 selene_core::Value::Int(
                                     (thread_idx * PER_THREAD + commit_idx) as i64,
                                 ),
@@ -435,7 +435,7 @@ fn t3_order_sensitive_batch_publishes_in_seal_order() {
         let mut txn = shared.begin_write();
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(istr(label)), PropertyMap::new())
+            .create_node(LabelSet::single(db_string(label)), PropertyMap::new())
             .unwrap();
         ids.push(id);
         sealeds.push(txn.seal(None, None).expect("seals"));
@@ -482,17 +482,17 @@ fn t4_gap_ends_batch_no_deadlock() {
 
     let mut s0 = shared.begin_write();
     s0.mutator()
-        .create_node(LabelSet::single(istr("Z0")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("Z0")), PropertyMap::new())
         .unwrap();
     let sealed0 = s0.seal(None, None).expect("0");
     let mut s1 = shared.begin_write();
     s1.mutator()
-        .create_node(LabelSet::single(istr("Z1")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("Z1")), PropertyMap::new())
         .unwrap();
     let sealed1 = s1.seal(None, None).expect("1");
     let mut s2 = shared.begin_write();
     s2.mutator()
-        .create_node(LabelSet::single(istr("Z2")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("Z2")), PropertyMap::new())
         .unwrap();
     let sealed2 = s2.seal(None, None).expect("2");
 
@@ -551,7 +551,7 @@ fn t5_partial_batch_append_failure_errs_all_and_poisons() {
     for label in ["a", "b", "c", "d", "e"] {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr(label)), PropertyMap::new())
+            .create_node(LabelSet::single(db_string(label)), PropertyMap::new())
             .unwrap();
         sealeds.push(txn.seal(None, None).expect("seals"));
     }
@@ -615,7 +615,7 @@ fn t6_flush_failure_poisons_all() {
     for label in ["a", "b", "c", "d"] {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr(label)), PropertyMap::new())
+            .create_node(LabelSet::single(db_string(label)), PropertyMap::new())
             .unwrap();
         sealeds.push(txn.seal(None, None).expect("seals"));
     }
@@ -709,7 +709,7 @@ fn t5b_publish_tail_panic_acks_member_errs_rest_and_poisons() {
     for label in ["x", "y", "z"] {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr(label)), PropertyMap::new())
+            .create_node(LabelSet::single(db_string(label)), PropertyMap::new())
             .unwrap();
         sealeds.push(txn.seal(None, None).expect("seals"));
     }

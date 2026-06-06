@@ -464,7 +464,7 @@ fn lower_remove_items(
 }
 
 fn property_inits(
-    properties: &[(selene_core::IStr, ValueExpr)],
+    properties: &[(selene_core::DbString, ValueExpr)],
     analyzed: &AnalyzedStatement,
 ) -> Result<Vec<PropertyInit>, PlannerError> {
     properties
@@ -549,7 +549,7 @@ fn named_node_endpoint(
 }
 
 fn fresh_insert_binding(
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     span: SourceSpan,
     kind: BindingDeclKind,
     analyzed: &AnalyzedStatement,
@@ -563,7 +563,7 @@ fn fresh_insert_binding(
 }
 
 fn pattern_reuse_binding(
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
 ) -> Option<BindingId> {

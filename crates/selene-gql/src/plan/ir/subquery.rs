@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     SourceSpan,
@@ -33,8 +33,8 @@ pub struct PlannedSubquery {
 pub struct OuterBindingRef {
     /// Analyzer binding ID for the outer declaration.
     pub binding: BindingId,
-    /// Interned source name used to project the value into the subquery seed.
-    pub name: IStr,
+    /// Database-string source name used to project the value into the subquery seed.
+    pub name: DbString,
 }
 
 /// Planned expression-subquery kind.
@@ -79,9 +79,9 @@ pub struct PlannedTableSubquery {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlannedTableSubqueryYield {
     /// Column name in the inner body result.
-    pub source: IStr,
+    pub source: DbString,
     /// Output column name after optional `AS` rename.
-    pub output: IStr,
+    pub output: DbString,
     /// Source span of the yield item.
     pub span: SourceSpan,
 }

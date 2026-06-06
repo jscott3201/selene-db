@@ -3,7 +3,7 @@
 //! Read-only graph-tier procedure exposing generation-checked metadata for
 //! maintained vector candidate-state sets.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use selene_graph::{ProviderError, VectorCandidateStateInfo};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -75,11 +75,11 @@ fn info_into_values(info: VectorCandidateStateInfo) -> Vec<Value> {
     ]
 }
 
-fn optional_string(value: Option<IStr>) -> Value {
+fn optional_string(value: Option<DbString>) -> Value {
     value.map_or(Value::Null, Value::String)
 }
 
-fn string_list(values: Vec<IStr>) -> Value {
+fn string_list(values: Vec<DbString>) -> Value {
     Value::List(values.into_iter().map(Value::String).collect())
 }
 

@@ -21,7 +21,7 @@ use selene_graph::{
 };
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
 
-use exec_common::istr;
+use exec_common::db_string;
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -48,7 +48,7 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 
 fn empty_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("catalog.extends.graph"),
+        name: db_string("catalog.extends.graph"),
         node_types: Vec::new(),
         edge_types: Vec::new(),
     }

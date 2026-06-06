@@ -1,6 +1,6 @@
 //! EXTENDS property-composition helpers for catalog DDL.
 
-use selene_core::IStr;
+use selene_core::DbString;
 use selene_graph::{GraphTypeDef, PropertyDefaultValue, PropertyElementType, PropertyTypeDef};
 
 use super::property::render_property_value_type;
@@ -8,8 +8,8 @@ use crate::{ExecutorError, SourceSpan};
 
 pub(super) fn compose_node_properties(
     graph_type: &GraphTypeDef,
-    child: IStr,
-    parent: IStr,
+    child: DbString,
+    parent: DbString,
     child_properties: Vec<PropertyTypeDef>,
     span: SourceSpan,
 ) -> Result<Vec<PropertyTypeDef>, ExecutorError> {
@@ -35,8 +35,8 @@ pub(super) fn compose_node_properties(
 
 pub(super) fn compose_edge_properties(
     graph_type: &GraphTypeDef,
-    child: IStr,
-    parent: IStr,
+    child: DbString,
+    parent: DbString,
     child_properties: Vec<PropertyTypeDef>,
     span: SourceSpan,
 ) -> Result<Vec<PropertyTypeDef>, ExecutorError> {
@@ -62,7 +62,7 @@ pub(super) fn compose_edge_properties(
 
 fn merge_properties(
     parent_properties: &[PropertyTypeDef],
-    child: IStr,
+    child: DbString,
     child_properties: Vec<PropertyTypeDef>,
     span: SourceSpan,
 ) -> Result<Vec<PropertyTypeDef>, ExecutorError> {
@@ -83,7 +83,7 @@ fn merge_properties(
 fn check_property_match(
     parent: &PropertyTypeDef,
     child: &PropertyTypeDef,
-    child_type: IStr,
+    child_type: DbString,
     span: SourceSpan,
 ) -> Result<(), ExecutorError> {
     if parent.value_type != child.value_type {
@@ -149,7 +149,7 @@ fn check_property_match(
 
 fn property_conflict(
     parent: &PropertyTypeDef,
-    child_type: IStr,
+    child_type: DbString,
     field: &'static str,
     parent_value: String,
     child_value: String,

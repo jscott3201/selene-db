@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use criterion::Criterion;
-use selene_core::{LabelSet, PropertyMap, Value, intern};
+use selene_core::{LabelSet, PropertyMap, Value, db_string};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ImplDefinedCaps, OptimizeContext, ProcedureRegistry,
     Session, StatementOutput, analyze, execute_statement, optimize, parse, plan,
@@ -179,13 +179,16 @@ fn commit_direct_insert(graph: &SharedGraph) -> CommitOutcome {
     let mut txn = graph.begin_write();
     {
         let mut mutator = txn.mutator();
-        let name = intern("name").expect("name key interns");
-        let score = intern("score").expect("score key interns");
+        let name = db_string("name").expect("name key fits DB string cap");
+        let score = db_string("score").expect("score key fits DB string cap");
         mutator
             .create_node(
-                LabelSet::single(intern("Person").expect("Person label interns")),
+                LabelSet::single(db_string("Person").expect("Person label fits DB string cap")),
                 PropertyMap::from_pairs([
-                    (name, Value::String(intern("x").expect("x value interns"))),
+                    (
+                        name,
+                        Value::String(db_string("x").expect("x value fits DB string cap")),
+                    ),
                     (score, Value::Int(42)),
                 ])
                 .expect("direct insert properties fit"),

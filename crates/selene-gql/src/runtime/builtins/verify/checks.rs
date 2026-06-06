@@ -5,7 +5,7 @@
 //! summarizing the inconsistencies it found; the orchestration and row shaping
 //! live in the parent [`super`] module.
 
-use selene_core::{EdgeId, IStr, NodeId, Value};
+use selene_core::{DbString, EdgeId, NodeId, Value};
 use selene_graph::{
     AdjacencyEntry, CompositeKey, CompositeKeyComponent, CompositeTypedIndex, NotNanF64, RowIndex,
     SeleneGraph, TypedIndex,
@@ -250,7 +250,7 @@ pub(super) fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
     )
 }
 
-fn expected_edge(snapshot: &SeleneGraph, edge_id: EdgeId) -> Option<(NodeId, NodeId, IStr)> {
+fn expected_edge(snapshot: &SeleneGraph, edge_id: EdgeId) -> Option<(NodeId, NodeId, DbString)> {
     let (source, target) = snapshot.edge_endpoints(edge_id)?;
     let label = snapshot.edge_label(edge_id)?.clone();
     Some((source, target, label))
@@ -260,7 +260,7 @@ fn adjacency_entry_contains(
     entry: Option<&AdjacencyEntry>,
     neighbor: NodeId,
     edge_id: EdgeId,
-    label: IStr,
+    label: DbString,
 ) -> bool {
     entry.is_some_and(|entry| {
         entry
@@ -436,8 +436,8 @@ fn composite_index_entries(index: &CompositeTypedIndex) -> Vec<(CompositeKey, u3
 
 fn indexed_property_row_matches(
     snapshot: &SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     row: u32,
     bucket: IndexedValue,
 ) -> bool {
@@ -461,8 +461,8 @@ fn indexed_property_row_matches(
 
 fn indexed_composite_row_matches(
     snapshot: &SeleneGraph,
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     row: u32,
     bucket: &CompositeKey,
 ) -> bool {
@@ -487,7 +487,7 @@ fn indexed_composite_row_matches(
 
 fn composite_property_values<'a>(
     row_properties: &'a selene_core::PropertyMap,
-    properties: &[IStr],
+    properties: &[DbString],
 ) -> Option<Vec<&'a Value>> {
     properties
         .iter()
@@ -499,7 +499,7 @@ fn composite_property_values<'a>(
 enum IndexedValue {
     I64(i64),
     F64(NotNanF64),
-    String(IStr),
+    String(DbString),
     Date(jiff::civil::Date),
     LocalDateTime(jiff::civil::DateTime),
     Uuid(String),

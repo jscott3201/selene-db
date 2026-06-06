@@ -11,7 +11,7 @@ use crate::{
 use super::{
     binary_ops::{
         data_exception, data_exception_value, data_exception_value_with, eval_equality,
-        intern_string, string_slice,
+        string_slice, string_value,
     },
     evaluate,
 };
@@ -121,13 +121,13 @@ pub(super) fn eval_substring(args: Vec<Value>, span: SourceSpan) -> Result<Value
     };
     let chars: Vec<char> = source.chars().collect();
     if start >= chars.len() {
-        return intern_string("", span);
+        return string_value("", span);
     }
     let end = length.map_or(chars.len(), |length| {
         start.saturating_add(length).min(chars.len())
     });
     let value: String = chars[start..end].iter().collect();
-    intern_string(&value, span)
+    string_value(&value, span)
 }
 
 pub(super) fn eval_left_right(
@@ -151,7 +151,7 @@ pub(super) fn eval_left_right(
     } else {
         chars.iter().take(count).copied().collect()
     };
-    intern_string(&value, span)
+    string_value(&value, span)
 }
 
 pub(super) fn eval_multi_char_trim(
@@ -178,7 +178,7 @@ pub(super) fn eval_multi_char_trim(
     } else {
         " "
     };
-    intern_string(&trim_by_char_set(source, trim_chars, side), span)
+    string_value(&trim_by_char_set(source, trim_chars, side), span)
 }
 
 pub(super) fn eval_explicit_trim(
@@ -224,7 +224,7 @@ pub(super) fn eval_explicit_trim(
     } else {
         " ".to_owned()
     };
-    intern_string(&trim_by_char_set(source, &character, side), span)
+    string_value(&trim_by_char_set(source, &character, side), span)
 }
 
 pub(super) fn eval_string_transform(
@@ -239,7 +239,7 @@ pub(super) fn eval_string_transform(
     let Some(value) = string_slice(&value) else {
         return data_exception("string function argument is not a string", span);
     };
-    intern_string(&transform(value), span)
+    string_value(&transform(value), span)
 }
 
 pub(super) fn eval_normalize(
@@ -253,7 +253,7 @@ pub(super) fn eval_normalize(
     let Some(value) = string_slice(&value) else {
         return data_exception("normalize argument is not a string", span);
     };
-    intern_string(
+    string_value(
         &normalize_string(value, form.unwrap_or(NormalForm::Nfc)),
         span,
     )
@@ -278,7 +278,7 @@ pub(super) fn eval_trim(args: Vec<Value>, span: SourceSpan) -> Result<Value, Exe
     let Some(value) = string_slice(&value) else {
         return data_exception("trim argument is not a string", span);
     };
-    intern_string(value.trim(), span)
+    string_value(value.trim(), span)
 }
 
 pub(super) fn eval_coalesce(

@@ -218,7 +218,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern};
+    use selene_core::{
+        Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, db_string,
+    };
 
     use super::*;
     use crate::entry_header::encode_entry_header;
@@ -240,8 +242,8 @@ mod tests {
     fn changes(id: u64) -> Vec<Change> {
         vec![Change::NodeCreated {
             id: NodeId::new(id),
-            labels: LabelSet::single(intern("reader.node").unwrap()),
-            properties: PropertyMap::from_pairs([(intern("reader.p").unwrap(), Value::Int(1))])
+            labels: LabelSet::single(db_string("reader.node").unwrap()),
+            properties: PropertyMap::from_pairs([(db_string("reader.p").unwrap(), Value::Int(1))])
                 .unwrap(),
         }]
     }
@@ -257,9 +259,9 @@ mod tests {
         }
         vec![Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(intern("reader.boundary").unwrap()),
+            labels: LabelSet::single(db_string("reader.boundary").unwrap()),
             properties: PropertyMap::from_pairs([(
-                intern("reader.payload").unwrap(),
+                db_string("reader.payload").unwrap(),
                 Value::Bytes(Arc::from(payload)),
             )])
             .unwrap(),

@@ -17,7 +17,7 @@ use selene_graph::{
     SharedGraph, ValidationMode,
 };
 
-use exec_common::{istr, planned};
+use exec_common::{db_string, planned};
 
 fn seed_table() -> BindingTable {
     BindingTable::new(
@@ -62,11 +62,11 @@ fn closed_graph_with_type(id: u64, graph_type: GraphTypeDef) -> SharedGraph {
 }
 
 fn person_graph(id: u64) -> SharedGraph {
-    let person = istr("Person");
+    let person = db_string("Person");
     closed_graph_with_type(
         id,
         GraphTypeDef {
-            name: istr("catalog.person.graph"),
+            name: db_string("catalog.person.graph"),
             node_types: vec![NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),
@@ -80,12 +80,12 @@ fn person_graph(id: u64) -> SharedGraph {
 
 /// KNOWS edge type whose endpoints index-reference Person (`NodeType(0)`).
 fn person_self_knows_graph(id: u64) -> SharedGraph {
-    let person = istr("Person");
-    let knows = istr("KNOWS");
+    let person = db_string("Person");
+    let knows = db_string("KNOWS");
     closed_graph_with_type(
         id,
         GraphTypeDef {
-            name: istr("catalog.person.knows.graph"),
+            name: db_string("catalog.person.knows.graph"),
             node_types: vec![NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),
@@ -107,12 +107,12 @@ fn person_self_knows_graph(id: u64) -> SharedGraph {
 /// KNOWS edge type with `Any` endpoints — no node-type index dependency, so
 /// dropping Person does not trip the reindexing guard.
 fn person_any_knows_graph(id: u64) -> SharedGraph {
-    let person = istr("Person");
-    let knows = istr("KNOWS");
+    let person = db_string("Person");
+    let knows = db_string("KNOWS");
     closed_graph_with_type(
         id,
         GraphTypeDef {
-            name: istr("catalog.person.any.knows.graph"),
+            name: db_string("catalog.person.any.knows.graph"),
             node_types: vec![NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),
@@ -141,7 +141,7 @@ fn drop_node_type_restrict_default_rejects_early_with_g2000() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
     }
@@ -163,7 +163,7 @@ fn drop_node_type_explicit_restrict_rejects_with_g2000() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
     }
@@ -181,8 +181,8 @@ fn drop_node_type_cascade_truncates_then_drops_observably_equal_to_manual() {
     // change followed by the schema drop, observably equal to
     // `TRUNCATE NODE TYPE :Person; DROP NODE TYPE :Person RESTRICT`.
     let graph = person_any_knows_graph(3713);
-    let person = istr("Person");
-    let knows = istr("KNOWS");
+    let person = db_string("Person");
+    let knows = db_string("KNOWS");
     {
         let mut txn = graph.begin_write();
         let a = txn
@@ -250,8 +250,8 @@ fn drop_node_type_restrict_rejects_when_edge_type_references_it() {
 #[test]
 fn drop_edge_type_restrict_rejects_with_surviving_edges_g2000() {
     let graph = person_self_knows_graph(3716);
-    let person = istr("Person");
-    let knows = istr("KNOWS");
+    let person = db_string("Person");
+    let knows = db_string("KNOWS");
     {
         let mut txn = graph.begin_write();
         let a = txn
@@ -282,8 +282,8 @@ fn drop_edge_type_restrict_rejects_with_surviving_edges_g2000() {
 #[test]
 fn drop_edge_type_cascade_removes_edges_then_drops_type() {
     let graph = person_self_knows_graph(37161);
-    let person = istr("Person");
-    let knows = istr("KNOWS");
+    let person = db_string("Person");
+    let knows = db_string("KNOWS");
     {
         let mut txn = graph.begin_write();
         let a = txn

@@ -20,7 +20,7 @@
 //!   `gqlstatus()` reports the correct shared G2000 to callers. The ordinals
 //!   are display-only and are *not* a contract — do not parse them.
 
-use selene_core::{IStr, LabelSet, PropertyValueType};
+use selene_core::{DbString, LabelSet, PropertyValueType};
 
 use crate::{
     BinaryOp, GqlStatus, GqlType, PathMode, PathSelector, ProcedureMutability, SourceSpan,
@@ -36,7 +36,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N03))]
     UndefinedReference {
         /// Unresolved binding name.
-        name: IStr,
+        name: DbString,
         /// Source span of the unresolved reference.
         #[label("not bound in scope")]
         span: SourceSpan,
@@ -50,7 +50,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N10))]
     Shadow {
         /// Redeclared binding name.
-        name: IStr,
+        name: DbString,
         /// Source span of the redeclaration.
         #[label("conflicts with an earlier binding")]
         span: SourceSpan,
@@ -68,7 +68,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N10))]
     PatternKindMismatch {
         /// Reused binding name.
-        name: IStr,
+        name: DbString,
         /// Element kind of the prior declaration.
         prior: PatternElementKind,
         /// Element kind of the new occurrence.
@@ -88,7 +88,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N10))]
     AliasReusedAsPatternBinding {
         /// Reused binding name.
-        name: IStr,
+        name: DbString,
         /// Prior non-pattern declaration kind.
         prior_kind: BindingDeclKind,
         /// New graph-pattern occurrence kind.
@@ -176,7 +176,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_22G03))]
     ConflictingParameterTypes {
         /// Name without the leading `$`.
-        name: IStr,
+        name: DbString,
         /// Conflicts in encounter order.
         declarations: Vec<(GqlType, SourceSpan)>,
     },
@@ -185,7 +185,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N04))]
     UnknownProcedure {
         /// Qualified procedure name.
-        name: Box<[IStr]>,
+        name: Box<[DbString]>,
         /// Source span of the procedure call.
         #[label("procedure is not registered")]
         span: SourceSpan,
@@ -200,7 +200,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_22G03))]
     WrongArgumentCount {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Maximum expected argument count.
         expected: usize,
         /// Minimum expected argument count.
@@ -220,9 +220,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N03))]
     UnknownYieldColumn {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Requested output column.
-        column: IStr,
+        column: DbString,
         /// Source span of the YIELD item.
         #[label("column is not produced by this procedure")]
         span: SourceSpan,
@@ -237,7 +237,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_25G02))]
     MutatingProcedureInReadPipeline {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Declared procedure mutability.
         mutability: ProcedureMutability,
         /// Source span of the procedure call.
@@ -252,7 +252,7 @@ pub enum AnalysisError {
         /// Observed static label set.
         labels: LabelSet,
         /// Bound graph type name.
-        graph_type: IStr,
+        graph_type: DbString,
         /// Source span of the offending label expression or pattern.
         #[label("unknown node type")]
         span: SourceSpan,
@@ -263,9 +263,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_011))]
     SchemaUnknownEdgeType {
         /// Edge label.
-        label: IStr,
+        label: DbString,
         /// Bound graph type name.
-        graph_type: IStr,
+        graph_type: DbString,
         /// Source span of the offending edge label.
         #[label("unknown edge type")]
         span: SourceSpan,
@@ -278,7 +278,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_012))]
     SchemaEdgeEndpointMismatch {
         /// Edge label.
-        label: IStr,
+        label: DbString,
         /// Expected source node type name.
         expected_source: String,
         /// Expected target node type name.
@@ -287,7 +287,7 @@ pub enum AnalysisError {
         ///
         /// Boxed (together with `observed_target`) so this variant does not
         /// inflate `AnalysisError` past clippy's `result_large_err` threshold:
-        /// `LabelSet` wraps `SmallVec<[IStr; 3]>` (~88 B inline now that `IStr`
+        /// `LabelSet` wraps `SmallVec<[DbString; 3]>` (~88 B inline now that `DbString`
         /// is an owned 24-byte type), so two inline copies dominated the
         /// variant. The `Box` moves both onto the cold error-construction path.
         observed_source: Box<LabelSet>,
@@ -304,11 +304,11 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_013))]
     SchemaUndeclaredProperty {
         /// Undeclared property key.
-        property: IStr,
+        property: DbString,
         /// Node or edge type name that was checked.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Bound graph type name.
-        graph_type: IStr,
+        graph_type: DbString,
         /// Source span of the property write.
         #[label("property is not declared")]
         span: SourceSpan,
@@ -319,9 +319,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_014))]
     SchemaPropertyTypeMismatch {
         /// Property key.
-        property: IStr,
+        property: DbString,
         /// Node or edge type name that declared the property.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Expected runtime storage type.
         expected: PropertyValueType,
         /// Statically inferred GQL type.
@@ -336,9 +336,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_015))]
     SchemaRequiredPropertyMissing {
         /// Required property key.
-        property: IStr,
+        property: DbString,
         /// Node or edge type name that declared the property.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Source span of the insert pattern.
         #[label("required property is not supplied")]
         span: SourceSpan,
@@ -349,9 +349,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_016))]
     SchemaRequiredPropertyRemoved {
         /// Required property key.
-        property: IStr,
+        property: DbString,
         /// Node or edge type name that declared the property.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Source span of the remove item.
         #[label("required property cannot be removed")]
         span: SourceSpan,
@@ -373,9 +373,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_018))]
     SchemaRequiredEdgeLabelRemoved {
         /// Required edge label.
-        label: IStr,
+        label: DbString,
         /// Edge type name that declared the label.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Source span of the remove item.
         #[label("edge label cannot be removed")]
         span: SourceSpan,
@@ -468,9 +468,9 @@ pub enum TypeMismatchContext {
     /// Procedure argument did not match the registered parameter type.
     ProcedureArgument {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Declared parameter name.
-        parameter: IStr,
+        parameter: DbString,
         /// Zero-based positional argument index.
         position: usize,
     },
@@ -517,11 +517,11 @@ impl std::fmt::Display for TypeMismatchContext {
     }
 }
 
-fn display_qualified_name(name: &[IStr]) -> QualifiedNameDisplay<'_> {
+fn display_qualified_name(name: &[DbString]) -> QualifiedNameDisplay<'_> {
     QualifiedNameDisplay(name)
 }
 
-struct QualifiedNameDisplay<'a>(&'a [IStr]);
+struct QualifiedNameDisplay<'a>(&'a [DbString]);
 
 impl std::fmt::Display for QualifiedNameDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -529,7 +529,7 @@ impl std::fmt::Display for QualifiedNameDisplay<'_> {
     }
 }
 
-fn fmt_qualified_name(f: &mut std::fmt::Formatter<'_>, name: &[IStr]) -> std::fmt::Result {
+fn fmt_qualified_name(f: &mut std::fmt::Formatter<'_>, name: &[DbString]) -> std::fmt::Result {
     let mut first = true;
     for segment in name {
         if !first {
@@ -711,7 +711,7 @@ impl AnalysisError {
         }
     }
 
-    pub(crate) fn undefined_reference(name: IStr, span: SourceSpan) -> Self {
+    pub(crate) fn undefined_reference(name: DbString, span: SourceSpan) -> Self {
         Self::UndefinedReference {
             name,
             span,

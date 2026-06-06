@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use selene_core::{IStr, LabelSet, PropertyValueType};
+use selene_core::{DbString, LabelSet, PropertyValueType};
 use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 
 use crate::{
@@ -16,9 +16,9 @@ use crate::{
 
 pub(super) fn validate_property_values(
     graph_type: &GraphTypeDef,
-    declared_in: IStr,
+    declared_in: DbString,
     declarations: &[PropertyTypeDef],
-    properties: &[(IStr, ValueExpr)],
+    properties: &[(DbString, ValueExpr)],
     analyzed: &AnalyzedStatement,
 ) -> Result<(), AnalysisError> {
     for (key, value) in properties {
@@ -42,9 +42,9 @@ pub(super) fn validate_property_values(
 }
 
 pub(super) fn validate_one_property_value(
-    declared_in: IStr,
+    declared_in: DbString,
     declaration: &PropertyTypeDef,
-    key: IStr,
+    key: DbString,
     value: &ValueExpr,
     analyzed: &AnalyzedStatement,
 ) -> Result<(), AnalysisError> {
@@ -77,9 +77,9 @@ pub(super) fn validate_one_property_value(
 }
 
 pub(super) struct RequiredPropertyCheck<'a> {
-    pub(super) declared_in: IStr,
+    pub(super) declared_in: DbString,
     pub(super) declarations: &'a [PropertyTypeDef],
-    pub(super) properties: &'a [(IStr, ValueExpr)],
+    pub(super) properties: &'a [(DbString, ValueExpr)],
     pub(super) stmt_index: usize,
     pub(super) binding: Option<BindingId>,
     pub(super) span: SourceSpan,
@@ -119,7 +119,7 @@ pub(super) fn validate_required_properties(
 fn required_property_supplied(
     stmt_index: usize,
     binding: BindingId,
-    property: IStr,
+    property: DbString,
     analyzed: &AnalyzedStatement,
 ) -> bool {
     analyzed.write_set.as_ref().is_some_and(|write_set| {
@@ -166,19 +166,19 @@ pub(super) fn set_value_index(analyzed: &AnalyzedStatement) -> HashMap<SourceSpa
 }
 
 pub(super) enum PropertyAgreement<'a> {
-    Declared(&'a PropertyTypeDef, IStr),
-    Undeclared(IStr),
+    Declared(&'a PropertyTypeDef, DbString),
+    Undeclared(DbString),
     Disagree,
 }
 
 pub(super) fn property_agreement<'a>(
     types: &[&'a NodeTypeDef],
-    key: IStr,
+    key: DbString,
 ) -> PropertyAgreement<'a> {
     let Some(first_type) = types.first() else {
         return PropertyAgreement::Disagree;
     };
-    let mut agreed: Option<(&PropertyTypeDef, IStr)> = None;
+    let mut agreed: Option<(&PropertyTypeDef, DbString)> = None;
     let mut saw_undeclared = false;
     for node_type in types {
         match node_type.properties.iter().find(|decl| decl.name == key) {
@@ -202,8 +202,8 @@ pub(super) fn property_agreement<'a>(
 
 pub(super) fn validate_declared_property(
     edge_type: &EdgeTypeDef,
-    key: IStr,
-    graph_type: IStr,
+    key: DbString,
+    graph_type: DbString,
     span: SourceSpan,
 ) -> Result<&PropertyTypeDef, AnalysisError> {
     edge_type
@@ -219,9 +219,9 @@ pub(super) fn validate_declared_property(
 }
 
 pub(super) fn undeclared_property(
-    property: IStr,
-    declared_in: IStr,
-    graph_type: IStr,
+    property: DbString,
+    declared_in: DbString,
+    graph_type: DbString,
     span: SourceSpan,
 ) -> Result<(), AnalysisError> {
     Err(AnalysisError::SchemaUndeclaredProperty {
@@ -306,7 +306,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
 mod tests {
     use std::sync::Arc;
 
-    use selene_core::{BindingTableId, EdgeId, GraphId, NodeId, Value, intern};
+    use selene_core::{BindingTableId, EdgeId, GraphId, NodeId, Value, db_string};
 
     use super::*;
 
@@ -444,7 +444,7 @@ mod tests {
             (
                 PropertyValueType::String,
                 GqlType::String,
-                Value::String(intern("schema.type.string").unwrap()),
+                Value::String(db_string("schema.type.string").unwrap()),
             ),
             (
                 PropertyValueType::Uuid,

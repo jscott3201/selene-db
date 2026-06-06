@@ -18,8 +18,8 @@ where
     assert_eq!(&decoded, value);
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).unwrap()
+fn dbs(value: &str) -> DbString {
+    crate::db_string(value).unwrap()
 }
 
 fn graph_type_id() -> GraphTypeId {
@@ -28,7 +28,7 @@ fn graph_type_id() -> GraphTypeId {
 
 fn property_def(name: &str) -> PropertyDef {
     PropertyDef {
-        name: istr(name),
+        name: dbs(name),
         value_type: ValueType::predefined(PredefinedValueType::String),
         nullable: false,
         default: None,
@@ -38,31 +38,31 @@ fn property_def(name: &str) -> PropertyDef {
 }
 
 fn graph_type() -> GraphType {
-    let mut graph_type = GraphType::new(graph_type_id(), istr("serde.graph_type"));
+    let mut graph_type = GraphType::new(graph_type_id(), dbs("serde.graph_type"));
     graph_type.node_types.insert(
-        istr("serde.node"),
+        dbs("serde.node"),
         NodeTypeDef {
-            labels: LabelSet::single(istr("serde.node")),
+            labels: LabelSet::single(dbs("serde.node")),
             properties: smallvec![property_def("serde.node.name")],
             key: Some(NodeKey {
-                property_names: smallvec![istr("serde.node.name")],
+                property_names: smallvec![dbs("serde.node.name")],
             }),
             validation_mode: ValidationMode::Strict,
         },
     );
     graph_type.edge_types.insert(
-        istr("serde.edge"),
+        dbs("serde.edge"),
         EdgeTypeDef::new(
-            istr("serde.edge"),
-            NodeTypeRef(istr("serde.node")),
-            NodeTypeRef(istr("serde.node")),
+            dbs("serde.edge"),
+            NodeTypeRef(dbs("serde.node")),
+            NodeTypeRef(dbs("serde.node")),
         ),
     );
     graph_type.record_types.insert(
         RecordTypeId::new(1),
         RecordTypeDef {
             id: RecordTypeId::new(1),
-            name: istr("serde.record"),
+            name: dbs("serde.record"),
             fields: smallvec![property_def("serde.record.field")],
         },
     );
@@ -88,16 +88,16 @@ fn all_values() -> Vec<Value> {
         Value::Float(1.5),
         Value::Float32(2.5),
         Value::Decimal(rust_decimal::Decimal::new(1234, 2)),
-        Value::String(istr("serde.value.string")),
+        Value::String(dbs("serde.value.string")),
         Value::Bytes(Arc::from([1_u8, 2, 3])),
         Value::List(vec![Value::Int(1), Value::Null]),
         Value::Record(Box::new(Record::Open(smallvec![(
-            istr("serde.record.open"),
+            dbs("serde.record.open"),
             Value::Bool(false),
         )]))),
         Value::RecordTyped(Box::new(RecordTyped {
             type_id: RecordTypeId::new(1),
-            values: smallvec![Some(Value::String(istr("serde.record.typed"))), None],
+            values: smallvec![Some(Value::String(dbs("serde.record.typed"))), None],
         })),
         Value::Path(Box::new(path)),
         Value::NodeRef(NodeId::new(1)),
@@ -138,14 +138,14 @@ fn value_postcard_round_trip() {
 #[test]
 fn property_map_postcard_round_trip() {
     let standard = PropertyMap::from_pairs([
-        (istr("serde.pm.a"), Value::Int(1)),
-        (istr("serde.pm.b"), Value::Null),
+        (dbs("serde.pm.a"), Value::Int(1)),
+        (dbs("serde.pm.b"), Value::Null),
     ])
     .unwrap();
     rt(&standard);
 
     let compact = PropertyMap::compact(
-        [istr("serde.pm.a"), istr("serde.pm.b")],
+        [dbs("serde.pm.a"), dbs("serde.pm.b")],
         [Some(Value::Int(1)), None],
     )
     .unwrap();
@@ -155,15 +155,15 @@ fn property_map_postcard_round_trip() {
 #[test]
 fn label_set_postcard_round_trip() {
     rt(&LabelSet::from_iter([
-        istr("serde.label.b"),
-        istr("serde.label.a"),
+        dbs("serde.label.b"),
+        dbs("serde.label.a"),
     ]));
 }
 
 #[test]
 fn change_postcard_round_trip() {
-    let label = istr("serde.change.label");
-    let property = istr("serde.change.property");
+    let label = dbs("serde.change.label");
+    let property = dbs("serde.change.property");
     let changes = vec![
         Change::NodeCreated {
             id: NodeId::new(1),
@@ -172,7 +172,7 @@ fn change_postcard_round_trip() {
         },
         Change::NodeUpdated {
             id: NodeId::new(1),
-            labels_diff: LabelDiff::new([istr("serde.change.add")], [istr("serde.change.remove")])
+            labels_diff: LabelDiff::new([dbs("serde.change.add")], [dbs("serde.change.remove")])
                 .unwrap(),
             properties_diff: PropertyDiff::new([(property.clone(), Value::Null)], []).unwrap(),
         },
@@ -255,12 +255,12 @@ fn pre_147_node_updated_wire_blob_still_decodes() {
 #[test]
 fn schema_change_postcard_round_trip() {
     let graph_type_id = graph_type_id();
-    let node_label = istr("serde.schema.node");
-    let edge_label = istr("serde.schema.edge");
+    let node_label = dbs("serde.schema.node");
+    let edge_label = dbs("serde.schema.edge");
     let changes = vec![
         SchemaChange::GraphCreated {
             id: GraphId::new(1),
-            name: istr("serde.schema.graph"),
+            name: dbs("serde.schema.graph"),
             graph_type: Some(graph_type_id),
         },
         SchemaChange::GraphDropped {
@@ -296,94 +296,88 @@ fn schema_change_postcard_round_trip() {
             graph_type: graph_type_id,
             def: RecordTypeDef {
                 id: RecordTypeId::new(1),
-                name: istr("serde.schema.record"),
+                name: dbs("serde.schema.record"),
                 fields: smallvec![property_def("serde.schema.field")],
             },
         },
         SchemaChange::PropertyIndexCreated {
             label: node_label.clone(),
-            property: istr("serde.schema.indexed"),
+            property: dbs("serde.schema.indexed"),
             kind: SchemaPropertyIndexKind::I64,
         },
         SchemaChange::PropertyIndexDropped {
             label: node_label.clone(),
-            property: istr("serde.schema.indexed"),
+            property: dbs("serde.schema.indexed"),
         },
         SchemaChange::PropertyIndexCreatedNamed {
             label: node_label.clone(),
-            property: istr("serde.schema.indexed"),
+            property: dbs("serde.schema.indexed"),
             kind: SchemaPropertyIndexKind::I64,
-            name: Some(istr("serde.schema.index.name")),
+            name: Some(dbs("serde.schema.index.name")),
         },
         SchemaChange::CompositePropertyIndexCreated {
             label: node_label.clone(),
-            properties: smallvec![
-                istr("serde.schema.indexed.a"),
-                istr("serde.schema.indexed.b")
-            ],
+            properties: smallvec![dbs("serde.schema.indexed.a"), dbs("serde.schema.indexed.b")],
             kinds: smallvec![
                 SchemaPropertyIndexKind::I64,
                 SchemaPropertyIndexKind::String
             ],
-            name: Some(istr("serde.schema.composite.index.name")),
+            name: Some(dbs("serde.schema.composite.index.name")),
         },
         SchemaChange::CompositePropertyIndexDropped {
             label: node_label.clone(),
-            properties: smallvec![
-                istr("serde.schema.indexed.a"),
-                istr("serde.schema.indexed.b")
-            ],
+            properties: smallvec![dbs("serde.schema.indexed.a"), dbs("serde.schema.indexed.b")],
         },
         SchemaChange::VectorIndexCreated {
             label: node_label.clone(),
-            property: istr("serde.schema.embedding"),
+            property: dbs("serde.schema.embedding"),
             kind: SchemaVectorIndexKind::Flat,
             dimension: 3,
-            name: Some(istr("serde.schema.vector.index.name")),
+            name: Some(dbs("serde.schema.vector.index.name")),
             hnsw_config: None,
             ivf_config: None,
         },
         SchemaChange::VectorIndexCreated {
             label: node_label.clone(),
-            property: istr("serde.schema.hnsw.embedding"),
+            property: dbs("serde.schema.hnsw.embedding"),
             kind: SchemaVectorIndexKind::HnswCosine,
             dimension: 3,
-            name: Some(istr("serde.schema.vector.hnsw.index.name")),
+            name: Some(dbs("serde.schema.vector.hnsw.index.name")),
             hnsw_config: Some(crate::HnswIndexConfig::new(24, 128)),
             ivf_config: None,
         },
         SchemaChange::VectorIndexCreated {
             label: node_label.clone(),
-            property: istr("serde.schema.ivf.embedding"),
+            property: dbs("serde.schema.ivf.embedding"),
             kind: SchemaVectorIndexKind::IvfCosine,
             dimension: 3,
-            name: Some(istr("serde.schema.vector.ivf.index.name")),
+            name: Some(dbs("serde.schema.vector.ivf.index.name")),
             hnsw_config: None,
             ivf_config: Some(crate::IvfIndexConfig::new(128)),
         },
         SchemaChange::VectorIndexDropped {
             label: node_label.clone(),
-            property: istr("serde.schema.embedding"),
+            property: dbs("serde.schema.embedding"),
         },
         SchemaChange::TextIndexCreated {
             label: node_label.clone(),
-            property: istr("serde.schema.body"),
-            name: Some(istr("serde.schema.text.index.name")),
+            property: dbs("serde.schema.body"),
+            name: Some(dbs("serde.schema.text.index.name")),
         },
         SchemaChange::TextIndexDropped {
             label: node_label.clone(),
-            property: istr("serde.schema.body"),
+            property: dbs("serde.schema.body"),
         },
         SchemaChange::NodeTypeAddedV2 {
             graph_type: graph_type_id,
-            label: istr("serde.schema.node.v2"),
-            def: NodeTypeDef::new(LabelSet::single(istr("serde.schema.node.v2"))),
+            label: dbs("serde.schema.node.v2"),
+            def: NodeTypeDef::new(LabelSet::single(dbs("serde.schema.node.v2"))),
         },
         SchemaChange::EdgeTypeAddedV2 {
             graph_type: graph_type_id,
-            label: istr("serde.schema.edge.v2"),
+            label: dbs("serde.schema.edge.v2"),
             def: EdgeTypeDef::new(
-                istr("serde.schema.edge.v2"),
+                dbs("serde.schema.edge.v2"),
                 NodeTypeRef(node_label.clone()),
                 NodeTypeRef(node_label),
             ),
@@ -395,18 +389,18 @@ fn schema_change_postcard_round_trip() {
 }
 
 #[test]
-fn istr_postcard_round_trips() {
-    let value = istr("serde.istr.canonical");
+fn db_string_postcard_round_trips() {
+    let value = dbs("serde.db_string.canonical");
     let bytes = postcard::to_allocvec(&value).unwrap();
-    let decoded: IStr = postcard::from_bytes(&bytes).unwrap();
-    assert_eq!(decoded, intern("serde.istr.canonical").unwrap());
+    let decoded: DbString = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.as_str(), "serde.db_string.canonical");
 }
 
 #[test]
-fn istr_deserialize_from_str_preserves_content() {
-    let bytes = postcard::to_allocvec("serde.istr.fresh").unwrap();
-    let decoded: IStr = postcard::from_bytes(&bytes).unwrap();
-    assert_eq!(decoded.as_str(), "serde.istr.fresh");
+fn db_string_deserialize_from_str_preserves_content() {
+    let bytes = postcard::to_allocvec("serde.db_string.fresh").unwrap();
+    let decoded: DbString = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.as_str(), "serde.db_string.fresh");
 }
 
 #[test]
@@ -416,7 +410,7 @@ fn record_fields_none_open_closed_postcard_round_trip() {
     // RECORD to Null if the Open marker does not round-trip. Pin all three
     // durable states at the core level.
     let not_record = PropertyDef {
-        name: istr("core-11.not-record"),
+        name: dbs("core-11.not-record"),
         value_type: ValueType::predefined(PredefinedValueType::String),
         nullable: false,
         default: None,
@@ -426,7 +420,7 @@ fn record_fields_none_open_closed_postcard_round_trip() {
     rt(&not_record);
 
     let bare_record = PropertyDef {
-        name: istr("core-11.bare-record"),
+        name: dbs("core-11.bare-record"),
         value_type: ValueType::predefined(PredefinedValueType::String),
         nullable: true,
         default: None,
@@ -436,14 +430,14 @@ fn record_fields_none_open_closed_postcard_round_trip() {
     rt(&bare_record);
 
     let closed_record = PropertyDef {
-        name: istr("core-11.closed-record"),
+        name: dbs("core-11.closed-record"),
         value_type: ValueType::predefined(PredefinedValueType::String),
         nullable: false,
         default: None,
         immutable: false,
         record_fields: Some(Box::new(RecordFieldStructure::Closed(vec![
             RecordFieldStructureDef {
-                name: istr("core-11.field.scalar"),
+                name: dbs("core-11.field.scalar"),
                 field_type: RecordFieldStructureType::Scalar(PropertyValueType::Int),
                 required: true,
             },
@@ -458,26 +452,26 @@ fn nested_record_field_structure_postcard_round_trip() {
     // themselves a LIST<RECORD{..}> and a nested closed RECORD. Exercises the
     // recursive RecordFieldStructureType { Scalar, List, Record } codec.
     let inner_closed = RecordFieldStructure::Closed(vec![RecordFieldStructureDef {
-        name: istr("core-11.nested.inner"),
+        name: dbs("core-11.nested.inner"),
         field_type: RecordFieldStructureType::Scalar(PropertyValueType::Bool),
         required: false,
     }]);
 
     let structure = RecordFieldStructure::Closed(vec![
         RecordFieldStructureDef {
-            name: istr("core-11.nested.list-of-records"),
+            name: dbs("core-11.nested.list-of-records"),
             field_type: RecordFieldStructureType::List(Box::new(RecordFieldStructureType::Record(
                 Box::new(inner_closed.clone()),
             ))),
             required: true,
         },
         RecordFieldStructureDef {
-            name: istr("core-11.nested.nested-record"),
+            name: dbs("core-11.nested.nested-record"),
             field_type: RecordFieldStructureType::Record(Box::new(RecordFieldStructure::Open)),
             required: false,
         },
         RecordFieldStructureDef {
-            name: istr("core-11.nested.nested-closed"),
+            name: dbs("core-11.nested.nested-closed"),
             field_type: RecordFieldStructureType::Record(Box::new(inner_closed)),
             required: true,
         },
@@ -486,7 +480,7 @@ fn nested_record_field_structure_postcard_round_trip() {
 
     // And the same structure carried on a PropertyDef.record_fields slot.
     let def = PropertyDef {
-        name: istr("core-11.nested.def"),
+        name: dbs("core-11.nested.def"),
         value_type: ValueType::predefined(PredefinedValueType::String),
         nullable: false,
         default: None,
@@ -536,7 +530,7 @@ fn simple_value_strategy() -> impl Strategy<Value = Value> {
             .prop_map(Value::Float32),
         (0_u8..32).prop_map(|idx| {
             let name = format!("serde.prop.string.{idx}");
-            Value::String(intern(&name).unwrap())
+            Value::String(dbs(&name))
         }),
         proptest::collection::vec(any::<u8>(), 0..32)
             .prop_map(|bytes| Value::Bytes(Arc::from(bytes))),

@@ -1,6 +1,6 @@
 //! Graph-pattern AST nodes.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::ast::{expr::ValueExpr, span::SourceSpan, util::Vec2OrMore};
 
@@ -61,7 +61,7 @@ pub enum MatchMode {
 #[non_exhaustive]
 pub enum LabelExpr {
     /// One label name.
-    Single(IStr),
+    Single(DbString),
     /// Conjunction.
     Conjunction(Vec2OrMore<LabelExpr>),
     /// Disjunction.
@@ -101,11 +101,11 @@ pub enum Quantifier {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct NodePattern {
     /// Optional binding.
-    pub binding: Option<IStr>,
+    pub binding: Option<DbString>,
     /// Optional label expression.
     pub label_expr: Option<LabelExpr>,
     /// Inline property predicates in source order.
-    pub properties: Vec<(IStr, ValueExpr)>,
+    pub properties: Vec<(DbString, ValueExpr)>,
     /// Optional inline `WHERE`.
     pub inline_where: Option<ValueExpr>,
     /// Source span.
@@ -116,13 +116,13 @@ pub struct NodePattern {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct EdgePattern {
     /// Optional binding.
-    pub binding: Option<IStr>,
+    pub binding: Option<DbString>,
     /// Direction.
     pub direction: EdgeDirection,
     /// Optional label expression.
     pub label_expr: Option<LabelExpr>,
     /// Inline property predicates in source order.
-    pub properties: Vec<(IStr, ValueExpr)>,
+    pub properties: Vec<(DbString, ValueExpr)>,
     /// Optional variable-length quantifier.
     pub quantifier: Option<Quantifier>,
     /// Optional inline `WHERE`.
@@ -145,7 +145,7 @@ pub enum PatternElement {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct GraphPattern {
     /// Optional path binding.
-    pub path_binding: Option<IStr>,
+    pub path_binding: Option<DbString>,
     /// Alternating node/edge/node elements.
     pub elements: Vec<PatternElement>,
     /// Source span.

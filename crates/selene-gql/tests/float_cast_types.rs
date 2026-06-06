@@ -1,6 +1,6 @@
 //! Runtime conformance for width-specific approximate numeric casts.
 
-use selene_core::{GraphId, Value, intern};
+use selene_core::{GraphId, Value, db_string};
 use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};
 use selene_graph::SharedGraph;
 
@@ -19,7 +19,7 @@ fn first_value(source: &str) -> Value {
 fn bound_status(source: &str, value: Value) -> String {
     let graph = SharedGraph::new(GraphId::new(13_721));
     let mut session = Session::new(&graph);
-    session.bind_parameter(intern("p").expect("intern param"), value);
+    session.bind_parameter(db_string("p").expect("db_string param"), value);
     session
         .execute_source(source, &EmptyProcedureRegistry)
         .expect_err("statement errors")

@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::BindingTable;
 use selene_graph::{
     CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
@@ -48,27 +48,27 @@ impl OmlxGqlQueryRootFixture {
             vectors.iter().all(|vector| vector.dimension() == dimension),
             "oMLX returned consistent vector dimensions"
         );
-        let doc_label = istr("OmlxEmbeddingDoc");
-        let query_label = istr("OmlxQueryAnchor");
-        let support_fact_label = istr("OmlxSupportFact");
-        let provenance_label = istr("OmlxEvidenceSource");
-        let dependency_edge = istr("OmlxDependsOn");
-        let support_edge = istr("OmlxSupports");
-        let negative_evidence_edge = istr("OmlxNegativeEvidence");
-        let provenance_edge = istr("OmlxGroundedBy");
-        let embedding_key = istr("embedding");
-        let body_key = istr("body");
-        let query_key = istr("query");
-        let query_text_key = istr("query_text");
-        let query_index_key = istr("query_index");
+        let doc_label = db_string("OmlxEmbeddingDoc");
+        let query_label = db_string("OmlxQueryAnchor");
+        let support_fact_label = db_string("OmlxSupportFact");
+        let provenance_label = db_string("OmlxEvidenceSource");
+        let dependency_edge = db_string("OmlxDependsOn");
+        let support_edge = db_string("OmlxSupports");
+        let negative_evidence_edge = db_string("OmlxNegativeEvidence");
+        let provenance_edge = db_string("OmlxGroundedBy");
+        let embedding_key = db_string("embedding");
+        let body_key = db_string("body");
+        let query_key = db_string("query");
+        let query_text_key = db_string("query_text");
+        let query_index_key = db_string("query_index");
         let support_state_provider = Arc::new(
             MaintainedCandidateStateProvider::new([
-                CandidateStateSpec::new(istr("omlx_support_facts"))
+                CandidateStateSpec::new(db_string("omlx_support_facts"))
                     .require_label(support_fact_label.clone()),
-                CandidateStateSpec::new(istr("omlx_current_support_facts"))
+                CandidateStateSpec::new(db_string("omlx_current_support_facts"))
                     .require_label(support_fact_label.clone())
                     .exclude_outgoing(negative_evidence_edge.clone()),
-                CandidateStateSpec::new(istr("omlx_provenance_current_support_facts"))
+                CandidateStateSpec::new(db_string("omlx_provenance_current_support_facts"))
                     .require_label(support_fact_label.clone())
                     .require_incoming(support_edge.clone())
                     .require_outgoing(provenance_edge.clone())
@@ -93,7 +93,7 @@ impl OmlxGqlQueryRootFixture {
                     }
                     let props = PropertyMap::from_pairs([
                         (embedding_key.clone(), Value::Vector(vector.clone())),
-                        (body_key.clone(), Value::String(istr(input.text()))),
+                        (body_key.clone(), Value::String(db_string(input.text()))),
                     ])
                     .expect("oMLX GQL bench document properties fit");
                     let graph_hint = admits_graph_hint(
@@ -182,7 +182,10 @@ impl OmlxGqlQueryRootFixture {
                     let props = PropertyMap::from_pairs([
                         (query_index_key.clone(), Value::Int(query_index as i64)),
                         (query_key.clone(), Value::Vector(vector.clone())),
-                        (query_text_key.clone(), Value::String(istr(input.text()))),
+                        (
+                            query_text_key.clone(),
+                            Value::String(db_string(input.text())),
+                        ),
                     ])
                     .expect("oMLX GQL bench query properties fit");
                     let anchor = mutator
@@ -333,7 +336,7 @@ impl OmlxGqlQueryRootFixture {
             return 0;
         };
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table.iter().any(|row| match row.get(node_column) {
             Some(Value::NodeRef(node)) => self.target_by_node.get(node) == Some(&expected),
@@ -343,10 +346,10 @@ impl OmlxGqlQueryRootFixture {
 
     pub(super) fn batch_target_hit_count(&self, table: &BindingTable) -> usize {
         let query_column = table
-            .column_index(istr("query_index"))
+            .column_index(db_string("query_index"))
             .expect("query_index column exists");
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         let mut hits = vec![false; self.queries.len()];
         for row in table.iter() {
@@ -419,8 +422,8 @@ fn is_negative_evidence_document(text: &str) -> bool {
         .any(|needle| text.contains(needle))
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }
 
 fn basis_points(numerator: usize, denominator: usize) -> usize {

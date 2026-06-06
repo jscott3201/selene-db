@@ -2,7 +2,7 @@ use crate::{
     LimitAmount, SourceSpan,
     runtime::{BindingTable, ExecutorError, TxContext, parameter_type},
 };
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 pub(super) fn execute(
     offset: &LimitAmount,
@@ -49,7 +49,7 @@ pub(super) fn resolve_amount(
     }
 }
 
-fn parameter_amount(name: IStr, span: SourceSpan, value: &Value) -> Result<u64, ExecutorError> {
+fn parameter_amount(name: DbString, span: SourceSpan, value: &Value) -> Result<u64, ExecutorError> {
     match value {
         Value::Int(value) if *value >= 0 => Ok(*value as u64),
         Value::Int(_) => Err(invalid_parameter_type(name, span, "negative integer")),
@@ -58,7 +58,7 @@ fn parameter_amount(name: IStr, span: SourceSpan, value: &Value) -> Result<u64, 
     }
 }
 
-fn invalid_parameter_type(name: IStr, span: SourceSpan, actual: &'static str) -> ExecutorError {
+fn invalid_parameter_type(name: DbString, span: SourceSpan, actual: &'static str) -> ExecutorError {
     ExecutorError::InvalidParameterType {
         name,
         expected: "non-negative integer".into(),

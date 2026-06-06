@@ -106,7 +106,7 @@ fn bind_inline_call(
 
 #[derive(Clone)]
 struct InlineCallOutput {
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     ty: AnalyzedType,
     span: crate::SourceSpan,
 }
@@ -186,7 +186,7 @@ fn declare_inline_call_yields(
     Ok(())
 }
 
-fn projection_name(item: &ReturnItem) -> Option<selene_core::IStr> {
+fn projection_name(item: &ReturnItem) -> Option<selene_core::DbString> {
     item.alias.clone().or({
         if let ValueExpr::Variable { name, .. } = &item.expr {
             Some(name.clone())

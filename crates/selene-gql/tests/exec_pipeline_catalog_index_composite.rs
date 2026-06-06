@@ -2,7 +2,7 @@
 
 mod exec_common;
 
-use selene_core::{GraphId, IStr, LabelSet, Value};
+use selene_core::{DbString, GraphId, LabelSet, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
     ExecutorError, JoinTree, NodeOrEdgeScan, ScanAccess, TxContext, analyze, execute_pattern,
@@ -12,7 +12,7 @@ use selene_graph::{CommitOutcome, GraphTypeDef, SharedGraph, TypedIndexKind};
 use selene_testing::MockIndexCatalog;
 use smallvec::smallvec;
 
-use exec_common::{column_values, istr, props};
+use exec_common::{column_values, db_string, props};
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -37,7 +37,7 @@ fn seed_table() -> BindingTable {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("catalog.composite.index.graph"),
+            name: db_string("catalog.composite.index.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -83,7 +83,7 @@ fn graph_type_violation(graph: &SharedGraph, source: &str) -> String {
     message
 }
 
-fn duplicate_name(graph: &SharedGraph, source: &str) -> IStr {
+fn duplicate_name(graph: &SharedGraph, source: &str) -> DbString {
     let err = run_ddl(graph, source).expect_err("statement rejects");
     let ExecutorError::DuplicateObject { name, .. } = err else {
         panic!("expected DuplicateObject");
@@ -133,10 +133,10 @@ fn create_sensor_type(graph: &SharedGraph) {
 fn seeded_sensor_graph(id: u64, with_index: bool) -> SharedGraph {
     let graph = empty_closed_graph(id);
     create_sensor_type(&graph);
-    let sensor = istr("Sensor");
-    let ts = istr("ts");
-    let location = istr("location");
-    let value = istr("value");
+    let sensor = db_string("Sensor");
+    let ts = db_string("ts");
+    let location = db_string("location");
+    let value = db_string("value");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -145,8 +145,8 @@ fn seeded_sensor_graph(id: u64, with_index: bool) -> SharedGraph {
                 LabelSet::single(sensor.clone()),
                 props([
                     (ts.clone(), Value::Int(1)),
-                    (location.clone(), Value::String(istr("north"))),
-                    (value.clone(), Value::String(istr("alpha"))),
+                    (location.clone(), Value::String(db_string("north"))),
+                    (value.clone(), Value::String(db_string("alpha"))),
                 ]),
             )
             .unwrap();
@@ -155,8 +155,8 @@ fn seeded_sensor_graph(id: u64, with_index: bool) -> SharedGraph {
                 LabelSet::single(sensor.clone()),
                 props([
                     (ts.clone(), Value::Int(1)),
-                    (location.clone(), Value::String(istr("south"))),
-                    (value, Value::String(istr("beta"))),
+                    (location.clone(), Value::String(db_string("south"))),
+                    (value, Value::String(db_string("beta"))),
                 ]),
             )
             .unwrap();
@@ -169,7 +169,7 @@ fn seeded_sensor_graph(id: u64, with_index: bool) -> SharedGraph {
                 sensor,
                 smallvec![ts, location],
                 smallvec![TypedIndexKind::I64, TypedIndexKind::String],
-                Some(istr("sensor_ts_location_idx")),
+                Some(db_string("sensor_ts_location_idx")),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -198,13 +198,16 @@ fn create_drop_and_same_property_set_idempotency_paths_work() {
         .iter_composite_property_index_entries()
         .collect::<Vec<_>>();
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].0, istr("Sensor"));
-    assert_eq!(rows[0].1.as_slice(), &[istr("ts"), istr("location")]);
+    assert_eq!(rows[0].0, db_string("Sensor"));
+    assert_eq!(
+        rows[0].1.as_slice(),
+        &[db_string("ts"), db_string("location")]
+    );
     assert_eq!(
         rows[0].2.as_slice(),
         &[TypedIndexKind::I64, TypedIndexKind::String]
     );
-    assert_eq!(rows[0].3, Some(istr("sensor_comp")));
+    assert_eq!(rows[0].3, Some(db_string("sensor_comp")));
     drop(snapshot);
 
     run_ddl(
@@ -229,9 +232,9 @@ fn create_drop_and_same_property_set_idempotency_paths_work() {
 fn same_property_set_duplicate_reports_existing_unnamed_declaration_order() {
     let graph = empty_closed_graph(14_107);
     create_sensor_type(&graph);
-    let sensor = istr("Sensor");
-    let ts = istr("ts");
-    let location = istr("location");
+    let sensor = db_string("Sensor");
+    let ts = db_string("ts");
+    let location = db_string("location");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
@@ -279,9 +282,9 @@ fn cross_map_name_collisions_and_ambiguous_drop_use_flat_namespace() {
     );
 
     let graph = SharedGraph::new(GraphId::new(14_104));
-    let sensor = istr("Sensor");
-    let ts = istr("ts");
-    let location = istr("location");
+    let sensor = db_string("Sensor");
+    let ts = db_string("ts");
+    let location = db_string("location");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -290,7 +293,7 @@ fn cross_map_name_collisions_and_ambiguous_drop_use_flat_namespace() {
                 sensor.clone(),
                 ts.clone(),
                 TypedIndexKind::I64,
-                Some(istr("foo")),
+                Some(db_string("foo")),
             )
             .unwrap();
         mutator
@@ -298,7 +301,7 @@ fn cross_map_name_collisions_and_ambiguous_drop_use_flat_namespace() {
                 sensor,
                 smallvec![ts, location],
                 smallvec![TypedIndexKind::I64, TypedIndexKind::String],
-                Some(istr("foo")),
+                Some(db_string("foo")),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -316,10 +319,10 @@ fn cross_map_name_collisions_and_ambiguous_drop_use_flat_namespace() {
 fn optimized_composite_lookup_executes_against_live_storage() {
     let graph = seeded_sensor_graph(14_105, true);
     let catalog = MockIndexCatalog::new().with_node_composite_index(
-        istr("Sensor"),
+        db_string("Sensor"),
         vec![
-            (istr("ts"), selene_gql::IndexKind::Integer),
-            (istr("location"), selene_gql::IndexKind::String),
+            (db_string("ts"), selene_gql::IndexKind::Integer),
+            (db_string("location"), selene_gql::IndexKind::String),
         ],
     );
     let plan = optimized(
@@ -330,15 +333,15 @@ fn optimized_composite_lookup_executes_against_live_storage() {
     let ScanAccess::CompositeLookup { properties, .. } = &scan.access else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    let property_keys: Vec<IStr> = properties
+    let property_keys: Vec<DbString> = properties
         .iter()
         .map(|(property, _)| property.clone())
         .collect();
-    assert_eq!(property_keys, vec![istr("ts"), istr("location")]);
+    assert_eq!(property_keys, vec![db_string("ts"), db_string("location")]);
     assert_eq!(
         graph
             .read()
-            .composite_property_index_for(&istr("Sensor"), &property_keys)
+            .composite_property_index_for(&db_string("Sensor"), &property_keys)
             .unwrap()
             .cardinality(),
         2
@@ -353,10 +356,10 @@ fn optimized_composite_lookup_executes_against_live_storage() {
 fn optimized_composite_lookup_falls_back_when_storage_is_absent() {
     let graph = seeded_sensor_graph(14_106, false);
     let catalog = MockIndexCatalog::new().with_node_composite_index(
-        istr("Sensor"),
+        db_string("Sensor"),
         vec![
-            (istr("ts"), selene_gql::IndexKind::Integer),
-            (istr("location"), selene_gql::IndexKind::String),
+            (db_string("ts"), selene_gql::IndexKind::Integer),
+            (db_string("location"), selene_gql::IndexKind::String),
         ],
     );
     let plan = optimized(

@@ -1,8 +1,7 @@
 //! End-to-end coverage for native `selene.*` vector built-ins.
 
 use selene_core::{
-    GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, VectorValue,
-    intern,
+    DbString, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, VectorValue,
 };
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
@@ -10,8 +9,8 @@ use selene_gql::{
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -22,7 +21,7 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -48,7 +47,7 @@ fn execute_rows(
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -62,7 +61,7 @@ fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -76,7 +75,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 
 fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -90,7 +89,7 @@ fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -107,8 +106,8 @@ fn create_vector_index_commits_through_the_funnel() {
     let graph = graph(330_013);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
@@ -146,8 +145,8 @@ fn create_vector_index_can_register_hnsw_metric_kind() {
     let graph = graph(330_015);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
@@ -175,8 +174,8 @@ fn vector_index_stats_reports_hnsw_memory_and_cardinality() {
     let graph = graph(330_016);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -241,8 +240,8 @@ fn rebuild_vector_indexes_reclaims_stale_hnsw_entries() {
     let graph = graph(330_019);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     let ids = {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -371,9 +370,9 @@ fn vector_search_nodes_returns_exact_matches_from_vector_parameter() {
     let graph = graph(330_011);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let other = istr("VectorOther");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let other = db_string("VectorOther");
+    let embedding = db_string("embedding");
 
     {
         let mut txn = graph.begin_write();
@@ -394,7 +393,7 @@ fn vector_search_nodes_returns_exact_matches_from_vector_parameter() {
             mutator
                 .create_node(
                     LabelSet::single(doc.clone()),
-                    props(&embedding, Value::String(istr("skip"))),
+                    props(&embedding, Value::String(db_string("skip"))),
                 )
                 .expect("non-vector property node inserts");
             mutator
@@ -407,7 +406,7 @@ fn vector_search_nodes_returns_exact_matches_from_vector_parameter() {
         txn.commit().expect("seed graph commits");
     }
 
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
     let table = execute_rows(
         &mut session,
         "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) \
@@ -427,8 +426,8 @@ fn vector_search_nodes_ann_uses_registered_hnsw_index() {
     let graph = graph(330_016);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
 
     {
         let mut txn = graph.begin_write();
@@ -452,7 +451,7 @@ fn vector_search_nodes_ann_uses_registered_hnsw_index() {
         )
         .expect("hnsw vector index creation executes");
 
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[4.1, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[4.1, 0.0])));
     let table = execute_rows(
         &mut session,
         "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 3, 'squared_euclidean', 32) \
@@ -470,7 +469,7 @@ fn vector_search_nodes_ann_requires_ann_index() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
 
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
     let err = session
         .execute_source(
             "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10)",
@@ -493,7 +492,7 @@ fn vector_search_nodes_query_parameter_must_be_vector() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
 
-    session.bind_parameter(istr("query"), Value::List(vec![Value::Float(0.0)]));
+    session.bind_parameter(db_string("query"), Value::List(vec![Value::Float(0.0)]));
     let err = session
         .execute_source(
             "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10)",
@@ -515,8 +514,8 @@ fn vector_search_nodes_ann_reports_metric_mismatch() {
     let graph = graph(330_018);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
@@ -534,7 +533,7 @@ fn vector_search_nodes_ann_reports_metric_mismatch() {
         )
         .expect("hnsw vector index creation executes");
 
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[1.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[1.0, 0.0])));
     let err = session
         .execute_source(
             "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10, 'squared_euclidean')",

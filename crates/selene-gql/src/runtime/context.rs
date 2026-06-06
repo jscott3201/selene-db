@@ -12,7 +12,8 @@ use std::{
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{
-    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, IStr, Value, metrics,
+    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, DbString, Value,
+    metrics,
 };
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, SharedGraph, WriteTxn};
 
@@ -33,7 +34,7 @@ pub trait AdaptiveOptimizer: Send + Sync {
     fn observe_cardinality(&self, _op: PipelineOpId, _rows: u64) {}
 }
 
-static EMPTY_PARAMETERS: BTreeMap<IStr, Value> = BTreeMap::new();
+static EMPTY_PARAMETERS: BTreeMap<DbString, Value> = BTreeMap::new();
 
 /// Row cadence for cooperative cancellation checkpoints.
 pub(crate) const CANCEL_CHECK_STRIDE: usize = 1024;
@@ -50,7 +51,7 @@ pub struct TxContext<'a, 'g> {
     impl_defined_caps: &'a ImplDefinedCaps,
     registry: &'a dyn ProcedureRegistry,
     providers: &'a [Arc<dyn IndexProvider>],
-    parameters: Cow<'a, BTreeMap<IStr, Value>>,
+    parameters: Cow<'a, BTreeMap<DbString, Value>>,
     binding_tables: Rc<BindingTableRegistry>,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     plan_expr_ids: Option<&'a ExprIdLookup>,
@@ -134,7 +135,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: &'a BTreeMap<IStr, Value>,
+        parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
         Self {
             snapshot,
@@ -184,7 +185,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
         reopt_hook: &'a dyn AdaptiveOptimizer,
-        parameters: &'a BTreeMap<IStr, Value>,
+        parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
         Self {
             snapshot,
@@ -234,7 +235,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         txn: &'a mut WriteTxn<'g>,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: &'a BTreeMap<IStr, Value>,
+        parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
         Self {
             snapshot,
@@ -264,7 +265,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: Cow<'a, BTreeMap<IStr, Value>>,
+        parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
@@ -296,7 +297,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         txn: &'a mut WriteTxn<'g>,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: Cow<'a, BTreeMap<IStr, Value>>,
+        parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
@@ -328,7 +329,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         graph: &'g SharedGraph,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: Cow<'a, BTreeMap<IStr, Value>>,
+        parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
@@ -624,7 +625,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
 
     /// Borrow the session-local query parameters visible to this statement.
     #[must_use]
-    pub fn parameters(&self) -> &BTreeMap<IStr, Value> {
+    pub fn parameters(&self) -> &BTreeMap<DbString, Value> {
         self.parameters.as_ref()
     }
 

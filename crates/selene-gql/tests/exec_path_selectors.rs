@@ -2,7 +2,7 @@
 
 mod exec_common;
 
-use exec_common::{istr, node_ids_for, planned, props};
+use exec_common::{db_string, node_ids_for, planned, props};
 use selene_core::{CancellationToken, GraphId, LabelSet, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutorError, TxContext,
@@ -16,9 +16,9 @@ struct PathSelectorFixture {
 
 impl PathSelectorFixture {
     fn build() -> Self {
-        let node = istr("N");
-        let edge = istr("K");
-        let name = istr("name");
+        let node = db_string("N");
+        let edge = db_string("K");
+        let name = db_string("name");
         let graph = SharedGraph::new(GraphId::new(6332));
         {
             let mut txn = graph.begin_write();
@@ -26,31 +26,31 @@ impl PathSelectorFixture {
             let a = mutator
                 .create_node(
                     LabelSet::single(node.clone()),
-                    props([(name.clone(), Value::String(istr("A")))]),
+                    props([(name.clone(), Value::String(db_string("A")))]),
                 )
                 .expect("A inserts");
             let b1 = mutator
                 .create_node(
                     LabelSet::single(node.clone()),
-                    props([(name.clone(), Value::String(istr("B1")))]),
+                    props([(name.clone(), Value::String(db_string("B1")))]),
                 )
                 .expect("B1 inserts");
             let b2 = mutator
                 .create_node(
                     LabelSet::single(node.clone()),
-                    props([(name.clone(), Value::String(istr("B2")))]),
+                    props([(name.clone(), Value::String(db_string("B2")))]),
                 )
                 .expect("B2 inserts");
             let c = mutator
                 .create_node(
                     LabelSet::single(node.clone()),
-                    props([(name.clone(), Value::String(istr("C")))]),
+                    props([(name.clone(), Value::String(db_string("C")))]),
                 )
                 .expect("C inserts");
             let d = mutator
                 .create_node(
                     LabelSet::single(node),
-                    props([(name, Value::String(istr("D")))]),
+                    props([(name, Value::String(db_string("D")))]),
                 )
                 .expect("D inserts");
 
@@ -326,12 +326,12 @@ fn counted_shortest_count_at_or_above_partition_size_keeps_all() {
 fn counted_shortest_cutoff_applies_per_endpoint_partition() {
     // §22.4 GR12-13: the N cutoff is per (source, final) partition. Build two
     // distinct endpoint pairs and assert each is counted independently.
-    let node = istr("N");
+    let node = db_string("N");
     // The midpoint carries a distinct label so `(t:N)` excludes it: the only
     // final-node targets are X and Y, giving exactly two endpoint partitions.
-    let mid_label = istr("M");
-    let edge = istr("K");
-    let name = istr("name");
+    let mid_label = db_string("M");
+    let edge = db_string("K");
+    let name = db_string("name");
     let graph = SharedGraph::new(GraphId::new(6335));
     {
         let mut txn = graph.begin_write();
@@ -339,27 +339,27 @@ fn counted_shortest_cutoff_applies_per_endpoint_partition() {
         let src = mutator
             .create_node(
                 LabelSet::single(node.clone()),
-                props([(name.clone(), Value::String(istr("S")))]),
+                props([(name.clone(), Value::String(db_string("S")))]),
             )
             .expect("S inserts");
         // Partition (S, X): one len-1 + one len-2 binding.
         let mid_x = mutator
             .create_node(
                 LabelSet::single(mid_label),
-                props([(name.clone(), Value::String(istr("MX")))]),
+                props([(name.clone(), Value::String(db_string("MX")))]),
             )
             .expect("MX inserts");
         let x = mutator
             .create_node(
                 LabelSet::single(node.clone()),
-                props([(name.clone(), Value::String(istr("X")))]),
+                props([(name.clone(), Value::String(db_string("X")))]),
             )
             .expect("X inserts");
         // Partition (S, Y): two len-1 bindings.
         let y = mutator
             .create_node(
                 LabelSet::single(node),
-                props([(name, Value::String(istr("Y")))]),
+                props([(name, Value::String(db_string("Y")))]),
             )
             .expect("Y inserts");
 
@@ -449,9 +449,9 @@ fn path_selector_keeps_repeat_inline_group_predicate_shape() {
 
 #[test]
 fn shortest_selectors_default_to_trail() {
-    let node = istr("N");
-    let edge = istr("K");
-    let name = istr("name");
+    let node = db_string("N");
+    let edge = db_string("K");
+    let name = db_string("name");
     let graph = SharedGraph::new(GraphId::new(6334));
     {
         let mut txn = graph.begin_write();
@@ -459,7 +459,7 @@ fn shortest_selectors_default_to_trail() {
         let a = mutator
             .create_node(
                 LabelSet::single(node),
-                props([(name, Value::String(istr("A")))]),
+                props([(name, Value::String(db_string("A")))]),
             )
             .expect("A inserts");
         mutator
@@ -485,7 +485,7 @@ fn shortest_selectors_default_to_trail() {
 
 #[test]
 fn path_selector_checks_cancellation_while_filtering_rows() {
-    let root = istr("Root");
+    let root = db_string("Root");
     let graph = SharedGraph::new(GraphId::new(6333));
     {
         let mut txn = graph.begin_write();

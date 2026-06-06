@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, db_string};
 use selene_graph::{
     AdjacencyEdge, AdjacencyEntry, CandidateStateSpec, IndexProvider,
     MaintainedCandidateStateProvider, SeleneGraph, SharedGraph, VectorCandidateSet,
@@ -172,18 +172,19 @@ fn bench_candidate_set_algebra(
 #[derive(Clone, Debug)]
 struct AdjacencyLabelFixture {
     entry: AdjacencyEntry,
-    label: IStr,
+    label: DbString,
     matching_edges: usize,
     noise_labels: usize,
 }
 
 impl AdjacencyLabelFixture {
     fn build(matching_edges: usize, noise_labels: usize) -> Self {
-        let label = intern("DEPENDS_ON").expect("bench edge label is valid");
+        let label = db_string("DEPENDS_ON").expect("bench edge label is valid");
         let mut entry = AdjacencyEntry::new();
         let mut edge_id = 1_u64;
         for label_idx in 0..noise_labels {
-            let noise = intern(&format!("NOISE_{label_idx}")).expect("bench edge label is valid");
+            let noise =
+                db_string(&format!("NOISE_{label_idx}")).expect("bench edge label is valid");
             for _ in 0..matching_edges {
                 entry.add(adjacency_edge(noise.clone(), edge_id));
                 edge_id += 1;
@@ -225,7 +226,7 @@ impl AdjacencyLabelFixture {
     }
 }
 
-fn adjacency_edge(label: IStr, edge_id: u64) -> AdjacencyEdge {
+fn adjacency_edge(label: DbString, edge_id: u64) -> AdjacencyEdge {
     AdjacencyEdge {
         label,
         neighbor: NodeId::new(10_000 + edge_id),
@@ -236,8 +237,8 @@ fn adjacency_edge(label: IStr, edge_id: u64) -> AdjacencyEdge {
 struct MaintainedCandidateStateFixture {
     graph: SeleneGraph,
     provider: Arc<MaintainedCandidateStateProvider>,
-    set_name: IStr,
-    superseded: IStr,
+    set_name: DbString,
+    superseded: DbString,
     docs: Vec<NodeId>,
     active_count: usize,
     stale_count: usize,
@@ -245,9 +246,9 @@ struct MaintainedCandidateStateFixture {
 
 impl MaintainedCandidateStateFixture {
     fn build(active_count: usize, stale_count: usize) -> Self {
-        let set_name = intern("current").expect("bench set name is valid");
-        let doc_label = intern("MemoryFact").expect("bench label is valid");
-        let superseded = intern("SUPERSEDED_BY").expect("bench edge label is valid");
+        let set_name = db_string("current").expect("bench set name is valid");
+        let doc_label = db_string("MemoryFact").expect("bench label is valid");
+        let superseded = db_string("SUPERSEDED_BY").expect("bench edge label is valid");
         let spec = CandidateStateSpec::new(set_name.clone())
             .require_label(doc_label.clone())
             .exclude_outgoing(superseded.clone());
@@ -420,16 +421,16 @@ struct VectorCandidateFixture {
     candidate_count: usize,
     graph: SeleneGraph,
     anchor: NodeId,
-    edge_label: IStr,
+    edge_label: DbString,
 }
 
 impl VectorCandidateFixture {
     fn build(scale: usize, dimension: usize, target_candidates: usize) -> Self {
         let scale = scale.max(target_candidates.max(1));
-        let anchor_label = intern("VectorAnchor").expect("bench label is valid");
-        let doc_label = intern("VectorDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
-        let edge_label = intern("DEPENDS_ON").expect("bench edge label is valid");
+        let anchor_label = db_string("VectorAnchor").expect("bench label is valid");
+        let doc_label = db_string("VectorDoc").expect("bench label is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
+        let edge_label = db_string("DEPENDS_ON").expect("bench edge label is valid");
         let shared = SharedGraph::new(GraphId::new(19_000 + scale as u64));
         let (anchor, candidate_count) = {
             let mut txn = shared.begin_write();
@@ -483,7 +484,7 @@ impl VectorCandidateFixture {
         self.anchor
     }
 
-    const fn edge_label(&self) -> &IStr {
+    const fn edge_label(&self) -> &DbString {
         &self.edge_label
     }
 }

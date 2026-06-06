@@ -19,7 +19,7 @@ mod common;
 use std::num::NonZeroUsize;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{IStr, Value, intern};
+use selene_core::{DbString, Value, db_string};
 use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};
 use selene_graph::TypedIndexKind;
 use selene_persist::SyncPolicy;
@@ -108,8 +108,8 @@ fn bench_gql_insert_single_node_cached_with_schema_churn(
     let state = common::gql_write_state_in_memory(scale);
     let registry = EmptyProcedureRegistry;
     let source = WriteCorpus::insert_single_node();
-    let label = intern("Person").expect("Person label interns");
-    let property = intern("plan_cache_churn").expect("churn property interns");
+    let label = db_string("Person").expect("Person label fits DB string cap");
+    let property = db_string("plan_cache_churn").expect("churn property fits DB string cap");
     let mut session =
         Session::new(&state.graph).with_plan_cache(NonZeroUsize::new(64).expect("nonzero"));
     execute_cached_source(&mut session, source, &registry);
@@ -162,16 +162,16 @@ fn bench_gql_cached_mixed_read_write(
 
 struct GqlMixedFixture<'g> {
     session: Session<'g>,
-    id_key: IStr,
-    score_key: IStr,
+    id_key: DbString,
+    score_key: DbString,
     read_ids: Vec<i64>,
     write_ids: Vec<i64>,
 }
 
 impl<'g> GqlMixedFixture<'g> {
     fn new(graph: &'g selene_graph::SharedGraph, scale: usize) -> Self {
-        let id_key = intern("id").expect("parameter name interns");
-        let score_key = intern("score").expect("parameter name interns");
+        let id_key = db_string("id").expect("parameter name fits DB string cap");
+        let score_key = db_string("score").expect("parameter name fits DB string cap");
         let mut session =
             Session::new(graph).with_plan_cache(NonZeroUsize::new(8).expect("nonzero"));
         session.bind_parameter(id_key.clone(), Value::Int(0));

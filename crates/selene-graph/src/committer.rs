@@ -580,15 +580,15 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
-    use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, PropertyMap, intern};
+    use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, PropertyMap};
 
     use crate::SharedGraph;
     use crate::durable_provider::DurableProvider;
     use crate::error::GraphError;
     use crate::index_provider::{ProviderError, ProviderTag};
 
-    fn istr(value: &str) -> selene_core::IStr {
-        intern(value).expect("interns")
+    fn db_string(value: &str) -> selene_core::DbString {
+        selene_core::db_string(value).expect("string fits DB string cap")
     }
 
     /// Durable provider whose `write_commit` panics, killing the committer's
@@ -764,7 +764,7 @@ mod tests {
 
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("L")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("L")), PropertyMap::new())
             .unwrap();
         let first = txn.commit();
         assert!(
@@ -834,7 +834,7 @@ mod tests {
 
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("L")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("L")), PropertyMap::new())
             .unwrap();
         let first = txn.commit();
         assert!(
@@ -888,7 +888,7 @@ mod tests {
         let mut txn_a = shared.begin_write();
         let a = txn_a
             .mutator()
-            .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("A")), PropertyMap::new())
             .unwrap();
         let sealed_a = txn_a.seal(None, None).expect("A seals");
 
@@ -896,7 +896,7 @@ mod tests {
         let mut txn_b = shared.begin_write();
         let b = txn_b
             .mutator()
-            .create_node(LabelSet::single(istr("B")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("B")), PropertyMap::new())
             .unwrap();
         let sealed_b = txn_b.seal(None, None).expect("B seals");
 
@@ -958,7 +958,7 @@ mod tests {
             for _ in 0..20 {
                 ids.push(
                     txn.mutator()
-                        .create_node(LabelSet::single(istr("S")), PropertyMap::new())
+                        .create_node(LabelSet::single(db_string("S")), PropertyMap::new())
                         .unwrap(),
                 );
             }
@@ -974,7 +974,7 @@ mod tests {
         let mut txn_a = shared.begin_write();
         let a = txn_a
             .mutator()
-            .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("A")), PropertyMap::new())
             .unwrap();
         let sealed_a = txn_a.seal(None, None).expect("A seals");
 

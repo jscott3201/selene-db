@@ -31,8 +31,8 @@ fn group_by_multi_key_partitions_by_tuple() {
     assert_eq!(
         column_values(&table, "tenant"),
         vec![
-            Value::String(exec_common::istr("t1")),
-            Value::String(exec_common::istr("t2")),
+            Value::String(exec_common::db_string("t1")),
+            Value::String(exec_common::db_string("t2")),
         ]
     );
     assert_eq!(

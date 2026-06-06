@@ -2,7 +2,7 @@
 
 use std::num::TryFromIntError;
 
-use selene_core::{CoreError, IStr, NodeId, Value, VectorMetric, VectorValue};
+use selene_core::{CoreError, DbString, NodeId, Value, VectorMetric, VectorValue};
 use selene_graph::{GraphError, VectorCandidateSet, VectorNeighborDirection, VectorSearchError};
 
 use crate::procedure_registry::ProcedureError;
@@ -20,7 +20,7 @@ pub(super) fn string_arg(
     proc_name: &'static str,
     value: &Value,
     name: &'static str,
-) -> Result<IStr, ProcedureError> {
+) -> Result<DbString, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!(
             "{proc_name} {name} must be a non-empty STRING"

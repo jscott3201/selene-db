@@ -4,14 +4,14 @@
 use std::num::NonZeroUsize;
 
 use selene_algorithms::{GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
 const PAGERANK_FIXED_ITER_RELATIVE_TOLERANCE: f64 = 1e-9;
 const PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE: f64 = 1e-12;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -29,7 +29,10 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
     .unwrap()
 }
 
-fn build_proj_with_edge_labels(shared: &SharedGraph, edge_labels: Vec<IStr>) -> GraphProjection {
+fn build_proj_with_edge_labels(
+    shared: &SharedGraph,
+    edge_labels: Vec<DbString>,
+) -> GraphProjection {
     let snapshot = shared.read();
     GraphProjection::build(
         &snapshot,
@@ -46,8 +49,8 @@ fn build_proj_with_edge_labels(shared: &SharedGraph, edge_labels: Vec<IStr>) -> 
 
 fn build_graph(count: usize, edges: &[(usize, usize)]) -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(85_001));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
@@ -71,11 +74,11 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> SharedGraph {
     shared
 }
 
-fn build_label_filtered_asymmetric_graph() -> (SharedGraph, IStr) {
+fn build_label_filtered_asymmetric_graph() -> (SharedGraph, DbString) {
     let shared = SharedGraph::new(GraphId::new(96_003));
-    let label = istr("N");
-    let knows = istr("KNOWS");
-    let owns = istr("OWNS");
+    let label = db_string("N");
+    let knows = db_string("KNOWS");
+    let owns = db_string("OWNS");
 
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(4);
@@ -180,7 +183,7 @@ fn empty_projection() -> GraphProjection {
         &snapshot,
         &ProjectionConfig {
             name: "empty".to_string(),
-            node_labels: vec![istr("Nonexistent")],
+            node_labels: vec![db_string("Nonexistent")],
             edge_labels: vec![],
             weight_property: None,
         },

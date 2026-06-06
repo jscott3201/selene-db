@@ -4,7 +4,7 @@
 //! `IS` sub-kinds, graph predicate functions, `ALL_DIFFERENT`, `SAME`, and
 //! `PROPERTY_EXISTS`. Predicate negation preserves `NULL` as unknown.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     BinaryOp, IsCheckKind, LabelExpr, SourceSpan, TruthValue, ValueExpr,
@@ -141,7 +141,7 @@ pub(super) fn eval_same(
 
 pub(super) fn eval_property_exists(
     target: &ValueExpr,
-    key: IStr,
+    key: DbString,
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,

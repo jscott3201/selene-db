@@ -10,10 +10,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
+use crate::db_string::DbString;
 use crate::error::{CoreError, CoreResult};
 use crate::extension_type_ids::ExtensionTypeId;
 use crate::identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
-use crate::istr::IStr;
 
 /// Maximum component count for a native dense vector value.
 ///
@@ -53,7 +53,7 @@ pub enum Value {
     /// Fixed-precision decimal value.
     Decimal(#[serde(with = "serde_decimal_str")] rust_decimal::Decimal),
     /// String value.
-    String(IStr),
+    String(DbString),
     /// Byte-string value.
     Bytes(Arc<[u8]>),
     /// List value.
@@ -122,7 +122,7 @@ pub enum Value {
 /// `Path` (120 B, which a `size_of` profile proved was the real former ceiling,
 /// **not** the time variants the design doc assumed), `Duration(jiff::Span)`
 /// (64 B), and the two `jiff::Zoned` variants (40 B) — bringing `Value` from
-/// 128 B down to 32 B (the `String(IStr)` / `List(Vec)` 24-byte payload plus
+/// 128 B down to 32 B (the `String(DbString)` / `List(Vec)` 24-byte payload plus
 /// the discriminant, 16-aligned by the `i128`/`Decimal` variants). This assert
 /// fails the build if a future variant regrows the enum; box the offending
 /// payload or lift the ceiling deliberately.
@@ -143,7 +143,7 @@ impl Value {
         || Self::Float(0.0),
         || Self::Float32(0.0),
         || Self::Decimal(rust_decimal::Decimal::ZERO),
-        || Self::String(value_variant_istr("value.all.string")),
+        || Self::String(value_variant_string("value.all.string")),
         || Self::Bytes(Arc::from([0_u8])),
         || Self::List(Vec::new()),
         || Self::Record(Box::new(Record::Open(SmallVec::new()))),
@@ -221,8 +221,8 @@ impl Value {
     }
 }
 
-fn value_variant_istr(name: &str) -> IStr {
-    crate::intern(name).expect("Value::ALL fixture strings fit the process interner cap")
+fn value_variant_string(name: &str) -> DbString {
+    crate::db_string(name).expect("Value::ALL fixture strings fit DB string cap")
 }
 
 fn value_variant_zoned() -> jiff::Zoned {
@@ -361,7 +361,7 @@ impl<'de> Deserialize<'de> for VectorValue {
 #[non_exhaustive]
 pub enum Record {
     /// Open `RECORD` literal in expressions.
-    Open(SmallVec<[(IStr, Value); 4]>),
+    Open(SmallVec<[(DbString, Value); 4]>),
 }
 
 /// Closed record value tied to a graph-type-defined record type.
@@ -471,7 +471,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::{PropertyMap, intern};
+    use crate::{PropertyMap, db_string};
 
     fn assert_send_sync<T: Send + Sync>() {}
 
@@ -485,7 +485,7 @@ mod tests {
         let values = [
             Value::Bool(true),
             Value::Int(42),
-            Value::String(intern("name").unwrap()),
+            Value::String(db_string("name").unwrap()),
             Value::Bytes(Arc::from([1_u8, 2, 3])),
             Value::NodeRef(NodeId::new(1)),
             Value::Null,
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn value_property_map_round_trip_nan() {
-        let original = PropertyMap::from_pairs([(intern("x").unwrap(), Value::Float(f64::NAN))])
+        let original = PropertyMap::from_pairs([(db_string("x").unwrap(), Value::Float(f64::NAN))])
             .expect("property map builds");
         let bytes = postcard::to_allocvec(&original).expect("property map serializes");
         let decoded: PropertyMap = postcard::from_bytes(&bytes).expect("property map deserializes");

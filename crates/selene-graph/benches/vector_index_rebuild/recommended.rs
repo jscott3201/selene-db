@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value, db_string};
 use selene_graph::{SharedGraph, VectorIndexRebuildEntry, VectorIndexRebuildReport};
 
 use super::{
@@ -130,17 +130,17 @@ fn report_indexed_rows(report: &VectorIndexRebuildReport) -> u64 {
 struct RecommendedRebuildFixture {
     shared: SharedGraph,
     variant: VectorRebuildVariant,
-    hot_label: IStr,
-    embedding_key: IStr,
+    hot_label: DbString,
+    embedding_key: DbString,
     total_indexes: usize,
 }
 
 impl RecommendedRebuildFixture {
     fn build(scale: usize, dimension: usize, variant: VectorRebuildVariant) -> Self {
         let scale = scale.max(100);
-        let embedding_key = intern("embedding").expect("bench key is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(70_000_000 + scale as u64));
-        let hot_label = intern("RecommendedHotVectorDoc").expect("bench label is valid");
+        let hot_label = db_string("RecommendedHotVectorDoc").expect("bench label is valid");
         let _hot_ids = seed_indexed_nodes(
             &shared,
             &hot_label,
@@ -158,7 +158,7 @@ impl RecommendedRebuildFixture {
             dimension,
         );
         for label in COLD_LABELS {
-            let label = intern(label).expect("bench label is valid");
+            let label = db_string(label).expect("bench label is valid");
             let _cold_ids =
                 seed_indexed_nodes(&shared, &label, &embedding_key, scale, dimension, variant);
         }
@@ -222,8 +222,8 @@ impl RecommendedRebuildFixture {
 
 fn insert_indexed_nodes(
     shared: &SharedGraph,
-    label: &IStr,
-    embedding_key: &IStr,
+    label: &DbString,
+    embedding_key: &DbString,
     count: usize,
     seed_offset: usize,
     dimension: usize,

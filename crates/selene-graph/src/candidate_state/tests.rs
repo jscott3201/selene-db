@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use selene_core::{Change, GraphId, HlcTimestamp, Origin, PropertyMap, intern};
+use selene_core::{Change, GraphId, HlcTimestamp, Origin, PropertyMap, db_string};
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig, WalWriter,
 };
@@ -13,11 +13,11 @@ use crate::SharedGraph;
 #[path = "required_edges_tests.rs"]
 mod required_edges_tests;
 
-fn label(name: &str) -> IStr {
-    intern(name).unwrap()
+fn label(name: &str) -> DbString {
+    db_string(name).unwrap()
 }
 
-fn current_spec() -> (CandidateStateSpec, IStr, IStr, IStr, IStr) {
+fn current_spec() -> (CandidateStateSpec, DbString, DbString, DbString, DbString) {
     let name = label("current");
     let doc = label("MemoryFact");
     let superseded = label("SUPERSEDED_BY");
@@ -33,7 +33,7 @@ fn provider_with(spec: CandidateStateSpec) -> Arc<MaintainedCandidateStateProvid
     Arc::new(MaintainedCandidateStateProvider::new([spec]).unwrap())
 }
 
-fn candidate_nodes(provider: &MaintainedCandidateStateProvider, name: &IStr) -> Vec<NodeId> {
+fn candidate_nodes(provider: &MaintainedCandidateStateProvider, name: &DbString) -> Vec<NodeId> {
     provider
         .candidate_set(name)
         .expect("candidate set is configured")
@@ -145,8 +145,8 @@ fn shared_graph_lists_generation_checked_candidate_state_metadata() {
     assert_eq!(info.generation, shared.read().meta.generation);
     assert_eq!(info.candidate_count, 1);
     assert_eq!(info.required_label, Some(label("MemoryFact")));
-    assert_eq!(info.require_outgoing, Vec::<IStr>::new());
-    assert_eq!(info.require_incoming, Vec::<IStr>::new());
+    assert_eq!(info.require_outgoing, Vec::<DbString>::new());
+    assert_eq!(info.require_incoming, Vec::<DbString>::new());
     assert_eq!(info.exclude_outgoing, vec![superseded]);
     assert_eq!(info.exclude_incoming, vec![contradicts]);
 }

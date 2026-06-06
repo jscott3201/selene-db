@@ -1,6 +1,6 @@
 use selene_core::{
     CancellationChecker, CoreError, GraphId, LabelSet, PropertyMap, Value, VectorMetric,
-    VectorValue, intern,
+    VectorValue, db_string,
 };
 
 use crate::{GraphError, SharedGraph, VectorIndexKind, VectorSearchError};
@@ -9,15 +9,15 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &selene_core::IStr, value: Value) -> PropertyMap {
+fn props(key: &selene_core::DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
 #[test]
 fn exact_vector_search_batch_matches_single_queries() {
     let shared = SharedGraph::new(GraphId::new(972));
-    let doc = intern("vector.exact.batch.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.exact.batch.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -72,8 +72,8 @@ fn exact_vector_search_batch_matches_single_queries() {
 #[test]
 fn exact_vector_search_batch_rejects_mixed_query_dimensions() {
     let shared = SharedGraph::new(GraphId::new(973));
-    let doc = intern("vector.exact.batch.mixed.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.exact.batch.mixed.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let queries = vec![vector(&[0.0, 0.0]), vector(&[0.0, 0.0, 0.0])];
 
     let err = shared

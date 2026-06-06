@@ -6,7 +6,7 @@ mod exec_common;
 
 use std::sync::{Arc, Mutex};
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, DataExceptionSubclass,
     EmptyProcedureRegistry, ExecutorWarning, GqlStatus, Session, SourceSpan, ValueExpr,
@@ -14,8 +14,8 @@ use selene_gql::{
 };
 use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn status_for(source: &str) -> String {
@@ -83,8 +83,8 @@ fn runtime_data_exceptions_emit_specific_subclasses() {
 
 #[test]
 fn dynamic_ordering_of_incomparable_values_emits_22g04() {
-    let lhs = istr("lhs");
-    let rhs = istr("rhs");
+    let lhs = db_string("lhs");
+    let rhs = db_string("rhs");
     let expr = ValueExpr::BinaryOp {
         op: BinaryOp::Lt,
         lhs: Box::new(ValueExpr::Variable {
@@ -111,7 +111,7 @@ fn dynamic_ordering_of_incomparable_values_emits_22g04() {
             },
         ],
     };
-    let binding = Binding::new([Value::Int(1), Value::String(istr("x"))]);
+    let binding = Binding::new([Value::Int(1), Value::String(db_string("x"))]);
     let caps = selene_gql::ImplDefinedCaps::default();
     let ctx = exec_common::empty_graph_context(&caps);
 
@@ -151,13 +151,13 @@ fn detach_delete_requirement_emits_g1001() {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         let victim = mutator
-            .create_node(LabelSet::single(istr("Victim")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Victim")), PropertyMap::new())
             .expect("victim inserts");
         let other = mutator
-            .create_node(LabelSet::single(istr("Other")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Other")), PropertyMap::new())
             .expect("other inserts");
         mutator
-            .create_edge(istr("REL"), victim, other, PropertyMap::new())
+            .create_edge(db_string("REL"), victim, other, PropertyMap::new())
             .expect("edge inserts");
         txn.commit().expect("fixture commits");
     }
@@ -172,9 +172,9 @@ fn detach_delete_requirement_emits_g1001() {
 
 #[test]
 fn closed_graph_schema_analysis_emits_g2000() {
-    let person = istr("Person");
+    let person = db_string("Person");
     let graph_type = GraphTypeDef {
-        name: istr("schema.graph"),
+        name: db_string("schema.graph"),
         node_types: vec![NodeTypeDef {
             name: person.clone(),
             key_labels: LabelSet::single(person),

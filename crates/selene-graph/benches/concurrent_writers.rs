@@ -222,7 +222,7 @@ fn run_writers_with_readers(shared: &SharedGraph, threads: usize) {
 }
 
 fn writer_loop(shared: &SharedGraph, thread_idx: usize, commits: usize) {
-    let score = selene_core::intern("score").expect("score key interns");
+    let score = selene_core::db_string("score").expect("score key fits DB string cap");
     for commit_idx in 0..commits {
         let mut txn = shared.begin_write();
         {
@@ -267,7 +267,7 @@ fn dump_percentiles(fixture: &BenchFixture, threads: usize, label: &str, batchin
             .map(|thread_idx| {
                 let shared = &wal.shared;
                 scope.spawn(move || {
-                    let score = selene_core::intern("score").expect("score interns");
+                    let score = selene_core::db_string("score").expect("score fits DB string cap");
                     let mut samples = Vec::with_capacity(per_thread);
                     for commit_idx in 0..per_thread {
                         let start = Instant::now();

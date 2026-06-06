@@ -10,7 +10,7 @@ mod type_name;
 
 use std::fmt::{self, Write as _};
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use super::format_ident::fmt_ident;
 use crate::ast::{
@@ -270,7 +270,7 @@ fn fmt_edge_pattern(out: &mut String, edge: &EdgePattern) -> fmt::Result {
     Ok(())
 }
 
-fn fmt_properties(out: &mut String, properties: &[(IStr, ValueExpr)]) -> fmt::Result {
+fn fmt_properties(out: &mut String, properties: &[(DbString, ValueExpr)]) -> fmt::Result {
     if properties.is_empty() {
         return Ok(());
     }
@@ -489,7 +489,7 @@ fn fmt_yield_items(out: &mut String, items: &[crate::YieldItem]) -> fmt::Result 
 
 pub(super) fn fmt_parameter(
     out: &mut String,
-    name: IStr,
+    name: DbString,
     declared_type: Option<&GqlType>,
 ) -> fmt::Result {
     write!(out, "${}", fmt_ident(name))?;

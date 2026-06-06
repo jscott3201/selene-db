@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, db_string};
 
 use super::super::*;
 use crate::SharedGraph;
 
-fn label(name: &str) -> IStr {
-    intern(name).unwrap()
+fn label(name: &str) -> DbString {
+    db_string(name).unwrap()
 }
 
-fn candidate_nodes(provider: &MaintainedCandidateStateProvider, name: &IStr) -> Vec<NodeId> {
+fn candidate_nodes(provider: &MaintainedCandidateStateProvider, name: &DbString) -> Vec<NodeId> {
     provider
         .candidate_set(name)
         .expect("candidate set is configured")

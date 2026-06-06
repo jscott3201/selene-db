@@ -6,9 +6,9 @@ mod exec_common;
 
 use std::sync::Arc;
 
-use exec_common::{column_values, execute_read, execute_read_result, istr};
+use exec_common::{column_values, db_string, execute_read, execute_read_result};
 use selene_core::{
-    EdgeDirection, EdgeId, GraphId, IStr, NodeId, Path, PathSegment, Value,
+    DbString, EdgeDirection, EdgeId, GraphId, NodeId, Path, PathSegment, Value,
     feature_register::FeatureId,
 };
 use selene_gql::{
@@ -48,7 +48,7 @@ fn assert_external_id(value: Value, prefix: &str) {
 struct BindingTableFixtureRegistry;
 
 impl ProcedureRegistry for BindingTableFixtureRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         if name.len() != 2
             || name[0].as_str() != "selene_test"
             || name[1].as_str() != "binding_table_with_rows"
@@ -58,12 +58,15 @@ impl ProcedureRegistry for BindingTableFixtureRegistry {
         Some(ProcedureMetadata::new(
             BINDING_TABLE_WITH_ROWS,
             ProcedureSignature::new(vec![ProcedureParameter::new(
-                istr("rows"),
+                db_string("rows"),
                 GqlType::Integer,
                 false,
             )]),
             ProcedureOutputSchema {
-                columns: vec![ProcedureOutputColumn::new(istr("t"), GqlType::TableRef)],
+                columns: vec![ProcedureOutputColumn::new(
+                    db_string("t"),
+                    GqlType::TableRef,
+                )],
             },
             ProcedureTier::Graph,
             ProcedureMutability::Read,
@@ -216,7 +219,7 @@ fn cardinality_counts_lists_paths_and_records() {
 fn cardinality_counts_path_parameter() {
     let graph = SharedGraph::new(GraphId::new(9202));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("p"), two_edge_path_value());
+    session.bind_parameter(db_string("p"), two_edge_path_value());
 
     let table = rows_from_output(
         session
@@ -234,7 +237,7 @@ fn cardinality_counts_path_parameter() {
 fn cardinality_counts_session_table_parameter() {
     let graph = SharedGraph::new(GraphId::new(9201));
     let mut session = Session::new(&graph);
-    session.bind_table_parameter(istr("t"), table_with_rows(5));
+    session.bind_table_parameter(db_string("t"), table_with_rows(5));
 
     let output = session
         .execute_source(

@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{
-    Change, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern,
-};
+use selene_core::{Change, DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
     Session, StatementOutput,
@@ -15,15 +13,15 @@ use selene_graph::{
     VectorCandidateStateInfo,
 };
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -49,7 +47,7 @@ fn execute_rows(
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -62,10 +60,10 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 fn ann_state_graph(id: u64) -> (SharedGraph, AnnStateIds) {
-    let active_fact = istr("ActiveFact");
+    let active_fact = db_string("ActiveFact");
     let provider = Arc::new(
         MaintainedCandidateStateProvider::new([
-            CandidateStateSpec::new(istr("active_facts")).require_label(active_fact.clone())
+            CandidateStateSpec::new(db_string("active_facts")).require_label(active_fact.clone())
         ])
         .expect("candidate-state provider config is valid"),
     );
@@ -73,10 +71,10 @@ fn ann_state_graph(id: u64) -> (SharedGraph, AnnStateIds) {
         .with_provider(provider as Arc<dyn IndexProvider>)
         .build()
         .expect("graph builds");
-    let summary = istr("Summary");
-    let fact = istr("Fact");
-    let embedding = istr("embedding");
-    let supports = istr("SUPPORTS");
+    let summary = db_string("Summary");
+    let fact = db_string("Fact");
+    let embedding = db_string("embedding");
+    let supports = db_string("SUPPORTS");
 
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
@@ -163,7 +161,7 @@ fn vector_search_candidate_state_expanded_ann_intersects_state_with_expanded_roo
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     create_hnsw_index(&mut session, &registry, 2);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let table = execute_rows(
         &mut session,
@@ -182,7 +180,7 @@ fn vector_search_candidate_state_expanded_ann_supports_union_algebra() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     create_hnsw_index(&mut session, &registry, 2);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let table = execute_rows(
         &mut session,
@@ -206,7 +204,7 @@ fn vector_search_candidate_state_expanded_ann_rejects_unknown_operation() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     create_hnsw_index(&mut session, &registry, 2);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let err = session
         .execute_source(
@@ -232,7 +230,7 @@ fn vector_search_candidate_state_expanded_ann_requires_ann_index() {
     let (graph, _ids) = ann_state_graph(330_514);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let err = session
         .execute_source(
@@ -261,7 +259,7 @@ fn vector_search_candidate_state_expanded_ann_surfaces_stale_provider_generation
         .expect("graph builds");
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let err = session
         .execute_source(
@@ -303,7 +301,7 @@ impl IndexProvider for StaleCandidateProvider {
 
     fn vector_candidate_set(
         &self,
-        _name: &IStr,
+        _name: &DbString,
         _generation: u64,
     ) -> Result<Option<selene_graph::VectorCandidateSet>, ProviderError> {
         Err(ProviderError::Inconsistent {

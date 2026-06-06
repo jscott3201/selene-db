@@ -2,12 +2,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use selene_core::{HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap, Value};
+use selene_core::{DbString, HnswIndexConfig, LabelSet, NodeId, PropertyMap, Value};
 use selene_graph::{SeleneGraph, SharedGraph, VectorIndexConfig, VectorIndexKind};
 
 use super::support::{
     DIMENSION, FACTS_PER_TOPIC, SEED_K, TOPICS_PER_SESSION, component_candidates,
-    current_replacement, duplicates_per_fact, graph_id_for_scale, istr, memory_vector,
+    current_replacement, db_string, duplicates_per_fact, graph_id_for_scale, memory_vector,
     pagerank_scores, topic_count,
 };
 use super::{MemoryRetrievalFixture, NodeMeta, Query, TopologyNoise, support};
@@ -18,20 +18,20 @@ impl MemoryRetrievalFixture {
     }
 
     pub(super) fn build_with_topology(requested_scale: usize, topology: TopologyNoise) -> Self {
-        let label = istr("Memory");
-        let bridge_label = istr("MemoryBridge");
-        let recent_label = istr("MemoryRecentWindow");
-        let scope_label = istr("MemoryScope");
-        let session_label = istr("MemorySession");
-        let embedding_key = istr("embedding");
-        let support_edge = istr("SUPPORTS");
-        let scope_edge = istr("IN_SCOPE");
-        let session_edge = istr("IN_SESSION");
-        let valid_edge = istr("VALID_AT");
-        let superseded_by_edge = istr("SUPERSEDED_BY");
-        let contradicts_edge = istr("CONTRADICTS");
-        let recent_edge = istr("RECENT_IN");
-        let depends_edge = istr("DEPENDS_ON");
+        let label = db_string("Memory");
+        let bridge_label = db_string("MemoryBridge");
+        let recent_label = db_string("MemoryRecentWindow");
+        let scope_label = db_string("MemoryScope");
+        let session_label = db_string("MemorySession");
+        let embedding_key = db_string("embedding");
+        let support_edge = db_string("SUPPORTS");
+        let scope_edge = db_string("IN_SCOPE");
+        let session_edge = db_string("IN_SESSION");
+        let valid_edge = db_string("VALID_AT");
+        let superseded_by_edge = db_string("SUPERSEDED_BY");
+        let contradicts_edge = db_string("CONTRADICTS");
+        let recent_edge = db_string("RECENT_IN");
+        let depends_edge = db_string("DEPENDS_ON");
         let topic_count = topic_count(requested_scale);
         let session_count = topic_count.div_ceil(TOPICS_PER_SESSION);
         let duplicates = duplicates_per_fact(requested_scale, topic_count);
@@ -392,9 +392,9 @@ fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize)
 fn add_active_hint_edges(
     mutator: &mut selene_graph::Mutator<'_, '_>,
     topic_nodes: &[Vec<Vec<NodeId>>],
-    recent_label: &IStr,
-    recent_edge: &IStr,
-    depends_edge: &IStr,
+    recent_label: &DbString,
+    recent_edge: &DbString,
+    depends_edge: &DbString,
 ) {
     for facts in topic_nodes {
         let anchor = facts[0][facts[0].len() / 2];
@@ -431,7 +431,7 @@ fn add_contradicted_current_duplicates(
     mutator: &mut selene_graph::Mutator<'_, '_>,
     topic_nodes: &[Vec<Vec<NodeId>>],
     metadata: &HashMap<NodeId, NodeMeta>,
-    contradicts_edge: &IStr,
+    contradicts_edge: &DbString,
 ) {
     for facts in topic_nodes {
         for nodes in facts {
@@ -455,7 +455,7 @@ fn add_contradicted_current_duplicates(
 fn materialized_current_nodes<I>(
     graph: &SeleneGraph,
     nodes: I,
-    superseded_by_edge: &IStr,
+    superseded_by_edge: &DbString,
 ) -> HashSet<NodeId>
 where
     I: IntoIterator<Item = NodeId>,
@@ -473,8 +473,8 @@ where
 fn materialized_unresolved_current_nodes<I>(
     graph: &SeleneGraph,
     nodes: I,
-    superseded_by_edge: &IStr,
-    contradicts_edge: &IStr,
+    superseded_by_edge: &DbString,
+    contradicts_edge: &DbString,
 ) -> HashSet<NodeId>
 where
     I: IntoIterator<Item = NodeId>,

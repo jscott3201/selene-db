@@ -11,8 +11,8 @@ use std::{hint::black_box, num::NonZeroUsize};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    CancellationChecker, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    Value, VectorMetric, VectorValue, intern,
+    CancellationChecker, DbString, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
+    Value, VectorMetric, VectorValue, db_string,
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, SharedGraph, VectorIndexKind, VectorIndexMaintenancePolicy,
@@ -85,8 +85,8 @@ fn bench_vector_mixed_workload(c: &mut Criterion) {
 
 struct MixedVectorFixture {
     shared: SharedGraph,
-    label: IStr,
-    embedding_key: IStr,
+    label: DbString,
+    embedding_key: DbString,
     queries: Vec<VectorValue>,
     read_ids: Vec<NodeId>,
     update_ids: Vec<NodeId>,
@@ -96,8 +96,8 @@ struct MixedVectorFixture {
 impl MixedVectorFixture {
     fn build(scale: usize) -> Self {
         let scale = scale.max(READS_PER_CYCLE);
-        let label = intern("VectorDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
+        let label = db_string("VectorDoc").expect("bench label is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(12_000 + scale as u64));
         let mut read_ids = Vec::with_capacity(READS_PER_CYCLE);
         let mut update_ids = Vec::with_capacity(WRITES_PER_CYCLE);
@@ -226,8 +226,8 @@ impl VectorReadMode {
 
 struct MixedMaintenanceFixture {
     shared: SharedGraph,
-    labels: Vec<IStr>,
-    embedding_key: IStr,
+    labels: Vec<DbString>,
+    embedding_key: DbString,
     queries: Vec<VectorValue>,
     update_ids: Vec<Vec<NodeId>>,
     update_vectors: Vec<Vec<VectorValue>>,
@@ -236,11 +236,11 @@ struct MixedMaintenanceFixture {
 impl MixedMaintenanceFixture {
     fn build(scale: usize) -> Self {
         let scale = scale.max(UPDATES_PER_MAINTENANCE_INDEX);
-        let embedding_key = intern("embedding").expect("bench key is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(13_000 + scale as u64));
         let labels = MAINTENANCE_LABELS
             .iter()
-            .map(|label| intern(label).expect("bench label is valid"))
+            .map(|label| db_string(label).expect("bench label is valid"))
             .collect::<Vec<_>>();
         let mut update_ids = vec![Vec::with_capacity(UPDATES_PER_MAINTENANCE_INDEX); labels.len()];
         {

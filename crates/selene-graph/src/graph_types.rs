@@ -4,7 +4,7 @@ mod record_types;
 
 use std::{collections::BTreeSet, fmt};
 
-use selene_core::{IStr, LabelSet, PropertyValueType, Value};
+use selene_core::{DbString, LabelSet, PropertyValueType, Value};
 use serde::{Deserialize, Serialize};
 
 use record_types::validate_record_field_types;
@@ -35,7 +35,7 @@ pub const MAX_RECORD_TYPE_NESTING: u32 = MAX_LIST_TYPE_NESTING;
 )]
 pub struct GraphTypeDef {
     /// Graph type name.
-    pub name: IStr,
+    pub name: DbString,
     /// Node-type elements in graph-type order.
     pub node_types: Vec<NodeTypeDef>,
     /// Edge-type elements in graph-type order.
@@ -74,7 +74,7 @@ impl GraphTypeDef {
 
     /// Return the node-type index matching `name`.
     #[must_use]
-    pub fn node_type_index_for(&self, name: IStr) -> Option<u32> {
+    pub fn node_type_index_for(&self, name: DbString) -> Option<u32> {
         self.node_types
             .iter()
             .position(|node_type| node_type.name == name)
@@ -85,7 +85,7 @@ impl GraphTypeDef {
     #[must_use]
     pub fn find_edge_type(
         &self,
-        label: IStr,
+        label: DbString,
         source_node_type: u32,
         target_node_type: u32,
     ) -> Option<&EdgeTypeDef> {
@@ -102,7 +102,7 @@ impl GraphTypeDef {
 
     /// Return the first edge type carrying `label`.
     #[must_use]
-    pub fn first_edge_type_with_label(&self, label: IStr) -> Option<&EdgeTypeDef> {
+    pub fn first_edge_type_with_label(&self, label: DbString) -> Option<&EdgeTypeDef> {
         self.edge_types
             .iter()
             .find(|edge_type| edge_type.label == label)
@@ -110,7 +110,7 @@ impl GraphTypeDef {
 
     /// Return the edge-type index matching `name`.
     #[must_use]
-    pub fn edge_type_index_for(&self, name: IStr) -> Option<u32> {
+    pub fn edge_type_index_for(&self, name: DbString) -> Option<u32> {
         self.edge_types
             .iter()
             .position(|edge_type| edge_type.name == name)
@@ -123,7 +123,7 @@ impl GraphTypeDef {
     /// cannot tolerate positional drift must reject the drop before using this
     /// helper.
     #[must_use]
-    pub fn without_node_type(&self, name: IStr) -> Option<Self> {
+    pub fn without_node_type(&self, name: DbString) -> Option<Self> {
         let index = self
             .node_types
             .iter()
@@ -135,7 +135,7 @@ impl GraphTypeDef {
 
     /// Return a copy with the named edge type removed.
     #[must_use]
-    pub fn without_edge_type(&self, name: IStr) -> Option<Self> {
+    pub fn without_edge_type(&self, name: DbString) -> Option<Self> {
         let index = self
             .edge_types
             .iter()
@@ -176,7 +176,7 @@ impl GraphTypeDef {
             // unreachable AND cause edge / property validation to dispatch
             // against the wrong type. Reject ambiguity at type-construction
             // time rather than letting it manifest as silent mis-typing.
-            let label_key: Vec<IStr> = node_type.key_labels.iter().cloned().collect();
+            let label_key: Vec<DbString> = node_type.key_labels.iter().cloned().collect();
             if !seen_label_sets.insert(label_key) {
                 return Err(GraphError::Inconsistent {
                     reason: format!(
@@ -237,7 +237,7 @@ impl GraphTypeDef {
 }
 
 fn validate_property_element_types(
-    type_name: IStr,
+    type_name: DbString,
     properties: &[PropertyTypeDef],
 ) -> GraphResult<()> {
     for property in properties {
@@ -281,8 +281,8 @@ fn validate_property_element_types(
 }
 
 fn validate_property_element_type(
-    type_name: IStr,
-    property_name: IStr,
+    type_name: DbString,
+    property_name: DbString,
     element_type: &PropertyElementType,
     depth: u32,
 ) -> GraphResult<()> {
@@ -322,7 +322,7 @@ fn validate_property_element_type(
 )]
 pub struct NodeTypeDef {
     /// Node type name.
-    pub name: IStr,
+    pub name: DbString,
     /// Defining label set for this node type.
     pub key_labels: LabelSet,
     /// Declared properties.
@@ -469,9 +469,9 @@ fn sorted_slices_intersect(left: &[u32], right: &[u32]) -> bool {
 )]
 pub struct EdgeTypeDef {
     /// Edge type name.
-    pub name: IStr,
+    pub name: DbString,
     /// Edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Source endpoint definition.
     pub source_node_type: EdgeEndpointDef,
     /// Target endpoint definition.
@@ -495,7 +495,7 @@ pub struct EdgeTypeDef {
 )]
 pub struct PropertyTypeDef {
     /// Property name.
-    pub name: IStr,
+    pub name: DbString,
     /// Declared value type.
     pub value_type: PropertyValueType,
     /// Declared element type when [`PropertyTypeDef::value_type`] is `List`.
@@ -594,8 +594,8 @@ pub enum PropertyDefaultValue {
     Boolean(bool),
     /// Signed integer default.
     Integer(i64),
-    /// Interned string default.
-    String(IStr),
+    /// Database-string default.
+    String(DbString),
 }
 
 impl PropertyDefaultValue {
@@ -668,7 +668,10 @@ pub enum DropBehavior {
     Cascade,
 }
 
-fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) -> GraphResult<()> {
+fn ensure_unique_names(
+    kind: &'static str,
+    names: impl Iterator<Item = DbString>,
+) -> GraphResult<()> {
     let mut seen = BTreeSet::new();
     for name in names {
         if !seen.insert(name.clone()) {
@@ -680,7 +683,7 @@ fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) ->
     Ok(())
 }
 
-fn ensure_node_type_index(count: usize, index: u32, edge_name: IStr) -> GraphResult<()> {
+fn ensure_node_type_index(count: usize, index: u32, edge_name: DbString) -> GraphResult<()> {
     if usize::try_from(index).is_ok_and(|index| index < count) {
         return Ok(());
     }
@@ -694,7 +697,7 @@ fn ensure_node_type_index(count: usize, index: u32, edge_name: IStr) -> GraphRes
 fn ensure_endpoint_index(
     count: usize,
     endpoint: &EdgeEndpointDef,
-    edge_name: IStr,
+    edge_name: DbString,
 ) -> GraphResult<()> {
     match endpoint {
         EdgeEndpointDef::Any => Ok(()),

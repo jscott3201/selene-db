@@ -1,7 +1,7 @@
 use std::fs;
 
 use selene_core::{
-    Change, EdgeEndpointDef as CoreEdgeEndpointDef, GraphId, LabelSet, SchemaChange, intern,
+    Change, EdgeEndpointDef as CoreEdgeEndpointDef, GraphId, LabelSet, SchemaChange, db_string,
 };
 
 use super::*;
@@ -11,11 +11,11 @@ use crate::EdgeEndpointDef;
 fn recover_closed_wal_only_preserves_any_edge_endpoints() {
     let dir = temp_dir("closed-schema-any-edge-wal-only");
     let graph_id = GraphId::new(22);
-    let person = intern("RecoverAnyPerson").unwrap();
-    let company = intern("RecoverAnyCompany").unwrap();
-    let rel = intern("RECOVER_ANY_REL").unwrap();
+    let person = db_string("RecoverAnyPerson").unwrap();
+    let company = db_string("RecoverAnyCompany").unwrap();
+    let rel = db_string("RECOVER_ANY_REL").unwrap();
     let base = GraphTypeDef {
-        name: intern("recover.any.edge.graph").unwrap(),
+        name: db_string("recover.any.edge.graph").unwrap(),
         node_types: vec![
             crate::NodeTypeDef {
                 name: person.clone(),

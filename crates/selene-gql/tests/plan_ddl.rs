@@ -147,7 +147,7 @@ fn all_property_constraints_lower() {
 
 #[test]
 fn ddl_ast_or_replace_path_still_lowers_for_forward_compat() {
-    let name = selene_core::intern("g").expect("test interner");
+    let name = selene_core::db_string("g").expect("test string fits DB string cap");
     let analyzed = selene_gql::AnalyzedStatement {
         statement: selene_gql::AnalyzedStatementKind::Ddl(DdlStatement::CreateGraph {
             name,

@@ -1,51 +1,57 @@
 use selene_core::{
     CancellationChecker, CancellationToken, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff,
-    PropertyMap, Value, intern,
+    PropertyMap, Value,
 };
 
 use super::*;
 use crate::SharedGraph;
 use crate::text_search::TextSearchError;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
 #[test]
 fn text_index_matches_exact_bm25_ranking() {
     let graph = SharedGraph::new(GraphId::new(433_001));
-    let doc = istr("TextIndexedDoc");
-    let other = istr("OtherDoc");
-    let body = istr("body");
+    let doc = db_string("TextIndexedDoc");
+    let other = db_string("OtherDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory graph retrieval"))),
+                props(
+                    &body,
+                    Value::String(db_string("graph memory graph retrieval")),
+                ),
             )
             .unwrap();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("vector retrieval retrieval"))),
+                props(
+                    &body,
+                    Value::String(db_string("vector retrieval retrieval")),
+                ),
             )
             .unwrap();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph search"))),
+                props(&body, Value::String(db_string("graph search"))),
             )
             .unwrap();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("unmatched corpus document"))),
+                props(&body, Value::String(db_string("unmatched corpus document"))),
             )
             .unwrap();
         mutator
@@ -54,7 +60,7 @@ fn text_index_matches_exact_bm25_ranking() {
         mutator
             .create_node(
                 LabelSet::single(other),
-                props(&body, Value::String(istr("graph retrieval"))),
+                props(&body, Value::String(db_string("graph retrieval"))),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -77,8 +83,8 @@ fn text_index_matches_exact_bm25_ranking() {
 #[test]
 fn text_index_rebuild_observes_update_and_delete_visibility() {
     let graph = SharedGraph::new(GraphId::new(433_002));
-    let doc = istr("TextIndexedMutableDoc");
-    let body = istr("body");
+    let doc = db_string("TextIndexedMutableDoc");
+    let body = db_string("body");
     let stale;
     let fresh;
     {
@@ -87,13 +93,13 @@ fn text_index_rebuild_observes_update_and_delete_visibility() {
         stale = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("stale memory"))),
+                props(&body, Value::String(db_string("stale memory"))),
             )
             .unwrap();
         fresh = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("fresh memory"))),
+                props(&body, Value::String(db_string("fresh memory"))),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -115,8 +121,11 @@ fn text_index_rebuild_observes_update_and_delete_visibility() {
             .update_node(
                 stale,
                 LabelDiff::new([], []).unwrap(),
-                PropertyDiff::new([(body.clone(), Value::String(istr("fresh updated")))], [])
-                    .unwrap(),
+                PropertyDiff::new(
+                    [(body.clone(), Value::String(db_string("fresh updated")))],
+                    [],
+                )
+                .unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -150,27 +159,27 @@ fn text_index_rebuild_observes_update_and_delete_visibility() {
 #[test]
 fn text_index_reports_stats_and_memory() {
     let graph = SharedGraph::new(GraphId::new(433_003));
-    let doc = istr("TextStatsDoc");
-    let body = istr("body");
+    let doc = db_string("TextStatsDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("agent graph graph"))),
+                props(&body, Value::String(db_string("agent graph graph"))),
             )
             .unwrap();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("agent vector memory"))),
+                props(&body, Value::String(db_string("agent vector memory"))),
             )
             .unwrap();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("!!!"))),
+                props(&body, Value::String(db_string("!!!"))),
             )
             .unwrap();
         mutator
@@ -200,14 +209,14 @@ fn text_index_reports_stats_and_memory() {
 #[test]
 fn text_index_empty_query_and_zero_k_are_empty() {
     let graph = SharedGraph::new(GraphId::new(433_004));
-    let doc = istr("TextIndexedEmptyDoc");
-    let body = istr("body");
+    let doc = db_string("TextIndexedEmptyDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory"))),
+                props(&body, Value::String(db_string("graph memory"))),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -232,14 +241,14 @@ fn text_index_empty_query_and_zero_k_are_empty() {
 #[test]
 fn shared_graph_indexed_text_search_matches_exact() {
     let graph = SharedGraph::new(GraphId::new(433_005));
-    let doc = istr("TextSharedIndexedDoc");
-    let body = istr("body");
+    let doc = db_string("TextSharedIndexedDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("agentic graph retrieval"))),
+                props(&body, Value::String(db_string("agentic graph retrieval"))),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -258,8 +267,8 @@ fn shared_graph_indexed_text_search_matches_exact() {
 #[test]
 fn text_index_candidate_search_matches_global_filter() {
     let graph = SharedGraph::new(GraphId::new(433_006));
-    let doc = istr("TextCandidateDoc");
-    let body = istr("body");
+    let doc = db_string("TextCandidateDoc");
+    let body = db_string("body");
     let keep_a;
     let keep_b;
     let reject;
@@ -269,19 +278,19 @@ fn text_index_candidate_search_matches_global_filter() {
         keep_a = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory graph"))),
+                props(&body, Value::String(db_string("graph memory graph"))),
             )
             .unwrap();
         reject = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory memory"))),
+                props(&body, Value::String(db_string("graph memory memory"))),
             )
             .unwrap();
         keep_b = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph retrieval"))),
+                props(&body, Value::String(db_string("graph retrieval"))),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -308,8 +317,8 @@ fn text_index_candidate_search_matches_global_filter() {
 #[test]
 fn text_index_candidate_search_dedups_and_ignores_unindexed_nodes() {
     let graph = SharedGraph::new(GraphId::new(433_007));
-    let doc = istr("TextCandidateDedupDoc");
-    let body = istr("body");
+    let doc = db_string("TextCandidateDedupDoc");
+    let body = db_string("body");
     let indexed;
     let non_string;
     {
@@ -318,7 +327,7 @@ fn text_index_candidate_search_dedups_and_ignores_unindexed_nodes() {
         indexed = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("needle current memory"))),
+                props(&body, Value::String(db_string("needle current memory"))),
             )
             .unwrap();
         non_string = mutator
@@ -341,8 +350,8 @@ fn text_index_candidate_search_dedups_and_ignores_unindexed_nodes() {
 #[test]
 fn text_index_candidate_search_checked_observes_cancelled_token() {
     let graph = SharedGraph::new(GraphId::new(433_008));
-    let doc = istr("TextCandidateCancelDoc");
-    let body = istr("body");
+    let doc = db_string("TextCandidateCancelDoc");
+    let body = db_string("body");
     let indexed;
     {
         let mut txn = graph.begin_write();
@@ -350,7 +359,7 @@ fn text_index_candidate_search_checked_observes_cancelled_token() {
         indexed = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory"))),
+                props(&body, Value::String(db_string("graph memory"))),
             )
             .unwrap();
         txn.commit().unwrap();

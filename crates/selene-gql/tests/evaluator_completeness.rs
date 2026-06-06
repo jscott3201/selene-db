@@ -5,9 +5,9 @@
 mod exec_common;
 
 use exec_common::{
-    ExecFixture, column_values, execute_read, execute_read_result, istr, planned, props,
+    ExecFixture, column_values, db_string, execute_read, execute_read_result, planned, props,
 };
-use selene_core::{EdgeId, LabelSet, NodeId, Value, intern};
+use selene_core::{EdgeId, LabelSet, NodeId, Value};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
     GqlType, IsCheckKind, LabelExpr, Literal, NonEmpty, NormalForm, SourceSpan, ValueExpr,
@@ -26,7 +26,7 @@ fn int_lit(value: i64) -> ValueExpr {
 }
 
 fn string_lit(value: &str) -> ValueExpr {
-    lit(Literal::String(istr(value), span()))
+    lit(Literal::String(db_string(value), span()))
 }
 
 fn null_lit() -> ValueExpr {
@@ -37,11 +37,11 @@ fn bool_lit(value: bool) -> ValueExpr {
     lit(Literal::Bool(value, span()))
 }
 
-fn var(name: selene_core::IStr) -> ValueExpr {
+fn var(name: selene_core::DbString) -> ValueExpr {
     ValueExpr::Variable { name, span: span() }
 }
 
-fn named_column(name: selene_core::IStr) -> BindingTableColumn {
+fn named_column(name: selene_core::DbString) -> BindingTableColumn {
     BindingTableColumn {
         name: Some(name),
         hidden: None,
@@ -63,7 +63,7 @@ fn eval(expr: &ValueExpr) -> Result<Value, ExecutorError> {
 fn eval_with_binding(
     expr: &ValueExpr,
     binding: Binding,
-    columns: Vec<selene_core::IStr>,
+    columns: Vec<selene_core::DbString>,
 ) -> Result<Value, ExecutorError> {
     let caps = selene_gql::ImplDefinedCaps::default();
     let ctx = exec_common::empty_graph_context(&caps);
@@ -77,7 +77,7 @@ fn eval_with_fixture(
     expr: &ValueExpr,
     fixture: &ExecFixture,
     binding: Binding,
-    columns: Vec<selene_core::IStr>,
+    columns: Vec<selene_core::DbString>,
 ) -> Result<Value, ExecutorError> {
     let plan = planned("RETURN 1 AS keepalive");
     let ctx = fixture.context_caps(&plan);
@@ -96,7 +96,7 @@ fn single_value(source: &str, column: &str) -> Value {
 
 fn function_call(name: &str, args: Vec<ValueExpr>) -> ValueExpr {
     ValueExpr::FunctionCall {
-        name: NonEmpty::try_from_vec(vec![intern(name).unwrap()]).expect("non-empty"),
+        name: NonEmpty::try_from_vec(vec![db_string(name)]).expect("non-empty"),
         args,
         star: false,
         distinct: false,
@@ -181,29 +181,42 @@ fn scalar_string_and_collection_functions_dispatch() {
     let table = execute_read(
         "RETURN length('abc') AS len, substring('abcdef', 2, 3) AS sub, upper('ab') AS up, \
          lower('AB') AS low, trim(' x ') AS trimmed, coalesce(null, 'x') AS co, \
-         nullif('x', 'x') AS nf, size([1, 2, 3]) AS sz, \
+         size([1, 2, 3]) AS sz, \
          char_length('café') AS char_len, character_length('日本') AS character_len",
     );
 
     assert_eq!(column_values(&table, "len"), vec![Value::Int(3)]);
     assert_eq!(
         column_values(&table, "sub"),
-        vec![Value::String(istr("cde"))]
+        vec![Value::String(db_string("cde"))]
     );
-    assert_eq!(column_values(&table, "up"), vec![Value::String(istr("AB"))]);
+    assert_eq!(
+        column_values(&table, "up"),
+        vec![Value::String(db_string("AB"))]
+    );
     assert_eq!(
         column_values(&table, "low"),
-        vec![Value::String(istr("ab"))]
+        vec![Value::String(db_string("ab"))]
     );
     assert_eq!(
         column_values(&table, "trimmed"),
-        vec![Value::String(istr("x"))]
+        vec![Value::String(db_string("x"))]
     );
-    assert_eq!(column_values(&table, "co"), vec![Value::String(istr("x"))]);
-    assert_eq!(column_values(&table, "nf"), vec![Value::Null]);
+    assert_eq!(
+        column_values(&table, "co"),
+        vec![Value::String(db_string("x"))]
+    );
     assert_eq!(column_values(&table, "sz"), vec![Value::Int(3)]);
     assert_eq!(column_values(&table, "char_len"), vec![Value::Int(4)]);
     assert_eq!(column_values(&table, "character_len"), vec![Value::Int(2)]);
+    assert_eq!(
+        eval(&function_call(
+            "nullif",
+            vec![string_lit("x"), string_lit("x")]
+        ))
+        .unwrap(),
+        Value::Null
+    );
 }
 
 #[test]
@@ -229,7 +242,7 @@ fn substring_null_propagates_index_arguments() {
 #[test]
 fn scalar_function_errors_have_typed_statuses() {
     let unknown = ValueExpr::FunctionCall {
-        name: NonEmpty::try_from_vec(vec![intern("missing_fn").unwrap()]).expect("non-empty"),
+        name: NonEmpty::try_from_vec(vec![db_string("missing_fn")]).expect("non-empty"),
         args: Vec::new(),
         star: false,
         distinct: false,
@@ -240,7 +253,7 @@ fn scalar_function_errors_have_typed_statuses() {
     assert_eq!(err.gqlstatus().as_str(), "22G03");
 
     let bad_arity = ValueExpr::FunctionCall {
-        name: NonEmpty::try_from_vec(vec![intern("abs").unwrap()]).expect("non-empty"),
+        name: NonEmpty::try_from_vec(vec![db_string("abs")]).expect("non-empty"),
         args: Vec::new(),
         star: false,
         distinct: false,
@@ -251,7 +264,7 @@ fn scalar_function_errors_have_typed_statuses() {
     assert_eq!(err.gqlstatus().as_str(), "22G03");
 
     let bad_modifier = ValueExpr::FunctionCall {
-        name: NonEmpty::try_from_vec(vec![intern("abs").unwrap()]).expect("non-empty"),
+        name: NonEmpty::try_from_vec(vec![db_string("abs")]).expect("non-empty"),
         args: vec![int_lit(1)],
         star: false,
         distinct: true,
@@ -290,7 +303,7 @@ fn binary_operator_completion_covers_power_xor_concat_and_string_predicates() {
     assert_eq!(column_values(&table, "xor_value"), vec![Value::Bool(true)]);
     assert_eq!(
         column_values(&table, "concat_value"),
-        vec![Value::String(istr("abcd"))]
+        vec![Value::String(db_string("abcd"))]
     );
     assert_eq!(
         column_values(&table, "contains_value"),
@@ -320,8 +333,8 @@ fn power_negative_integer_exponent_uses_float_path() {
 
 #[test]
 fn power_treats_128_bit_integers_as_numeric_for_float_path() {
-    let lhs = intern("lhs").unwrap();
-    let rhs = intern("rhs").unwrap();
+    let lhs = db_string("lhs");
+    let rhs = db_string("rhs");
     let power = function_call("power", vec![var(lhs.clone()), var(rhs.clone())]);
 
     assert_float_near(
@@ -389,8 +402,8 @@ fn predicate_completion_covers_all_different_and_same() {
         Value::Bool(true)
     );
 
-    let left = intern("left").unwrap();
-    let right = intern("right").unwrap();
+    let left = db_string("left");
+    let right = db_string("right");
     let same = ValueExpr::Same {
         items: vec![var(left.clone()), var(right.clone())],
         span: span(),
@@ -412,8 +425,8 @@ fn predicate_completion_covers_all_different_and_same() {
 #[test]
 fn is_predicates_and_property_exists_use_graph_snapshot() {
     let fixture = ExecFixture::build();
-    let node = intern("node").unwrap();
-    let edge = intern("edge").unwrap();
+    let node = db_string("node");
+    let edge = db_string("edge");
 
     let labeled = ValueExpr::IsCheck {
         operand: Box::new(var(node.clone())),
@@ -489,7 +502,7 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
 #[test]
 fn property_exists_target_null_propagates_but_property_null_is_false() {
     let fixture = ExecFixture::build();
-    let node = intern("node").unwrap();
+    let node = db_string("node");
 
     let property_exists = ValueExpr::PropertyExists {
         target: Box::new(var(node.clone())),
@@ -647,7 +660,7 @@ fn case_list_access_and_record_literal_evaluate() {
         eval(&list_access(null_lit(), null_lit())).unwrap(),
         Value::Null
     );
-    let index = intern("index").unwrap();
+    let index = db_string("index");
     assert_eq!(
         eval_with_binding(
             &list_access(
@@ -692,15 +705,18 @@ fn case_list_access_and_record_literal_evaluate() {
     assert_data_exception_contains(err, "list access index is not an integer");
 
     let record = ValueExpr::RecordLiteral {
-        fields: vec![(istr("a"), int_lit(1)), (istr("b"), bool_lit(true))],
+        fields: vec![
+            (db_string("a"), int_lit(1)),
+            (db_string("b"), bool_lit(true)),
+        ],
         span: span(),
     };
     match eval(&record).expect("record evaluates") {
         Value::Record(record) => match *record {
             selene_core::Record::Open(fields) => {
                 assert_eq!(fields.len(), 2);
-                assert_eq!(fields[0], (istr("a"), Value::Int(1)));
-                assert_eq!(fields[1], (istr("b"), Value::Bool(true)));
+                assert_eq!(fields[0], (db_string("a"), Value::Int(1)));
+                assert_eq!(fields[1], (db_string("b"), Value::Bool(true)));
             }
             _ => panic!("expected open record"),
         },
@@ -708,7 +724,7 @@ fn case_list_access_and_record_literal_evaluate() {
     }
 
     let duplicate = ValueExpr::RecordLiteral {
-        fields: vec![(istr("a"), int_lit(1)), (istr("a"), null_lit())],
+        fields: vec![(db_string("a"), int_lit(1)), (db_string("a"), null_lit())],
         span: span(),
     };
     let err = eval(&duplicate).expect_err("duplicate keys are rejected");

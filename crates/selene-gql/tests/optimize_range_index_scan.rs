@@ -1,14 +1,14 @@
 //! BRIEF-29 range-index optimizer tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     EmptyProcedureRegistry, IndexKey, IndexKind, JoinTree, NodeOrEdgeScan, ScanAccess,
     TypedIndexBounds, analyze, optimize, parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::ExecutionPlan {
@@ -21,14 +21,18 @@ fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::Execut
 
 fn person_catalog() -> MockIndexCatalog {
     MockIndexCatalog::new()
-        .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
-        .with_node_typed_index(istr("Person"), istr("name"), IndexKind::String)
+        .with_node_typed_index(db_string("Person"), db_string("age"), IndexKind::Integer)
+        .with_node_typed_index(db_string("Person"), db_string("name"), IndexKind::String)
 }
 
 fn event_catalog() -> MockIndexCatalog {
     MockIndexCatalog::new()
-        .with_node_typed_index(istr("Event"), istr("event_date"), IndexKind::Date)
-        .with_node_typed_index(istr("Event"), istr("started_at"), IndexKind::LocalDateTime)
+        .with_node_typed_index(db_string("Event"), db_string("event_date"), IndexKind::Date)
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("started_at"),
+            IndexKind::LocalDateTime,
+        )
 }
 
 fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
@@ -320,8 +324,8 @@ fn float_width_generic_typed_param_against_float_index_falls_back_to_linear() {
     // by treating `GqlType::Float` as typed-incompatible with
     // `IndexKind::Float` at plan time, falling back to Linear.
     let catalog = MockIndexCatalog::new().with_node_typed_index(
-        istr("Person"),
-        istr("score"),
+        db_string("Person"),
+        db_string("score"),
         IndexKind::Float,
     );
     let plan = optimized_one(
@@ -344,8 +348,8 @@ fn float64_typed_param_against_float_index_fires() {
     // `parameter_type::validate_declared_type`), so it admits at plan
     // time and the indexed path fires.
     let catalog = MockIndexCatalog::new().with_node_typed_index(
-        istr("Person"),
-        istr("score"),
+        db_string("Person"),
+        db_string("score"),
         IndexKind::Float,
     );
     let plan = optimized_one(

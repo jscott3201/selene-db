@@ -2,7 +2,9 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, execute_pattern, execute_plan, istr, node_ids_for, planned, props};
+use exec_common::{
+    ExecFixture, db_string, execute_pattern, execute_plan, node_ids_for, planned, props,
+};
 use selene_core::{CancellationToken, GraphId, LabelSet, Value};
 use selene_gql::{EmptyProcedureRegistry, ExecutorError, ImplDefinedCaps, TxContext};
 use selene_graph::SharedGraph;
@@ -144,9 +146,9 @@ fn repeat_composes_under_optional_outer_join() {
 
 #[test]
 fn repeat_checks_cancellation_during_traversal() {
-    let root_label = istr("Root");
-    let target_label = istr("Target");
-    let edge_label = istr("K");
+    let root_label = db_string("Root");
+    let target_label = db_string("Target");
+    let edge_label = db_string("K");
     let graph = SharedGraph::new(GraphId::new(6201));
     {
         let mut txn = graph.begin_write();
@@ -187,7 +189,7 @@ fn repeat_checks_cancellation_during_traversal() {
 
 #[test]
 fn repeat_checks_cancellation_between_source_rows_without_adjacent_edges() {
-    let root_label = istr("Root");
+    let root_label = db_string("Root");
     let graph = SharedGraph::new(GraphId::new(6202));
     {
         let mut txn = graph.begin_write();

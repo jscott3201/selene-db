@@ -2,7 +2,7 @@
 
 use pest::iterators::Pair;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     ast::{
@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    Rule, expr, first_child, intern_pair, keyword_starts_with, keyword_tokens_eq, span,
+    Rule, db_string_pair, expr, first_child, keyword_starts_with, keyword_tokens_eq, span,
     unexpected_pair,
 };
 
@@ -49,7 +49,7 @@ fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => name = Some(intern_pair(child)?),
+            Rule::ident => name = Some(db_string_pair(child)?),
             _ => return Err(unexpected_pair(child, "unexpected CREATE GRAPH child")),
         }
     }
@@ -71,7 +71,7 @@ fn build_drop_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
-            Rule::ident => name = Some(intern_pair(child)?),
+            Rule::ident => name = Some(db_string_pair(child)?),
             _ => return Err(unexpected_pair(child, "unexpected DROP GRAPH child")),
         }
     }
@@ -91,7 +91,7 @@ fn build_create_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => idents.push(intern_pair(child)?),
+            Rule::ident => idents.push(db_string_pair(child)?),
             _ => return Err(unexpected_pair(child, "unexpected CREATE INDEX child")),
         }
     }
@@ -129,7 +129,7 @@ fn build_drop_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
-            Rule::ident => name = Some(intern_pair(child)?),
+            Rule::ident => name = Some(db_string_pair(child)?),
             _ => return Err(unexpected_pair(child, "unexpected DROP INDEX child")),
         }
     }
@@ -159,7 +159,7 @@ fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
             Rule::node_type_descriptor => descriptor = Some(build_type_descriptor(child)?),
             // The `EXTENDS :ident` parent is the only bare `ident` child once the
             // element-type descriptor is its own rule.
-            Rule::ident => extends = Some(intern_pair(child)?),
+            Rule::ident => extends = Some(db_string_pair(child)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
             _ => return Err(unexpected_pair(child, "unexpected CREATE NODE TYPE child")),
@@ -197,7 +197,7 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
             Rule::edge_type_descriptor => descriptor = Some(build_type_descriptor(child)?),
-            Rule::ident => extends = Some(intern_pair(child)?),
+            Rule::ident => extends = Some(db_string_pair(child)?),
             Rule::edge_endpoint_clause => endpoints = Some(build_edge_endpoint(child)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
@@ -232,20 +232,22 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
 /// phrase label (ISO §18.2 SR5a — the key label set is the phrase's labels). A
 /// bare `<implies>` with no phrase has no label; that empty key label set is
 /// left for the plan-time IL003 minimum-cardinality reject (42012/42014), so an
-/// empty placeholder name is interned to keep the AST total — it never reaches
+/// empty placeholder name is constructed to keep the AST total — it never reaches
 /// the catalog because the plan rejects first.
-fn build_type_descriptor(pair: Pair<'_, Rule>) -> Result<(IStr, Option<KeyLabelSet>), ParserError> {
+fn build_type_descriptor(
+    pair: Pair<'_, Rule>,
+) -> Result<(DbString, Option<KeyLabelSet>), ParserError> {
     let descriptor_span = span(&pair);
     let inner = first_child(pair)?;
     match inner.as_rule() {
-        Rule::ident => Ok((intern_pair(inner)?, None)),
+        Rule::ident => Ok((db_string_pair(inner)?, None)),
         Rule::node_type_key_label_set | Rule::edge_type_key_label_set => {
             let key_label_set = build_key_label_set(inner)?;
             let label = match key_label_set.labels.first() {
                 Some(label) => label.clone(),
-                None => selene_core::intern("").map_err(|_err| {
+                None => selene_core::db_string("").map_err(|_err| {
                     ParserError::syntax(
-                        "could not intern empty key-label-set placeholder name",
+                        "could not construct database string for empty key-label-set placeholder name",
                         descriptor_span,
                         None,
                     )
@@ -280,10 +282,10 @@ fn build_key_label_set(pair: Pair<'_, Rule>) -> Result<KeyLabelSet, ParserError>
 }
 
 /// Collect the `:Label (& :Label)*` identifiers of a key-label-set phrase.
-fn build_key_label_phrase(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
+fn build_key_label_phrase(pair: Pair<'_, Rule>) -> Result<Vec<DbString>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::ident)
-        .map(intern_pair)
+        .map(db_string_pair)
         .collect()
 }
 
@@ -332,12 +334,12 @@ fn build_truncate_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, Parser
 fn build_truncate_label(
     pair: Pair<'_, Rule>,
     missing: &'static str,
-) -> Result<selene_core::IStr, ParserError> {
+) -> Result<selene_core::DbString, ParserError> {
     let source_span = span(&pair);
     let mut label = None;
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::ident => label = Some(intern_pair(child)?),
+            Rule::ident => label = Some(db_string_pair(child)?),
             _ => return Err(unexpected_pair(child, "unexpected TRUNCATE TYPE child")),
         }
     }
@@ -347,7 +349,7 @@ fn build_truncate_label(
 fn build_drop_type_parts(
     pair: Pair<'_, Rule>,
     missing: &'static str,
-) -> Result<(selene_core::IStr, bool, DropBehavior), ParserError> {
+) -> Result<(selene_core::DbString, bool, DropBehavior), ParserError> {
     let source_span = span(&pair);
     let mut label = None;
     let mut if_exists = false;
@@ -356,7 +358,7 @@ fn build_drop_type_parts(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
-            Rule::ident => label = Some(intern_pair(child)?),
+            Rule::ident => label = Some(db_string_pair(child)?),
             Rule::drop_behavior => behavior = build_drop_behavior(&child)?,
             _ => return Err(unexpected_pair(child, "unexpected DROP TYPE child")),
         }
@@ -395,7 +397,7 @@ fn build_type_prop_def(pair: Pair<'_, Rule>) -> Result<TypePropertyDef, ParserEr
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::ident => name = Some(intern_pair(child)?),
+            Rule::ident => name = Some(db_string_pair(child)?),
             Rule::type_name => gql_type = Some(expr::build_type_name(child)?),
             Rule::type_prop_constraint => {
                 constraints.push(build_type_prop_constraint(child)?);
@@ -449,7 +451,7 @@ fn build_type_prop_constraint(pair: Pair<'_, Rule>) -> Result<TypePropertyConstr
         let name = pair
             .into_inner()
             .find(|child| child.as_rule() == Rule::ident)
-            .map(|child| intern_pair(child))
+            .map(|child| db_string_pair(child))
             .transpose()?;
         return Ok(TypePropertyConstraint::Indexed {
             name,
@@ -489,10 +491,10 @@ fn build_edge_endpoint(pair: Pair<'_, Rule>) -> Result<EdgeEndpointSpec, ParserE
     })
 }
 
-fn build_label_list(pair: Pair<'_, Rule>) -> Result<Vec<selene_core::IStr>, ParserError> {
+fn build_label_list(pair: Pair<'_, Rule>) -> Result<Vec<selene_core::DbString>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::ident)
-        .map(|child| intern_pair(child))
+        .map(|child| db_string_pair(child))
         .collect()
 }
 

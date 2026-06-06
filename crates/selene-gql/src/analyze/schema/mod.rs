@@ -3,7 +3,7 @@
 mod labels;
 mod properties;
 
-use selene_core::IStr;
+use selene_core::DbString;
 use selene_graph::{EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef};
 
 use self::{
@@ -300,7 +300,7 @@ fn validate_non_insert_entry(
 fn validate_set_property(
     target: BindingId,
     element: ElementKind,
-    key: IStr,
+    key: DbString,
     value_span: SourceSpan,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
@@ -333,7 +333,7 @@ fn validate_set_property(
 fn validate_remove_property(
     target: BindingId,
     element: ElementKind,
-    key: IStr,
+    key: DbString,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
@@ -372,7 +372,7 @@ fn validate_remove_property(
 fn validate_set_label(
     target: BindingId,
     element: ElementKind,
-    label: IStr,
+    label: DbString,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
@@ -404,7 +404,7 @@ fn validate_set_label(
 fn validate_remove_label(
     target: BindingId,
     element: ElementKind,
-    label: IStr,
+    label: DbString,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,

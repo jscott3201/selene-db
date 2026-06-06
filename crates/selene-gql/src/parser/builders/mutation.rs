@@ -12,7 +12,7 @@ use crate::{
 };
 
 use super::{
-    Rule, build_filter, build_return_clause, expr, first_child, intern_pair, not_implemented,
+    Rule, build_filter, build_return_clause, db_string_pair, expr, first_child, not_implemented,
     pattern, span, unexpected_pair,
 };
 
@@ -118,7 +118,7 @@ fn build_insert_node_pattern(pair: Pair<'_, Rule>) -> Result<NodePattern, Parser
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::ident => binding = Some(intern_pair(child)?),
+            Rule::ident => binding = Some(db_string_pair(child)?),
             Rule::insert_label_set => {
                 label_expr = Some(pattern::build_label_expr(first_child(child)?)?);
             }
@@ -156,7 +156,7 @@ fn build_insert_edge_pattern(pair: Pair<'_, Rule>) -> Result<EdgePattern, Parser
 
     for child in inner.into_inner() {
         match child.as_rule() {
-            Rule::edge_var => pattern.binding = Some(intern_pair(first_child(child)?)?),
+            Rule::edge_var => pattern.binding = Some(db_string_pair(first_child(child)?)?),
             Rule::label_expr => pattern.label_expr = Some(pattern::build_label_expr(child)?),
             Rule::property_map => pattern.properties = pattern::build_property_map(child)?,
             _ => return Err(unexpected_pair(child, "unexpected INSERT edge child")),
@@ -181,8 +181,8 @@ fn build_set_item(pair: Pair<'_, Rule>) -> Result<SetItem, ParserError> {
     match rule {
         Rule::set_property_item => {
             let target =
-                next_interned(&mut children, source_span, "SET property is missing target")?;
-            let key = next_interned(&mut children, source_span, "SET property is missing key")?;
+                next_db_string(&mut children, source_span, "SET property is missing target")?;
+            let key = next_db_string(&mut children, source_span, "SET property is missing key")?;
             let value_pair = children.next().ok_or_else(|| {
                 ParserError::syntax("SET property is missing value", source_span, None)
             })?;
@@ -194,7 +194,7 @@ fn build_set_item(pair: Pair<'_, Rule>) -> Result<SetItem, ParserError> {
             })
         }
         Rule::set_all_properties_item => {
-            let target = next_interned(&mut children, source_span, "SET map is missing target")?;
+            let target = next_db_string(&mut children, source_span, "SET map is missing target")?;
             let map_pair = children.next().ok_or_else(|| {
                 ParserError::syntax("SET map is missing property map", source_span, None)
             })?;
@@ -205,8 +205,8 @@ fn build_set_item(pair: Pair<'_, Rule>) -> Result<SetItem, ParserError> {
             })
         }
         Rule::set_label_item => {
-            let target = next_interned(&mut children, source_span, "SET label is missing target")?;
-            let label = next_interned(&mut children, source_span, "SET label is missing label")?;
+            let target = next_db_string(&mut children, source_span, "SET label is missing target")?;
+            let label = next_db_string(&mut children, source_span, "SET label is missing label")?;
             Ok(SetItem::Label {
                 target,
                 label,
@@ -231,12 +231,12 @@ fn build_remove_item(pair: Pair<'_, Rule>) -> Result<RemoveItem, ParserError> {
     let mut children = inner.into_inner();
     match rule {
         Rule::remove_property_item => {
-            let target = next_interned(
+            let target = next_db_string(
                 &mut children,
                 source_span,
                 "REMOVE property is missing target",
             )?;
-            let key = next_interned(&mut children, source_span, "REMOVE property is missing key")?;
+            let key = next_db_string(&mut children, source_span, "REMOVE property is missing key")?;
             Ok(RemoveItem::Property {
                 target,
                 key,
@@ -245,8 +245,9 @@ fn build_remove_item(pair: Pair<'_, Rule>) -> Result<RemoveItem, ParserError> {
         }
         Rule::remove_label_item => {
             let target =
-                next_interned(&mut children, source_span, "REMOVE label is missing target")?;
-            let label = next_interned(&mut children, source_span, "REMOVE label is missing label")?;
+                next_db_string(&mut children, source_span, "REMOVE label is missing target")?;
+            let label =
+                next_db_string(&mut children, source_span, "REMOVE label is missing label")?;
             Ok(RemoveItem::Label {
                 target,
                 label,
@@ -270,7 +271,7 @@ fn build_delete_op(pair: Pair<'_, Rule>) -> Result<DeleteStatement, ParserError>
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::nodetach_kw => mode = DeleteMode::NoDetach,
-            Rule::ident => items.push(intern_pair(child)?),
+            Rule::ident => items.push(db_string_pair(child)?),
             _ => {}
         }
     }
@@ -282,14 +283,14 @@ fn build_delete(pair: Pair<'_, Rule>, mode: DeleteMode) -> Result<DeleteStatemen
     let items = pair
         .into_inner()
         .filter(|child| child.as_rule() == Rule::ident)
-        .map(|child| intern_pair(child))
+        .map(|child| db_string_pair(child))
         .collect::<Result<Vec<_>, _>>()?;
     finish_delete(mode, items, source_span)
 }
 
 fn finish_delete(
     mode: DeleteMode,
-    items: Vec<selene_core::IStr>,
+    items: Vec<selene_core::DbString>,
     source_span: crate::ast::SourceSpan,
 ) -> Result<DeleteStatement, ParserError> {
     if items.is_empty() {
@@ -306,13 +307,13 @@ fn finish_delete(
     })
 }
 
-fn next_interned(
+fn next_db_string(
     children: &mut pest::iterators::Pairs<'_, Rule>,
     source_span: crate::ast::SourceSpan,
     missing: &'static str,
-) -> Result<selene_core::IStr, ParserError> {
+) -> Result<selene_core::DbString, ParserError> {
     children
         .next()
         .ok_or_else(|| ParserError::syntax(missing, source_span, None))
-        .and_then(|pair| intern_pair(pair))
+        .and_then(|pair| db_string_pair(pair))
 }

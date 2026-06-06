@@ -8,7 +8,9 @@
 //! value at the wrong external id, resurrects a reclaimed key, or drops the
 //! closed-graph binding.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, intern};
+use selene_core::{
+    DbString, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, db_string,
+};
 use smallvec::{SmallVec, smallvec};
 
 use super::compact_core;
@@ -19,17 +21,17 @@ use crate::{
 };
 
 fn prop(key: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(key).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
 }
 
 /// A graph carrying a registered property index (`cmp.idx`.`name`, kind I64),
 /// 3 indexed nodes (values 11/22/33), then a delete of the middle node — so the
 /// post-compaction index rebuild must drop the reclaimed node's bucket and point
 /// the survivors at their renumbered rows.
-fn graph_with_indexed_deletion() -> (SharedGraph, IStr, IStr) {
+fn graph_with_indexed_deletion() -> (SharedGraph, DbString, DbString) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.idx").unwrap();
-    let name = intern("name").unwrap();
+    let la = db_string("cmp.idx").unwrap();
+    let name = db_string("name").unwrap();
     shared
         .create_property_index(la.clone(), name.clone(), TypedIndexKind::I64)
         .unwrap();
@@ -95,15 +97,15 @@ fn compaction_rebuilds_property_index_dropping_reclaimed_rows() {
 /// the post-compaction composite rebuild must drop the reclaimed key and point
 /// survivors at their renumbered rows. The composite-registration-copy path in
 /// `compact_core` is otherwise exercised by no test.
-fn graph_with_composite_indexed_deletion() -> (SharedGraph, IStr, SmallVec<[IStr; 4]>) {
+fn graph_with_composite_indexed_deletion() -> (SharedGraph, DbString, SmallVec<[DbString; 4]>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.cidx").unwrap();
-    let zone = intern("zone").unwrap();
-    let rank = intern("rank").unwrap();
-    let props: SmallVec<[IStr; 4]> = smallvec![zone.clone(), rank.clone()];
+    let la = db_string("cmp.cidx").unwrap();
+    let zone = db_string("zone").unwrap();
+    let rank = db_string("rank").unwrap();
+    let props: SmallVec<[DbString; 4]> = smallvec![zone.clone(), rank.clone()];
     let mk = |z: &str, r: i64| {
         PropertyMap::from_pairs([
-            (zone.clone(), Value::String(intern(z).unwrap())),
+            (zone.clone(), Value::String(db_string(z).unwrap())),
             (rank.clone(), Value::Int(r)),
         ])
         .unwrap()
@@ -150,7 +152,7 @@ fn compaction_rebuilds_composite_property_index() {
         let Some(entry) = graph.composite_property_index_entry_for(&la, &props) else {
             return Vec::new();
         };
-        let zone_v = Value::String(intern(z).unwrap());
+        let zone_v = Value::String(db_string(z).unwrap());
         let rank_v = Value::Int(r);
         let refs: Vec<&Value> = vec![&zone_v, &rank_v];
         let Ok(key) = entry.index.key_from_values(&refs) else {
@@ -182,12 +184,12 @@ fn compaction_rebuilds_composite_property_index() {
 /// + one `KNOWS` Person→Person edge type, both `Strict`.
 fn person_only_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: intern("cmp.closed.graph").unwrap(),
+        name: db_string("cmp.closed.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: intern("cmp.closed.person").unwrap(),
-            key_labels: LabelSet::single(intern("Person").unwrap()),
+            name: db_string("cmp.closed.person").unwrap(),
+            key_labels: LabelSet::single(db_string("Person").unwrap()),
             properties: vec![PropertyTypeDef {
-                name: intern("name").unwrap(),
+                name: db_string("name").unwrap(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
@@ -199,8 +201,8 @@ fn person_only_graph_type() -> GraphTypeDef {
             validation_mode: ValidationMode::Strict,
         }],
         edge_types: vec![EdgeTypeDef {
-            name: intern("cmp.closed.knows").unwrap(),
-            label: intern("KNOWS").unwrap(),
+            name: db_string("cmp.closed.knows").unwrap(),
+            label: db_string("KNOWS").unwrap(),
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(0),
             properties: vec![],
@@ -219,11 +221,11 @@ fn compaction_preserves_closed_graph_binding_and_revalidates() {
         .unwrap()
         .build()
         .unwrap();
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
-    let name = intern("name").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
+    let name = db_string("name").unwrap();
     let mk = |n: &str| {
-        PropertyMap::from_pairs([(name.clone(), Value::String(intern(n).unwrap()))]).unwrap()
+        PropertyMap::from_pairs([(name.clone(), Value::String(db_string(n).unwrap()))]).unwrap()
     };
 
     let mut txn = shared.begin_write();

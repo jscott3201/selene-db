@@ -9,8 +9,8 @@ mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    CancellationChecker, GraphId, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue,
-    intern,
+    CancellationChecker, DbString, GraphId, LabelSet, PropertyMap, Value, VectorMetric,
+    VectorValue, db_string,
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind,
@@ -84,8 +84,8 @@ impl DriftMode {
 
 struct IvfInsertDriftFixture {
     graph: SeleneGraph,
-    label: IStr,
-    embedding_key: IStr,
+    label: DbString,
+    embedding_key: DbString,
     queries: Vec<VectorValue>,
     exact: Vec<Vec<VectorNodeSearchHit>>,
     scale: usize,
@@ -96,8 +96,8 @@ impl IvfInsertDriftFixture {
     fn build(scale: usize, mode: DriftMode, drift_basis_points: usize) -> Self {
         let scale = scale.max(1);
         let insert_count = drift_insert_count(scale, drift_basis_points);
-        let label = intern("VectorIvfInsertDriftDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
+        let label = db_string("VectorIvfInsertDriftDoc").expect("bench label is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
         let graph_id = 80_000_000u64
             .saturating_add(scale as u64)
             .saturating_mul(BASIS_POINTS_DENOMINATOR as u64)
@@ -203,7 +203,7 @@ impl IvfInsertDriftFixture {
     }
 }
 
-fn seed_base_index(shared: &SharedGraph, label: &IStr, embedding_key: &IStr, scale: usize) {
+fn seed_base_index(shared: &SharedGraph, label: &DbString, embedding_key: &DbString, scale: usize) {
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();
     for idx in 0..scale {
@@ -229,8 +229,8 @@ fn seed_base_index(shared: &SharedGraph, label: &IStr, embedding_key: &IStr, sca
 
 fn insert_novel_cluster(
     shared: &SharedGraph,
-    label: &IStr,
-    embedding_key: &IStr,
+    label: &DbString,
+    embedding_key: &DbString,
     scale: usize,
     insert_count: usize,
 ) {

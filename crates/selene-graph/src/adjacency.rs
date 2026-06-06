@@ -2,13 +2,13 @@
 
 use smallvec::SmallVec;
 
-use selene_core::{EdgeId, IStr, NodeId};
+use selene_core::{DbString, EdgeId, NodeId};
 
 /// One edge recorded in a node's incoming or outgoing adjacency list.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AdjacencyEdge {
     /// Edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Opposite endpoint reached through this edge.
     pub neighbor: NodeId,
     /// Stable edge ID.
@@ -52,7 +52,7 @@ impl AdjacencyEntry {
     ///
     /// Entries are sorted by `(label, neighbor, edge_id)`, so this uses a
     /// bounded label range rather than scanning unrelated edge labels.
-    pub fn iter_label<'a>(&'a self, label: &IStr) -> impl Iterator<Item = &'a AdjacencyEdge> {
+    pub fn iter_label<'a>(&'a self, label: &DbString) -> impl Iterator<Item = &'a AdjacencyEdge> {
         let range = self.label_range(label);
         self.edges[range].iter()
     }
@@ -75,7 +75,7 @@ impl AdjacencyEntry {
             .map(|index| self.edges.remove(index))
     }
 
-    fn label_range(&self, label: &IStr) -> std::ops::Range<usize> {
+    fn label_range(&self, label: &DbString) -> std::ops::Range<usize> {
         let start = self
             .edges
             .partition_point(|edge| edge.label.as_str() < label.as_str());
@@ -95,17 +95,17 @@ impl Default for AdjacencyEntry {
     }
 }
 
-fn adjacency_key(edge: &AdjacencyEdge) -> (IStr, NodeId, EdgeId) {
+fn adjacency_key(edge: &AdjacencyEdge) -> (DbString, NodeId, EdgeId) {
     (edge.label.clone(), edge.neighbor, edge.edge_id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::intern;
+    use selene_core::db_string;
 
-    fn label(name: &str) -> IStr {
-        intern(name).unwrap()
+    fn label(name: &str) -> DbString {
+        db_string(name).unwrap()
     }
 
     fn edge(label_name: &str, neighbor: u64, edge_id: u64) -> AdjacencyEdge {

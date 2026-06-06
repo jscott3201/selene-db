@@ -2,7 +2,7 @@
 
 use roaring::RoaringBitmap;
 
-use selene_core::{EdgeId, IStr, LabelSet, NodeId, PropertyMap};
+use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
 
 use crate::chunked_vec::ChunkedVec;
 
@@ -101,7 +101,7 @@ impl Default for NodeStore {
 #[derive(Clone, Debug)]
 pub struct EdgeStore {
     /// Per-row edge label.
-    pub label: ChunkedVec<IStr>,
+    pub label: ChunkedVec<DbString>,
     /// Per-row edge source node.
     pub source: ChunkedVec<NodeId>,
     /// Per-row edge target node.
@@ -166,7 +166,7 @@ impl Default for EdgeStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::intern;
+    use selene_core::db_string;
 
     #[test]
     fn node_store_new_is_empty() {
@@ -187,7 +187,7 @@ mod tests {
         let mut store = NodeStore::new();
         store
             .labels
-            .push(LabelSet::single(intern("store.node").unwrap()));
+            .push(LabelSet::single(db_string("store.node").unwrap()));
         store.properties.push(PropertyMap::new());
         store.alive.insert(0);
         assert!(store.is_alive(0));

@@ -1,6 +1,6 @@
 //! Mutation statement AST nodes.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::ast::{
     expr::ValueExpr,
@@ -92,9 +92,9 @@ pub enum SetItem {
     /// `SET n.prop = expr`.
     Property {
         /// Bound target variable.
-        target: IStr,
+        target: DbString,
         /// Property key.
-        key: IStr,
+        key: DbString,
         /// New value.
         value: ValueExpr,
         /// Source span.
@@ -103,18 +103,18 @@ pub enum SetItem {
     /// `SET n = {k: v}`.
     PropertyMerge {
         /// Bound target variable.
-        target: IStr,
+        target: DbString,
         /// Replacement/merge properties.
-        properties: Vec<(IStr, ValueExpr)>,
+        properties: Vec<(DbString, ValueExpr)>,
         /// Source span.
         span: SourceSpan,
     },
     /// `SET n :Label` / `SET n IS Label`.
     Label {
         /// Bound target variable.
-        target: IStr,
+        target: DbString,
         /// Label name.
-        label: IStr,
+        label: DbString,
         /// Source span.
         span: SourceSpan,
     },
@@ -139,18 +139,18 @@ pub enum RemoveItem {
     /// `REMOVE n.prop`.
     Property {
         /// Bound target variable.
-        target: IStr,
+        target: DbString,
         /// Property key.
-        key: IStr,
+        key: DbString,
         /// Source span.
         span: SourceSpan,
     },
     /// `REMOVE n :Label` / `REMOVE n IS Label`.
     Label {
         /// Bound target variable.
-        target: IStr,
+        target: DbString,
         /// Label name.
-        label: IStr,
+        label: DbString,
         /// Source span.
         span: SourceSpan,
     },
@@ -172,7 +172,7 @@ pub struct DeleteStatement {
     /// Delete mode.
     pub mode: DeleteMode,
     /// Bound variables to delete.
-    pub items: Vec<IStr>,
+    pub items: Vec<DbString>,
     /// Source span.
     pub span: SourceSpan,
 }

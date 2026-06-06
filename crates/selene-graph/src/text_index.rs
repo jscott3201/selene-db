@@ -13,7 +13,7 @@ use std::mem::size_of;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 
-use selene_core::{CancellationChecker, IStr, LabelSet, NodeId, PropertyMap, Value};
+use selene_core::{CancellationChecker, DbString, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::{SeleneGraph, TextIndexEntry};
@@ -29,8 +29,8 @@ mod candidate;
 /// In-memory BM25 postings index for one node `(label, property)` pair.
 #[derive(Clone, Debug)]
 pub struct TextIndex {
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     rows: RoaringBitmap,
     document_lengths: FxHashMap<NodeId, u32>,
     document_terms: FxHashMap<NodeId, Vec<String>>,
@@ -50,7 +50,7 @@ impl TextIndex {
     ///
     /// Returns [`GraphError::Inconsistent`] if the label index references a row
     /// without a resolvable node id or property row.
-    pub fn build(graph: &SeleneGraph, label: IStr, property: IStr) -> GraphResult<Self> {
+    pub fn build(graph: &SeleneGraph, label: DbString, property: DbString) -> GraphResult<Self> {
         let mut index = Self::empty(label.clone(), property.clone());
         let Some(label_rows) = graph.nodes_with_label(&label) else {
             return Ok(index);
@@ -90,7 +90,7 @@ impl TextIndex {
 
     /// Construct an empty postings index for `label.property`.
     #[must_use]
-    pub fn empty(label: IStr, property: IStr) -> Self {
+    pub fn empty(label: DbString, property: DbString) -> Self {
         Self {
             label,
             property,
@@ -105,13 +105,13 @@ impl TextIndex {
 
     /// Return the indexed node label.
     #[must_use]
-    pub const fn label(&self) -> &IStr {
+    pub const fn label(&self) -> &DbString {
         &self.label
     }
 
     /// Return the indexed node property.
     #[must_use]
-    pub const fn property(&self) -> &IStr {
+    pub const fn property(&self) -> &DbString {
         &self.property
     }
 
@@ -417,7 +417,11 @@ impl SeleneGraph {
     ///
     /// Returns [`GraphError::Inconsistent`] if graph label/property columns are
     /// internally inconsistent while the snapshot is scanned.
-    pub fn build_text_index(&self, label: &IStr, property: &IStr) -> GraphResult<TextIndex> {
+    pub fn build_text_index(
+        &self,
+        label: &DbString,
+        property: &DbString,
+    ) -> GraphResult<TextIndex> {
         TextIndex::build(self, label.clone(), property.clone())
     }
 
@@ -433,8 +437,8 @@ impl SeleneGraph {
     /// graph columns.
     pub fn indexed_text_search_nodes(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &str,
         k: usize,
     ) -> GraphResult<Vec<TextSearchHit>> {
@@ -449,7 +453,11 @@ impl SharedGraph {
     ///
     /// Returns [`GraphError::Inconsistent`] if index construction observes corrupt
     /// graph columns.
-    pub fn build_text_index(&self, label: &IStr, property: &IStr) -> GraphResult<TextIndex> {
+    pub fn build_text_index(
+        &self,
+        label: &DbString,
+        property: &DbString,
+    ) -> GraphResult<TextIndex> {
         self.read().build_text_index(label, property)
     }
 
@@ -461,8 +469,8 @@ impl SharedGraph {
     /// graph columns.
     pub fn indexed_text_search_nodes(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &str,
         k: usize,
     ) -> GraphResult<Vec<TextSearchHit>> {
@@ -471,7 +479,7 @@ impl SharedGraph {
     }
 }
 
-type TextIndexMap = FxHashMap<(IStr, IStr), TextIndexEntry>;
+type TextIndexMap = FxHashMap<(DbString, DbString), TextIndexEntry>;
 
 pub(crate) fn apply_node_create(
     indexes: &mut TextIndexMap,
@@ -567,7 +575,7 @@ pub(crate) fn apply_node_update(
 }
 
 pub(crate) fn rebuild_text_indexes(graph: &mut SeleneGraph) -> GraphResult<()> {
-    let registrations: Vec<((IStr, IStr), Option<IStr>)> = graph
+    let registrations: Vec<((DbString, DbString), Option<DbString>)> = graph
         .text_index
         .iter()
         .map(|(key, entry)| (key.clone(), entry.name.clone()))
@@ -588,15 +596,15 @@ fn candidate_keys(
     old_props: &PropertyMap,
     new_labels: &LabelSet,
     new_props: &PropertyMap,
-) -> BTreeSet<(IStr, IStr)> {
+) -> BTreeSet<(DbString, DbString)> {
     if indexes.is_empty() {
         return BTreeSet::new();
     }
-    let mut labels: BTreeSet<IStr> = BTreeSet::new();
+    let mut labels: BTreeSet<DbString> = BTreeSet::new();
     labels.extend(old_labels.iter().cloned());
     labels.extend(new_labels.iter().cloned());
 
-    let mut properties: BTreeSet<IStr> = BTreeSet::new();
+    let mut properties: BTreeSet<DbString> = BTreeSet::new();
     properties.extend(old_props.keys().cloned());
     properties.extend(new_props.keys().cloned());
 
@@ -615,8 +623,8 @@ fn candidate_keys(
 fn indexable_text<'a>(
     labels: &LabelSet,
     props: &'a PropertyMap,
-    label: &IStr,
-    property: &IStr,
+    label: &DbString,
+    property: &DbString,
 ) -> Option<&'a str> {
     if !labels.contains(label) {
         return None;
@@ -629,8 +637,8 @@ fn indexable_text<'a>(
 
 fn insert_commit(
     indexes: &mut TextIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     value: impl TextValue,
     row: u32,
     node_id: NodeId,
@@ -645,8 +653,8 @@ fn insert_commit(
 
 fn remove_commit(
     indexes: &mut TextIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     value: impl TextValue,
     row: u32,
     node_id: NodeId,

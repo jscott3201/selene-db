@@ -200,12 +200,12 @@ fn single_uint_result(value: u64) -> ProcedureResult {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{Value, intern};
+    use selene_core::{Value, db_string};
 
     use super::*;
 
     fn projection_name() -> Value {
-        Value::String(intern("p").expect("test string interns"))
+        Value::String(db_string("p").expect("test string fits DB string cap"))
     }
 
     #[test]

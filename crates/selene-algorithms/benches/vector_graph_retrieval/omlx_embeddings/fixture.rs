@@ -18,7 +18,7 @@ use self::build_support::{
     DocumentMeta, QueryAnchor, QueryVector, admits_graph_hint, graph_id_for_model,
     topic_hint_expansion_set_for,
 };
-use super::super::support::istr;
+use super::super::support::db_string;
 use super::{ANN_SEARCH_WIDTH, TOP_K, precision_basis_points};
 use selene_testing::local_omlx::{CorpusInput, Topic, topic_label};
 
@@ -29,11 +29,11 @@ mod build_support;
 pub(super) struct OmlxVectorFixture {
     shared: SharedGraph,
     graph: SeleneGraph,
-    label: selene_core::IStr,
-    embedding_key: selene_core::IStr,
-    dependency_edge: selene_core::IStr,
-    support_edge: selene_core::IStr,
-    support_state_name: selene_core::IStr,
+    label: selene_core::DbString,
+    embedding_key: selene_core::DbString,
+    dependency_edge: selene_core::DbString,
+    support_edge: selene_core::DbString,
+    support_state_name: selene_core::DbString,
     text_index: Arc<TextIndex>,
     pub(super) dimension: usize,
     documents: Vec<DocumentMeta>,
@@ -62,14 +62,14 @@ impl OmlxVectorFixture {
             vectors.iter().all(|vector| vector.dimension() == dimension),
             "oMLX returned consistent vector dimensions"
         );
-        let label = istr("OmlxEmbeddingDoc");
-        let query_label = istr("OmlxQueryAnchor");
-        let support_fact_label = istr("OmlxSupportFact");
-        let dependency_edge = istr("OmlxDependsOn");
-        let support_edge = istr("OmlxSupports");
-        let body_key = istr("body");
-        let embedding_key = istr("embedding");
-        let support_state_name = istr("omlx_support_facts");
+        let label = db_string("OmlxEmbeddingDoc");
+        let query_label = db_string("OmlxQueryAnchor");
+        let support_fact_label = db_string("OmlxSupportFact");
+        let dependency_edge = db_string("OmlxDependsOn");
+        let support_edge = db_string("OmlxSupports");
+        let body_key = db_string("body");
+        let embedding_key = db_string("embedding");
+        let support_state_name = db_string("omlx_support_facts");
         let support_state_provider = Arc::new(
             MaintainedCandidateStateProvider::new([CandidateStateSpec::new(
                 support_state_name.clone(),
@@ -93,7 +93,7 @@ impl OmlxVectorFixture {
                         continue;
                     }
                     let props = PropertyMap::from_pairs([
-                        (body_key.clone(), Value::String(istr(input.text()))),
+                        (body_key.clone(), Value::String(db_string(input.text()))),
                         (embedding_key.clone(), Value::Vector(vector.clone())),
                     ])
                     .expect("oMLX bench document properties fit");

@@ -68,7 +68,7 @@ fn validate_output_row(call: &PlannedCall, row: &[Value]) -> Result<(), Executor
     Ok(())
 }
 
-fn output_column_index(call: &PlannedCall, name: selene_core::IStr) -> Option<usize> {
+fn output_column_index(call: &PlannedCall, name: selene_core::DbString) -> Option<usize> {
     call.output_schema
         .columns
         .iter()

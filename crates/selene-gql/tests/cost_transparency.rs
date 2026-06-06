@@ -3,7 +3,7 @@
 //! ON or OFF, over both a uniform and a heavily-skewed graph. The cost model can
 //! only change WHICH correct access path runs — never WHICH rows are produced.
 
-use selene_core::{GraphId, intern};
+use selene_core::{GraphId, db_string};
 use selene_gql::{BindingTable, EmptyProcedureRegistry, Session, StatementOutput};
 use selene_graph::{SharedGraph, TypedIndexKind};
 use smallvec::smallvec;
@@ -42,9 +42,9 @@ fn row_multiset(table: &BindingTable) -> Vec<String> {
 /// session, returning the populated shared graph.
 fn build_graph(id: u64, skewed: bool) -> SharedGraph {
     let graph = SharedGraph::new(GraphId::new(id));
-    let person = intern("Person").unwrap();
-    let age = intern("age").unwrap();
-    let city = intern("city").unwrap();
+    let person = db_string("Person").unwrap();
+    let age = db_string("age").unwrap();
+    let city = db_string("city").unwrap();
 
     // Open-graph indexes are created via the graph API (CREATE INDEX DDL needs a
     // bound graph type). Single-property (age, city) + composite (city, age).
@@ -61,7 +61,7 @@ fn build_graph(id: u64, skewed: bool) -> SharedGraph {
                 person,
                 smallvec![city, age],
                 smallvec![TypedIndexKind::String, TypedIndexKind::I64],
-                Some(intern("person_city_age").unwrap()),
+                Some(db_string("person_city_age").unwrap()),
             )
             .unwrap();
         txn.commit().unwrap();

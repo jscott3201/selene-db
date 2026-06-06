@@ -221,7 +221,7 @@ impl ValueExpr {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::IStr;
+    use selene_core::DbString;
 
     use crate::ast::ValueExpr;
     use crate::ast::expr::{BinaryOp, IsCheckKind, Literal};
@@ -231,13 +231,13 @@ mod tests {
         SourceSpan::new(offset, 1)
     }
 
-    fn istr(value: &str) -> IStr {
-        selene_core::intern(value).expect("test string interns")
+    fn db_string(value: &str) -> DbString {
+        selene_core::db_string(value).expect("test string fits DB string cap")
     }
 
     fn var(name: &str, offset: u32) -> ValueExpr {
         ValueExpr::Variable {
-            name: istr(name),
+            name: db_string(name),
             span: span(offset),
         }
     }

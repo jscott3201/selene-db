@@ -1,15 +1,15 @@
 //! BRIEF-155 Commit 3 — registry-driven `DisjunctiveLabelExpansion` rule
 //! tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, IndexKind, JoinTree, LabelExpr, NodeOrEdgeScan,
     ScanAccess, Vec2OrMore, analyze, optimize, parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn optimized(source: &str, catalog: &MockIndexCatalog) -> ExecutionPlan {
@@ -53,33 +53,37 @@ fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
 /// Per-label `email` STRING index on three of the four candidate labels.
 fn email_indexed_catalog() -> MockIndexCatalog {
     MockIndexCatalog::new()
-        .with_node_typed_index(istr("Module"), istr("email"), IndexKind::String)
-        .with_node_typed_index(istr("Namespace"), istr("email"), IndexKind::String)
-        .with_node_typed_index(istr("Class"), istr("email"), IndexKind::String)
+        .with_node_typed_index(db_string("Module"), db_string("email"), IndexKind::String)
+        .with_node_typed_index(
+            db_string("Namespace"),
+            db_string("email"),
+            IndexKind::String,
+        )
+        .with_node_typed_index(db_string("Class"), db_string("email"), IndexKind::String)
 }
 
 /// Per-label `age` INTEGER index — covers range and equality.
 fn age_indexed_catalog() -> MockIndexCatalog {
     MockIndexCatalog::new()
-        .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
-        .with_node_typed_index(istr("Robot"), istr("age"), IndexKind::Integer)
+        .with_node_typed_index(db_string("Person"), db_string("age"), IndexKind::Integer)
+        .with_node_typed_index(db_string("Robot"), db_string("age"), IndexKind::Integer)
 }
 
 /// Composite index on (tenant, kind) for each label in the disjunction.
 fn composite_catalog() -> MockIndexCatalog {
     MockIndexCatalog::new()
         .with_node_composite_index(
-            istr("A"),
+            db_string("A"),
             vec![
-                (istr("tenant"), IndexKind::String),
-                (istr("kind"), IndexKind::String),
+                (db_string("tenant"), IndexKind::String),
+                (db_string("kind"), IndexKind::String),
             ],
         )
         .with_node_composite_index(
-            istr("B"),
+            db_string("B"),
             vec![
-                (istr("tenant"), IndexKind::String),
-                (istr("kind"), IndexKind::String),
+                (db_string("tenant"), IndexKind::String),
+                (db_string("kind"), IndexKind::String),
             ],
         )
 }
@@ -192,7 +196,11 @@ fn mixed_inner_branch_conjunction_stays_linear() {
     // returns None; rule must not fire.
     let plan = optimized(
         "MATCH (n:A|B&C) WHERE n.email = 'foo' RETURN n",
-        &MockIndexCatalog::new().with_node_typed_index(istr("A"), istr("email"), IndexKind::String),
+        &MockIndexCatalog::new().with_node_typed_index(
+            db_string("A"),
+            db_string("email"),
+            IndexKind::String,
+        ),
     );
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan present");
     assert!(
@@ -206,7 +214,11 @@ fn negation_inner_branch_stays_linear() {
     // `A|!B` — second branch is a Negation.
     let plan = optimized(
         "MATCH (n:A|!B) WHERE n.email = 'foo' RETURN n",
-        &MockIndexCatalog::new().with_node_typed_index(istr("A"), istr("email"), IndexKind::String),
+        &MockIndexCatalog::new().with_node_typed_index(
+            db_string("A"),
+            db_string("email"),
+            IndexKind::String,
+        ),
     );
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan present");
     assert!(
@@ -324,9 +336,9 @@ fn helper_handles_three_singles_via_full_planner() {
     // and produce exactly three branches in the IR — confirming
     // flat_disjunction_singles extracts every label, not just the first.
     let catalog = MockIndexCatalog::new()
-        .with_node_typed_index(istr("X"), istr("email"), IndexKind::String)
-        .with_node_typed_index(istr("Y"), istr("email"), IndexKind::String)
-        .with_node_typed_index(istr("Z"), istr("email"), IndexKind::String);
+        .with_node_typed_index(db_string("X"), db_string("email"), IndexKind::String)
+        .with_node_typed_index(db_string("Y"), db_string("email"), IndexKind::String)
+        .with_node_typed_index(db_string("Z"), db_string("email"), IndexKind::String);
     let plan = optimized("MATCH (n:X|Y|Z) WHERE n.email = 'foo' RETURN n", &catalog);
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan present");
     let branches = branches_of(&pattern.join_tree).expect("expansion fires");
@@ -338,7 +350,11 @@ fn helper_rejects_disjunction_with_intermediate_conjunction() {
     // `A|(B&C)|D` — middle branch is not a single, helper returns None.
     let plan = optimized(
         "MATCH (n:A|B&C|D) WHERE n.email = 'foo' RETURN n",
-        &MockIndexCatalog::new().with_node_typed_index(istr("A"), istr("email"), IndexKind::String),
+        &MockIndexCatalog::new().with_node_typed_index(
+            db_string("A"),
+            db_string("email"),
+            IndexKind::String,
+        ),
     );
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan present");
     assert!(branches_of(&pattern.join_tree).is_none());
@@ -349,7 +365,10 @@ fn vec2ormore_round_trip_via_disjunction() {
     // Sanity guard: confirm Vec2OrMore::try_from_vec accepts the construction
     // shape used by the rule's clone-and-stamp path. If this regresses, the
     // rule's `branches: labels.iter().map(...).collect()` would also break.
-    let parts = vec![LabelExpr::Single(istr("A")), LabelExpr::Single(istr("B"))];
+    let parts = vec![
+        LabelExpr::Single(db_string("A")),
+        LabelExpr::Single(db_string("B")),
+    ];
     let expr = disjunction(parts);
     assert!(matches!(expr, LabelExpr::Disjunction(_)));
 }

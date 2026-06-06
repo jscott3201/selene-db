@@ -6,7 +6,7 @@
 
 use std::num::NonZeroUsize;
 
-use selene_core::{CancellationCause, IStr, Value, intern};
+use selene_core::{CancellationCause, DbString, Value, db_string};
 use selene_graph::{
     HnswIndexConfig, IvfIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy,
     VectorIndexMemoryUsage, VectorIndexRebuildEntry, VectorIndexRebuildReport,
@@ -298,8 +298,8 @@ fn positive_integer_arg(name: &'static str) -> ProcedureError {
 }
 
 struct RebuildRow {
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     name: String,
     kind: String,
     dimension: u32,
@@ -432,7 +432,11 @@ impl RebuildRow {
     }
 }
 
-fn render_vector_index_name(label: IStr, property: IStr, explicit: Option<IStr>) -> String {
+fn render_vector_index_name(
+    label: DbString,
+    property: DbString,
+    explicit: Option<DbString>,
+) -> String {
     explicit
         .map(|name| name.as_str().to_owned())
         .unwrap_or_else(|| {
@@ -511,9 +515,9 @@ fn bytes(value: usize) -> Value {
 }
 
 fn string(value: &str) -> Result<Value, ProcedureError> {
-    intern(value)
+    db_string(value)
         .map(Value::String)
         .map_err(|_err| ProcedureError::Internal {
-            detail: "interner cap exhausted during selene.rebuild_vector_indexes".to_owned(),
+            detail: "string construction failed during selene.rebuild_vector_indexes".to_owned(),
         })
 }

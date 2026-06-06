@@ -1,6 +1,6 @@
 //! Shared-graph helpers for maintained candidate-state providers.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     CANDIDATE_STATE_PROVIDER_TAG, ProviderError, ProviderTag, SharedGraph, VectorCandidateSet,
@@ -20,7 +20,7 @@ impl SharedGraph {
     /// but cannot prove it has applied through the current graph generation.
     pub fn vector_candidate_set(
         &self,
-        name: &IStr,
+        name: &DbString,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
         let snapshot = self.read();
         let Some(provider) = self.index_provider_by_tag(ProviderTag(CANDIDATE_STATE_PROVIDER_TAG))

@@ -10,14 +10,11 @@ pub const WAL_MAGIC: [u8; 4] = *b"SLDB";
 pub const WAL_VERSION_MAJOR: u16 = 2;
 /// WAL minor format version.
 ///
-/// Bumped `0 -> 1` by the IStr-removal stage B: deleting `Value::ExternalString`
-/// from the middle of the `Value` enum shifts the postcard variant discriminant
-/// of every following variant (`Bytes`, `List`, `Record`, the temporals, …),
-/// and WAL change payloads (`payload.rs`) postcard-encode `Value`. The version
-/// gate (`WalFileHeader::read_from`) rejects any mismatch, so a pre-stage-B
-/// WAL is cleanly rejected with [`crate::PersistError::UnsupportedVersion`]
-/// rather than silently mis-decoding a shifted variant — a clean greenfield
-/// break, not a dual decoder.
+/// Bumped `0 -> 1` when the serialized `Value` enum layout changed. WAL change
+/// payloads (`payload.rs`) postcard-encode `Value`, and the version gate
+/// (`WalFileHeader::read_from`) rejects any mismatch rather than silently
+/// mis-decoding shifted variant discriminants — a clean greenfield break, not a
+/// dual decoder.
 pub const WAL_VERSION_MINOR: u16 = 1;
 /// Fixed WAL file header length.
 pub const WAL_FILE_HEADER_LEN: usize = 16;

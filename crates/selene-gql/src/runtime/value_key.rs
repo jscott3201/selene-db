@@ -3,7 +3,7 @@
 //! `DistinctRowKey` is variant-strict and follows `Value::PartialEq`.
 //! `RuntimeEqKey` follows the runtime row-key comparator used by pattern joins:
 //! cross-type `Int`/`Uint`/`Float`/`Float32` values compare by lossless numeric
-//! equality, and interned/external strings compare by string contents. Both hash
+//! equality, and strings compare by contents. Both hash
 //! paths normalize signed zero and NaN payloads so any values that compare equal
 //! under their key regime hash identically.
 
@@ -113,7 +113,7 @@ fn hash_record_runtime_eq<H: Hasher>(record: &Record, state: &mut H) {
     match record {
         Record::Open(fields) => {
             fields.len().hash(state);
-            let mut sorted: Vec<&(selene_core::IStr, Value)> = fields.iter().collect();
+            let mut sorted: Vec<&(selene_core::DbString, Value)> = fields.iter().collect();
             sorted.sort_by(|lhs, rhs| lhs.0.as_str().cmp(rhs.0.as_str()));
             for (name, value) in sorted {
                 name.as_str().hash(state);
@@ -415,7 +415,7 @@ mod tests {
     };
 
     use proptest::{prelude::*, test_runner::Config};
-    use selene_core::{Record, Value, VectorValue, intern};
+    use selene_core::{Record, Value, VectorValue, db_string};
     use smallvec::smallvec;
 
     use super::{DistinctRowKey, RuntimeEqKey, runtime_values_equal};
@@ -515,8 +515,8 @@ mod tests {
         // GQLRT-14 parity: `{a:1,b:2}` and `{b:2,a:1}` are field-name-equal, so
         // the RuntimeEqKey must treat them equal AND hash them identically, or
         // DISTINCT / GROUP BY / set-ops keep them apart.
-        let a = intern("a").expect("key interns");
-        let b = intern("b").expect("key interns");
+        let a = db_string("a").expect("key fits DB string cap");
+        let b = db_string("b").expect("key fits DB string cap");
         let lhs = Value::Record(Box::new(Record::Open(smallvec![
             (a.clone(), Value::Int(1)),
             (b.clone(), Value::Int(2)),
@@ -545,7 +545,7 @@ mod tests {
     fn runtime_eq_key_record_cross_type_numeric_field_parity() {
         // A record field comparing equal under runtime numeric collapse
         // (`{a:1}` vs `{a:1.0}`) must also hash equal.
-        let a = intern("a").expect("key interns");
+        let a = db_string("a").expect("key fits DB string cap");
         let int_rec = RuntimeEqKey::from_row(vec![Value::Record(Box::new(Record::Open(
             smallvec![(a.clone(), Value::Int(1))],
         )))]);
@@ -560,10 +560,10 @@ mod tests {
     #[test]
     fn runtime_eq_key_hashes_strings_by_content() {
         let a = RuntimeEqKey::from_row(vec![Value::String(
-            intern("same").expect("test string interns"),
+            db_string("same").expect("test string fits DB string cap"),
         )]);
         let b = RuntimeEqKey::from_row(vec![Value::String(
-            intern("same").expect("test string interns"),
+            db_string("same").expect("test string fits DB string cap"),
         )]);
 
         assert_eq!(a, b);
@@ -572,7 +572,7 @@ mod tests {
 
     #[test]
     fn runtime_eq_key_dedups_record_with_null_by_rust_equality() {
-        let key = intern("x").expect("test key interns");
+        let key = db_string("x").expect("test key fits DB string cap");
         let record = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
         let mut map = HashMap::new();
 
@@ -621,8 +621,9 @@ mod tests {
                 .prop_map(|value| { Value::Decimal(rust_decimal::Decimal::from(value)) }),
             (-1000_i64..1000)
                 .prop_map(|value| { Value::Decimal(rust_decimal::Decimal::new(value, 1)) }),
-            prop::sample::select(vec!["a", "b", "same"])
-                .prop_map(|value| { Value::String(intern(value).expect("test string interns")) }),
+            prop::sample::select(vec!["a", "b", "same"]).prop_map(|value| {
+                Value::String(db_string(value).expect("test string fits DB string cap"))
+            }),
             proptest::collection::vec(-1000_i16..1000, 1..8).prop_map(|components| {
                 let components = components.into_iter().map(f32::from).collect::<Vec<_>>();
                 Value::Vector(VectorValue::new(components).expect("test vector is finite"))
@@ -641,8 +642,8 @@ mod tests {
             Just(Value::Null),
         ];
         (field_value.clone(), field_value, any::<bool>()).prop_map(|(a, b, reversed)| {
-            let a_key = intern("a").expect("interns");
-            let b_key = intern("b").expect("interns");
+            let a_key = db_string("a").expect("string fits DB string cap");
+            let b_key = db_string("b").expect("string fits DB string cap");
             let fields = if reversed {
                 smallvec![(b_key, b), (a_key, a)]
             } else {

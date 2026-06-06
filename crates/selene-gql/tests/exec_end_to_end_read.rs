@@ -28,8 +28,8 @@ fn read_executes_match_filter_project() {
     assert_eq!(
         column_values(&table, "name"),
         vec![
-            Value::String(exec_common::istr("Bob")),
-            Value::String(exec_common::istr("Cara")),
+            Value::String(exec_common::db_string("Bob")),
+            Value::String(exec_common::db_string("Cara")),
         ]
     );
 }
@@ -41,8 +41,8 @@ fn read_executes_with_filter_chain() {
     assert_eq!(
         column_values(&table, "name"),
         vec![
-            Value::String(exec_common::istr("Bob")),
-            Value::String(exec_common::istr("Cara")),
+            Value::String(exec_common::db_string("Bob")),
+            Value::String(exec_common::db_string("Cara")),
         ]
     );
 }
@@ -74,8 +74,8 @@ fn read_executes_distinct_projection() {
     assert_eq!(
         column_values(&table, "tenant"),
         vec![
-            Value::String(exec_common::istr("t1")),
-            Value::String(exec_common::istr("t2")),
+            Value::String(exec_common::db_string("t1")),
+            Value::String(exec_common::db_string("t2")),
         ]
     );
 }
@@ -87,8 +87,8 @@ fn read_executes_limit_with_offset() {
     assert_eq!(
         column_values(&table, "name"),
         vec![
-            Value::String(exec_common::istr("Bob")),
-            Value::String(exec_common::istr("Cara")),
+            Value::String(exec_common::db_string("Bob")),
+            Value::String(exec_common::db_string("Cara")),
         ]
     );
 }

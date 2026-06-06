@@ -1,6 +1,6 @@
 //! Statement AST nodes.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::ast::{
     call::{InlineProcedureCall, ProcedureCall},
@@ -74,8 +74,8 @@ pub enum Statement {
     /// (ISO/IEC 39075:2024 section 7.4): when set, an existing binding is left
     /// untouched.
     SessionSetValue {
-        /// Interned parameter name without the leading `$`.
-        param: IStr,
+        /// Database-string parameter name without the leading `$`.
+        param: DbString,
         /// Value expression bound to the parameter.
         value: Box<ValueExpr>,
         /// `IF NOT EXISTS` was present on the parameter specification.
@@ -122,7 +122,7 @@ pub enum SessionResetTarget {
     TimeZone,
     /// `SESSION RESET [PARAMETER] <param>`: clear a single named session
     /// parameter. ISO feature GS16.
-    Parameter(IStr),
+    Parameter(DbString),
 }
 
 impl Statement {
@@ -225,8 +225,8 @@ impl PipelineStatement {
 /// Variable binding in `LET`.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct LetBinding {
-    /// Interned alias.
-    pub alias: IStr,
+    /// Database-string alias.
+    pub alias: DbString,
     /// Bound value expression.
     pub value: ValueExpr,
     /// Source span.
@@ -238,8 +238,8 @@ pub struct LetBinding {
 pub struct UnwindStatement {
     /// Source expression.
     pub source: ValueExpr,
-    /// Interned alias.
-    pub alias: IStr,
+    /// Database-string alias.
+    pub alias: DbString,
     /// Source span.
     pub span: SourceSpan,
 }
@@ -286,8 +286,8 @@ pub enum LimitValue {
     Count(u64, SourceSpan),
     /// Parameter reference.
     Parameter {
-        /// Interned parameter name without the leading `$`.
-        name: IStr,
+        /// Database-string parameter name without the leading `$`.
+        name: DbString,
         /// Optional inline declared parameter type.
         declared_type: Option<GqlType>,
         /// Source span of the parameter reference.
@@ -328,7 +328,7 @@ pub struct ReturnItem {
     /// Returned expression.
     pub expr: ValueExpr,
     /// Optional `AS` alias.
-    pub alias: Option<IStr>,
+    pub alias: Option<DbString>,
     /// Source span of the projection item.
     pub span: SourceSpan,
 }
@@ -354,7 +354,7 @@ pub struct WithClause {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TypedBinding {
     /// Binding name.
-    pub name: IStr,
+    pub name: DbString,
     /// Parsed type.
     pub ty: GqlType,
     /// Source span.

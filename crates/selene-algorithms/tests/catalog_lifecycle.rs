@@ -3,19 +3,19 @@
 use std::thread;
 
 use selene_algorithms::{AlgorithmsError, ProjectionCatalog, ProjectionConfig};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 /// Two-Person-one-Company fixture: matches BRIEF-50's `fixture_small` shape.
 fn fixture_small() -> (SharedGraph, [NodeId; 3]) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let person = istr("Person");
-    let company = istr("Company");
-    let friend = istr("friend");
+    let person = db_string("Person");
+    let company = db_string("Company");
+    let friend = db_string("friend");
 
     let mut txn = shared.begin_write();
     let n1 = txn
@@ -93,7 +93,7 @@ fn ensure_fresh_rebuilds_on_stale_generation() {
 
     // Mutate the graph: append a third Person.
     let mut txn = shared.begin_write();
-    let person = istr("Person");
+    let person = db_string("Person");
     txn.mutator()
         .create_node(LabelSet::single(person), PropertyMap::new())
         .unwrap();
@@ -184,7 +184,7 @@ fn project_overwrites_existing_name() {
     // Same name, different shape: only Person-labelled nodes.
     let person_only = ProjectionConfig {
         name: "social".to_string(),
-        node_labels: vec![istr("Person")],
+        node_labels: vec![db_string("Person")],
         edge_labels: vec![],
         weight_property: None,
     };
@@ -217,7 +217,7 @@ fn concurrent_ensure_fresh_rebuild_is_race_free() {
     // Advance the generation so the cached projection is stale.
     let mut txn = shared.begin_write();
     txn.mutator()
-        .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
         .unwrap();
     txn.commit().unwrap();
 

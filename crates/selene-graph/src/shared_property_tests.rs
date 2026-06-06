@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{
-    GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern,
+    DbString, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, db_string,
 };
 
 use crate::{GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
@@ -9,9 +9,9 @@ use crate::{GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
 #[test]
 fn create_property_index_builds_from_existing_nodes() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let person = intern("prop.index.person").unwrap();
-    let order = intern("prop.index.order").unwrap();
-    let age = intern("prop.index.age").unwrap();
+    let person = db_string("prop.index.person").unwrap();
+    let order = db_string("prop.index.order").unwrap();
+    let age = db_string("prop.index.age").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -51,8 +51,8 @@ fn create_property_index_builds_from_existing_nodes() {
 #[test]
 fn create_property_index_rejects_duplicates() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = intern("prop.duplicate.label").unwrap();
-    let property = intern("prop.duplicate.property").unwrap();
+    let label = db_string("prop.duplicate.label").unwrap();
+    let property = db_string("prop.duplicate.property").unwrap();
     shared
         .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
@@ -73,15 +73,15 @@ fn create_property_index_rejects_duplicates() {
 #[test]
 fn create_property_index_rejects_existing_kind_violations() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = intern("prop.strict.label").unwrap();
-    let property = intern("prop.strict.property").unwrap();
+    let label = db_string("prop.strict.label").unwrap();
+    let property = db_string("prop.strict.property").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
                 LabelSet::single(label.clone()),
-                property_map([(property.clone(), Value::String(intern("wrong").unwrap()))]),
+                property_map([(property.clone(), Value::String(db_string("wrong").unwrap()))]),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -105,8 +105,8 @@ fn create_property_index_rejects_existing_kind_violations() {
 #[test]
 fn drop_property_index_is_idempotent() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = intern("prop.drop.label").unwrap();
-    let property = intern("prop.drop.property").unwrap();
+    let label = db_string("prop.drop.label").unwrap();
+    let property = db_string("prop.drop.property").unwrap();
     shared
         .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
@@ -123,8 +123,8 @@ fn drop_property_index_is_idempotent() {
 #[test]
 fn property_index_tracks_create_update_delete_in_one_commit() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = intern("prop.track.label").unwrap();
-    let property = intern("prop.track.property").unwrap();
+    let label = db_string("prop.track.label").unwrap();
+    let property = db_string("prop.track.property").unwrap();
     shared
         .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
@@ -174,8 +174,8 @@ fn property_index_tracks_create_update_delete_in_one_commit() {
 #[test]
 fn property_range_lookup_unions_matching_keys() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = intern("prop.range.label").unwrap();
-    let property = intern("prop.range.property").unwrap();
+    let label = db_string("prop.range.label").unwrap();
+    let property = db_string("prop.range.property").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -204,11 +204,11 @@ fn property_range_lookup_unions_matching_keys() {
 #[test]
 fn property_prefix_lookup_is_string_only() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = intern("prop.prefix.label").unwrap();
-    let name = intern("prop.prefix.name").unwrap();
-    let age = intern("prop.prefix.age").unwrap();
-    let ada = intern("Ada Lovelace").unwrap();
-    let grace = intern("Grace Hopper").unwrap();
+    let label = db_string("prop.prefix.label").unwrap();
+    let name = db_string("prop.prefix.name").unwrap();
+    let age = db_string("prop.prefix.age").unwrap();
+    let ada = db_string("Ada Lovelace").unwrap();
+    let grace = db_string("Grace Hopper").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -254,9 +254,9 @@ fn property_prefix_lookup_is_string_only() {
 #[test]
 fn cross_label_property_indexes_are_independent() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let person = intern("prop.cross.person").unwrap();
-    let order = intern("prop.cross.order").unwrap();
-    let age = intern("prop.cross.age").unwrap();
+    let person = db_string("prop.cross.person").unwrap();
+    let order = db_string("prop.cross.order").unwrap();
+    let age = db_string("prop.cross.age").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -303,8 +303,8 @@ fn cross_label_property_indexes_are_independent() {
 #[test]
 fn old_snapshot_does_not_see_new_property_index() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = intern("prop.snapshot.label").unwrap();
-    let property = intern("prop.snapshot.property").unwrap();
+    let label = db_string("prop.snapshot.label").unwrap();
+    let property = db_string("prop.snapshot.property").unwrap();
     let old = shared.read();
 
     shared
@@ -319,8 +319,8 @@ proptest! {
     #[test]
     fn indexed_i64_sequence_matches_column_scan(ops in prop::collection::vec(0u8..32, 1..40)) {
         let shared = SharedGraph::new(GraphId::new(1));
-        let label = intern("prop.sequence.label").unwrap();
-        let property = intern("prop.sequence.property").unwrap();
+        let label = db_string("prop.sequence.label").unwrap();
+        let property = db_string("prop.sequence.property").unwrap();
         shared.create_property_index(label.clone(), property.clone(), TypedIndexKind::I64).unwrap();
         let mut nodes: Vec<(NodeId, bool)> = Vec::new();
 
@@ -373,11 +373,16 @@ proptest! {
     }
 }
 
-fn property_map(pairs: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+fn property_map(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
 }
 
-fn brute_force_i64(graph: &SeleneGraph, label: IStr, property: IStr, value: i64) -> RoaringBitmap {
+fn brute_force_i64(
+    graph: &SeleneGraph,
+    label: DbString,
+    property: DbString,
+    value: i64,
+) -> RoaringBitmap {
     let mut rows = RoaringBitmap::new();
     for row in graph.node_store.alive.iter() {
         let labels = graph

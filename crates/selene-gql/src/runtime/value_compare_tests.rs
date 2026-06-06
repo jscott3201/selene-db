@@ -1,7 +1,9 @@
 //! Unit tests for [`super`] GQL value comparison and ordering.
 use std::{cmp::Ordering, sync::Arc};
 
-use selene_core::{EdgeId, NodeId, Record, RecordTypeId, RecordTyped, Value, VectorValue, intern};
+use selene_core::{
+    EdgeId, NodeId, Record, RecordTypeId, RecordTyped, Value, VectorValue, db_string,
+};
 use smallvec::smallvec;
 
 use super::{
@@ -10,9 +12,9 @@ use super::{
 
 #[test]
 fn string_comparison_is_content_based() {
-    let same_a = Value::String(intern("same").unwrap());
-    let same_b = Value::String(intern("same").unwrap());
-    let later = Value::String(intern("zzz").unwrap());
+    let same_a = Value::String(db_string("same").unwrap());
+    let same_b = Value::String(db_string("same").unwrap());
+    let later = Value::String(db_string("zzz").unwrap());
 
     assert!(equal_non_null(&same_a, &same_b));
     assert_eq!(compare_non_null(&same_a, &same_b), Some(Ordering::Equal));
@@ -46,7 +48,7 @@ fn equal_non_null_list_nan_returns_true() {
 
 #[test]
 fn equal_non_null_record_nan_returns_true() {
-    let key = intern("x").unwrap();
+    let key = db_string("x").unwrap();
     let lhs = Value::Record(Box::new(Record::Open(smallvec![(
         key.clone(),
         Value::Float(f64::NAN)
@@ -69,7 +71,7 @@ fn numeric_equal_top_level_float_nan_returns_null() {
 
 #[test]
 fn gql_equal_record_null_field_returns_null() {
-    let key = intern("x").unwrap();
+    let key = db_string("x").unwrap();
     let lhs = Value::Record(Box::new(Record::Open(smallvec![(
         key.clone(),
         Value::Null
@@ -97,7 +99,7 @@ fn gql_equal_typed_record_null_slot_returns_null() {
 
 #[test]
 fn compare_record_with_null_field_returns_null() {
-    let key = intern("x").unwrap();
+    let key = db_string("x").unwrap();
     let lhs = Value::Record(Box::new(Record::Open(smallvec![(
         key.clone(),
         Value::Null
@@ -121,7 +123,7 @@ fn compare_list_with_null_element_returns_null() {
 #[test]
 fn compare_list_with_incomparable_element_returns_null() {
     // Cross-type elements are not comparable → None (not a silent ordering).
-    let lhs = Value::List(vec![Value::String(intern("a").unwrap())]);
+    let lhs = Value::List(vec![Value::String(db_string("a").unwrap())]);
     let rhs = Value::List(vec![Value::Int(1)]);
 
     assert_eq!(compare_non_null(&lhs, &rhs), None);
@@ -310,7 +312,7 @@ fn compare_non_null_uint128_negative_int() {
 
 #[test]
 fn compare_non_null_string_vs_date_returns_none() {
-    let string = Value::String(intern("2024-01-01").unwrap());
+    let string = Value::String(db_string("2024-01-01").unwrap());
     let date = Value::Date("2024-01-01".parse().unwrap());
 
     assert_eq!(compare_non_null(&string, &date), None);
@@ -395,7 +397,7 @@ fn compare_for_sort_orders_extended_scalar_payloads() {
 fn open_record(fields: &[(&str, Value)]) -> Value {
     let mut record = smallvec![];
     for (name, value) in fields {
-        record.push((intern(name).unwrap(), value.clone()));
+        record.push((db_string(name).unwrap(), value.clone()));
     }
     Value::Record(Box::new(Record::Open(record)))
 }

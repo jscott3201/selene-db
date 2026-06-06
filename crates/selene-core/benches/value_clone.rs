@@ -18,7 +18,7 @@ use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, exact_vector_top_k, intern,
+    PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string, exact_vector_top_k,
 };
 
 const N: usize = 1_024;
@@ -58,7 +58,9 @@ fn mixed_values() -> Vec<Value> {
         .map(|i| match i % 6 {
             0 => Value::Int(i as i64),
             1 => Value::Float(i as f64 * 1.5),
-            2 => Value::String(intern(&format!("v{}", i % 64)).expect("string interns")),
+            2 => Value::String(
+                db_string(&format!("v{}", i % 64)).expect("string fits DB string cap"),
+            ),
             3 => Value::Duration(Box::new(span)),
             4 => Value::ZonedDateTime(Box::new(zoned.clone())),
             _ => Value::Vector(VectorValue::new(vector_components(32)).expect("vector is valid")),
@@ -68,27 +70,30 @@ fn mixed_values() -> Vec<Value> {
 
 fn mixed_property_map() -> PropertyMap {
     PropertyMap::from_pairs([
-        (intern("i").expect("key"), Value::Int(42)),
-        (intern("f").expect("key"), Value::Float(2.5)),
+        (db_string("i").expect("key"), Value::Int(42)),
+        (db_string("f").expect("key"), Value::Float(2.5)),
         (
-            intern("s").expect("key"),
-            Value::String(intern("hello").expect("value")),
+            db_string("s").expect("key"),
+            Value::String(db_string("hello").expect("value")),
         ),
-        (intern("d").expect("key"), Value::Duration(Box::new(span()))),
         (
-            intern("z").expect("key"),
+            db_string("d").expect("key"),
+            Value::Duration(Box::new(span())),
+        ),
+        (
+            db_string("z").expect("key"),
             Value::ZonedDateTime(Box::new(zoned())),
         ),
     ])
     .expect("property map fits core caps")
 }
 
-fn wide_property_pairs(width: usize) -> Vec<(selene_core::IStr, Value)> {
+fn wide_property_pairs(width: usize) -> Vec<(selene_core::DbString, Value)> {
     (0..width)
         .rev()
         .map(|idx| {
             (
-                intern(&format!("wide_property_{idx:04}")).expect("key interns"),
+                db_string(&format!("wide_property_{idx:04}")).expect("key fits DB string cap"),
                 Value::Int(idx as i64),
             )
         })

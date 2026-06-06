@@ -2,8 +2,8 @@
 //!
 //! The principal/audit actor lives in the WAL entry header per D12; these
 //! payloads carry only the graph mutation itself. Diff payloads keep key lists
-//! in canonical lexicographic order by [`IStr::as_str`] both in memory and on
-//! the wire (the derived [`IStr`] `Ord` is lexicographic through the inner
+//! in canonical lexicographic order by [`DbString::as_str`] both in memory and on
+//! the wire (the derived [`DbString`] `Ord` is lexicographic through the inner
 //! string). Serialize canonicalizes (sorts) the lists before emitting — a no-op
 //! for diffs built via the constructors, but load-bearing because the diff
 //! fields are public and can be set non-canonically. Deserialize then validates
@@ -14,8 +14,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
 use crate::{
-    CoreError, CoreResult, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId,
-    HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1,
+    CoreError, CoreResult, DbString, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType,
+    GraphTypeId, HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1,
     PropertyMap, RecordTypeDef, Value,
 };
 
@@ -53,7 +53,7 @@ pub enum Change {
         /// Created edge ID.
         id: EdgeId,
         /// Edge label.
-        label: IStr,
+        label: DbString,
         /// Source node ID.
         source: NodeId,
         /// Target node ID.
@@ -85,21 +85,21 @@ pub enum Change {
         /// Updated node ID.
         id: NodeId,
         /// Removed property key.
-        property: IStr,
+        property: DbString,
     },
     /// Edge property removal.
     EdgePropertyRemoved {
         /// Updated edge ID.
         id: EdgeId,
         /// Removed property key.
-        property: IStr,
+        property: DbString,
     },
     /// Node label removal.
     NodeLabelRemoved {
         /// Updated node ID.
         id: NodeId,
         /// Removed label.
-        label: IStr,
+        label: DbString,
     },
     /// Bulk removal of every node carrying `label` plus all incident edges.
     ///
@@ -117,7 +117,7 @@ pub enum Change {
     /// or rebuild from the recovered graph snapshot before serving reads.
     NodesOfTypeTruncated {
         /// Node label whose instances (and incident edges) were removed.
-        label: IStr,
+        label: DbString,
     },
     /// Bulk removal of every edge carrying `label`.
     ///
@@ -130,7 +130,7 @@ pub enum Change {
     /// or rebuild before serving reads.
     EdgesOfTypeTruncated {
         /// Edge label whose instances were removed.
-        label: IStr,
+        label: DbString,
     },
     /// Factory-reset of the entire graph: wipe **all** nodes and edges (every
     /// label, including untyped/arbitrary-label rows) **and** reset the schema
@@ -158,9 +158,9 @@ pub enum Change {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LabelDiff {
     /// Labels added by the mutation.
-    pub added: SmallVec<[IStr; 2]>,
+    pub added: SmallVec<[DbString; 2]>,
     /// Labels removed by the mutation.
-    pub removed: SmallVec<[IStr; 2]>,
+    pub removed: SmallVec<[DbString; 2]>,
 }
 
 impl LabelDiff {
@@ -172,8 +172,8 @@ impl LabelDiff {
     /// `added` and `removed`. Contradictory diffs would make WAL replay
     /// order-dependent, so the constructor refuses to build them.
     pub fn new(
-        added: impl IntoIterator<Item = IStr>,
-        removed: impl IntoIterator<Item = IStr>,
+        added: impl IntoIterator<Item = DbString>,
+        removed: impl IntoIterator<Item = DbString>,
     ) -> CoreResult<Self> {
         let added = sorted_deduped(added);
         let removed = sorted_deduped(removed);
@@ -190,8 +190,8 @@ impl LabelDiff {
 
 #[derive(Deserialize, Serialize)]
 struct LabelDiffWire {
-    added: SmallVec<[IStr; 2]>,
-    removed: SmallVec<[IStr; 2]>,
+    added: SmallVec<[DbString; 2]>,
+    removed: SmallVec<[DbString; 2]>,
 }
 
 impl Serialize for LabelDiff {
@@ -235,9 +235,9 @@ impl<'de> Deserialize<'de> for LabelDiff {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PropertyDiff {
     /// Keys set to a new value. Use [`Value::Null`] for an explicit null set.
-    pub set: SmallVec<[(IStr, Value); 4]>,
+    pub set: SmallVec<[(DbString, Value); 4]>,
     /// Keys whose entries are removed entirely.
-    pub removed: SmallVec<[IStr; 2]>,
+    pub removed: SmallVec<[DbString; 2]>,
 }
 
 impl PropertyDiff {
@@ -249,8 +249,8 @@ impl PropertyDiff {
     /// and `removed`. Contradictory diffs would make WAL replay
     /// order-dependent, so the constructor refuses to build them.
     pub fn new(
-        set: impl IntoIterator<Item = (IStr, Value)>,
-        removed: impl IntoIterator<Item = IStr>,
+        set: impl IntoIterator<Item = (DbString, Value)>,
+        removed: impl IntoIterator<Item = DbString>,
     ) -> CoreResult<Self> {
         let mut set: Vec<_> = set.into_iter().collect();
         set.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
@@ -262,7 +262,7 @@ impl PropertyDiff {
                 false
             }
         });
-        let set: SmallVec<[(IStr, Value); 4]> = set.into_iter().collect();
+        let set: SmallVec<[(DbString, Value); 4]> = set.into_iter().collect();
         let removed = sorted_deduped(removed);
         for (key, _) in set.iter() {
             if removed.binary_search(key).is_ok() {
@@ -284,8 +284,8 @@ impl PropertyDiff {
 
 #[derive(Deserialize, Serialize)]
 struct PropertyDiffWire {
-    set: SmallVec<[(IStr, Value); 4]>,
-    removed: SmallVec<[IStr; 2]>,
+    set: SmallVec<[(DbString, Value); 4]>,
+    removed: SmallVec<[DbString; 2]>,
 }
 
 impl Serialize for PropertyDiff {
@@ -318,7 +318,7 @@ impl<'de> Deserialize<'de> for PropertyDiff {
         for window in wire.set.windows(2) {
             if window[0].0 >= window[1].0 {
                 return Err(serde::de::Error::custom(
-                    "PropertyDiff.set entries must be sorted by IStr order with no duplicate keys",
+                    "PropertyDiff.set entries must be sorted by DbString order with no duplicate keys",
                 ));
             }
         }
@@ -346,7 +346,7 @@ pub enum SchemaChange {
         /// Created graph ID.
         id: GraphId,
         /// Graph name.
-        name: IStr,
+        name: DbString,
         /// Optional graph type assigned at creation.
         graph_type: Option<GraphTypeId>,
     },
@@ -370,7 +370,7 @@ pub enum SchemaChange {
         /// Owning graph type.
         graph_type: GraphTypeId,
         /// Node type label.
-        label: IStr,
+        label: DbString,
         /// Legacy node type definition.
         def: NodeTypeDefV1,
     },
@@ -379,7 +379,7 @@ pub enum SchemaChange {
         /// Owning graph type.
         graph_type: GraphTypeId,
         /// Edge type label.
-        label: IStr,
+        label: DbString,
         /// Legacy edge type definition.
         def: EdgeTypeDefV1,
     },
@@ -388,14 +388,14 @@ pub enum SchemaChange {
         /// Owning graph type.
         graph_type: GraphTypeId,
         /// Dropped node type name.
-        name: IStr,
+        name: DbString,
     },
     /// Edge type deletion.
     EdgeTypeDropped {
         /// Owning graph type.
         graph_type: GraphTypeId,
         /// Dropped edge type name.
-        name: IStr,
+        name: DbString,
     },
     /// Record type addition.
     RecordTypeAdded {
@@ -407,18 +407,18 @@ pub enum SchemaChange {
     /// Property index creation.
     PropertyIndexCreated {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
         /// Declared index value kind.
         kind: SchemaPropertyIndexKind,
     },
     /// Property index deletion.
     PropertyIndexDropped {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
     },
     /// Property index creation with optional explicit catalog name.
     ///
@@ -427,13 +427,13 @@ pub enum SchemaChange {
     /// to decode through [`SchemaChange::PropertyIndexCreated`].
     PropertyIndexCreatedNamed {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
         /// Declared index value kind.
         kind: SchemaPropertyIndexKind,
         /// Optional explicit catalog name.
-        name: Option<IStr>,
+        name: Option<DbString>,
     },
     /// Node type addition carrying v2 type-model fields.
     ///
@@ -444,7 +444,7 @@ pub enum SchemaChange {
         /// Owning graph type.
         graph_type: GraphTypeId,
         /// Node type label.
-        label: IStr,
+        label: DbString,
         /// Node type definition.
         def: NodeTypeDef,
     },
@@ -457,7 +457,7 @@ pub enum SchemaChange {
         /// Owning graph type.
         graph_type: GraphTypeId,
         /// Edge type label.
-        label: IStr,
+        label: DbString,
         /// Edge type definition.
         def: EdgeTypeDef,
     },
@@ -467,13 +467,13 @@ pub enum SchemaChange {
     /// discriminants of all earlier variants remain stable.
     CompositePropertyIndexCreated {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property keys in declaration order.
-        properties: SmallVec<[IStr; 4]>,
+        properties: SmallVec<[DbString; 4]>,
         /// Declared index value kinds in declaration order.
         kinds: SmallVec<[SchemaPropertyIndexKind; 4]>,
         /// Optional explicit catalog name.
-        name: Option<IStr>,
+        name: Option<DbString>,
     },
     /// Composite property index deletion.
     ///
@@ -481,9 +481,9 @@ pub enum SchemaChange {
     /// discriminants of all earlier variants remain stable.
     CompositePropertyIndexDropped {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property keys in declaration order.
-        properties: SmallVec<[IStr; 4]>,
+        properties: SmallVec<[DbString; 4]>,
     },
     /// Vector property index creation with optional explicit catalog name.
     ///
@@ -491,15 +491,15 @@ pub enum SchemaChange {
     /// discriminants of all earlier variants remain stable.
     VectorIndexCreated {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed vector property key.
-        property: IStr,
+        property: DbString,
         /// Declared vector index algorithm.
         kind: SchemaVectorIndexKind,
         /// Required vector dimensionality for indexed rows.
         dimension: u32,
         /// Optional explicit catalog name.
-        name: Option<IStr>,
+        name: Option<DbString>,
         /// Optional HNSW construction parameters.
         hnsw_config: Option<HnswIndexConfig>,
         /// Optional IVF construction parameters.
@@ -511,9 +511,9 @@ pub enum SchemaChange {
     /// discriminants of all earlier variants remain stable.
     VectorIndexDropped {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed vector property key.
-        property: IStr,
+        property: DbString,
     },
     /// Text property index creation with optional explicit catalog name.
     ///
@@ -521,11 +521,11 @@ pub enum SchemaChange {
     /// discriminants of all earlier variants remain stable.
     TextIndexCreated {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed string property key.
-        property: IStr,
+        property: DbString,
         /// Optional explicit catalog name.
-        name: Option<IStr>,
+        name: Option<DbString>,
     },
     /// Text property index deletion.
     ///
@@ -533,9 +533,9 @@ pub enum SchemaChange {
     /// discriminants of all earlier variants remain stable.
     TextIndexDropped {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed string property key.
-        property: IStr,
+        property: DbString,
     },
 }
 
@@ -572,7 +572,7 @@ pub enum SchemaPropertyIndexKind {
     I64,
     /// Finite 64-bit floating-point value.
     F64,
-    /// Interned string.
+    /// Database string.
     String,
     /// Civil date.
     Date,
@@ -582,8 +582,8 @@ pub enum SchemaPropertyIndexKind {
     Uuid,
 }
 
-fn sorted_deduped(values: impl IntoIterator<Item = IStr>) -> SmallVec<[IStr; 2]> {
-    let mut values: SmallVec<[IStr; 2]> = values.into_iter().collect();
+fn sorted_deduped(values: impl IntoIterator<Item = DbString>) -> SmallVec<[DbString; 2]> {
+    let mut values: SmallVec<[DbString; 2]> = values.into_iter().collect();
     values.sort();
     values.dedup();
     values
@@ -591,8 +591,8 @@ fn sorted_deduped(values: impl IntoIterator<Item = IStr>) -> SmallVec<[IStr; 2]>
 
 fn ensure_disjoint(
     kind: &'static str,
-    added: &SmallVec<[IStr; 2]>,
-    removed: &SmallVec<[IStr; 2]>,
+    added: &SmallVec<[DbString; 2]>,
+    removed: &SmallVec<[DbString; 2]>,
 ) -> CoreResult<()> {
     for label in added.iter() {
         if removed.binary_search(label).is_ok() {
@@ -606,13 +606,13 @@ fn ensure_disjoint(
 }
 
 fn validate_sorted_unique<E: serde::de::Error>(
-    values: &SmallVec<[IStr; 2]>,
+    values: &SmallVec<[DbString; 2]>,
     label: &'static str,
 ) -> Result<(), E> {
     for window in values.windows(2) {
         if window[0] >= window[1] {
             return Err(E::custom(format!(
-                "{label} must be sorted by IStr order with no duplicates"
+                "{label} must be sorted by DbString order with no duplicates"
             )));
         }
     }
@@ -620,8 +620,8 @@ fn validate_sorted_unique<E: serde::de::Error>(
 }
 
 fn validate_disjoint<E: serde::de::Error>(
-    added: &SmallVec<[IStr; 2]>,
-    removed: &SmallVec<[IStr; 2]>,
+    added: &SmallVec<[DbString; 2]>,
+    removed: &SmallVec<[DbString; 2]>,
     kind: &'static str,
 ) -> Result<(), E> {
     for label in added.iter() {
@@ -639,18 +639,18 @@ mod tests {
     use smallvec::smallvec;
 
     use super::*;
-    use crate::{GraphTypeId, intern};
+    use crate::GraphTypeId;
 
-    fn istr(name: &str) -> IStr {
-        intern(name).unwrap()
+    fn dbs(name: &str) -> DbString {
+        crate::db_string(name).unwrap()
     }
 
     #[test]
     fn node_created_round_trip() {
         let change = Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(istr("change.node")),
-            properties: PropertyMap::from_pairs([(istr("change.p"), Value::Int(1))]).unwrap(),
+            labels: LabelSet::single(dbs("change.node")),
+            properties: PropertyMap::from_pairs([(dbs("change.p"), Value::Int(1))]).unwrap(),
         };
         assert_eq!(change.clone(), change);
     }
@@ -659,8 +659,8 @@ mod tests {
     fn node_updated_with_label_diff_and_property_diff() {
         let change = Change::NodeUpdated {
             id: NodeId::new(1),
-            labels_diff: LabelDiff::new([istr("change.add")], [istr("change.remove")]).unwrap(),
-            properties_diff: PropertyDiff::new([(istr("change.set"), Value::Bool(true))], [])
+            labels_diff: LabelDiff::new([dbs("change.add")], [dbs("change.remove")]).unwrap(),
+            properties_diff: PropertyDiff::new([(dbs("change.set"), Value::Bool(true))], [])
                 .unwrap(),
         };
         assert_eq!(change.clone(), change);
@@ -670,14 +670,14 @@ mod tests {
     fn edge_lifecycle_create_update_delete() {
         let create = Change::EdgeCreated {
             id: EdgeId::new(1),
-            label: istr("change.edge"),
+            label: dbs("change.edge"),
             source: NodeId::new(1),
             target: NodeId::new(2),
             properties: PropertyMap::new(),
         };
         let update = Change::EdgeUpdated {
             id: EdgeId::new(1),
-            properties_diff: PropertyDiff::new([], [istr("change.removed")]).unwrap(),
+            properties_diff: PropertyDiff::new([], [dbs("change.removed")]).unwrap(),
         };
         let delete = Change::EdgeDeleted { id: EdgeId::new(1) };
         assert_ne!(create, update);
@@ -691,7 +691,7 @@ mod tests {
             graph: GraphId::new(1),
             change: SchemaChange::GraphCreated {
                 id: GraphId::new(2),
-                name: istr("change.graph"),
+                name: dbs("change.graph"),
                 graph_type: Some(graph_type),
             },
         };
@@ -723,8 +723,8 @@ mod tests {
 
     #[test]
     fn label_diff_added_and_removed_independent() {
-        let added = istr("change.label.added");
-        let removed = istr("change.label.removed");
+        let added = dbs("change.label.added");
+        let removed = dbs("change.label.removed");
         let diff = LabelDiff::new([added.clone()], [removed.clone()]).unwrap();
         assert_eq!(diff.added.as_slice(), &[added]);
         assert_eq!(diff.removed.as_slice(), &[removed]);
@@ -732,14 +732,14 @@ mod tests {
 
     #[test]
     fn property_diff_set_includes_null_value() {
-        let property = istr("change.null");
+        let property = dbs("change.null");
         let diff = PropertyDiff::new([(property.clone(), Value::Null)], []).unwrap();
         assert_eq!(diff.set.as_slice(), &[(property, Value::Null)]);
     }
 
     #[test]
     fn label_diff_rejects_overlapping_label() {
-        let label = istr("change.overlap.label");
+        let label = dbs("change.overlap.label");
         let err = LabelDiff::new([label.clone()], [label]).unwrap_err();
         assert!(matches!(
             err,
@@ -749,7 +749,7 @@ mod tests {
 
     #[test]
     fn property_diff_rejects_overlapping_key() {
-        let key = istr("change.overlap.prop");
+        let key = dbs("change.overlap.prop");
         let err = PropertyDiff::new([(key.clone(), Value::Int(1))], [key]).unwrap_err();
         assert!(matches!(
             err,
@@ -762,8 +762,8 @@ mod tests {
 
     #[test]
     fn label_diff_deserialize_round_trip() {
-        let added = istr("change.deser.add");
-        let removed = istr("change.deser.remove");
+        let added = dbs("change.deser.add");
+        let removed = dbs("change.deser.remove");
         let diff = LabelDiff::new([added], [removed]).unwrap();
         let bytes = postcard::to_allocvec(&diff).unwrap();
         let round: LabelDiff = postcard::from_bytes(&bytes).unwrap();
@@ -774,9 +774,9 @@ mod tests {
     fn label_diff_serialize_independent_of_construction_order() {
         // Wire-invariance proof: two diffs built from different input orders of
         // the same labels serialize to byte-identical (canonical) wire.
-        let a = istr("change.wire.alpha");
-        let b = istr("change.wire.beta");
-        let c = istr("change.wire.gamma");
+        let a = dbs("change.wire.alpha");
+        let b = dbs("change.wire.beta");
+        let c = dbs("change.wire.gamma");
         let forward = LabelDiff::new([c.clone(), a.clone(), b.clone()], []).unwrap();
         let reverse = LabelDiff::new([b, a, c], []).unwrap();
         assert_eq!(
@@ -791,8 +791,8 @@ mod tests {
         // non-canonical diff without `LabelDiff::new`. Serialize canonicalizes
         // it so the wire round-trips through the strict (validate-no-resort)
         // decoder rather than being rejected as malformed.
-        let zebra = istr("change.noncanon.label.zebra");
-        let apple = istr("change.noncanon.label.apple");
+        let zebra = dbs("change.noncanon.label.zebra");
+        let apple = dbs("change.noncanon.label.apple");
         let non_canonical = LabelDiff {
             added: smallvec![zebra.clone(), apple.clone()],
             removed: SmallVec::new(),
@@ -801,7 +801,7 @@ mod tests {
         let round: LabelDiff = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(
             round.added,
-            SmallVec::<[IStr; 2]>::from_vec(vec![apple, zebra])
+            SmallVec::<[DbString; 2]>::from_vec(vec![apple, zebra])
         );
     }
 
@@ -809,8 +809,8 @@ mod tests {
     fn property_diff_serialize_canonicalizes_public_field_construction() {
         // `PropertyDiff.set`/`removed` are PUBLIC fields; serialize canonicalizes
         // a non-canonical diff so it round-trips through the strict decoder.
-        let zebra = istr("change.noncanon.prop.zebra");
-        let apple = istr("change.noncanon.prop.apple");
+        let zebra = dbs("change.noncanon.prop.zebra");
+        let apple = dbs("change.noncanon.prop.apple");
         let non_canonical = PropertyDiff {
             set: smallvec![
                 (zebra.clone(), Value::Int(2)),
@@ -827,9 +827,9 @@ mod tests {
     #[test]
     fn label_diff_deserialize_round_trips_canonical_payload() {
         // A canonical (ascending) wire payload deserializes preserving order.
-        // `IStr` Ord is lexicographic, so "apple" sorts before "zebra".
-        let zebra = istr("change.deser.label.zebra");
-        let apple = istr("change.deser.label.apple");
+        // `DbString` Ord is lexicographic, so "apple" sorts before "zebra".
+        let zebra = dbs("change.deser.label.zebra");
+        let apple = dbs("change.deser.label.apple");
         let good = LabelDiffWireSer {
             added: smallvec![apple.clone(), zebra.clone()],
             removed: SmallVec::new(),
@@ -838,7 +838,7 @@ mod tests {
         let round: LabelDiff = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(
             round.added,
-            SmallVec::<[IStr; 2]>::from_vec(vec![apple, zebra])
+            SmallVec::<[DbString; 2]>::from_vec(vec![apple, zebra])
         );
     }
 
@@ -846,8 +846,8 @@ mod tests {
     fn label_diff_deserialize_rejects_non_canonical_payload() {
         // A non-ascending wire payload is rejected as malformed (the decoder
         // validates the canonical invariant, no longer resorts).
-        let zebra = istr("change.deser.label.noncanon.zebra");
-        let apple = istr("change.deser.label.noncanon.apple");
+        let zebra = dbs("change.deser.label.noncanon.zebra");
+        let apple = dbs("change.deser.label.noncanon.apple");
         let bad = LabelDiffWireSer {
             added: smallvec![zebra, apple],
             removed: SmallVec::new(),
@@ -859,7 +859,7 @@ mod tests {
 
     #[test]
     fn label_diff_deserialize_rejects_duplicate_added() {
-        let label = istr("change.deser.label.dup");
+        let label = dbs("change.deser.label.dup");
         let bad = LabelDiffWireSer {
             added: smallvec![label.clone(), label],
             removed: SmallVec::new(),
@@ -871,10 +871,10 @@ mod tests {
 
     #[test]
     fn label_diff_deserialize_rejects_overlap() {
-        let label = istr("change.deser.bad");
-        let mut added = SmallVec::<[IStr; 2]>::new();
+        let label = dbs("change.deser.bad");
+        let mut added = SmallVec::<[DbString; 2]>::new();
         added.push(label.clone());
-        let mut removed = SmallVec::<[IStr; 2]>::new();
+        let mut removed = SmallVec::<[DbString; 2]>::new();
         removed.push(label);
         let bad = LabelDiffWireSer { added, removed };
         let bytes = postcard::to_allocvec(&bad).unwrap();
@@ -886,8 +886,8 @@ mod tests {
     fn property_diff_deserialize_round_trips_canonical_payload() {
         // A canonical (ascending key) property-set wire payload deserializes
         // preserving order.
-        let zebra = istr("change.deser.prop.zebra");
-        let apple = istr("change.deser.prop.apple");
+        let zebra = dbs("change.deser.prop.zebra");
+        let apple = dbs("change.deser.prop.apple");
         let good = PropertyDiffWireSer {
             set: smallvec![
                 (apple.clone(), Value::Int(1)),
@@ -899,7 +899,7 @@ mod tests {
         let round: PropertyDiff = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(
             round.set,
-            SmallVec::<[(IStr, Value); 4]>::from_vec(vec![
+            SmallVec::<[(DbString, Value); 4]>::from_vec(vec![
                 (apple, Value::Int(1)),
                 (zebra, Value::Int(2)),
             ])
@@ -909,8 +909,8 @@ mod tests {
     #[test]
     fn property_diff_deserialize_rejects_non_canonical_payload() {
         // A non-ascending property-set key list is rejected as malformed.
-        let zebra = istr("change.deser.prop.noncanon.zebra");
-        let apple = istr("change.deser.prop.noncanon.apple");
+        let zebra = dbs("change.deser.prop.noncanon.zebra");
+        let apple = dbs("change.deser.prop.noncanon.apple");
         let bad = PropertyDiffWireSer {
             set: smallvec![(zebra, Value::Int(2)), (apple, Value::Int(1))],
             removed: SmallVec::new(),
@@ -922,7 +922,7 @@ mod tests {
 
     #[test]
     fn property_diff_deserialize_rejects_duplicate_set_key() {
-        let key = istr("change.deser.prop.dup");
+        let key = dbs("change.deser.prop.dup");
         let bad = PropertyDiffWireSer {
             set: smallvec![(key.clone(), Value::Int(1)), (key, Value::Int(2))],
             removed: SmallVec::new(),
@@ -934,10 +934,10 @@ mod tests {
 
     #[test]
     fn property_diff_deserialize_rejects_overlap() {
-        let key = istr("change.deser.prop");
-        let mut set = SmallVec::<[(IStr, Value); 4]>::new();
+        let key = dbs("change.deser.prop");
+        let mut set = SmallVec::<[(DbString, Value); 4]>::new();
         set.push((key.clone(), Value::Int(1)));
-        let mut removed = SmallVec::<[IStr; 2]>::new();
+        let mut removed = SmallVec::<[DbString; 2]>::new();
         removed.push(key);
         let bad = PropertyDiffWireSer { set, removed };
         let bytes = postcard::to_allocvec(&bad).unwrap();
@@ -947,14 +947,14 @@ mod tests {
 
     #[derive(serde::Serialize)]
     struct LabelDiffWireSer {
-        added: SmallVec<[IStr; 2]>,
-        removed: SmallVec<[IStr; 2]>,
+        added: SmallVec<[DbString; 2]>,
+        removed: SmallVec<[DbString; 2]>,
     }
 
     #[derive(serde::Serialize)]
     struct PropertyDiffWireSer {
-        set: SmallVec<[(IStr, Value); 4]>,
-        removed: SmallVec<[IStr; 2]>,
+        set: SmallVec<[(DbString, Value); 4]>,
+        removed: SmallVec<[DbString; 2]>,
     }
 
     #[test]

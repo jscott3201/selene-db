@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use criterion::Criterion;
-use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern};
+use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, db_string};
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
     WalConfig, WalWriter, snapshot_path,
@@ -64,8 +64,8 @@ pub(crate) fn scales() -> &'static [usize] {
 }
 
 pub(crate) fn changes(count: usize) -> Vec<Change> {
-    let label = intern("bench.persist.node").expect("fixture string fits");
-    let key = intern("bench.persist.value").expect("fixture string fits");
+    let label = db_string("bench.persist.node").expect("fixture string fits");
+    let key = db_string("bench.persist.value").expect("fixture string fits");
     (0..count)
         .map(|idx| Change::NodeCreated {
             id: NodeId::new(idx as u64 + 1),

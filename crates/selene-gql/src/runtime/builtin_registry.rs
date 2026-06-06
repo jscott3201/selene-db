@@ -42,7 +42,7 @@
 
 use std::collections::HashMap;
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value, db_string};
 
 use crate::ProcedureContext;
 use crate::procedure_registry::{
@@ -69,12 +69,12 @@ enum Dispatch {
 #[derive(Debug)]
 pub struct BuiltinProcedureRegistry {
     /// `name → metadata`, used by plan-time [`lookup`](ProcedureRegistry::lookup).
-    by_name: HashMap<Box<[IStr]>, ProcedureMetadata>,
+    by_name: HashMap<Box<[DbString]>, ProcedureMetadata>,
     /// `handle → dispatch`, used by runtime [`execute`](ProcedureRegistry::execute).
     by_handle: HashMap<ProcedureHandle, Dispatch>,
     /// `(name, metadata)` pairs in registration order for
     /// [`iter_handles`](ProcedureRegistry::iter_handles) (SHOW PROCEDURES).
-    ordered: Vec<(Vec<IStr>, ProcedureMetadata)>,
+    ordered: Vec<(Vec<DbString>, ProcedureMetadata)>,
     /// Engine-internal, per-`GraphId`, ephemeral projection catalogs.
     catalogs: AlgorithmCatalogs,
 }
@@ -84,13 +84,10 @@ impl BuiltinProcedureRegistry {
     ///
     /// # Panics
     ///
-    /// Panics only if the global string interner is exhausted while interning
-    /// the fixed, static procedure-name segments. The set is small and known at
-    /// compile time; an interner with any spare capacity at engine startup
-    /// admits it. (The historical pack surfaced this as a recoverable
-    /// `InternerCapExhausted`; the native registry's name set is a closed
-    /// compile-time constant, so exhaustion here is a startup-environment bug,
-    /// not an operational input.)
+    /// Panics only if a fixed, static procedure-name segment exceeds the
+    /// per-string byte cap (IL013). The native registry's name set is a closed
+    /// compile-time constant, so this would be a source invariant bug, not an
+    /// operational input.
     #[must_use]
     pub fn new() -> Self {
         let mut by_name = HashMap::new();
@@ -105,7 +102,7 @@ impl BuiltinProcedureRegistry {
         for spec in &ALGO_SPECS {
             let handle = ProcedureHandle::new(next_handle);
             next_handle += 1;
-            let name = intern_name(spec.name);
+            let name = procedure_name_segments(spec.name);
             let metadata = spec.kind.metadata(handle, spec.description);
 
             by_handle.insert(handle, Dispatch::Algo(spec.kind));
@@ -115,7 +112,7 @@ impl BuiltinProcedureRegistry {
         for spec in &BUILTIN_SPECS {
             let handle = ProcedureHandle::new(next_handle);
             next_handle += 1;
-            let name = intern_name(spec.name);
+            let name = procedure_name_segments(spec.name);
             let metadata = spec
                 .kind
                 .metadata(handle, spec.description, spec.since_version);
@@ -150,7 +147,7 @@ impl Default for BuiltinProcedureRegistry {
 }
 
 impl ProcedureRegistry for BuiltinProcedureRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         self.by_name.get(name).cloned()
     }
 
@@ -158,7 +155,7 @@ impl ProcedureRegistry for BuiltinProcedureRegistry {
         REGISTRY_VERSION
     }
 
-    fn iter_handles(&self) -> Box<dyn Iterator<Item = (Vec<IStr>, ProcedureMetadata)> + '_> {
+    fn iter_handles(&self) -> Box<dyn Iterator<Item = (Vec<DbString>, ProcedureMetadata)> + '_> {
         Box::new(
             self.ordered
                 .iter()
@@ -245,9 +242,11 @@ fn builtin_name(kind: BuiltinKind) -> String {
         .map_or_else(String::new, |spec| spec.name.join("."))
 }
 
-fn intern_name(raw: &'static [&'static str]) -> Vec<IStr> {
+fn procedure_name_segments(raw: &'static [&'static str]) -> Vec<DbString> {
     raw.iter()
-        .map(|segment| intern(segment).expect("static procedure name segment interns"))
+        .map(|segment| {
+            db_string(segment).expect("static procedure name segment fits DB string cap")
+        })
         .collect()
 }
 
@@ -257,15 +256,15 @@ mod surface_tests;
 
 #[cfg(test)]
 mod tests {
-    use selene_core::intern;
+    use selene_core::db_string;
 
     use super::*;
     use crate::{ProcedureMutability, ProcedureTier};
 
-    fn name(segments: &[&str]) -> Vec<IStr> {
+    fn name(segments: &[&str]) -> Vec<DbString> {
         segments
             .iter()
-            .map(|segment| intern(segment).expect("interns"))
+            .map(|segment| db_string(segment).expect("string fits DB string cap"))
             .collect()
     }
 

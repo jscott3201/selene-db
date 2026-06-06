@@ -113,7 +113,7 @@ fn property_default_value(
 }
 
 fn validate_default_value(
-    property: selene_core::IStr,
+    property: selene_core::DbString,
     value_type: PropertyValueType,
     required: bool,
     default: &PropertyDefaultValue,
@@ -145,7 +145,7 @@ fn validate_default_value(
 }
 
 fn default_type_error(
-    property: selene_core::IStr,
+    property: selene_core::DbString,
     expected: PropertyValueType,
     observed: &'static str,
     reason: &'static str,

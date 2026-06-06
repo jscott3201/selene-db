@@ -1,21 +1,21 @@
 //! End-to-end coverage for native `selene.*` text-search built-ins.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
     Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
     SharedGraph::new(GraphId::new(id))
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -51,7 +51,7 @@ fn execute_ok(session: &mut Session<'_>, source: &str, registry: &dyn ProcedureR
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -65,7 +65,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 
 fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -79,7 +79,7 @@ fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -93,7 +93,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -110,27 +110,33 @@ fn text_search_nodes_ranks_string_properties() {
     let graph = graph(431_101);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("TextDoc");
-    let body = istr("body");
+    let doc = db_string("TextDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory graph retrieval"))),
+                props(
+                    &body,
+                    Value::String(db_string("graph memory graph retrieval")),
+                ),
             )
             .expect("text node inserts");
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("vector retrieval retrieval"))),
+                props(
+                    &body,
+                    Value::String(db_string("vector retrieval retrieval")),
+                ),
             )
             .expect("text node inserts");
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph search"))),
+                props(&body, Value::String(db_string("graph search"))),
             )
             .expect("text node inserts");
         mutator
@@ -160,21 +166,24 @@ fn create_text_index_commits_and_stats_reports_bm25_state() {
     let graph = graph(431_104);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("TextDoc");
-    let body = istr("body");
+    let doc = db_string("TextDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory graph retrieval"))),
+                props(
+                    &body,
+                    Value::String(db_string("graph memory graph retrieval")),
+                ),
             )
             .expect("text node inserts");
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("vector retrieval"))),
+                props(&body, Value::String(db_string("vector retrieval"))),
             )
             .expect("text node inserts");
         mutator
@@ -193,7 +202,7 @@ fn create_text_index_commits_and_stats_reports_bm25_state() {
     assert_eq!(
         graph
             .read()
-            .text_index_for(&istr("TextDoc"), &body)
+            .text_index_for(&db_string("TextDoc"), &body)
             .unwrap()
             .search("graph", 10)
             .into_iter()
@@ -227,27 +236,30 @@ fn text_score_nodes_reranks_explicit_candidates_with_index() {
     let graph = graph(431_107);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("TextDoc");
-    let body = istr("body");
+    let doc = db_string("TextDoc");
+    let body = db_string("body");
     let ids = {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         let top_global = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph graph graph graph memory"))),
+                props(
+                    &body,
+                    Value::String(db_string("graph graph graph graph memory")),
+                ),
             )
             .expect("text node inserts");
         let weak = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph retrieval"))),
+                props(&body, Value::String(db_string("graph retrieval"))),
             )
             .expect("text node inserts");
         let strong = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph graph notes"))),
+                props(&body, Value::String(db_string("graph graph notes"))),
             )
             .expect("text node inserts");
         let non_string = mutator
@@ -256,7 +268,7 @@ fn text_score_nodes_reranks_explicit_candidates_with_index() {
         let no_match = mutator
             .create_node(
                 LabelSet::single(doc),
-                props(&body, Value::String(istr("vector retrieval"))),
+                props(&body, Value::String(db_string("vector retrieval"))),
             )
             .expect("text node inserts");
         txn.commit().expect("seed commits");
@@ -269,7 +281,7 @@ fn text_score_nodes_reranks_explicit_candidates_with_index() {
         &registry,
     );
     session.bind_parameter(
-        istr("nodes"),
+        db_string("nodes"),
         Value::List(vec![
             Value::NodeRef(ids[1]),
             Value::NodeRef(ids[2]),
@@ -296,7 +308,7 @@ fn text_score_nodes_requires_registered_text_index() {
     let graph = graph(431_108);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("nodes"), node_list(&[NodeId::new(1)]));
+    session.bind_parameter(db_string("nodes"), node_list(&[NodeId::new(1)]));
 
     let err = session
         .execute_source(
@@ -319,27 +331,27 @@ fn text_score_nodes_uses_registered_text_index() {
     let graph = graph(431_110);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("TextDoc");
-    let body = istr("body");
+    let doc = db_string("TextDoc");
+    let body = db_string("body");
     let ids = {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         let first = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("agent graph memory"))),
+                props(&body, Value::String(db_string("agent graph memory"))),
             )
             .expect("text node inserts");
         let second = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("agent graph graph memory"))),
+                props(&body, Value::String(db_string("agent graph graph memory"))),
             )
             .expect("text node inserts");
         let third = mutator
             .create_node(
                 LabelSet::single(doc),
-                props(&body, Value::String(istr("agent vector retrieval"))),
+                props(&body, Value::String(db_string("agent vector retrieval"))),
             )
             .expect("text node inserts");
         txn.commit().expect("seed commits");
@@ -351,7 +363,7 @@ fn text_score_nodes_uses_registered_text_index() {
         "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
         &registry,
     );
-    session.bind_parameter(istr("nodes"), node_list(&[ids[0], ids[1], ids[2]]));
+    session.bind_parameter(db_string("nodes"), node_list(&[ids[0], ids[1], ids[2]]));
 
     let table = execute_rows(
         &mut session,
@@ -370,33 +382,33 @@ fn text_score_nodes_batch_reranks_per_query_candidates_with_index() {
     let graph = graph(431_111);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("TextDoc");
-    let body = istr("body");
+    let doc = db_string("TextDoc");
+    let body = db_string("body");
     let ids = {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         let graph_memory = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph graph memory"))),
+                props(&body, Value::String(db_string("graph graph memory"))),
             )
             .expect("text node inserts");
         let graph_retrieval = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph retrieval"))),
+                props(&body, Value::String(db_string("graph retrieval"))),
             )
             .expect("text node inserts");
         let memory_notes = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("memory memory notes"))),
+                props(&body, Value::String(db_string("memory memory notes"))),
             )
             .expect("text node inserts");
         let no_match = mutator
             .create_node(
                 LabelSet::single(doc),
-                props(&body, Value::String(istr("vector only"))),
+                props(&body, Value::String(db_string("vector only"))),
             )
             .expect("text node inserts");
         txn.commit().expect("seed commits");
@@ -409,14 +421,14 @@ fn text_score_nodes_batch_reranks_per_query_candidates_with_index() {
         &registry,
     );
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
-            Value::String(istr("graph")),
-            Value::String(istr("memory")),
+            Value::String(db_string("graph")),
+            Value::String(db_string("memory")),
         ]),
     );
     session.bind_parameter(
-        istr("nodes"),
+        db_string("nodes"),
         Value::List(vec![
             node_list(&[ids[0], ids[1], ids[2], ids[3]]),
             node_list(&[ids[0], ids[2], ids[3]]),
@@ -446,14 +458,14 @@ fn text_score_nodes_batch_rejects_mismatched_batch_lengths() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
-            Value::String(istr("graph")),
-            Value::String(istr("memory")),
+            Value::String(db_string("graph")),
+            Value::String(db_string("memory")),
         ]),
     );
     session.bind_parameter(
-        istr("nodes"),
+        db_string("nodes"),
         Value::List(vec![node_list(&[NodeId::new(1)])]),
     );
 
@@ -479,11 +491,11 @@ fn text_score_nodes_batch_requires_registered_text_index() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
-        Value::List(vec![Value::String(istr("graph"))]),
+        db_string("queries"),
+        Value::List(vec![Value::String(db_string("graph"))]),
     );
     session.bind_parameter(
-        istr("nodes"),
+        db_string("nodes"),
         Value::List(vec![node_list(&[NodeId::new(1)])]),
     );
 
@@ -509,11 +521,11 @@ fn text_score_nodes_batch_rejects_non_node_candidates() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
-        Value::List(vec![Value::String(istr("graph"))]),
+        db_string("queries"),
+        Value::List(vec![Value::String(db_string("graph"))]),
     );
     session.bind_parameter(
-        istr("nodes"),
+        db_string("nodes"),
         Value::List(vec![Value::List(vec![Value::Int(1)])]),
     );
 
@@ -538,7 +550,7 @@ fn text_score_nodes_rejects_non_node_candidates() {
     let graph = graph(431_109);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("nodes"), Value::List(vec![Value::Int(1)]));
+    session.bind_parameter(db_string("nodes"), Value::List(vec![Value::Int(1)]));
 
     let err = session
         .execute_source(
@@ -640,14 +652,14 @@ fn text_search_nodes_empty_token_query_returns_no_rows() {
     let graph = graph(431_103);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("TextDoc");
-    let body = istr("body");
+    let doc = db_string("TextDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(doc),
-                props(&body, Value::String(istr("graph memory"))),
+                props(&body, Value::String(db_string("graph memory"))),
             )
             .expect("text node inserts");
         txn.commit().expect("seed commits");

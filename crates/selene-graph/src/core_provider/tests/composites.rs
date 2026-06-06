@@ -33,66 +33,66 @@ fn deeply_nested_list(depth: usize) -> Value {
 fn composite_property_map(prefix: &str) -> PropertyMap {
     PropertyMap::from_pairs([
         (
-            intern(&format!("{prefix}.list")).unwrap(),
+            db_string(&format!("{prefix}.list")).unwrap(),
             Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
         ),
         (
-            intern(&format!("{prefix}.empty_list")).unwrap(),
+            db_string(&format!("{prefix}.empty_list")).unwrap(),
             Value::List(vec![]),
         ),
         (
-            intern(&format!("{prefix}.nested_list")).unwrap(),
+            db_string(&format!("{prefix}.nested_list")).unwrap(),
             Value::List(vec![
                 Value::List(vec![Value::Int(1)]),
                 Value::List(vec![Value::Int(2), Value::Int(3)]),
             ]),
         ),
         (
-            intern(&format!("{prefix}.record")).unwrap(),
+            db_string(&format!("{prefix}.record")).unwrap(),
             Value::Record(Box::new(Record::Open(smallvec![
-                (intern("id").unwrap(), Value::Int(7)),
+                (db_string("id").unwrap(), Value::Int(7)),
                 (
-                    intern("name").unwrap(),
-                    Value::String(intern("ada").unwrap()),
+                    db_string("name").unwrap(),
+                    Value::String(db_string("ada").unwrap()),
                 ),
             ]))),
         ),
         (
-            intern(&format!("{prefix}.empty_record")).unwrap(),
+            db_string(&format!("{prefix}.empty_record")).unwrap(),
             Value::Record(Box::new(Record::Open(smallvec![]))),
         ),
         (
-            intern(&format!("{prefix}.nested_record")).unwrap(),
+            db_string(&format!("{prefix}.nested_record")).unwrap(),
             Value::Record(Box::new(Record::Open(smallvec![
                 (
-                    intern("tags").unwrap(),
+                    db_string("tags").unwrap(),
                     Value::List(vec![
-                        Value::String(intern("a").unwrap()),
-                        Value::String(intern("b").unwrap()),
+                        Value::String(db_string("a").unwrap()),
+                        Value::String(db_string("b").unwrap()),
                     ]),
                 ),
                 (
-                    intern("inner").unwrap(),
+                    db_string("inner").unwrap(),
                     Value::Record(Box::new(Record::Open(smallvec![(
-                        intern("leaf").unwrap(),
+                        db_string("leaf").unwrap(),
                         Value::Int(42),
                     )]))),
                 ),
             ]))),
         ),
         (
-            intern(&format!("{prefix}.record_typed")).unwrap(),
+            db_string(&format!("{prefix}.record_typed")).unwrap(),
             Value::RecordTyped(Box::new(RecordTyped {
                 type_id: RecordTypeId::new(1),
                 values: smallvec![
                     Some(Value::Int(1)),
                     None,
-                    Some(Value::String(intern("x").unwrap())),
+                    Some(Value::String(db_string("x").unwrap())),
                 ],
             })),
         ),
         (
-            intern(&format!("{prefix}.deep")).unwrap(),
+            db_string(&format!("{prefix}.deep")).unwrap(),
             deeply_nested_list(8),
         ),
     ])
@@ -106,7 +106,10 @@ fn graph_with_node_props(props: PropertyMap) -> SeleneGraph {
     {
         let mut mutator = txn.mutator();
         let id = mutator
-            .create_node(LabelSet::single(intern("composite.node").unwrap()), props)
+            .create_node(
+                LabelSet::single(db_string("composite.node").unwrap()),
+                props,
+            )
             .unwrap();
         assert_eq!(id, NodeId::new(1));
     }
@@ -123,18 +126,18 @@ fn graph_with_edge_props(edge_props: PropertyMap) -> SeleneGraph {
         let mut mutator = txn.mutator();
         let a = mutator
             .create_node(
-                LabelSet::single(intern("composite.a").unwrap()),
+                LabelSet::single(db_string("composite.a").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         let b = mutator
             .create_node(
-                LabelSet::single(intern("composite.b").unwrap()),
+                LabelSet::single(db_string("composite.b").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         let edge = mutator
-            .create_edge(intern("composite.edge").unwrap(), a, b, edge_props)
+            .create_edge(db_string("composite.edge").unwrap(), a, b, edge_props)
             .unwrap();
         assert_eq!(edge, EdgeId::new(1));
     }
@@ -214,7 +217,7 @@ fn wal_round_trips_composite_node_properties() {
     let expected = composite_property_map("node.wal");
     let changes = vec![Change::NodeCreated {
         id: NodeId::new(1),
-        labels: LabelSet::single(intern("composite.wal").unwrap()),
+        labels: LabelSet::single(db_string("composite.wal").unwrap()),
         properties: expected.clone(),
     }];
     let timestamp = DurableProvider::next_timestamp(provider.as_ref());
@@ -240,7 +243,7 @@ fn wal_replay_reconstructs_composite_node_properties() {
         provider.as_ref(),
         &Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(intern("composite.replay").unwrap()),
+            labels: LabelSet::single(db_string("composite.replay").unwrap()),
             properties: expected.clone(),
         },
     )

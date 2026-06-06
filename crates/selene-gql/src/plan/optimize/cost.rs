@@ -21,7 +21,7 @@
 //! snapshot the executor runs against, so a plan can never be costed against a
 //! graph that differs from the one executed.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::Literal;
 use crate::plan::{IndexKey, IndexTarget, TypedIndexBounds, optimize::IndexCatalog};
@@ -40,7 +40,7 @@ const RANGE_DIVISOR: u64 = 3;
 pub fn linear_baseline(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    label: IStr,
+    label: DbString,
 ) -> Option<u64> {
     match catalog.label_cardinality(target, label) {
         Some(rows) => Some(rows),
@@ -53,7 +53,7 @@ pub fn linear_baseline(
 pub fn label_scan_cost(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    label: IStr,
+    label: DbString,
 ) -> Option<u64> {
     catalog.label_cardinality(target, label)
 }
@@ -67,8 +67,8 @@ pub fn label_scan_cost(
 pub fn typed_index_cost(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     bounds: &TypedIndexBounds,
 ) -> Option<u64> {
     match bounds {
@@ -105,8 +105,8 @@ pub fn typed_index_cost(
 fn equality_cost(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     key: &IndexKey,
 ) -> Option<u64> {
     match literal_value(key) {
@@ -120,8 +120,8 @@ fn equality_cost(
 fn single_ended_range_cost(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     bounds: &TypedIndexBounds,
     key: &IndexKey,
 ) -> Option<u64> {
@@ -154,7 +154,7 @@ fn single_ended_range_cost(
 fn parameter_range_cost(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    label: IStr,
+    label: DbString,
 ) -> Option<u64> {
     let population = catalog
         .label_cardinality(target, label)
@@ -167,8 +167,8 @@ fn parameter_range_cost(
 pub fn in_list_cost(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     keys: &[IndexKey],
 ) -> Option<u64> {
     let mut total: u64 = 0;
@@ -189,8 +189,8 @@ pub fn in_list_cost(
 pub fn composite_cost(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     keys: &[IndexKey],
 ) -> Option<u64> {
     let mut literal_keys: Vec<Value> = Vec::with_capacity(keys.len());
@@ -216,7 +216,7 @@ pub fn composite_cost(
 pub fn disjunctive_cost(
     catalog: &dyn IndexCatalog,
     target: IndexTarget,
-    labels: &[IStr],
+    labels: &[DbString],
 ) -> Option<u64> {
     let mut total: u64 = 0;
     for label in labels {
@@ -288,11 +288,9 @@ fn literal_to_value(literal: &Literal) -> Option<Value> {
 mod tests {
     use super::*;
 
-    // NOTE: estimator unit tests that need interned `IStr` labels/properties
-    // live in `tests/cost_estimators.rs` (test-harness gated), because the
-    // `dos_guard` interner-budget scan rejects any direct interner-call
-    // substring anywhere under `src/`. Only the pure numeric gate logic is
-    // tested inline here.
+    // NOTE: estimator unit tests that need synthetic `DbString` labels/properties
+    // live in `tests/cost_estimators.rs` (test-harness gated). Only the pure
+    // numeric gate logic is tested inline here.
 
     #[test]
     fn should_decline_index_semantics() {

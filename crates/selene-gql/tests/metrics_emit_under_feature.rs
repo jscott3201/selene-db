@@ -10,7 +10,7 @@ use std::{
 use metrics::{
     Counter, CounterFn, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit,
 };
-use selene_core::{GraphId, IStr, Value, intern, metrics as selene_metrics};
+use selene_core::{DbString, GraphId, Value, metrics as selene_metrics};
 use selene_gql::{
     CallPlanCache, EmptyProcedureRegistry, GqlType, ProcedureContext, ProcedureError,
     ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
@@ -87,20 +87,20 @@ impl CounterFn for RecordingCounter {
 }
 
 struct MetricsProcedureRegistry {
-    name: Box<[IStr]>,
+    name: Box<[DbString]>,
     metadata: ProcedureMetadata,
 }
 
 impl MetricsProcedureRegistry {
     fn new() -> Self {
-        let name = Box::from([istr("metrics"), istr("noop")]);
+        let name = Box::from([db_string("metrics"), db_string("noop")]);
         Self {
             name,
             metadata: ProcedureMetadata::new(
                 ProcedureHandle::new(1),
                 ProcedureSignature::new(Vec::new()),
                 ProcedureOutputSchema {
-                    columns: vec![ProcedureOutputColumn::new(istr("n"), GqlType::Integer)],
+                    columns: vec![ProcedureOutputColumn::new(db_string("n"), GqlType::Integer)],
                 },
                 ProcedureTier::Graph,
                 ProcedureMutability::Read,
@@ -110,7 +110,7 @@ impl MetricsProcedureRegistry {
 }
 
 impl ProcedureRegistry for MetricsProcedureRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         (name == self.name.as_ref()).then(|| self.metadata.clone())
     }
 
@@ -126,8 +126,8 @@ impl ProcedureRegistry for MetricsProcedureRegistry {
     }
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 #[test]

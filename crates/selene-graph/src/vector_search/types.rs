@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use selene_core::{CancellationCause, IStr, NodeId, VectorMetric};
+use selene_core::{CancellationCause, DbString, NodeId, VectorMetric};
 
 use crate::error::GraphError;
 
@@ -198,7 +198,7 @@ pub enum VectorNeighborDirection {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VectorNeighborSearchOptions<'a> {
     /// Edge label used to derive the one-hop candidate set.
-    pub edge_label: &'a IStr,
+    pub edge_label: &'a DbString,
     /// Direction used when walking one-hop graph adjacency.
     pub direction: VectorNeighborDirection,
     /// Distance metric requested by the caller.
@@ -211,7 +211,7 @@ impl<'a> VectorNeighborSearchOptions<'a> {
     /// Construct one-hop vector-neighbor scoring options.
     #[must_use]
     pub const fn new(
-        edge_label: &'a IStr,
+        edge_label: &'a DbString,
         direction: VectorNeighborDirection,
         metric: VectorMetric,
         k: usize,
@@ -256,7 +256,7 @@ impl ApproximateVectorSearchOptions {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ApproximateVectorExpansionOptions<'a> {
     /// Edge label used to expand ANN root candidates.
-    pub edge_label: &'a IStr,
+    pub edge_label: &'a DbString,
     /// Direction used when walking one-hop graph adjacency from ANN roots.
     pub direction: VectorNeighborDirection,
     /// Distance metric requested by the caller.
@@ -273,7 +273,7 @@ impl<'a> ApproximateVectorExpansionOptions<'a> {
     /// Construct ANN-root graph-expansion search options.
     #[must_use]
     pub const fn new(
-        edge_label: &'a IStr,
+        edge_label: &'a DbString,
         direction: VectorNeighborDirection,
         metric: VectorMetric,
         root_k: usize,

@@ -1,7 +1,7 @@
 //! Function, aggregate, subquery, and CASE builders.
 
 use pest::iterators::Pair;
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     ast::{BinaryOp, NormalForm, SourceSpan, TrimSpec, ValueExpr, util::NonEmpty},
@@ -10,7 +10,7 @@ use crate::{
 
 use super::{Rule, build_value_expr, first_child, literal};
 use crate::parser::builders::{
-    build_qualified_name, build_query_pipeline, intern_str, pattern, span, unexpected_pair,
+    build_qualified_name, build_query_pipeline, db_string_from_str, pattern, span, unexpected_pair,
 };
 
 pub(super) enum PredicateKind {
@@ -56,7 +56,9 @@ pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::aggregate_op | Rule::binary_aggregate_op => name = Some(intern_lower(child)?),
+            Rule::aggregate_op | Rule::binary_aggregate_op => {
+                name = Some(lowercase_db_string(child)?)
+            }
             Rule::distinct_kw => distinct = true,
             Rule::star => star = true,
             Rule::expr => args.push(build_value_expr(child)?),
@@ -318,10 +320,10 @@ fn expr_from_child(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
         .and_then(|pair| build_value_expr(pair))
 }
 
-fn intern_lower(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+fn lowercase_db_string(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let source_span = span(&pair);
     let canonical = pair.as_str().to_ascii_lowercase();
-    intern_str(&canonical, source_span, "aggregate name")
+    db_string_from_str(&canonical, source_span, "aggregate name")
 }
 
 fn parse_normal_form(value: &str) -> NormalForm {

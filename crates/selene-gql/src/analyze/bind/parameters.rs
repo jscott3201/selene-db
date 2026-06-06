@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     DdlStatement, GqlType, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
@@ -11,7 +11,7 @@ use crate::{
     TypePropertyConstraint, UnwindStatement, ValueExpr, analyze::error::AnalysisError,
 };
 
-pub(super) type DeclarationMap = BTreeMap<IStr, (GqlType, SourceSpan)>;
+pub(super) type DeclarationMap = BTreeMap<DbString, (GqlType, SourceSpan)>;
 
 pub(crate) fn apply_statement_parameter_declarations(
     statement: &mut Statement,
@@ -382,7 +382,7 @@ fn collect_value_parameter_declarations(
 
 fn record_parameter_declaration(
     declarations: &mut DeclarationMap,
-    name: IStr,
+    name: DbString,
     declared_type: &GqlType,
     span: SourceSpan,
 ) -> Result<(), AnalysisError> {

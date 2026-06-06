@@ -21,7 +21,7 @@ pub(crate) fn bind_value_expr(
     // level; the depth-256 contract enforced by `check_expr_depth` is well
     // above what a small (e.g. 2 MB default, or smaller test-harness) thread
     // stack can carry in debug builds — and the per-level bind frame grew once
-    // `IStr` became an owned 24-byte `CompactString` (istr-removal Stage A).
+    // `DbString` became an owned 24-byte `CompactString` (db_string-removal Stage A).
     // `stacker::maybe_grow` allocates a fresh 1 MB segment whenever fewer than
     // 256 KB remain; the red zone is sized to comfortably exceed a single
     // unoptimized `bind_value_expr_inner` frame so growth always fires before
@@ -523,7 +523,7 @@ fn has_effective_final_limit_one(body: &QueryPipeline, return_index: usize) -> b
         .unwrap_or(false)
 }
 
-fn is_aggregate_name(name: &selene_core::IStr) -> bool {
+fn is_aggregate_name(name: &selene_core::DbString) -> bool {
     let name = name.as_str();
     [
         "count",

@@ -1,13 +1,13 @@
 //! BRIEF-29 index-order optimizer tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     EmptyProcedureRegistry, IndexKind, OrderAccess, PipelineOp, analyze, optimize, parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::ExecutionPlan {
@@ -21,8 +21,8 @@ fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::Execut
 #[test]
 fn annotates_order_key_with_typed_index_access() {
     let catalog = MockIndexCatalog::new().with_node_typed_index(
-        istr("Person"),
-        istr("age"),
+        db_string("Person"),
+        db_string("age"),
         IndexKind::Integer,
     );
     let plan = optimized_one("MATCH (n:Person) RETURN n ORDER BY n.age", &catalog);
@@ -44,8 +44,8 @@ fn annotates_order_key_with_typed_index_access() {
 #[test]
 fn topk_preserves_order_access_after_fusion() {
     let catalog = MockIndexCatalog::new().with_node_typed_index(
-        istr("Person"),
-        istr("age"),
+        db_string("Person"),
+        db_string("age"),
         IndexKind::Integer,
     );
     let plan = optimized_one(
@@ -70,8 +70,8 @@ fn topk_preserves_order_access_after_fusion() {
 #[test]
 fn sentinel_index_order_snapshot() {
     let catalog = MockIndexCatalog::new().with_node_typed_index(
-        istr("Person"),
-        istr("age"),
+        db_string("Person"),
+        db_string("age"),
         IndexKind::Integer,
     );
     let plan = optimized_one(

@@ -20,7 +20,7 @@ mod vector_omlx_query_roots;
 use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{
     BuiltinProcedureRegistry, CallPlanCache, GqlType, ProcedureContext, ProcedureError,
     ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
@@ -44,20 +44,20 @@ const VECTOR_BATCH_QUERIES: usize = 8;
 const VECTOR_SCORE_CANDIDATES: usize = 64;
 
 struct RepeatRegistry {
-    name: Box<[IStr]>,
+    name: Box<[DbString]>,
     metadata: ProcedureMetadata,
 }
 
 impl RepeatRegistry {
     fn new() -> Self {
-        let name = Box::from([istr("bench"), istr("repeat")]);
+        let name = Box::from([db_string("bench"), db_string("repeat")]);
         Self {
             name,
             metadata: ProcedureMetadata::new(
                 ProcedureHandle::new(1),
                 ProcedureSignature::new(Vec::new()),
                 ProcedureOutputSchema {
-                    columns: vec![ProcedureOutputColumn::new(istr("n"), GqlType::Integer)],
+                    columns: vec![ProcedureOutputColumn::new(db_string("n"), GqlType::Integer)],
                 },
                 ProcedureTier::Graph,
                 ProcedureMutability::Read,
@@ -67,7 +67,7 @@ impl RepeatRegistry {
 }
 
 impl ProcedureRegistry for RepeatRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         (name == self.name.as_ref()).then(|| self.metadata.clone())
     }
 
@@ -290,7 +290,7 @@ fn warm_vector_cache(
 ) {
     let mut session = Session::new(graph).with_call_plan_cache(cache);
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(0, VECTOR_DIMENSION)),
     );
     session
@@ -305,7 +305,7 @@ fn warm_vector_batch_cache(
     source: &str,
 ) {
     let mut session = Session::new(graph).with_call_plan_cache(cache);
-    session.bind_parameter(istr("queries"), vector_query_batch());
+    session.bind_parameter(db_string("queries"), vector_query_batch());
     session
         .execute_source(source, registry)
         .expect("warmup batched vector search executes");
@@ -348,7 +348,7 @@ fn execute_vector_search(
         session = session.with_call_plan_cache(cache);
     }
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(0, VECTOR_DIMENSION)),
     );
     match session
@@ -433,7 +433,7 @@ fn execute_vector_ann_repeated_batch(
             session = session.with_call_plan_cache(Arc::clone(cache));
         }
         session.bind_parameter(
-            istr("query"),
+            db_string("query"),
             Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
         );
         match session
@@ -459,7 +459,7 @@ fn execute_vector_exact_repeated_batch(
             session = session.with_call_plan_cache(Arc::clone(cache));
         }
         session.bind_parameter(
-            istr("query"),
+            db_string("query"),
             Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
         );
         match session
@@ -482,7 +482,7 @@ fn execute_vector_exact_batch(
     if let Some(cache) = cache {
         session = session.with_call_plan_cache(cache);
     }
-    session.bind_parameter(istr("queries"), vector_query_batch());
+    session.bind_parameter(db_string("queries"), vector_query_batch());
     match session
         .execute_source(VECTOR_BATCH_SOURCE, registry)
         .expect("batched exact vector search procedure executes")
@@ -501,7 +501,7 @@ fn execute_vector_ann_batch(
     if let Some(cache) = cache {
         session = session.with_call_plan_cache(cache);
     }
-    session.bind_parameter(istr("queries"), vector_query_batch());
+    session.bind_parameter(db_string("queries"), vector_query_batch());
     match session
         .execute_source(VECTOR_ANN_BATCH_SOURCE, registry)
         .expect("batched ANN vector search procedure executes")
@@ -513,8 +513,8 @@ fn execute_vector_ann_batch(
 
 fn vector_graph(scale: usize, dimension: usize) -> SharedGraph {
     let graph = SharedGraph::new(GraphId::new(71_002));
-    let label = istr("VectorDoc");
-    let embedding_key = istr("embedding");
+    let label = db_string("VectorDoc");
+    let embedding_key = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         {
@@ -539,8 +539,8 @@ fn vector_graph_indexed(scale: usize, dimension: usize) -> SharedGraph {
     let graph = vector_graph(scale, dimension);
     graph
         .create_vector_index(
-            istr("VectorDoc"),
-            istr("embedding"),
+            db_string("VectorDoc"),
+            db_string("embedding"),
             VectorIndexKind::Flat,
             u32::try_from(dimension).expect("bench dimension fits u32"),
         )
@@ -552,8 +552,8 @@ fn vector_graph_hnsw_indexed(scale: usize, dimension: usize) -> SharedGraph {
     let graph = vector_graph(scale, dimension);
     graph
         .create_vector_index(
-            istr("VectorDoc"),
-            istr("embedding"),
+            db_string("VectorDoc"),
+            db_string("embedding"),
             VectorIndexKind::HnswSquaredEuclidean,
             u32::try_from(dimension).expect("bench dimension fits u32"),
         )
@@ -575,15 +575,15 @@ fn bind_vector_score_inputs(session: &mut Session<'_>) {
 
 fn bind_vector_score_inputs_for(session: &mut Session<'_>, query_index: usize) {
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
-    session.bind_parameter(istr("nodes"), vector_score_candidates(query_index));
+    session.bind_parameter(db_string("nodes"), vector_score_candidates(query_index));
 }
 
 fn bind_vector_score_batch_inputs(session: &mut Session<'_>) {
-    session.bind_parameter(istr("queries"), vector_query_batch());
-    session.bind_parameter(istr("nodes"), vector_score_candidate_batch());
+    session.bind_parameter(db_string("queries"), vector_query_batch());
+    session.bind_parameter(db_string("nodes"), vector_score_candidate_batch());
 }
 
 fn vector_score_candidate_batch() -> Value {
@@ -618,8 +618,8 @@ fn vector_value(seed: usize, dimension: usize) -> VectorValue {
     VectorValue::new(components).expect("bench vector is valid")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }
 
 criterion_group! {

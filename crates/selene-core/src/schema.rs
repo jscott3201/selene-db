@@ -10,7 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    CoreError, CoreResult, ExtensionTypeId, IStr, LabelSet, PropertyValueType, RecordTypeId, Value,
+    CoreError, CoreResult, DbString, ExtensionTypeId, LabelSet, PropertyValueType, RecordTypeId,
+    Value,
 };
 
 /// Graph-type-scoped schema identifier.
@@ -60,12 +61,12 @@ impl fmt::Display for GraphTypeId {
 pub struct GraphType {
     /// Stable graph type ID.
     pub id: GraphTypeId,
-    /// Interned graph type name.
-    pub name: IStr,
+    /// Database-string graph type name.
+    pub name: DbString,
     /// Node types keyed by node label.
-    pub node_types: BTreeMap<IStr, NodeTypeDef>,
+    pub node_types: BTreeMap<DbString, NodeTypeDef>,
     /// Edge types keyed by edge label.
-    pub edge_types: BTreeMap<IStr, EdgeTypeDef>,
+    pub edge_types: BTreeMap<DbString, EdgeTypeDef>,
     /// Record types keyed by record type ID.
     pub record_types: BTreeMap<RecordTypeId, RecordTypeDef>,
     /// Reserved policy for relationships between key label sets. **Not yet
@@ -79,7 +80,7 @@ pub struct GraphType {
 impl GraphType {
     /// Construct an empty graph type.
     #[must_use]
-    pub fn new(id: GraphTypeId, name: IStr) -> Self {
+    pub fn new(id: GraphTypeId, name: DbString) -> Self {
         Self {
             id,
             name,
@@ -161,7 +162,7 @@ impl From<NodeTypeDefV1> for NodeTypeDef {
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct NodeKey {
     /// Property names participating in the key.
-    pub property_names: SmallVec<[IStr; 2]>,
+    pub property_names: SmallVec<[DbString; 2]>,
 }
 
 /// Edge endpoint definition.
@@ -186,7 +187,7 @@ pub enum EdgeEndpointDef {
 impl EdgeEndpointDef {
     /// Construct an endpoint accepting `refs`, canonicalized.
     ///
-    /// References are sorted by interned-name identity and deduplicated. A
+    /// References are sorted by database-string identity and deduplicated. A
     /// single resulting reference collapses to [`EdgeEndpointDef::NodeType`].
     ///
     /// # Panics
@@ -214,7 +215,7 @@ impl EdgeEndpointDef {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EdgeTypeDef {
     /// Single edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Source endpoint definition.
     pub source_node_type: EdgeEndpointDef,
     /// Target endpoint definition.
@@ -229,7 +230,7 @@ pub struct EdgeTypeDef {
 impl EdgeTypeDef {
     /// Construct an edge type definition with no properties.
     #[must_use]
-    pub fn new(label: IStr, source: NodeTypeRef, target: NodeTypeRef) -> Self {
+    pub fn new(label: DbString, source: NodeTypeRef, target: NodeTypeRef) -> Self {
         Self::new_with_endpoints(
             label,
             EdgeEndpointDef::NodeType(source),
@@ -240,7 +241,7 @@ impl EdgeTypeDef {
     /// Construct an edge type definition with explicit endpoints and no properties.
     #[must_use]
     pub fn new_with_endpoints(
-        label: IStr,
+        label: DbString,
         source: EdgeEndpointDef,
         target: EdgeEndpointDef,
     ) -> Self {
@@ -263,7 +264,7 @@ impl EdgeTypeDef {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EdgeTypeDefV1 {
     /// Single edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Source node type reference.
     pub source_node_type: NodeTypeRef,
     /// Target node type reference.
@@ -275,7 +276,7 @@ pub struct EdgeTypeDefV1 {
 impl EdgeTypeDefV1 {
     /// Construct a legacy edge type definition with no properties.
     #[must_use]
-    pub fn new(label: IStr, source: NodeTypeRef, target: NodeTypeRef) -> Self {
+    pub fn new(label: DbString, source: NodeTypeRef, target: NodeTypeRef) -> Self {
         Self {
             label,
             source_node_type: source,
@@ -310,7 +311,7 @@ pub enum ValidationMode {
 /// Node type reference by label.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[repr(transparent)]
-pub struct NodeTypeRef(pub IStr);
+pub struct NodeTypeRef(pub DbString);
 
 /// Record type reference by ID.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -348,7 +349,7 @@ pub enum RecordFieldStructure {
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct RecordFieldStructureDef {
     /// Field name.
-    pub name: IStr,
+    pub name: DbString,
     /// Declared field type (recursively nestable).
     pub field_type: RecordFieldStructureType,
     /// `true` when the field is required (NOT NULL).
@@ -376,7 +377,7 @@ pub enum RecordFieldStructureType {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PropertyDef {
     /// Property name.
-    pub name: IStr,
+    pub name: DbString,
     /// Property value type.
     pub value_type: ValueType,
     /// Whether `Value::Null` is allowed.
@@ -403,7 +404,7 @@ pub struct PropertyDef {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PropertyDefV1 {
     /// Property name.
-    pub name: IStr,
+    pub name: DbString,
     /// Property value type.
     pub value_type: ValueType,
     /// Whether `Value::Null` is allowed.
@@ -508,7 +509,7 @@ pub enum PredefinedValueType {
     Float64,
     /// Fixed-precision decimal.
     Decimal,
-    /// Interned string.
+    /// Database string.
     String,
     /// Byte string.
     Bytes,
@@ -556,8 +557,8 @@ pub enum ValueTypeCardinality {
 pub struct RecordTypeDef {
     /// Stable record type ID.
     pub id: RecordTypeId,
-    /// Interned record type name.
-    pub name: IStr,
+    /// Database-string record type name.
+    pub name: DbString,
     /// Field definitions in schema order.
     pub fields: SmallVec<[PropertyDef; 4]>,
 }

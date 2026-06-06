@@ -1,6 +1,6 @@
 //! Procedure-call bind handling.
 
-use selene_core::{IStr, intern};
+use selene_core::{DbString, db_string};
 
 use super::{BindContext, expr};
 use crate::{
@@ -37,7 +37,7 @@ pub(crate) fn lookup_metadata(
 /// Build the boxed name slice used by the error variants that name the
 /// offending procedure. Computed lazily at each error-return site so the
 /// happy path allocates nothing.
-fn procedure_name(call: &ProcedureCall) -> Box<[IStr]> {
+fn procedure_name(call: &ProcedureCall) -> Box<[DbString]> {
     call.name.clone().into_vec().into_boxed_slice()
 }
 
@@ -155,13 +155,13 @@ fn default_expr(
         ProcedureDefaultValue::Null => Literal::Null(span),
         ProcedureDefaultValue::Integer(value) => Literal::Integer(value, span),
         ProcedureDefaultValue::String(value) => {
-            let interned = intern(value).map_err(|_| AnalysisError::NotImplemented {
-                message: "procedure default string exceeds the maximum interned string length"
+            let default_value = db_string(value).map_err(|_| AnalysisError::NotImplemented {
+                message: "procedure default string exceeds the maximum DB string byte length"
                     .to_owned(),
                 span,
                 hint: None,
             })?;
-            Literal::String(interned, span)
+            Literal::String(default_value, span)
         }
     };
     Ok(ValueExpr::Literal(literal))
@@ -170,7 +170,7 @@ fn default_expr(
 fn declare_output(
     ctx: &mut BindContext,
     column: &ProcedureOutputColumn,
-    name: IStr,
+    name: DbString,
     span: crate::SourceSpan,
 ) -> Result<(), AnalysisError> {
     ctx.declare_strict_typed(

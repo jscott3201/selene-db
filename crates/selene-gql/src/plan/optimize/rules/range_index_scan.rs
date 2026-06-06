@@ -116,7 +116,7 @@ fn rewrite_scan(
 
 struct Candidate {
     handle: crate::IndexHandle,
-    property: selene_core::IStr,
+    property: selene_core::DbString,
     kind: crate::IndexKind,
     bounds: TypedIndexBounds,
     consumed_indices: Vec<usize>,
@@ -126,7 +126,7 @@ fn best_candidate(
     predicates: &[FilterPredicate],
     bindings: &[BindingDef],
     catalog: &dyn crate::IndexCatalog,
-    label: selene_core::IStr,
+    label: selene_core::DbString,
 ) -> Option<Candidate> {
     for (index, pred) in predicates.iter().enumerate() {
         let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
@@ -163,7 +163,7 @@ fn best_candidate(
 }
 
 fn bounds_for_property(
-    key: selene_core::IStr,
+    key: selene_core::DbString,
     predicates: &[FilterPredicate],
     bindings: &[BindingDef],
     first_index: usize,

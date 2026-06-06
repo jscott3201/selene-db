@@ -17,7 +17,7 @@ mod csr;
 mod row_index;
 
 use roaring::RoaringBitmap;
-use selene_core::{IStr, NodeId};
+use selene_core::{DbString, NodeId};
 use selene_graph::SeleneGraph;
 
 pub use csr::ProjNeighbor;
@@ -34,14 +34,14 @@ use crate::error::AlgorithmsError;
 #[derive(Debug, Clone)]
 pub struct ProjectionConfig {
     /// Stable name used by the projection catalog. Projection names are
-    /// user-facing and arbitrary; `String` keeps them out of the global
-    /// `IStr` interner per the Spec 16 §E04 high-cardinality discipline.
+    /// user-facing and arbitrary; `String` avoids forcing projection-catalog
+    /// names through the graph identifier string type.
     pub name: String,
     /// Node labels to include. Empty = all alive nodes (intersected with
     /// `scope` at build time).
-    pub node_labels: Vec<IStr>,
+    pub node_labels: Vec<DbString>,
     /// Edge labels to include. Empty = all edge types.
-    pub edge_labels: Vec<IStr>,
+    pub edge_labels: Vec<DbString>,
     /// Property key projecting numeric edge weights to `f64`. `None` =
     /// unweighted (all weights = `1.0`).
     ///
@@ -49,7 +49,7 @@ pub struct ProjectionConfig {
     /// (including `Value::Null`), default to weight `1.0` (the same as the
     /// unweighted case). For strict weight validation, preprocess at write
     /// time.
-    pub weight_property: Option<IStr>,
+    pub weight_property: Option<DbString>,
 }
 
 /// A named subgraph view with cached CSR adjacency for fast algorithm
@@ -64,8 +64,8 @@ pub struct GraphProjection {
     /// Row-indexed bitmap of nodes included in this projection (post label
     /// filter, post scope intersection).
     nodes: RoaringBitmap,
-    edge_labels: Vec<IStr>,
-    weight_property: Option<IStr>,
+    edge_labels: Vec<DbString>,
+    weight_property: Option<DbString>,
     /// Cached dense `sparse_row ↔ dense_index` remap over the frozen `nodes`
     /// set. Built once at construction and shared by reference with every
     /// algorithm via [`GraphProjection::row_index`].
@@ -259,7 +259,7 @@ impl GraphProjection {
     /// Edge-label filter declared at projection build time. Empty slice means
     /// "all edge types were admitted" (no filter).
     #[must_use]
-    pub fn edge_labels(&self) -> &[IStr] {
+    pub fn edge_labels(&self) -> &[DbString] {
         &self.edge_labels
     }
 }
@@ -304,11 +304,11 @@ fn assert_csr_transpose(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::{GraphId, LabelSet, PropertyMap, intern};
+    use selene_core::{GraphId, LabelSet, PropertyMap};
     use selene_graph::SharedGraph;
 
-    fn istr(name: &str) -> IStr {
-        intern(name).unwrap()
+    fn db_string(name: &str) -> DbString {
+        selene_core::db_string(name).unwrap()
     }
 
     /// Build a graph with `total` nodes (all labeled `T`), keep only the nodes
@@ -317,8 +317,8 @@ mod tests {
     /// surviving NodeIds in insertion order.
     fn sparse_ring(total: u64, keep_rows: &[u32]) -> (SharedGraph, Vec<NodeId>) {
         let shared = SharedGraph::new(GraphId::new(7_700));
-        let label = istr("T");
-        let link = istr("link");
+        let label = db_string("T");
+        let link = db_string("link");
 
         let mut all = Vec::with_capacity(total as usize);
         {
@@ -364,7 +364,7 @@ mod tests {
     fn config() -> ProjectionConfig {
         ProjectionConfig {
             name: "p".to_string(),
-            node_labels: vec![istr("T")],
+            node_labels: vec![db_string("T")],
             edge_labels: vec![],
             weight_property: None,
         }
@@ -470,7 +470,7 @@ mod tests {
         let snapshot = shared.read();
         let cfg = ProjectionConfig {
             name: "empty".to_string(),
-            node_labels: vec![istr("Nonexistent")],
+            node_labels: vec![db_string("Nonexistent")],
             edge_labels: vec![],
             weight_property: None,
         };
@@ -509,8 +509,8 @@ mod tests {
     #[test]
     fn projection_over_non_identity_graph_emits_external_node_ids() {
         use selene_core::EdgeId;
-        let label = istr("T");
-        let link = istr("link");
+        let label = db_string("T");
+        let link = db_string("link");
         let mut built = SeleneGraph::new(GraphId::new(7_702));
         built
             .node_store

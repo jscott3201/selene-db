@@ -7,13 +7,13 @@ use crate::{
     runtime::{DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
-use super::binary_ops::{data_exception_with, intern_string};
+use super::binary_ops::{data_exception_with, string_value};
 
 pub(super) fn eval_element_id(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
     match args.into_iter().next().expect("arity checked") {
         Value::Null => Ok(Value::Null),
-        Value::NodeRef(id) => intern_string(&id.to_string(), span),
-        Value::EdgeRef(id) => intern_string(&id.to_string(), span),
+        Value::NodeRef(id) => string_value(&id.to_string(), span),
+        Value::EdgeRef(id) => string_value(&id.to_string(), span),
         Value::List(_) => data_exception_with(
             DataExceptionSubclass::InvalidValueType,
             "element_id argument is not a singleton element reference",

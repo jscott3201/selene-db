@@ -1,14 +1,14 @@
 //! Procedure-call AST nodes.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::ast::{expr::ValueExpr, span::SourceSpan, statement::QueryPipeline, util::NonEmpty};
 
 /// Top-level or in-pipeline procedure call.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ProcedureCall {
-    /// Qualified procedure name as interned path segments.
-    pub name: NonEmpty<IStr>,
+    /// Qualified procedure name as database-string path segments.
+    pub name: NonEmpty<DbString>,
     /// Positional arguments.
     pub args: Vec<ValueExpr>,
     /// Requested yield columns. Empty means the call discards return columns.
@@ -21,7 +21,7 @@ pub struct ProcedureCall {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct InlineProcedureCall {
     /// Optional explicit variable-scope names from `CALL (x, y) { ... }`.
-    pub variable_scope: Option<Vec<IStr>>,
+    pub variable_scope: Option<Vec<DbString>>,
     /// Query body executed per input row.
     pub body: Box<QueryPipeline>,
     /// Requested yield columns. Empty means the call discards return columns.
@@ -38,7 +38,7 @@ pub struct YieldItem {
     /// Yielded column.
     pub column: YieldColumn,
     /// Optional alias.
-    pub alias: Option<IStr>,
+    pub alias: Option<DbString>,
     /// Source span.
     pub span: SourceSpan,
 }
@@ -50,5 +50,5 @@ pub enum YieldColumn {
     /// `YIELD *`.
     Star,
     /// `YIELD col`.
-    Named(IStr),
+    Named(DbString),
 }

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    CancellationChecker, GraphId, IStr, IvfIndexConfig, LabelDiff, LabelSet, PropertyDiff,
-    PropertyMap, Value, VectorValue, intern,
+    CancellationChecker, DbString, GraphId, IvfIndexConfig, LabelDiff, LabelSet, PropertyDiff,
+    PropertyMap, Value, VectorValue, db_string,
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, HnswIndexConfig, SharedGraph, VectorIndexConfig,
@@ -311,8 +311,8 @@ fn parse_scales(raw: String) -> Option<Vec<usize>> {
 struct VectorRebuildFixture {
     shared: SharedGraph,
     variant: VectorRebuildVariant,
-    label: IStr,
-    embedding_key: IStr,
+    label: DbString,
+    embedding_key: DbString,
     query: VectorValue,
     scale: usize,
     update_count: usize,
@@ -322,8 +322,8 @@ struct VectorRebuildFixture {
 impl VectorRebuildFixture {
     fn build(scale: usize, dimension: usize, variant: VectorRebuildVariant) -> Self {
         let scale = scale.max(2);
-        let label = intern("VectorIndexRebuildDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
+        let label = db_string("VectorIndexRebuildDoc").expect("bench label is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(50_000_000 + scale as u64));
         let ids = seed_indexed_nodes(&shared, &label, &embedding_key, scale, dimension, variant);
         let (update_count, delete_count) = churn_counts(scale);
@@ -449,16 +449,16 @@ impl VectorRebuildFixture {
 
 struct VectorMemoryProjectionFixture {
     shared: SharedGraph,
-    label: IStr,
-    embedding_key: IStr,
+    label: DbString,
+    embedding_key: DbString,
     query: VectorValue,
 }
 
 impl VectorMemoryProjectionFixture {
     fn build(scale: usize, dimension: usize) -> Self {
         let scale = scale.max(1);
-        let label = intern("VectorMemoryProjectionDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
+        let label = db_string("VectorMemoryProjectionDoc").expect("bench label is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(60_000_000 + scale as u64 + dimension as u64));
         let variant = VectorRebuildVariant {
             name: "hnsw_l2_default",
@@ -505,8 +505,8 @@ impl VectorMemoryProjectionFixture {
 
 fn seed_indexed_nodes(
     shared: &SharedGraph,
-    label: &IStr,
-    embedding_key: &IStr,
+    label: &DbString,
+    embedding_key: &DbString,
     scale: usize,
     dimension: usize,
     variant: VectorRebuildVariant,
@@ -542,7 +542,7 @@ fn seed_indexed_nodes(
 
 fn churn_indexed_nodes(
     shared: &SharedGraph,
-    embedding_key: &IStr,
+    embedding_key: &DbString,
     ids: &[selene_core::NodeId],
     update_count: usize,
     delete_count: usize,

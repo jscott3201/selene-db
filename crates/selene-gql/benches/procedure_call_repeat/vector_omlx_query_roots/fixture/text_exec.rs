@@ -3,7 +3,7 @@ use std::sync::Arc;
 use selene_core::Value;
 use selene_gql::{BindingTable, BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
 
-use super::{OmlxGqlQueryRootFixture, TOP_K, istr};
+use super::{OmlxGqlQueryRootFixture, TOP_K, db_string};
 
 const QUERY_ROOT_TEXT_SCORE_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) WHERE anchor.query_index = $query_index MATCH (root)-[:OmlxSupports]->(candidate:OmlxEmbeddingDoc) WITH collect_list(candidate) AS candidates CALL selene.text_score_nodes('OmlxEmbeddingDoc', 'body', $query_text, candidates, 4) YIELD node_id, score RETURN node_id, score";
 const QUERY_ROOT_TEXT_SCORE_BATCH_SOURCE: &str = "MATCH (anchor:OmlxQueryAnchor)-[:OmlxDependsOn]->(root:OmlxEmbeddingDoc) MATCH (root)-[:OmlxSupports]->(candidate:OmlxEmbeddingDoc) WITH anchor.query_index AS query_index, anchor.query_text AS query_text, collect_list(candidate) AS candidates GROUP BY anchor.query_index, anchor.query_text ORDER BY query_index WITH collect_list(query_text) AS queries, collect_list(candidates) AS candidate_sets CALL selene.text_score_nodes_batch('OmlxEmbeddingDoc', 'body', queries, candidate_sets, 4) YIELD query_index, node_id, score RETURN query_index, node_id, score";
@@ -373,8 +373,11 @@ impl OmlxGqlQueryRootFixture {
             .queries
             .get(query_index)
             .expect("oMLX GQL bench query index is valid");
-        session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
-        session.bind_parameter(istr("query_text"), Value::String(istr(&query.text)));
+        session.bind_parameter(db_string("query_index"), Value::Int(query_index as i64));
+        session.bind_parameter(
+            db_string("query_text"),
+            Value::String(db_string(&query.text)),
+        );
         match session
             .execute_source(QUERY_ROOT_TEXT_SCORE_SOURCE, registry)
             .expect("oMLX GQL query-root text scoring procedure executes")
@@ -386,7 +389,7 @@ impl OmlxGqlQueryRootFixture {
 
     fn text_score_precision(&self, topic: super::Topic, table: &BindingTable) -> usize {
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table
             .iter()
@@ -404,7 +407,7 @@ impl OmlxGqlQueryRootFixture {
 
     fn text_score_current_precision(&self, topic: super::Topic, table: &BindingTable) -> usize {
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table
             .iter()
@@ -423,10 +426,10 @@ impl OmlxGqlQueryRootFixture {
 
     fn text_score_batch_precision(&self, table: &BindingTable) -> usize {
         let query_column = table
-            .column_index(istr("query_index"))
+            .column_index(db_string("query_index"))
             .expect("query_index column exists");
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table
             .iter()
@@ -448,10 +451,10 @@ impl OmlxGqlQueryRootFixture {
 
     fn text_score_batch_current_precision(&self, table: &BindingTable) -> usize {
         let query_column = table
-            .column_index(istr("query_index"))
+            .column_index(db_string("query_index"))
             .expect("query_index column exists");
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table
             .iter()

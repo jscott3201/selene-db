@@ -4,7 +4,7 @@
 //! function owns arity checking; `NULL` propagates except where short-circuit
 //! functions (`coalesce`, `nullif`) define different behavior.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     BinaryOp, NonEmpty, SourceSpan, ValueExpr,
@@ -22,7 +22,7 @@ use super::{
 };
 
 pub(super) fn eval_function_call(
-    name: &NonEmpty<IStr>,
+    name: &NonEmpty<DbString>,
     args: &[ValueExpr],
     (star, distinct): (bool, bool),
     span: SourceSpan,
@@ -499,11 +499,11 @@ fn eval_sqrt(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError>
     }
 }
 
-fn single_segment_name(name: &NonEmpty<IStr>) -> Option<String> {
+fn single_segment_name(name: &NonEmpty<DbString>) -> Option<String> {
     (name.len() == 1).then(|| name.first().as_str().to_ascii_lowercase())
 }
 
-fn display_name(name: &NonEmpty<IStr>) -> String {
+fn display_name(name: &NonEmpty<DbString>) -> String {
     name.iter()
         .map(|segment| segment.as_str())
         .collect::<Vec<_>>()

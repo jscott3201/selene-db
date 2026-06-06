@@ -5,7 +5,7 @@ mod exec_common;
 use std::num::NonZeroUsize;
 
 use exec_common::{column_values, execute_read, planned};
-use selene_core::{CancellationToken, GraphId, Value, intern};
+use selene_core::{CancellationToken, GraphId, Value, db_string};
 use selene_gql::{
     AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema,
     DataExceptionSubclass, EmptyProcedureRegistry, ExecutorError, GqlType, ImplDefinedCaps,
@@ -17,7 +17,7 @@ fn int_table(name: &str, values: impl IntoIterator<Item = i64>) -> BindingTable 
     BindingTable::new(
         BindingTableSchema {
             columns: vec![BindingTableColumn {
-                name: Some(exec_common::istr(name)),
+                name: Some(exec_common::db_string(name)),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::Integer),
             }],
@@ -33,7 +33,7 @@ fn string_table(name: &str, values: Vec<Value>) -> BindingTable {
     BindingTable::new(
         BindingTableSchema {
             columns: vec![BindingTableColumn {
-                name: Some(exec_common::istr(name)),
+                name: Some(exec_common::db_string(name)),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::String),
             }],
@@ -163,7 +163,7 @@ fn set_op_string_equality() {
     let table = execute_manual_set_op(
         SetOp::Intersect,
         "RETURN 'same' AS s",
-        string_table("s", vec![Value::String(intern("same").unwrap())]),
+        string_table("s", vec![Value::String(db_string("same").unwrap())]),
         &ImplDefinedCaps::default(),
         None,
     )
@@ -171,7 +171,7 @@ fn set_op_string_equality() {
 
     assert_eq!(
         column_values(&table, "s"),
-        vec![Value::String(intern("same").unwrap())]
+        vec![Value::String(db_string("same").unwrap())]
     );
 }
 

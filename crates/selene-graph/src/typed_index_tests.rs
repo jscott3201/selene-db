@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use jiff::civil::{date, datetime};
 use proptest::prelude::*;
 use roaring::RoaringBitmap;
-use selene_core::{Value, intern};
+use selene_core::{Value, db_string};
 
 use super::*;
 
@@ -74,7 +74,7 @@ fn not_nan_hash_agrees_with_eq() {
 
 #[test]
 fn insert_remove_round_trips_for_each_kind() {
-    let string = intern("typed-index.string").unwrap();
+    let string = db_string("typed-index.string").unwrap();
     let uuid = uuid::Uuid::from_u128(7);
     let cases = [
         (TypedIndexKind::I64, Value::Int(7)),
@@ -112,7 +112,7 @@ fn lookup_eq_returns_cow_variants_for_hit_and_empty_match() {
 
     assert!(
         index
-            .lookup_eq(&Value::String(intern("wrong").unwrap()))
+            .lookup_eq(&Value::String(db_string("wrong").unwrap()))
             .is_none()
     );
 }
@@ -120,7 +120,7 @@ fn lookup_eq_returns_cow_variants_for_hit_and_empty_match() {
 #[test]
 fn insert_errors_on_kind_mismatch() {
     let mut index = TypedIndex::new(TypedIndexKind::I64);
-    let err = index.insert(&Value::String(intern("wrong-kind").unwrap()), 0);
+    let err = index.insert(&Value::String(db_string("wrong-kind").unwrap()), 0);
     assert!(matches!(
         err,
         Err(TypedIndexValueError::KindMismatch {
@@ -195,9 +195,12 @@ fn distinct_keys_counts_buckets_not_rows() {
 fn distinct_keys_each_kind() {
     // String, Date, Uuid kinds: distinct_keys == number of distinct inserts.
     let mut s = TypedIndex::new(TypedIndexKind::String);
-    s.insert(&Value::String(intern("a").unwrap()), 0).unwrap();
-    s.insert(&Value::String(intern("b").unwrap()), 1).unwrap();
-    s.insert(&Value::String(intern("a").unwrap()), 2).unwrap();
+    s.insert(&Value::String(db_string("a").unwrap()), 0)
+        .unwrap();
+    s.insert(&Value::String(db_string("b").unwrap()), 1)
+        .unwrap();
+    s.insert(&Value::String(db_string("a").unwrap()), 2)
+        .unwrap();
     assert_eq!(s.distinct_keys(), 2);
     assert_eq!(s.cardinality(), 3);
 
@@ -224,8 +227,8 @@ fn range_scan_honors_included_and_excluded_bounds() {
 
 #[test]
 fn prefix_scan_matches_string_keys_only() {
-    let alpha = intern("typed-index.prefix.alpha").unwrap();
-    let beta = intern("typed-index.beta").unwrap();
+    let alpha = db_string("typed-index.prefix.alpha").unwrap();
+    let beta = db_string("typed-index.beta").unwrap();
     let mut index = TypedIndex::new(TypedIndexKind::String);
     index.insert(&Value::String(alpha), 0).unwrap();
     index.insert(&Value::String(beta), 1).unwrap();
@@ -241,14 +244,14 @@ fn prefix_scan_matches_string_keys_only() {
 
 #[test]
 fn typed_key_string_returns_string_key() {
-    let value = Value::String(intern("typed_key_admit.string.unique-1").unwrap());
+    let value = Value::String(db_string("typed_key_admit.string.unique-1").unwrap());
 
     let key = typed_key(&value, TypedIndexKind::String).expect("string coerces");
 
-    let TypedKey::String(istr) = key else {
+    let TypedKey::String(db_string) = key else {
         panic!("expected TypedKey::String, got {key:?}");
     };
-    assert_eq!(istr.as_str(), "typed_key_admit.string.unique-1");
+    assert_eq!(db_string.as_str(), "typed_key_admit.string.unique-1");
 }
 
 #[test]
@@ -283,7 +286,7 @@ fn string_value_rejected_by_non_string_index() {
     let mut index = TypedIndex::new(TypedIndexKind::I64);
     let err = index
         .insert(
-            &Value::String(intern("typed_key_admit.kind_mismatch.unique").unwrap()),
+            &Value::String(db_string("typed_key_admit.kind_mismatch.unique").unwrap()),
             0,
         )
         .expect_err("cross-kind insert rejects");
@@ -301,10 +304,12 @@ fn string_value_rejected_by_non_string_index() {
 fn lookup_eq_string_finds_admitted_row() {
     let mut index = TypedIndex::new(TypedIndexKind::String);
     let content = "lookup_eq.string.cross-variant";
-    let istr = intern(content).unwrap();
-    index.insert(&Value::String(istr.clone()), 3).unwrap();
+    let db_string = db_string(content).unwrap();
+    index.insert(&Value::String(db_string.clone()), 3).unwrap();
 
-    let result = index.lookup_eq(&Value::String(istr)).expect("kind matches");
+    let result = index
+        .lookup_eq(&Value::String(db_string))
+        .expect("kind matches");
 
     assert!(result.contains(3));
 }
@@ -318,7 +323,7 @@ fn lookup_eq_returns_none_for_kind_drift_under_open_graph() {
     let index = TypedIndex::new(TypedIndexKind::I64);
 
     let result = index.lookup_eq(&Value::String(
-        intern("lookup_eq.kind_drift.unique").unwrap(),
+        db_string("lookup_eq.kind_drift.unique").unwrap(),
     ));
 
     assert!(
@@ -330,8 +335,8 @@ fn lookup_eq_returns_none_for_kind_drift_under_open_graph() {
 #[test]
 fn values_share_key_falls_through_for_distinct_strings() {
     let index = TypedIndex::new(TypedIndexKind::String);
-    let lhs = Value::String(intern("values_share_key.string.lhs-unique").unwrap());
-    let rhs = Value::String(intern("values_share_key.string.rhs-unique").unwrap());
+    let lhs = Value::String(db_string("values_share_key.string.lhs-unique").unwrap());
+    let rhs = Value::String(db_string("values_share_key.string.rhs-unique").unwrap());
 
     assert!(!index.values_share_key(&lhs, &rhs));
 }
@@ -340,21 +345,21 @@ fn values_share_key_falls_through_for_distinct_strings() {
 fn values_share_key_returns_true_for_same_string_content() {
     let index = TypedIndex::new(TypedIndexKind::String);
     let content = "values_share_key.string.same-content-unique";
-    let lhs = Value::String(intern(content).unwrap());
-    let rhs = Value::String(intern(content).unwrap());
+    let lhs = Value::String(db_string(content).unwrap());
+    let rhs = Value::String(db_string(content).unwrap());
 
     assert!(index.values_share_key(&lhs, &rhs));
 }
 
 #[test]
 fn string_range_returns_matched_rows_over_lexicographic_keys() {
-    // Post-collapse: `IStr` Ord is lexicographic, so the String arm of
+    // Post-collapse: `DbString` Ord is lexicographic, so the String arm of
     // `lookup_range` walks the BTreeMap range directly instead of refusing
     // with `None`. Half-open `[alpha, charlie)` includes "alpha" and "bravo"
     // and excludes the exclusive end "charlie".
-    let alpha = intern("typed-index.range.alpha").unwrap();
-    let bravo = intern("typed-index.range.bravo").unwrap();
-    let charlie = intern("typed-index.range.charlie").unwrap();
+    let alpha = db_string("typed-index.range.alpha").unwrap();
+    let bravo = db_string("typed-index.range.bravo").unwrap();
+    let charlie = db_string("typed-index.range.charlie").unwrap();
     let mut index = TypedIndex::new(TypedIndexKind::String);
     index.insert(&Value::String(alpha.clone()), 0).unwrap();
     index.insert(&Value::String(bravo.clone()), 1).unwrap();
@@ -372,8 +377,8 @@ fn string_range_returns_matched_rows_over_lexicographic_keys() {
 
 #[test]
 fn string_range_inclusive_includes_high_endpoint() {
-    let alpha = intern("typed-index.range.incl.alpha").unwrap();
-    let charlie = intern("typed-index.range.incl.charlie").unwrap();
+    let alpha = db_string("typed-index.range.incl.alpha").unwrap();
+    let charlie = db_string("typed-index.range.incl.charlie").unwrap();
     let mut index = TypedIndex::new(TypedIndexKind::String);
     index.insert(&Value::String(alpha.clone()), 0).unwrap();
     index.insert(&Value::String(charlie.clone()), 1).unwrap();
@@ -390,7 +395,7 @@ fn string_range_inclusive_includes_high_endpoint() {
 /// Reference implementation: the pre-collapse O(n) full-scan `starts_with`
 /// filter that `lookup_prefix` replaced with a `BTreeMap::range` seek. The
 /// proptest below asserts the two are result-identical.
-fn lookup_prefix_full_scan_oracle(keys: &[(IStr, u32)], prefix: &str) -> RoaringBitmap {
+fn lookup_prefix_full_scan_oracle(keys: &[(DbString, u32)], prefix: &str) -> RoaringBitmap {
     let mut result = RoaringBitmap::new();
     for (key, row) in keys {
         if key.as_str().starts_with(prefix) {
@@ -407,16 +412,16 @@ fn lookup_prefix_handles_empty_and_high_byte_edges() {
     // UTF-8 trails in 0xBF/0xFF-range bytes (the prefix span must not silently
     // drop the tail of matching keys).
     let keys = [
-        intern("").unwrap(),
-        intern("a").unwrap(),
-        intern("a\u{FF}").unwrap(),     // ends in 0xC3 0xBF
-        intern("a\u{FFFF}").unwrap(),   // ends in 0xEF 0xBF 0xBF
-        intern("a\u{10FFFF}").unwrap(), // max code point, ends in 0xF4 0x8F 0xBF 0xBF
-        intern("ab").unwrap(),
-        intern("b").unwrap(),
+        db_string("").unwrap(),
+        db_string("a").unwrap(),
+        db_string("a\u{FF}").unwrap(),     // ends in 0xC3 0xBF
+        db_string("a\u{FFFF}").unwrap(),   // ends in 0xEF 0xBF 0xBF
+        db_string("a\u{10FFFF}").unwrap(), // max code point, ends in 0xF4 0x8F 0xBF 0xBF
+        db_string("ab").unwrap(),
+        db_string("b").unwrap(),
     ];
     let mut index = TypedIndex::new(TypedIndexKind::String);
-    let mut pairs: Vec<(IStr, u32)> = Vec::new();
+    let mut pairs: Vec<(DbString, u32)> = Vec::new();
     for (row, key) in keys.iter().enumerate() {
         let row = row as u32;
         index.insert(&Value::String(key.clone()), row).unwrap();
@@ -472,7 +477,7 @@ proptest! {
         // Dedup keys (an index has one bucket per distinct key) while assigning
         // each distinct key a stable row.
         let mut seen = std::collections::BTreeMap::<String, u32>::new();
-        let mut pairs: Vec<(IStr, u32)> = Vec::new();
+        let mut pairs: Vec<(DbString, u32)> = Vec::new();
         let mut index = TypedIndex::new(TypedIndexKind::String);
         let mut next_row = 0u32;
         for chars in &raw_keys {
@@ -483,7 +488,7 @@ proptest! {
             let row = next_row;
             next_row += 1;
             seen.insert(s.clone(), row);
-            let key = intern(&s).unwrap();
+            let key = db_string(&s).unwrap();
             index.insert(&Value::String(key.clone()), row).unwrap();
             pairs.push((key, row));
         }

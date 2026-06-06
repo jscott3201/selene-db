@@ -1,6 +1,6 @@
 use selene_core::{
     CancellationChecker, CancellationToken, CoreError, GraphId, LabelSet, NodeId, PropertyMap,
-    Value, VectorMetric, VectorValue, intern,
+    Value, VectorMetric, VectorValue, db_string,
 };
 
 use crate::{
@@ -15,16 +15,16 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &selene_core::IStr, value: Value) -> PropertyMap {
+fn props(key: &selene_core::DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
 #[test]
 fn score_vector_nodes_ranks_unique_live_vector_candidates() {
     let shared = SharedGraph::new(GraphId::new(974));
-    let label = intern("vector.score.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
-    let other = intern("other").unwrap();
+    let label = db_string("vector.score.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let other = db_string("other").unwrap();
     let ids = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -43,7 +43,7 @@ fn score_vector_nodes_ranks_unique_live_vector_candidates() {
             mutator
                 .create_node(
                     LabelSet::single(label.clone()),
-                    props(&other, Value::String(intern("not-a-vector").unwrap())),
+                    props(&other, Value::String(db_string("not-a-vector").unwrap())),
                 )
                 .unwrap(),
         );
@@ -84,7 +84,7 @@ fn score_vector_nodes_ranks_unique_live_vector_candidates() {
 #[test]
 fn score_vector_nodes_zero_k_does_not_bind_query() {
     let shared = SharedGraph::new(GraphId::new(975));
-    let embedding = intern("embedding").unwrap();
+    let embedding = db_string("embedding").unwrap();
 
     let hits = shared
         .score_vector_nodes_checked(
@@ -103,8 +103,8 @@ fn score_vector_nodes_zero_k_does_not_bind_query() {
 #[test]
 fn score_vector_nodes_surfaces_candidate_dimension_errors() {
     let shared = SharedGraph::new(GraphId::new(976));
-    let label = intern("vector.score.dim.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let label = db_string("vector.score.dim.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let node = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -141,8 +141,8 @@ fn score_vector_nodes_surfaces_candidate_dimension_errors() {
 #[test]
 fn score_vector_nodes_batch_matches_single_queries() {
     let shared = SharedGraph::new(GraphId::new(977));
-    let label = intern("vector.score.batch.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let label = db_string("vector.score.batch.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let ids = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -201,7 +201,7 @@ fn score_vector_nodes_batch_matches_single_queries() {
 #[test]
 fn score_vector_nodes_batch_empty_and_zero_k_do_not_bind_queries() {
     let shared = SharedGraph::new(GraphId::new(978));
-    let embedding = intern("embedding").unwrap();
+    let embedding = db_string("embedding").unwrap();
 
     let empty = shared
         .score_vector_nodes_batch_checked::<Vec<NodeId>>(
@@ -231,7 +231,7 @@ fn score_vector_nodes_batch_empty_and_zero_k_do_not_bind_queries() {
 #[test]
 fn score_vector_nodes_batch_rejects_invalid_batch_shape() {
     let shared = SharedGraph::new(GraphId::new(979));
-    let embedding = intern("embedding").unwrap();
+    let embedding = db_string("embedding").unwrap();
 
     let err = shared
         .score_vector_nodes_batch_checked(
@@ -273,12 +273,12 @@ fn score_vector_nodes_batch_rejects_invalid_batch_shape() {
 #[test]
 fn score_vector_neighbors_filters_direction_and_ranks_unique_live_vectors() {
     let shared = SharedGraph::new(GraphId::new(980));
-    let anchor_label = intern("vector.neighbor.anchor").unwrap();
-    let doc_label = intern("vector.neighbor.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
-    let link = intern("DEPENDS_ON").unwrap();
-    let other_link = intern("MENTIONS").unwrap();
-    let other = intern("other").unwrap();
+    let anchor_label = db_string("vector.neighbor.anchor").unwrap();
+    let doc_label = db_string("vector.neighbor.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let link = db_string("DEPENDS_ON").unwrap();
+    let other_link = db_string("MENTIONS").unwrap();
+    let other = db_string("other").unwrap();
     let (anchor, out_near, out_far, incoming, deleted, non_vector) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -312,7 +312,7 @@ fn score_vector_neighbors_filters_direction_and_ranks_unique_live_vectors() {
         let non_vector = mutator
             .create_node(
                 LabelSet::single(doc_label),
-                props(&other, Value::String(intern("skip").unwrap())),
+                props(&other, Value::String(db_string("skip").unwrap())),
             )
             .unwrap();
         mutator
@@ -425,10 +425,10 @@ fn score_vector_neighbors_filters_direction_and_ranks_unique_live_vectors() {
 #[test]
 fn expand_vector_candidate_set_preserves_roots_and_walks_labeled_edges() {
     let shared = SharedGraph::new(GraphId::new(982));
-    let root_label = intern("vector.expand.root").unwrap();
-    let doc_label = intern("vector.expand.doc").unwrap();
-    let support = intern("SUPPORTS").unwrap();
-    let other = intern("MENTIONS").unwrap();
+    let root_label = db_string("vector.expand.root").unwrap();
+    let doc_label = db_string("vector.expand.doc").unwrap();
+    let support = db_string("SUPPORTS").unwrap();
+    let other = db_string("MENTIONS").unwrap();
     let (root_a, root_b, out_a, out_b, incoming, wrong_label) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -490,7 +490,7 @@ fn expand_vector_candidate_set_preserves_roots_and_walks_labeled_edges() {
 #[test]
 fn expand_vector_candidate_set_handles_empty_and_cancelled_inputs() {
     let shared = SharedGraph::new(GraphId::new(983));
-    let link = intern("EXPANDS_TO").unwrap();
+    let link = db_string("EXPANDS_TO").unwrap();
     let empty = VectorCandidateSet::default();
     assert!(
         shared
@@ -514,10 +514,10 @@ fn expand_vector_candidate_set_handles_empty_and_cancelled_inputs() {
 #[test]
 fn score_vector_neighbors_batch_matches_single_anchor_queries() {
     let shared = SharedGraph::new(GraphId::new(981));
-    let anchor_label = intern("vector.neighbor.batch.anchor").unwrap();
-    let doc_label = intern("vector.neighbor.batch.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
-    let link = intern("NEAR").unwrap();
+    let anchor_label = db_string("vector.neighbor.batch.anchor").unwrap();
+    let doc_label = db_string("vector.neighbor.batch.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let link = db_string("NEAR").unwrap();
     let (anchor_a, anchor_b, ids) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();

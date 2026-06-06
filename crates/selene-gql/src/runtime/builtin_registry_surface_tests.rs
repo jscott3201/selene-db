@@ -1,12 +1,12 @@
-use selene_core::{IStr, intern};
+use selene_core::{DbString, db_string};
 
 use super::*;
 use crate::ProcedureRegistry;
 
-fn name(segments: &[&str]) -> Vec<IStr> {
+fn name(segments: &[&str]) -> Vec<DbString> {
     segments
         .iter()
-        .map(|segment| intern(segment).expect("interns"))
+        .map(|segment| db_string(segment).expect("string fits DB string cap"))
         .collect()
 }
 

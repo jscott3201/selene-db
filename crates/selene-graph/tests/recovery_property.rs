@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use proptest::prelude::*;
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Record, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Record, Value, db_string};
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig,
 };
@@ -189,22 +189,22 @@ proptest! {
 // ---------------------------------------------------------------------------
 
 /// The non-indexed property key the heavy values land on.
-fn payload_key() -> IStr {
-    intern("recover.heavy.payload").unwrap()
+fn payload_key() -> DbString {
+    db_string("recover.heavy.payload").unwrap()
 }
 
 /// The indexed I64 key (only ever set to `Value::Int`, so index admission stays
 /// type-clean while the schema change still exercises catalog DDL persistence).
-fn indexed_key() -> IStr {
-    intern("recover.heavy.age").unwrap()
+fn indexed_key() -> DbString {
+    db_string("recover.heavy.age").unwrap()
 }
 
-fn heavy_label() -> IStr {
-    intern("recover.heavy.node").unwrap()
+fn heavy_label() -> DbString {
+    db_string("recover.heavy.node").unwrap()
 }
 
-fn heavy_edge_label() -> IStr {
-    intern("recover.heavy.edge").unwrap()
+fn heavy_edge_label() -> DbString {
+    db_string("recover.heavy.edge").unwrap()
 }
 
 /// Generate one heavy `Value`. Bounded `prop_recursive` covers the nested
@@ -219,8 +219,8 @@ fn heavy_value() -> impl Strategy<Value = Value> {
         any::<f64>().prop_map(Value::Float),
         any::<f32>().prop_map(Value::Float32),
         any::<i64>().prop_map(|m| Value::Decimal(rust_decimal::Decimal::new(m, 2))),
-        "[a-z]{1,8}".prop_map(|s| Value::String(intern(&format!("recover.v.{s}")).unwrap())),
-        "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::String(intern(&s).unwrap())),
+        "[a-z]{1,8}".prop_map(|s| Value::String(db_string(&format!("recover.v.{s}")).unwrap())),
+        "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::String(db_string(&s).unwrap())),
         proptest::collection::vec(any::<u8>(), 0..20)
             .prop_map(|b| Value::Bytes(std::sync::Arc::from(b))),
         Just(Value::Date("2024-06-15".parse().unwrap())),
@@ -237,7 +237,7 @@ fn heavy_value() -> impl Strategy<Value = Value> {
                 Value::Record(Box::new(Record::Open(
                     fields
                         .into_iter()
-                        .map(|(k, v)| (intern(&format!("recover.f.{k}")).unwrap(), v))
+                        .map(|(k, v)| (db_string(&format!("recover.f.{k}")).unwrap(), v))
                         .collect(),
                 )))
             }),

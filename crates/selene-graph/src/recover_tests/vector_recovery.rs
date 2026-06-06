@@ -2,7 +2,7 @@ use std::fs;
 
 use selene_core::{
     Change, HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, PropertyValueType, SchemaChange,
-    SchemaVectorIndexKind, Value, VectorValue, intern,
+    SchemaVectorIndexKind, Value, VectorValue, db_string,
 };
 
 use super::*;
@@ -21,7 +21,7 @@ fn recover_snapshot_preserves_vector_property() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(intern("recover.vector.node").unwrap()),
+                LabelSet::single(db_string("recover.vector.node").unwrap()),
                 prop("recover.vector", vector_value()),
             )
             .unwrap();
@@ -43,8 +43,8 @@ fn recover_snapshot_preserves_vector_property() {
 #[test]
 fn recover_snapshot_preserves_vector_index_registration() {
     let dir = temp_dir("snapshot-vector-index");
-    let label = intern("recover.vector.index.node").unwrap();
-    let property = intern("recover.vector.index.embedding").unwrap();
+    let label = db_string("recover.vector.index.node").unwrap();
+    let property = db_string("recover.vector.index.embedding").unwrap();
     let shared = SharedGraph::builder(GraphId::new(40)).build().unwrap();
     {
         let mut txn = shared.begin_write();
@@ -76,8 +76,8 @@ fn recover_snapshot_preserves_vector_index_registration() {
 #[test]
 fn recover_snapshot_preserves_hnsw_vector_index_registration() {
     let dir = temp_dir("snapshot-hnsw-vector-index");
-    let label = intern("recover.hnsw.vector.index.node").unwrap();
-    let property = intern("recover.hnsw.vector.index.embedding").unwrap();
+    let label = db_string("recover.hnsw.vector.index.node").unwrap();
+    let property = db_string("recover.hnsw.vector.index.embedding").unwrap();
     let config = HnswIndexConfig::new(24, 128);
     let shared = SharedGraph::builder(GraphId::new(42)).build().unwrap();
     {
@@ -118,8 +118,8 @@ fn recover_snapshot_preserves_hnsw_vector_index_registration() {
 #[test]
 fn recover_snapshot_preserves_ivf_vector_index_registration() {
     let dir = temp_dir("snapshot-ivf-vector-index");
-    let label = intern("recover.ivf.vector.index.node").unwrap();
-    let property = intern("recover.ivf.vector.index.embedding").unwrap();
+    let label = db_string("recover.ivf.vector.index.node").unwrap();
+    let property = db_string("recover.ivf.vector.index.embedding").unwrap();
     let config = IvfIndexConfig::new(4);
     let shared = SharedGraph::builder(GraphId::new(43)).build().unwrap();
     {
@@ -168,7 +168,7 @@ fn recover_wal_only_replays_vector_property() {
         0,
         &[Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(intern("recover.wal.vector.node").unwrap()),
+            labels: LabelSet::single(db_string("recover.wal.vector.node").unwrap()),
             properties: prop("recover.wal.vector", vector_value()),
         }],
     );
@@ -187,8 +187,8 @@ fn recover_wal_only_replays_vector_property() {
 #[test]
 fn recover_wal_only_replays_vector_index_registration() {
     let dir = temp_dir("wal-vector-index");
-    let label = intern("recover.wal.vector.index.node").unwrap();
-    let property = intern("recover.wal.vector.index.embedding").unwrap();
+    let label = db_string("recover.wal.vector.index.node").unwrap();
+    let property = db_string("recover.wal.vector.index.embedding").unwrap();
     let config = HnswIndexConfig::new(24, 128);
     append_wal(
         &dir,
@@ -230,8 +230,8 @@ fn recover_wal_only_replays_vector_index_registration() {
 #[test]
 fn recover_wal_only_replays_ivf_vector_index_registration() {
     let dir = temp_dir("wal-ivf-vector-index");
-    let label = intern("recover.wal.ivf.vector.index.node").unwrap();
-    let property = intern("recover.wal.ivf.vector.index.embedding").unwrap();
+    let label = db_string("recover.wal.ivf.vector.index.node").unwrap();
+    let property = db_string("recover.wal.ivf.vector.index.embedding").unwrap();
     let config = IvfIndexConfig::new(4);
     append_wal(
         &dir,
@@ -282,8 +282,8 @@ fn recover_closed_wal_only_preserves_vector_property_type() {
         .unwrap()
         .build()
         .unwrap();
-    let sensor = intern("VectorSensor").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let sensor = db_string("VectorSensor").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()

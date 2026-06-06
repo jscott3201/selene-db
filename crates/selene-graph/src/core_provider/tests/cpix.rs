@@ -1,4 +1,4 @@
-use selene_core::{GraphId, intern};
+use selene_core::{GraphId, db_string};
 use smallvec::smallvec;
 
 use crate::graph::CompositePropertyIndexEntry;
@@ -12,10 +12,10 @@ use crate::{
 
 #[test]
 fn round_trip_preserves_composite_registration_metadata() {
-    let label = intern("core.cpix.sensor").unwrap();
-    let ts = intern("ts").unwrap();
-    let location = intern("location").unwrap();
-    let name = intern("sensor_ts_location_idx").unwrap();
+    let label = db_string("core.cpix.sensor").unwrap();
+    let ts = db_string("ts").unwrap();
+    let location = db_string("location").unwrap();
+    let name = db_string("sensor_ts_location_idx").unwrap();
     let declared_properties = smallvec![ts.clone(), location.clone()];
     let kinds = smallvec![TypedIndexKind::LocalDateTime, TypedIndexKind::String];
     let mut graph = SeleneGraph::new(GraphId::new(9992));
@@ -50,9 +50,9 @@ fn round_trip_preserves_composite_registration_metadata() {
 
 #[test]
 fn decode_rejects_duplicate_canonical_property_sets() {
-    let label = intern("core.cpix.dup").unwrap();
-    let left = intern("left").unwrap();
-    let right = intern("right").unwrap();
+    let label = db_string("core.cpix.dup").unwrap();
+    let left = db_string("left").unwrap();
+    let right = db_string("right").unwrap();
     let rows = vec![
         (
             CompositeSchemaKey {
@@ -71,7 +71,7 @@ fn decode_rejects_duplicate_canonical_property_sets() {
             },
             CompositeSchemaEntry {
                 kinds: vec![TypedIndexKind::String, TypedIndexKind::I64],
-                name: Some(intern("dup_idx").unwrap()),
+                name: Some(db_string("dup_idx").unwrap()),
             },
         ),
     ];
@@ -86,8 +86,8 @@ fn decode_rejects_duplicate_canonical_property_sets() {
 
 #[test]
 fn decode_rejects_single_property_composite_registration() {
-    let label = intern("core.cpix.single").unwrap();
-    let only = intern("only").unwrap();
+    let label = db_string("core.cpix.single").unwrap();
+    let only = db_string("only").unwrap();
     let rows = vec![(
         CompositeSchemaKey {
             label,

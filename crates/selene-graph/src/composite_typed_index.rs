@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
 use roaring::RoaringBitmap;
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use smallvec::SmallVec;
 
 use crate::typed_index::{NotNanError, NotNanF64, TypedIndexKind, TypedIndexValueError};
@@ -19,8 +19,8 @@ pub enum CompositeKeyComponent {
     I64(i64),
     /// Floating-point component with NaN excluded.
     F64(NotNanF64),
-    /// Interned string component.
-    String(IStr),
+    /// Database-string component.
+    String(DbString),
     /// Civil date component.
     Date(jiff::civil::Date),
     /// Civil local date-time component.
@@ -176,9 +176,9 @@ impl CompositeTypedIndex {
     /// Build a composite key from the index's ordered component kinds.
     ///
     /// This is the single coercion shared by write/maintenance and read paths.
-    /// With the global interner removed there is one string space, so every
-    /// coercible `STRING` component resolves directly; an arity or per-component
-    /// kind mismatch raises [`CompositeIndexValueError`].
+    /// Every coercible `STRING` component resolves directly to a
+    /// database-string key; an arity or per-component kind mismatch raises
+    /// [`CompositeIndexValueError`].
     pub fn key_from_values(
         &self,
         values: &[&Value],
@@ -223,9 +223,9 @@ pub enum CompositeIndexValueError {
 
 /// Build a composite key from ordered component kinds and values.
 ///
-/// This is the single coercion shared by write/maintenance and read paths.
-/// With the global interner removed every coercible `STRING` component resolves
-/// directly; an arity mismatch or a per-component kind/NaN mismatch raises
+/// This is the single coercion shared by write/maintenance and read paths. Every
+/// coercible `STRING` component resolves directly to a database-string key; an
+/// arity mismatch or a per-component kind/NaN mismatch raises
 /// [`CompositeIndexValueError`].
 pub(crate) fn composite_key_from_values(
     kinds: &[TypedIndexKind],
@@ -281,7 +281,7 @@ fn component_from_value(
 
 #[cfg(test)]
 mod tests {
-    use selene_core::intern;
+    use selene_core::db_string;
     use smallvec::smallvec;
 
     use super::*;
@@ -289,25 +289,25 @@ mod tests {
     #[test]
     fn component_from_value_string_kind() {
         let probe = "component_admit.string.unique-1";
-        let value = Value::String(intern(probe).unwrap());
+        let value = Value::String(db_string(probe).unwrap());
 
         let component =
             component_from_value(TypedIndexKind::String, &value).expect("string component coerces");
 
-        let CompositeKeyComponent::String(istr) = component else {
+        let CompositeKeyComponent::String(db_string) = component else {
             panic!("expected String component, got {component:?}");
         };
-        assert_eq!(istr.as_str(), probe);
+        assert_eq!(db_string.as_str(), probe);
     }
 
     #[test]
     fn composite_key_rejects_when_later_component_kind_mismatches() {
         let kinds: SmallVec<[TypedIndexKind; 4]> =
             smallvec![TypedIndexKind::String, TypedIndexKind::I64];
-        let location = Value::String(intern("composite_admit.left_to_right.loc").unwrap());
+        let location = Value::String(db_string("composite_admit.left_to_right.loc").unwrap());
         // Component 1 is kind-mismatched — a String value bound to an I64
         // index component triggers `KindMismatch` on the second component.
-        let bad = Value::String(intern("composite_admit.left_to_right.bad").unwrap());
+        let bad = Value::String(db_string("composite_admit.left_to_right.bad").unwrap());
         let refs: Vec<&Value> = vec![&location, &bad];
 
         let err = composite_key_from_values(&kinds, &refs)
@@ -328,7 +328,7 @@ mod tests {
         let kinds: SmallVec<[TypedIndexKind; 4]> =
             smallvec![TypedIndexKind::I64, TypedIndexKind::String];
         let ts = Value::Int(7);
-        let location = Value::String(intern("composite_admit.string.unique-1").unwrap());
+        let location = Value::String(db_string("composite_admit.string.unique-1").unwrap());
         let refs: Vec<&Value> = vec![&ts, &location];
 
         let key = composite_key_from_values(&kinds, &refs).expect("string component coerces");
@@ -342,8 +342,10 @@ mod tests {
             CompositeTypedIndex::new(smallvec![TypedIndexKind::I64, TypedIndexKind::String]);
         let ts_lhs = Value::Int(1);
         let ts_rhs = Value::Int(1);
-        let loc_lhs = Value::String(intern("values_share_key.composite.string.unique-1").unwrap());
-        let loc_rhs = Value::String(intern("values_share_key.composite.string.unique-1").unwrap());
+        let loc_lhs =
+            Value::String(db_string("values_share_key.composite.string.unique-1").unwrap());
+        let loc_rhs =
+            Value::String(db_string("values_share_key.composite.string.unique-1").unwrap());
         let lhs: Vec<&Value> = vec![&ts_lhs, &loc_lhs];
         let rhs: Vec<&Value> = vec![&ts_rhs, &loc_rhs];
 
@@ -356,7 +358,7 @@ mod tests {
             CompositeTypedIndex::new(smallvec![TypedIndexKind::I64, TypedIndexKind::String]);
         assert_eq!(index.distinct_keys(), 0, "empty index");
 
-        let k1 = intern("k1").unwrap();
+        let k1 = db_string("k1").unwrap();
         let v_k1 = Value::String(k1);
         let one = Value::Int(1);
         let two = Value::Int(2);
@@ -385,8 +387,8 @@ mod tests {
             CompositeTypedIndex::new(smallvec![TypedIndexKind::I64, TypedIndexKind::String]);
         let ts_lhs = Value::Int(1);
         let ts_rhs = Value::Int(1);
-        let loc_lhs = Value::String(intern("values_share_key.composite.lhs-unique").unwrap());
-        let loc_rhs = Value::String(intern("values_share_key.composite.rhs-unique").unwrap());
+        let loc_lhs = Value::String(db_string("values_share_key.composite.lhs-unique").unwrap());
+        let loc_rhs = Value::String(db_string("values_share_key.composite.rhs-unique").unwrap());
         let lhs: Vec<&Value> = vec![&ts_lhs, &loc_lhs];
         let rhs: Vec<&Value> = vec![&ts_rhs, &loc_rhs];
 

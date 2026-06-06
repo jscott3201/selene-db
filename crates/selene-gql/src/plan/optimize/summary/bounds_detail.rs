@@ -14,7 +14,7 @@
 //! - `BitmapUnion[bounds=Keys [STRING 'alice', $b]]`
 //! - `CompositeLookup[bounds=Composite [tenant=STRING 't1', kind=$k]]`
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{IndexKey, Literal, ScanAccess, TypedIndexBounds};
 
@@ -61,7 +61,7 @@ fn render_bitmap_union_keys(keys: &[IndexKey]) -> String {
     )
 }
 
-fn render_composite_keys(keys: &[(IStr, IndexKey)]) -> String {
+fn render_composite_keys(keys: &[(DbString, IndexKey)]) -> String {
     format!(
         "Composite [{}]",
         keys.iter()

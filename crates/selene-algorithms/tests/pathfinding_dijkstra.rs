@@ -3,15 +3,15 @@
 use selene_algorithms::{
     GraphProjection, PathResult, PathfindingError, ProjectionConfig, dijkstra,
 };
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn weight_props(value: f64) -> PropertyMap {
-    PropertyMap::from_pairs([(istr("w"), Value::Float(value))]).unwrap()
+    PropertyMap::from_pairs([(db_string("w"), Value::Float(value))]).unwrap()
 }
 
 fn build_proj_weighted(shared: &SharedGraph) -> GraphProjection {
@@ -22,7 +22,7 @@ fn build_proj_weighted(shared: &SharedGraph) -> GraphProjection {
             name: "test".to_string(),
             node_labels: vec![],
             edge_labels: vec![],
-            weight_property: Some(istr("w")),
+            weight_property: Some(db_string("w")),
         },
         None,
     )
@@ -47,8 +47,8 @@ fn build_proj_unweighted(shared: &SharedGraph) -> GraphProjection {
 /// Build a graph with `count` nodes and the supplied weighted directed edges.
 fn build_weighted_graph(count: usize, edges: &[(usize, usize, f64)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
@@ -69,8 +69,8 @@ fn build_weighted_graph(count: usize, edges: &[(usize, usize, f64)]) -> (SharedG
 
 fn build_unweighted_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {

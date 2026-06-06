@@ -9,8 +9,8 @@ mod common;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    GraphId, GraphTypeId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, PropertyValueType,
-    SchemaChange, Value, intern,
+    DbString, GraphId, GraphTypeId, LabelDiff, LabelSet, PropertyDiff, PropertyMap,
+    PropertyValueType, SchemaChange, Value, db_string,
 };
 use selene_graph::{
     EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, SeleneGraph,
@@ -112,7 +112,7 @@ fn update_batch(shared: &SharedGraph) -> usize {
 fn graph_snapshot(
     scale: usize,
     type_def: Option<GraphTypeDef>,
-    labels: &[IStr],
+    labels: &[DbString],
     property_count: usize,
 ) -> SeleneGraph {
     let builder = SharedGraph::builder(GraphId::new(1));
@@ -216,7 +216,7 @@ fn properties(row: usize, count: usize) -> PropertyMap {
     .expect("fixture properties fit core caps")
 }
 
-fn property_name(idx: usize) -> IStr {
+fn property_name(idx: usize) -> DbString {
     match idx {
         0 => label("score"),
         1 => label("name"),
@@ -225,8 +225,8 @@ fn property_name(idx: usize) -> IStr {
     }
 }
 
-fn label(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+fn label(value: &str) -> DbString {
+    db_string(value).expect("bench string fits DB string cap")
 }
 
 criterion_group! {

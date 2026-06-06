@@ -2,7 +2,9 @@
 
 use smallvec::SmallVec;
 
-use selene_core::{EdgeId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value};
+use selene_core::{
+    DbString, EdgeId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value,
+};
 
 use crate::{
     BindingTableColumn, BindingTableSchema, DeleteMode, EdgeDirection, ElementKind,
@@ -259,7 +261,7 @@ fn execute_insert_edge(
 fn execute_set_property(
     element: ElementKind,
     target_column_index: u32,
-    key: IStr,
+    key: DbString,
     value: &ProjectExpr,
     span: SourceSpan,
     table: BindingTable,
@@ -306,7 +308,7 @@ fn execute_set_property(
 fn execute_set_label(
     element: ElementKind,
     target_column_index: u32,
-    label: IStr,
+    label: DbString,
     span: SourceSpan,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
@@ -334,7 +336,7 @@ fn execute_set_label(
 fn execute_remove_property(
     element: ElementKind,
     target_column_index: u32,
-    key: IStr,
+    key: DbString,
     span: SourceSpan,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
@@ -368,7 +370,7 @@ fn execute_remove_property(
 fn execute_remove_label(
     element: ElementKind,
     target_column_index: u32,
-    label: IStr,
+    label: DbString,
     span: SourceSpan,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
@@ -490,7 +492,7 @@ fn node_labels(
     }
 }
 
-fn edge_label(label_expr: Option<&LabelExpr>, span: SourceSpan) -> Result<IStr, ExecutorError> {
+fn edge_label(label_expr: Option<&LabelExpr>, span: SourceSpan) -> Result<DbString, ExecutorError> {
     match label_expr {
         Some(LabelExpr::Single(label)) => Ok(label.clone()),
         // An edge insert with no label is an internal-invariant break: the binder must
@@ -620,8 +622,8 @@ fn record_insert_site(
 }
 
 fn label_diff(
-    added: impl IntoIterator<Item = IStr>,
-    removed: impl IntoIterator<Item = IStr>,
+    added: impl IntoIterator<Item = DbString>,
+    removed: impl IntoIterator<Item = DbString>,
     span: SourceSpan,
 ) -> Result<LabelDiff, ExecutorError> {
     LabelDiff::new(added, removed).map_err(|source| {
@@ -634,8 +636,8 @@ fn label_diff(
 }
 
 fn property_diff(
-    set: impl IntoIterator<Item = (IStr, Value)>,
-    removed: impl IntoIterator<Item = IStr>,
+    set: impl IntoIterator<Item = (DbString, Value)>,
+    removed: impl IntoIterator<Item = DbString>,
     span: SourceSpan,
 ) -> Result<PropertyDiff, ExecutorError> {
     PropertyDiff::new(set, removed).map_err(|source| {

@@ -1,13 +1,13 @@
 //! Temporal CAST conformance cases.
 
-use selene_core::{GraphId, Value, intern};
+use selene_core::{GraphId, Value, db_string};
 use selene_gql::{EmptyProcedureRegistry, GqlStatus, Session, StatementOutput};
 use selene_graph::SharedGraph;
 
 fn cast_bound(value: Value, target: &str) -> Value {
     let graph = SharedGraph::new(GraphId::new(13_810));
     let mut session = Session::new(&graph);
-    session.bind_parameter(intern("p").expect("intern param"), value);
+    session.bind_parameter(db_string("p").expect("db_string param"), value);
     let source = format!("RETURN CAST($p AS {target}) AS v");
     let output = session
         .execute_source(&source, &EmptyProcedureRegistry)
@@ -27,7 +27,7 @@ fn cast_bound_in_zone(value: Value, target: &str, zone: &str) -> Value {
             &EmptyProcedureRegistry,
         )
         .expect("set session time zone");
-    session.bind_parameter(intern("p").expect("intern param"), value);
+    session.bind_parameter(db_string("p").expect("db_string param"), value);
     let source = format!("RETURN CAST($p AS {target}) AS v");
     let output = session
         .execute_source(&source, &EmptyProcedureRegistry)
@@ -57,7 +57,7 @@ fn cast_bound_with_date_window(
     target: &str,
 ) -> (Value, jiff::civil::Date, jiff::civil::Date) {
     let before = current_date(session);
-    session.bind_parameter(intern("p").expect("intern param"), value);
+    session.bind_parameter(db_string("p").expect("db_string param"), value);
     let source = format!("RETURN CAST($p AS {target}) AS v");
     let output = session
         .execute_source(&source, &EmptyProcedureRegistry)
@@ -88,15 +88,18 @@ fn cast_bound_to_string(value: Value) -> String {
 }
 
 fn cast_string(text: &str, target: &str) -> Value {
-    cast_bound(Value::String(intern(text).expect("intern source")), target)
+    cast_bound(
+        Value::String(db_string(text).expect("db_string source")),
+        target,
+    )
 }
 
 fn cast_string_status(text: &str, target: &str) -> GqlStatus {
     let graph = SharedGraph::new(GraphId::new(13_812));
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        intern("p").expect("intern param"),
-        Value::String(intern(text).expect("intern source")),
+        db_string("p").expect("db_string param"),
+        Value::String(db_string(text).expect("db_string source")),
     );
     let source = format!("RETURN CAST($p AS {target}) AS v");
     session

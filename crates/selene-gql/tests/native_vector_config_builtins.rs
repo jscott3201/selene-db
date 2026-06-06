@@ -1,8 +1,7 @@
 //! End-to-end coverage for HNSW config arguments on vector built-ins.
 
 use selene_core::{
-    GraphId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorValue,
-    intern,
+    DbString, GraphId, HnswIndexConfig, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorValue,
 };
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
@@ -10,8 +9,8 @@ use selene_gql::{
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -22,7 +21,7 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -48,7 +47,7 @@ fn execute_rows(
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -87,8 +86,8 @@ fn create_vector_index_can_register_explicit_hnsw_config() {
     let graph = graph(330_121);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
@@ -151,8 +150,8 @@ fn create_vector_index_can_register_explicit_ivf_config() {
     let graph = graph(330_123);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         for idx in 0..6 {

@@ -4,14 +4,11 @@
 //!
 //! `typed_key` is the single `Value`→`TypedKey` coercion shared by every
 //! write-side (`insert`, `remove`) and read/diff-side (`lookup_eq`, the
-//! per-type closures in `lookup_range`, and `values_share_key`) caller. With
-//! the global string interner removed there is one string space, so a `STRING`
-//! value always resolves directly to its key — the historical two-phase
-//! `admit`/`lookup` split (which existed only to handle the now-deleted
-//! `Value::ExternalString` asymmetry) is collapsed to this one fallible
-//! coercion. Kind mismatch (e.g. a `Value::Bool` against any index) and NaN
-//! still raise `TypedIndexValueError`; a kind-mismatched read returns `None`
-//! to the caller so it drops to a runtime scan.
+//! per-type closures in `lookup_range`, and `values_share_key`) caller. A
+//! `STRING` value always resolves directly to its database-string key. Kind
+//! mismatch (e.g. a `Value::Bool` against any index) and NaN still raise
+//! `TypedIndexValueError`; a kind-mismatched read returns `None` to the caller
+//! so it drops to a runtime scan.
 //!
 //! The same collapse is mirrored in [`crate::composite_typed_index`] for
 //! composite indexes.
@@ -23,7 +20,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::{Bound, RangeBounds};
 
 use roaring::RoaringBitmap;
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use serde::{Deserialize, Serialize};
 
 /// Indexable value kind for v1.0 built-in node property indexes.
@@ -45,7 +42,7 @@ pub enum TypedIndexKind {
     I64,
     /// Finite `f64`. Backs [`Value::Float`]; NaN is rejected.
     F64,
-    /// Interned string. Backs [`Value::String`].
+    /// Database string. Backs [`Value::String`].
     String,
     /// Civil date. Backs [`Value::Date`].
     Date,
@@ -122,8 +119,8 @@ pub enum TypedIndex {
     I64(BTreeMap<i64, RoaringBitmap>),
     /// Floating-point index with NaN excluded.
     F64(BTreeMap<NotNanF64, RoaringBitmap>),
-    /// Interned string index.
-    String(BTreeMap<IStr, RoaringBitmap>),
+    /// Database-string index.
+    String(BTreeMap<DbString, RoaringBitmap>),
     /// Civil date index.
     Date(BTreeMap<jiff::civil::Date, RoaringBitmap>),
     /// Civil local date-time index.
@@ -370,10 +367,10 @@ impl TypedIndex {
                 })?;
                 Some(range_union(index, &start, &end))
             }
-            // String ranges walk the now-lexicographic `BTreeMap<IStr, _>`
+            // String ranges walk the now-lexicographic `BTreeMap<DbString, _>`
             // range directly — result-identical to the old `None` linear-scan
             // fallback (the linear scan compared `Value::String` rows
-            // lexicographically, and `IStr` Ord is lexicographic), just
+            // lexicographically, and `DbString` Ord is lexicographic), just
             // O(log n + matched) instead of O(total cardinality).
             Self::String(index) => {
                 let start = bound_to_key(range.start_bound(), |value| {
@@ -440,7 +437,7 @@ impl TypedIndex {
 
     /// Return the union of string-key rows whose key starts with `prefix`.
     ///
-    /// `IStr` orders **lexicographically** (through the inner `CompactString`),
+    /// `DbString` orders **lexicographically** (through the inner `CompactString`),
     /// so every key starting with `prefix` forms a contiguous run beginning at
     /// the first key `>= prefix`. This seeks that run with `BTreeMap::range`
     /// (`Included(prefix)`, [`Bound::Unbounded`]) and stops at the first key
@@ -460,11 +457,11 @@ impl TypedIndex {
     pub(crate) fn lookup_prefix(&self, prefix: &str) -> Option<RoaringBitmap> {
         match self {
             Self::String(index) => {
-                // `BTreeMap<IStr, _>` keys are owned `IStr`, so seek with an
-                // owned `IStr` lower bound. A prefix within the IL013 cap always
-                // interns; an over-cap prefix matches nothing (no stored key can
+                // `BTreeMap<DbString, _>` keys are owned `DbString`, so seek with an
+                // owned `DbString` lower bound. A prefix within the IL013 cap always
+                // constructs; an over-cap prefix matches nothing (no stored key can
                 // exceed the cap) — return empty rather than panic.
-                let Ok(lo_key) = selene_core::intern(prefix) else {
+                let Ok(lo_key) = selene_core::db_string(prefix) else {
                     return Some(RoaringBitmap::new());
                 };
                 let mut result = RoaringBitmap::new();
@@ -546,7 +543,7 @@ impl TypedIndexValueError {
 enum TypedKey {
     I64(i64),
     F64(NotNanF64),
-    String(IStr),
+    String(DbString),
     Date(jiff::civil::Date),
     LocalDateTime(jiff::civil::DateTime),
     Uuid(uuid::Uuid),
@@ -569,8 +566,8 @@ impl TypedKey {
 ///
 /// This is the single coercion shared by write-side (`insert`/`remove`) and
 /// read/diff-side (`lookup_eq`/`lookup_range`/`values_share_key`) callers.
-/// With the global interner removed there is one string space, so a `STRING`
-/// value always resolves directly to its key. `Err` carries the kind-mismatch
+/// A `STRING` value always resolves directly to its database-string key. `Err`
+/// carries the kind-mismatch
 /// (`expected_kind` set by the caller's index kind) / NaN semantics; the outer
 /// `(self, key)` match in `insert`/`remove` enforces the final kind check so a
 /// `Value::String` inserted into an `I64` index still rejects with

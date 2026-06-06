@@ -9,7 +9,7 @@ use std::{
 };
 
 use selene_core::{
-    Change, GraphId, HlcTimestamp, IStr, Origin, Value,
+    Change, DbString, GraphId, HlcTimestamp, Origin, Value,
     feature_register::{FeatureId, SUPPORTED_FEATURES},
 };
 use selene_gql::{
@@ -20,7 +20,7 @@ use selene_gql::{
 use selene_graph::{CommitOutcome, GraphTypeDef, SharedGraph, TypedIndexKind};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
 
-use exec_common::istr;
+use exec_common::db_string;
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -47,7 +47,7 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 
 fn empty_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("catalog.index.graph"),
+        name: db_string("catalog.index.graph"),
         node_types: Vec::new(),
         edge_types: Vec::new(),
     }
@@ -96,7 +96,7 @@ fn graph_type_violation(graph: &SharedGraph, source: &str) -> String {
     message
 }
 
-fn duplicate_name(graph: &SharedGraph, source: &str) -> IStr {
+fn duplicate_name(graph: &SharedGraph, source: &str) -> DbString {
     let err = run_ddl(graph, source).expect_err("statement rejects");
     let ExecutorError::DuplicateObject { name, .. } = err else {
         panic!("expected DuplicateObject");
@@ -108,7 +108,7 @@ fn index_entry(
     graph: &SharedGraph,
     label: &str,
     property: &str,
-) -> Option<(TypedIndexKind, Option<IStr>)> {
+) -> Option<(TypedIndexKind, Option<DbString>)> {
     graph
         .read()
         .iter_property_index_entries()
@@ -120,7 +120,7 @@ fn index_entry(
 
 fn column_strings(table: &BindingTable, column: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(column))
+        .column_index(db_string(column))
         .unwrap_or_else(|| panic!("missing column {column}"));
     table
         .rows()
@@ -181,7 +181,10 @@ fn create_show_drop_and_idempotency_paths_work() {
     run_ddl(&graph, "CREATE INDEX sensor_ts_idx ON :Sensor(ts)").unwrap();
     assert_eq!(
         index_entry(&graph, "Sensor", "ts"),
-        Some((TypedIndexKind::LocalDateTime, Some(istr("sensor_ts_idx"))))
+        Some((
+            TypedIndexKind::LocalDateTime,
+            Some(db_string("sensor_ts_idx"))
+        ))
     );
     run_ddl(
         &graph,
@@ -265,7 +268,7 @@ fn create_index_infers_all_supported_storage_kinds() {
         run_ddl(&graph, &format!("CREATE INDEX {name} ON :T({property})")).unwrap();
         assert_eq!(
             index_entry(&graph, "T", property),
-            Some((kind, Some(istr(name))))
+            Some((kind, Some(db_string(name))))
         );
     }
 }
@@ -296,7 +299,10 @@ fn named_index_survives_wal_recovery() {
     let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
     assert_eq!(
         index_entry(&recovered, "Sensor", "ts"),
-        Some((TypedIndexKind::LocalDateTime, Some(istr("sensor_ts_idx"))))
+        Some((
+            TypedIndexKind::LocalDateTime,
+            Some(db_string("sensor_ts_idx"))
+        ))
     );
     let _ = fs::remove_dir_all(dir);
 }
@@ -369,7 +375,7 @@ fn duplicate_names_and_same_pair_conflicts_follow_brief_matrix() {
     run_ddl(&graph, "CREATE INDEX IF NOT EXISTS new_name ON :Sensor(ts)").unwrap();
     assert_eq!(
         index_entry(&graph, "Sensor", "ts"),
-        Some((TypedIndexKind::LocalDateTime, Some(istr("foo"))))
+        Some((TypedIndexKind::LocalDateTime, Some(db_string("foo"))))
     );
     assert_eq!(
         duplicate_name(&graph, "CREATE INDEX new_name ON :Sensor(ts)").as_str(),
@@ -380,10 +386,10 @@ fn duplicate_names_and_same_pair_conflicts_follow_brief_matrix() {
 #[test]
 fn drop_index_refuses_ambiguous_rendered_name_matches() {
     let graph = SharedGraph::new(GraphId::new(14_007));
-    let sensor = istr("Sensor");
-    let meter = istr("Meter");
-    let ts = istr("ts");
-    let collision = istr("colliding_name");
+    let sensor = db_string("Sensor");
+    let meter = db_string("Meter");
+    let ts = db_string("ts");
+    let collision = db_string("colliding_name");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();

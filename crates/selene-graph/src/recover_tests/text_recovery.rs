@@ -1,13 +1,13 @@
 use std::fs;
 
-use selene_core::{Change, GraphId, LabelSet, NodeId, SchemaChange, Value, intern};
+use selene_core::{Change, GraphId, LabelSet, NodeId, SchemaChange, Value, db_string};
 
 use super::*;
 
 fn hit_ids(
     graph: &SharedGraph,
-    label: &selene_core::IStr,
-    property: &selene_core::IStr,
+    label: &selene_core::DbString,
+    property: &selene_core::DbString,
     query: &str,
 ) -> Vec<NodeId> {
     graph
@@ -23,8 +23,8 @@ fn hit_ids(
 #[test]
 fn recover_snapshot_preserves_text_index_registration() {
     let dir = temp_dir("snapshot-text-index");
-    let label = intern("recover.text.index.node").unwrap();
-    let property = intern("recover.text.index.body").unwrap();
+    let label = db_string("recover.text.index.node").unwrap();
+    let property = db_string("recover.text.index.body").unwrap();
     let shared = SharedGraph::builder(GraphId::new(45)).build().unwrap();
     {
         let mut txn = shared.begin_write();
@@ -33,7 +33,7 @@ fn recover_snapshot_preserves_text_index_registration() {
                 LabelSet::single(label.clone()),
                 prop(
                     "recover.text.index.body",
-                    Value::String(intern("alpha beta").unwrap()),
+                    Value::String(db_string("alpha beta").unwrap()),
                 ),
             )
             .unwrap();
@@ -43,7 +43,7 @@ fn recover_snapshot_preserves_text_index_registration() {
         .create_text_index_named(
             label.clone(),
             property.clone(),
-            Some(intern("recover_text_idx").unwrap()),
+            Some(db_string("recover_text_idx").unwrap()),
         )
         .unwrap();
     write_snapshot(&dir, &shared, 1);
@@ -58,7 +58,7 @@ fn recover_snapshot_preserves_text_index_registration() {
             .iter_text_index_entries()
             .next()
             .and_then(|(_, _, _, _, name)| name),
-        Some(intern("recover_text_idx").unwrap())
+        Some(db_string("recover_text_idx").unwrap())
     );
     drop(snapshot);
     assert_eq!(
@@ -71,8 +71,8 @@ fn recover_snapshot_preserves_text_index_registration() {
 #[test]
 fn recover_wal_only_replays_text_index_registration() {
     let dir = temp_dir("wal-text-index");
-    let label = intern("recover.wal.text.index.node").unwrap();
-    let property = intern("recover.wal.text.index.body").unwrap();
+    let label = db_string("recover.wal.text.index.node").unwrap();
+    let property = db_string("recover.wal.text.index.body").unwrap();
     append_wal(
         &dir,
         0,
@@ -82,7 +82,7 @@ fn recover_wal_only_replays_text_index_registration() {
                 labels: LabelSet::single(label.clone()),
                 properties: prop(
                     "recover.wal.text.index.body",
-                    Value::String(intern("gamma delta").unwrap()),
+                    Value::String(db_string("gamma delta").unwrap()),
                 ),
             },
             Change::SchemaChanged {
@@ -112,8 +112,8 @@ fn recover_wal_only_replays_text_index_registration() {
 #[test]
 fn recover_wal_only_replays_text_index_drop() {
     let dir = temp_dir("wal-text-index-drop");
-    let label = intern("recover.wal.text.drop.node").unwrap();
-    let property = intern("recover.wal.text.drop.body").unwrap();
+    let label = db_string("recover.wal.text.drop.node").unwrap();
+    let property = db_string("recover.wal.text.drop.body").unwrap();
     append_wal(
         &dir,
         0,
@@ -123,7 +123,7 @@ fn recover_wal_only_replays_text_index_drop() {
                 change: SchemaChange::TextIndexCreated {
                     label: label.clone(),
                     property: property.clone(),
-                    name: Some(intern("recover_wal_text_drop_idx").unwrap()),
+                    name: Some(db_string("recover_wal_text_drop_idx").unwrap()),
                 },
             },
             Change::SchemaChanged {

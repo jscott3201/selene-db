@@ -1,6 +1,6 @@
 //! Planner diagnostics.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{GqlStatus, SourceSpan, analyze::BindingId};
 
@@ -46,7 +46,7 @@ pub enum PlannerError {
     #[diagnostic(code(SLENE_P_013))]
     UnknownProcedure {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Source span of the procedure call.
         #[label("unknown procedure")]
         span: SourceSpan,
@@ -75,7 +75,7 @@ pub enum PlannerError {
     #[diagnostic(code(SLENE_P_016))]
     ProcedureMetadataMismatch {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Stable mismatch detail tag.
         detail: &'static str,
         /// Source span of the procedure call or yield item.
@@ -83,15 +83,14 @@ pub enum PlannerError {
         span: SourceSpan,
     },
 
-    /// The planner could not intern a static identifier because the process
-    /// interner has reached its configured cap.
-    #[error("planner could not intern static identifier during lowering: {detail}")]
+    /// The planner could not construct a static database string during lowering.
+    #[error("planner could not construct static database string during lowering: {detail}")]
     #[diagnostic(code(SLENE_P_017))]
-    InternerCapExhausted {
+    StaticStringConstructionFailed {
         /// Stable static identifier detail tag.
         detail: &'static str,
         /// Source span of the construct requiring the static identifier.
-        #[label("interner cap exhausted")]
+        #[label("string construction failed")]
         span: SourceSpan,
     },
 
@@ -108,9 +107,9 @@ pub enum PlannerError {
         /// Zero-based column position of the first name mismatch.
         position: usize,
         /// Left arm column name (`None` for an unnamed column).
-        lhs: Option<IStr>,
+        lhs: Option<DbString>,
         /// Right arm column name (`None` for an unnamed column).
-        rhs: Option<IStr>,
+        rhs: Option<DbString>,
         /// Source span of the composite query.
         #[label("set-op arms must have equal column names")]
         span: SourceSpan,
@@ -192,7 +191,9 @@ impl PlannerError {
             | Self::WriteSetMissing { .. }
             | Self::WriteSetPatternMismatch { .. }
             | Self::ProcedureMetadataMismatch { .. }
-            | Self::InternerCapExhausted { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
+            | Self::StaticStringConstructionFailed { .. } => {
+                GqlStatus::IMPLEMENTATION_DEFINED_ERROR
+            }
             Self::ProgramLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             // ISO §14.2 SR v is a Syntax Rule; its violation is the syntax
             // error class (matching the analyzer's SR-violation precedents).

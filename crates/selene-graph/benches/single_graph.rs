@@ -10,7 +10,9 @@ mod single_graph_ann_recall;
 mod single_graph_candidate_set;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue, intern};
+use selene_core::{
+    DbString, GraphId, LabelSet, PropertyMap, Value, VectorMetric, VectorValue, db_string,
+};
 use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind, VectorIndexMemoryUsage};
 use selene_testing::BenchProfile;
 use single_graph_ann_recall::{ANN_RECALL_PROFILES, AnnRecallFixture};
@@ -252,16 +254,16 @@ fn vector_scan_scales() -> Vec<usize> {
 struct VectorFixture {
     scale: usize,
     graph: SeleneGraph,
-    label: IStr,
-    embedding_key: IStr,
+    label: DbString,
+    embedding_key: DbString,
     query: VectorValue,
 }
 
 impl VectorFixture {
     fn build(scale: usize, dimension: usize, index_kind: Option<VectorIndexKind>) -> Self {
         let scale = scale.max(1);
-        let label = intern("VectorDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
+        let label = db_string("VectorDoc").expect("bench label is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(9_000 + scale as u64));
         {
             let mut txn = shared.begin_write();
@@ -299,11 +301,11 @@ impl VectorFixture {
         self.scale
     }
 
-    fn label(&self) -> IStr {
+    fn label(&self) -> DbString {
         self.label.clone()
     }
 
-    fn embedding_key(&self) -> IStr {
+    fn embedding_key(&self) -> DbString {
         self.embedding_key.clone()
     }
 
@@ -316,7 +318,11 @@ impl VectorFixture {
     }
 }
 
-fn vector_index_memory_id_suffix(graph: &SeleneGraph, label: &IStr, property: &IStr) -> String {
+fn vector_index_memory_id_suffix(
+    graph: &SeleneGraph,
+    label: &DbString,
+    property: &DbString,
+) -> String {
     graph
         .vector_index_for(label, property)
         .map(|index| format_vector_memory_id_suffix(index.memory_usage()))

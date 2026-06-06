@@ -427,7 +427,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{NodeId, Value, VectorValue, intern};
+    use selene_core::{NodeId, Value, VectorValue, db_string};
 
     use crate::{
         Binding, BindingTable, BindingTableColumn, BindingTableSchema, analyze::AnalyzedType,
@@ -464,12 +464,12 @@ mod tests {
     #[test]
     fn raw_list_keys_are_injective_when_string_elements_contain_commas() {
         let lhs = Value::List(vec![
-            Value::String(intern("a").expect("test string interns")),
-            Value::String(intern("b,string:c").expect("test string interns")),
+            Value::String(db_string("a").expect("test string fits DB string cap")),
+            Value::String(db_string("b,string:c").expect("test string fits DB string cap")),
         ]);
         let rhs = Value::List(vec![
-            Value::String(intern("a,string:b").expect("test string interns")),
-            Value::String(intern("c").expect("test string interns")),
+            Value::String(db_string("a,string:b").expect("test string fits DB string cap")),
+            Value::String(db_string("c").expect("test string fits DB string cap")),
         ]);
 
         assert_ne!(raw_value_key(&lhs), raw_value_key(&rhs));

@@ -1,28 +1,28 @@
 use selene_core::{
-    Change, GraphId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, PropertyMap, SchemaChange,
-    SchemaVectorIndexKind, Value, VectorValue, intern,
+    Change, DbString, GraphId, HnswIndexConfig, IvfIndexConfig, LabelSet, PropertyMap,
+    SchemaChange, SchemaVectorIndexKind, Value, VectorValue,
 };
 
 use crate::{GraphError, SharedGraph, VectorIndexConfig, VectorIndexKind};
 
-fn istr(value: &str) -> IStr {
-    intern(value).unwrap()
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).unwrap()
 }
 
 fn vector(components: &[f32]) -> Value {
     Value::Vector(VectorValue::new(components.to_vec()).unwrap())
 }
 
-fn props(pairs: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+fn props(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
 }
 
 #[test]
 fn create_vector_index_updates_working_graph_and_emits_schema_change() {
     let shared = SharedGraph::new(GraphId::new(8201));
-    let label = istr("mutator.vector.doc");
-    let property = istr("embedding");
-    let name = istr("doc_embedding_idx");
+    let label = db_string("mutator.vector.doc");
+    let property = db_string("embedding");
+    let name = db_string("doc_embedding_idx");
     let outcome = {
         let mut txn = shared.begin_write();
         {
@@ -78,8 +78,8 @@ fn create_vector_index_updates_working_graph_and_emits_schema_change() {
 #[test]
 fn create_hnsw_vector_index_emits_explicit_config_in_schema_change() {
     let shared = SharedGraph::new(GraphId::new(8206));
-    let label = istr("mutator.vector.hnsw.config");
-    let property = istr("embedding");
+    let label = db_string("mutator.vector.hnsw.config");
+    let property = db_string("embedding");
     let config = HnswIndexConfig::new(24, 128);
     let outcome = {
         let mut txn = shared.begin_write();
@@ -136,8 +136,8 @@ fn create_hnsw_vector_index_emits_explicit_config_in_schema_change() {
 #[test]
 fn create_ivf_vector_index_emits_explicit_config_in_schema_change() {
     let shared = SharedGraph::new(GraphId::new(8207));
-    let label = istr("mutator.vector.ivf.config");
-    let property = istr("embedding");
+    let label = db_string("mutator.vector.ivf.config");
+    let property = db_string("embedding");
     let config = IvfIndexConfig::new(4);
     let outcome = {
         let mut txn = shared.begin_write();
@@ -196,8 +196,8 @@ fn create_ivf_vector_index_emits_explicit_config_in_schema_change() {
 #[test]
 fn create_vector_index_rejects_duplicate_in_working_graph() {
     let shared = SharedGraph::new(GraphId::new(8202));
-    let label = istr("mutator.vector.duplicate");
-    let property = istr("embedding");
+    let label = db_string("mutator.vector.duplicate");
+    let property = db_string("embedding");
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();
     mutator
@@ -220,8 +220,8 @@ fn create_vector_index_rejects_duplicate_in_working_graph() {
 #[test]
 fn create_vector_index_rejects_zero_dimension() {
     let shared = SharedGraph::new(GraphId::new(8203));
-    let label = istr("mutator.vector.zero");
-    let property = istr("embedding");
+    let label = db_string("mutator.vector.zero");
+    let property = db_string("embedding");
     let err = shared
         .create_vector_index(label, property, VectorIndexKind::Flat, 0)
         .unwrap_err();
@@ -235,8 +235,8 @@ fn create_vector_index_rejects_zero_dimension() {
 #[test]
 fn drop_vector_index_removes_from_working_graph_and_emits_schema_change() {
     let shared = SharedGraph::new(GraphId::new(8204));
-    let label = istr("mutator.vector.drop");
-    let property = istr("embedding");
+    let label = db_string("mutator.vector.drop");
+    let property = db_string("embedding");
     shared
         .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 3)
         .unwrap();
@@ -266,8 +266,8 @@ fn drop_vector_index_removes_from_working_graph_and_emits_schema_change() {
 #[test]
 fn drop_vector_index_is_idempotent_and_emits_no_change_when_absent() {
     let shared = SharedGraph::new(GraphId::new(8205));
-    let label = istr("mutator.vector.absent");
-    let property = istr("embedding");
+    let label = db_string("mutator.vector.absent");
+    let property = db_string("embedding");
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator().drop_vector_index(label, property).unwrap();

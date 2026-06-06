@@ -55,7 +55,7 @@ use unsigned::{UnsignedIntegerTarget, cast_to_unsigned_integer};
 /// `value` is the already-evaluated source value; `target_type` is the
 /// declared GQL target. The returned `Value` matches the canonical Rust
 /// representation of `target_type` (`Integer` → `Value::Int(i64)`, `STRING`
-/// → `Value::String(IStr)`, etc.). NULL propagates as NULL (ISO §22
+/// → `Value::String(DbString)`, etc.). NULL propagates as NULL (ISO §22
 /// universal rule). Unsupported source/target combinations produce
 /// `FeatureNotSupportedYet` with a descriptive `feature` tag.
 pub(super) fn eval_cast(
@@ -217,9 +217,9 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
         }
     };
     // CAST output strings construct a plain `Value::String`; the only guard is
-    // the IL013 per-string byte cap (there is no global interner pool).
-    match selene_core::intern(&rendered) {
-        Ok(istr) => Ok(Value::String(istr)),
+    // the IL013 per-string byte cap (there is no global string pool).
+    match selene_core::db_string(&rendered) {
+        Ok(db_string) => Ok(Value::String(db_string)),
         Err(_err) => Err(ExecutorError::data_exception(
             DataExceptionSubclass::DataException,
             "CAST result string exceeds the maximum byte length",
@@ -426,7 +426,7 @@ mod tests {
             type_id: RecordTypeId::new(1),
             values: [Some(Value::Int(1))].into_iter().collect(),
         }));
-        let field = selene_core::intern("a").expect("intern field");
+        let field = selene_core::db_string("a").expect("db_string field");
         let target = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
         let err =
             eval_cast_for_test(value, &target, span()).expect_err("RecordTyped source rejected");
@@ -462,7 +462,7 @@ mod tests {
 
     fn as_str(value: Value) -> String {
         match value {
-            Value::String(istr) => istr.as_str().to_owned(),
+            Value::String(db_string) => db_string.as_str().to_owned(),
             other => panic!("expected string, got {other:?}"),
         }
     }
@@ -638,7 +638,7 @@ mod tests {
         for text in ["true", "True", "TRUE", "tRuE", "  true  "] {
             assert_eq!(
                 cast(
-                    Value::String(selene_core::intern(text).unwrap()),
+                    Value::String(selene_core::db_string(text).unwrap()),
                     &GqlType::Boolean
                 ),
                 Value::Bool(true),
@@ -648,7 +648,7 @@ mod tests {
         for text in ["false", "False", "FALSE", "fAlSe", " FALSE "] {
             assert_eq!(
                 cast(
-                    Value::String(selene_core::intern(text).unwrap()),
+                    Value::String(selene_core::db_string(text).unwrap()),
                     &GqlType::Boolean
                 ),
                 Value::Bool(false),
@@ -661,7 +661,7 @@ mod tests {
     fn string_to_boolean_garbage_still_returns_22018() {
         assert_eq!(
             cast_status(
-                Value::String(selene_core::intern("yes").unwrap()),
+                Value::String(selene_core::db_string("yes").unwrap()),
                 &GqlType::Boolean
             ),
             "22018"

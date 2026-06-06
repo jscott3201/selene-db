@@ -66,7 +66,7 @@ pub(crate) fn execute(
 fn set_value(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
-    param: selene_core::IStr,
+    param: selene_core::DbString,
     value: &ValueExpr,
     if_not_exists: bool,
     _span: SourceSpan,

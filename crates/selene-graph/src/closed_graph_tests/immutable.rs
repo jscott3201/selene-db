@@ -3,13 +3,13 @@ use super::*;
 #[test]
 fn node_property_rejects_relabel_bypass_at_commit() {
     let graph_type = GraphTypeDef {
-        name: istr("closed.immutable.relabel.graph"),
+        name: db_string("closed.immutable.relabel.graph"),
         node_types: vec![
             NodeTypeDef {
-                name: istr("closed.immutable.relabel.person"),
-                key_labels: LabelSet::single(istr("Person")),
+                name: db_string("closed.immutable.relabel.person"),
+                key_labels: LabelSet::single(db_string("Person")),
                 properties: vec![PropertyTypeDef {
-                    name: istr("serial"),
+                    name: db_string("serial"),
                     value_type: PropertyValueType::String,
                     list_element_type: None,
                     required: true,
@@ -21,10 +21,10 @@ fn node_property_rejects_relabel_bypass_at_commit() {
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("closed.immutable.relabel.temp"),
-                key_labels: LabelSet::single(istr("Temp")),
+                name: db_string("closed.immutable.relabel.temp"),
+                key_labels: LabelSet::single(db_string("Temp")),
                 properties: vec![PropertyTypeDef {
-                    name: istr("serial"),
+                    name: db_string("serial"),
                     value_type: PropertyValueType::String,
                     list_element_type: None,
                     required: true,
@@ -47,8 +47,8 @@ fn node_property_rejects_relabel_bypass_at_commit() {
     let id = txn
         .mutator()
         .create_node(
-            LabelSet::single(istr("Person")),
-            prop("serial", Value::String(istr("A"))),
+            LabelSet::single(db_string("Person")),
+            prop("serial", Value::String(db_string("A"))),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -59,7 +59,7 @@ fn node_property_rejects_relabel_bypass_at_commit() {
         mutator
             .update_node(
                 id,
-                LabelDiff::new([istr("Temp")], [istr("Person")]).unwrap(),
+                LabelDiff::new([db_string("Temp")], [db_string("Person")]).unwrap(),
                 PropertyDiff::new([], []).unwrap(),
             )
             .unwrap();
@@ -67,13 +67,14 @@ fn node_property_rejects_relabel_bypass_at_commit() {
             .update_node(
                 id,
                 LabelDiff::new([], []).unwrap(),
-                PropertyDiff::new([(istr("serial"), Value::String(istr("B")))], []).unwrap(),
+                PropertyDiff::new([(db_string("serial"), Value::String(db_string("B")))], [])
+                    .unwrap(),
             )
             .unwrap();
         mutator
             .update_node(
                 id,
-                LabelDiff::new([istr("Person")], [istr("Temp")]).unwrap(),
+                LabelDiff::new([db_string("Person")], [db_string("Temp")]).unwrap(),
                 PropertyDiff::new([], []).unwrap(),
             )
             .unwrap();
@@ -88,38 +89,38 @@ fn node_property_rejects_relabel_bypass_at_commit() {
             entity_id,
             property,
             ..
-        }) if entity_id == EntityId::Node(id) && property == istr("serial")
+        }) if entity_id == EntityId::Node(id) && property == db_string("serial")
     ));
 }
 
 #[test]
 fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
-    let person = istr("Person");
-    let temp = istr("Temp");
-    let knows = istr("KNOWS");
+    let person = db_string("Person");
+    let temp = db_string("Temp");
+    let knows = db_string("KNOWS");
     let graph_type = GraphTypeDef {
-        name: istr("closed.immutable.edge.relabel.graph"),
+        name: db_string("closed.immutable.edge.relabel.graph"),
         node_types: vec![
             NodeTypeDef {
-                name: istr("closed.immutable.edge.person"),
+                name: db_string("closed.immutable.edge.person"),
                 key_labels: LabelSet::single(person.clone()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("closed.immutable.edge.temp"),
+                name: db_string("closed.immutable.edge.temp"),
                 key_labels: LabelSet::single(temp.clone()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![crate::EdgeTypeDef {
-            name: istr("closed.immutable.edge.knows"),
+            name: db_string("closed.immutable.edge.knows"),
             label: knows.clone(),
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(0),
             properties: vec![PropertyTypeDef {
-                name: istr("serial"),
+                name: db_string("serial"),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
@@ -150,7 +151,7 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
                 knows,
                 source,
                 target,
-                prop("serial", Value::String(istr("A"))),
+                prop("serial", Value::String(db_string("A"))),
             )
             .unwrap();
         (source, target, edge)
@@ -170,7 +171,8 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
         mutator
             .update_edge(
                 edge,
-                PropertyDiff::new([(istr("serial"), Value::String(istr("B")))], []).unwrap(),
+                PropertyDiff::new([(db_string("serial"), Value::String(db_string("B")))], [])
+                    .unwrap(),
             )
             .unwrap();
         mutator
@@ -191,7 +193,7 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
             entity_id,
             property,
             ..
-        }) if entity_id == EntityId::Edge(edge) && property == istr("serial")
+        }) if entity_id == EntityId::Edge(edge) && property == db_string("serial")
     ));
     assert!(shared.read().is_node_alive(target));
 }

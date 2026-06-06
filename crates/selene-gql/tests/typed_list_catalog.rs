@@ -9,7 +9,7 @@ use selene_gql::{
 };
 use selene_graph::{GraphError, GraphTypeDef, PropertyElementType, SharedGraph};
 
-use exec_common::istr;
+use exec_common::db_string;
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -29,7 +29,7 @@ fn seed_table() -> BindingTable {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("catalog.typed.list.graph"),
+            name: db_string("catalog.typed.list.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -107,7 +107,7 @@ fn create_node_type_accepts_and_renders_typed_list_property() {
     let table = execute_pipeline(&show.pipeline, seed_table(), &mut ctx).expect("show executes");
     assert_eq!(
         table.rows()[0].values()[1],
-        Value::String(istr(
+        Value::String(db_string(
             "CREATE NODE TYPE :Person (tags :: LIST<STRING>, matrix :: LIST<LIST<INTEGER>>)"
         ))
     );

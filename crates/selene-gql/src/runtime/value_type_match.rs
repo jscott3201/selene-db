@@ -112,7 +112,7 @@ mod tests {
     fn closed_record_type_rejects_recordtyped_operand_fail_closed() {
         // A catalog-bound RecordTyped cannot be name-verified without the (unbuilt)
         // named-record-type catalog, so a closed record type conservatively does not match.
-        let field = selene_core::intern("a").expect("intern field");
+        let field = selene_core::db_string("a").expect("db_string field");
         let ty = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
         assert!(!value_matches_gql_type(&sample_recordtyped(), &ty));
     }

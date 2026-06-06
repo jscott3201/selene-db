@@ -1,6 +1,6 @@
 //! Composite index lookup rule.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::plan::{
     BindingDef, ExecutionPlan, IndexKey, IndexTarget, JoinTree, ScanAccess, ScanKind,
@@ -128,7 +128,7 @@ fn rewrite_scan(
         // OPT-5 cost estimate (None when stats absent → ranks last so the
         // deterministic collection order is preserved).
         let probe_keys: Vec<IndexKey> = keys.iter().map(|(_, k)| k.clone()).collect();
-        let property_keys: Vec<IStr> = composite
+        let property_keys: Vec<DbString> = composite
             .properties
             .iter()
             .map(|(p, _)| p.clone())
@@ -179,8 +179,8 @@ fn rewrite_scan(
 /// A composite-index candidate with its resolved probe keys and estimated cost.
 struct SelectedComposite {
     handle: crate::IndexHandle,
-    properties: Vec<(IStr, crate::IndexKind)>,
-    keys: Vec<(IStr, IndexKey)>,
+    properties: Vec<(DbString, crate::IndexKind)>,
+    keys: Vec<(DbString, IndexKey)>,
     consumed_indices: Vec<usize>,
     /// Estimated output rows; `None` when no statistic is available.
     cost: Option<u64>,
@@ -213,7 +213,7 @@ fn is_cheaper(candidate: &SelectedComposite, current: &SelectedComposite) -> boo
 /// remain byte-identical to the old behavior.
 fn find_composite_matches(
     candidates: &[EqualityCandidate],
-    label: IStr,
+    label: DbString,
     catalog: &dyn crate::IndexCatalog,
 ) -> Vec<(crate::CompositeIndexHandle, Vec<usize>)> {
     let n = candidates.len();
@@ -226,7 +226,7 @@ fn find_composite_matches(
     for size in (2..=n).rev() {
         let mut mask = (1u64 << size) - 1;
         while mask < (1u64 << n) {
-            let subset_keys: Vec<IStr> = (0..n)
+            let subset_keys: Vec<DbString> = (0..n)
                 .filter(|i| (mask >> i) & 1 == 1)
                 .map(|i| candidates[i].key.clone())
                 .collect();

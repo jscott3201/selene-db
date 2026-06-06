@@ -2,8 +2,10 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, edge_ids_for, execute_plan, istr, node_ids_for, planned, props};
-use selene_core::{GraphId, IStr, LabelSet, Value};
+use exec_common::{
+    ExecFixture, db_string, edge_ids_for, execute_plan, node_ids_for, planned, props,
+};
+use selene_core::{DbString, GraphId, LabelSet, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutorError, TxContext,
     execute_pattern, execute_pipeline,
@@ -54,9 +56,9 @@ fn execute_on_graph(
 }
 
 fn cycle_graph() -> SharedGraph {
-    let node = istr("N");
-    let edge = istr("K");
-    let name = istr("name");
+    let node = db_string("N");
+    let edge = db_string("K");
+    let name = db_string("name");
     let graph = SharedGraph::new(GraphId::new(6401));
     {
         let mut txn = graph.begin_write();
@@ -64,13 +66,13 @@ fn cycle_graph() -> SharedGraph {
         let a = mutator
             .create_node(
                 LabelSet::single(node.clone()),
-                props([(name.clone(), Value::String(istr("A")))]),
+                props([(name.clone(), Value::String(db_string("A")))]),
             )
             .expect("A inserts");
         let b = mutator
             .create_node(
                 LabelSet::single(node),
-                props([(name, Value::String(istr("B")))]),
+                props([(name, Value::String(db_string("B")))]),
             )
             .expect("B inserts");
         mutator
@@ -83,9 +85,9 @@ fn cycle_graph() -> SharedGraph {
 }
 
 fn chain_graph() -> SharedGraph {
-    let node = istr("N");
-    let edge = istr("K");
-    let name = istr("name");
+    let node = db_string("N");
+    let edge = db_string("K");
+    let name = db_string("name");
     let graph = SharedGraph::new(GraphId::new(6402));
     {
         let mut txn = graph.begin_write();
@@ -104,14 +106,14 @@ fn chain_graph() -> SharedGraph {
 
 fn named_node(
     mutator: &mut selene_graph::Mutator<'_, '_>,
-    label: IStr,
-    name_key: IStr,
+    label: DbString,
+    name_key: DbString,
     name: &str,
 ) -> selene_core::NodeId {
     mutator
         .create_node(
             LabelSet::single(label),
-            props([(name_key, Value::String(istr(name)))]),
+            props([(name_key, Value::String(db_string(name)))]),
         )
         .expect("node inserts")
 }
@@ -257,9 +259,9 @@ fn unbounded_all_shortest_keeps_equal_length_paths_and_equals_trail() {
     //   A -e1-> B -e3-> D   (len 2, shortest)
     //   A -e2-> C -e4-> D   (len 2, shortest)
     //   A -e1-> B -e5-> E -e6-> D  (len 3, longer — must be pruned by the selector)
-    let node = istr("N");
-    let edge = istr("K");
-    let name = istr("name");
+    let node = db_string("N");
+    let edge = db_string("K");
+    let name = db_string("name");
     let graph = SharedGraph::new(GraphId::new(6403));
     {
         let mut txn = graph.begin_write();

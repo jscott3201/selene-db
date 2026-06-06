@@ -1,20 +1,20 @@
 //! End-to-end coverage for batched vector scoring over GQL-produced roots.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(entries: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+fn props(entries: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(entries).expect("test property map is valid")
 }
 
@@ -39,7 +39,7 @@ fn execute_rows(
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -53,7 +53,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -93,14 +93,14 @@ fn vector_score_expanded_candidates_batch_accepts_gql_query_roots() {
 }
 
 fn seed_batched_query_root_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId) {
-    let root = istr("VectorRoot");
-    let doc = istr("VectorDoc");
-    let query_anchor = istr("QueryAnchor");
-    let embedding = istr("embedding");
-    let query = istr("query");
-    let query_index = istr("query_index");
-    let depends = istr("DEPENDS_ON");
-    let supports = istr("SUPPORTS");
+    let root = db_string("VectorRoot");
+    let doc = db_string("VectorDoc");
+    let query_anchor = db_string("QueryAnchor");
+    let embedding = db_string("embedding");
+    let query = db_string("query");
+    let query_index = db_string("query_index");
+    let depends = db_string("DEPENDS_ON");
+    let supports = db_string("SUPPORTS");
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
     let root_labels = || LabelSet::from_iter([doc.clone(), root.clone()]);

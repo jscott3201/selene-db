@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-use selene_core::{GraphId, IStr, NodeId, VectorValue};
+use selene_core::{DbString, GraphId, NodeId, VectorValue};
 use selene_graph::{SeleneGraph, VectorCandidateSet, VectorNeighborDirection};
 use selene_testing::local_omlx::Topic;
 
@@ -27,8 +27,8 @@ pub(super) struct QueryVector {
 
 pub(super) fn topic_hint_expansion_set_for(
     graph: &SeleneGraph,
-    dependency_edge: &IStr,
-    support_edge: &IStr,
+    dependency_edge: &DbString,
+    support_edge: &DbString,
     anchor: NodeId,
 ) -> VectorCandidateSet {
     let roots = graph.vector_neighbor_candidates(

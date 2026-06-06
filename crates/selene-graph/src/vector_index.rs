@@ -29,7 +29,8 @@ mod rebuild;
 mod search_hit;
 
 use selene_core::{
-    HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorMetric, VectorValue,
+    DbString, HnswIndexConfig, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorMetric,
+    VectorValue,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,7 +55,7 @@ pub use rebuild::{
 pub(crate) use search_hit::VectorIndexSearchHit;
 use search_hit::{hnsw_hits, ivf_hits};
 
-type VectorIndexMap = FxHashMap<(IStr, IStr), VectorIndexEntry>;
+type VectorIndexMap = FxHashMap<(DbString, DbString), VectorIndexEntry>;
 
 /// Vector index algorithm kind.
 #[derive(
@@ -554,15 +555,15 @@ fn candidate_keys(
     old_props: &PropertyMap,
     new_labels: &LabelSet,
     new_props: &PropertyMap,
-) -> BTreeSet<(IStr, IStr)> {
+) -> BTreeSet<(DbString, DbString)> {
     if indexes.is_empty() {
         return BTreeSet::new();
     }
-    let mut labels: BTreeSet<IStr> = BTreeSet::new();
+    let mut labels: BTreeSet<DbString> = BTreeSet::new();
     labels.extend(old_labels.iter().cloned());
     labels.extend(new_labels.iter().cloned());
 
-    let mut properties: BTreeSet<IStr> = BTreeSet::new();
+    let mut properties: BTreeSet<DbString> = BTreeSet::new();
     properties.extend(old_props.keys().cloned());
     properties.extend(new_props.keys().cloned());
 
@@ -581,8 +582,8 @@ fn candidate_keys(
 fn indexable_value<'a>(
     labels: &LabelSet,
     props: &'a PropertyMap,
-    label: &IStr,
-    property: &IStr,
+    label: &DbString,
+    property: &DbString,
 ) -> Option<&'a Value> {
     if !labels.contains(label) {
         return None;
@@ -592,8 +593,8 @@ fn indexable_value<'a>(
 
 fn insert_commit(
     indexes: &mut VectorIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
@@ -607,8 +608,8 @@ fn insert_commit(
 
 fn remove_commit(
     indexes: &mut VectorIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
@@ -622,8 +623,8 @@ fn remove_commit(
 
 fn replace_commit(
     indexes: &mut VectorIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     old_value: &Value,
     new_value: &Value,
     row: u32,
@@ -678,8 +679,8 @@ fn u64_to_usize_saturating(value: u64) -> usize {
 }
 
 fn index_rejection(
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     expected_dimension: u32,
     err: VectorIndexValueError,
 ) -> GraphError {
@@ -693,8 +694,8 @@ fn index_rejection(
 
 fn warn_rejected(
     op: &'static str,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     row: u32,
     err: &VectorIndexValueError,
 ) {

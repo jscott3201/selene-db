@@ -5,11 +5,11 @@ use selene_algorithms::{
     BetweennessConfig, GraphProjection, Parallelism, ProjectionConfig,
     betweenness as run_betweenness,
 };
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -29,8 +29,8 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
 
 fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
@@ -238,8 +238,8 @@ fn betweenness_sample_size_one_returns_single_source_result() {
 fn betweenness_handles_sparse_row_projection() {
     // §E20 — state arrays sized by RowIndex, not max_row + 1.
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(100);
     for _ in 0..100 {

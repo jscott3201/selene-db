@@ -5,7 +5,7 @@
 //! which emits `SchemaChange::TextIndexCreated` through the single mutation
 //! funnel (Hard Rule 11).
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use selene_graph::GraphError;
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -70,7 +70,7 @@ pub(super) fn execute(
     }
 }
 
-fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError> {
+fn string_arg(value: &Value, name: &'static str) -> Result<DbString, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!(
             "{PROC_NAME} {name} must be a non-empty STRING"
@@ -84,7 +84,7 @@ fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError>
     Ok(value.clone())
 }
 
-fn name_arg(value: &Value) -> Result<Option<IStr>, ProcedureError> {
+fn name_arg(value: &Value) -> Result<Option<DbString>, ProcedureError> {
     match value {
         Value::Null => Ok(None),
         Value::String(value) if !value.as_str().is_empty() => Ok(Some(value.clone())),

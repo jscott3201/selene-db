@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use selene_core::{IStr, intern};
+use selene_core::{DbString, db_string};
 use selene_gql::{
     GqlType, ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
     ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry, ProcedureResult,
@@ -12,7 +12,7 @@ use selene_gql::{
 /// Test registry implementing selene-gql's planner-facing procedure boundary.
 #[derive(Debug, Default)]
 pub struct MockProcedureRegistry {
-    procedures: HashMap<Box<[IStr]>, ProcedureMetadata>,
+    procedures: HashMap<Box<[DbString]>, ProcedureMetadata>,
     results: HashMap<ProcedureHandle, ProcedureResult>,
     next_handle: u64,
     version: u64,
@@ -34,7 +34,7 @@ impl MockProcedureRegistry {
     #[must_use]
     pub fn with_procedure(
         mut self,
-        name: Vec<IStr>,
+        name: Vec<DbString>,
         parameters: Vec<ProcedureParameter>,
         output_columns: Vec<ProcedureOutputColumn>,
     ) -> Self {
@@ -45,7 +45,7 @@ impl MockProcedureRegistry {
     /// Register a procedure in place.
     pub fn insert_procedure(
         &mut self,
-        name: Vec<IStr>,
+        name: Vec<DbString>,
         parameters: Vec<ProcedureParameter>,
         output_columns: Vec<ProcedureOutputColumn>,
     ) {
@@ -62,7 +62,7 @@ impl MockProcedureRegistry {
     #[must_use]
     pub fn with_procedure_mutability(
         mut self,
-        name: Vec<IStr>,
+        name: Vec<DbString>,
         parameters: Vec<ProcedureParameter>,
         output_columns: Vec<ProcedureOutputColumn>,
         mutability: ProcedureMutability,
@@ -75,7 +75,7 @@ impl MockProcedureRegistry {
     #[must_use]
     pub fn with_procedure_tier(
         mut self,
-        name: Vec<IStr>,
+        name: Vec<DbString>,
         parameters: Vec<ProcedureParameter>,
         output_columns: Vec<ProcedureOutputColumn>,
         mutability: ProcedureMutability,
@@ -88,7 +88,7 @@ impl MockProcedureRegistry {
     /// Register a procedure with a specific mutability in place.
     pub fn insert_procedure_with_mutability(
         &mut self,
-        name: Vec<IStr>,
+        name: Vec<DbString>,
         parameters: Vec<ProcedureParameter>,
         output_columns: Vec<ProcedureOutputColumn>,
         mutability: ProcedureMutability,
@@ -105,7 +105,7 @@ impl MockProcedureRegistry {
     /// Register a procedure with explicit mutability and tier metadata in place.
     pub fn insert_procedure_with_tier(
         &mut self,
-        name: Vec<IStr>,
+        name: Vec<DbString>,
         parameters: Vec<ProcedureParameter>,
         output_columns: Vec<ProcedureOutputColumn>,
         mutability: ProcedureMutability,
@@ -149,7 +149,7 @@ impl MockProcedureRegistry {
 }
 
 impl ProcedureRegistry for MockProcedureRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         self.procedures.get(name).cloned()
     }
 
@@ -186,17 +186,14 @@ const fn tier_for_mutability(mutability: ProcedureMutability) -> ProcedureTier {
 #[must_use]
 pub fn default_corpus_registry() -> MockProcedureRegistry {
     MockProcedureRegistry::new().with_procedure(
-        vec![interned("selene"), interned("labels")],
+        vec![dbs("selene"), dbs("labels")],
         Vec::new(),
-        vec![ProcedureOutputColumn::new(
-            interned("label"),
-            GqlType::String,
-        )],
+        vec![ProcedureOutputColumn::new(dbs("label"), GqlType::String)],
     )
 }
 
-fn interned(value: &str) -> IStr {
-    intern(value).expect("test fixture strings fit the interner")
+fn dbs(value: &str) -> DbString {
+    db_string(value).expect("test fixture strings fit DB string cap")
 }
 
 #[cfg(test)]
@@ -205,18 +202,11 @@ mod tests {
 
     #[test]
     fn mock_registry_lookup_round_trips() {
-        let name = vec![interned("pkg"), interned("proc")];
+        let name = vec![dbs("pkg"), dbs("proc")];
         let registry = MockProcedureRegistry::new().with_procedure(
             name.clone(),
-            vec![ProcedureParameter::new(
-                interned("arg"),
-                GqlType::String,
-                false,
-            )],
-            vec![ProcedureOutputColumn::new(
-                interned("out"),
-                GqlType::Boolean,
-            )],
+            vec![ProcedureParameter::new(dbs("arg"), GqlType::String, false)],
+            vec![ProcedureOutputColumn::new(dbs("out"), GqlType::Boolean)],
         );
 
         let metadata = registry.lookup(&name).expect("procedure registered");
@@ -228,10 +218,6 @@ mod tests {
     #[test]
     fn mock_registry_unknown_returns_none() {
         let registry = MockProcedureRegistry::new();
-        assert!(
-            registry
-                .lookup(&[interned("missing"), interned("proc")])
-                .is_none()
-        );
+        assert!(registry.lookup(&[dbs("missing"), dbs("proc")]).is_none());
     }
 }

@@ -15,7 +15,7 @@
 mod funnel_harness;
 
 use proptest::prelude::*;
-use selene_core::{GraphId, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, intern};
+use selene_core::{GraphId, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, db_string};
 
 use selene_graph::{SharedGraph, TypedIndexKind};
 
@@ -226,13 +226,14 @@ fn string_value_admits_into_string_index() {
         .create_property_index(alpha.clone(), name.clone(), TypedIndexKind::String)
         .unwrap();
     let content = "proptest.string.unique-admit";
-    let interned = intern(content).unwrap();
+    let text_value = db_string(content).unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(alpha.clone()),
-                PropertyMap::from_pairs([(name.clone(), Value::String(interned.clone()))]).unwrap(),
+                PropertyMap::from_pairs([(name.clone(), Value::String(text_value.clone()))])
+                    .unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -241,7 +242,7 @@ fn string_value_admits_into_string_index() {
     snapshot.assert_indexes_consistent().unwrap();
     assert_eq!(
         snapshot
-            .nodes_with_property_eq(&alpha, &name, &Value::String(interned))
+            .nodes_with_property_eq(&alpha, &name, &Value::String(text_value))
             .unwrap()
             .iter()
             .collect::<Vec<_>>(),

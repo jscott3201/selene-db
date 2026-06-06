@@ -1,6 +1,6 @@
 //! Mutation planner IR rows.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     DeleteMode, EdgeDirection, LabelExpr, SourceSpan,
@@ -48,7 +48,7 @@ pub enum InsertEndpointRef {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PropertyInit {
     /// Property key.
-    pub key: IStr,
+    pub key: DbString,
     /// Planned property value expression.
     pub value: ProjectExpr,
     /// Source span of the value expression.
@@ -114,7 +114,7 @@ pub enum MutationOp {
         /// Planner-assigned input column containing the target element ID.
         target_column_index: u32,
         /// Property key.
-        key: IStr,
+        key: DbString,
         /// Planned value expression.
         value: ProjectExpr,
         /// Source span.
@@ -129,7 +129,7 @@ pub enum MutationOp {
         /// Planner-assigned input column containing the target element ID.
         target_column_index: u32,
         /// Label to add.
-        label: IStr,
+        label: DbString,
         /// Source span.
         span: SourceSpan,
     },
@@ -142,7 +142,7 @@ pub enum MutationOp {
         /// Planner-assigned input column containing the target element ID.
         target_column_index: u32,
         /// Property key.
-        key: IStr,
+        key: DbString,
         /// Source span.
         span: SourceSpan,
     },
@@ -155,7 +155,7 @@ pub enum MutationOp {
         /// Planner-assigned input column containing the target element ID.
         target_column_index: u32,
         /// Label to remove.
-        label: IStr,
+        label: DbString,
         /// Source span.
         span: SourceSpan,
     },

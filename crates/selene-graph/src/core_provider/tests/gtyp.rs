@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use selene_core::{GraphId, LabelSet, PropertyValueType, intern};
+use selene_core::{GraphId, LabelSet, PropertyValueType, db_string};
 use selene_persist::RecoveryProvider;
 
 use super::*;
@@ -13,12 +13,12 @@ use crate::{GraphError, SeleneGraph, SharedGraph};
 #[test]
 fn gtyp_v3_preserves_type_model_fields() {
     let graph_type = GraphTypeDef {
-        name: intern("core.gtyp.v3").unwrap(),
+        name: db_string("core.gtyp.v3").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: intern("core.gtyp.v3.node").unwrap(),
-            key_labels: LabelSet::single(intern("V3Node").unwrap()),
+            name: db_string("core.gtyp.v3.node").unwrap(),
+            key_labels: LabelSet::single(db_string("V3Node").unwrap()),
             properties: vec![PropertyTypeDef {
-                name: intern("core.gtyp.v3.name").unwrap(),
+                name: db_string("core.gtyp.v3.name").unwrap(),
                 value_type: PropertyValueType::List,
                 list_element_type: Some(PropertyElementType::List(Box::new(
                     PropertyElementType::Scalar(PropertyValueType::String),
@@ -55,12 +55,12 @@ fn finish_recovery_rejects_gtyp_without_meta() {
     // downgrading to an open graph.
     let mut graph = SeleneGraph::new(GraphId::new(20));
     graph.meta.bound_type = Some(Arc::new(GraphTypeDef {
-        name: intern("test.gtyp.no.meta").unwrap(),
+        name: db_string("test.gtyp.no.meta").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: intern("test.node").unwrap(),
-            key_labels: LabelSet::single(intern("Test").unwrap()),
+            name: db_string("test.node").unwrap(),
+            key_labels: LabelSet::single(db_string("Test").unwrap()),
             properties: vec![PropertyTypeDef {
-                name: intern("name").unwrap(),
+                name: db_string("name").unwrap(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: false,

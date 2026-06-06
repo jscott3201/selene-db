@@ -1,6 +1,6 @@
 //! EXPLAIN pipeline operator.
 
-use selene_core::{Value, intern};
+use selene_core::{Value, db_string};
 
 use crate::{
     AnalyzedType, BindingTableColumn, BindingTableSchema, ExecutionPlan, GqlType,
@@ -12,17 +12,17 @@ pub(super) fn execute(inner: &ExecutionPlan) -> Result<BindingTable, ExecutorErr
     Ok(BindingTable::new(
         BindingTableSchema {
             columns: vec![BindingTableColumn {
-                name: Some(intern_runtime("plan")?),
+                name: Some(runtime_db_string("plan")?),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::String),
             }],
         },
-        vec![Binding::new([Value::String(intern_runtime(&dump)?)])],
+        vec![Binding::new([Value::String(runtime_db_string(&dump)?)])],
     ))
 }
 
-fn intern_runtime(value: &str) -> Result<selene_core::IStr, ExecutorError> {
-    intern(value).map_err(|_err| ExecutorError::ImplementationDefined {
-        detail: "interner cap exhausted during EXPLAIN rendering",
+fn runtime_db_string(value: &str) -> Result<selene_core::DbString, ExecutorError> {
+    db_string(value).map_err(|_err| ExecutorError::ImplementationDefined {
+        detail: "string construction failed during EXPLAIN rendering",
     })
 }

@@ -1,14 +1,14 @@
 //! End-to-end coverage for ANN-root graph-expanded vector search built-ins.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
     Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -19,7 +19,7 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -45,7 +45,7 @@ fn execute_rows(
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -59,7 +59,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -72,11 +72,11 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 fn seed_ann_expansion_graph(shared: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId, NodeId) {
-    let summary = istr("Summary");
-    let fact = istr("Fact");
-    let embedding = istr("embedding");
-    let supports = istr("SUPPORTS");
-    let mentions = istr("MENTIONS");
+    let summary = db_string("Summary");
+    let fact = db_string("Fact");
+    let embedding = db_string("embedding");
+    let supports = db_string("SUPPORTS");
+    let mentions = db_string("MENTIONS");
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();
     let root_a = mutator
@@ -144,7 +144,7 @@ fn vector_search_expanded_candidates_ann_uses_ann_roots_then_graph_rerank() {
     let (_root_a, fact_a, _root_b, _fact_b, wrong_edge_fact) = seed_ann_expansion_graph(&graph);
     let mut session = Session::new(&graph);
     create_hnsw_index(&mut session, &registry, 2);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let table = execute_rows(
         &mut session,
@@ -169,7 +169,7 @@ fn vector_search_expanded_candidates_ann_batch_groups_hits_by_query_index() {
     let mut session = Session::new(&graph);
     create_hnsw_index(&mut session, &registry, 2);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[0.0, 0.0])),
             Value::Vector(vector(&[10.0, 0.0])),
@@ -195,7 +195,7 @@ fn vector_search_expanded_candidates_ann_requires_ann_index() {
     let registry = BuiltinProcedureRegistry::new();
     seed_ann_expansion_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let err = session
         .execute_source(
@@ -223,7 +223,7 @@ fn vector_search_expanded_candidates_ann_batch_rejects_mixed_query_dimensions() 
     let mut session = Session::new(&graph);
     create_hnsw_index(&mut session, &registry, 2);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[0.0, 0.0])),
             Value::Vector(vector(&[0.0, 0.0, 0.0])),

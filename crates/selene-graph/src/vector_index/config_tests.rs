@@ -1,26 +1,24 @@
-use selene_core::{
-    GraphId, IStr, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorValue, intern,
-};
+use selene_core::{DbString, GraphId, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorValue};
 
 use crate::{GraphError, SharedGraph, VectorIndexConfig, VectorIndexKind};
 
-fn istr(value: &str) -> IStr {
-    intern(value).unwrap()
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).unwrap()
 }
 
 fn vector(components: &[f32]) -> Value {
     Value::Vector(VectorValue::new(components.to_vec()).unwrap())
 }
 
-fn props(pairs: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+fn props(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
 }
 
 #[test]
 fn explicit_ivf_config_controls_centroid_count() {
     let shared = SharedGraph::new(GraphId::new(8110));
-    let label = istr("vector.index.ivf.config");
-    let property = istr("embedding");
+    let label = db_string("vector.index.ivf.config");
+    let property = db_string("embedding");
     let config = IvfIndexConfig::new(4);
     {
         let mut txn = shared.begin_write();
@@ -63,8 +61,8 @@ fn explicit_ivf_config_controls_centroid_count() {
 #[test]
 fn ivf_config_is_rejected_for_non_ivf_or_invalid_shapes() {
     let shared = SharedGraph::new(GraphId::new(8111));
-    let label = istr("vector.index.ivf.config.reject");
-    let property = istr("embedding");
+    let label = db_string("vector.index.ivf.config.reject");
+    let property = db_string("embedding");
 
     let hnsw_err = shared
         .create_vector_index_named_with_configs(

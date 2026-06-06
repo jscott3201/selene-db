@@ -1,6 +1,6 @@
 //! Analyzer ProcedureRegistry integration tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedType, BindingDeclKind, EmptyProcedureRegistry,
     GqlStatus, GqlType, ProcedureOutputColumn, ProcedureParameter, ProcedureRegistry,
@@ -22,18 +22,18 @@ fn registry(
     output_columns: Vec<ProcedureOutputColumn>,
 ) -> MockProcedureRegistry {
     MockProcedureRegistry::new().with_procedure(
-        name.iter().map(|segment| istr(segment)).collect(),
+        name.iter().map(|segment| db_string(segment)).collect(),
         parameters,
         output_columns,
     )
 }
 
 fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-    ProcedureParameter::new(istr(name), ty, nullable)
+    ProcedureParameter::new(db_string(name), ty, nullable)
 }
 
 fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-    ProcedureOutputColumn::new(istr(name), ty)
+    ProcedureOutputColumn::new(db_string(name), ty)
 }
 
 fn yield_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
@@ -57,8 +57,8 @@ fn yield_names(analyzed: &AnalyzedStatement) -> Vec<String> {
         .collect()
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test strings fit interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test strings fit DB string cap")
 }
 
 #[test]

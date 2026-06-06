@@ -10,16 +10,16 @@ use selene_algorithms::{
     wcc_with_checker,
 };
 use selene_core::{
-    CancellationCause, CancellationChecker, CancellationToken, GraphId, IStr, LabelSet,
-    PropertyMap, intern,
+    CancellationCause, CancellationChecker, CancellationToken, DbString, GraphId, LabelSet,
+    PropertyMap,
 };
 use selene_graph::SharedGraph;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-fn istr(name: &str) -> IStr {
-    intern(name).expect("test name interns")
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).expect("test name fits DB string cap")
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -39,8 +39,8 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
 
 fn build_graph() -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(1170));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::new();
     for _ in 0..4 {
@@ -70,8 +70,8 @@ fn cancelled_checker<'a>(token: &'a CancellationToken) -> CancellationChecker<'a
 /// the in-loop strided checkpoint rather than the entry check.
 fn build_large_line_graph(n: usize) -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(1171));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(n);
     for _ in 0..n {

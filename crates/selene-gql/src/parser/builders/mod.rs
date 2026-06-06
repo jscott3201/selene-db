@@ -12,7 +12,7 @@ pub(super) mod transaction;
 use std::borrow::Cow;
 
 use pest::iterators::Pair;
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     ast::{
@@ -263,7 +263,7 @@ fn build_let(pair: Pair<'_, Rule>) -> Result<Vec<LetBinding>, ParserError> {
                 ParserError::syntax("LET binding is missing expression", binding_span, None)
             })?;
             Ok(LetBinding {
-                alias: intern_pair(alias_pair)?,
+                alias: db_string_pair(alias_pair)?,
                 value: expr::build_value_expr(value_pair)?,
                 span: binding_span,
             })
@@ -283,7 +283,7 @@ fn build_unwind(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
     let alias = children
         .next()
         .ok_or_else(|| ParserError::syntax("UNWIND is missing alias", source_span, None))
-        .and_then(|pair| intern_pair(pair))?;
+        .and_then(|pair| db_string_pair(pair))?;
     Ok(UnwindStatement {
         source,
         alias,
@@ -452,13 +452,13 @@ fn build_return_item(pair: Pair<'_, Rule>) -> Result<ReturnItem, ParserError> {
     })
 }
 
-fn build_alias(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+fn build_alias(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let source_span = span(&pair);
     let ident = pair
         .into_inner()
         .find(|child| child.as_rule() == Rule::prop_ident)
         .ok_or_else(|| ParserError::syntax("AS alias is missing identifier", source_span, None))?;
-    intern_pair(ident)
+    db_string_pair(ident)
 }
 
 fn build_group_by(pair: Pair<'_, Rule>) -> Result<Vec<crate::ast::ValueExpr>, ParserError> {
@@ -486,34 +486,34 @@ pub(super) fn span(pair: &Pair<'_, Rule>) -> SourceSpan {
     SourceSpan::from_pest(pair.as_span())
 }
 
-/// Intern a parsed string, mapping the only remaining construction failure
+/// Construct a database string, mapping the only remaining construction failure
 /// (the `IL013` per-string byte cap) to a syntax error at `span`.
-pub(super) fn intern_str(
+pub(super) fn db_string_from_str(
     value: &str,
     span: SourceSpan,
     kind: &'static str,
-) -> Result<IStr, ParserError> {
-    selene_core::intern(value).map_err(|err| {
+) -> Result<DbString, ParserError> {
+    selene_core::db_string(value).map_err(|err| {
         ParserError::syntax(
-            format!("could not intern {kind}: {err}"),
+            format!("could not construct database string for {kind}: {err}"),
             span,
             Some("string exceeds the maximum byte length".into()),
         )
     })
 }
 
-pub(super) fn intern_pair(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+pub(super) fn db_string_pair(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let source_span = span(&pair);
     let decoded = decode_ident_like(pair.as_str());
-    intern_str(&decoded, source_span, "identifier")
+    db_string_from_str(&decoded, source_span, "identifier")
 }
 
-/// Build a qualified name as a list of interned segments.
+/// Build a qualified name as a list of database-string segments.
 ///
-/// Each grammar segment is interned independently. Quoted segments containing
+/// Each grammar segment is constructed independently. Quoted segments containing
 /// dots stay one segment, so `foo."bar.baz"` and `foo.bar.baz` produce
 /// different paths.
-pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
+pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<DbString>, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::qualified_name);
     let source_span = span(&pair);
     let mut segments = Vec::new();
@@ -521,8 +521,9 @@ pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, Pa
         match child.as_rule() {
             Rule::ident | Rule::prop_ident => {
                 let canonical = decode_ident_like(child.as_str());
-                let interned = intern_str(&canonical, source_span, "qualified-name segment")?;
-                segments.push(interned);
+                let segment =
+                    db_string_from_str(&canonical, source_span, "qualified-name segment")?;
+                segments.push(segment);
             }
             _ => return Err(unexpected_pair(child, "unexpected qualified-name child")),
         }
@@ -537,15 +538,15 @@ pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, Pa
     Ok(segments)
 }
 
-pub(super) fn intern_param(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+pub(super) fn db_string_param(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let source_span = span(&pair);
     let text = pair.as_str().strip_prefix('$').unwrap_or(pair.as_str());
-    intern_str(text, source_span, "parameter")
+    db_string_from_str(text, source_span, "parameter")
 }
 
 pub(super) fn build_typed_param_ref(
     pair: Pair<'_, Rule>,
-) -> Result<(IStr, Option<GqlType>, SourceSpan), ParserError> {
+) -> Result<(DbString, Option<GqlType>, SourceSpan), ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::typed_param_ref);
     let source_span = span(&pair);
     let mut name = None;
@@ -555,7 +556,7 @@ pub(super) fn build_typed_param_ref(
         match child.as_rule() {
             Rule::param_ref => {
                 param_span = Some(span(&child));
-                name = Some(intern_param(child)?);
+                name = Some(db_string_param(child)?);
             }
             Rule::type_name => declared_type = Some(expr::build_type_name(child)?),
             _ => return Err(unexpected_pair(child, "unexpected typed parameter child")),
@@ -581,7 +582,7 @@ pub(super) fn build_typed_param_ref(
 /// Bare (unquoted) identifiers — the common case — are returned borrowed
 /// (`Cow::Borrowed`) with zero allocation; only delimited identifiers that
 /// must strip delimiters or unescape `""` allocate. Callers pass the result
-/// straight into `intern`, which only needs `&str`.
+/// straight into `db_string`, which only needs `&str`.
 pub(super) fn decode_ident_like(text: &str) -> Cow<'_, str> {
     if let Some(inner) = text.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         Cow::Owned(inner.replace("\"\"", "\""))

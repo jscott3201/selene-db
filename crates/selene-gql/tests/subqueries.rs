@@ -313,7 +313,7 @@ fn value_subquery_correlates_with_outer_binding() {
     assert_eq!(
         value_values(&table, "first_known"),
         vec![
-            Value::String(exec_common::istr("Bob")),
+            Value::String(exec_common::db_string("Bob")),
             Value::Null,
             Value::Null
         ]

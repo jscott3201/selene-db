@@ -49,7 +49,7 @@ pub enum PropertyValueType {
     Float32,
     /// Fixed-precision decimal value.
     Decimal,
-    /// Interned string value.
+    /// Database-string value.
     String,
     /// Byte-string value.
     Bytes,
@@ -193,7 +193,7 @@ mod tests {
     use super::*;
     use crate::{
         BindingTableId, EdgeDirection, EdgeId, ExtensionTypeId, GraphId, NodeId, Path, PathSegment,
-        Record, RecordTypeId, RecordTyped, VectorValue, intern,
+        Record, RecordTypeId, RecordTyped, VectorValue, db_string,
     };
 
     fn sample_values() -> Vec<(PropertyValueType, Value)> {
@@ -211,7 +211,7 @@ mod tests {
             ),
             (
                 PropertyValueType::String,
-                Value::String(intern("property-value-type.string").unwrap()),
+                Value::String(db_string("property-value-type.string").unwrap()),
             ),
             (
                 PropertyValueType::Bytes,
@@ -221,7 +221,7 @@ mod tests {
             (
                 PropertyValueType::Record,
                 Value::Record(Box::new(Record::Open(smallvec![(
-                    intern("property-value-type.field").unwrap(),
+                    db_string("property-value-type.field").unwrap(),
                     Value::Bool(true),
                 )]))),
             ),

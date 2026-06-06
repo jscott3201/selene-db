@@ -6,7 +6,7 @@
 //! `SchemaChange::PropertyIndexCreated` through the single mutation funnel (Hard
 //! Rule 11). It never bypasses the funnel and never re-enters `begin_write`.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use selene_graph::{GraphError, TypedIndexKind};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -68,7 +68,7 @@ pub(super) fn execute(
     }
 }
 
-fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError> {
+fn string_arg(value: &Value, name: &'static str) -> Result<DbString, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!(
             "selene.create_index {name} must be a non-empty STRING"
@@ -82,7 +82,7 @@ fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError>
     Ok(value.clone())
 }
 
-fn parse_kind(value: IStr) -> Result<TypedIndexKind, ProcedureError> {
+fn parse_kind(value: DbString) -> Result<TypedIndexKind, ProcedureError> {
     let raw = value.as_str();
     match raw.to_ascii_lowercase().as_str() {
         "i64" | "integer" | "int" => Ok(TypedIndexKind::I64),

@@ -1,6 +1,6 @@
 //! Optimizer helpers for binding and property-expression recognition.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     BinaryOp, GqlType, Literal, SourceSpan, ValueExpr,
@@ -17,7 +17,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub(crate) struct ParameterRef<'a> {
     /// Parameter name without the leading `$`.
-    pub name: IStr,
+    pub name: DbString,
     /// Optional declared type from a `$id :: TYPE` annotation (BRIEF-137).
     pub declared_type: Option<&'a GqlType>,
     /// Source span of the parameter reference.
@@ -46,7 +46,7 @@ pub(crate) struct MatchedPropertyPredicate<'a> {
     /// Referenced binding.
     pub binding: BindingId,
     /// Property key.
-    pub key: IStr,
+    pub key: DbString,
     /// Predicate shape.
     pub shape: PropertyPredicateShape<'a>,
 }
@@ -116,7 +116,7 @@ pub(crate) fn match_property_predicate<'a>(
 pub(crate) fn match_property_access(
     expr: &ValueExpr,
     bindings: &[BindingDef],
-) -> Option<(BindingId, IStr)> {
+) -> Option<(BindingId, DbString)> {
     let ValueExpr::PropertyAccess { target, key, .. } = expr else {
         return None;
     };
@@ -260,8 +260,8 @@ mod tests {
     use crate::analyze::types::AnalyzedType;
     use crate::plan::BindingElement;
 
-    fn name_of(name: &str) -> selene_core::IStr {
-        selene_core::intern(name).unwrap()
+    fn name_of(name: &str) -> selene_core::DbString {
+        selene_core::db_string(name).unwrap()
     }
 
     fn binding_def(name: &str, raw: u32, element: BindingElement) -> BindingDef {

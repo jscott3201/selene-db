@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     CallPlanCache, GqlType, ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata,
     ProcedureMutability, ProcedureOutputColumn, ProcedureOutputSchema, ProcedureRegistry,
@@ -15,7 +15,7 @@ use selene_graph::{SharedGraph, TypedIndexKind};
 
 #[derive(Debug)]
 struct TestRegistry {
-    name: Box<[IStr]>,
+    name: Box<[DbString]>,
     metadata: ProcedureMetadata,
     version: u64,
     value: i64,
@@ -29,12 +29,15 @@ impl TestRegistry {
 
     fn with_version_handle_and_value(version: u64, handle: ProcedureHandle, value: i64) -> Self {
         Self {
-            name: Box::from([istr("cache"), istr("values")]),
+            name: Box::from([db_string("cache"), db_string("values")]),
             metadata: ProcedureMetadata::new(
                 handle,
                 ProcedureSignature::new(Vec::new()),
                 ProcedureOutputSchema {
-                    columns: vec![ProcedureOutputColumn::new(istr("value"), GqlType::Integer)],
+                    columns: vec![ProcedureOutputColumn::new(
+                        db_string("value"),
+                        GqlType::Integer,
+                    )],
                 },
                 ProcedureTier::Graph,
                 ProcedureMutability::Read,
@@ -51,7 +54,7 @@ impl TestRegistry {
 }
 
 impl ProcedureRegistry for TestRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         (name == self.name.as_ref()).then(|| self.metadata.clone())
     }
 
@@ -112,7 +115,11 @@ fn call_plan_cache_schema_version_change_misses_next_lookup() {
         .execute_source("CALL cache.values() YIELD value", &registry)
         .expect("second call hits cache");
     graph
-        .create_property_index(istr("CachePerson"), istr("age"), TypedIndexKind::I64)
+        .create_property_index(
+            db_string("CachePerson"),
+            db_string("age"),
+            TypedIndexKind::I64,
+        )
         .expect("schema change executes");
     session
         .execute_source("CALL cache.values() YIELD value", &registry)
@@ -222,6 +229,6 @@ fn cache() -> Arc<CallPlanCache> {
     Arc::new(CallPlanCache::new(NonZeroUsize::new(8).expect("nonzero")))
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }

@@ -300,9 +300,9 @@ const fn classify_mutability(mutability: ProcedureMutability) -> StatementCatego
 fn push_binding_column(
     planned: &PlannedCall,
     columns: &mut Vec<BindingTableColumn>,
-    seen: &mut HashSet<selene_core::IStr>,
+    seen: &mut HashSet<selene_core::DbString>,
     col: &ProcedureOutputColumn,
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     span: crate::SourceSpan,
 ) -> Result<(), PlannerError> {
     if !seen.insert(name.clone()) {
@@ -316,7 +316,7 @@ fn push_binding_column(
     Ok(())
 }
 
-fn binding_column(col: &ProcedureOutputColumn, name: selene_core::IStr) -> BindingTableColumn {
+fn binding_column(col: &ProcedureOutputColumn, name: selene_core::DbString) -> BindingTableColumn {
     BindingTableColumn {
         name: Some(name),
         hidden: None,
@@ -326,8 +326,6 @@ fn binding_column(col: &ProcedureOutputColumn, name: selene_core::IStr) -> Bindi
 
 #[cfg(test)]
 mod defensive_tests {
-    use selene_core::intern;
-
     use super::*;
     use crate::{
         ProcedureDefaultValue, ProcedureHandle, ProcedureOutputSchema, ProcedureParameter,
@@ -341,7 +339,7 @@ mod defensive_tests {
     }
 
     impl ProcedureRegistry for StaticRegistry {
-        fn lookup(&self, _name: &[selene_core::IStr]) -> Option<ProcedureMetadata> {
+        fn lookup(&self, _name: &[selene_core::DbString]) -> Option<ProcedureMetadata> {
             Some(self.metadata.clone())
         }
 
@@ -355,16 +353,16 @@ mod defensive_tests {
         }
     }
 
-    fn istr(value: &str) -> selene_core::IStr {
-        intern(value).expect("test interner")
+    fn db_string(value: &str) -> selene_core::DbString {
+        selene_core::db_string(value).expect("test string fits DB string cap")
     }
 
     fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-        ProcedureParameter::new(istr(name), ty, nullable)
+        ProcedureParameter::new(db_string(name), ty, nullable)
     }
 
     fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-        ProcedureOutputColumn::new(istr(name), ty)
+        ProcedureOutputColumn::new(db_string(name), ty)
     }
 
     fn registry(
@@ -520,8 +518,8 @@ mod defensive_tests {
 
     #[test]
     fn changed_yield_schema_reports_metadata_mismatch() {
-        let name = intern("pkg").expect("test interner");
-        let col = intern("out").expect("test interner");
+        let name = selene_core::db_string("pkg").expect("test string fits DB string cap");
+        let col = selene_core::db_string("out").expect("test string fits DB string cap");
         let planned = PlannedCall {
             procedure: Box::new([name.clone()]),
             handle: ProcedureHandle::new(1),

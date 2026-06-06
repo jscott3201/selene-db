@@ -13,7 +13,7 @@ use crate::{
 
 use super::{Rule, build_value_expr, literal};
 use crate::parser::builders::{
-    intern_pair, keyword_starts_with, keyword_tokens_eq, not_implemented, pattern, span,
+    db_string_pair, keyword_starts_with, keyword_tokens_eq, not_implemented, pattern, span,
 };
 
 pub(super) fn apply_is_suffix(
@@ -282,7 +282,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         // Per ISO 39075:2024 section18.9 <record type> / <field types specification> +
         // section18.10 <field type>: a braced `RECORD { a :: INT }` is a closed record
         // type; bare `RECORD` (no fields) is the open record type. Field names are
-        // user-controlled; interning them applies the per-string byte cap (IL013).
+        // user-controlled; construction applies the per-string byte cap (IL013).
         let mut fields = Vec::new();
         for field in pair
             .into_inner()
@@ -296,7 +296,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             let type_pair = children.next().ok_or_else(|| {
                 ParserError::syntax("record field type is missing type", field_span, None)
             })?;
-            let name = intern_pair(name_pair)?;
+            let name = db_string_pair(name_pair)?;
             if fields
                 .iter()
                 .any(|(existing_name, _)| existing_name == &name)

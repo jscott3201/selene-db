@@ -19,7 +19,7 @@
 //! which bumped `SNAPSHOT_VERSION_MINOR` 2 -> 3 for the same clean-break reason.
 //!
 //! `CORE/SCMA` schema rows are stored in memory in `(label, property)` order
-//! via [`SchemaKey`]'s derived `Ord`, which is lexicographic through [`IStr`].
+//! via [`SchemaKey`]'s derived `Ord`, which is lexicographic through [`DbString`].
 //! Their wire order is the same canonical lexicographic order by
 //! `(label.as_str(), property.as_str())`; decode re-sorts defensively into that
 //! canonical order before duplicate validation.
@@ -34,7 +34,9 @@ use rkyv::{
     vec::{ArchivedVec, VecResolver},
     with::{ArchiveWith, DeserializeWith, SerializeWith},
 };
-use selene_core::{EdgeId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, NodeId, PropertyMap};
+use selene_core::{
+    DbString, EdgeId, HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, PropertyMap,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::core_provider::{inconsistent, invalid_payload};
@@ -130,7 +132,7 @@ pub struct NodeRow {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EdgeRow {
     /// Edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Source node ID.
     pub source: NodeId,
     /// Target node ID.
@@ -169,7 +171,7 @@ impl NodeArchiveRow {
 
 #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 struct EdgeArchiveRow {
-    label: IStr,
+    label: DbString,
     source: NodeId,
     target: NodeId,
     #[rkyv(with = ArcBytes)]
@@ -202,7 +204,7 @@ impl EdgeArchiveRow {
 /// Identity for an entry in the core schema section.
 ///
 /// In v1.0, schema entries map one-to-one with built-in property index
-/// registrations. In-memory order follows local [`IStr`] handles; the
+/// registrations. In-memory order follows local [`DbString`] handles; the
 /// `CORE/SCMA` wire order is lexicographic by `label.as_str()` and
 /// `property.as_str()` for cross-process stability.
 #[derive(
@@ -220,9 +222,9 @@ impl EdgeArchiveRow {
 )]
 pub struct SchemaKey {
     /// Node label the registration applies to.
-    pub label: IStr,
+    pub label: DbString,
     /// Property the registration applies to.
-    pub property: IStr,
+    pub property: DbString,
 }
 
 /// Persisted shape of a single schema entry.
@@ -241,7 +243,7 @@ pub struct SchemaEntry {
     /// Indexable value kind declared at registration time.
     pub kind: TypedIndexKind,
     /// Optional explicit catalog name for the property index.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 /// `CORE/SCMA` section format version byte.
@@ -268,9 +270,9 @@ pub(super) const SCMA_VERSION: u8 = 2;
 )]
 pub struct CompositeSchemaKey {
     /// Node label the composite registration applies to.
-    pub label: IStr,
+    pub label: DbString,
     /// Properties in declaration order.
-    pub properties: Vec<IStr>,
+    pub properties: Vec<DbString>,
 }
 
 /// Persisted shape of a composite-property-index registration.
@@ -289,7 +291,7 @@ pub struct CompositeSchemaEntry {
     /// Indexable value kinds in declaration order.
     pub kinds: Vec<TypedIndexKind>,
     /// Optional explicit catalog name for the composite property index.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 /// Identity for an entry in the vector-index snapshot section.
@@ -308,9 +310,9 @@ pub struct CompositeSchemaEntry {
 )]
 pub struct VectorSchemaKey {
     /// Node label the vector registration applies to.
-    pub label: IStr,
+    pub label: DbString,
     /// Vector property the registration applies to.
-    pub property: IStr,
+    pub property: DbString,
 }
 
 /// Persisted shape of a vector-index registration.
@@ -335,7 +337,7 @@ pub struct VectorSchemaEntry {
     /// IVF construction config for IVF vector indexes.
     pub ivf_config: Option<IvfIndexConfig>,
     /// Optional explicit catalog name for the vector index.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 /// Identity for an entry in the text-index snapshot section.
@@ -354,9 +356,9 @@ pub struct VectorSchemaEntry {
 )]
 pub struct TextSchemaKey {
     /// Node label the text registration applies to.
-    pub label: IStr,
+    pub label: DbString,
     /// Text property the registration applies to.
-    pub property: IStr,
+    pub property: DbString,
 }
 
 /// Persisted shape of a text-index registration.
@@ -373,7 +375,7 @@ pub struct TextSchemaKey {
 )]
 pub struct TextSchemaEntry {
     /// Optional explicit catalog name for the text index.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 pub(super) fn encode_meta(

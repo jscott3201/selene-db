@@ -5,7 +5,7 @@
 //! (CLAUDE.md hard rule #5). The constants and helpers here are private
 //! to `selene_gql::ast` and consumed only by `format.rs`.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 /// Aggregate-op keywords reserved by the `aggregate_expr` grammar rule.
 ///
@@ -83,7 +83,7 @@ const KEYWORDS: &[&str] = &[
 /// Returns the bare identifier when it is a simple ASCII ident and not a
 /// grammar-reserved keyword; otherwise returns the double-quoted form
 /// with embedded `"` escaped as `""`.
-pub(super) fn fmt_ident(value: IStr) -> String {
+pub(super) fn fmt_ident(value: DbString) -> String {
     let value = value.as_str();
     if is_simple_ident(value) && !KEYWORDS.contains(&value.to_ascii_uppercase().as_str()) {
         return value.to_owned();
@@ -99,7 +99,7 @@ pub(super) fn fmt_ident(value: IStr) -> String {
 /// the COUNT aggregate; quoting any of those names breaks the parse.
 /// Aggregate ops are not safe identifier names anyway — they are
 /// grammar-reserved at every site where this function is consulted.
-pub(super) fn fmt_call_segment(value: IStr) -> String {
+pub(super) fn fmt_call_segment(value: DbString) -> String {
     let value = value.as_str();
     if is_simple_ident(value) {
         let upper = value.to_ascii_uppercase();

@@ -1,6 +1,6 @@
 use std::{num::NonZeroUsize, time::Instant};
 
-use selene_core::{BindingTableId, GraphId, IStr, Value, intern};
+use selene_core::{BindingTableId, DbString, GraphId, Value, db_string};
 use selene_graph::{GraphTypeDef, SharedGraph, TypedIndexKind};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
@@ -26,8 +26,8 @@ fn execute(source: &str, session: &mut Session<'_>) -> Result<StatementOutput, E
     execute_statement(&plan, session, &EmptyProcedureRegistry)
 }
 
-fn admitted(value: &str) -> IStr {
-    intern(value).expect("test name admits")
+fn admitted(value: &str) -> DbString {
+    db_string(value).expect("test name admits")
 }
 
 fn empty_closed_graph(id: u64) -> SharedGraph {

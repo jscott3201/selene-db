@@ -1,14 +1,14 @@
 //! OPT-3 single-label-scan optimizer rule tests (`label_scan`).
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     EmptyProcedureRegistry, IndexKind, JoinTree, NodeOrEdgeScan, ScanAccess, analyze, optimize,
     parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::ExecutionPlan {
@@ -57,7 +57,7 @@ fn collect_scans<'a>(tree: &'a JoinTree, out: &mut Vec<&'a NodeOrEdgeScan>) {
 }
 
 fn person_label_catalog() -> MockIndexCatalog {
-    MockIndexCatalog::new().with_node_label_index(istr("Person"))
+    MockIndexCatalog::new().with_node_label_index(db_string("Person"))
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ fn edge_scan_branch_maps_edge_target() {
     // any node scan against an edge-only catalog. If a future planner emits a
     // standalone edge Scan, the rule's `ScanKind::Edge -> IndexTarget::Edge`
     // arm promotes it (the runtime consumer already exists).
-    let catalog = MockIndexCatalog::new().with_edge_label_index(istr("KNOWS"));
+    let catalog = MockIndexCatalog::new().with_edge_label_index(db_string("KNOWS"));
     let plan = optimized_one("MATCH ()-[e:KNOWS]->() RETURN e", &catalog);
     let mut scans = Vec::new();
     collect_scans(&plan.pattern_plan.as_ref().unwrap().join_tree, &mut scans);
@@ -138,8 +138,8 @@ fn unlabeled_scan_stays_linear() {
 fn multi_label_conjunction_stays_linear() {
     // `(n:A&B)` is a conjunction, not a single label.
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(istr("Person"))
-        .with_node_label_index(istr("Employee"));
+        .with_node_label_index(db_string("Person"))
+        .with_node_label_index(db_string("Employee"));
     let plan = optimized_one("MATCH (n:Person&Employee) RETURN n", &catalog);
     let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
     assert!(
@@ -155,8 +155,8 @@ fn pure_label_disjunction_stays_linear() {
     // predicate) is NOT expanded by disjunctive_label_expansion, so the scan
     // keeps a Disjunction predicate and label_scan leaves it Linear.
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(istr("Person"))
-        .with_node_label_index(istr("Account"));
+        .with_node_label_index(db_string("Person"))
+        .with_node_label_index(db_string("Account"));
     let plan = optimized_one("MATCH (n:Person|Account) RETURN n", &catalog);
     let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
     assert!(
@@ -175,8 +175,8 @@ fn typed_index_precedence_over_label_index() {
     // Both a label index AND a typed index on (Person, age) exist; the
     // range_index_scan rule fires first and label_scan must NOT clobber it.
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(istr("Person"))
-        .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer);
+        .with_node_label_index(db_string("Person"))
+        .with_node_typed_index(db_string("Person"), db_string("age"), IndexKind::Integer);
     let plan = optimized_one("MATCH (n:Person) WHERE n.age = 30 RETURN n", &catalog);
     let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
     assert!(
@@ -189,12 +189,12 @@ fn typed_index_precedence_over_label_index() {
 #[test]
 fn composite_index_precedence_over_label_index() {
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(istr("Person"))
+        .with_node_label_index(db_string("Person"))
         .with_node_composite_index(
-            istr("Person"),
+            db_string("Person"),
             vec![
-                (istr("tenant"), IndexKind::String),
-                (istr("kind"), IndexKind::String),
+                (db_string("tenant"), IndexKind::String),
+                (db_string("kind"), IndexKind::String),
             ],
         );
     let plan = optimized_one(

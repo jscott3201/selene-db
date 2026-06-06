@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
     ExecutorError, GqlStatus, GqlType, PipelineOp, ProcedureContext, ProcedureError,
@@ -21,7 +21,7 @@ use selene_graph::SharedGraph;
 enum Behavior {
     Return(Vec<Vec<Value>>),
     CountNodes,
-    CreateNode(IStr),
+    CreateNode(DbString),
     Error(ProcedureError),
 }
 
@@ -34,7 +34,7 @@ struct CallRecord {
 
 #[derive(Debug, Default)]
 struct TestRegistry {
-    metadata: HashMap<Box<[IStr]>, ProcedureMetadata>,
+    metadata: HashMap<Box<[DbString]>, ProcedureMetadata>,
     behavior: HashMap<u64, Behavior>,
     records: Mutex<Vec<CallRecord>>,
     next_handle: u64,
@@ -64,7 +64,7 @@ impl TestRegistry {
         self.behavior.insert(handle.raw(), behavior);
         self.metadata.insert(
             name.iter()
-                .map(|segment| istr(segment))
+                .map(|segment| db_string(segment))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
             ProcedureMetadata::new(
@@ -84,7 +84,7 @@ impl TestRegistry {
 }
 
 impl ProcedureRegistry for TestRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         self.metadata.get(name).cloned()
     }
 
@@ -134,16 +134,16 @@ fn procedure_result(rows: Vec<Vec<Value>>) -> ProcedureResult {
     ProcedureResult { rows }
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-    ProcedureParameter::new(istr(name), ty, nullable)
+    ProcedureParameter::new(db_string(name), ty, nullable)
 }
 
 fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-    ProcedureOutputColumn::new(istr(name), ty)
+    ProcedureOutputColumn::new(db_string(name), ty)
 }
 
 fn registry_one(
@@ -391,14 +391,14 @@ fn read_tier_procedure_yield_star_emits_all_columns_in_schema_order() {
         ProcedureMutability::Read,
         ProcedureTier::Graph,
         vec![output("a", GqlType::Integer), output("b", GqlType::String)],
-        Behavior::Return(vec![vec![Value::Int(1), Value::String(istr("two"))]]),
+        Behavior::Return(vec![vec![Value::Int(1), Value::String(db_string("two"))]]),
     );
 
     let table = rows(execute("CALL pkg.values() YIELD *", &graph(3906), &registry).unwrap());
 
     assert_eq!(
         table.rows()[0].values(),
-        &[Value::Int(1), Value::String(istr("two"))]
+        &[Value::Int(1), Value::String(db_string("two"))]
     );
 }
 
@@ -432,7 +432,7 @@ fn mutation_tier_procedure_in_auto_commit_commits_on_success() {
         ProcedureMutability::SchemaWrite,
         ProcedureTier::Mutation,
         Vec::new(),
-        Behavior::CreateNode(istr("FromProc")),
+        Behavior::CreateNode(db_string("FromProc")),
     );
     let graph = graph(3908);
 
@@ -552,7 +552,7 @@ fn mutation_tier_procedure_in_read_only_context_returns_invalid_transaction_stat
         ProcedureMutability::SchemaWrite,
         ProcedureTier::Mutation,
         Vec::new(),
-        Behavior::CreateNode(istr("FromProc")),
+        Behavior::CreateNode(db_string("FromProc")),
     );
     let plan = planned("CALL pkg.create()", &registry);
     let graph = graph(3910);
@@ -657,7 +657,7 @@ fn procedure_returns_wrong_value_type_returns_internal_error() {
         ProcedureMutability::Read,
         ProcedureTier::Graph,
         vec![output("out", GqlType::Integer)],
-        Behavior::Return(vec![vec![Value::String(istr("wrong"))]]),
+        Behavior::Return(vec![vec![Value::String(db_string("wrong"))]]),
     );
 
     let err = execute("CALL pkg.bad() YIELD out", &graph(3914), &registry)

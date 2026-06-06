@@ -2,15 +2,15 @@
 
 use std::sync::{Arc, Mutex};
 
-use selene_core::{GraphId, IStr, Value, feature_register::FeatureId, intern};
+use selene_core::{DbString, GraphId, Value, feature_register::FeatureId};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorWarning, GqlStatus, Session, StatementOutput, WarningSink,
     analyze, feature_walk, parse,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn execute_rows(session: &mut Session<'_>, source: &str) -> selene_gql::BindingTable {
@@ -122,7 +122,7 @@ fn percentile_null_handling_matches_set_function_warning_contract() {
 fn percentile_independent_expression_accepts_parameters_and_arithmetic() {
     let graph = SharedGraph::new(GraphId::new(13_502));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("p"), Value::Float(0.75));
+    session.bind_parameter(db_string("p"), Value::Float(0.75));
 
     let parameterized = execute_rows(
         &mut session,

@@ -1,14 +1,14 @@
 //! End-to-end coverage for batched native vector-search built-ins.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
     Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -19,7 +19,7 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -45,7 +45,7 @@ fn execute_rows(
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -59,7 +59,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -72,8 +72,8 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 fn seed_vector_graph(graph: &SharedGraph) {
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -107,7 +107,7 @@ fn vector_search_nodes_batch_groups_hits_by_query_index_without_ann_index() {
     seed_vector_graph(&graph);
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[4.1, 0.0])),
             Value::Vector(vector(&[12.2, 0.0])),
@@ -133,7 +133,7 @@ fn vector_search_nodes_batch_returns_no_rows_for_empty_query_list() {
     let registry = BuiltinProcedureRegistry::new();
     seed_vector_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("queries"), Value::List(Vec::new()));
+    session.bind_parameter(db_string("queries"), Value::List(Vec::new()));
 
     let table = execute_rows(
         &mut session,
@@ -152,7 +152,7 @@ fn vector_search_nodes_batch_rejects_mixed_query_dimensions() {
     seed_vector_graph(&graph);
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[0.0, 0.0])),
             Value::Vector(vector(&[0.0, 0.0, 0.0])),
@@ -182,7 +182,7 @@ fn vector_search_nodes_ann_batch_groups_hits_by_query_index() {
     seed_hnsw_vector_graph(&graph, &registry);
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[4.1, 0.0])),
             Value::Vector(vector(&[12.2, 0.0])),
@@ -208,7 +208,7 @@ fn vector_search_nodes_ann_batch_rejects_missing_ann_index() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![Value::Vector(vector(&[0.0, 0.0]))]),
     );
 
@@ -235,7 +235,7 @@ fn vector_search_nodes_ann_batch_rejects_mixed_query_dimensions() {
     seed_hnsw_vector_graph(&graph, &registry);
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[0.0, 0.0])),
             Value::Vector(vector(&[0.0, 0.0, 0.0])),

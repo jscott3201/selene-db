@@ -47,7 +47,7 @@ fn plan_err(source: &str) -> GqlStatus {
 
 fn base_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: selene_core::intern("gg21.test.graph").unwrap(),
+        name: selene_core::db_string("gg21.test.graph").unwrap(),
         node_types: Vec::new(),
         edge_types: Vec::new(),
     }
@@ -91,10 +91,10 @@ fn append_wal(dir: &Path, changes: &[Change]) {
 }
 
 fn person_closed_graph(id: u64) -> SharedGraph {
-    let person = selene_core::intern("Person").unwrap();
+    let person = selene_core::db_string("Person").unwrap();
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: selene_core::intern("gg21.person.graph").unwrap(),
+            name: selene_core::db_string("gg21.person.graph").unwrap(),
             node_types: vec![selene_graph::NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),
@@ -303,7 +303,7 @@ fn explicit_singleton_is_identical_to_implied_form() {
 
     // The committed key label set is the singleton `:Person`, so exact-equality
     // identification resolves it (G6 unchanged).
-    let person = LabelSet::single(selene_core::intern("Person").unwrap());
+    let person = LabelSet::single(selene_core::db_string("Person").unwrap());
     assert_eq!(explicit_type.node_types[0].key_labels, person);
     assert!(explicit_type.find_node_type(&person).is_some());
     assert!(matches!(
@@ -394,7 +394,7 @@ fn explicit_singleton_survives_wal_recovery() {
 
     let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
     let graph_type = recovered.graph_type().expect("recovered closed graph type");
-    let person = LabelSet::single(selene_core::intern("Person").unwrap());
+    let person = LabelSet::single(selene_core::db_string("Person").unwrap());
 
     assert_eq!(
         graph_type.node_types.len(),

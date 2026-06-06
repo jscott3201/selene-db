@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn string_to_decimal() {
         assert_eq!(
-            ok(Value::String(selene_core::intern("123.45").unwrap())),
+            ok(Value::String(selene_core::db_string("123.45").unwrap())),
             Value::Decimal(dec("123.45"))
         );
     }
@@ -283,7 +283,7 @@ mod tests {
     fn string_parse_fail_to_decimal_returns_22018() {
         assert_eq!(
             status(numeric_to_decimal(
-                Value::String(selene_core::intern("abc").unwrap()),
+                Value::String(selene_core::db_string("abc").unwrap()),
                 span()
             )),
             "22018"

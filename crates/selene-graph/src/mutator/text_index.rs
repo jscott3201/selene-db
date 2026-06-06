@@ -1,6 +1,6 @@
 //! Text-index mutation methods for the transaction mutator.
 
-use selene_core::{Change, IStr, SchemaChange};
+use selene_core::{Change, DbString, SchemaChange};
 
 use crate::graph::TextIndexEntry;
 use crate::{GraphError, GraphResult, Mutator, TextIndex};
@@ -13,16 +13,16 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Returns [`GraphError::TextIndexAlreadyExists`] if the pair already
     /// exists, or [`GraphError::Inconsistent`] if index construction observes
     /// corrupt graph columns.
-    pub fn create_text_index(&mut self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn create_text_index(&mut self, label: DbString, property: DbString) -> GraphResult<()> {
         self.create_text_index_named(label, property, None)
     }
 
     /// Register a durable node text index with optional catalog name.
     pub fn create_text_index_named(
         &mut self,
-        label: IStr,
-        property: IStr,
-        name: Option<IStr>,
+        label: DbString,
+        property: DbString,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         if self
             .txn
@@ -53,7 +53,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// The operation is idempotent. Dropping an absent index succeeds and emits
     /// no WAL change.
-    pub fn drop_text_index(&mut self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn drop_text_index(&mut self, label: DbString, property: DbString) -> GraphResult<()> {
         if !self
             .txn
             .read()

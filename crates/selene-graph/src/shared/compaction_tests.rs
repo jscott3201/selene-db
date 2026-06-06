@@ -8,21 +8,21 @@
 
 use super::*;
 use selene_core::{
-    EdgeId, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, intern,
+    EdgeId, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, db_string,
 };
 
 use crate::store::RowIndex;
 use crate::{GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode};
 
 fn prop(key: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(key).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
 }
 
 /// 5 nodes (ids 1..=5), then delete ids 2 and 4 — leaving 1, 3, 5 alive across
 /// dead rows 1 and 3.
 fn churned_graph() -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("c4c.node").unwrap();
+    let la = db_string("c4c.node").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
@@ -96,7 +96,7 @@ fn create_after_compact_appends_without_rebloat() {
         let id = txn
             .mutator()
             .create_node(
-                LabelSet::single(intern("c4c.node").unwrap()),
+                LabelSet::single(db_string("c4c.node").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
@@ -119,7 +119,7 @@ fn create_after_compact_appends_without_rebloat() {
 #[test]
 fn compact_on_a_dense_graph_is_a_noop() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("c4c.dense").unwrap();
+    let la = db_string("c4c.dense").unwrap();
     {
         let mut txn = shared.begin_write();
         {
@@ -146,8 +146,8 @@ fn compact_preserves_edges_and_adjacency() {
     // surviving edges + adjacency rebuild correctly under the renumber (edges key
     // by stable external NodeId, so endpoints survive; adjacency is rebuilt).
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("c4c.n").unwrap();
-    let el = intern("c4c.e").unwrap();
+    let la = db_string("c4c.n").unwrap();
+    let el = db_string("c4c.e").unwrap();
     let (n1, n3, n4) = {
         let mut txn = shared.begin_write();
         let ids = {
@@ -206,12 +206,12 @@ fn compact_preserves_edges_and_adjacency() {
 /// Minimal GG02 closed graph: one `Person` node type with a required `name`.
 fn person_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: intern("c4c.closed").unwrap(),
+        name: db_string("c4c.closed").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: intern("c4c.person").unwrap(),
-            key_labels: LabelSet::single(intern("Person").unwrap()),
+            name: db_string("c4c.person").unwrap(),
+            key_labels: LabelSet::single(db_string("Person").unwrap()),
             properties: vec![PropertyTypeDef {
-                name: intern("name").unwrap(),
+                name: db_string("name").unwrap(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
@@ -236,10 +236,10 @@ fn compact_preserves_closed_graph_binding_on_the_live_path() {
         .unwrap()
         .build()
         .unwrap();
-    let person = intern("Person").unwrap();
-    let name = intern("name").unwrap();
+    let person = db_string("Person").unwrap();
+    let name = db_string("name").unwrap();
     let mk = |n: &str| {
-        PropertyMap::from_pairs([(name.clone(), Value::String(intern(n).unwrap()))]).unwrap()
+        PropertyMap::from_pairs([(name.clone(), Value::String(db_string(n).unwrap()))]).unwrap()
     };
     {
         let mut txn = shared.begin_write();

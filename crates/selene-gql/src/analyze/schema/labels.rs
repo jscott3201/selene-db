@@ -1,4 +1,4 @@
-use selene_core::{IStr, LabelSet};
+use selene_core::{DbString, LabelSet};
 use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef};
 
 use crate::{
@@ -50,7 +50,7 @@ pub(super) fn insert_label_set(
         .map_err(|form| AnalysisError::SchemaInvalidInsertLabelExpr { form, span })
 }
 
-pub(super) fn insert_edge_label(edge: &EdgePattern) -> Result<IStr, AnalysisError> {
+pub(super) fn insert_edge_label(edge: &EdgePattern) -> Result<DbString, AnalysisError> {
     let Some(expr) = edge.label_expr.as_ref() else {
         return Err(AnalysisError::SchemaInvalidInsertLabelExpr {
             form: InvalidLabelForm::Missing,
@@ -195,7 +195,7 @@ pub(super) fn is_fresh_edge(edge: &EdgePattern, analyzed: &AnalyzedStatement) ->
 }
 
 pub(super) fn fresh_binding(
-    name: Option<IStr>,
+    name: Option<DbString>,
     span: SourceSpan,
     kind: BindingDeclKind,
     analyzed: &AnalyzedStatement,
@@ -223,7 +223,7 @@ pub(super) fn fresh_binding(
 }
 
 pub(super) fn reused_binding(
-    name: Option<IStr>,
+    name: Option<DbString>,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
 ) -> Option<BindingId> {
@@ -239,7 +239,7 @@ pub(super) fn reused_binding(
         .map(|reference| reference.binding)
 }
 
-pub(super) fn unique_edge_type(graph_type: &GraphTypeDef, label: IStr) -> Option<&EdgeTypeDef> {
+pub(super) fn unique_edge_type(graph_type: &GraphTypeDef, label: DbString) -> Option<&EdgeTypeDef> {
     let mut matches = graph_type
         .edge_types
         .iter()

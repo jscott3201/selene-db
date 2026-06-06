@@ -1,6 +1,6 @@
 //! Deterministic graph fixtures for benchmark binaries.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_graph::{SeleneGraph, SharedGraph, TypedIndexKind};
 
 /// Canonical publish-quality graph-size scales for release-prep benchmarks.
@@ -17,15 +17,15 @@ pub struct BenchFixture {
     scale: usize,
     graph: SeleneGraph,
     sample_node_id: NodeId,
-    person_label: IStr,
-    sensor_label: IStr,
-    edge_label: IStr,
-    age_key: IStr,
-    bench_id_key: IStr,
-    name_key: IStr,
-    score_key: IStr,
+    person_label: DbString,
+    sensor_label: DbString,
+    edge_label: DbString,
+    age_key: DbString,
+    bench_id_key: DbString,
+    name_key: DbString,
+    score_key: DbString,
     sample_age: i64,
-    sample_name: IStr,
+    sample_name: DbString,
 }
 
 impl BenchFixture {
@@ -33,14 +33,14 @@ impl BenchFixture {
     #[must_use]
     pub fn build(scale: usize) -> Self {
         let scale = scale.max(1);
-        let person_label = istr("Person");
-        let sensor_label = istr("Sensor");
-        let device_label = istr("Device");
-        let edge_label = istr("KNOWS");
-        let age_key = istr("age");
-        let bench_id_key = istr("bench_id");
-        let name_key = istr("name");
-        let score_key = istr("score");
+        let person_label = db_string("Person");
+        let sensor_label = db_string("Sensor");
+        let device_label = db_string("Device");
+        let edge_label = db_string("KNOWS");
+        let age_key = db_string("age");
+        let bench_id_key = db_string("bench_id");
+        let name_key = db_string("name");
+        let score_key = db_string("score");
         let shared = SharedGraph::new(GraphId::new(1));
         {
             let mut txn = shared.begin_write();
@@ -127,43 +127,43 @@ impl BenchFixture {
 
     /// Return the primary node label used by index benchmarks.
     #[must_use]
-    pub fn person_label(&self) -> IStr {
+    pub fn person_label(&self) -> DbString {
         self.person_label.clone()
     }
 
     /// Return the secondary node label used by label-scan benchmarks.
     #[must_use]
-    pub fn sensor_label(&self) -> IStr {
+    pub fn sensor_label(&self) -> DbString {
         self.sensor_label.clone()
     }
 
     /// Return the canonical edge label.
     #[must_use]
-    pub fn edge_label(&self) -> IStr {
+    pub fn edge_label(&self) -> DbString {
         self.edge_label.clone()
     }
 
     /// Return the indexed integer property key.
     #[must_use]
-    pub fn age_key(&self) -> IStr {
+    pub fn age_key(&self) -> DbString {
         self.age_key.clone()
     }
 
     /// Return the unique integer lookup key used by write benchmarks.
     #[must_use]
-    pub fn bench_id_key(&self) -> IStr {
+    pub fn bench_id_key(&self) -> DbString {
         self.bench_id_key.clone()
     }
 
     /// Return the indexed string property key.
     #[must_use]
-    pub fn name_key(&self) -> IStr {
+    pub fn name_key(&self) -> DbString {
         self.name_key.clone()
     }
 
     /// Return a non-indexed integer property key.
     #[must_use]
-    pub fn score_key(&self) -> IStr {
+    pub fn score_key(&self) -> DbString {
         self.score_key.clone()
     }
 
@@ -175,13 +175,13 @@ impl BenchFixture {
 
     /// Return a name value known to be present for [`Self::person_label`].
     #[must_use]
-    pub fn sample_name_value(&self) -> IStr {
+    pub fn sample_name_value(&self) -> DbString {
         self.sample_name.clone()
     }
 
     /// Return one registered `(label, property)` pair for index lookup.
     #[must_use]
-    pub fn sample_label_property(&self) -> (IStr, IStr) {
+    pub fn sample_label_property(&self) -> (DbString, DbString) {
         (self.person_label.clone(), self.age_key.clone())
     }
 }
@@ -197,9 +197,9 @@ impl BenchFixture {
 /// deletes edgeless nodes) cannot exercise.
 #[must_use]
 pub fn star_graph(degree: usize) -> SeleneGraph {
-    let center_label = istr("Hub");
-    let leaf_label = istr("Leaf");
-    let edge_label = istr("LINK");
+    let center_label = db_string("Hub");
+    let leaf_label = db_string("Leaf");
+    let edge_label = db_string("LINK");
     let shared = SharedGraph::new(GraphId::new(1));
     {
         let mut txn = shared.begin_write();
@@ -265,12 +265,13 @@ fn sample_age(idx: usize) -> i64 {
     20 + (idx % 80) as i64
 }
 
-fn sample_name(idx: usize) -> IStr {
-    intern(&format!("bench-name-{}", idx % 256)).expect("fixture string fits interner")
+fn sample_name(idx: usize) -> DbString {
+    selene_core::db_string(&format!("bench-name-{}", idx % 256))
+        .expect("fixture string fits DB string cap")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("fixture string fits interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("fixture string fits DB string cap")
 }
 
 #[cfg(test)]

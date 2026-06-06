@@ -7,7 +7,7 @@
 
 use std::cmp::Ordering;
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     IndexKey, IndexKind, Literal, SourceSpan, TypedIndexBounds,
@@ -216,7 +216,7 @@ pub(super) fn literal_to_value(literal: &Literal) -> Value {
 fn check_value_index_kind(
     value: &Value,
     expected: IndexKind,
-    name: IStr,
+    name: DbString,
     span: SourceSpan,
 ) -> Result<(), ExecutorError> {
     let matches = match expected {

@@ -1,29 +1,27 @@
 use std::sync::Arc;
 
-use selene_core::{
-    ExtensionTypeId, GraphId, Record, RecordTypeId, RecordTyped, VectorValue, intern,
-};
+use selene_core::{ExtensionTypeId, GraphId, Record, RecordTypeId, RecordTyped, VectorValue};
 
 use super::*;
 use crate::{GraphError, RecordFieldType, RecordFieldTypeDef, RecordFieldTypes, SharedGraph};
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn prop(name: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(istr(name), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(name), value)]).unwrap()
 }
 
 fn graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("validator.graph"),
+        name: db_string("validator.graph"),
         node_types: vec![
             crate::NodeTypeDef {
-                name: istr("validator.person"),
-                key_labels: LabelSet::single(istr("Person")),
+                name: db_string("validator.person"),
+                key_labels: LabelSet::single(db_string("Person")),
                 properties: vec![PropertyTypeDef {
-                    name: istr("name"),
+                    name: db_string("name"),
                     value_type: PropertyValueType::String,
                     list_element_type: None,
                     required: true,
@@ -34,10 +32,10 @@ fn graph_type() -> GraphTypeDef {
                 validation_mode: ValidationMode::Strict,
             },
             crate::NodeTypeDef {
-                name: istr("validator.company"),
-                key_labels: LabelSet::single(istr("Company")),
+                name: db_string("validator.company"),
+                key_labels: LabelSet::single(db_string("Company")),
                 properties: vec![PropertyTypeDef {
-                    name: istr("name"),
+                    name: db_string("name"),
                     value_type: PropertyValueType::String,
                     list_element_type: None,
                     required: true,
@@ -49,12 +47,12 @@ fn graph_type() -> GraphTypeDef {
             },
         ],
         edge_types: vec![crate::EdgeTypeDef {
-            name: istr("validator.works_at"),
-            label: istr("WORKS_AT"),
+            name: db_string("validator.works_at"),
+            label: db_string("WORKS_AT"),
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(1),
             properties: vec![PropertyTypeDef {
-                name: istr("since"),
+                name: db_string("since"),
                 value_type: PropertyValueType::Int,
                 list_element_type: None,
                 required: false,
@@ -74,19 +72,19 @@ fn valid_graph() -> SeleneGraph {
         let mut mutator = txn.mutator();
         let person = mutator
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("Alice"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("Alice"))),
             )
             .unwrap();
         let company = mutator
             .create_node(
-                LabelSet::single(istr("Company")),
-                prop("name", Value::String(istr("Acme"))),
+                LabelSet::single(db_string("Company")),
+                prop("name", Value::String(db_string("Acme"))),
             )
             .unwrap();
         mutator
             .create_edge(
-                istr("WORKS_AT"),
+                db_string("WORKS_AT"),
                 person,
                 company,
                 prop("since", Value::Int(2026)),
@@ -105,12 +103,12 @@ fn validate_entity_state_accepts_valid_graph() {
 #[test]
 fn validate_entity_state_accepts_vector_property() {
     let graph_type = GraphTypeDef {
-        name: istr("validator.vector.graph"),
+        name: db_string("validator.vector.graph"),
         node_types: vec![crate::NodeTypeDef {
-            name: istr("validator.embedding"),
-            key_labels: LabelSet::single(istr("Embedding")),
+            name: db_string("validator.embedding"),
+            key_labels: LabelSet::single(db_string("Embedding")),
             properties: vec![PropertyTypeDef {
-                name: istr("embedding"),
+                name: db_string("embedding"),
                 value_type: PropertyValueType::Vector,
                 list_element_type: None,
                 required: true,
@@ -128,7 +126,7 @@ fn validate_entity_state_accepts_vector_property() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(istr("Embedding")),
+                LabelSet::single(db_string("Embedding")),
                 prop(
                     "embedding",
                     Value::Vector(VectorValue::new(vec![0.1, 0.2, 0.3]).unwrap()),
@@ -146,8 +144,8 @@ fn validate_change_accepts_applied_node_created() {
     validate_change(
         &Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(istr("Person")),
-            properties: prop("name", Value::String(istr("Alice"))),
+            labels: LabelSet::single(db_string("Person")),
+            properties: prop("name", Value::String(db_string("Alice"))),
         },
         &graph,
         &graph_type(),
@@ -162,7 +160,7 @@ fn rejects_unknown_node_label() {
     let node = {
         let mut mutator = txn.mutator();
         mutator
-            .create_node(LabelSet::single(istr("Project")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Project")), PropertyMap::new())
             .unwrap()
     };
     txn.commit().unwrap();
@@ -175,11 +173,11 @@ fn rejects_unknown_node_label() {
 #[test]
 fn rejects_unknown_edge_label() {
     let mut graph = valid_graph();
-    graph.edge_store.label.set(0, istr("KNOWS"));
+    graph.edge_store.label.set(0, db_string("KNOWS"));
     assert!(matches!(
         validate_entity_state(&graph, &graph_type()),
         Err(TypeViolation::UnknownEdgeLabel { id, label })
-            if id == EdgeId::new(1) && label == istr("KNOWS")
+            if id == EdgeId::new(1) && label == db_string("KNOWS")
     ));
 }
 
@@ -191,18 +189,18 @@ fn rejects_edge_endpoint_mismatch() {
         let mut mutator = txn.mutator();
         let a = mutator
             .create_node(
-                LabelSet::single(istr("Company")),
-                prop("name", Value::String(istr("A"))),
+                LabelSet::single(db_string("Company")),
+                prop("name", Value::String(db_string("A"))),
             )
             .unwrap();
         let b = mutator
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("B"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("B"))),
             )
             .unwrap();
         mutator
-            .create_edge(istr("WORKS_AT"), a, b, PropertyMap::new())
+            .create_edge(db_string("WORKS_AT"), a, b, PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();
@@ -223,13 +221,13 @@ fn rejects_missing_required_property() {
     {
         let mut mutator = txn.mutator();
         mutator
-            .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();
     assert!(matches!(
         validate_entity_state(shared.read().as_ref(), &graph_type()),
-        Err(TypeViolation::MissingRequiredProperty { property, .. }) if property == istr("name")
+        Err(TypeViolation::MissingRequiredProperty { property, .. }) if property == db_string("name")
     ));
 }
 
@@ -241,7 +239,7 @@ fn rejects_property_type_mismatch() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(istr("Person")),
+                LabelSet::single(db_string("Person")),
                 prop("name", Value::Int(7)),
             )
             .unwrap();
@@ -260,7 +258,7 @@ fn rejects_property_type_mismatch() {
 #[test]
 fn legacy_untyped_list_declaration_accepts_any_list_elements() {
     let declaration = PropertyTypeDef {
-        name: istr("legacy"),
+        name: db_string("legacy"),
         value_type: PropertyValueType::List,
         list_element_type: None,
         required: false,
@@ -271,7 +269,7 @@ fn legacy_untyped_list_declaration_accepts_any_list_elements() {
 
     assert!(property_value_matches(
         &declaration,
-        &Value::List(vec![Value::Int(1), Value::String(istr("two"))])
+        &Value::List(vec![Value::Int(1), Value::String(db_string("two"))])
     ));
     assert!(!property_value_matches(&declaration, &Value::Int(1)));
 }
@@ -279,7 +277,7 @@ fn legacy_untyped_list_declaration_accepts_any_list_elements() {
 #[test]
 fn vector_declaration_matches_only_vector_values() {
     let declaration = PropertyTypeDef {
-        name: istr("embedding"),
+        name: db_string("embedding"),
         value_type: PropertyValueType::Vector,
         list_element_type: None,
         required: false,
@@ -306,7 +304,7 @@ fn rejects_extension_value() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(istr("Person")),
+                LabelSet::single(db_string("Person")),
                 prop(
                     "name",
                     Value::Extended {
@@ -320,7 +318,7 @@ fn rejects_extension_value() {
     txn.commit().unwrap();
     assert!(matches!(
         validate_entity_state(shared.read().as_ref(), &graph_type()),
-        Err(TypeViolation::ExtensionValueRejected { property, .. }) if property == istr("name")
+        Err(TypeViolation::ExtensionValueRejected { property, .. }) if property == db_string("name")
     ));
 }
 
@@ -330,16 +328,16 @@ fn rejects_undeclared_property() {
     let mut txn = shared.begin_write();
     {
         let mut mutator = txn.mutator();
-        let mut props = prop("name", Value::String(istr("Alice")));
-        props.set(istr("extra"), Value::Bool(true)).unwrap();
+        let mut props = prop("name", Value::String(db_string("Alice")));
+        props.set(db_string("extra"), Value::Bool(true)).unwrap();
         mutator
-            .create_node(LabelSet::single(istr("Person")), props)
+            .create_node(LabelSet::single(db_string("Person")), props)
             .unwrap();
     }
     txn.commit().unwrap();
     assert!(matches!(
         validate_entity_state(shared.read().as_ref(), &graph_type()),
-        Err(TypeViolation::UndeclaredProperty { property, .. }) if property == istr("extra")
+        Err(TypeViolation::UndeclaredProperty { property, .. }) if property == db_string("extra")
     ));
 }
 
@@ -347,7 +345,7 @@ fn rejects_undeclared_property() {
 fn graph_error_wraps_type_violation() {
     let error = GraphError::from(TypeViolation::UnknownEdgeLabel {
         id: EdgeId::new(1),
-        label: istr("BAD"),
+        label: db_string("BAD"),
     });
     assert_eq!(error.gqlstatus(), "G2000");
 }
@@ -358,7 +356,7 @@ fn open_record(fields: &[(&str, Value)]) -> Value {
     Value::Record(Box::new(Record::Open(
         fields
             .iter()
-            .map(|(name, value)| (istr(name), value.clone()))
+            .map(|(name, value)| (db_string(name), value.clone()))
             .collect(),
     )))
 }
@@ -369,7 +367,7 @@ fn open_record(fields: &[(&str, Value)]) -> Value {
 /// only), so the `required: false` path is reachable only via a hand-built descriptor.
 fn closed_record_declaration() -> PropertyTypeDef {
     PropertyTypeDef {
-        name: istr("config"),
+        name: db_string("config"),
         value_type: PropertyValueType::RecordTyped,
         list_element_type: None,
         required: false,
@@ -377,12 +375,12 @@ fn closed_record_declaration() -> PropertyTypeDef {
         immutable: false,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
-                name: istr("host"),
+                name: db_string("host"),
                 field_type: RecordFieldType::Scalar(PropertyValueType::String),
                 required: true,
             },
             RecordFieldTypeDef {
-                name: istr("port"),
+                name: db_string("port"),
                 field_type: RecordFieldType::Scalar(PropertyValueType::Int),
                 required: false,
             },
@@ -396,14 +394,14 @@ fn closed_record_accepts_conforming_value() {
     assert!(property_value_matches(
         &declaration,
         &open_record(&[
-            ("host", Value::String(istr("h"))),
+            ("host", Value::String(db_string("h"))),
             ("port", Value::Int(8080)),
         ])
     ));
     // Optional field may be omitted.
     assert!(property_value_matches(
         &declaration,
-        &open_record(&[("host", Value::String(istr("h")))])
+        &open_record(&[("host", Value::String(db_string("h")))])
     ));
 }
 
@@ -432,7 +430,7 @@ fn closed_record_rejects_extra_undeclared_field() {
     assert!(!property_value_matches(
         &declaration,
         &open_record(&[
-            ("host", Value::String(istr("h"))),
+            ("host", Value::String(db_string("h"))),
             ("port", Value::Int(8080)),
             ("extra", Value::Bool(true)),
         ])
@@ -443,7 +441,7 @@ fn closed_record_rejects_extra_undeclared_field() {
 fn closed_record_accepts_and_rejects_nested() {
     // config :: RECORD { id :: INT, tags :: LIST<STRING>, meta :: RECORD { live :: BOOL } }
     let declaration = PropertyTypeDef {
-        name: istr("config"),
+        name: db_string("config"),
         value_type: PropertyValueType::RecordTyped,
         list_element_type: None,
         required: true,
@@ -451,22 +449,22 @@ fn closed_record_accepts_and_rejects_nested() {
         immutable: false,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
-                name: istr("id"),
+                name: db_string("id"),
                 field_type: RecordFieldType::Scalar(PropertyValueType::Int),
                 required: true,
             },
             RecordFieldTypeDef {
-                name: istr("tags"),
+                name: db_string("tags"),
                 field_type: RecordFieldType::List(Box::new(RecordFieldType::Scalar(
                     PropertyValueType::String,
                 ))),
                 required: true,
             },
             RecordFieldTypeDef {
-                name: istr("meta"),
+                name: db_string("meta"),
                 field_type: RecordFieldType::Record(Box::new(RecordFieldTypes(vec![
                     RecordFieldTypeDef {
-                        name: istr("live"),
+                        name: db_string("live"),
                         field_type: RecordFieldType::Scalar(PropertyValueType::Bool),
                         required: true,
                     },
@@ -479,7 +477,10 @@ fn closed_record_accepts_and_rejects_nested() {
         ("id", Value::Int(1)),
         (
             "tags",
-            Value::List(vec![Value::String(istr("a")), Value::String(istr("b"))]),
+            Value::List(vec![
+                Value::String(db_string("a")),
+                Value::String(db_string("b")),
+            ]),
         ),
         ("meta", open_record(&[("live", Value::Bool(true))])),
     ]);
@@ -496,7 +497,7 @@ fn closed_record_accepts_and_rejects_nested() {
     // Nested record-of-record violation: inner field wrong type.
     let bad_inner = open_record(&[
         ("id", Value::Int(1)),
-        ("tags", Value::List(vec![Value::String(istr("a"))])),
+        ("tags", Value::List(vec![Value::String(db_string("a"))])),
         ("meta", open_record(&[("live", Value::Int(0))])),
     ]);
     assert!(!property_value_matches(&declaration, &bad_inner));
@@ -508,7 +509,7 @@ fn closed_record_validates_recordtyped_positionally() {
     // Positional [host=String, port=Int] conforms.
     let conforming = Value::RecordTyped(Box::new(RecordTyped {
         type_id: RecordTypeId::new(1),
-        values: [Some(Value::String(istr("h"))), Some(Value::Int(80))]
+        values: [Some(Value::String(db_string("h"))), Some(Value::Int(80))]
             .into_iter()
             .collect(),
     }));
@@ -517,7 +518,9 @@ fn closed_record_validates_recordtyped_positionally() {
     // Optional port omitted (None at its position) conforms.
     let optional_omitted = Value::RecordTyped(Box::new(RecordTyped {
         type_id: RecordTypeId::new(1),
-        values: [Some(Value::String(istr("h"))), None].into_iter().collect(),
+        values: [Some(Value::String(db_string("h"))), None]
+            .into_iter()
+            .collect(),
     }));
     assert!(property_value_matches(&declaration, &optional_omitted));
 
@@ -531,7 +534,7 @@ fn closed_record_validates_recordtyped_positionally() {
     // Wrong arity is rejected.
     let wrong_arity = Value::RecordTyped(Box::new(RecordTyped {
         type_id: RecordTypeId::new(1),
-        values: [Some(Value::String(istr("h")))].into_iter().collect(),
+        values: [Some(Value::String(db_string("h")))].into_iter().collect(),
     }));
     assert!(!property_value_matches(&declaration, &wrong_arity));
 }
@@ -543,7 +546,10 @@ fn closed_record_optional_field_accepts_explicit_null() {
     let declaration = closed_record_declaration();
 
     // Open form: optional `port` present as explicit NULL conforms.
-    let port_null = open_record(&[("host", Value::String(istr("h"))), ("port", Value::Null)]);
+    let port_null = open_record(&[
+        ("host", Value::String(db_string("h"))),
+        ("port", Value::Null),
+    ]);
     assert!(property_value_matches(&declaration, &port_null));
 
     // Open form: required `host` present as explicit NULL is rejected.
@@ -553,7 +559,7 @@ fn closed_record_optional_field_accepts_explicit_null() {
     // Positional form: optional `port` slot = Some(NULL) conforms.
     let positional_null = Value::RecordTyped(Box::new(RecordTyped {
         type_id: RecordTypeId::new(1),
-        values: [Some(Value::String(istr("h"))), Some(Value::Null)]
+        values: [Some(Value::String(db_string("h"))), Some(Value::Null)]
             .into_iter()
             .collect(),
     }));
@@ -565,7 +571,7 @@ fn open_bare_record_declaration_accepts_any_record() {
     // value_type RecordTyped with no declared field structure is permissive (mirrors the
     // legacy untyped LIST path).
     let declaration = PropertyTypeDef {
-        name: istr("anything"),
+        name: db_string("anything"),
         value_type: PropertyValueType::RecordTyped,
         list_element_type: None,
         required: false,
@@ -586,10 +592,10 @@ fn open_bare_record_declaration_accepts_any_record() {
 fn closed_record_violation_is_graph_type_violation_g2000() {
     // End-to-end: a non-conforming record property surfaces as G2000.
     let record_graph_type = GraphTypeDef {
-        name: istr("record.validator.graph"),
+        name: db_string("record.validator.graph"),
         node_types: vec![crate::NodeTypeDef {
-            name: istr("record.host"),
-            key_labels: LabelSet::single(istr("Host")),
+            name: db_string("record.host"),
+            key_labels: LabelSet::single(db_string("Host")),
             properties: vec![closed_record_declaration()],
             validation_mode: ValidationMode::Strict,
         }],
@@ -601,7 +607,7 @@ fn closed_record_violation_is_graph_type_violation_g2000() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(istr("Host")),
+                LabelSet::single(db_string("Host")),
                 // host has the wrong type → closed-record violation.
                 prop("config", open_record(&[("host", Value::Int(1))])),
             )
@@ -612,7 +618,7 @@ fn closed_record_violation_is_graph_type_violation_g2000() {
         .expect_err("non-conforming record must be rejected");
     assert!(matches!(
         violation,
-        TypeViolation::PropertyTypeMismatch { ref property, .. } if *property == istr("config")
+        TypeViolation::PropertyTypeMismatch { ref property, .. } if *property == db_string("config")
     ));
     assert_eq!(GraphError::from(violation).gqlstatus(), "G2000");
 }

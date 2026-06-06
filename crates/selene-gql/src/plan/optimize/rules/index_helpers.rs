@@ -1,6 +1,6 @@
 //! Shared helpers for index-aware optimizer rules.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     FilterPredicate, GqlType, LabelExpr, Literal, ValueExpr,
@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Return the single label carried by a label expression.
-pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::IStr> {
+pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::DbString> {
     match label {
         Some(LabelExpr::Single(label)) => Some(label.clone()),
         _ => None,
@@ -44,7 +44,7 @@ pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::ISt
 /// `parts.len() >= 2` — no empty/1-element edge case to handle.
 pub(super) fn flat_disjunction_singles(
     label: &Option<LabelExpr>,
-) -> Option<Vec<selene_core::IStr>> {
+) -> Option<Vec<selene_core::DbString>> {
     let Some(LabelExpr::Disjunction(parts)) = label else {
         return None;
     };
@@ -70,7 +70,7 @@ pub(super) fn target_for_element(element: BindingElement) -> Option<IndexTarget>
 pub(super) fn binding_index_target(
     bindings: &[BindingDef],
     binding_id: BindingId,
-) -> Option<(IndexTarget, selene_core::IStr)> {
+) -> Option<(IndexTarget, selene_core::DbString)> {
     let binding = bindings
         .iter()
         .find(|binding| binding.binding == binding_id)?;
@@ -142,7 +142,7 @@ pub(super) struct EqualityCandidate<'a> {
     /// Position of the candidate within the scan's `property_predicates`.
     pub(super) index: usize,
     /// Property key the equality predicate references.
-    pub(super) key: IStr,
+    pub(super) key: DbString,
     /// Equality value (literal or parameter slot).
     pub(super) value: &'a ValueExpr,
 }
