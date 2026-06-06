@@ -1,4 +1,5 @@
 // corpus: positive
 // feature: IM_JSON
 // expects: parse-ok
-RETURN json('{"kind":"memory","score":7}') AS payload
+RETURN json('{"kind":"memory","score":7}') AS payload,
+       json_get_path(json('{"memory":{"score":7}}'), 'memory', 'score') AS score
