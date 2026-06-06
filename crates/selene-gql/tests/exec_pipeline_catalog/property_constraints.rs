@@ -233,6 +233,81 @@ fn float_default_property_constraint_rejects_non_finite_literal() {
 }
 
 #[test]
+fn exact_numeric_default_property_constraint_accepts_coerced_literals() {
+    let graph = empty_closed_graph(3733);
+    let plan = planned(
+        "CREATE NODE TYPE :Metric (u :: UINT64 DEFAULT 42, \
+         i128 :: INT128 DEFAULT '-170141183460469231731687303715884105728', \
+         u128 :: UINT128 DEFAULT '340282366920938463463374607431768211455', \
+         dec_i :: DECIMAL DEFAULT 7, dec_s :: DECIMAL DEFAULT '123.450', \
+         dec_f :: DECIMAL DEFAULT 1.25)",
+    );
+
+    run_write(&graph, &plan)
+        .expect("exact numeric defaults execute")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(PropertyDefaultValue::Uint(42))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[1].default,
+        Some(PropertyDefaultValue::Int128(i128::MIN))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[2].default,
+        Some(PropertyDefaultValue::Uint128(u128::MAX))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[3].default,
+        Some(PropertyDefaultValue::Decimal(db_string("7")))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[4].default,
+        Some(PropertyDefaultValue::Decimal(db_string("123.450")))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[5].default,
+        Some(PropertyDefaultValue::Decimal(db_string("1.25")))
+    );
+}
+
+#[test]
+fn exact_numeric_default_property_constraint_rejects_invalid_text() {
+    let graph = empty_closed_graph(3734);
+    let plan = planned("CREATE NODE TYPE :Metric (amount :: DECIMAL DEFAULT 'not-decimal')");
+
+    let err = run_write(&graph, &plan).expect_err("invalid DECIMAL default rejected");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("not a valid DECIMAL")
+    ));
+}
+
+#[test]
+fn exact_numeric_default_property_constraint_rejects_range_overflow() {
+    let graph = empty_closed_graph(3735);
+    let plan = planned(
+        "CREATE NODE TYPE :Metric (id :: UINT128 DEFAULT \
+         '340282366920938463463374607431768211456')",
+    );
+
+    let err = run_write(&graph, &plan).expect_err("overflowing UINT128 default rejected");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("unsigned integer range")
+    ));
+}
+
+#[test]
 fn temporal_default_property_constraint_accepts_temporal_literals() {
     let graph = empty_closed_graph(3732);
     let plan = planned(

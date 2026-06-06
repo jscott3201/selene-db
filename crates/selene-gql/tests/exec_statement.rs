@@ -240,6 +240,55 @@ fn catalog_float_default_properties_materialize_and_round_trip() {
 }
 
 #[test]
+fn catalog_exact_numeric_default_properties_materialize_and_round_trip() {
+    let graph = empty_closed_graph(3826);
+    let mut session = Session::new(&graph);
+
+    execute(
+        "CREATE NODE TYPE :Metric (u :: UINT64 DEFAULT 42, \
+         i128 :: INT128 DEFAULT '-170141183460469231731687303715884105728', \
+         u128 :: UINT128 DEFAULT '340282366920938463463374607431768211455', \
+         dec_i :: DECIMAL DEFAULT 7, dec_s :: DECIMAL DEFAULT '123.450', \
+         dec_f :: DECIMAL DEFAULT 1.25)",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute("INSERT (n:Metric) FINISH", &mut session).expect("insert succeeds");
+    let table = rows(
+        execute(
+            "MATCH (n:Metric) RETURN n.u AS u, n.i128 AS i128, n.u128 AS u128, \
+             n.dec_i AS dec_i, n.dec_s AS dec_s, n.dec_f AS dec_f",
+            &mut session,
+        )
+        .expect("match succeeds"),
+    );
+
+    assert_eq!(
+        table.rows()[0].values(),
+        &[
+            Value::Uint(42),
+            Value::Int128(i128::MIN),
+            Value::Uint128(u128::MAX),
+            Value::Decimal("7".parse().unwrap()),
+            Value::Decimal("123.450".parse().unwrap()),
+            Value::Decimal("1.25".parse().unwrap()),
+        ]
+    );
+
+    let table = rows(execute("SHOW NODE TYPES", &mut session).expect("show succeeds"));
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Metric (u :: UINT64 DEFAULT '42', \
+         i128 :: INT128 DEFAULT '-170141183460469231731687303715884105728', \
+         u128 :: UINT128 DEFAULT '340282366920938463463374607431768211455', \
+         dec_i :: DECIMAL DEFAULT '7', dec_s :: DECIMAL DEFAULT '123.450', \
+         dec_f :: DECIMAL DEFAULT '1.25')"
+        ))
+    );
+}
+
+#[test]
 fn catalog_immutable_property_rejects_gql_set() {
     let graph = empty_closed_graph(3815);
     let mut session = Session::new(&graph);

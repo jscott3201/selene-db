@@ -92,6 +92,54 @@ fn property_default_float_descriptors_reject_non_finite_values() {
 }
 
 #[test]
+fn property_default_exact_numeric_descriptors_materialize_values() {
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Uint(u64::MAX)),
+        Some(PropertyDefaultValue::Uint(u64::MAX))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Uint(u64::MAX).to_value().unwrap(),
+        Value::Uint(u64::MAX)
+    );
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Int128(i128::MIN)),
+        Some(PropertyDefaultValue::Int128(i128::MIN))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Int128(i128::MIN).to_value().unwrap(),
+        Value::Int128(i128::MIN)
+    );
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Uint128(u128::MAX)),
+        Some(PropertyDefaultValue::Uint128(u128::MAX))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Uint128(u128::MAX).to_value().unwrap(),
+        Value::Uint128(u128::MAX)
+    );
+    let decimal = Value::Decimal("123.450".parse().unwrap());
+    assert_eq!(
+        PropertyDefaultValue::from_value(&decimal),
+        Some(PropertyDefaultValue::Decimal(label("123.450")))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Decimal(label("123.450"))
+            .to_value()
+            .unwrap(),
+        decimal
+    );
+}
+
+#[test]
+fn property_default_decimal_descriptor_rejects_invalid_text() {
+    assert!(matches!(
+        PropertyDefaultValue::Decimal(label("not-decimal")).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("DECIMAL property default is invalid")
+    ));
+}
+
+#[test]
 fn property_default_temporal_descriptors_materialize_values() {
     let zoned = Value::ZonedDateTime(Box::new(
         "2026-05-07T12:34:56-04:00[America/New_York]"
