@@ -3,7 +3,22 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map as SerdeJsonMap, Value as SerdeJsonValue};
 
-use crate::{CoreError, CoreResult, db_string::MAX_DB_STRING_BYTES, json_patch::apply_json_patch};
+use crate::{
+    CoreError, CoreResult, DbString, db_string::MAX_DB_STRING_BYTES, json_patch::apply_json_patch,
+};
+
+/// Selector used by JSON path-existence helpers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum JsonPathSelector {
+    /// Select an object member by key.
+    Key(DbString),
+    /// Select an array element by signed index.
+    ///
+    /// Negative indexes count from the end, matching `json_has_path`.
+    Index(i64),
+    /// Select an array element by unsigned index.
+    UnsignedIndex(u64),
+}
 
 /// Native JSON payload stored as a first-class [`crate::Value`].
 ///
@@ -81,6 +96,23 @@ impl JsonValue {
         json_contains_value(self.as_serde(), candidate.as_serde())
     }
 
+    /// Return true when every selector in `path` resolves inside this value.
+    ///
+    /// Stored-value shape mismatches return false. This makes the helper useful
+    /// for heterogeneous graph scans where one malformed document should not
+    /// abort the entire candidate search.
+    #[must_use]
+    pub fn path_exists(&self, path: &[JsonPathSelector]) -> bool {
+        let mut current = self.as_serde();
+        for selector in path {
+            let Some(next) = select_json_child(current, selector) else {
+                return false;
+            };
+            current = next;
+        }
+        true
+    }
+
     /// Return the result of applying an RFC 7396 JSON Merge Patch document.
     ///
     /// The operation is copy-on-write: this value and `patch` are left
@@ -109,6 +141,33 @@ impl JsonValue {
     /// result exceeds engine caps.
     pub fn apply_patch(&self, patch: &Self) -> CoreResult<Self> {
         Self::new(apply_json_patch(self.as_serde(), patch.as_serde())?)
+    }
+}
+
+fn select_json_child<'a>(
+    current: &'a SerdeJsonValue,
+    selector: &JsonPathSelector,
+) -> Option<&'a SerdeJsonValue> {
+    match (current, selector) {
+        (SerdeJsonValue::Object(values), JsonPathSelector::Key(key)) => values.get(key.as_str()),
+        (SerdeJsonValue::Array(values), JsonPathSelector::Index(index)) => {
+            signed_array_index(*index, values.len()).and_then(|index| values.get(index))
+        }
+        (SerdeJsonValue::Array(values), JsonPathSelector::UnsignedIndex(index)) => {
+            usize::try_from(*index)
+                .ok()
+                .and_then(|index| values.get(index))
+        }
+        _ => None,
+    }
+}
+
+fn signed_array_index(index: i64, len: usize) -> Option<usize> {
+    if index >= 0 {
+        usize::try_from(index).ok().filter(|index| *index < len)
+    } else {
+        let offset = usize::try_from(index.unsigned_abs()).ok()?;
+        (offset <= len).then_some(len - offset)
     }
 }
 
@@ -278,7 +337,8 @@ fn write_json_canonical(value: &SerdeJsonValue, output: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::JsonValue;
+    use super::{JsonPathSelector, JsonValue};
+    use crate::db_string;
 
     #[test]
     fn human_readable_serde_preserves_json_shape() {
@@ -307,6 +367,33 @@ mod tests {
         assert!(!target.contains(
             &JsonValue::new(serde_json::json!({"memory": {"kind": "semantic"}})).unwrap()
         ));
+    }
+
+    #[test]
+    fn path_exists_matches_object_keys_and_array_indexes() {
+        let target = JsonValue::new(serde_json::json!({
+            "memory": {"facts": [{"title": "old"}, {"title": "current"}]}
+        }))
+        .unwrap();
+        let path = [
+            JsonPathSelector::Key(db_string("memory").unwrap()),
+            JsonPathSelector::Key(db_string("facts").unwrap()),
+            JsonPathSelector::Index(1),
+            JsonPathSelector::Key(db_string("title").unwrap()),
+        ];
+
+        assert!(target.path_exists(&path));
+        assert!(target.path_exists(&[
+            JsonPathSelector::Key(db_string("memory").unwrap()),
+            JsonPathSelector::Key(db_string("facts").unwrap()),
+            JsonPathSelector::Index(-1),
+            JsonPathSelector::Key(db_string("title").unwrap()),
+        ]));
+        assert!(!target.path_exists(&[
+            JsonPathSelector::Key(db_string("memory").unwrap()),
+            JsonPathSelector::Key(db_string("facts").unwrap()),
+            JsonPathSelector::UnsignedIndex(9),
+        ]));
     }
 
     #[test]

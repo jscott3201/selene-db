@@ -2,8 +2,8 @@
 
 use selene_core::{DbString, GraphId, JsonValue, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{
-    AnalysisError, BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureRegistry,
-    Session, StatementOutput, TypeMismatchContext,
+    AnalysisError, BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError,
+    ProcedureRegistry, Session, StatementOutput, TypeMismatchContext,
 };
 use selene_graph::SharedGraph;
 
@@ -135,6 +135,48 @@ fn json_contains_nodes_respects_k() {
 }
 
 #[test]
+fn json_path_exists_nodes_returns_json_property_candidates() {
+    let graph = graph(514_104);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    seed_json_docs(&graph);
+
+    let table = execute_rows(
+        &mut session,
+        r#"CALL selene.json_path_exists_nodes(
+             'JsonDoc',
+             'payload',
+             json_array('memory', 'score'),
+             10
+           ) YIELD node_id"#,
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id"), vec![NodeId::new(1)]);
+}
+
+#[test]
+fn json_path_exists_nodes_supports_array_indexes_and_k() {
+    let graph = graph(514_105);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    seed_json_docs(&graph);
+
+    let table = execute_rows(
+        &mut session,
+        r#"CALL selene.json_path_exists_nodes(
+             'JsonDoc',
+             'payload',
+             json_array(1, 'memory', 'kind'),
+             1
+           ) YIELD node_id"#,
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id"), vec![NodeId::new(4)]);
+}
+
+#[test]
 fn json_contains_nodes_rejects_non_json_candidate() {
     let graph = graph(514_103);
     let registry = BuiltinProcedureRegistry::new();
@@ -157,4 +199,54 @@ fn json_contains_nodes_rejects_non_json_candidate() {
     else {
         panic!("expected analyzer JSON argument type mismatch, got {err:?}");
     };
+}
+
+#[test]
+fn json_path_exists_nodes_rejects_bad_path_document() {
+    let graph = graph(514_106);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let err = session
+        .execute_source(
+            r#"CALL selene.json_path_exists_nodes('JsonDoc', 'payload', json_object('a', 1), 10)"#,
+            &registry,
+        )
+        .expect_err("object path document should fail");
+
+    let ExecutorError::Procedure {
+        source: ProcedureError::InvalidArgument { detail },
+        ..
+    } = err
+    else {
+        panic!("expected procedure invalid argument, got {err:?}");
+    };
+    assert!(detail.contains("path must be a JSON array"));
+}
+
+#[test]
+fn json_path_exists_nodes_rejects_too_many_selectors() {
+    let graph = graph(514_107);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let selectors = std::iter::repeat_n("\"a\"", 65)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let json_path = format!("[{selectors}]");
+    let source = format!(
+        "CALL selene.json_path_exists_nodes('JsonDoc', 'payload', json('{json_path}'), 10)"
+    );
+
+    let err = session
+        .execute_source(&source, &registry)
+        .expect_err("over-limit path document should fail");
+
+    let ExecutorError::Procedure {
+        source: ProcedureError::InvalidArgument { detail },
+        ..
+    } = err
+    else {
+        panic!("expected procedure invalid argument, got {err:?}");
+    };
+    assert!(detail.contains("supports at most 64 selectors"));
 }

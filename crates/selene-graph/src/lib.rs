@@ -75,8 +75,9 @@ pub use id_allocator::IdAllocator;
 pub use index_provider::{
     IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
 };
-pub use json_search::{JsonContainmentHit, JsonSearchError};
+pub use json_search::{JSON_PATH_SELECTOR_LIMIT, JsonContainmentHit, JsonPathHit, JsonSearchError};
 pub use mutator::Mutator;
+pub use selene_core::JsonPathSelector;
 pub use selene_core::{HnswIndexConfig, IvfIndexConfig};
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
 pub use shared::{SharedGraph, SharedGraphBuilder};

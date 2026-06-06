@@ -10,7 +10,7 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 36 platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 37 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
 //! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
 //! `selene.vector_search_nodes_batch`, `selene.vector_score_nodes`,
@@ -29,14 +29,14 @@
 //! `selene.vector_search_candidate_state_expanded_ann`,
 //! `selene.vector_search_expanded_candidates_ann_batch`,
 //! `selene.vector_index_stats`, `selene.text_index_stats`,
-//! `selene.json_contains_nodes`,
+//! `selene.json_contains_nodes`, `selene.json_path_exists_nodes`,
 //! `selene.rebuild_vector_indexes`,
 //! `selene.rebuild_recommended_vector_indexes`, `selene.create_vector_index`,
 //! `selene.drop_vector_index`, `selene.create_text_index`,
 //! `selene.drop_text_index`, `selene.text_search_nodes`,
 //! `selene.text_score_nodes`, `selene.text_score_nodes_batch`,
 //! `selene.text_score_candidate_state_expanded_batch`) are registered here,
-//! bringing the total to 55;
+//! bringing the total to 56;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -97,7 +97,7 @@ impl BuiltinProcedureRegistry {
 
         // Handles are 1-based and assigned in registration order: the 19
         // `algo.*` procedures first (handles 1..=19), then the 36 `selene.*`
-        // platform built-ins (handles 20..=55), continuing the same monotonic
+        // platform built-ins (handles 20..=56), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
@@ -767,7 +767,7 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=55).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=56).collect::<Vec<_>>());
     }
 
     #[test]

@@ -26,7 +26,7 @@ SQL, Cypher, SPARQL, or ad hoc grammar.
 | Procedures | Native `BuiltinProcedureRegistry` for health/feature reporting, index DDL, vector search/scoring, JSON candidate production, BM25 search/scoring, maintenance, and `algo.*` graph algorithms. |
 | Algorithms | Structural, pathfinding, centrality, and community algorithms through `selene-algorithms` and GQL `CALL algo.*` adapters. |
 | Vectors | `Value::Vector`, exact scoring/search, HNSW and IVF indexes, batch scoring, graph-expanded scoring, maintained candidate state, index stats, and rebuild APIs. |
-| JSON | `Value::Json`, typed GQL properties/parameters/casts, bounded selectors, containment predicates, and exact containment candidate search. |
+| JSON | `Value::Json`, typed GQL properties/parameters/casts, bounded selectors, containment/path predicates, and exact JSON candidate search. |
 | Text | BM25 exact scan, maintained text indexes, candidate-scoped scoring, batched scoring, graph/state-expanded scoring, and text-index stats. |
 | Safety | Workspace-wide `#![forbid(unsafe_code)]`, `missing_docs = "deny"`, rustls-only dependency posture, file-size checks, secret scans, license checks, fuzz targets, and benchmark hygiene guards. |
 
@@ -37,7 +37,7 @@ There is no umbrella facade crate. Use the layers directly.
 | Crate | Owns |
 |---|---|
 | [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, `JsonValue`, IDs, `DbString`, labels, property maps, schema metadata, codecs, origins, changesets, and core vector kernels. |
-| [`selene-graph`](crates/selene-graph) | Graph storage, transactions, mutation funnel, property/composite/vector/text indexes, exact and ANN vector search, BM25 search, exact JSON containment search, maintained candidate state, graph type validation, compaction, and recovery providers. |
+| [`selene-graph`](crates/selene-graph) | Graph storage, transactions, mutation funnel, property/composite/vector/text indexes, exact and ANN vector search, BM25 search, exact JSON search, maintained candidate state, graph type validation, compaction, and recovery providers. |
 | [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, retention pruning, and audit log files. It stays below graph semantics. |
 | [`selene-algorithms`](crates/selene-algorithms) | Native graph algorithms, projection catalogs, free functions, and the `GraphAlgorithms` convenience trait. |
 | [`selene-gql`](crates/selene-gql) | GQL grammar, AST, analysis, planning, optimization, execution, procedure traits, and the built-in procedure registry. |
@@ -238,14 +238,22 @@ JSON is a first-class value for structured agent payloads and metadata:
   array/object shape introspection, bounded path selectors, existence checks,
   recursive containment, RFC 7396 merge-patch updates, and RFC 6902 JSON Patch
   updates;
-- `selene.json_contains_nodes` turns JSON metadata predicates into graph node
-  candidates for vector/text reranking.
+- `selene.json_contains_nodes` and `selene.json_path_exists_nodes` turn JSON
+  metadata predicates into graph node candidates for vector/text reranking.
 
-Representative GQL call:
+Representative GQL calls:
 
 ```gql
 CALL selene.json_contains_nodes(
   'Document', 'payload', json('{"memory":{"kind":"episodic"}}'), 10
+)
+YIELD node_id
+RETURN node_id
+```
+
+```gql
+CALL selene.json_path_exists_nodes(
+  'Document', 'payload', json_array('memory', 'score'), 10
 )
 YIELD node_id
 RETURN node_id

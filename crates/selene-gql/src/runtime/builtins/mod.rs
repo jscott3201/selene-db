@@ -71,6 +71,7 @@ mod drop_vector_index;
 mod feature_status;
 mod health;
 mod json_contains_nodes;
+mod json_path_exists_nodes;
 mod meta;
 mod rebuild_vector_indexes;
 mod text_index_stats;

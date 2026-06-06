@@ -87,7 +87,7 @@ and benchmark profiles for dev-dependencies.
 | Crate | Owns |
 |---|---|
 | `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, `JsonValue`, vector metrics/top-k helpers, `DbString`, schema/value types, feature register, property maps, codecs, and changesets. |
-| `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, exact JSON containment search, reusable BM25 postings indexes, recovery provider, compaction, and graph type enforcement. |
+| `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, exact JSON search, reusable BM25 postings indexes, recovery provider, compaction, and graph type enforcement. |
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
 | `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |
 | `selene-gql` | Parser, AST, analyzer, planner, optimizer, executor, procedure tiers, and the concrete native `BuiltinProcedureRegistry`. |
@@ -105,7 +105,7 @@ and benchmark profiles for dev-dependencies.
 - Procedure tiers are load-bearing:
   - graph tier: read-only health, feature status, verify, vector search/score,
     vector candidate-state discovery/composition, vector index stats, BM25 text
-    search/candidate scoring, and JSON containment candidate search;
+    search/candidate scoring, and JSON candidate search;
   - mutation tier: property, vector, and text index create/drop;
   - maintenance tier: vector index rebuild and rebuild recommendation.
 
@@ -243,11 +243,14 @@ JSON is native engine data for agentic workloads:
 - `selene.json_contains_nodes(label, property, candidate, k)` is the exact
   graph-tier candidate producer for JSON-valued node properties. It is the
   correctness oracle before maintained JSON/path indexes exist.
+- `selene.json_path_exists_nodes(label, property, path, k)` is the exact
+  graph-tier candidate producer for JSON selector-array path existence. Path
+  arrays use string object keys and integer array indexes, including negative
+  indexes from the end; this is intentionally not JSONPath.
 
 Keep JSON grammar strict. Defer JSON literals, RFC 9535 JSONPath,
-candidate-producing path/existence search beyond containment, maintained JSON
-indexes, and hybrid JSON/text/vector retrieval surfaces until they have focused
-design, recovery semantics, tests, and benchmarks.
+maintained JSON indexes, and hybrid JSON/text/vector retrieval surfaces until
+they have focused design, recovery semantics, tests, and benchmarks.
 
 ## BM25 / Full Text
 
