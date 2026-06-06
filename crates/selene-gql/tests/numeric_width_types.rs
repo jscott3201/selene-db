@@ -51,6 +51,13 @@ fn bind_and_error(value: Value, source: &str) -> ExecutorError {
         .expect_err("statement errors")
 }
 
+fn bind_and_status(value: Value, source: &str) -> String {
+    bind_and_error(value, source)
+        .gqlstatus()
+        .as_str()
+        .to_owned()
+}
+
 #[test]
 fn is_typed_signed_integer_width_checks_range() {
     for (source, expected) in [
@@ -168,4 +175,92 @@ fn cast_to_signed_integer_width_checks_range() {
     ] {
         assert_eq!(first_status(source), "22003", "{source}");
     }
+}
+
+#[test]
+fn cast_to_unsigned_integer_width_checks_range() {
+    assert_eq!(
+        first_value("RETURN CAST(255 AS UINT8) AS v"),
+        Value::Uint(255)
+    );
+    assert_eq!(
+        first_value("RETURN CAST(4294967295 AS UINT32) AS v"),
+        Value::Uint(u64::from(u32::MAX))
+    );
+
+    for source in [
+        "RETURN CAST(256 AS UINT8) AS v",
+        "RETURN CAST(-1 AS UINT8) AS v",
+        "RETURN CAST(4294967296 AS UINT32) AS v",
+    ] {
+        assert_eq!(first_status(source), "22003", "{source}");
+    }
+}
+
+#[test]
+fn cast_string_to_unsigned_integer_checks_parse_and_range() {
+    assert_eq!(
+        first_value("RETURN CAST('255' AS UINT8) AS v"),
+        Value::Uint(255)
+    );
+    assert_eq!(
+        first_value("RETURN CAST(' 18446744073709551615 ' AS UINT64) AS v"),
+        Value::Uint(u64::MAX)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('340282366920938463463374607431768211455' AS UINT128) AS v"),
+        Value::Uint128(u128::MAX)
+    );
+
+    for source in [
+        "RETURN CAST('-1' AS UINT8) AS v",
+        "RETURN CAST('not-a-number' AS UINT8) AS v",
+    ] {
+        assert_eq!(first_status(source), "22018", "{source}");
+    }
+    assert_eq!(first_status("RETURN CAST('256' AS UINT8) AS v"), "22003");
+}
+
+#[test]
+fn cast_bound_numeric_sources_to_unsigned_integer() {
+    assert_eq!(
+        bind_and_eval(Value::Uint128(u128::MAX), "RETURN CAST($p AS UINT128) AS p"),
+        Value::Uint128(u128::MAX)
+    );
+    assert_eq!(
+        bind_and_eval(Value::Float(3.7), "RETURN CAST($p AS UINT8) AS p"),
+        Value::Uint(3)
+    );
+    assert_eq!(
+        bind_and_eval(
+            Value::Decimal("12.9".parse().expect("valid decimal")),
+            "RETURN CAST($p AS UINT8) AS p"
+        ),
+        Value::Uint(12)
+    );
+
+    assert_eq!(
+        bind_and_status(Value::Int(-1), "RETURN CAST($p AS UINT8) AS p"),
+        "22003"
+    );
+    assert_eq!(
+        bind_and_status(Value::Float(-0.1), "RETURN CAST($p AS UINT8) AS p"),
+        "22003"
+    );
+    assert_eq!(
+        bind_and_status(Value::Float(f64::NAN), "RETURN CAST($p AS UINT8) AS p"),
+        "22018"
+    );
+    assert_eq!(
+        bind_and_status(
+            Value::Decimal("-1".parse().expect("valid decimal")),
+            "RETURN CAST($p AS UINT8) AS p"
+        ),
+        "22003"
+    );
+}
+
+#[test]
+fn cast_boolean_to_unsigned_integer_returns_22g03() {
+    assert_eq!(first_status("RETURN CAST(true AS UINT8) AS v"), "22G03");
 }
