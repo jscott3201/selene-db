@@ -324,14 +324,41 @@ fn uuid_indexed_node_type_round_trips_catalog_and_execution() {
 }
 
 #[test]
-fn uuid_default_literal_is_rejected_until_default_literals_are_expanded() {
+fn uuid_default_literal_materializes_and_round_trips() {
     let graph = empty_closed_graph(13_505);
     let mut session = Session::new(&graph);
-    let err = session
+    session
         .execute_source(
             "CREATE NODE TYPE :Thing (id :: UUID DEFAULT UUID '018f1b6d-7b89-7cc0-9f40-2c6f8d4df101')",
             &EmptyProcedureRegistry,
         )
-        .expect_err("UUID DEFAULT literals are deferred");
-    assert_eq!(err.gqlstatus().as_str(), "42N01");
+        .expect("UUID DEFAULT literal is accepted");
+
+    session
+        .execute_source("INSERT (:Thing)", &EmptyProcedureRegistry)
+        .expect("UUID default materializes on insert");
+    let output = session
+        .execute_source(
+            "MATCH (n:Thing) RETURN n.id AS value",
+            &EmptyProcedureRegistry,
+        )
+        .expect("defaulted UUID property reads");
+    let table = rows_from_output(output);
+    assert_eq!(
+        column_values(&table, "value"),
+        vec![Value::Uuid(
+            uuid::Uuid::parse_str(UUID_TEXT).expect("test UUID parses")
+        )]
+    );
+
+    let output = session
+        .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
+        .expect("SHOW NODE TYPES executes");
+    let table = rows_from_output(output);
+    assert_eq!(
+        column_values(&table, "definition"),
+        vec![Value::String(db_string(
+            "CREATE NODE TYPE :Thing (id :: UUID DEFAULT UUID '018f1b6d-7b89-7cc0-9f40-2c6f8d4df101')"
+        ))]
+    );
 }

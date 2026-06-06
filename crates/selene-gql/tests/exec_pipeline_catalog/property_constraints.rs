@@ -143,8 +143,28 @@ fn bytes_default_property_constraint_accepts_byte_literal() {
 }
 
 #[test]
-fn json_default_property_constraint_accepts_json_string_literal() {
+fn uuid_default_property_constraint_accepts_uuid_literal() {
     let graph = empty_closed_graph(3728);
+    let plan = planned(
+        "CREATE NODE TYPE :Thing (id :: UUID DEFAULT UUID '018f1b6d-7b89-7cc0-9f40-2c6f8d4df101')",
+    );
+
+    run_write(&graph, &plan)
+        .expect("UUID default constraint executes")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(PropertyDefaultValue::Uuid(db_string(
+            "018f1b6d-7b89-7cc0-9f40-2c6f8d4df101"
+        )))
+    );
+}
+
+#[test]
+fn json_default_property_constraint_accepts_json_string_literal() {
+    let graph = empty_closed_graph(3729);
     let plan = planned(r#"CREATE NODE TYPE :Doc (payload :: JSON DEFAULT '{"b":2,"a":"don''t"}')"#);
 
     run_write(&graph, &plan)
@@ -162,7 +182,7 @@ fn json_default_property_constraint_accepts_json_string_literal() {
 
 #[test]
 fn json_default_property_constraint_rejects_invalid_json_string() {
-    let graph = empty_closed_graph(3729);
+    let graph = empty_closed_graph(3730);
     let plan = planned("CREATE NODE TYPE :Doc (payload :: JSON DEFAULT 'not-json')");
 
     let err = run_write(&graph, &plan).expect_err("invalid JSON default rejected");
