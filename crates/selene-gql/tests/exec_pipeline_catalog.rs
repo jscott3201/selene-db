@@ -341,6 +341,35 @@ fn show_node_types_after_create_in_same_statement_includes_new_type() {
 }
 
 #[test]
+fn show_node_types_renders_bytes_default_as_byte_literal() {
+    let graph = empty_closed_graph(3718);
+    run_write(
+        &graph,
+        &planned("CREATE NODE TYPE :Blob (payload :: BYTES DEFAULT X'00ff')"),
+    )
+    .expect("catalog executes")
+    .1
+    .expect("commit succeeds");
+
+    let plan = planned("SHOW NODE TYPES");
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+        graph.index_providers(),
+    );
+
+    let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
+
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Blob (payload :: BYTES DEFAULT X'00FF')"
+        ))
+    );
+}
+
+#[test]
 fn show_node_types_renders_key_labels_not_internal_name() {
     let graph = closed_graph_with_type(
         3717,

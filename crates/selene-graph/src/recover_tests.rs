@@ -276,21 +276,33 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         .unwrap();
     let sensor = db_string("Sensor").unwrap();
     let serial = db_string("serial").unwrap();
+    let payload = db_string("payload").unwrap();
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node_type(
                 sensor.clone(),
                 LabelSet::single(sensor.clone()),
-                vec![PropertyTypeDef {
-                    name: serial.clone(),
-                    value_type: selene_core::PropertyValueType::String,
-                    list_element_type: None,
-                    required: false,
-                    default: Some(PropertyDefaultValue::String(db_string("unknown").unwrap())),
-                    immutable: true,
-                    record_field_types: None,
-                }],
+                vec![
+                    PropertyTypeDef {
+                        name: serial.clone(),
+                        value_type: selene_core::PropertyValueType::String,
+                        list_element_type: None,
+                        required: false,
+                        default: Some(PropertyDefaultValue::String(db_string("unknown").unwrap())),
+                        immutable: true,
+                        record_field_types: None,
+                    },
+                    PropertyTypeDef {
+                        name: payload.clone(),
+                        value_type: selene_core::PropertyValueType::Bytes,
+                        list_element_type: None,
+                        required: false,
+                        default: Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE])),
+                        immutable: false,
+                        record_field_types: None,
+                    },
+                ],
                 ValidationMode::Warn,
             )
             .unwrap();
@@ -323,6 +335,11 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         Some(PropertyDefaultValue::String(db_string("unknown").unwrap()))
     );
     assert!(graph_type.node_types[0].properties[0].immutable);
+    assert_eq!(graph_type.node_types[0].properties[1].name, payload);
+    assert_eq!(
+        graph_type.node_types[0].properties[1].default,
+        Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE]))
+    );
     let _ = fs::remove_dir_all(dir);
 }
 
