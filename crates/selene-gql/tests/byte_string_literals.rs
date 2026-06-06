@@ -136,9 +136,16 @@ fn byte_string_literal_rejects_non_hex_digit() {
 }
 
 #[test]
-fn non_identity_bytes_casts_remain_unsupported() {
-    assert_eq!(
-        first_status("RETURN CAST('00' AS BYTES) AS payload"),
-        "42N01"
-    );
+fn non_identity_bytes_casts_are_invalid_type_combinations() {
+    for source in [
+        "RETURN CAST('00' AS BYTES) AS payload",
+        "RETURN CAST(1 AS BYTES) AS payload",
+        "RETURN CAST(true AS BYTES) AS payload",
+        "RETURN CAST(X'CAFE' AS STRING) AS payload",
+        "RETURN CAST(X'CAFE' AS INTEGER) AS payload",
+        "RETURN CAST(X'CAFE' AS BOOLEAN) AS payload",
+        "RETURN CAST([X'CAFE'] AS LIST<STRING>) AS payload",
+    ] {
+        assert_eq!(first_status(source), "22G03", "{source}");
+    }
 }

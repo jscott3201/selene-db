@@ -22,8 +22,8 @@
 //!   source/target combination, e.g. boolean ↔ numeric (Table 4 `N`), which
 //!   ISO does not define a `CAST` for.
 //! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
-//!   currently implemented explicit-cast scope (NODE / EDGE / PATH source,
-//!   non-identity bytes casts, or any cast whose target is `NULL` / `NOTHING`).
+//!   currently implemented explicit-cast scope (NODE / EDGE / PATH source or
+//!   any cast whose target is `NULL` / `NOTHING`).
 
 use selene_core::Value;
 
@@ -120,6 +120,15 @@ pub(super) fn eval_cast(
             return Err(ExecutorError::data_exception(
                 DataExceptionSubclass::InvalidValueType,
                 "CAST from RECORD to a non-record type is not a valid type combination",
+                span,
+            ));
+        }
+        Value::Bytes(_) if !matches!(target_type, GqlType::Bytes) => {
+            // ISO §20.8 Table 4: byte strings only cast to byte strings. Every
+            // byte-string source to a non-BYTES target is an invalid
+            // source/target combination, not an unimplemented conversion.
+            return Err(non_iso_combination(
+                "CAST from BYTES to a non-BYTES type is not a valid type combination",
                 span,
             ));
         }
@@ -243,10 +252,10 @@ fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> 
 fn cast_to_bytes(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
     match value {
         Value::Bytes(value) => Ok(Value::Bytes(value)),
-        _ => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "CAST source not supported for BYTES target",
+        _ => Err(non_iso_combination(
+            "CAST from a non-BYTES type to BYTES is not a valid type combination",
             span,
-        }),
+        )),
     }
 }
 
