@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use selene_gql::{
     CompositeIndexHandle, IndexCatalog, IndexHandle, IndexKind, IndexTarget, TypedIndexLookup,
 };
@@ -18,23 +18,23 @@ use selene_gql::{
 /// statistics are kept as association lists matched by `PartialEq`.
 #[derive(Clone, Debug, Default)]
 pub struct MockIndexCatalog {
-    typed: HashMap<(IndexTarget, IStr, IStr), TypedIndexLookup>,
-    labels: HashMap<(IndexTarget, IStr), IndexHandle>,
-    composites: HashMap<(IndexTarget, IStr, Vec<IStr>), CompositeIndexHandle>,
+    typed: HashMap<(IndexTarget, DbString, DbString), TypedIndexLookup>,
+    labels: HashMap<(IndexTarget, DbString), IndexHandle>,
+    composites: HashMap<(IndexTarget, DbString, Vec<DbString>), CompositeIndexHandle>,
     next_handle: u64,
     total_rows: HashMap<IndexTarget, u64>,
-    label_cardinality: HashMap<(IndexTarget, IStr), u64>,
-    typed_avg_bucket: HashMap<(IndexTarget, IStr, IStr), u64>,
-    composite_avg_bucket: HashMap<(IndexTarget, IStr, Vec<IStr>), u64>,
+    label_cardinality: HashMap<(IndexTarget, DbString), u64>,
+    typed_avg_bucket: HashMap<(IndexTarget, DbString, DbString), u64>,
+    composite_avg_bucket: HashMap<(IndexTarget, DbString, Vec<DbString>), u64>,
     equality_cardinality: Vec<EqualityStat>,
     composite_cardinality: Vec<CompositeStat>,
 }
 
 /// One injected equality-cardinality stat: `((target, label, property, value), rows)`.
-type EqualityStat = ((IndexTarget, IStr, IStr, Value), u64);
+type EqualityStat = ((IndexTarget, DbString, DbString, Value), u64);
 
 /// One injected composite-cardinality stat: `((target, label, canonical_keys), rows)`.
-type CompositeStat = ((IndexTarget, IStr, Vec<Value>), u64);
+type CompositeStat = ((IndexTarget, DbString, Vec<Value>), u64);
 
 impl MockIndexCatalog {
     /// Construct an empty mock catalog.
@@ -45,21 +45,26 @@ impl MockIndexCatalog {
 
     /// Register a node typed-property index.
     #[must_use]
-    pub fn with_node_typed_index(mut self, label: IStr, property: IStr, kind: IndexKind) -> Self {
+    pub fn with_node_typed_index(
+        mut self,
+        label: DbString,
+        property: DbString,
+        kind: IndexKind,
+    ) -> Self {
         self.insert_typed_index(IndexTarget::Node, label, property, kind);
         self
     }
 
     /// Register a node label index.
     #[must_use]
-    pub fn with_node_label_index(mut self, label: IStr) -> Self {
+    pub fn with_node_label_index(mut self, label: DbString) -> Self {
         self.insert_label_index(IndexTarget::Node, label);
         self
     }
 
     /// Register an edge label index.
     #[must_use]
-    pub fn with_edge_label_index(mut self, label: IStr) -> Self {
+    pub fn with_edge_label_index(mut self, label: DbString) -> Self {
         self.insert_label_index(IndexTarget::Edge, label);
         self
     }
@@ -72,8 +77,8 @@ impl MockIndexCatalog {
     #[must_use]
     pub fn with_node_composite_index(
         mut self,
-        label: IStr,
-        properties: Vec<(IStr, IndexKind)>,
+        label: DbString,
+        properties: Vec<(DbString, IndexKind)>,
     ) -> Self {
         self.insert_composite_index(IndexTarget::Node, label, properties);
         self
@@ -82,8 +87,8 @@ impl MockIndexCatalog {
     fn insert_typed_index(
         &mut self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: IndexKind,
     ) {
         let handle = self.next_handle();
@@ -93,7 +98,7 @@ impl MockIndexCatalog {
         );
     }
 
-    fn insert_label_index(&mut self, target: IndexTarget, label: IStr) {
+    fn insert_label_index(&mut self, target: IndexTarget, label: DbString) {
         let handle = self.next_handle();
         self.labels.insert((target, label), handle);
     }
@@ -101,11 +106,11 @@ impl MockIndexCatalog {
     fn insert_composite_index(
         &mut self,
         target: IndexTarget,
-        label: IStr,
-        properties: Vec<(IStr, IndexKind)>,
+        label: DbString,
+        properties: Vec<(DbString, IndexKind)>,
     ) {
         let handle = self.next_handle();
-        let mut key_properties: Vec<IStr> = properties
+        let mut key_properties: Vec<DbString> = properties
             .iter()
             .map(|(property, _)| property.clone())
             .collect();
@@ -132,7 +137,7 @@ impl MockIndexCatalog {
 
     /// Inject the exact row count carrying a node label.
     #[must_use]
-    pub fn with_label_cardinality(mut self, label: IStr, rows: u64) -> Self {
+    pub fn with_label_cardinality(mut self, label: DbString, rows: u64) -> Self {
         self.label_cardinality
             .insert((IndexTarget::Node, label), rows);
         self
@@ -142,8 +147,8 @@ impl MockIndexCatalog {
     #[must_use]
     pub fn with_equality_cardinality(
         mut self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         value: Value,
         rows: u64,
     ) -> Self {
@@ -154,7 +159,7 @@ impl MockIndexCatalog {
 
     /// Inject the average bucket size for a typed index (parameter equality).
     #[must_use]
-    pub fn with_typed_avg_bucket(mut self, label: IStr, property: IStr, rows: u64) -> Self {
+    pub fn with_typed_avg_bucket(mut self, label: DbString, property: DbString, rows: u64) -> Self {
         self.typed_avg_bucket
             .insert((IndexTarget::Node, label, property), rows);
         self
@@ -163,7 +168,12 @@ impl MockIndexCatalog {
     /// Inject the exact match count for a literal composite probe. `keys` are in
     /// the index's canonical (sorted-property) order.
     #[must_use]
-    pub fn with_composite_cardinality(mut self, label: IStr, keys: Vec<Value>, rows: u64) -> Self {
+    pub fn with_composite_cardinality(
+        mut self,
+        label: DbString,
+        keys: Vec<Value>,
+        rows: u64,
+    ) -> Self {
         self.composite_cardinality
             .push(((IndexTarget::Node, label, keys), rows));
         self
@@ -174,8 +184,8 @@ impl MockIndexCatalog {
     #[must_use]
     pub fn with_composite_avg_bucket(
         mut self,
-        label: IStr,
-        mut properties: Vec<IStr>,
+        label: DbString,
+        mut properties: Vec<DbString>,
         rows: u64,
     ) -> Self {
         properties.sort();
@@ -189,21 +199,21 @@ impl IndexCatalog for MockIndexCatalog {
     fn typed_index(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
     ) -> Option<TypedIndexLookup> {
         self.typed.get(&(target, label, property)).copied()
     }
 
-    fn label_index(&self, target: IndexTarget, label: IStr) -> Option<IndexHandle> {
+    fn label_index(&self, target: IndexTarget, label: DbString) -> Option<IndexHandle> {
         self.labels.get(&(target, label)).copied()
     }
 
     fn composite_index(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
     ) -> Option<CompositeIndexHandle> {
         let mut key_properties = properties.to_vec();
         key_properties.sort();
@@ -216,15 +226,15 @@ impl IndexCatalog for MockIndexCatalog {
         self.total_rows.get(&target).copied()
     }
 
-    fn label_cardinality(&self, target: IndexTarget, label: IStr) -> Option<u64> {
+    fn label_cardinality(&self, target: IndexTarget, label: DbString) -> Option<u64> {
         self.label_cardinality.get(&(target, label)).copied()
     }
 
     fn equality_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         value: &Value,
     ) -> Option<u64> {
         self.equality_cardinality
@@ -233,7 +243,12 @@ impl IndexCatalog for MockIndexCatalog {
             .map(|(_, rows)| *rows)
     }
 
-    fn typed_avg_bucket(&self, target: IndexTarget, label: IStr, property: IStr) -> Option<u64> {
+    fn typed_avg_bucket(
+        &self,
+        target: IndexTarget,
+        label: DbString,
+        property: DbString,
+    ) -> Option<u64> {
         self.typed_avg_bucket
             .get(&(target, label, property))
             .copied()
@@ -242,8 +257,8 @@ impl IndexCatalog for MockIndexCatalog {
     fn composite_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        _properties: &[IStr],
+        label: DbString,
+        _properties: &[DbString],
         keys: &[Value],
     ) -> Option<u64> {
         self.composite_cardinality
@@ -255,8 +270,8 @@ impl IndexCatalog for MockIndexCatalog {
     fn composite_avg_bucket(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
     ) -> Option<u64> {
         let mut key = properties.to_vec();
         key.sort();

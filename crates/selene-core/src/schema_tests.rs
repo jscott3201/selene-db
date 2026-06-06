@@ -1,10 +1,10 @@
 use smallvec::smallvec;
 
 use super::*;
-use crate::{ExtensionTypeId, Value, intern};
+use crate::{ExtensionTypeId, Value};
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn dbs(name: &str) -> DbString {
+    crate::db_string(name).unwrap()
 }
 
 #[test]
@@ -18,7 +18,7 @@ fn graph_type_id_rejects_zero() {
 
 #[test]
 fn node_type_def_constructed_with_labels() {
-    let label = istr("schema.node");
+    let label = dbs("schema.node");
     let def = NodeTypeDef::new(LabelSet::single(label.clone()));
     assert!(def.labels.contains(&label));
     assert!(def.properties.is_empty());
@@ -27,9 +27,9 @@ fn node_type_def_constructed_with_labels() {
 
 #[test]
 fn edge_type_def_constructed_with_endpoints() {
-    let edge = istr("schema.edge");
-    let source = NodeTypeRef(istr("schema.source"));
-    let target = NodeTypeRef(istr("schema.target"));
+    let edge = dbs("schema.edge");
+    let source = NodeTypeRef(dbs("schema.source"));
+    let target = NodeTypeRef(dbs("schema.target"));
     let def = EdgeTypeDef::new(edge.clone(), source.clone(), target.clone());
     assert_eq!(def.label, edge);
     assert_eq!(def.source_node_type, EdgeEndpointDef::NodeType(source));
@@ -39,7 +39,7 @@ fn edge_type_def_constructed_with_endpoints() {
 #[test]
 fn property_def_with_default_carries_value() {
     let property = PropertyDef {
-        name: istr("schema.prop"),
+        name: dbs("schema.prop"),
         value_type: ValueType::predefined(PredefinedValueType::Int),
         nullable: false,
         default: Some(Value::Int(7)),
@@ -80,7 +80,7 @@ fn key_label_set_policy_default_is_containment() {
 #[test]
 fn record_type_def_with_multiple_fields() {
     let field_a = PropertyDef {
-        name: istr("schema.field.a"),
+        name: dbs("schema.field.a"),
         value_type: ValueType::predefined(PredefinedValueType::String),
         nullable: false,
         default: None,
@@ -88,7 +88,7 @@ fn record_type_def_with_multiple_fields() {
         record_fields: None,
     };
     let field_b = PropertyDef {
-        name: istr("schema.field.b"),
+        name: dbs("schema.field.b"),
         value_type: ValueType::predefined(PredefinedValueType::Bool),
         nullable: true,
         default: Some(Value::Bool(false)),
@@ -97,7 +97,7 @@ fn record_type_def_with_multiple_fields() {
     };
     let def = RecordTypeDef {
         id: RecordTypeId::new(1),
-        name: istr("schema.record"),
+        name: dbs("schema.record"),
         fields: smallvec![field_a, field_b],
     };
     assert_eq!(def.fields.len(), 2);
@@ -105,7 +105,7 @@ fn record_type_def_with_multiple_fields() {
 
 #[test]
 fn graph_type_starts_with_empty_type_maps() {
-    let graph_type = GraphType::new(GraphTypeId::new(1).unwrap(), istr("schema.graph"));
+    let graph_type = GraphType::new(GraphTypeId::new(1).unwrap(), dbs("schema.graph"));
     assert!(graph_type.node_types.is_empty());
     assert!(graph_type.edge_types.is_empty());
     assert!(graph_type.record_types.is_empty());
@@ -114,7 +114,7 @@ fn graph_type_starts_with_empty_type_maps() {
 #[test]
 fn property_def_with_no_default_is_valid() {
     let property = PropertyDef {
-        name: istr("schema.no.default"),
+        name: dbs("schema.no.default"),
         value_type: ValueType::predefined(PredefinedValueType::Bytes),
         nullable: true,
         default: None,
@@ -149,7 +149,7 @@ fn graph_type_id_deserialize_rejects_zero() {
 
 #[test]
 fn wal_one_of_canonicalizes_singleton_to_node_type() {
-    let source = NodeTypeRef(istr("schema.solo"));
+    let source = NodeTypeRef(dbs("schema.solo"));
     assert_eq!(
         EdgeEndpointDef::one_of([source.clone()]),
         EdgeEndpointDef::NodeType(source)
@@ -158,8 +158,8 @@ fn wal_one_of_canonicalizes_singleton_to_node_type() {
 
 #[test]
 fn wal_one_of_dedupes() {
-    let a = NodeTypeRef(istr("schema.aaa"));
-    let b = NodeTypeRef(istr("schema.bbb"));
+    let a = NodeTypeRef(dbs("schema.aaa"));
+    let b = NodeTypeRef(dbs("schema.bbb"));
     let endpoint = EdgeEndpointDef::one_of([a.clone(), b, a]);
     match endpoint {
         EdgeEndpointDef::OneOf(refs) => assert_eq!(refs.len(), 2),
@@ -173,19 +173,19 @@ fn postcard_round_trips_oneof_endpoint() {
     // byte-stably. Length-2 stays inline; length-5 spills to heap; both must
     // round-trip identically.
     let two = EdgeEndpointDef::one_of([
-        NodeTypeRef(istr("schema.alpha")),
-        NodeTypeRef(istr("schema.beta")),
+        NodeTypeRef(dbs("schema.alpha")),
+        NodeTypeRef(dbs("schema.beta")),
     ]);
     let bytes = postcard::to_allocvec(&two).unwrap();
     let decoded: EdgeEndpointDef = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(decoded, two);
 
     let five = EdgeEndpointDef::one_of([
-        NodeTypeRef(istr("schema.a")),
-        NodeTypeRef(istr("schema.b")),
-        NodeTypeRef(istr("schema.c")),
-        NodeTypeRef(istr("schema.d")),
-        NodeTypeRef(istr("schema.e")),
+        NodeTypeRef(dbs("schema.a")),
+        NodeTypeRef(dbs("schema.b")),
+        NodeTypeRef(dbs("schema.c")),
+        NodeTypeRef(dbs("schema.d")),
+        NodeTypeRef(dbs("schema.e")),
     ]);
     let bytes = postcard::to_allocvec(&five).unwrap();
     let decoded: EdgeEndpointDef = postcard::from_bytes(&bytes).unwrap();
@@ -202,7 +202,7 @@ fn postcard_round_trips_any_and_node_type_after_oneof_variant_addition() {
     let any: EdgeEndpointDef = postcard::from_bytes(&any_bytes).unwrap();
     assert_eq!(any, EdgeEndpointDef::Any);
 
-    let nt = EdgeEndpointDef::NodeType(NodeTypeRef(istr("schema.legacy")));
+    let nt = EdgeEndpointDef::NodeType(NodeTypeRef(dbs("schema.legacy")));
     let nt_bytes = postcard::to_allocvec(&nt).unwrap();
     let decoded: EdgeEndpointDef = postcard::from_bytes(&nt_bytes).unwrap();
     assert_eq!(decoded, nt);

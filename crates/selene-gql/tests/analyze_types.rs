@@ -1,6 +1,6 @@
 //! Analyzer type-inference tests.
 
-use selene_core::intern;
+use selene_core::db_string;
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ConditionClause,
     EmptyProcedureRegistry, GqlStatus, GqlType, IsCheckKind, Literal, PipelineStatement,
@@ -443,7 +443,7 @@ fn is_typed_unsupported_variant_errors_for_hand_built_ast() {
             star: false,
             items: vec![ReturnItem {
                 expr,
-                alias: Some(intern("ok").unwrap()),
+                alias: Some(db_string("ok").unwrap()),
                 span,
             }],
             group_by: None,

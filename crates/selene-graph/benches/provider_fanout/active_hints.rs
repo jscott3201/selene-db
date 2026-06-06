@@ -7,7 +7,7 @@ use std::{
 };
 
 use criterion::{BatchSize, BenchmarkId, Throughput};
-use selene_core::{Change, EdgeId, IStr, NodeId, PropertyMap, intern};
+use selene_core::{Change, DbString, EdgeId, NodeId, PropertyMap, db_string};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 use selene_testing::BenchFixture;
@@ -32,8 +32,8 @@ fn bench_active_hint_edge_create(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     fixture: &BenchFixture,
     mode: ActiveHintMode,
-    recent: &IStr,
-    dependency: &IStr,
+    recent: &DbString,
+    dependency: &DbString,
 ) {
     group.throughput(Throughput::Elements(ACTIVE_HINT_BATCH as u64));
     group.bench_function(
@@ -56,8 +56,8 @@ fn bench_active_hint_edge_delete(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     fixture: &BenchFixture,
     mode: ActiveHintMode,
-    recent: &IStr,
-    dependency: &IStr,
+    recent: &DbString,
+    dependency: &DbString,
 ) {
     group.throughput(Throughput::Elements(ACTIVE_HINT_BATCH as u64));
     group.bench_function(
@@ -84,8 +84,8 @@ fn bench_active_hint_wal_edge_create(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     fixture: &BenchFixture,
     mode: ActiveHintMode,
-    recent: &IStr,
-    dependency: &IStr,
+    recent: &DbString,
+    dependency: &DbString,
 ) {
     group.throughput(Throughput::Elements(ACTIVE_HINT_BATCH as u64));
     group.bench_function(
@@ -112,8 +112,8 @@ fn bench_active_hint_wal_edge_delete(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     fixture: &BenchFixture,
     mode: ActiveHintMode,
-    recent: &IStr,
-    dependency: &IStr,
+    recent: &DbString,
+    dependency: &DbString,
 ) {
     group.throughput(Throughput::Elements(ACTIVE_HINT_BATCH as u64));
     group.bench_function(
@@ -142,8 +142,8 @@ fn bench_active_hint_wal_edge_delete(
 
 fn active_hint_shared(
     fixture: &BenchFixture,
-    recent: &IStr,
-    dependency: &IStr,
+    recent: &DbString,
+    dependency: &DbString,
 ) -> (SharedGraph, Arc<ActiveHintProvider>) {
     let provider = Arc::new(ActiveHintProvider::new(recent.clone(), dependency.clone()));
     let shared = SharedGraph::from_graph_with_providers(
@@ -156,8 +156,8 @@ fn active_hint_shared(
 
 fn active_hint_wal_graph(
     fixture: &BenchFixture,
-    recent: &IStr,
-    dependency: &IStr,
+    recent: &DbString,
+    dependency: &DbString,
 ) -> ActiveHintWalGraph {
     let dir = super::fresh_active_set_wal_dir();
     let provider = Arc::new(ActiveHintProvider::new(recent.clone(), dependency.clone()));
@@ -179,8 +179,8 @@ fn commit_active_hint_edges(
     shared: &SharedGraph,
     fixture: &BenchFixture,
     mode: ActiveHintMode,
-    recent: &IStr,
-    dependency: &IStr,
+    recent: &DbString,
+    dependency: &DbString,
 ) -> (usize, Vec<EdgeId>) {
     let mut txn = shared.begin_write();
     let mut edges = Vec::with_capacity(ACTIVE_HINT_BATCH);
@@ -219,12 +219,12 @@ fn delete_edges(shared: &SharedGraph, edges: Vec<EdgeId>) -> usize {
         .len()
 }
 
-fn active_hint_recent_label() -> IStr {
-    intern("ACTIVE_HINT_RECENT_IN").expect("bench recent edge label interns")
+fn active_hint_recent_label() -> DbString {
+    db_string("ACTIVE_HINT_RECENT_IN").expect("bench recent edge label fits DB string cap")
 }
 
-fn active_hint_dependency_label() -> IStr {
-    intern("ACTIVE_HINT_DEPENDS_ON").expect("bench dependency edge label interns")
+fn active_hint_dependency_label() -> DbString {
+    db_string("ACTIVE_HINT_DEPENDS_ON").expect("bench dependency edge label fits DB string cap")
 }
 
 #[derive(Clone, Copy)]
@@ -243,11 +243,11 @@ impl ActiveHintMode {
 
     fn edge(
         self,
-        recent: &IStr,
-        dependency: &IStr,
+        recent: &DbString,
+        dependency: &DbString,
         fixture: &BenchFixture,
         idx: usize,
-    ) -> (IStr, NodeId, NodeId) {
+    ) -> (DbString, NodeId, NodeId) {
         match self {
             Self::Recent => (
                 recent.clone(),
@@ -282,8 +282,8 @@ impl Drop for ActiveHintWalGraph {
 }
 
 struct ActiveHintProvider {
-    recent_label: IStr,
-    dependency_label: IStr,
+    recent_label: DbString,
+    dependency_label: DbString,
     state: Mutex<ActiveHintState>,
 }
 
@@ -300,7 +300,7 @@ enum ActiveHintEdge {
 }
 
 impl ActiveHintProvider {
-    fn new(recent_label: IStr, dependency_label: IStr) -> Self {
+    fn new(recent_label: DbString, dependency_label: DbString) -> Self {
         Self {
             recent_label,
             dependency_label,

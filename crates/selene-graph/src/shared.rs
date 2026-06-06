@@ -9,7 +9,9 @@ use std::sync::{
 use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
-use selene_core::{Change, GraphId, HnswIndexConfig, IStr, SchemaChange, SchemaPropertyIndexKind};
+use selene_core::{
+    Change, DbString, GraphId, HnswIndexConfig, SchemaChange, SchemaPropertyIndexKind,
+};
 use selene_persist::{AuditLog, SyncPolicy, WalConfig, WalWriter};
 
 use crate::adjacency::AdjacencyEdge;
@@ -472,8 +474,8 @@ impl SharedGraph {
     /// `kind`.
     pub fn create_property_index(
         &self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: TypedIndexKind,
     ) -> GraphResult<()> {
         self.create_property_index_named(label, property, kind, None)
@@ -482,10 +484,10 @@ impl SharedGraph {
     /// Register a built-in node property index with optional catalog name.
     pub fn create_property_index_named(
         &self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: TypedIndexKind,
-        name: Option<IStr>,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         let mut txn = self.begin_write();
         if txn
@@ -523,7 +525,7 @@ impl SharedGraph {
     ///
     /// The operation is idempotent; dropping an absent index succeeds without
     /// publishing a new snapshot.
-    pub fn drop_property_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn drop_property_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
         let mut txn = self.begin_write();
         if !txn
             .read()
@@ -558,8 +560,8 @@ impl SharedGraph {
     /// vector with the declared dimension.
     pub fn create_vector_index(
         &self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: VectorIndexKind,
         dimension: u32,
     ) -> GraphResult<()> {
@@ -569,11 +571,11 @@ impl SharedGraph {
     /// Register a built-in node vector index with optional catalog name.
     pub fn create_vector_index_named(
         &self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: VectorIndexKind,
         dimension: u32,
-        name: Option<IStr>,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         self.create_vector_index_named_with_config(label, property, kind, dimension, name, None)
     }
@@ -581,11 +583,11 @@ impl SharedGraph {
     /// Register a built-in node vector index with optional HNSW construction config.
     pub fn create_vector_index_named_with_config(
         &self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: VectorIndexKind,
         dimension: u32,
-        name: Option<IStr>,
+        name: Option<DbString>,
         hnsw_config: Option<HnswIndexConfig>,
     ) -> GraphResult<()> {
         self.create_vector_index_named_with_configs(
@@ -601,11 +603,11 @@ impl SharedGraph {
     /// Register a built-in node vector index with optional ANN construction config.
     pub fn create_vector_index_named_with_configs(
         &self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: VectorIndexKind,
         dimension: u32,
-        name: Option<IStr>,
+        name: Option<DbString>,
         config: VectorIndexConfig,
     ) -> GraphResult<()> {
         let mut txn = self.begin_write();
@@ -620,7 +622,7 @@ impl SharedGraph {
     ///
     /// The operation is idempotent; dropping an absent index succeeds without
     /// publishing a new snapshot.
-    pub fn drop_vector_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn drop_vector_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
         let mut txn = self.begin_write();
         txn.mutator().drop_vector_index(label, property)?;
         txn.commit()?;
@@ -637,16 +639,16 @@ impl SharedGraph {
     /// Returns [`GraphError::TextIndexAlreadyExists`] if the pair is already
     /// registered, or [`GraphError::Inconsistent`] if index construction
     /// observes corrupt graph columns.
-    pub fn create_text_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn create_text_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
         self.create_text_index_named(label, property, None)
     }
 
     /// Register a built-in node text index with optional catalog name.
     pub fn create_text_index_named(
         &self,
-        label: IStr,
-        property: IStr,
-        name: Option<IStr>,
+        label: DbString,
+        property: DbString,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         let mut txn = self.begin_write();
         txn.mutator()
@@ -659,7 +661,7 @@ impl SharedGraph {
     ///
     /// The operation is idempotent; dropping an absent index succeeds without
     /// publishing a new snapshot.
-    pub fn drop_text_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn drop_text_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
         let mut txn = self.begin_write();
         txn.mutator().drop_text_index(label, property)?;
         txn.commit()?;
@@ -1060,7 +1062,7 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
 fn edge_row_parts(
     store: &EdgeStore,
     row_index: usize,
-) -> GraphResult<(IStr, selene_core::NodeId, selene_core::NodeId)> {
+) -> GraphResult<(DbString, selene_core::NodeId, selene_core::NodeId)> {
     let label = store
         .label
         .get(row_index)

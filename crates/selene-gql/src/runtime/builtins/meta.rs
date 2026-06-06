@@ -6,7 +6,7 @@
 //! `with_description` / `with_default_doc` / `with_default` shape identical means
 //! the relocated built-ins expose byte-identical `SHOW PROCEDURES` metadata.
 
-use selene_core::intern;
+use selene_core::db_string;
 
 use crate::{GqlType, ProcedureDefaultValue, ProcedureOutputColumn, ProcedureParameter};
 
@@ -61,8 +61,9 @@ impl StaticParameter {
     /// Convert into planner-visible parameter metadata, preserving the pack's
     /// `description` / `default_doc` / `default` carry-over rules.
     pub(super) fn into_parameter(self) -> ProcedureParameter {
-        let mut result = ProcedureParameter::new(intern_static(self.name), self.ty, self.nullable)
-            .with_description(self.description);
+        let mut result =
+            ProcedureParameter::new(static_db_string(self.name), self.ty, self.nullable)
+                .with_description(self.description);
         if let Some(default_doc) = self.default_doc {
             result = result.with_default_doc(default_doc);
         }
@@ -102,12 +103,12 @@ impl StaticOutputColumn {
 
     /// Convert into planner-visible output-column metadata.
     pub(super) fn into_output_column(self) -> ProcedureOutputColumn {
-        ProcedureOutputColumn::new(intern_static(self.name), self.ty)
+        ProcedureOutputColumn::new(static_db_string(self.name), self.ty)
             .with_description(self.description)
     }
 }
 
-/// Intern a static built-in metadata name.
+/// Construct a static built-in metadata name.
 ///
 /// # Panics
 ///
@@ -115,6 +116,6 @@ impl StaticOutputColumn {
 /// names/columns are a fixed, compile-time set of short identifiers, so this
 /// never fires in practice; the native registry is built once at engine
 /// startup.
-fn intern_static(value: &'static str) -> selene_core::IStr {
-    intern(value).expect("static built-in metadata name interns")
+fn static_db_string(value: &'static str) -> selene_core::DbString {
+    db_string(value).expect("static built-in metadata name fits DB string cap")
 }

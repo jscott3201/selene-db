@@ -14,7 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern,
+    DbString, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value,
+    db_string,
 };
 use selene_graph::{
     CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
@@ -98,8 +99,8 @@ fn bench_scalar_mixed_workload(c: &mut Criterion) {
 
 struct CandidateStateMixedFixture {
     shared: SharedGraph,
-    set_name: IStr,
-    edge_label: IStr,
+    set_name: DbString,
+    edge_label: DbString,
     activate_edges: Vec<EdgeId>,
     deactivate_sources: Vec<NodeId>,
     deactivate_targets: Vec<NodeId>,
@@ -110,9 +111,9 @@ impl CandidateStateMixedFixture {
         let scale = scale.max(WRITES_PER_CYCLE * 2);
         let active_count = scale / 2;
         let stale_count = scale - active_count;
-        let set_name = intern("current").expect("bench set name is valid");
-        let doc_label = intern("MemoryFact").expect("bench label is valid");
-        let edge_label = intern("SUPERSEDED_BY").expect("bench edge label is valid");
+        let set_name = db_string("current").expect("bench set name is valid");
+        let doc_label = db_string("MemoryFact").expect("bench label is valid");
+        let edge_label = db_string("SUPERSEDED_BY").expect("bench edge label is valid");
         let spec = CandidateStateSpec::new(set_name.clone())
             .require_label(doc_label.clone())
             .exclude_outgoing(edge_label.clone());
@@ -246,7 +247,7 @@ impl CandidateStateMixedFixture {
 
 struct ScalarMixedFixture {
     shared: SharedGraph,
-    update_key: selene_core::IStr,
+    update_key: selene_core::DbString,
     update_base: i64,
     read_ids: Vec<NodeId>,
     update_ids: Vec<NodeId>,

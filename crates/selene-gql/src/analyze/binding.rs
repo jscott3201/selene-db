@@ -1,6 +1,6 @@
 //! Binding identifiers, declarations, and resolved reference records.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{GqlType, LabelExpr, SourceSpan, Vec2OrMore, analyze::types::AnalyzedType};
 
@@ -51,8 +51,8 @@ pub enum BindingDecl {
     NodePattern {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -64,8 +64,8 @@ pub enum BindingDecl {
     EdgePattern {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -77,8 +77,8 @@ pub enum BindingDecl {
     LetAlias {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -88,8 +88,8 @@ pub enum BindingDecl {
     UnwindAlias {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -99,8 +99,8 @@ pub enum BindingDecl {
     ProjectionAlias {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -110,8 +110,8 @@ pub enum BindingDecl {
     YieldColumn {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -121,8 +121,8 @@ pub enum BindingDecl {
     InsertNode {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -134,8 +134,8 @@ pub enum BindingDecl {
     InsertEdge {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -147,8 +147,8 @@ pub enum BindingDecl {
     PathBinding {
         /// Allocated binding ID.
         binding: BindingId,
-        /// Interned binding name.
-        name: IStr,
+        /// Database-string binding name.
+        name: DbString,
         /// Source span of the declaration.
         span: SourceSpan,
         /// Static type of the binding.
@@ -160,7 +160,7 @@ impl BindingDecl {
     pub(crate) fn new(
         kind: BindingDeclKind,
         binding: BindingId,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         ty: AnalyzedType,
         labels: Option<LabelExpr>,
@@ -259,9 +259,9 @@ impl BindingDecl {
         }
     }
 
-    /// Return this declaration's interned name.
+    /// Return this declaration's database-string name.
     #[must_use]
-    pub fn name(&self) -> IStr {
+    pub fn name(&self) -> DbString {
         match self {
             Self::NodePattern { name, .. }
             | Self::EdgePattern { name, .. }
@@ -387,7 +387,7 @@ pub enum BindingUseKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BindingUse {
     /// Referenced name.
-    pub name: IStr,
+    pub name: DbString,
     /// Binding declaration resolved by the analyzer.
     pub binding: BindingId,
     /// Source span of the reference.

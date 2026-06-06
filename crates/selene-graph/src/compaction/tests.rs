@@ -1,6 +1,6 @@
 //! BRIEF-Item-4b CORE compaction tests.
 //!
-//! Bar ("would this catch the IStr admission race"): the suite drives a graph
+//! Bar ("would this catch the DbString admission race"): the suite drives a graph
 //! with a cascade-deleting node delete through `compact_core`, then walks every
 //! surviving external id through every read path (labels, properties,
 //! endpoints, adjacency, label index) asserting observational equivalence,
@@ -9,7 +9,7 @@
 
 use std::collections::HashSet;
 
-use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, db_string};
 
 use super::compact_core;
 use crate::error::GraphError;
@@ -17,13 +17,13 @@ use crate::store::RowIndex;
 use crate::{AdjacencyEntry, CompactionReport, SeleneGraph, SharedGraph};
 
 fn prop(key: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(key).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
 }
 
 /// Sorted (neighbor, edge_id, label) projection of an adjacency entry, for
 /// order-independent equality across the row renumber.
-fn adjacency_summary(entry: &AdjacencyEntry) -> Vec<(NodeId, EdgeId, IStr)> {
-    let mut edges: Vec<(NodeId, EdgeId, IStr)> = entry
+fn adjacency_summary(entry: &AdjacencyEntry) -> Vec<(NodeId, EdgeId, DbString)> {
+    let mut edges: Vec<(NodeId, EdgeId, DbString)> = entry
         .iter()
         .map(|edge| (edge.neighbor, edge.edge_id, edge.label.clone()))
         .collect();
@@ -35,9 +35,9 @@ fn adjacency_summary(entry: &AdjacencyEntry) -> Vec<(NodeId, EdgeId, IStr)> {
 /// cascade-deletes its incident edge (id 2). Surviving: nodes 1,3,4; edges 1,3.
 fn graph_with_a_deletion() -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.a").unwrap();
-    let lb = intern("cmp.b").unwrap();
-    let el = intern("cmp.e").unwrap();
+    let la = db_string("cmp.a").unwrap();
+    let lb = db_string("cmp.b").unwrap();
+    let el = db_string("cmp.e").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
@@ -172,7 +172,7 @@ fn compaction_preserves_observable_reads() {
     }
 
     // The label index resolves the SAME external ids after the row renumber.
-    let la = intern("cmp.a").unwrap();
+    let la = db_string("cmp.a").unwrap();
     let external_with_label = |graph: &SeleneGraph| -> HashSet<NodeId> {
         graph
             .nodes_with_label(&la)
@@ -220,7 +220,7 @@ fn compacting_a_dense_graph_is_idempotent() {
     // A graph with no dead rows compacts to an observationally identical graph
     // (same ids, same dense rows) and reclaims nothing.
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.idem").unwrap();
+    let la = db_string("cmp.idem").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
@@ -273,8 +273,8 @@ fn compaction_of_an_all_deleted_graph_reclaims_everything() {
     // the allocator high-water marks are still preserved so the deleted ids are
     // never reissued by a later create.
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.alldel").unwrap();
-    let el = intern("cmp.alldele").unwrap();
+    let la = db_string("cmp.alldel").unwrap();
+    let el = db_string("cmp.alldele").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
@@ -321,7 +321,7 @@ fn aborted_tx_leaves_no_hole_so_store_stays_dense() {
     // land at rows 0 and 1 with NO gap. The burned id is still NotFound, the
     // high-water is still preserved, and compaction has nothing to reclaim.
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.hole").unwrap();
+    let la = db_string("cmp.hole").unwrap();
 
     let mut txn = shared.begin_write();
     {
@@ -413,7 +413,7 @@ fn republished_compacted_graph_allocates_without_reuse() {
         let id = {
             let mut m = txn.mutator();
             m.create_node(
-                LabelSet::single(intern("cmp.a").unwrap()),
+                LabelSet::single(db_string("cmp.a").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap()
@@ -459,7 +459,7 @@ fn graph_with_one_live_node() -> SeleneGraph {
     graph
         .node_store
         .labels
-        .push(LabelSet::single(intern("cmp.live").unwrap()));
+        .push(LabelSet::single(db_string("cmp.live").unwrap()));
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.row_to_id.push(NodeId::new(1));
     graph.node_store.alive.insert(0);
@@ -490,7 +490,10 @@ fn compaction_rejects_edge_with_dead_endpoint() {
     // Alive edge (row 0) from the live node (1) to a node id (99) that is NOT in
     // the alive set: the edge "survives compaction but its endpoint does not".
     let mut graph = graph_with_one_live_node();
-    graph.edge_store.label.push(intern("cmp.dangling").unwrap());
+    graph
+        .edge_store
+        .label
+        .push(db_string("cmp.dangling").unwrap());
     graph.edge_store.source.push(NodeId::new(1));
     graph.edge_store.target.push(NodeId::new(99)); // dead endpoint
     graph.edge_store.properties.push(PropertyMap::new());
@@ -518,7 +521,7 @@ fn compaction_rejects_alive_node_row_with_no_external_id() {
     graph
         .node_store
         .labels
-        .push(LabelSet::single(intern("cmp.noid").unwrap()));
+        .push(LabelSet::single(db_string("cmp.noid").unwrap()));
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.row_to_id.push(NodeId::TOMBSTONE); // alive but no id
     graph.node_store.alive.insert(0);
@@ -541,7 +544,7 @@ fn compaction_rejects_alive_edge_row_with_no_external_id() {
     graph
         .edge_store
         .label
-        .push(intern("cmp.noid.edge").unwrap());
+        .push(db_string("cmp.noid.edge").unwrap());
     graph.edge_store.source.push(NodeId::new(1));
     graph.edge_store.target.push(NodeId::new(1));
     graph.edge_store.properties.push(PropertyMap::new());

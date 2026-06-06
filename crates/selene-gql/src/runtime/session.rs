@@ -4,7 +4,7 @@ use std::{
     borrow::Cow, cell::RefCell, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant,
 };
 
-use selene_core::{CancellationToken, Change, IStr, Value};
+use selene_core::{CancellationToken, Change, DbString, Value};
 use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
 
 use crate::{
@@ -33,8 +33,8 @@ pub enum SessionParameterValue {
 pub struct Session<'g> {
     graph: &'g SharedGraph,
     principal: Option<Arc<[u8]>>,
-    pub(crate) parameters: BTreeMap<IStr, SessionParameterValue>,
-    pub(crate) scalar_parameters: BTreeMap<IStr, Value>,
+    pub(crate) parameters: BTreeMap<DbString, SessionParameterValue>,
+    pub(crate) scalar_parameters: BTreeMap<DbString, Value>,
     pub(crate) plan_cache: Option<PlanCache>,
     pub(crate) call_plan_cache: Option<Arc<CallPlanCache>>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
@@ -72,10 +72,10 @@ pub struct Session<'g> {
 }
 
 pub(crate) fn materialize_parameter_values<'a>(
-    parameters: &'a BTreeMap<IStr, SessionParameterValue>,
-    scalar_parameters: &'a BTreeMap<IStr, Value>,
+    parameters: &'a BTreeMap<DbString, SessionParameterValue>,
+    scalar_parameters: &'a BTreeMap<DbString, Value>,
     registry: &BindingTableRegistry,
-) -> Cow<'a, BTreeMap<IStr, Value>> {
+) -> Cow<'a, BTreeMap<DbString, Value>> {
     if parameters
         .values()
         .all(|value| matches!(value, SessionParameterValue::Scalar(_)))
@@ -272,7 +272,7 @@ impl<'g> Session<'g> {
     /// If `name` previously held a table binding, the table is replaced and
     /// `None` is returned. Use [`Self::bind_table_parameter`] when callers need
     /// table-aware replacement information.
-    pub fn bind_parameter(&mut self, name: IStr, value: Value) -> Option<Value> {
+    pub fn bind_parameter(&mut self, name: DbString, value: Value) -> Option<Value> {
         self.scalar_parameters.insert(name.clone(), value.clone());
         match self
             .parameters
@@ -289,7 +289,7 @@ impl<'g> Session<'g> {
     /// request-scoped table reference for each statement execution.
     pub fn bind_table_parameter(
         &mut self,
-        name: IStr,
+        name: DbString,
         table: BindingTable,
     ) -> Option<SessionParameterValue> {
         self.scalar_parameters.remove(&name);
@@ -301,7 +301,7 @@ impl<'g> Session<'g> {
     ///
     /// If `name` held a table binding, the table is removed and `None` is
     /// returned.
-    pub fn clear_parameter(&mut self, name: &IStr) -> Option<Value> {
+    pub fn clear_parameter(&mut self, name: &DbString) -> Option<Value> {
         self.scalar_parameters.remove(name);
         match self.parameters.remove(name) {
             Some(SessionParameterValue::Scalar(prior)) => Some(prior),
@@ -320,7 +320,7 @@ impl<'g> Session<'g> {
     /// Used to honor `SESSION SET VALUE IF NOT EXISTS` (ISO section 7.4): an
     /// existing binding is left untouched.
     #[must_use]
-    pub(crate) fn has_parameter(&self, name: &IStr) -> bool {
+    pub(crate) fn has_parameter(&self, name: &DbString) -> bool {
         self.parameters.contains_key(name)
     }
 
@@ -359,7 +359,7 @@ impl<'g> Session<'g> {
     }
 
     /// Reset one named session parameter (ISO feature GS16).
-    pub(crate) fn reset_parameter(&mut self, name: &IStr) {
+    pub(crate) fn reset_parameter(&mut self, name: &DbString) {
         self.clear_parameter(name);
     }
 
@@ -381,7 +381,7 @@ impl<'g> Session<'g> {
     /// Borrow the session-local query-parameter map used for statement execution.
     #[must_use]
     #[cfg(test)]
-    pub(crate) fn parameters(&self) -> &BTreeMap<IStr, SessionParameterValue> {
+    pub(crate) fn parameters(&self) -> &BTreeMap<DbString, SessionParameterValue> {
         &self.parameters
     }
 
@@ -389,7 +389,7 @@ impl<'g> Session<'g> {
     pub(crate) fn materialize_parameters<'a>(
         &'a self,
         registry: &BindingTableRegistry,
-    ) -> Cow<'a, BTreeMap<IStr, Value>> {
+    ) -> Cow<'a, BTreeMap<DbString, Value>> {
         materialize_parameter_values(&self.parameters, &self.scalar_parameters, registry)
     }
 

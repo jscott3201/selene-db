@@ -1,29 +1,29 @@
 use selene_core::{
-    CancellationChecker, GraphId, HnswIndexConfig, IStr, LabelDiff, LabelSet, PropertyDiff,
-    PropertyMap, Value, VectorMetric, VectorValue, intern,
+    CancellationChecker, DbString, GraphId, HnswIndexConfig, LabelDiff, LabelSet, PropertyDiff,
+    PropertyMap, Value, VectorMetric, VectorValue,
 };
 
 use super::VectorIndex;
 use crate::{ApproximateVectorSearchOptions, GraphError, SharedGraph, VectorIndexKind};
 
-fn istr(value: &str) -> IStr {
-    intern(value).unwrap()
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).unwrap()
 }
 
 fn vector(components: &[f32]) -> Value {
     Value::Vector(VectorValue::new(components.to_vec()).unwrap())
 }
 
-fn props(pairs: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+fn props(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
 }
 
 #[test]
 fn vector_index_tracks_create_update_and_delete_membership() {
     let shared = SharedGraph::new(GraphId::new(8101));
-    let label = istr("vector.index.doc");
-    let property = istr("embedding");
-    let other = istr("vector.index.other");
+    let label = db_string("vector.index.doc");
+    let property = db_string("embedding");
+    let other = db_string("vector.index.other");
     let (doc_a, doc_b) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -99,14 +99,14 @@ fn vector_index_tracks_create_update_and_delete_membership() {
 #[test]
 fn create_vector_index_rejects_existing_wrong_kind() {
     let shared = SharedGraph::new(GraphId::new(8102));
-    let label = istr("vector.index.kind");
-    let property = istr("embedding");
+    let label = db_string("vector.index.kind");
+    let property = db_string("embedding");
     {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(label.clone()),
-                props([(property.clone(), Value::String(istr("not-vector")))]),
+                props([(property.clone(), Value::String(db_string("not-vector")))]),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -130,8 +130,8 @@ fn create_vector_index_rejects_existing_wrong_kind() {
 #[test]
 fn create_vector_index_rejects_existing_dimension_mismatch() {
     let shared = SharedGraph::new(GraphId::new(8103));
-    let label = istr("vector.index.dimension");
-    let property = istr("embedding");
+    let label = db_string("vector.index.dimension");
+    let property = db_string("embedding");
     {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -161,8 +161,8 @@ fn create_vector_index_rejects_existing_dimension_mismatch() {
 #[test]
 fn create_hnsw_cosine_index_rejects_existing_zero_norm_vector() {
     let shared = SharedGraph::new(GraphId::new(8106));
-    let label = istr("vector.index.cosine.zero");
-    let property = istr("embedding");
+    let label = db_string("vector.index.cosine.zero");
+    let property = db_string("embedding");
     {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -199,8 +199,8 @@ fn create_hnsw_cosine_index_rejects_existing_zero_norm_vector() {
 #[test]
 fn indexed_vector_property_rejects_later_dimension_drift() {
     let shared = SharedGraph::new(GraphId::new(8104));
-    let label = istr("vector.index.strict");
-    let property = istr("embedding");
+    let label = db_string("vector.index.strict");
+    let property = db_string("embedding");
     let doc = {
         let mut txn = shared.begin_write();
         let doc = txn
@@ -239,8 +239,8 @@ fn indexed_vector_property_rejects_later_dimension_drift() {
 #[test]
 fn hnsw_vector_index_tracks_membership_and_metric() {
     let shared = SharedGraph::new(GraphId::new(8105));
-    let label = istr("vector.index.hnsw");
-    let property = istr("embedding");
+    let label = db_string("vector.index.hnsw");
+    let property = db_string("embedding");
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -277,8 +277,8 @@ fn hnsw_vector_index_tracks_membership_and_metric() {
 #[test]
 fn ivf_vector_index_tracks_membership_and_metric() {
     let shared = SharedGraph::new(GraphId::new(8110));
-    let label = istr("vector.index.ivf");
-    let property = istr("embedding");
+    let label = db_string("vector.index.ivf");
+    let property = db_string("embedding");
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -327,8 +327,8 @@ fn ivf_vector_index_tracks_membership_and_metric() {
 #[test]
 fn hnsw_vector_index_stores_explicit_construction_config() {
     let shared = SharedGraph::new(GraphId::new(8108));
-    let label = istr("vector.index.hnsw.config");
-    let property = istr("embedding");
+    let label = db_string("vector.index.hnsw.config");
+    let property = db_string("embedding");
     let config = HnswIndexConfig::new(24, 128);
     {
         let mut txn = shared.begin_write();
@@ -368,8 +368,8 @@ fn hnsw_vector_index_stores_explicit_construction_config() {
 #[test]
 fn hnsw_config_is_rejected_for_flat_or_invalid_hnsw_shapes() {
     let shared = SharedGraph::new(GraphId::new(8109));
-    let label = istr("vector.index.hnsw.config.reject");
-    let property = istr("embedding");
+    let label = db_string("vector.index.hnsw.config.reject");
+    let property = db_string("embedding");
 
     let flat_err = shared
         .create_vector_index_named_with_config(
@@ -488,8 +488,8 @@ fn hnsw_vector_index_memory_usage_reports_links_and_stale_entries() {
 #[test]
 fn shared_rebuild_vector_indexes_reclaims_stale_hnsw_entries() {
     let shared = SharedGraph::new(GraphId::new(8107));
-    let label = istr("vector.index.rebuild.doc");
-    let property = istr("embedding");
+    let label = db_string("vector.index.rebuild.doc");
+    let property = db_string("embedding");
     let ids = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -605,8 +605,8 @@ fn shared_rebuild_vector_indexes_reclaims_stale_hnsw_entries() {
 #[test]
 fn shared_rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     let shared = SharedGraph::new(GraphId::new(8111));
-    let label = istr("vector.index.rebuild.ivf.doc");
-    let property = istr("embedding");
+    let label = db_string("vector.index.rebuild.ivf.doc");
+    let property = db_string("embedding");
     let ids = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();

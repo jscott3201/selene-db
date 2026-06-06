@@ -1,6 +1,6 @@
 //! Expression-bearing planner IR rows.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     GqlType, NullsPolicy, OrderDirection, SourceSpan, ValueExpr,
@@ -17,8 +17,8 @@ pub enum LimitAmount {
     Literal(u64),
     /// Parameter resolved by the executor.
     Parameter {
-        /// Interned parameter name without the leading `$`.
-        name: IStr,
+        /// Database-string parameter name without the leading `$`.
+        name: DbString,
         /// Optional inline declared parameter type.
         declared_type: Option<GqlType>,
         /// Source span of the parameter reference.
@@ -62,7 +62,7 @@ pub enum FilterPredicateKind {
         /// Pattern element binding, if named.
         binding: Option<BindingId>,
         /// Property key.
-        key: IStr,
+        key: DbString,
     },
 }
 
@@ -76,7 +76,7 @@ pub struct ProjectExpr {
     /// Analyzer-inferred type for `expr`.
     pub ty: AnalyzedType,
     /// Output alias, when present.
-    pub alias: Option<IStr>,
+    pub alias: Option<DbString>,
     /// Referenced bindings, sorted and deduplicated.
     pub binding_refs: Vec<BindingId>,
     /// Source span.
@@ -110,9 +110,9 @@ pub struct Aggregate {
     /// Analyzer expression ID for the aggregate call.
     pub aggregate_id: ExprId,
     /// Executor-private synthesized output column name.
-    pub output_name: IStr,
+    pub output_name: DbString,
     /// Aggregate function name.
-    pub function: IStr,
+    pub function: DbString,
     /// Aggregate arguments.
     pub args: Vec<AggregateArg>,
     /// Whether the aggregate uses `*`.

@@ -1,6 +1,6 @@
 //! Core error types and ISO GQLSTATUS mappings.
 
-use crate::istr::IStr;
+use crate::db_string::DbString;
 
 /// Result alias for `selene-core` operations.
 pub type CoreResult<T> = Result<T, CoreError>;
@@ -107,7 +107,7 @@ pub enum CoreError {
         /// `"label"` or `"property"`.
         kind: &'static str,
         /// The contradicting key.
-        key: IStr,
+        key: DbString,
     },
 }
 
@@ -180,7 +180,7 @@ mod tests {
         "SLENE_C_008"
     )]
     #[case(
-        CoreError::OverlappingDiff { kind: "label", key: crate::intern("err.test.overlap").unwrap() },
+        CoreError::OverlappingDiff { kind: "label", key: crate::db_string("err.test.overlap").unwrap() },
         "0G009",
         "SLENE_C_009"
     )]

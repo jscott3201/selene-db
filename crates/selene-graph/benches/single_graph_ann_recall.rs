@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use selene_core::{
-    CancellationChecker, GraphId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, PropertyMap,
-    Value, VectorMetric, VectorValue, intern,
+    CancellationChecker, DbString, GraphId, HnswIndexConfig, IvfIndexConfig, LabelSet, PropertyMap,
+    Value, VectorMetric, VectorValue, db_string,
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexConfig, VectorIndexKind,
@@ -201,8 +201,8 @@ pub(crate) struct AnnRecallFixture {
     dimension: usize,
     scale: usize,
     graph: SeleneGraph,
-    label: IStr,
-    embedding_key: IStr,
+    label: DbString,
+    embedding_key: DbString,
     queries: Vec<VectorValue>,
     exact: Vec<Vec<VectorNodeSearchHit>>,
     k: usize,
@@ -218,8 +218,8 @@ impl AnnRecallFixture {
     ) -> Self {
         let scale = scale.max(1);
         let dimension = profile.dimension();
-        let label = intern("AnnRecallDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
+        let label = db_string("AnnRecallDoc").expect("bench label is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(
             10_000 + scale as u64 + profile.graph_id_offset(),
         ));

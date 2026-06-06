@@ -6,15 +6,15 @@
 
 use super::*;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test label admits")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test label admits")
 }
 
 #[test]
 fn render_partial_any_edge_endpoint_as_endpoint_less_ddl() {
-    let person = istr("Person");
+    let person = db_string("Person");
     let graph_type = GraphTypeDef {
-        name: istr("catalog.partial.any.graph"),
+        name: db_string("catalog.partial.any.graph"),
         node_types: vec![NodeTypeDef {
             name: person.clone(),
             key_labels: LabelSet::single(person),
@@ -23,7 +23,7 @@ fn render_partial_any_edge_endpoint_as_endpoint_less_ddl() {
         }],
         edge_types: Vec::new(),
     };
-    let knows = istr("KNOWS");
+    let knows = db_string("KNOWS");
 
     for (source_node_type, target_node_type) in [
         (EdgeEndpointDef::Any, EdgeEndpointDef::NodeType(0)),

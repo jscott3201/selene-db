@@ -11,21 +11,21 @@
 mod exec_common;
 
 use exec_common::{ExecFixture, execute_pattern, planned};
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     Binding, BindingTable, EmptyProcedureRegistry, JoinTree, LabelExpr, NodeOrEdgeScan, TxContext,
     execute_pattern as execute_pattern_plan,
 };
 use selene_graph::SharedGraph;
 
-fn istr_local(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string_local(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 /// Replace the leading `JoinTree::Scan` with a `DisjunctiveScan` whose
 /// branches each clone the original scan but stamp a single label on the
 /// per-branch `label_predicate`.
-fn rewrite_to_disjunctive(tree: &mut JoinTree, labels: &[IStr]) {
+fn rewrite_to_disjunctive(tree: &mut JoinTree, labels: &[DbString]) {
     let JoinTree::Scan(scan) = tree else {
         panic!("expected leading JoinTree::Scan, got {tree:?}");
     };
@@ -55,7 +55,7 @@ fn count_rows(table: &BindingTable) -> usize {
 fn execute_with_branches(
     fixture: &ExecFixture,
     source: &str,
-    branch_labels: &[IStr],
+    branch_labels: &[DbString],
 ) -> BindingTable {
     let mut plan = planned(source);
     let pattern = plan
@@ -135,9 +135,9 @@ fn disjunctive_scan_executor_dedups_multi_label_node() {
     // `LabelExpr::Disjunction(any(...))` semantics, preserving the
     // catalog-present vs catalog-absent invariant for COUNT / LIMIT /
     // aggregates.
-    let label_a = istr_local("Alpha");
-    let label_b = istr_local("Beta");
-    let label_c = istr_local("Gamma");
+    let label_a = db_string_local("Alpha");
+    let label_b = db_string_local("Beta");
+    let label_c = db_string_local("Gamma");
     let multi_label = LabelSet::from_iter([label_a.clone(), label_b.clone()]);
     let single_a = LabelSet::single(label_a.clone());
     let single_b = LabelSet::single(label_b.clone());

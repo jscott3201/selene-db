@@ -1,4 +1,4 @@
-use selene_core::{GraphId, intern};
+use selene_core::{GraphId, db_string};
 
 use crate::{
     ProviderError, SeleneGraph, TextIndex,
@@ -10,9 +10,9 @@ use crate::{
 
 #[test]
 fn round_trip_preserves_text_index_name() {
-    let label = intern("core.tidx.label").unwrap();
-    let property = intern("core.tidx.property").unwrap();
-    let name = intern("core.tidx.index").unwrap();
+    let label = db_string("core.tidx.label").unwrap();
+    let property = db_string("core.tidx.property").unwrap();
+    let name = db_string("core.tidx.index").unwrap();
     let mut graph = SeleneGraph::new(GraphId::new(9992));
     graph.text_index.insert(
         (label.clone(), property.clone()),
@@ -35,8 +35,8 @@ fn round_trip_preserves_text_index_name() {
 
 #[test]
 fn decode_rejects_duplicate_text_registration() {
-    let label = intern("core.tidx.dup.label").unwrap();
-    let property = intern("core.tidx.dup.property").unwrap();
+    let label = db_string("core.tidx.dup.label").unwrap();
+    let property = db_string("core.tidx.dup.property").unwrap();
     let duplicate = vec![
         (
             TextSchemaKey {

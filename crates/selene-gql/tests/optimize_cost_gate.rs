@@ -4,15 +4,15 @@
 //! These exercise the optimizer directly with a `MockIndexCatalog` carrying
 //! injected synthetic statistics, so the gate decisions are deterministic.
 
-use selene_core::{IStr, Value, intern};
+use selene_core::{DbString, Value};
 use selene_gql::{
     EmptyProcedureRegistry, IndexKind, JoinTree, NodeOrEdgeScan, ScanAccess, analyze, optimize,
     parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn optimized(source: &str, catalog: &MockIndexCatalog) -> selene_gql::ExecutionPlan {
@@ -49,9 +49,9 @@ fn scan_access(plan: &selene_gql::ExecutionPlan) -> ScanAccess {
 fn label_scan_high_selectivity_promotes_to_label_index() {
     // 42 of 1000 rows carry `Person` → the label index is far cheaper.
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(istr("Person"))
+        .with_node_label_index(db_string("Person"))
         .with_total_rows(selene_gql::IndexTarget::Node, 1000)
-        .with_label_cardinality(istr("Person"), 42);
+        .with_label_cardinality(db_string("Person"), 42);
     let plan = optimized("MATCH (n:Person) RETURN n", &catalog);
     assert!(
         matches!(scan_access(&plan), ScanAccess::LabelIndex { .. }),
@@ -65,9 +65,9 @@ fn label_scan_low_selectivity_stays_linear() {
     // Every row carries `Person` (1000 of 1000) → label bitmap == full scan, so
     // the index is NOT cheaper and the scan stays Linear.
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(istr("Person"))
+        .with_node_label_index(db_string("Person"))
         .with_total_rows(selene_gql::IndexTarget::Node, 1000)
-        .with_label_cardinality(istr("Person"), 1000);
+        .with_label_cardinality(db_string("Person"), 1000);
     let plan = optimized("MATCH (n:Person) RETURN n", &catalog);
     assert!(
         matches!(scan_access(&plan), ScanAccess::Linear),
@@ -79,7 +79,7 @@ fn label_scan_low_selectivity_stays_linear() {
 #[test]
 fn label_scan_without_stats_promotes_as_before() {
     // No cardinality stats injected → gate is a no-op → structural promote.
-    let catalog = MockIndexCatalog::new().with_node_label_index(istr("Person"));
+    let catalog = MockIndexCatalog::new().with_node_label_index(db_string("Person"));
     let plan = optimized("MATCH (n:Person) RETURN n", &catalog);
     assert!(
         matches!(scan_access(&plan), ScanAccess::LabelIndex { .. }),
@@ -96,10 +96,10 @@ fn label_scan_without_stats_promotes_as_before() {
 fn equality_unique_value_uses_typed_index() {
     // age = 30 matches 3 rows out of a 500-row Person population → use the index.
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(istr("Person"))
-        .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
-        .with_label_cardinality(istr("Person"), 500)
-        .with_equality_cardinality(istr("Person"), istr("age"), Value::Int(30), 3);
+        .with_node_label_index(db_string("Person"))
+        .with_node_typed_index(db_string("Person"), db_string("age"), IndexKind::Integer)
+        .with_label_cardinality(db_string("Person"), 500)
+        .with_equality_cardinality(db_string("Person"), db_string("age"), Value::Int(30), 3);
     let plan = optimized("MATCH (n:Person) FILTER n.age = 30 RETURN n", &catalog);
     assert!(
         matches!(scan_access(&plan), ScanAccess::TypedIndexRange { .. }),
@@ -116,10 +116,10 @@ fn equality_near_constant_declines_typed_index() {
     // row-equivalent); the key assertion is that the *typed property* index was
     // NOT selected.
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(istr("Person"))
-        .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
-        .with_label_cardinality(istr("Person"), 500)
-        .with_equality_cardinality(istr("Person"), istr("age"), Value::Int(30), 500);
+        .with_node_label_index(db_string("Person"))
+        .with_node_typed_index(db_string("Person"), db_string("age"), IndexKind::Integer)
+        .with_label_cardinality(db_string("Person"), 500)
+        .with_equality_cardinality(db_string("Person"), db_string("age"), Value::Int(30), 500);
     let plan = optimized("MATCH (n:Person) FILTER n.age = 30 RETURN n", &catalog);
     assert!(
         !matches!(scan_access(&plan), ScanAccess::TypedIndexRange { .. }),
@@ -137,10 +137,10 @@ fn composite_ranking_picks_cheaper_index() {
     // Two composite indexes match the (a, b, c) equality set: (a, b) and (b, c).
     // (b, c) is cheaper by injected composite cardinality, so it must be chosen
     // even though (a, b) is not smaller as a subset (both size 2).
-    let label = istr("Doc");
-    let a = istr("a");
-    let b = istr("b");
-    let c = istr("c");
+    let label = db_string("Doc");
+    let a = db_string("a");
+    let b = db_string("b");
+    let c = db_string("c");
     let catalog = MockIndexCatalog::new()
         .with_node_label_index(label.clone())
         .with_node_composite_index(label.clone(), vec![(a, IndexKind::Integer), (b.clone(), IndexKind::Integer)])
@@ -166,9 +166,9 @@ fn composite_ranking_picks_cheaper_index() {
 fn composite_gate_declines_when_not_cheaper_than_label() {
     // The only composite index matches every row (cardinality == label
     // population) → not cheaper than the residual baseline → stays Linear.
-    let label = istr("Doc2");
-    let a = istr("a");
-    let b = istr("b");
+    let label = db_string("Doc2");
+    let a = db_string("a");
+    let b = db_string("b");
     let catalog = MockIndexCatalog::new()
         .with_node_label_index(label.clone())
         .with_node_composite_index(
@@ -194,13 +194,13 @@ fn composite_gate_declines_when_not_cheaper_than_label() {
 
 #[test]
 fn in_list_selective_uses_bitmap_union() {
-    let label = istr("PersonIn");
+    let label = db_string("PersonIn");
     let catalog = MockIndexCatalog::new()
         .with_node_label_index(label.clone())
-        .with_node_typed_index(label.clone(), istr("age"), IndexKind::Integer)
+        .with_node_typed_index(label.clone(), db_string("age"), IndexKind::Integer)
         .with_label_cardinality(label.clone(), 1000)
-        .with_equality_cardinality(label.clone(), istr("age"), Value::Int(1), 3)
-        .with_equality_cardinality(label, istr("age"), Value::Int(2), 4);
+        .with_equality_cardinality(label.clone(), db_string("age"), Value::Int(1), 3)
+        .with_equality_cardinality(label.clone(), db_string("age"), Value::Int(2), 4);
     let plan = optimized(
         "MATCH (n:PersonIn) FILTER n.age IN [1, 2] RETURN n",
         &catalog,
@@ -214,14 +214,14 @@ fn in_list_selective_uses_bitmap_union() {
 
 #[test]
 fn in_list_non_selective_declines_bitmap_union() {
-    let label = istr("PersonIn2");
+    let label = db_string("PersonIn2");
     let catalog = MockIndexCatalog::new()
         .with_node_label_index(label.clone())
-        .with_node_typed_index(label.clone(), istr("age"), IndexKind::Integer)
+        .with_node_typed_index(label.clone(), db_string("age"), IndexKind::Integer)
         .with_label_cardinality(label.clone(), 10)
         // Each value matches ~all rows: 8+8 ≥ 10 baseline → not cheaper.
-        .with_equality_cardinality(label.clone(), istr("age"), Value::Int(1), 8)
-        .with_equality_cardinality(label, istr("age"), Value::Int(2), 8);
+        .with_equality_cardinality(label.clone(), db_string("age"), Value::Int(1), 8)
+        .with_equality_cardinality(label.clone(), db_string("age"), Value::Int(2), 8);
     let plan = optimized(
         "MATCH (n:PersonIn2) FILTER n.age IN [1, 2] RETURN n",
         &catalog,

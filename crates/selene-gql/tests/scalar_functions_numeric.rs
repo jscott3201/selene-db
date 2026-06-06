@@ -4,7 +4,7 @@
 
 mod exec_common;
 
-use exec_common::{column_values, execute_read, execute_read_result, istr};
+use exec_common::{column_values, db_string, execute_read, execute_read_result};
 use selene_core::{GraphId, Value, feature_register::FeatureId};
 use selene_gql::{EmptyProcedureRegistry, Session, feature_walk, parse};
 use selene_graph::SharedGraph;
@@ -301,7 +301,7 @@ fn scalar_functions_numeric_power_gr11_overflow_uses_22003() {
 fn scalar_functions_numeric_power_zero_base_rejects_nan_exponent() {
     let graph = SharedGraph::new(GraphId::new(13_521));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("nan"), Value::Float(f64::NAN));
+    session.bind_parameter(db_string("nan"), Value::Float(f64::NAN));
 
     let err = session
         .execute_source("RETURN power(0, $nan) AS value", &EmptyProcedureRegistry)

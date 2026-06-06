@@ -1,6 +1,6 @@
 use selene_core::{
     CancellationChecker, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric, VectorValue,
-    intern,
+    db_string,
 };
 
 use crate::{
@@ -11,18 +11,18 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &selene_core::IStr, value: Value) -> PropertyMap {
+fn props(key: &selene_core::DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
 #[test]
 fn approximate_vector_search_expanded_candidates_uses_ann_roots_then_graph_rerank() {
     let shared = SharedGraph::new(GraphId::new(9891));
-    let summary = intern("vector.ann.expand.summary").unwrap();
-    let fact = intern("vector.ann.expand.fact").unwrap();
-    let embedding = intern("embedding").unwrap();
-    let supports = intern("SUPPORTS").unwrap();
-    let mentions = intern("MENTIONS").unwrap();
+    let summary = db_string("vector.ann.expand.summary").unwrap();
+    let fact = db_string("vector.ann.expand.fact").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let supports = db_string("SUPPORTS").unwrap();
+    let mentions = db_string("MENTIONS").unwrap();
     let (root, supported, wrong_label) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -103,10 +103,10 @@ fn approximate_vector_search_expanded_candidates_uses_ann_roots_then_graph_reran
 #[test]
 fn approximate_vector_search_expanded_candidates_batch_matches_single_queries() {
     let shared = SharedGraph::new(GraphId::new(9892));
-    let summary = intern("vector.ann.expand.batch.summary").unwrap();
-    let fact = intern("vector.ann.expand.batch.fact").unwrap();
-    let embedding = intern("embedding").unwrap();
-    let supports = intern("SUPPORTS").unwrap();
+    let summary = db_string("vector.ann.expand.batch.summary").unwrap();
+    let fact = db_string("vector.ann.expand.batch.fact").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let supports = db_string("SUPPORTS").unwrap();
     let (root_a, fact_a, root_b, fact_b) =
         create_two_root_expansion_graph(&shared, &summary, &fact, &embedding, &supports);
     shared
@@ -161,9 +161,9 @@ fn approximate_vector_search_expanded_candidates_batch_matches_single_queries() 
 #[test]
 fn approximate_vector_search_expanded_candidates_preserves_ann_errors() {
     let shared = SharedGraph::new(GraphId::new(9893));
-    let summary = intern("vector.ann.expand.error.summary").unwrap();
-    let embedding = intern("embedding").unwrap();
-    let supports = intern("SUPPORTS").unwrap();
+    let summary = db_string("vector.ann.expand.error.summary").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let supports = db_string("SUPPORTS").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -200,10 +200,10 @@ fn approximate_vector_search_expanded_candidates_preserves_ann_errors() {
 
 fn create_two_root_expansion_graph(
     shared: &SharedGraph,
-    summary: &selene_core::IStr,
-    fact: &selene_core::IStr,
-    embedding: &selene_core::IStr,
-    supports: &selene_core::IStr,
+    summary: &selene_core::DbString,
+    fact: &selene_core::DbString,
+    embedding: &selene_core::DbString,
+    supports: &selene_core::DbString,
 ) -> (NodeId, NodeId, NodeId, NodeId) {
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();

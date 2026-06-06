@@ -17,7 +17,7 @@ pub(crate) use super::binding_refs::binding_refs_in;
 /// Build a planned projection expression.
 pub(crate) fn project_expr(
     expr: &ValueExpr,
-    alias: Option<selene_core::IStr>,
+    alias: Option<selene_core::DbString>,
     analyzed: &AnalyzedStatement,
 ) -> Result<ProjectExpr, PlannerError> {
     let (expr_id, ty) = expr_cell(expr, analyzed)?;
@@ -51,7 +51,7 @@ pub(crate) fn filter_predicate(
 /// Build a property-map equality predicate.
 pub(crate) fn property_predicate(
     binding: Option<BindingId>,
-    key: selene_core::IStr,
+    key: selene_core::DbString,
     value: &ValueExpr,
     analyzed: &AnalyzedStatement,
 ) -> Result<FilterPredicate, PlannerError> {
@@ -655,7 +655,7 @@ pub(super) fn outer_binding_uses_in_match(
     pattern: &crate::MatchClause,
     subquery_span: SourceSpan,
     analyzed: &AnalyzedStatement,
-) -> Result<Vec<(BindingId, selene_core::IStr, SourceSpan)>, PlannerError> {
+) -> Result<Vec<(BindingId, selene_core::DbString, SourceSpan)>, PlannerError> {
     outer_binding_uses_in_span(pattern.span, subquery_span, analyzed)
 }
 
@@ -663,7 +663,7 @@ pub(super) fn outer_binding_uses_in_span(
     local_span: SourceSpan,
     subquery_span: SourceSpan,
     analyzed: &AnalyzedStatement,
-) -> Result<Vec<(BindingId, selene_core::IStr, SourceSpan)>, PlannerError> {
+) -> Result<Vec<(BindingId, selene_core::DbString, SourceSpan)>, PlannerError> {
     let mut refs = Vec::new();
     for reference in &analyzed.references {
         if !span_contains(subquery_span, reference.span) {
@@ -689,7 +689,7 @@ fn span_contains(outer: SourceSpan, inner: SourceSpan) -> bool {
 }
 
 /// Aggregate function names recognised by the planner. Mirrors the parser
-/// grammar's `aggregate_op` rule (lower-cased after `intern_lower`). A scalar
+/// grammar's `aggregate_op` rule (lower-cased after `lowercase_db_string`). A scalar
 /// function call with the same arity (e.g. `length(s)`) must not be lifted into
 /// `PipelineOp::GroupBy.aggregates`, so this list — not arity — is the gate.
 const AGGREGATE_NAMES: &[&str] = &[
@@ -713,7 +713,7 @@ const AGGREGATE_NAMES: &[&str] = &[
 /// `aggregate_expr` rule with `star`/`distinct` set, while bare scalar function
 /// calls keep both flags false. Either way, the name must appear in
 /// [`AGGREGATE_NAMES`] for the planner to treat it as an aggregate.
-pub(crate) fn aggregate_name(expr: &ValueExpr) -> Option<(selene_core::IStr, bool, bool)> {
+pub(crate) fn aggregate_name(expr: &ValueExpr) -> Option<(selene_core::DbString, bool, bool)> {
     let ValueExpr::FunctionCall {
         name,
         star,

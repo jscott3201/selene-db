@@ -1,5 +1,5 @@
 use selene_core::{
-    CancellationChecker, CoreError, IStr, NodeId, Value, VectorMetric, VectorTopK, VectorValue,
+    CancellationChecker, CoreError, DbString, NodeId, Value, VectorMetric, VectorTopK, VectorValue,
 };
 
 use crate::error::{GraphError, GraphResult};
@@ -20,7 +20,7 @@ impl SeleneGraph {
     /// are skipped to match normal live-snapshot visibility.
     pub fn score_vector_nodes(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &[NodeId],
         metric: VectorMetric,
@@ -43,7 +43,7 @@ impl SeleneGraph {
     /// checking `checker` before work begins and every 1024 unique candidates.
     pub fn score_vector_nodes_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &[NodeId],
         metric: VectorMetric,
@@ -74,7 +74,7 @@ impl SeleneGraph {
     /// the same live-snapshot visibility, metric, and hit ordering semantics.
     pub fn score_vector_candidate_set(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &VectorCandidateSet,
         metric: VectorMetric,
@@ -94,7 +94,7 @@ impl SeleneGraph {
     /// Score one canonical node candidate set with cancellation checks.
     pub fn score_vector_candidate_set_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &VectorCandidateSet,
         metric: VectorMetric,
@@ -112,7 +112,7 @@ impl SeleneGraph {
 
     fn score_vector_candidate_set_after_initial_check(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &VectorCandidateSet,
         metric: VectorMetric,
@@ -149,7 +149,7 @@ impl SeleneGraph {
     /// query/candidate-set counts and mixed query dimensions before scoring.
     pub fn score_vector_nodes_batch<C>(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         candidate_sets: &[C],
         metric: VectorMetric,
@@ -176,7 +176,7 @@ impl SeleneGraph {
     /// each query's candidate set is scored.
     pub fn score_vector_nodes_batch_checked<C>(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         candidate_sets: &[C],
         metric: VectorMetric,
@@ -218,7 +218,7 @@ impl SeleneGraph {
     /// sets.
     pub fn score_vector_candidate_sets_batch(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         candidate_sets: &[VectorCandidateSet],
         metric: VectorMetric,
@@ -238,7 +238,7 @@ impl SeleneGraph {
     /// Score batched canonical candidate sets with cancellation checks.
     pub fn score_vector_candidate_sets_batch_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         candidate_sets: &[VectorCandidateSet],
         metric: VectorMetric,
@@ -272,7 +272,7 @@ impl SeleneGraph {
     /// ordering rules as explicit candidate scoring.
     pub fn score_vector_neighbors(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         anchor: NodeId,
         options: VectorNeighborSearchOptions<'_>,
@@ -290,7 +290,7 @@ impl SeleneGraph {
     /// Score vector-valued neighbors with cancellation checks.
     pub fn score_vector_neighbors_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         anchor: NodeId,
         options: VectorNeighborSearchOptions<'_>,
@@ -319,7 +319,7 @@ impl SeleneGraph {
     /// before scoring.
     pub fn score_vector_neighbors_batch(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         anchors: &[NodeId],
         options: VectorNeighborSearchOptions<'_>,
@@ -337,7 +337,7 @@ impl SeleneGraph {
     /// Score batched one-hop graph neighbors with cancellation checks.
     pub fn score_vector_neighbors_batch_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         anchors: &[NodeId],
         options: VectorNeighborSearchOptions<'_>,
@@ -375,7 +375,7 @@ impl SeleneGraph {
     /// graph-query-then-vector-rerank workloads.
     pub fn score_vector_expanded_candidate_sets_batch(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         root_sets: &[VectorCandidateSet],
         options: VectorNeighborSearchOptions<'_>,
@@ -393,7 +393,7 @@ impl SeleneGraph {
     /// Expand and score batched canonical root sets with cancellation checks.
     pub fn score_vector_expanded_candidate_sets_batch_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         root_sets: &[VectorCandidateSet],
         options: VectorNeighborSearchOptions<'_>,
@@ -438,7 +438,7 @@ impl SeleneGraph {
     pub fn vector_neighbor_candidates(
         &self,
         anchor: NodeId,
-        edge_label: &IStr,
+        edge_label: &DbString,
         direction: VectorNeighborDirection,
     ) -> VectorCandidateSet {
         let mut candidates = Vec::new();
@@ -470,7 +470,7 @@ impl SeleneGraph {
     pub fn expand_vector_candidate_set(
         &self,
         roots: &VectorCandidateSet,
-        edge_label: &IStr,
+        edge_label: &DbString,
         direction: VectorNeighborDirection,
     ) -> VectorCandidateSet {
         self.expand_vector_candidate_set_checked(
@@ -486,7 +486,7 @@ impl SeleneGraph {
     pub fn expand_vector_candidate_set_checked(
         &self,
         roots: &VectorCandidateSet,
-        edge_label: &IStr,
+        edge_label: &DbString,
         direction: VectorNeighborDirection,
         checker: CancellationChecker<'_>,
     ) -> Result<VectorCandidateSet, VectorSearchError> {

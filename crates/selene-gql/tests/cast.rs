@@ -5,7 +5,7 @@
 //! live in the sibling `cast_conformance.rs` so both files stay under the
 //! 700-LOC cap.
 
-use selene_core::{GraphId, Record, Value, intern};
+use selene_core::{GraphId, Record, Value, db_string};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry,
     GqlStatus, GqlType, PipelineStatement, ReturnItem, Session, Statement, StatementOutput,
@@ -297,7 +297,7 @@ fn execute_first_status(source: &str) -> String {
 
 fn as_string(value: Value) -> String {
     match value {
-        Value::String(istr) => istr.as_str().to_owned(),
+        Value::String(db_string) => db_string.as_str().to_owned(),
         other => panic!("expected string, got {other:?}"),
     }
 }
@@ -363,7 +363,7 @@ fn cast_float_nan_to_integer_returns_22018() {
     let graph = SharedGraph::new(GraphId::new(13_520));
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        selene_core::intern("nan").expect("intern parameter name"),
+        selene_core::db_string("nan").expect("db_string parameter name"),
         Value::Float(f64::NAN),
     );
     let status = session
@@ -530,7 +530,7 @@ fn cast_boolean_to_decimal_returns_22g03() {
 fn execute_with_param(source: &str, name: &str, value: Value) -> Value {
     let graph = SharedGraph::new(GraphId::new(13_530));
     let mut session = Session::new(&graph);
-    session.bind_parameter(intern(name).expect("intern param"), value);
+    session.bind_parameter(db_string(name).expect("db_string param"), value);
     let output = session
         .execute_source(source, &EmptyProcedureRegistry)
         .unwrap_or_else(|err| panic!("execute failed for `{source}`: {err:?}"));
@@ -548,7 +548,7 @@ fn execute_with_param(source: &str, name: &str, value: Value) -> Value {
 fn execute_with_param_status(source: &str, name: &str, value: Value) -> String {
     let graph = SharedGraph::new(GraphId::new(13_531));
     let mut session = Session::new(&graph);
-    session.bind_parameter(intern(name).expect("intern param"), value);
+    session.bind_parameter(db_string(name).expect("db_string param"), value);
     session
         .execute_source(source, &EmptyProcedureRegistry)
         .expect_err("statement errors")
@@ -805,7 +805,7 @@ fn cast_record_to_closed_record_coerces_and_projects() {
     assert_eq!(
         value,
         Value::Record(Box::new(Record::Open(
-            [(intern("a").unwrap(), Value::Int(5))]
+            [(db_string("a").unwrap(), Value::Int(5))]
                 .into_iter()
                 .collect()
         )))
@@ -833,8 +833,11 @@ fn cast_record_to_open_record_is_identity() {
         value,
         Value::Record(Box::new(Record::Open(
             [
-                (intern("a").unwrap(), Value::Int(1)),
-                (intern("b").unwrap(), Value::String(intern("x").unwrap())),
+                (db_string("a").unwrap(), Value::Int(1)),
+                (
+                    db_string("b").unwrap(),
+                    Value::String(db_string("x").unwrap())
+                ),
             ]
             .into_iter()
             .collect()
@@ -867,9 +870,9 @@ fn cast_record_to_nested_record_coerces_recursively() {
         value,
         Value::Record(Box::new(Record::Open(
             [(
-                intern("a").unwrap(),
+                db_string("a").unwrap(),
                 Value::Record(Box::new(Record::Open(
-                    [(intern("b").unwrap(), Value::Int(5))]
+                    [(db_string("b").unwrap(), Value::Int(5))]
                         .into_iter()
                         .collect()
                 )))

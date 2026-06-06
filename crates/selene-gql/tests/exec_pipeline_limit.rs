@@ -1,6 +1,6 @@
 //! Pipeline Limit executor tests.
 
-use selene_core::{Value, intern};
+use selene_core::{Value, db_string};
 use selene_gql::{
     AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema, ExecutorError,
     GqlType, ImplDefinedCaps, LimitAmount, PipelineOp, TxContext, execute_pipeline,
@@ -10,7 +10,7 @@ fn table() -> BindingTable {
     BindingTable::new(
         BindingTableSchema {
             columns: vec![BindingTableColumn {
-                name: Some(intern("n").expect("interns")),
+                name: Some(db_string("n").expect("string fits DB string cap")),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::Integer),
             }],
@@ -78,7 +78,7 @@ fn limit_parameter_without_binding_is_unbound() {
     let err = execute_pipeline(
         &[PipelineOp::Limit {
             offset: LimitAmount::Parameter {
-                name: intern("rows").expect("interns"),
+                name: db_string("rows").expect("string fits DB string cap"),
                 declared_type: None,
                 span: Default::default(),
             },

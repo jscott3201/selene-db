@@ -147,8 +147,8 @@ pub struct PatternPlan {
 pub struct BindingDef {
     /// Analyzer-stable binding ID.
     pub binding: BindingId,
-    /// Interned binding name.
-    pub name: selene_core::IStr,
+    /// Database-string binding name.
+    pub name: selene_core::DbString,
     /// Element kind represented by the binding.
     pub element: BindingElement,
     /// Analyzer-inferred binding type.
@@ -368,7 +368,7 @@ pub enum JoinTree {
         /// Right input.
         right: Box<JoinTree>,
         /// Shared binding names used as the join key.
-        key: Vec<selene_core::IStr>,
+        key: Vec<selene_core::DbString>,
         /// Planner-selected build input.
         build_side: BuildSide,
     },
@@ -379,7 +379,7 @@ pub enum JoinTree {
         /// Optional right input.
         right: Box<JoinTree>,
         /// Shared binding names used as the join key.
-        key: Vec<selene_core::IStr>,
+        key: Vec<selene_core::DbString>,
         /// Predicates scoped to the optional right side.
         right_filters: Vec<FilterPredicate>,
     },
@@ -570,7 +570,7 @@ pub enum PipelineOp {
         /// Source list expression.
         source: ProjectExpr,
         /// Alias bound to each list element.
-        alias: selene_core::IStr,
+        alias: selene_core::DbString,
         /// Source span.
         span: SourceSpan,
     },
@@ -771,7 +771,7 @@ pub struct BindingTableSchema {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BindingTableColumn {
     /// Stable column name for aliases and bare variable projections.
-    pub name: Option<selene_core::IStr>,
+    pub name: Option<selene_core::DbString>,
     /// Executor-private anonymous pattern slot.
     pub hidden: Option<HiddenBindingId>,
     /// Analyzer-inferred column type.

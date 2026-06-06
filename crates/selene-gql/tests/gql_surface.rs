@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, CatalogOp, EmptyProcedureRegistry, PipelineOp,
     ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
@@ -14,8 +14,8 @@ use selene_gql::{
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -44,7 +44,7 @@ fn execute_rows(
 
 fn column_strings(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -225,8 +225,8 @@ struct CountingRegistry {
 }
 
 impl ProcedureRegistry for CountingRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
-        (name == [istr("test"), istr("bump")]).then(|| {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
+        (name == [db_string("test"), db_string("bump")]).then(|| {
             ProcedureMetadata::new(
                 ProcedureHandle::new(1),
                 ProcedureSignature::default(),

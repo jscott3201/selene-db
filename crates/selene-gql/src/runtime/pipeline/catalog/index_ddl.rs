@@ -2,10 +2,10 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::{IStr, PropertyValueType};
+use selene_core::{DbString, PropertyValueType};
 use selene_graph::{GraphTypeDef, NodeTypeDef, TypedIndexKind};
 
-use super::intern_runtime;
+use super::runtime_db_string;
 use crate::{
     SourceSpan,
     runtime::{ExecutorError, TxContext},
@@ -17,20 +17,20 @@ use super::super::catalog_index::{
 
 pub(super) enum IndexPath {
     Single {
-        property: IStr,
+        property: DbString,
         kind: TypedIndexKind,
     },
     Composite {
-        properties: Vec<IStr>,
+        properties: Vec<DbString>,
         kinds: Vec<TypedIndexKind>,
     },
 }
 
 pub(super) fn create_index_plan(
     ctx: &TxContext<'_, '_>,
-    name: IStr,
-    label: IStr,
-    properties: &[IStr],
+    name: DbString,
+    label: DbString,
+    properties: &[DbString],
     if_not_exists: bool,
     span: SourceSpan,
 ) -> Result<Option<IndexPath>, ExecutorError> {
@@ -59,9 +59,9 @@ pub(super) fn create_index_plan(
 
 fn create_single_index_plan(
     graph: &selene_graph::SeleneGraph,
-    name: IStr,
-    label: IStr,
-    property: IStr,
+    name: DbString,
+    label: DbString,
+    property: DbString,
     kind: TypedIndexKind,
     if_not_exists: bool,
     span: SourceSpan,
@@ -80,7 +80,7 @@ fn create_single_index_plan(
         }
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
-            name: intern_runtime(&existing_name)?,
+            name: runtime_db_string(&existing_name)?,
             span,
         });
     }
@@ -89,8 +89,8 @@ fn create_single_index_plan(
 
 fn dispatch_index_properties(
     node_type: &NodeTypeDef,
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     span: SourceSpan,
 ) -> Result<IndexPath, ExecutorError> {
     match properties {
@@ -119,9 +119,9 @@ fn dispatch_index_properties(
 
 fn create_composite_index_plan(
     graph: &selene_graph::SeleneGraph,
-    name: IStr,
-    label: IStr,
-    properties: Vec<IStr>,
+    name: DbString,
+    label: DbString,
+    properties: Vec<DbString>,
     kinds: Vec<TypedIndexKind>,
     if_not_exists: bool,
     span: SourceSpan,
@@ -154,7 +154,7 @@ fn create_composite_index_plan(
         }
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
-            name: intern_runtime(&existing_name)?,
+            name: runtime_db_string(&existing_name)?,
             span,
         });
     }
@@ -163,7 +163,7 @@ fn create_composite_index_plan(
 
 fn index_node_type(
     graph_type: &GraphTypeDef,
-    label: IStr,
+    label: DbString,
     span: SourceSpan,
 ) -> Result<&NodeTypeDef, ExecutorError> {
     if let Some(index) = graph_type.node_type_index_for(label.clone()) {
@@ -186,8 +186,8 @@ fn index_node_type(
 
 fn index_kind_for_property(
     node_type: &NodeTypeDef,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     span: SourceSpan,
 ) -> Result<TypedIndexKind, ExecutorError> {
     let property_def = node_type
@@ -221,7 +221,7 @@ fn index_kind_for_property(
 
 pub(super) fn resolve_drop_index(
     graph: &selene_graph::SeleneGraph,
-    name: IStr,
+    name: DbString,
     if_exists: bool,
     span: SourceSpan,
 ) -> Result<Option<DropTarget>, ExecutorError> {
@@ -253,7 +253,7 @@ fn render_index_pair_list(pairs: &[DropTarget]) -> String {
         .join(", ")
 }
 
-fn duplicate_properties(properties: &[IStr]) -> Vec<IStr> {
+fn duplicate_properties(properties: &[DbString]) -> Vec<DbString> {
     let mut seen = BTreeSet::new();
     let mut duplicates = Vec::new();
     for property in properties {

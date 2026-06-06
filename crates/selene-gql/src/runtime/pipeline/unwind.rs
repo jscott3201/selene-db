@@ -1,4 +1,4 @@
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     AnalyzedType, BindingTableColumn, GqlType, ProjectExpr, SourceSpan,
@@ -7,7 +7,7 @@ use crate::{
 
 pub(super) fn execute(
     source: &ProjectExpr,
-    alias: IStr,
+    alias: DbString,
     span: SourceSpan,
     table: BindingTable,
     ctx: &EvalCtx<'_, '_, '_, '_>,

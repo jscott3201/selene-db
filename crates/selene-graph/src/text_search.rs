@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, BinaryHeap};
 use std::time::Duration;
 
-use selene_core::{CancellationCause, CancellationChecker, IStr, NodeId, Value};
+use selene_core::{CancellationCause, CancellationChecker, DbString, NodeId, Value};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
@@ -77,8 +77,8 @@ impl SeleneGraph {
     /// are deduplicated so repeated query terms do not overweight a document.
     pub fn exact_text_search_nodes(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &str,
         k: usize,
     ) -> GraphResult<Vec<TextSearchHit>> {
@@ -95,8 +95,8 @@ impl SeleneGraph {
     /// Exhaustively rank string-valued node properties with cancellation checks.
     pub fn exact_text_search_nodes_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &str,
         k: usize,
         checker: CancellationChecker<'_>,
@@ -185,8 +185,8 @@ impl SharedGraph {
     /// Exhaustively rank string-valued node properties in the current snapshot.
     pub fn exact_text_search_nodes(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &str,
         k: usize,
     ) -> GraphResult<Vec<TextSearchHit>> {
@@ -197,8 +197,8 @@ impl SharedGraph {
     /// Exhaustively rank string-valued node properties with cancellation checks.
     pub fn exact_text_search_nodes_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &str,
         k: usize,
         checker: CancellationChecker<'_>,

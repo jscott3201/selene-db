@@ -245,7 +245,7 @@ fn record_compare(lhs: &Record, rhs: &Record) -> Option<Ordering> {
             // Order over a field-name-sorted view so permuted-equal records
             // compare `Equal` and the ordering agrees with name-keyed equality
             // (GQLRT-14). Field names sort by string content (not the
-            // non-lexicographic IStr handle order) so the order is stable.
+            // non-lexicographic DbString handle order) so the order is stable.
             let lhs = sorted_record_fields(lhs);
             let rhs = sorted_record_fields(rhs);
             for (&(lhs_key, lhs_value), &(rhs_key, rhs_value)) in lhs.iter().zip(rhs.iter()) {
@@ -266,10 +266,12 @@ fn record_compare(lhs: &Record, rhs: &Record) -> Option<Ordering> {
 
 /// Borrow a record's fields sorted by field-name string content.
 ///
-/// IStr ordering is handle order, not lexicographic, so the wire codecs and
+/// DbString ordering is handle order, not lexicographic, so the wire codecs and
 /// every name-keyed comparison sort by `as_str()` to stay deterministic.
-fn sorted_record_fields(fields: &[(selene_core::IStr, Value)]) -> Vec<&(selene_core::IStr, Value)> {
-    let mut sorted: Vec<&(selene_core::IStr, Value)> = fields.iter().collect();
+fn sorted_record_fields(
+    fields: &[(selene_core::DbString, Value)],
+) -> Vec<&(selene_core::DbString, Value)> {
+    let mut sorted: Vec<&(selene_core::DbString, Value)> = fields.iter().collect();
     sorted.sort_by(|lhs, rhs| lhs.0.as_str().cmp(rhs.0.as_str()));
     sorted
 }

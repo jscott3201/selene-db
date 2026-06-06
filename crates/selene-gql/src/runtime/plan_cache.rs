@@ -187,7 +187,7 @@ impl std::fmt::Display for SourcePrefix<'_> {
 mod tests {
     use std::{num::NonZeroUsize, sync::Arc};
 
-    use selene_core::{IStr, intern};
+    use selene_core::{DbString, db_string};
 
     use super::*;
     use crate::{
@@ -204,8 +204,8 @@ mod tests {
         Arc::new(plan(&analyzed, &EmptyProcedureRegistry).expect("test source plans"))
     }
 
-    fn admitted(value: &str) -> IStr {
-        intern(value).expect("test name admits")
+    fn admitted(value: &str) -> DbString {
+        db_string(value).expect("test name admits")
     }
 
     fn call_plan() -> Arc<ExecutionPlan> {

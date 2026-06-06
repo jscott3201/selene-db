@@ -2,7 +2,7 @@
 
 use pest::iterators::Pair;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     ast::{
@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    Rule, build_qualified_name, build_query_pipeline, expr, first_child, intern_pair,
+    Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, first_child,
     not_implemented, span, unexpected_pair,
 };
 
@@ -81,10 +81,10 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
     })
 }
 
-fn build_variable_scope(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
+fn build_variable_scope(pair: Pair<'_, Rule>) -> Result<Vec<DbString>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::ident)
-        .map(|child| intern_pair(child))
+        .map(|child| db_string_pair(child))
         .collect()
 }
 
@@ -147,9 +147,9 @@ fn build_yield_item(pair: Pair<'_, Rule>) -> Result<YieldItem, ParserError> {
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::prop_ident if column.is_none() => {
-                column = Some(YieldColumn::Named(intern_pair(child)?));
+                column = Some(YieldColumn::Named(db_string_pair(child)?));
             }
-            Rule::alias => alias = Some(intern_pair(first_child(child)?)?),
+            Rule::alias => alias = Some(db_string_pair(first_child(child)?)?),
             _ => return Err(unexpected_pair(child, "unexpected YIELD item child")),
         }
     }

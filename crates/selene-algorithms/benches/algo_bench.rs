@@ -14,7 +14,7 @@ use selene_algorithms::{
     ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism,
     TriangleCountConfig, apsp, betweenness, louvain, pagerank, triangle_count,
 };
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 use selene_testing::{BenchFixture, BenchProfile};
 
@@ -148,8 +148,8 @@ impl BenchState {
 fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
     let scale = scale.max(6);
     let graph = SharedGraph::new(GraphId::new(graph_id));
-    let node_label = istr("AlgoBench");
-    let rel = istr("LINK");
+    let node_label = db_string("AlgoBench");
+    let rel = db_string("LINK");
     let mut txn = graph.begin_write();
     let mut nodes = Vec::with_capacity(scale);
     for _ in 0..scale {
@@ -190,7 +190,7 @@ fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
 
 fn create_undirected_edge(
     txn: &mut selene_graph::WriteTxn<'_>,
-    rel: IStr,
+    rel: DbString,
     source: NodeId,
     target: NodeId,
 ) {
@@ -206,8 +206,8 @@ fn betweenness_sample_size(scale: usize) -> Option<usize> {
     (scale > BENCH_BETWEENNESS_SAMPLE_SIZE).then_some(BENCH_BETWEENNESS_SAMPLE_SIZE)
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }
 
 criterion_group! {

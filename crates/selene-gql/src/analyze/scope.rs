@@ -1,6 +1,6 @@
 //! Binding scope tree.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     SourceSpan,
@@ -148,7 +148,7 @@ impl BindingScopeTree {
         &mut self,
         scope: ScopeId,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         ty: AnalyzedType,
     ) -> Result<BindingId, AnalysisError> {
@@ -180,7 +180,7 @@ impl BindingScopeTree {
         &mut self,
         scope: ScopeId,
         binding: BindingId,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
     ) -> Result<(), AnalysisError> {
         if let Some(prior) = self.resolve_local(scope, name.clone()) {
@@ -210,7 +210,7 @@ impl BindingScopeTree {
         &mut self,
         scope: ScopeId,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         ty: AnalyzedType,
         labels: Option<crate::LabelExpr>,
@@ -277,7 +277,7 @@ impl BindingScopeTree {
         ))
     }
 
-    pub(crate) fn resolve(&self, scope: ScopeId, name: IStr) -> Option<BindingId> {
+    pub(crate) fn resolve(&self, scope: ScopeId, name: DbString) -> Option<BindingId> {
         self.resolve_with_scope(scope, name)
             .map(|(binding, _)| binding)
     }
@@ -285,7 +285,7 @@ impl BindingScopeTree {
     pub(crate) fn resolve_with_scope(
         &self,
         scope: ScopeId,
-        name: IStr,
+        name: DbString,
     ) -> Option<(BindingId, ScopeId)> {
         let mut cursor = Some(scope);
         while let Some(scope_id) = cursor {
@@ -322,7 +322,7 @@ impl BindingScopeTree {
         &mut self,
         scope: ScopeId,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         ty: AnalyzedType,
         labels: Option<crate::LabelExpr>,
@@ -334,7 +334,7 @@ impl BindingScopeTree {
         id
     }
 
-    fn resolve_local(&self, scope: ScopeId, name: IStr) -> Option<BindingId> {
+    fn resolve_local(&self, scope: ScopeId, name: DbString) -> Option<BindingId> {
         let scope = self.scope(scope)?;
         // Locals first, then imports (GP03): both are visible in this scope; a
         // local declared here shadows an import of the same name.

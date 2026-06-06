@@ -8,7 +8,7 @@
 //! — the load-bearing guard — a neighbor's *unrelated* edges left untouched by
 //! the wholesale drop.
 
-use selene_core::{GraphId, PropertyMap, intern};
+use selene_core::{GraphId, PropertyMap, db_string};
 
 use super::*;
 use crate::SharedGraph;
@@ -17,8 +17,8 @@ use crate::SharedGraph;
 /// and a `leaf -> hub` in-edge, so the cascade exercises both adjacency
 /// directions. Returns `(hub, leaves, every incident edge id)`.
 fn build_star(mutator: &mut Mutator<'_, '_>, n: usize) -> (NodeId, Vec<NodeId>, Vec<EdgeId>) {
-    let out_label = intern("hub.out").unwrap();
-    let in_label = intern("hub.in").unwrap();
+    let out_label = db_string("hub.out").unwrap();
+    let in_label = db_string("hub.in").unwrap();
     let hub = mutator
         .create_node(LabelSet::new(), PropertyMap::new())
         .unwrap();
@@ -101,11 +101,11 @@ fn delete_hub_preserves_neighbor_unrelated_edges() {
             .unwrap();
         // hub -> l0 (incident on the hub)
         let hub_edge = mutator
-            .create_edge(intern("hub.link").unwrap(), hub, l0, PropertyMap::new())
+            .create_edge(db_string("hub.link").unwrap(), hub, l0, PropertyMap::new())
             .unwrap();
         // l0 -> l1 (does NOT involve the hub)
         let side_edge = mutator
-            .create_edge(intern("side.link").unwrap(), l0, l1, PropertyMap::new())
+            .create_edge(db_string("side.link").unwrap(), l0, l1, PropertyMap::new())
             .unwrap();
         mutator.delete_node(hub).unwrap();
         (hub, l0, l1, hub_edge, side_edge)

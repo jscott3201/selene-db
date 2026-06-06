@@ -9,7 +9,7 @@
 //! to the verbatim `HEURISTIC_*` constants + `expr_id` tie-break so plans are
 //! byte-identical to pre-OPT-5 HEAD when stats are absent.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     BinaryOp, LabelExpr, Literal, ValueExpr,
@@ -127,7 +127,7 @@ fn estimate_expr(expr: &ValueExpr) -> f64 {
     }
 }
 
-fn label_for_binding(bindings: &[BindingDef], binding_id: crate::BindingId) -> Option<IStr> {
+fn label_for_binding(bindings: &[BindingDef], binding_id: crate::BindingId) -> Option<DbString> {
     bindings
         .iter()
         .find(|binding| binding.binding == binding_id)

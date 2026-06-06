@@ -179,7 +179,7 @@ fn t7_compact_boundary_durable_before_visible() {
         for _ in 0..20 {
             ids.push(
                 txn.mutator()
-                    .create_node(LabelSet::single(istr("S")), PropertyMap::new())
+                    .create_node(LabelSet::single(db_string("S")), PropertyMap::new())
                     .unwrap(),
             );
         }
@@ -195,13 +195,13 @@ fn t7_compact_boundary_durable_before_visible() {
     let mut txn_a = shared.begin_write();
     let a = txn_a
         .mutator()
-        .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("A")), PropertyMap::new())
         .unwrap();
     let sealed_a = txn_a.seal(None, None).expect("A seals");
     let mut txn_b = shared.begin_write();
     let b = txn_b
         .mutator()
-        .create_node(LabelSet::single(istr("B")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("B")), PropertyMap::new())
         .unwrap();
     let sealed_b = txn_b.seal(None, None).expect("B seals");
 
@@ -281,7 +281,7 @@ fn t7b_compact_at_head_publishes_with_zero_flush_calls() {
     let ids: Vec<_> = (0..4)
         .map(|_| {
             txn.mutator()
-                .create_node(LabelSet::single(istr("H")), PropertyMap::new())
+                .create_node(LabelSet::single(db_string("H")), PropertyMap::new())
                 .unwrap()
         })
         .collect();
@@ -337,7 +337,7 @@ fn t2b_within_batch_commits_flush_before_publish() {
         let mut txn = shared.begin_write();
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(istr(label)), PropertyMap::new())
+            .create_node(LabelSet::single(db_string(label)), PropertyMap::new())
             .unwrap();
         ids.push(id);
         sealeds.push(txn.seal(None, None).expect("seals"));
@@ -414,13 +414,13 @@ fn t8_compact_recovery_after_crash() {
         let mut txn = shared.begin_write();
         let a = txn
             .mutator()
-            .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("A")), PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
         let mut txn = shared.begin_write();
         let b = txn
             .mutator()
-            .create_node(LabelSet::single(istr("B")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("B")), PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
         shared.compact().expect("compact ok");
@@ -470,7 +470,7 @@ fn t9_recovery_after_crash_batched() {
                         let mut txn = shared.begin_write();
                         let id = txn
                             .mutator()
-                            .create_node(LabelSet::single(istr("F")), PropertyMap::new())
+                            .create_node(LabelSet::single(db_string("F")), PropertyMap::new())
                             .unwrap();
                         txn.commit().expect("commit ok");
                         // Only record AFTER the ack: this id is durable + visible.
@@ -532,7 +532,7 @@ fn t10_crash_after_append_before_flush_loses_only_unflushed() {
         for _ in 0..10 {
             let mut txn = shared.begin_write();
             txn.mutator()
-                .create_node(LabelSet::single(istr("C")), PropertyMap::new())
+                .create_node(LabelSet::single(db_string("C")), PropertyMap::new())
                 .unwrap();
             last = txn.commit().expect("ok").generation;
         }
@@ -553,7 +553,7 @@ fn t10_crash_after_append_before_flush_loses_only_unflushed() {
         for _ in 0..10 {
             let mut txn = shared.begin_write();
             txn.mutator()
-                .create_node(LabelSet::single(istr("C")), PropertyMap::new())
+                .create_node(LabelSet::single(db_string("C")), PropertyMap::new())
                 .unwrap();
             txn.commit().unwrap();
         }
@@ -589,7 +589,7 @@ fn t11_concurrent_fan_in_no_loss() {
                 for _ in 0..PER {
                     let mut txn = shared.begin_write();
                     txn.mutator()
-                        .create_node(LabelSet::single(istr("D")), PropertyMap::new())
+                        .create_node(LabelSet::single(db_string("D")), PropertyMap::new())
                         .unwrap();
                     let outcome = txn.commit().expect("commit ok");
                     let d = outcome.durable_at.expect("durable_at set");
@@ -640,7 +640,7 @@ fn t12_config_forces_on_flush_only() {
         // per commit) makes it durable.
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("O")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("O")), PropertyMap::new())
             .unwrap();
         let outcome = txn.commit().expect("commit ok");
         assert_eq!(outcome.durable_at, Some(1));
@@ -670,7 +670,7 @@ fn t13_cap_bounds_accumulation() {
         let mut txn = shared.begin_write();
         for _ in 0..50 {
             txn.mutator()
-                .create_node(LabelSet::single(istr("Fat")), PropertyMap::new())
+                .create_node(LabelSet::single(db_string("Fat")), PropertyMap::new())
                 .unwrap();
         }
         txn.commit().expect("fat commit alone, never rejected");
@@ -686,7 +686,7 @@ fn t13_cap_bounds_accumulation() {
                 while idx < TOTAL {
                     let mut txn = shared.begin_write();
                     txn.mutator()
-                        .create_node(LabelSet::single(istr("Sm")), PropertyMap::new())
+                        .create_node(LabelSet::single(db_string("Sm")), PropertyMap::new())
                         .unwrap();
                     txn.commit().expect("small commit ok");
                     idx += 8;
@@ -736,7 +736,7 @@ fn t13b_count_cap_clamps_batch_size() {
     for _ in 0..TOTAL {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("Cap")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Cap")), PropertyMap::new())
             .unwrap();
         sealeds.push(txn.seal(None, None).expect("seals"));
     }

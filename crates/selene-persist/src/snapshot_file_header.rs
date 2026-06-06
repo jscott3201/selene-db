@@ -19,12 +19,11 @@ pub const SNAPSHOT_VERSION_MAJOR: u16 = 1;
 /// (minor 0) snapshots are cleanly rejected with [`crate::PersistError::UnsupportedVersion`]
 /// — a clean break, not a dual decoder (deferred to 4c per the D14 amendment).
 ///
-/// Bumped `1 -> 2` by the IStr-removal stage B: deleting `Value::ExternalString`
-/// shifts the postcard variant discriminant of every following `Value` variant,
-/// and snapshot rows embed property values as postcard `PropertyMap` blobs
-/// inside the rkyv `CORE/NODE` / `CORE/EDGE` sections. A pre-stage-B snapshot is
-/// rejected by the same exact-match gate rather than mis-decoding a shifted
-/// variant — another clean greenfield break.
+/// Bumped `1 -> 2` when the serialized `Value` enum layout changed. Snapshot
+/// rows embed property values as postcard `PropertyMap` blobs inside the rkyv
+/// `CORE/NODE` / `CORE/EDGE` sections. Older snapshots are rejected by the same
+/// exact-match gate rather than mis-decoding shifted variant discriminants —
+/// another clean greenfield break.
 ///
 /// Bumped `2 -> 3` by first-class IVF config: `CORE/VIDX` rows now persist
 /// optional IVF construction parameters beside HNSW construction parameters.

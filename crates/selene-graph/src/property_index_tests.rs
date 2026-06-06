@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyDiff, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyDiff, PropertyMap, Value, db_string};
 
 use super::*;
 use crate::graph::PropertyIndexEntry;
 use crate::typed_index::{TypedIndexKind, TypedIndexValueError};
 
-fn property_map(pairs: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+fn property_map(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
 }
 
@@ -14,7 +14,12 @@ fn entry(kind: TypedIndexKind) -> PropertyIndexEntry {
     PropertyIndexEntry::new(TypedIndex::new(kind), None)
 }
 
-fn rows(indexes: &PropertyIndexMap, label: IStr, property: IStr, value: &Value) -> RoaringRows {
+fn rows(
+    indexes: &PropertyIndexMap,
+    label: DbString,
+    property: DbString,
+    value: &Value,
+) -> RoaringRows {
     RoaringRows(
         indexes
             .get(&(label, property))
@@ -38,9 +43,9 @@ impl RoaringRows {
 
 #[test]
 fn apply_node_create_populates_matching_indexes() {
-    let label = intern("pi.create.label").unwrap();
-    let age = intern("pi.create.age").unwrap();
-    let name = intern("pi.create.name").unwrap();
+    let label = db_string("pi.create.label").unwrap();
+    let age = db_string("pi.create.age").unwrap();
+    let name = db_string("pi.create.name").unwrap();
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), age.clone()), entry(TypedIndexKind::I64));
     indexes.insert((label.clone(), name.clone()), entry(TypedIndexKind::String));
@@ -48,7 +53,7 @@ fn apply_node_create_populates_matching_indexes() {
         (age.clone(), Value::Int(30)),
         (
             name.clone(),
-            Value::String(intern("pi.create.ada").unwrap()),
+            Value::String(db_string("pi.create.ada").unwrap()),
         ),
     ]);
 
@@ -60,7 +65,7 @@ fn apply_node_create_populates_matching_indexes() {
             &indexes,
             label,
             name,
-            &Value::String(intern("pi.create.ada").unwrap())
+            &Value::String(db_string("pi.create.ada").unwrap())
         )
         .contains(0)
     );
@@ -68,8 +73,8 @@ fn apply_node_create_populates_matching_indexes() {
 
 #[test]
 fn apply_node_delete_removes_matching_entries() {
-    let label = intern("pi.delete.label").unwrap();
-    let age = intern("pi.delete.age").unwrap();
+    let label = db_string("pi.delete.label").unwrap();
+    let age = db_string("pi.delete.age").unwrap();
     let props = property_map([(age.clone(), Value::Int(30))]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), age.clone()), entry(TypedIndexKind::I64));
@@ -82,8 +87,8 @@ fn apply_node_delete_removes_matching_entries() {
 
 #[test]
 fn apply_node_update_with_label_add_inserts_relevant_property() {
-    let label = intern("pi.update.label-add").unwrap();
-    let age = intern("pi.update.label-add.age").unwrap();
+    let label = db_string("pi.update.label-add").unwrap();
+    let age = db_string("pi.update.label-add.age").unwrap();
     let props = property_map([(age.clone(), Value::Int(41))]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), age.clone()), entry(TypedIndexKind::I64));
@@ -103,8 +108,8 @@ fn apply_node_update_with_label_add_inserts_relevant_property() {
 
 #[test]
 fn apply_node_update_with_label_remove_deletes_relevant_property() {
-    let label = intern("pi.update.label-remove").unwrap();
-    let age = intern("pi.update.label-remove.age").unwrap();
+    let label = db_string("pi.update.label-remove").unwrap();
+    let age = db_string("pi.update.label-remove.age").unwrap();
     let props = property_map([(age.clone(), Value::Int(41))]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), age.clone()), entry(TypedIndexKind::I64));
@@ -125,8 +130,8 @@ fn apply_node_update_with_label_remove_deletes_relevant_property() {
 
 #[test]
 fn apply_node_update_with_property_set_moves_rows_between_keys() {
-    let label = intern("pi.update.prop-set").unwrap();
-    let age = intern("pi.update.prop-set.age").unwrap();
+    let label = db_string("pi.update.prop-set").unwrap();
+    let age = db_string("pi.update.prop-set.age").unwrap();
     let old_props = property_map([(age.clone(), Value::Int(41))]);
     let new_props = property_map([(age.clone(), Value::Int(42))]);
     let mut indexes = PropertyIndexMap::default();
@@ -155,8 +160,8 @@ fn apply_node_update_with_property_set_moves_rows_between_keys() {
 
 #[test]
 fn apply_node_update_with_property_remove_drops_row() {
-    let label = intern("pi.update.prop-remove").unwrap();
-    let age = intern("pi.update.prop-remove.age").unwrap();
+    let label = db_string("pi.update.prop-remove").unwrap();
+    let age = db_string("pi.update.prop-remove.age").unwrap();
     let old_props = property_map([(age.clone(), Value::Int(41))]);
     let new_props = PropertyMap::new();
     let mut indexes = PropertyIndexMap::default();
@@ -184,9 +189,12 @@ fn apply_node_update_with_property_remove_drops_row() {
 
 #[test]
 fn kind_mismatch_skips_commit_update() {
-    let label = intern("pi.kind.label").unwrap();
-    let age = intern("pi.kind.age").unwrap();
-    let props = property_map([(age.clone(), Value::String(intern("pi.kind.old").unwrap()))]);
+    let label = db_string("pi.kind.label").unwrap();
+    let age = db_string("pi.kind.age").unwrap();
+    let props = property_map([(
+        age.clone(),
+        Value::String(db_string("pi.kind.old").unwrap()),
+    )]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), age.clone()), entry(TypedIndexKind::I64));
 
@@ -197,8 +205,8 @@ fn kind_mismatch_skips_commit_update() {
 
 #[test]
 fn null_values_are_skipped() {
-    let label = intern("pi.null.label").unwrap();
-    let age = intern("pi.null.age").unwrap();
+    let label = db_string("pi.null.label").unwrap();
+    let age = db_string("pi.null.age").unwrap();
     let props = property_map([(age.clone(), Value::Null)]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), age.clone()), entry(TypedIndexKind::I64));
@@ -210,16 +218,22 @@ fn null_values_are_skipped() {
 
 #[test]
 fn untouched_indexes_keep_their_arc() {
-    let label = intern("pi.cow.label").unwrap();
-    let age = intern("pi.cow.age").unwrap();
-    let name = intern("pi.cow.name").unwrap();
+    let label = db_string("pi.cow.label").unwrap();
+    let age = db_string("pi.cow.age").unwrap();
+    let name = db_string("pi.cow.name").unwrap();
     let old_props = property_map([
         (age.clone(), Value::Int(1)),
-        (name.clone(), Value::String(intern("pi.cow.ada").unwrap())),
+        (
+            name.clone(),
+            Value::String(db_string("pi.cow.ada").unwrap()),
+        ),
     ]);
     let new_props = property_map([
         (age.clone(), Value::Int(2)),
-        (name.clone(), Value::String(intern("pi.cow.ada").unwrap())),
+        (
+            name.clone(),
+            Value::String(db_string("pi.cow.ada").unwrap()),
+        ),
     ]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), age), entry(TypedIndexKind::I64));
@@ -251,8 +265,8 @@ fn untouched_indexes_keep_their_arc() {
 
 #[test]
 fn build_property_index_is_strict_for_existing_data() {
-    let label = intern("pi.build.label").unwrap();
-    let age = intern("pi.build.age").unwrap();
+    let label = db_string("pi.build.label").unwrap();
+    let age = db_string("pi.build.age").unwrap();
     let mut graph = crate::SeleneGraph::new(GraphId::new(1));
     graph
         .node_store
@@ -260,7 +274,7 @@ fn build_property_index_is_strict_for_existing_data() {
         .push(LabelSet::single(label.clone()));
     graph.node_store.properties.push(property_map([(
         age.clone(),
-        Value::String(intern("wrong").unwrap()),
+        Value::String(db_string("wrong").unwrap()),
     )]));
     graph.node_store.alive.insert(0);
 
@@ -282,9 +296,9 @@ fn build_property_index_is_strict_for_existing_data() {
 fn apply_node_create_admits_string_into_string_index() {
     // `Value::String` reaches the property-index commit and produces a
     // findable index entry.
-    let label = intern("pi.string.create.label").unwrap();
-    let name = intern("pi.string.create.name").unwrap();
-    let probe = intern("pi.string.create.unique-1").unwrap();
+    let label = db_string("pi.string.create.label").unwrap();
+    let name = db_string("pi.string.create.name").unwrap();
+    let probe = db_string("pi.string.create.unique-1").unwrap();
     let props = property_map([(name.clone(), Value::String(probe.clone()))]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), name.clone()), entry(TypedIndexKind::String));
@@ -298,10 +312,10 @@ fn apply_node_create_admits_string_into_string_index() {
 fn apply_node_update_moves_string_index_key() {
     // SET against an INDEXED column moves the row from the previous key to
     // the new one.
-    let label = intern("pi.string.update.label").unwrap();
-    let name = intern("pi.string.update.name").unwrap();
-    let old = intern("pi.string.update.old").unwrap();
-    let new_key = intern("pi.string.update.new-unique").unwrap();
+    let label = db_string("pi.string.update.label").unwrap();
+    let name = db_string("pi.string.update.name").unwrap();
+    let old = db_string("pi.string.update.old").unwrap();
+    let new_key = db_string("pi.string.update.new-unique").unwrap();
     let old_props = property_map([(name.clone(), Value::String(old.clone()))]);
     let new_props = property_map([(name.clone(), Value::String(new_key.clone()))]);
     let mut indexes = PropertyIndexMap::default();
@@ -330,11 +344,11 @@ fn apply_node_update_moves_string_index_key() {
 
 #[test]
 fn build_property_index_admits_existing_string_rows() {
-    let label = intern("pi.build.string.label").unwrap();
-    let name = intern("pi.build.string.name").unwrap();
+    let label = db_string("pi.build.string.label").unwrap();
+    let name = db_string("pi.build.string.name").unwrap();
     let mut graph = crate::SeleneGraph::new(GraphId::new(11));
     let unique = (0..3)
-        .map(|i| intern(&format!("pi.build.string.foo_{i}")).unwrap())
+        .map(|i| db_string(&format!("pi.build.string.foo_{i}")).unwrap())
         .collect::<Vec<_>>();
     for (row, content) in unique.iter().enumerate() {
         graph
@@ -355,8 +369,8 @@ fn build_property_index_admits_existing_string_rows() {
 
 #[test]
 fn index_rejection_keeps_kind_mismatch_path_unchanged() {
-    let label = intern("pi.kind-mismatch.label").unwrap();
-    let name = intern("pi.kind-mismatch.name").unwrap();
+    let label = db_string("pi.kind-mismatch.label").unwrap();
+    let name = db_string("pi.kind-mismatch.name").unwrap();
     let synthetic = TypedIndexValueError::KindMismatch {
         expected_kind: TypedIndexKind::I64,
         observed: "String",
@@ -376,7 +390,7 @@ fn index_rejection_keeps_kind_mismatch_path_unchanged() {
 
 #[test]
 fn apply_property_diff_remove_is_covered_by_update_shape() {
-    let key = intern("pi.diff.key").unwrap();
+    let key = db_string("pi.diff.key").unwrap();
     let diff = PropertyDiff::new([], [key.clone()]).unwrap();
     assert_eq!(diff.removed.iter().cloned().collect::<Vec<_>>(), vec![key]);
 }
@@ -389,8 +403,8 @@ fn rebuild_property_indexes_is_lenient_on_kind_drift() {
     // logs and skips). Recovery must reconstruct the registry without
     // hard-failing, otherwise a runtime-accepted snapshot becomes
     // unloadable.
-    let label = intern("pi.rebuild.label").unwrap();
-    let age = intern("pi.rebuild.age").unwrap();
+    let label = db_string("pi.rebuild.label").unwrap();
+    let age = db_string("pi.rebuild.age").unwrap();
     let mut graph = crate::SeleneGraph::new(GraphId::new(1));
     // Row 0: matching kind (Int 30) — should land in the rebuilt index.
     graph
@@ -409,7 +423,7 @@ fn rebuild_property_indexes_is_lenient_on_kind_drift() {
         .push(LabelSet::single(label.clone()));
     graph.node_store.properties.push(property_map([(
         age.clone(),
-        Value::String(intern("pi.rebuild.wrong").unwrap()),
+        Value::String(db_string("pi.rebuild.wrong").unwrap()),
     )]));
     graph.node_store.alive.insert(1);
     // Pre-register the index (will be cleared and rebuilt by
@@ -440,17 +454,17 @@ fn apply_node_update_only_touches_affected_indexes() {
     // counts stay 1 (untouched / unshared) after the update — the
     // affected index's count rises because Arc::make_mut clones it
     // when the bitmap mutates.
-    let label = intern("pi.affected.label").unwrap();
-    let age = intern("pi.affected.age").unwrap();
-    let unrelated_label = intern("pi.affected.other-label").unwrap();
-    let unrelated_property = intern("pi.affected.other-prop").unwrap();
+    let label = db_string("pi.affected.label").unwrap();
+    let age = db_string("pi.affected.age").unwrap();
+    let unrelated_label = db_string("pi.affected.other-label").unwrap();
+    let unrelated_property = db_string("pi.affected.other-prop").unwrap();
 
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label.clone(), age.clone()), entry(TypedIndexKind::I64));
     // Many unrelated indexes that the update should NOT touch.
     for i in 0..10 {
-        let extra_label = intern(&format!("pi.affected.extra-label-{i}")).unwrap();
-        let extra_property = intern(&format!("pi.affected.extra-prop-{i}")).unwrap();
+        let extra_label = db_string(&format!("pi.affected.extra-label-{i}")).unwrap();
+        let extra_property = db_string(&format!("pi.affected.extra-prop-{i}")).unwrap();
         indexes.insert((extra_label, extra_property), entry(TypedIndexKind::I64));
     }
     indexes.insert(
@@ -466,8 +480,8 @@ fn apply_node_update_only_touches_affected_indexes() {
     );
     let extra_clones: Vec<_> = (0..10)
         .map(|i| {
-            let l = intern(&format!("pi.affected.extra-label-{i}")).unwrap();
-            let p = intern(&format!("pi.affected.extra-prop-{i}")).unwrap();
+            let l = db_string(&format!("pi.affected.extra-label-{i}")).unwrap();
+            let p = db_string(&format!("pi.affected.extra-prop-{i}")).unwrap();
             Arc::clone(&indexes.get(&(l, p)).unwrap().index)
         })
         .collect();

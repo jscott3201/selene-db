@@ -29,7 +29,7 @@
 //!   expansion is pure overhead (N linear scans vs a single linear scan
 //!   with post-filter), so the rule stays Linear in that case.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     LabelExpr,
@@ -169,13 +169,13 @@ fn maybe_expand_scan(
 /// case = 13 probes per cache-miss; amortized via the source-text plan
 /// cache (BRIEF-114).
 fn any_branch_has_applicable_index(
-    labels: &[IStr],
+    labels: &[DbString],
     predicates: &[FilterPredicate],
     bindings: &[BindingDef],
     catalog: &dyn IndexCatalog,
 ) -> bool {
     let eq_candidates = equality_candidates(predicates, bindings);
-    let eq_keys: Vec<IStr> = eq_candidates
+    let eq_keys: Vec<DbString> = eq_candidates
         .iter()
         .map(|candidate| candidate.key.clone())
         .collect();

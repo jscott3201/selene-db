@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use selene_core::{GraphId, LabelSet, Value, intern};
+use selene_core::{GraphId, LabelSet, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ExecutorError, ExecutorWarning, GqlStatus, Session,
     StatementOutput, WarningSink, WriteOutcome, analyze, execute_statement, parse, plan,
@@ -10,8 +10,8 @@ use selene_gql::{
 use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
-fn istr(value: &str) -> selene_core::IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> selene_core::DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn planned(source: &str) -> ExecutionPlan {
@@ -42,7 +42,7 @@ fn written(output: StatementOutput) -> WriteOutcome {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("statement.test.graph"),
+            name: db_string("statement.test.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -52,10 +52,10 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 }
 
 fn closed_person_graph(id: u64) -> SharedGraph {
-    let person = istr("Person");
+    let person = db_string("Person");
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("statement.person.graph"),
+            name: db_string("statement.person.graph"),
             node_types: vec![NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),
@@ -97,7 +97,7 @@ fn read_only_returns_rows_from_pattern_plan() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("Person")), Default::default())
+            .create_node(LabelSet::single(db_string("Person")), Default::default())
             .expect("fixture node inserts");
         txn.commit().expect("fixture commits");
     }
@@ -243,10 +243,10 @@ fn explicit_commit_emits_relaxed_write_warning_after_commit() {
 fn catalog_show_yields_rows() {
     let graph = SharedGraph::builder(GraphId::new(3806))
         .bound_to(GraphTypeDef {
-            name: istr("statement.show.graph"),
+            name: db_string("statement.show.graph"),
             node_types: vec![NodeTypeDef {
-                name: istr("types.person"),
-                key_labels: LabelSet::single(istr("Person")),
+                name: db_string("types.person"),
+                key_labels: LabelSet::single(db_string("Person")),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
@@ -260,7 +260,10 @@ fn catalog_show_yields_rows() {
     let table = rows(execute("SHOW NODE TYPES", &mut session).expect("show executes"));
 
     assert_eq!(table.row_count(), 1);
-    assert_eq!(table.rows()[0].values()[0], Value::String(istr("Person")));
+    assert_eq!(
+        table.rows()[0].values()[0],
+        Value::String(db_string("Person"))
+    );
 }
 
 #[test]
@@ -535,7 +538,7 @@ fn catalog_modifying_rejects_drop_with_surviving_instances_no_partial_state() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("Person")), Default::default())
+            .create_node(LabelSet::single(db_string("Person")), Default::default())
             .expect("fixture node inserts");
         txn.commit().expect("fixture commits");
     }

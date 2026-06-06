@@ -44,7 +44,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use selene_graph::{SeleneGraph, TypedIndexKind};
 
 use crate::plan::optimize::{
@@ -75,8 +75,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn typed_index(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
     ) -> Option<TypedIndexLookup> {
         // Built-in typed property indexes are node-only at HEAD.
         if target != IndexTarget::Node {
@@ -91,7 +91,7 @@ impl IndexCatalog for LiveIndexCatalog {
         ))
     }
 
-    fn label_index(&self, target: IndexTarget, _label: IStr) -> Option<IndexHandle> {
+    fn label_index(&self, target: IndexTarget, _label: DbString) -> Option<IndexHandle> {
         // The intrinsic RoaringBitmap label index is always available for both
         // node and edge targets; the runtime falls back to linear when a label
         // bitmap is absent. The handle is opaque (runtime re-derives by label).
@@ -103,8 +103,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn composite_index(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
     ) -> Option<CompositeIndexHandle> {
         // Composite indexes are node-only at HEAD.
         if target != IndexTarget::Node {
@@ -119,7 +119,7 @@ impl IndexCatalog for LiveIndexCatalog {
         // Per-component IndexKind in declaration order enables parameter-aware
         // composite probes (BRIEF-154 §B.2). The runtime re-derives the actual
         // index by (label, sorted-properties) at execute time.
-        let component_kinds: Vec<(IStr, IndexKind)> = entry
+        let component_kinds: Vec<(DbString, IndexKind)> = entry
             .declared_properties
             .iter()
             .zip(kinds.iter())
@@ -146,7 +146,7 @@ impl IndexCatalog for LiveIndexCatalog {
         })
     }
 
-    fn label_cardinality(&self, target: IndexTarget, label: IStr) -> Option<u64> {
+    fn label_cardinality(&self, target: IndexTarget, label: DbString) -> Option<u64> {
         match target {
             // Absent bitmap = zero rows carry the label; report 0 (an exact,
             // maximally-selective count) rather than None so the cost gate can
@@ -165,8 +165,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn equality_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         value: &Value,
     ) -> Option<u64> {
         if target != IndexTarget::Node {
@@ -183,8 +183,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn range_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         range: (std::ops::Bound<Value>, std::ops::Bound<Value>),
     ) -> Option<u64> {
         if target != IndexTarget::Node {
@@ -195,7 +195,12 @@ impl IndexCatalog for LiveIndexCatalog {
             .map(|bm| bm.len())
     }
 
-    fn typed_avg_bucket(&self, target: IndexTarget, label: IStr, property: IStr) -> Option<u64> {
+    fn typed_avg_bucket(
+        &self,
+        target: IndexTarget,
+        label: DbString,
+        property: DbString,
+    ) -> Option<u64> {
         if target != IndexTarget::Node {
             return None;
         }
@@ -206,8 +211,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn composite_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
         keys: &[Value],
     ) -> Option<u64> {
         if target != IndexTarget::Node {
@@ -238,8 +243,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn composite_avg_bucket(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
     ) -> Option<u64> {
         if target != IndexTarget::Node {
             return None;

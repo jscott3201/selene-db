@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use proptest::prelude::*;
 use selene_core::{
-    EdgeId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern,
+    DbString, EdgeId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, db_string,
 };
 use smallvec::smallvec;
 
@@ -26,26 +26,26 @@ use selene_graph::{SeleneGraph, SharedGraph, TypedIndexKind};
 // Shared label / property pools (small so index maintenance is exercised).
 // ---------------------------------------------------------------------------
 
-pub fn labels() -> [IStr; 3] {
+pub fn labels() -> [DbString; 3] {
     [
-        intern("proptest.label.alpha").unwrap(),
-        intern("proptest.label.beta").unwrap(),
-        intern("proptest.label.gamma").unwrap(),
+        db_string("proptest.label.alpha").unwrap(),
+        db_string("proptest.label.beta").unwrap(),
+        db_string("proptest.label.gamma").unwrap(),
     ]
 }
 
-pub fn prop_keys() -> [IStr; 3] {
+pub fn prop_keys() -> [DbString; 3] {
     [
-        intern("proptest.key.age").unwrap(),
-        intern("proptest.key.score").unwrap(),
-        intern("proptest.key.name").unwrap(),
+        db_string("proptest.key.age").unwrap(),
+        db_string("proptest.key.score").unwrap(),
+        db_string("proptest.key.name").unwrap(),
     ]
 }
 
-pub fn edge_labels() -> [IStr; 2] {
+pub fn edge_labels() -> [DbString; 2] {
     [
-        intern("proptest.edge.knows").unwrap(),
-        intern("proptest.edge.likes").unwrap(),
+        db_string("proptest.edge.knows").unwrap(),
+        db_string("proptest.edge.likes").unwrap(),
     ]
 }
 
@@ -60,7 +60,7 @@ pub fn register_indexes(shared: &SharedGraph) {
     shared
         .create_property_index(alpha.clone(), score, TypedIndexKind::F64)
         .unwrap();
-    let props: smallvec::SmallVec<[IStr; 4]> = smallvec![age, name];
+    let props: smallvec::SmallVec<[DbString; 4]> = smallvec![age, name];
     let kinds: smallvec::SmallVec<[TypedIndexKind; 4]> =
         smallvec![TypedIndexKind::I64, TypedIndexKind::String];
     let mut txn = shared.begin_write();
@@ -78,8 +78,8 @@ pub fn arb_value() -> impl Strategy<Value = Value> {
     prop_oneof![
         (0i64..5).prop_map(Value::Int),
         (0u8..3).prop_map(|n| Value::Float(f64::from(n))),
-        Just(Value::String(intern("proptest.value.x").unwrap())),
-        Just(Value::String(intern("proptest.value.y").unwrap())),
+        Just(Value::String(db_string("proptest.value.x").unwrap())),
+        Just(Value::String(db_string("proptest.value.y").unwrap())),
         Just(Value::Null),
     ]
 }
@@ -300,7 +300,7 @@ pub fn apply_op(shared: &SharedGraph, oracle: &mut Oracle, op: &Op, seed: usize)
                     } else {
                         LabelDiff::new([label.clone()], []).unwrap()
                     };
-                    let set: Vec<(IStr, Value)> =
+                    let set: Vec<(DbString, Value)> =
                         props.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                     let prop_diff = PropertyDiff::new(set.clone(), []).unwrap();
                     mutator.update_node(node, label_diff, prop_diff).unwrap();
@@ -323,7 +323,7 @@ pub fn apply_op(shared: &SharedGraph, oracle: &mut Oracle, op: &Op, seed: usize)
             }
             Op::UpdateEdge { props } => {
                 if let Some(edge) = oracle.pick_alive_edge(seed) {
-                    let set: Vec<(IStr, Value)> =
+                    let set: Vec<(DbString, Value)> =
                         props.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                     let prop_diff = PropertyDiff::new(set.clone(), []).unwrap();
                     mutator.update_edge(edge, prop_diff).unwrap();

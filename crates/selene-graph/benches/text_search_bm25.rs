@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    CancellationChecker, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
-    VectorValue, intern,
+    CancellationChecker, DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
+    VectorValue, db_string,
 };
 use selene_graph::VectorNeighborDirection;
 use selene_graph::{ApproximateVectorSearchOptions, VectorCandidateSet, VectorIndexKind};
@@ -163,8 +163,8 @@ fn bench_hybrid_bm25_vector(c: &mut Criterion) {
 
 struct TextFixture {
     graph: Arc<SeleneGraph>,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     query: String,
     index: TextIndex,
     registered_index: Arc<TextIndex>,
@@ -173,8 +173,8 @@ struct TextFixture {
 impl TextFixture {
     fn build(scale: usize) -> Self {
         let shared = SharedGraph::new(GraphId::new(431_201));
-        let label = intern("BenchTextDoc").expect("bench label interns");
-        let property = intern("body").expect("bench property interns");
+        let label = db_string("BenchTextDoc").expect("bench label fits DB string cap");
+        let property = db_string("body").expect("bench property fits DB string cap");
         {
             let mut txn = shared.begin_write();
             let mut mutator = txn.mutator();
@@ -190,7 +190,7 @@ impl TextFixture {
                         LabelSet::single(label.clone()),
                         props(
                             &property,
-                            Value::String(intern(&text).expect("bench text interns")),
+                            Value::String(db_string(&text).expect("bench text fits DB string cap")),
                         ),
                     )
                     .expect("bench node inserts");
@@ -262,9 +262,9 @@ impl HybridStrategy {
 struct HybridFixture {
     graph: Arc<SeleneGraph>,
     scale: usize,
-    label: IStr,
-    embedding_key: IStr,
-    topic_edge: IStr,
+    label: DbString,
+    embedding_key: DbString,
+    topic_edge: DbString,
     text_index: Arc<TextIndex>,
     queries: Vec<HybridQuery>,
     metadata: HashMap<NodeId, HybridMeta>,
@@ -275,11 +275,14 @@ struct HybridFixture {
 
 impl HybridFixture {
     fn build(requested_scale: usize) -> Self {
-        let label = intern("HybridMemoryDoc").expect("hybrid label interns");
-        let topic_label = intern("HybridMemoryTopic").expect("hybrid topic label interns");
-        let body_key = intern("body").expect("hybrid body key interns");
-        let embedding_key = intern("embedding").expect("hybrid embedding key interns");
-        let topic_edge = intern("IN_HYBRID_TOPIC").expect("hybrid topic edge interns");
+        let label = db_string("HybridMemoryDoc").expect("hybrid label fits DB string cap");
+        let topic_label =
+            db_string("HybridMemoryTopic").expect("hybrid topic label fits DB string cap");
+        let body_key = db_string("body").expect("hybrid body key fits DB string cap");
+        let embedding_key =
+            db_string("embedding").expect("hybrid embedding key fits DB string cap");
+        let topic_edge =
+            db_string("IN_HYBRID_TOPIC").expect("hybrid topic edge fits DB string cap");
         let duplicates = (requested_scale / (TOPICS.len() * HYBRID_FACTS_PER_TOPIC)).clamp(2, 256);
         let scale = TOPICS.len() * HYBRID_FACTS_PER_TOPIC * duplicates;
         let shared = SharedGraph::new(GraphId::new(434_000 + scale as u64));
@@ -294,7 +297,7 @@ impl HybridFixture {
                         LabelSet::single(topic_label.clone()),
                         props(
                             &body_key,
-                            Value::String(intern(topic).expect("topic interns")),
+                            Value::String(db_string(topic).expect("topic fits DB string cap")),
                         ),
                     )
                     .expect("hybrid topic node inserts");
@@ -313,7 +316,9 @@ impl HybridFixture {
                                 LabelSet::single(label.clone()),
                                 hybrid_props(
                                     &body_key,
-                                    Value::String(intern(&body).expect("hybrid body interns")),
+                                    Value::String(
+                                        db_string(&body).expect("hybrid body fits DB string cap"),
+                                    ),
                                     &embedding_key,
                                     Value::Vector(vector),
                                 ),
@@ -666,9 +671,9 @@ fn vector_hit_node(hit: VectorNodeSearchHit) -> NodeId {
 }
 
 fn hybrid_props(
-    text_key: &IStr,
+    text_key: &DbString,
     text_value: Value,
-    vector_key: &IStr,
+    vector_key: &DbString,
     vector_value: Value,
 ) -> PropertyMap {
     PropertyMap::from_pairs([
@@ -678,7 +683,7 @@ fn hybrid_props(
     .expect("hybrid property map is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("bench property map is valid")
 }
 

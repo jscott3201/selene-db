@@ -7,7 +7,7 @@
 
 use std::num::TryFromIntError;
 
-use selene_core::{CoreError, IStr, Value, VectorMetric, VectorValue};
+use selene_core::{CoreError, DbString, Value, VectorMetric, VectorValue};
 use selene_graph::{GraphError, VectorSearchError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -89,7 +89,7 @@ pub(super) fn execute(
     })
 }
 
-fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError> {
+fn string_arg(value: &Value, name: &'static str) -> Result<DbString, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!(
             "{PROC_NAME} {name} must be a non-empty STRING"

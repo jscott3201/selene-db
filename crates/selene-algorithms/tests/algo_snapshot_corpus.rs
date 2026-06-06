@@ -26,7 +26,7 @@ use selene_algorithms::{
     articulation_points, betweenness, bridges, dijkstra, label_propagation, louvain, pagerank, scc,
     scc_count, sssp, topological_sort, triangle_count, wcc, wcc_count,
 };
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 use selene_testing::{
     ALGORITHM_COVERAGE, AlgoCorpus, AlgoCorpusCategory, AlgoCorpusEntry, AlgoCorpusGraph,
@@ -200,8 +200,8 @@ fn corpus_fixture_graphs_build_successfully() {
 // Fixture instantiation
 // ---------------------------------------------------------------------------
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 /// Build a `SharedGraph` from an `AlgoCorpusGraph` plus the projection that
@@ -209,8 +209,8 @@ fn istr(name: &str) -> IStr {
 /// label used in the snapshot header.
 fn build_graph_and_projection(graph: AlgoCorpusGraph) -> (GraphProjection, String) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let (node_count, edges, fixture_label, scope_opt) = match graph {
         AlgoCorpusGraph::Empty => (0_usize, vec![], "empty".to_string(), None),

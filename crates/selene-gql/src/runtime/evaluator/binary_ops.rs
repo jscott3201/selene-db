@@ -367,7 +367,7 @@ fn eval_concat(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Execut
         return Ok(Value::Null);
     }
     match (lhs, rhs) {
-        (Value::String(lhs), Value::String(rhs)) => intern_string(&format!("{lhs}{rhs}"), span),
+        (Value::String(lhs), Value::String(rhs)) => string_value(&format!("{lhs}{rhs}"), span),
         (Value::List(mut lhs), Value::List(rhs)) => {
             lhs.extend(rhs);
             Ok(Value::List(lhs))
@@ -647,9 +647,9 @@ pub(super) fn string_slice(value: &Value) -> Option<&str> {
 
 /// Construct a `Value::String` from engine-produced text, mapping the IL013
 /// byte-cap failure to a runtime data exception at `span`.
-pub(super) fn intern_string(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match selene_core::intern(text) {
-        Ok(istr) => Ok(Value::String(istr)),
+pub(super) fn string_value(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match selene_core::db_string(text) {
+        Ok(db_string) => Ok(Value::String(db_string)),
         Err(_err) => data_exception("string exceeds the maximum byte length", span),
     }
 }

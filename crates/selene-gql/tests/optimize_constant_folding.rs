@@ -1,6 +1,6 @@
 //! BRIEF-28 constant-folding optimizer tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     AnalyzedStatement, BinaryOp, CatalogOp, EmptyProcedureRegistry, Literal, MutationOp,
     PipelineOp, PlannedTypePropertyConstraint, ProcedureOutputColumn, SourceSpan, ValueExpr,
@@ -39,8 +39,8 @@ fn project_expr(plan: &selene_gql::ExecutionPlan) -> &ValueExpr {
         .expect("project expression")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 #[test]
@@ -143,14 +143,14 @@ fn folds_pattern_property_and_where_expressions() {
 #[test]
 fn folds_call_mutation_and_catalog_expression_payloads() {
     let registry = MockProcedureRegistry::new().with_procedure(
-        vec![istr("pkg"), istr("args")],
+        vec![db_string("pkg"), db_string("args")],
         vec![selene_gql::ProcedureParameter::new(
-            istr("a"),
+            db_string("a"),
             selene_gql::GqlType::Integer,
             false,
         )],
         vec![ProcedureOutputColumn::new(
-            istr("out"),
+            db_string("out"),
             selene_gql::GqlType::Integer,
         )],
     );

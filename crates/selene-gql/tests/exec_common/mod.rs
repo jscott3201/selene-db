@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, JoinTree, NodeOrEdgeScan, PatternPlan, ScanAccess,
     TxContext, analyze, execute_pattern as execute_pattern_plan, execute_pipeline, optimize, parse,
@@ -16,31 +16,31 @@ pub const LARGE_COUNTER_B: i64 = 9_007_199_254_740_993;
 
 pub struct ExecFixture {
     pub graph: SharedGraph,
-    pub person: IStr,
-    pub sensor: IStr,
-    pub counter: IStr,
-    pub age: IStr,
-    pub count: IStr,
-    pub name: IStr,
-    pub email: IStr,
-    pub tenant: IStr,
-    pub kind: IStr,
-    pub score: IStr,
+    pub person: DbString,
+    pub sensor: DbString,
+    pub counter: DbString,
+    pub age: DbString,
+    pub count: DbString,
+    pub name: DbString,
+    pub email: DbString,
+    pub tenant: DbString,
+    pub kind: DbString,
+    pub score: DbString,
 }
 
 impl ExecFixture {
     pub fn build() -> Self {
-        let person = istr("Person");
-        let sensor = istr("Sensor");
-        let counter = istr("Counter");
-        let knows = istr("KNOWS");
-        let age = istr("age");
-        let count = istr("count");
-        let name = istr("name");
-        let email = istr("email");
-        let tenant = istr("tenant");
-        let kind = istr("kind");
-        let score = istr("score");
+        let person = db_string("Person");
+        let sensor = db_string("Sensor");
+        let counter = db_string("Counter");
+        let knows = db_string("KNOWS");
+        let age = db_string("age");
+        let count = db_string("count");
+        let name = db_string("name");
+        let email = db_string("email");
+        let tenant = db_string("tenant");
+        let kind = db_string("kind");
+        let score = db_string("score");
         let graph = SharedGraph::new(GraphId::new(31));
         {
             let mut txn = graph.begin_write();
@@ -50,10 +50,10 @@ impl ExecFixture {
                     LabelSet::single(person.clone()),
                     props([
                         (age.clone(), Value::Int(30)),
-                        (name.clone(), Value::String(istr("Alice"))),
-                        (email.clone(), Value::String(istr("alice@example.com"))),
-                        (tenant.clone(), Value::String(istr("t1"))),
-                        (kind.clone(), Value::String(istr("person"))),
+                        (name.clone(), Value::String(db_string("Alice"))),
+                        (email.clone(), Value::String(db_string("alice@example.com"))),
+                        (tenant.clone(), Value::String(db_string("t1"))),
+                        (kind.clone(), Value::String(db_string("person"))),
                         (score.clone(), Value::Int(7)),
                     ]),
                 )
@@ -63,10 +63,10 @@ impl ExecFixture {
                     LabelSet::single(person.clone()),
                     props([
                         (age.clone(), Value::Int(42)),
-                        (name.clone(), Value::String(istr("Bob"))),
-                        (email.clone(), Value::String(istr("bob@example.com"))),
-                        (tenant.clone(), Value::String(istr("t1"))),
-                        (kind.clone(), Value::String(istr("person"))),
+                        (name.clone(), Value::String(db_string("Bob"))),
+                        (email.clone(), Value::String(db_string("bob@example.com"))),
+                        (tenant.clone(), Value::String(db_string("t1"))),
+                        (kind.clone(), Value::String(db_string("person"))),
                         (score.clone(), Value::Int(3)),
                     ]),
                 )
@@ -76,10 +76,10 @@ impl ExecFixture {
                     LabelSet::single(person.clone()),
                     props([
                         (age.clone(), Value::Int(55)),
-                        (name.clone(), Value::String(istr("Cara"))),
-                        (email.clone(), Value::String(istr("cara@example.com"))),
-                        (tenant.clone(), Value::String(istr("t2"))),
-                        (kind.clone(), Value::String(istr("person"))),
+                        (name.clone(), Value::String(db_string("Cara"))),
+                        (email.clone(), Value::String(db_string("cara@example.com"))),
+                        (tenant.clone(), Value::String(db_string("t2"))),
+                        (kind.clone(), Value::String(db_string("person"))),
                         (score.clone(), Value::Int(9)),
                     ]),
                 )
@@ -193,8 +193,8 @@ impl ExecFixture {
     }
 }
 
-pub fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+pub fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 pub fn planned(source: &str) -> ExecutionPlan {
@@ -349,7 +349,7 @@ pub fn set_first_scan_access(pattern: &mut PatternPlan, access: ScanAccess) {
         .access = access;
 }
 
-pub fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+pub fn props<const N: usize>(pairs: [(DbString, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 

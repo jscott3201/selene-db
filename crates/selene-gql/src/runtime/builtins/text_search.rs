@@ -9,7 +9,7 @@
 //! search is an implementation-defined engine capability layered on ISO GQL
 //! values.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use selene_graph::{GraphError, TextSearchError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -364,7 +364,7 @@ fn query_arg<'a>(proc_name: &'static str, value: &'a Value) -> Result<&'a str, P
     Ok(value.as_str())
 }
 
-fn query_list_arg(proc_name: &'static str, value: &Value) -> Result<Vec<IStr>, ProcedureError> {
+fn query_list_arg(proc_name: &'static str, value: &Value) -> Result<Vec<DbString>, ProcedureError> {
     let Value::List(values) = value else {
         return Err(invalid_arg(format!(
             "{proc_name} queries must be a LIST<STRING>"

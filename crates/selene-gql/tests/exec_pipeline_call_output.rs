@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use selene_core::{GraphId, IStr, Record, Value, intern};
+use selene_core::{DbString, GraphId, Record, Value};
 use selene_gql::{
     BindingTable, ExecutionPlan, ExecutorError, GqlType, ProcedureContext, ProcedureError,
     ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
@@ -14,7 +14,7 @@ use smallvec::smallvec;
 
 #[derive(Debug)]
 struct OutputRegistry {
-    metadata: HashMap<Box<[IStr]>, ProcedureMetadata>,
+    metadata: HashMap<Box<[DbString]>, ProcedureMetadata>,
     rows: Vec<Vec<Value>>,
 }
 
@@ -23,7 +23,7 @@ impl OutputRegistry {
         let handle = ProcedureHandle::new(1);
         let mut metadata = HashMap::new();
         metadata.insert(
-            [istr("pkg"), istr("out")]
+            [db_string("pkg"), db_string("out")]
                 .into_iter()
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
@@ -40,7 +40,7 @@ impl OutputRegistry {
 }
 
 impl ProcedureRegistry for OutputRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         self.metadata.get(name).cloned()
     }
 
@@ -56,12 +56,12 @@ impl ProcedureRegistry for OutputRegistry {
     }
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-    ProcedureOutputColumn::new(istr(name), ty)
+    ProcedureOutputColumn::new(db_string(name), ty)
 }
 
 fn planned(source: &str, registry: &dyn ProcedureRegistry) -> ExecutionPlan {
@@ -146,11 +146,11 @@ fn procedure_output_generic_float_accepts_float32() {
 
 #[test]
 fn procedure_output_closed_record_rejects_extra_fields() {
-    let expected_field = istr("count");
-    let extra_field = istr("name");
+    let expected_field = db_string("count");
+    let extra_field = db_string("name");
     let returned = Value::Record(Box::new(Record::Open(smallvec![
         (expected_field.clone(), Value::Int(3)),
-        (extra_field, Value::String(istr("extra"))),
+        (extra_field, Value::String(db_string("extra"))),
     ])));
     let registry = OutputRegistry::new(
         vec![output(

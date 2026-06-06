@@ -1,6 +1,6 @@
 //! GQL type AST nodes.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 /// Parsed GQL type.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -97,5 +97,5 @@ pub enum RecordType {
     /// Open record.
     Open,
     /// Closed record with named fields.
-    Closed(Vec<(IStr, GqlType)>),
+    Closed(Vec<(DbString, GqlType)>),
 }

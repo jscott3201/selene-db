@@ -3,7 +3,7 @@
 mod exec_common;
 
 use exec_common::{LARGE_COUNTER_A, LARGE_COUNTER_B, column_values};
-use selene_core::{Value, intern};
+use selene_core::{Value, db_string};
 use selene_gql::{
     AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema, GqlType,
     ImplDefinedCaps, PipelineOp, execute_pipeline,
@@ -13,7 +13,7 @@ fn table(values: Vec<Value>) -> BindingTable {
     BindingTable::new(
         BindingTableSchema {
             columns: vec![BindingTableColumn {
-                name: Some(intern("v").expect("interns")),
+                name: Some(db_string("v").expect("string fits DB string cap")),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::Integer),
             }],
@@ -36,12 +36,12 @@ fn two_column_table(rows: Vec<[Value; 2]>) -> BindingTable {
         BindingTableSchema {
             columns: vec![
                 BindingTableColumn {
-                    name: Some(intern("a").expect("interns")),
+                    name: Some(db_string("a").expect("string fits DB string cap")),
                     hidden: None,
                     ty: AnalyzedType::Resolved(GqlType::Integer),
                 },
                 BindingTableColumn {
-                    name: Some(intern("b").expect("interns")),
+                    name: Some(db_string("b").expect("string fits DB string cap")),
                     hidden: None,
                     ty: AnalyzedType::Resolved(GqlType::Integer),
                 },

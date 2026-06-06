@@ -19,13 +19,13 @@ pub mod cancellation;
 pub mod change_kind;
 pub mod changeset;
 mod changeset_variants;
+pub mod db_string;
 pub mod error;
 pub mod extension_type_ids;
 pub mod feature_register;
 pub mod gqlstatus;
 pub mod hlc;
 pub mod identity;
-pub mod istr;
 pub mod label_set;
 pub mod metrics;
 pub mod origin;
@@ -42,6 +42,7 @@ pub use change_kind::ChangeKind;
 pub use changeset::{
     Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
 };
+pub use db_string::{DbString, db_string};
 pub use error::{CoreError, CoreResult};
 pub use extension_type_ids::{
     ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_RDF, SELENE_TIMESERIES,
@@ -49,7 +50,6 @@ pub use extension_type_ids::{
 pub use gqlstatus::{ALL_GQLSTATUS_NAMES, gqlstatus_name};
 pub use hlc::HlcTimestamp;
 pub use identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
-pub use istr::{IStr, intern, resolve};
 pub use label_set::LabelSet;
 pub use origin::Origin;
 pub use property_map::{PropertyMap, PropertyMapIter, PropertyMapKeys, PropertyMapValues};

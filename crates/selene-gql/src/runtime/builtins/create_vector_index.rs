@@ -6,7 +6,7 @@
 //! (Hard Rule 11). It never bypasses the funnel and never re-enters
 //! `begin_write`.
 
-use selene_core::{HnswIndexConfig, IStr, IvfIndexConfig, Value, VectorMetric};
+use selene_core::{DbString, HnswIndexConfig, IvfIndexConfig, Value, VectorMetric};
 use selene_graph::{GraphError, VectorIndexConfig, VectorIndexKind};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -114,7 +114,7 @@ pub(super) fn execute(
     }
 }
 
-fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError> {
+fn string_arg(value: &Value, name: &'static str) -> Result<DbString, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!(
             "{PROC_NAME} {name} must be a non-empty STRING"
@@ -176,7 +176,7 @@ fn kind_arg(
     }
 }
 
-fn name_arg(value: &Value) -> Result<Option<IStr>, ProcedureError> {
+fn name_arg(value: &Value) -> Result<Option<DbString>, ProcedureError> {
     match value {
         Value::Null => Ok(None),
         Value::String(value) if !value.as_str().is_empty() => Ok(Some(value.clone())),
@@ -249,7 +249,7 @@ fn optional_u16_arg(value: &Value, name: &'static str) -> Result<Option<u16>, Pr
     }
 }
 
-fn parse_metric(value: &IStr) -> Result<VectorMetric, ProcedureError> {
+fn parse_metric(value: &DbString) -> Result<VectorMetric, ProcedureError> {
     let raw = value.as_str();
     match raw.to_ascii_lowercase().as_str() {
         "squared_euclidean" | "sq_l2" | "l2" | "euclidean" => Ok(VectorMetric::SquaredEuclidean),

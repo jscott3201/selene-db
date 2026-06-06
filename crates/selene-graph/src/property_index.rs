@@ -7,14 +7,14 @@
 //! would be harder to reason about.
 
 use rustc_hash::FxHashMap;
-use selene_core::{IStr, LabelSet, PropertyMap, Value};
+use selene_core::{DbString, LabelSet, PropertyMap, Value};
 use std::collections::BTreeSet;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::PropertyIndexEntry;
 use crate::typed_index::{TypedIndex, TypedIndexKind, TypedIndexValueError};
 
-type PropertyIndexMap = FxHashMap<(IStr, IStr), PropertyIndexEntry>;
+type PropertyIndexMap = FxHashMap<(DbString, DbString), PropertyIndexEntry>;
 
 pub(crate) fn apply_node_create(
     indexes: &mut PropertyIndexMap,
@@ -95,18 +95,18 @@ fn candidate_keys(
     old_props: &PropertyMap,
     new_labels: &LabelSet,
     new_props: &PropertyMap,
-) -> BTreeSet<(IStr, IStr)> {
+) -> BTreeSet<(DbString, DbString)> {
     // Zero registered indexes is the common case for graphs that never declared
     // a property index — skip the three BTreeSet allocations entirely (mirrors
     // the composite-index sibling, which is already alloc-free on an empty map).
     if indexes.is_empty() {
         return BTreeSet::new();
     }
-    let mut labels: BTreeSet<IStr> = BTreeSet::new();
+    let mut labels: BTreeSet<DbString> = BTreeSet::new();
     labels.extend(old_labels.iter().cloned());
     labels.extend(new_labels.iter().cloned());
 
-    let mut properties: BTreeSet<IStr> = BTreeSet::new();
+    let mut properties: BTreeSet<DbString> = BTreeSet::new();
     properties.extend(old_props.keys().cloned());
     properties.extend(new_props.keys().cloned());
 
@@ -128,8 +128,8 @@ fn candidate_keys(
 /// existing data violates the declared kind.
 pub(crate) fn build_property_index(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: TypedIndexKind,
 ) -> GraphResult<TypedIndex> {
     build_property_index_inner(graph, label, property, kind, BuildPolicy::Strict)
@@ -143,8 +143,8 @@ pub(crate) fn build_property_index(
 /// indexes are not.
 pub(crate) fn build_property_index_lenient(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: TypedIndexKind,
 ) -> GraphResult<TypedIndex> {
     build_property_index_inner(graph, label, property, kind, BuildPolicy::Lenient)
@@ -158,8 +158,8 @@ enum BuildPolicy {
 
 fn build_property_index_inner(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: TypedIndexKind,
     policy: BuildPolicy,
 ) -> GraphResult<TypedIndex> {
@@ -209,7 +209,7 @@ fn build_property_index_inner(
 /// of a runtime-accepted snapshot never fails. The strict policy lives
 /// at registration only.
 pub(crate) fn rebuild_property_indexes(graph: &mut crate::SeleneGraph) -> GraphResult<()> {
-    let registrations: Vec<((IStr, IStr), TypedIndexKind, Option<IStr>)> = graph
+    let registrations: Vec<((DbString, DbString), TypedIndexKind, Option<DbString>)> = graph
         .property_index
         .iter()
         .map(|(key, entry)| (key.clone(), entry.kind(), entry.name.clone()))
@@ -226,8 +226,8 @@ pub(crate) fn rebuild_property_indexes(graph: &mut crate::SeleneGraph) -> GraphR
 
 fn values_share_key(
     indexes: &PropertyIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     old_value: Option<&Value>,
     new_value: Option<&Value>,
 ) -> bool {
@@ -243,8 +243,8 @@ fn values_share_key(
 fn indexable_value<'a>(
     labels: &LabelSet,
     props: &'a PropertyMap,
-    label: &IStr,
-    property: &IStr,
+    label: &DbString,
+    property: &DbString,
 ) -> Option<&'a Value> {
     if !labels.contains(label) {
         return None;
@@ -254,8 +254,8 @@ fn indexable_value<'a>(
 
 fn insert_commit(
     indexes: &mut PropertyIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
@@ -269,8 +269,8 @@ fn insert_commit(
 
 fn remove_commit(
     indexes: &mut PropertyIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
@@ -286,8 +286,8 @@ fn remove_commit(
 /// drift (`KindMismatch`, `NaN`) keeps the `warn_rejected` lenient skip
 /// because it remains recoverable per the module rustdoc.
 fn demote_or_promote(
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     row: u32,
     op: &'static str,
     err: TypedIndexValueError,
@@ -300,7 +300,7 @@ fn demote_or_promote(
     }
 }
 
-fn index_rejection(label: IStr, property: IStr, err: TypedIndexValueError) -> GraphError {
+fn index_rejection(label: DbString, property: DbString, err: TypedIndexValueError) -> GraphError {
     match err {
         TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
             GraphError::IndexValueRejected {
@@ -315,8 +315,8 @@ fn index_rejection(label: IStr, property: IStr, err: TypedIndexValueError) -> Gr
 
 fn warn_rejected(
     op: &'static str,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     row: u32,
     err: &TypedIndexValueError,
 ) {

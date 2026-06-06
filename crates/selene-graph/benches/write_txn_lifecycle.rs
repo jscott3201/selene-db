@@ -8,7 +8,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod common;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{LabelSet, NodeId, PropertyMap, db_string};
 use selene_graph::SharedGraph;
 
 const BATCHES: &[usize] = &[1, 10, 100, 1_000];
@@ -36,7 +36,8 @@ fn bench_empty_commit(c: &mut Criterion) {
 
 fn bench_create_only(c: &mut Criterion) {
     let mut group = c.benchmark_group("write_txn_lifecycle/create_only");
-    let label = LabelSet::single(intern("BenchCreated").expect("bench label interns"));
+    let label =
+        LabelSet::single(db_string("BenchCreated").expect("bench label fits DB string cap"));
     for &batch in BATCHES {
         for fixture in common::fixtures() {
             group.throughput(Throughput::Elements(batch as u64));
@@ -69,7 +70,8 @@ fn bench_create_only(c: &mut Criterion) {
 
 fn bench_delete_only(c: &mut Criterion) {
     let mut group = c.benchmark_group("write_txn_lifecycle/delete_only");
-    let label = LabelSet::single(intern("BenchDeleted").expect("bench label interns"));
+    let label =
+        LabelSet::single(db_string("BenchDeleted").expect("bench label fits DB string cap"));
     for &batch in BATCHES {
         for fixture in common::fixtures() {
             group.throughput(Throughput::Elements(batch as u64));

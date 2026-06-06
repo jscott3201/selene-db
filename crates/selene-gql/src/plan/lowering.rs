@@ -438,7 +438,7 @@ fn table_subquery_yields(
 
 fn body_column(
     schema: &BindingTableSchema,
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     span: SourceSpan,
 ) -> Result<&BindingTableColumn, PlannerError> {
     schema
@@ -553,9 +553,11 @@ pub(super) fn visible_after_pattern(
 }
 
 fn explain_output_schema(span: SourceSpan) -> Result<BindingTableSchema, PlannerError> {
-    let name = selene_core::intern("plan").map_err(|_err| PlannerError::InternerCapExhausted {
-        detail: "static EXPLAIN column 'plan'",
-        span,
+    let name = selene_core::db_string("plan").map_err(|_err| {
+        PlannerError::StaticStringConstructionFailed {
+            detail: "static EXPLAIN column 'plan'",
+            span,
+        }
     })?;
     Ok(BindingTableSchema {
         columns: vec![BindingTableColumn {

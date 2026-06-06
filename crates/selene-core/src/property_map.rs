@@ -1,6 +1,6 @@
 //! Property maps per spec 02 section 5.2.
 //!
-//! Keys are ordered in memory lexicographically by [`IStr`] (through the inner
+//! Keys are ordered in memory lexicographically by [`DbString`] (through the inner
 //! `CompactString`) for fast binary-search lookups. Serialize canonicalizes
 //! (sorts) the keys before emitting — a no-op for the common case (construction
 //! keeps them sorted) but load-bearing because the `Standard`/`Compact` variants
@@ -15,7 +15,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
-use crate::{CoreError, CoreResult, IStr, Value};
+use crate::{CoreError, CoreResult, DbString, Value};
 
 const MAX_PROPERTY_COUNT: usize = u32::MAX as usize;
 
@@ -23,11 +23,11 @@ const MAX_PROPERTY_COUNT: usize = u32::MAX as usize;
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyMap {
     /// Open graph representation: sorted key/value pairs.
-    Standard(SmallVec<[(IStr, Value); 6]>),
+    Standard(SmallVec<[(DbString, Value); 6]>),
     /// Closed graph representation: fixed sorted keys with positional values.
     Compact {
         /// Sorted key set defined by a schema type.
-        keys: Arc<[IStr]>,
+        keys: Arc<[DbString]>,
         /// Positional values aligned with `keys`; `None` means absent.
         values: SmallVec<[Option<Value>; 6]>,
     },
@@ -40,7 +40,7 @@ impl PropertyMap {
         Self::Standard(SmallVec::new())
     }
 
-    /// Construct a standard property map from pairs, sorting by `IStr` order.
+    /// Construct a standard property map from pairs, sorting by `DbString` order.
     ///
     /// Later duplicate keys overwrite earlier keys.
     ///
@@ -48,8 +48,10 @@ impl PropertyMap {
     ///
     /// Returns [`CoreError::ConstructedValueTooLarge`] if the final distinct
     /// key count exceeds the implementation-defined cardinality cap.
-    pub fn from_pairs(pairs: impl IntoIterator<Item = (IStr, Value)>) -> CoreResult<Self> {
-        let mut entries = pairs.into_iter().collect::<SmallVec<[(IStr, Value); 6]>>();
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (DbString, Value)>) -> CoreResult<Self> {
+        let mut entries = pairs
+            .into_iter()
+            .collect::<SmallVec<[(DbString, Value); 6]>>();
         // `sort_by` is stable: equal keys keep source order, so the collapse
         // loop below preserves the documented "later duplicate wins" contract.
         entries.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
@@ -78,10 +80,10 @@ impl PropertyMap {
     /// Returns [`CoreError::ConstructedValueTooLarge`] if key count exceeds the
     /// implementation-defined cardinality cap.
     pub fn compact(
-        keys: impl IntoIterator<Item = IStr>,
+        keys: impl IntoIterator<Item = DbString>,
         values: impl IntoIterator<Item = Option<Value>>,
     ) -> CoreResult<Self> {
-        let keys: Vec<IStr> = keys.into_iter().collect();
+        let keys: Vec<DbString> = keys.into_iter().collect();
         let values: Vec<Option<Value>> = values.into_iter().collect();
         if keys.len() != values.len() {
             return Err(CoreError::CompactKeyValueLengthMismatch {
@@ -89,7 +91,7 @@ impl PropertyMap {
                 values: values.len(),
             });
         }
-        let mut slots: Vec<(IStr, Option<Value>)> = keys.into_iter().zip(values).collect();
+        let mut slots: Vec<(DbString, Option<Value>)> = keys.into_iter().zip(values).collect();
         ensure_within_cap(slots.len())?;
         slots.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
         slots.dedup_by(|(lhs_key, lhs_value), (rhs_key, rhs_value)| {
@@ -109,7 +111,7 @@ impl PropertyMap {
 
     /// Return the value for `key`, if present.
     #[must_use]
-    pub fn get(&self, key: &IStr) -> Option<&Value> {
+    pub fn get(&self, key: &DbString) -> Option<&Value> {
         match self {
             Self::Standard(entries) => entries
                 .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
@@ -133,7 +135,7 @@ impl PropertyMap {
     ///
     /// Returns [`CoreError::ConstructedValueTooLarge`] if inserting a distinct
     /// key would exceed the implementation-defined cardinality cap.
-    pub fn set(&mut self, key: IStr, value: Value) -> CoreResult<()> {
+    pub fn set(&mut self, key: DbString, value: Value) -> CoreResult<()> {
         match self {
             Self::Standard(entries) => set_standard(entries, key, value),
             Self::Compact { keys, values } => match keys.binary_search(&key) {
@@ -152,7 +154,7 @@ impl PropertyMap {
     }
 
     /// Remove a present property.
-    pub fn remove(&mut self, key: &IStr) -> Option<Value> {
+    pub fn remove(&mut self, key: &DbString) -> Option<Value> {
         match self {
             Self::Standard(entries) => entries
                 .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
@@ -212,7 +214,7 @@ impl PropertyMap {
 
     /// Return true if `key` has a present value.
     #[must_use]
-    pub fn contains_key(&self, key: &IStr) -> bool {
+    pub fn contains_key(&self, key: &DbString) -> bool {
         self.get(key).is_some()
     }
 
@@ -240,18 +242,18 @@ impl Default for PropertyMap {
 #[derive(Debug)]
 pub enum PropertyMapIter<'a> {
     /// Iterator over a [`PropertyMap::Standard`] entry slice.
-    Standard(std::slice::Iter<'a, (IStr, Value)>),
+    Standard(std::slice::Iter<'a, (DbString, Value)>),
     /// Iterator over a [`PropertyMap::Compact`] key/value slot pair.
     Compact {
         /// Sorted key slots.
-        keys: std::slice::Iter<'a, IStr>,
+        keys: std::slice::Iter<'a, DbString>,
         /// Positional value slots aligned with `keys`; `None` means absent.
         values: std::slice::Iter<'a, Option<Value>>,
     },
 }
 
 impl<'a> Iterator for PropertyMapIter<'a> {
-    type Item = (&'a IStr, &'a Value);
+    type Item = (&'a DbString, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -274,7 +276,7 @@ impl<'a> Iterator for PropertyMapIter<'a> {
 pub struct PropertyMapKeys<'a>(PropertyMapIter<'a>);
 
 impl<'a> Iterator for PropertyMapKeys<'a> {
-    type Item = &'a IStr;
+    type Item = &'a DbString;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next().map(|(key, _)| key)
@@ -295,9 +297,9 @@ impl<'a> Iterator for PropertyMapValues<'a> {
 
 #[derive(Deserialize, Serialize)]
 enum PropertyMapWire {
-    Standard(SmallVec<[(IStr, Value); 6]>),
+    Standard(SmallVec<[(DbString, Value); 6]>),
     Compact {
-        keys: Arc<[IStr]>,
+        keys: Arc<[DbString]>,
         values: SmallVec<[Option<Value>; 6]>,
     },
 }
@@ -308,7 +310,7 @@ impl Serialize for PropertyMap {
         S: Serializer,
     {
         // Canonicalize on serialize. Construction through `set_standard` /
-        // `compact` / `from_pairs` already keeps keys in lexicographic `IStr`
+        // `compact` / `from_pairs` already keeps keys in lexicographic `DbString`
         // order, so this sort is a no-op (byte-identical) for those values. But
         // `Standard` / `Compact` are PUBLIC variants, so a caller can build a
         // non-canonical map directly; canonicalizing here guarantees the wire
@@ -322,7 +324,7 @@ impl Serialize for PropertyMap {
                 PropertyMapWire::Standard(entries).serialize(serializer)
             }
             Self::Compact { keys, values } => {
-                let mut pairs: Vec<(IStr, Option<Value>)> =
+                let mut pairs: Vec<(DbString, Option<Value>)> =
                     keys.iter().cloned().zip(values.iter().cloned()).collect();
                 pairs.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
                 let (keys, values): (Vec<_>, SmallVec<_>) = pairs.into_iter().unzip();
@@ -352,7 +354,7 @@ impl<'de> Deserialize<'de> for PropertyMap {
                 for window in entries.windows(2) {
                     if window[0].0 >= window[1].0 {
                         return Err(serde::de::Error::custom(
-                            "PropertyMap::Standard entries must be sorted by IStr order with no duplicate keys",
+                            "PropertyMap::Standard entries must be sorted by DbString order with no duplicate keys",
                         ));
                     }
                 }
@@ -369,7 +371,7 @@ impl<'de> Deserialize<'de> for PropertyMap {
                 for window in keys.windows(2) {
                     if window[0] >= window[1] {
                         return Err(serde::de::Error::custom(
-                            "PropertyMap::Compact keys must be sorted by IStr order with no duplicates",
+                            "PropertyMap::Compact keys must be sorted by DbString order with no duplicates",
                         ));
                     }
                 }
@@ -391,8 +393,8 @@ fn ensure_within_cap(count: usize) -> CoreResult<()> {
 }
 
 fn set_standard(
-    entries: &mut SmallVec<[(IStr, Value); 6]>,
-    key: IStr,
+    entries: &mut SmallVec<[(DbString, Value); 6]>,
+    key: DbString,
     value: Value,
 ) -> CoreResult<()> {
     match entries.binary_search_by(|(entry_key, _)| entry_key.cmp(&key)) {
@@ -409,9 +411,9 @@ fn set_standard(
 }
 
 fn compact_to_standard(
-    keys: &Arc<[IStr]>,
+    keys: &Arc<[DbString]>,
     values: &SmallVec<[Option<Value>; 6]>,
-) -> SmallVec<[(IStr, Value); 6]> {
+) -> SmallVec<[(DbString, Value); 6]> {
     keys.iter()
         .cloned()
         .zip(values.iter())
@@ -424,10 +426,10 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::intern;
+    use crate::db_string;
 
-    fn key(name: &str) -> IStr {
-        intern(name).unwrap()
+    fn key(name: &str) -> DbString {
+        db_string(name).unwrap()
     }
 
     fn int(value: i64) -> Value {
@@ -552,11 +554,11 @@ mod tests {
     #[test]
     fn deserialize_round_trips_canonical_standard_keys() {
         // Canonical (lexicographically sorted) Standard wire round-trips and
-        // preserves the sorted invariant. `IStr` Ord is lexicographic, so
+        // preserves the sorted invariant. `DbString` Ord is lexicographic, so
         // "apple" sorts before "zebra".
         let b = key("pm.de.std.zebra");
         let a = key("pm.de.std.apple");
-        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        let mut entries: SmallVec<[(DbString, Value); 6]> = SmallVec::new();
         entries.push((a.clone(), int(1)));
         entries.push((b.clone(), int(2)));
         let wire = PropertyMapWire::Standard(entries);
@@ -569,11 +571,11 @@ mod tests {
 
     #[test]
     fn deserialize_rejects_non_canonical_standard_keys() {
-        // A Standard wire whose keys are NOT in ascending IStr order is now
+        // A Standard wire whose keys are NOT in ascending DbString order is now
         // rejected as malformed (deserialize validates, no longer resorts).
         let zebra = key("pm.de.std.noncanon.zebra");
         let apple = key("pm.de.std.noncanon.apple");
-        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        let mut entries: SmallVec<[(DbString, Value); 6]> = SmallVec::new();
         entries.push((zebra, int(2)));
         entries.push((apple, int(1)));
         let wire = PropertyMapWire::Standard(entries);
@@ -585,7 +587,7 @@ mod tests {
     #[test]
     fn deserialize_rejects_duplicate_standard_keys() {
         let a = key("pm.de.std.dup");
-        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        let mut entries: SmallVec<[(DbString, Value); 6]> = SmallVec::new();
         entries.push((a.clone(), int(1)));
         entries.push((a, int(2)));
         let wire = PropertyMapWire::Standard(entries);
@@ -661,9 +663,9 @@ mod tests {
 
     #[derive(serde::Serialize)]
     enum PropertyMapWireSer {
-        Standard(SmallVec<[(IStr, Value); 6]>),
+        Standard(SmallVec<[(DbString, Value); 6]>),
         Compact {
-            keys: Arc<[IStr]>,
+            keys: Arc<[DbString]>,
             values: SmallVec<[Option<Value>; 6]>,
         },
     }
@@ -686,7 +688,7 @@ mod tests {
         let map_bytes = postcard::to_allocvec(&map).unwrap();
 
         // The canonical wire is the same keys in sorted order.
-        let mut canonical: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        let mut canonical: SmallVec<[(DbString, Value); 6]> = SmallVec::new();
         canonical.push((apple, int(1)));
         canonical.push((mango, int(2)));
         canonical.push((zebra, int(3)));
@@ -712,7 +714,7 @@ mod tests {
         // the public-construction path against the validate-no-resort decoder.
         let zebra = key("pm.noncanon.zebra");
         let apple = key("pm.noncanon.apple");
-        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        let mut entries: SmallVec<[(DbString, Value); 6]> = SmallVec::new();
         entries.push((zebra.clone(), int(2)));
         entries.push((apple.clone(), int(1)));
         let non_canonical = PropertyMap::Standard(entries);
@@ -769,7 +771,7 @@ mod tests {
             let mut expected = std::collections::BTreeSet::new();
             for (raw, insert) in ops {
                 let name = format!("pm.prop.{raw}");
-                let key = intern(&name).unwrap();
+                let key = db_string(&name).unwrap();
                 if insert {
                     map.set(key.clone(), Value::Uint(u64::from(raw))).unwrap();
                     expected.insert(key);
@@ -794,14 +796,14 @@ mod tests {
             ops in proptest::collection::vec((0_usize..6, any::<bool>(), 0_u64..16), 0..64),
         ) {
             let pid = std::process::id();
-            let schema_keys: Vec<IStr> = (0..4)
-                .map(|i| intern(&format!("pm.core16.{pid}.k{i}")).unwrap())
+            let schema_keys: Vec<DbString> = (0..4)
+                .map(|i| db_string(&format!("pm.core16.{pid}.k{i}")).unwrap())
                 .collect();
-            let all_keys: Vec<IStr> = (0..6)
-                .map(|i| intern(&format!("pm.core16.{pid}.k{i}")).unwrap())
+            let all_keys: Vec<DbString> = (0..6)
+                .map(|i| db_string(&format!("pm.core16.{pid}.k{i}")).unwrap())
                 .collect();
 
-            let mut oracle = std::collections::BTreeMap::<IStr, Value>::new();
+            let mut oracle = std::collections::BTreeMap::<DbString, Value>::new();
             let seed_values: Vec<Option<Value>> = schema_keys
                 .iter()
                 .zip(&seed)
@@ -839,11 +841,11 @@ mod tests {
                 prop_assert!(map.sorted_invariant_holds());
 
                 // iter() yields exactly the oracle's present pairs in key order.
-                let observed: Vec<(IStr, Value)> =
+                let observed: Vec<(DbString, Value)> =
                     map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                let expected: Vec<(IStr, Value)> =
+                let expected: Vec<(DbString, Value)> =
                     oracle.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                // Both are key-handle-sorted (BTreeMap by IStr Ord, map by invariant).
+                // Both are key-handle-sorted (BTreeMap by DbString Ord, map by invariant).
                 prop_assert_eq!(observed, expected);
             }
         }

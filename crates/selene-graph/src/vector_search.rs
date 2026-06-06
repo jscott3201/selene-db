@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{
-    CancellationChecker, CoreError, IStr, NodeId, Value, VectorMetric, VectorMetricQuery,
+    CancellationChecker, CoreError, DbString, NodeId, Value, VectorMetric, VectorMetricQuery,
     VectorTopK, VectorValue,
 };
 
@@ -40,8 +40,8 @@ impl SeleneGraph {
     /// mismatch propagate through [`GraphError::Core`].
     pub fn exact_vector_search_nodes(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &VectorValue,
         metric: VectorMetric,
         k: usize,
@@ -66,8 +66,8 @@ impl SeleneGraph {
     /// cooperatively cancellable until ANN indexes take over this surface.
     pub fn exact_vector_search_nodes_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &VectorValue,
         metric: VectorMetric,
         k: usize,
@@ -148,8 +148,8 @@ impl SeleneGraph {
     /// several embeddings over the same `(label, property)` surface.
     pub fn exact_vector_search_nodes_batch_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         queries: &[VectorValue],
         metric: VectorMetric,
         k: usize,
@@ -234,8 +234,8 @@ impl SeleneGraph {
 
     fn exact_vector_search_indexed_parallel(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         scorer: VectorMetricQuery<'_>,
         k: usize,
         rows: &RoaringBitmap,
@@ -251,8 +251,8 @@ impl SeleneGraph {
 
     fn exact_vector_search_indexed_chunk(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         scorer: VectorMetricQuery<'_>,
         k: usize,
         rows: &[u32],
@@ -299,8 +299,8 @@ impl SeleneGraph {
     /// returns, but recall is governed by `ef_search`.
     pub fn approximate_vector_search_nodes_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &VectorValue,
         options: ApproximateVectorSearchOptions,
         checker: CancellationChecker<'_>,
@@ -341,8 +341,8 @@ impl SeleneGraph {
     /// independent embedding lookups over the same `(label, property)` index.
     pub fn approximate_vector_search_nodes_batch_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         queries: &[VectorValue],
         options: ApproximateVectorSearchOptions,
         checker: CancellationChecker<'_>,
@@ -400,8 +400,8 @@ impl SeleneGraph {
     /// [`Self::approximate_vector_search_nodes_checked`].
     pub fn approximate_vector_search_expanded_candidates_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &VectorValue,
         options: ApproximateVectorExpansionOptions<'_>,
         checker: CancellationChecker<'_>,
@@ -444,8 +444,8 @@ impl SeleneGraph {
     /// [`Self::score_vector_expanded_candidate_sets_batch_checked`].
     pub fn approximate_vector_search_expanded_candidates_batch_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         queries: &[VectorValue],
         options: ApproximateVectorExpansionOptions<'_>,
         checker: CancellationChecker<'_>,
@@ -516,7 +516,7 @@ fn vector_node_hits(top_k: VectorTopK<NodeId>) -> Vec<VectorNodeSearchHit> {
 
 fn ann_row_hits_to_node_hits(
     graph: &SeleneGraph,
-    label: &IStr,
+    label: &DbString,
     row_hits: Vec<VectorIndexSearchHit>,
     checker: &CancellationChecker<'_>,
 ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
@@ -566,8 +566,8 @@ impl SharedGraph {
     /// with respect to concurrent writers once the snapshot pointer is read.
     pub fn exact_vector_search_nodes(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &VectorValue,
         metric: VectorMetric,
         k: usize,
@@ -582,8 +582,8 @@ impl SharedGraph {
     /// [`SeleneGraph::exact_vector_search_nodes_checked`].
     pub fn exact_vector_search_nodes_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &VectorValue,
         metric: VectorMetric,
         k: usize,
@@ -597,8 +597,8 @@ impl SharedGraph {
     /// [`SeleneGraph::exact_vector_search_nodes_batch_checked`].
     pub fn exact_vector_search_nodes_batch_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         queries: &[VectorValue],
         metric: VectorMetric,
         k: usize,
@@ -614,8 +614,8 @@ impl SharedGraph {
     /// [`SeleneGraph::approximate_vector_search_nodes_checked`].
     pub fn approximate_vector_search_nodes_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &VectorValue,
         options: ApproximateVectorSearchOptions,
         checker: CancellationChecker<'_>,
@@ -628,8 +628,8 @@ impl SharedGraph {
     /// [`SeleneGraph::approximate_vector_search_nodes_batch_checked`].
     pub fn approximate_vector_search_nodes_batch_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         queries: &[VectorValue],
         options: ApproximateVectorSearchOptions,
         checker: CancellationChecker<'_>,
@@ -643,8 +643,8 @@ impl SharedGraph {
     /// [`SeleneGraph::approximate_vector_search_expanded_candidates_checked`].
     pub fn approximate_vector_search_expanded_candidates_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         query: &VectorValue,
         options: ApproximateVectorExpansionOptions<'_>,
         checker: CancellationChecker<'_>,
@@ -659,8 +659,8 @@ impl SharedGraph {
     /// [`SeleneGraph::approximate_vector_search_expanded_candidates_batch_checked`].
     pub fn approximate_vector_search_expanded_candidates_batch_checked(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         queries: &[VectorValue],
         options: ApproximateVectorExpansionOptions<'_>,
         checker: CancellationChecker<'_>,

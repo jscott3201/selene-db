@@ -1,7 +1,7 @@
 //! Hash-join join-tree operator.
 
 use rustc_hash::FxHashMap;
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     BuildSide, JoinTree,
@@ -15,11 +15,11 @@ use super::pattern;
 /// Join keys are extracted by binding name via `pattern::key_values` and then
 /// bucketed with `RuntimeEqKey`, so build/probe matching mirrors
 /// `pattern::key_values_equal`: null keys are skipped, lossless cross-type
-/// numeric values match, and interned/external strings compare by contents.
+/// numeric values match, and strings compare by contents.
 pub(crate) fn execute(
     left: &JoinTree,
     right: &JoinTree,
-    key: &[IStr],
+    key: &[DbString],
     build_side: BuildSide,
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
@@ -32,7 +32,7 @@ pub(crate) fn execute(
 fn execute_ordered(
     build_tree: &JoinTree,
     probe_tree: &JoinTree,
-    key: &[IStr],
+    key: &[DbString],
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
     build_is_left: bool,
 ) -> Result<Vec<Binding>, ExecutorError> {

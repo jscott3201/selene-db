@@ -10,7 +10,7 @@ use crate::{
     error::ParserError,
 };
 
-use super::{Rule, expr, first_child, intern_pair, keyword_tokens_eq, span, unexpected_pair};
+use super::{Rule, db_string_pair, expr, first_child, keyword_tokens_eq, span, unexpected_pair};
 
 pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::match_stmt);
@@ -280,7 +280,7 @@ fn build_graph_pattern(pair: Pair<'_, Rule>) -> Result<GraphPattern, ParserError
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::path_var_binding => {
-                path_binding = Some(intern_pair(first_child(child)?)?);
+                path_binding = Some(db_string_pair(first_child(child)?)?);
             }
             Rule::pattern_chain => elements = build_pattern_chain(child)?,
             _ => return Err(unexpected_pair(child, "unexpected graph-pattern child")),
@@ -327,7 +327,7 @@ fn build_node_pattern(pair: Pair<'_, Rule>) -> Result<NodePattern, ParserError> 
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::node_var => binding = Some(intern_pair(first_child(child)?)?),
+            Rule::node_var => binding = Some(db_string_pair(first_child(child)?)?),
             Rule::label_expr => label_expr = Some(build_label_expr(child)?),
             Rule::property_map => properties = build_property_map(child)?,
             Rule::inline_where => inline_where = Some(expr_from_child(child)?),
@@ -395,7 +395,7 @@ fn assign_quantifier(pattern: &mut EdgePattern, pair: Pair<'_, Rule>) -> Result<
 fn apply_edge_interior(pair: Pair<'_, Rule>, pattern: &mut EdgePattern) -> Result<(), ParserError> {
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::edge_var => pattern.binding = Some(intern_pair(first_child(child)?)?),
+            Rule::edge_var => pattern.binding = Some(db_string_pair(first_child(child)?)?),
             Rule::label_expr => pattern.label_expr = Some(build_label_expr(child)?),
             Rule::property_map => pattern.properties = build_property_map(child)?,
             Rule::quantifier => assign_quantifier(pattern, child)?,
@@ -437,7 +437,7 @@ pub(super) fn build_label_expr(pair: Pair<'_, Rule>) -> Result<LabelExpr, Parser
         }
         Rule::label_atom => build_label_expr(first_child(pair)?),
         Rule::label_wildcard => Ok(LabelExpr::Wildcard),
-        Rule::ident => Ok(LabelExpr::Single(intern_pair(pair)?)),
+        Rule::ident => Ok(LabelExpr::Single(db_string_pair(pair)?)),
         _ => Err(unexpected_pair(pair, "expected label expression")),
     }
 }
@@ -543,7 +543,7 @@ fn parse_u32(text: &str, source_span: SourceSpan) -> Result<u32, ParserError> {
 
 pub(super) fn build_property_map(
     pair: Pair<'_, Rule>,
-) -> Result<Vec<(selene_core::IStr, ValueExpr)>, ParserError> {
+) -> Result<Vec<(selene_core::DbString, ValueExpr)>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::property_pair)
         .map(|property| {
@@ -554,7 +554,7 @@ pub(super) fn build_property_map(
                 .ok_or_else(|| {
                     ParserError::syntax("property pair is missing key", property_span, None)
                 })
-                .and_then(|pair| intern_pair(pair))?;
+                .and_then(|pair| db_string_pair(pair))?;
             let value = children
                 .next()
                 .ok_or_else(|| {

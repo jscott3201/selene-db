@@ -12,8 +12,8 @@ use crate::{
 };
 
 use super::{
-    Rule, build_typed_param_ref, first_child, intern_pair, intern_param, not_implemented, span,
-    unexpected_pair,
+    Rule, build_typed_param_ref, db_string_pair, db_string_param, first_child, not_implemented,
+    span, unexpected_pair,
 };
 
 pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
@@ -36,11 +36,11 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
         Rule::list_lit => literal::build_list_lit(pair),
         Rule::record_constructor => build_record_constructor(pair),
         Rule::var_ref => Ok(ValueExpr::Variable {
-            name: intern_pair(pair)?,
+            name: db_string_pair(pair)?,
             span: source_span,
         }),
         Rule::param_ref => Ok(ValueExpr::Parameter {
-            name: intern_param(pair)?,
+            name: db_string_param(pair)?,
             declared_type: None,
             span: source_span,
         }),
@@ -296,7 +296,7 @@ fn build_postfix(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
                 let previous_span = value.span();
                 value = ValueExpr::PropertyAccess {
                     target: Box::new(value),
-                    key: intern_pair(prop)?,
+                    key: db_string_pair(prop)?,
                     span: SourceSpan::merge(previous_span, op_span),
                 };
             }
@@ -330,7 +330,7 @@ fn build_record_constructor(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserErr
             let value_pair = children.next().ok_or_else(|| {
                 ParserError::syntax("record field is missing value", field_span, None)
             })?;
-            Ok((intern_pair(key_pair)?, build_value_expr(value_pair)?))
+            Ok((db_string_pair(key_pair)?, build_value_expr(value_pair)?))
         })
         .collect::<Result<Vec<_>, ParserError>>()?;
     Ok(ValueExpr::RecordLiteral {

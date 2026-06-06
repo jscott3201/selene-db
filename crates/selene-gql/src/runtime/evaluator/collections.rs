@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::{IStr, Record, Value};
+use selene_core::{DbString, Record, Value};
 use smallvec::SmallVec;
 
 use crate::{
@@ -57,14 +57,14 @@ pub(super) fn eval_list_access(
 }
 
 pub(super) fn eval_record_literal(
-    fields: &[(IStr, ValueExpr)],
+    fields: &[(DbString, ValueExpr)],
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let mut seen = BTreeSet::new();
-    let mut values = SmallVec::<[(IStr, Value); 4]>::new();
+    let mut values = SmallVec::<[(DbString, Value); 4]>::new();
     for (key, expr) in fields {
         if !seen.insert(key.clone()) {
             return data_exception_with(
@@ -84,7 +84,7 @@ pub(super) fn eval_record_literal(
 /// named field yields its value; a field absent from an open record yields
 /// `NULL` (the open-record property-reference declared type is the nullable
 /// open dynamic union type, SR2(b)).
-pub(super) fn record_field(record: &Record, key: IStr) -> Value {
+pub(super) fn record_field(record: &Record, key: DbString) -> Value {
     match record {
         Record::Open(fields) => fields
             .iter()

@@ -7,7 +7,7 @@ use crate::{
     error::ParserError,
 };
 
-use super::{Rule, expr, first_child, intern_param, span, unexpected_pair};
+use super::{Rule, db_string_param, expr, first_child, span, unexpected_pair};
 
 /// Build a `session_command` parse tree into a session-control [`Statement`].
 pub(super) fn build_session_command(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -57,7 +57,7 @@ fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_not_exists => if_not_exists = true,
-            Rule::param_ref => param = Some(intern_param(child)?),
+            Rule::param_ref => param = Some(db_string_param(child)?),
             // <value specification>: a single literal or parameter reference.
             Rule::session_value_spec => {
                 value = Some(expr::build_value_expr(first_child(child)?)?);
@@ -115,7 +115,7 @@ fn build_session_reset(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
                         None,
                     )
                 })?;
-            SessionResetTarget::Parameter(intern_param(param_pair)?)
+            SessionResetTarget::Parameter(db_string_param(param_pair)?)
         }
         _ => return Err(unexpected_pair(inner, "unexpected SESSION RESET argument")),
     };

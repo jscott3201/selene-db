@@ -10,7 +10,7 @@ use std::fs;
 use selene_core::{
     Change, GraphId, GraphTypeId, LabelSet, PredefinedValueType, PropertyValueType,
     RecordFieldStructure, RecordFieldStructureDef, RecordFieldStructureType, SchemaChange,
-    ValueType, intern,
+    ValueType, db_string,
 };
 use smallvec::smallvec;
 
@@ -25,22 +25,22 @@ use super::{append_wal, empty_closed_graph_type, temp_dir};
 fn nested_record_field_types() -> RecordFieldTypes {
     RecordFieldTypes(vec![
         RecordFieldTypeDef {
-            name: intern("a").unwrap(),
+            name: db_string("a").unwrap(),
             field_type: RecordFieldType::Scalar(PropertyValueType::Int),
             required: true,
         },
         RecordFieldTypeDef {
-            name: intern("b").unwrap(),
+            name: db_string("b").unwrap(),
             field_type: RecordFieldType::List(Box::new(RecordFieldType::Scalar(
                 PropertyValueType::String,
             ))),
             required: false,
         },
         RecordFieldTypeDef {
-            name: intern("c").unwrap(),
+            name: db_string("c").unwrap(),
             field_type: RecordFieldType::Record(Box::new(RecordFieldTypes(vec![
                 RecordFieldTypeDef {
-                    name: intern("d").unwrap(),
+                    name: db_string("d").unwrap(),
                     field_type: RecordFieldType::Scalar(PropertyValueType::Bool),
                     required: true,
                 },
@@ -60,8 +60,8 @@ fn recover_closed_wal_only_preserves_closed_record_property() {
         .unwrap()
         .build()
         .unwrap();
-    let sensor = intern("RecordSensor").unwrap();
-    let config = intern("config").unwrap();
+    let sensor = db_string("RecordSensor").unwrap();
+    let config = db_string("config").unwrap();
     let field_types = nested_record_field_types();
     let changes = {
         let mut txn = shared.begin_write();
@@ -110,8 +110,8 @@ fn recover_closed_wal_only_preserves_open_record_property() {
         .unwrap()
         .build()
         .unwrap();
-    let sensor = intern("OpenRecordSensor").unwrap();
-    let payload = intern("payload").unwrap();
+    let sensor = db_string("OpenRecordSensor").unwrap();
+    let payload = db_string("payload").unwrap();
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -148,13 +148,13 @@ fn recover_closed_wal_only_preserves_open_record_property() {
 /// recovery-side depth guard directly.
 fn deep_record_structure(levels: u32) -> RecordFieldStructure {
     let mut structure = RecordFieldStructure::Closed(vec![RecordFieldStructureDef {
-        name: intern("leaf").unwrap(),
+        name: db_string("leaf").unwrap(),
         field_type: RecordFieldStructureType::Scalar(PropertyValueType::Bool),
         required: true,
     }]);
     for _ in 0..levels {
         structure = RecordFieldStructure::Closed(vec![RecordFieldStructureDef {
-            name: intern("nest").unwrap(),
+            name: db_string("nest").unwrap(),
             field_type: RecordFieldStructureType::Record(Box::new(structure)),
             required: true,
         }]);
@@ -168,7 +168,7 @@ fn recover_closed_rejects_overdeep_record_property() {
     let graph_id = GraphId::new(33);
     let base = empty_closed_graph_type();
     let graph_type = GraphTypeId::new(1).unwrap();
-    let sensor = intern("DeepRecordSensor").unwrap();
+    let sensor = db_string("DeepRecordSensor").unwrap();
     // value_type is unread on the record-recovery path (record_fields drives it); a scalar
     // placeholder keeps the hand-built WAL entry well-formed.
     let value_type = ValueType::predefined(PredefinedValueType::String);
@@ -184,7 +184,7 @@ fn recover_closed_rejects_overdeep_record_property() {
                 def: selene_core::NodeTypeDef {
                     labels: LabelSet::single(sensor),
                     properties: smallvec![selene_core::PropertyDef {
-                        name: intern("too_deep").unwrap(),
+                        name: db_string("too_deep").unwrap(),
                         value_type,
                         nullable: true,
                         default: None,

@@ -1,6 +1,6 @@
 //! Composite property-index mutation methods for the transaction mutator.
 
-use selene_core::{Change, IStr, SchemaChange, SchemaPropertyIndexKind};
+use selene_core::{Change, DbString, SchemaChange, SchemaPropertyIndexKind};
 use smallvec::SmallVec;
 
 use crate::graph::{CompositePropertyIndexEntry, composite_property_key};
@@ -15,10 +15,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// canonical property set already exists.
     pub fn create_composite_property_index_named(
         &mut self,
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
+        label: DbString,
+        properties: SmallVec<[DbString; 4]>,
         kinds: SmallVec<[TypedIndexKind; 4]>,
-        name: Option<IStr>,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         validate_shape(&properties, &kinds)?;
         let key = composite_property_key(&properties);
@@ -62,8 +62,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// no WAL change.
     pub fn drop_composite_property_index(
         &mut self,
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
+        label: DbString,
+        properties: SmallVec<[DbString; 4]>,
     ) -> GraphResult<()> {
         let key = composite_property_key(&properties);
         if !self
@@ -87,7 +87,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 }
 
-fn validate_shape(properties: &[IStr], kinds: &[TypedIndexKind]) -> Result<(), GraphError> {
+fn validate_shape(properties: &[DbString], kinds: &[TypedIndexKind]) -> Result<(), GraphError> {
     if properties.len() < 2 {
         return Err(GraphError::Inconsistent {
             reason: "composite index requires at least two properties".to_owned(),
@@ -130,7 +130,7 @@ const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{GraphId, intern};
+    use selene_core::{GraphId, db_string};
     use smallvec::smallvec;
 
     use crate::{GraphError, SharedGraph, TypedIndexKind};
@@ -142,7 +142,7 @@ mod tests {
         let err = txn
             .mutator()
             .create_composite_property_index_named(
-                intern("CompositeShape").unwrap(),
+                db_string("CompositeShape").unwrap(),
                 smallvec![],
                 smallvec![],
                 None,
@@ -163,8 +163,8 @@ mod tests {
         let err = txn
             .mutator()
             .create_composite_property_index_named(
-                intern("CompositeShape").unwrap(),
-                smallvec![intern("only").unwrap()],
+                db_string("CompositeShape").unwrap(),
+                smallvec![db_string("only").unwrap()],
                 smallvec![TypedIndexKind::I64],
                 None,
             )

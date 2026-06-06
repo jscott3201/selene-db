@@ -5,7 +5,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     AnalysisError, AnalyzedStatementKind, BindingTableSchema, GqlStatus, GqlType, PipelineOp,
     ProcedureContext, ProcedureDefaultValue, ProcedureError, ProcedureHandle, ProcedureMetadata,
@@ -16,7 +16,7 @@ use selene_graph::SharedGraph;
 
 #[derive(Debug)]
 struct RecordingRegistry {
-    metadata: HashMap<Box<[IStr]>, ProcedureMetadata>,
+    metadata: HashMap<Box<[DbString]>, ProcedureMetadata>,
     calls: Mutex<Vec<Vec<Value>>>,
 }
 
@@ -24,7 +24,7 @@ impl RecordingRegistry {
     fn new(parameters: Vec<ProcedureParameter>) -> Self {
         let mut metadata = HashMap::new();
         metadata.insert(
-            vec![istr("test"), istr("optional")].into_boxed_slice(),
+            vec![db_string("test"), db_string("optional")].into_boxed_slice(),
             ProcedureMetadata::new(
                 ProcedureHandle::new(1),
                 ProcedureSignature::new(parameters),
@@ -47,7 +47,7 @@ impl RecordingRegistry {
 }
 
 impl ProcedureRegistry for RecordingRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         self.metadata.get(name).cloned()
     }
 
@@ -66,21 +66,21 @@ impl ProcedureRegistry for RecordingRegistry {
 
 fn optional_registry() -> RecordingRegistry {
     RecordingRegistry::new(vec![
-        ProcedureParameter::new(istr("id"), GqlType::Integer, false),
-        ProcedureParameter::new(istr("enabled"), GqlType::Boolean, false)
+        ProcedureParameter::new(db_string("id"), GqlType::Integer, false),
+        ProcedureParameter::new(db_string("enabled"), GqlType::Boolean, false)
             .with_default(ProcedureDefaultValue::Boolean(false)),
     ])
 }
 
 fn exact_registry() -> RecordingRegistry {
     RecordingRegistry::new(vec![
-        ProcedureParameter::new(istr("id"), GqlType::Integer, false),
-        ProcedureParameter::new(istr("enabled"), GqlType::Boolean, false),
+        ProcedureParameter::new(db_string("id"), GqlType::Integer, false),
+        ProcedureParameter::new(db_string("enabled"), GqlType::Boolean, false),
     ])
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test strings fit interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test strings fit DB string cap")
 }
 
 #[test]

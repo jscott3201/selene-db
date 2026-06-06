@@ -18,7 +18,7 @@
 //! surface — distributed algorithms handle them.
 
 use roaring::RoaringBitmap;
-use selene_core::{EdgeId, IStr, NodeId, Value};
+use selene_core::{DbString, EdgeId, NodeId, Value};
 use selene_graph::SeleneGraph;
 
 use super::RowIndex;
@@ -88,8 +88,8 @@ pub(crate) fn build_csr_out(
     snapshot: &SeleneGraph,
     nodes: &RoaringBitmap,
     row_index: &RowIndex,
-    edge_labels: &[IStr],
-    weight_property: Option<&IStr>,
+    edge_labels: &[DbString],
+    weight_property: Option<&DbString>,
 ) -> ProjCsr {
     build_csr(
         snapshot,
@@ -106,8 +106,8 @@ pub(crate) fn build_csr_in(
     snapshot: &SeleneGraph,
     nodes: &RoaringBitmap,
     row_index: &RowIndex,
-    edge_labels: &[IStr],
-    weight_property: Option<&IStr>,
+    edge_labels: &[DbString],
+    weight_property: Option<&DbString>,
 ) -> ProjCsr {
     build_csr(
         snapshot,
@@ -129,8 +129,8 @@ fn build_csr(
     snapshot: &SeleneGraph,
     nodes: &RoaringBitmap,
     row_index: &RowIndex,
-    edge_labels: &[IStr],
-    weight_property: Option<&IStr>,
+    edge_labels: &[DbString],
+    weight_property: Option<&DbString>,
     direction: Direction,
 ) -> ProjCsr {
     // Invariant: `row_index` is built from exactly this `nodes` bitmap (see
@@ -253,7 +253,11 @@ fn build_csr(
 
 /// Extract the edge weight per spec 16 §E04 (permissive: missing / non-numeric
 /// / null → `1.0`).
-fn extract_weight(snapshot: &SeleneGraph, edge_id: EdgeId, weight_property: Option<&IStr>) -> f64 {
+fn extract_weight(
+    snapshot: &SeleneGraph,
+    edge_id: EdgeId,
+    weight_property: Option<&DbString>,
+) -> f64 {
     let Some(prop) = weight_property else {
         return 1.0;
     };

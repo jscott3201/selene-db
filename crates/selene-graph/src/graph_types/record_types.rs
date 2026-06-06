@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::{IStr, PropertyValueType, Record, Value};
+use selene_core::{DbString, PropertyValueType, Record, Value};
 use serde::{Deserialize, Serialize};
 
 use super::MAX_RECORD_TYPE_NESTING;
@@ -68,7 +68,7 @@ pub struct RecordFieldTypes(pub Vec<RecordFieldTypeDef>);
 )]
 pub struct RecordFieldTypeDef {
     /// Field name.
-    pub name: IStr,
+    pub name: DbString,
     /// Declared field type (recursively nestable).
     pub field_type: RecordFieldType,
     /// `true` when the field is required (NOT NULL).
@@ -174,8 +174,8 @@ impl RecordFieldTypes {
 /// Validate the shape of a typed-`RECORD` field-type list at catalog time:
 /// nesting budget, unique field names, and recursively-valid field types.
 pub(super) fn validate_record_field_types(
-    type_name: IStr,
-    property_name: IStr,
+    type_name: DbString,
+    property_name: DbString,
     fields: &RecordFieldTypes,
     depth: u32,
 ) -> GraphResult<()> {
@@ -208,8 +208,8 @@ pub(super) fn validate_record_field_types(
 }
 
 fn validate_record_field_type(
-    type_name: IStr,
-    property_name: IStr,
+    type_name: DbString,
+    property_name: DbString,
     field_type: &RecordFieldType,
     depth: u32,
 ) -> GraphResult<()> {

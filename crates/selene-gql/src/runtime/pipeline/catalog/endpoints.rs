@@ -1,6 +1,6 @@
 //! Edge-endpoint helpers for catalog DDL.
 
-use selene_core::{IStr, LabelSet};
+use selene_core::{DbString, LabelSet};
 use selene_graph::{EdgeEndpointDef, GraphTypeDef};
 
 use crate::{EdgeEndpointSpec, ExecutorError, SourceSpan};
@@ -17,7 +17,7 @@ pub(super) fn resolve_endpoints(
 }
 
 fn single_endpoint(
-    labels: &[IStr],
+    labels: &[DbString],
     graph_type: &GraphTypeDef,
     span: SourceSpan,
 ) -> Result<EdgeEndpointDef, ExecutorError> {

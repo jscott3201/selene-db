@@ -1,6 +1,6 @@
 //! Property-index mutation methods for the transaction mutator.
 
-use selene_core::{Change, IStr, SchemaChange, SchemaPropertyIndexKind};
+use selene_core::{Change, DbString, SchemaChange, SchemaPropertyIndexKind};
 
 use crate::graph::PropertyIndexEntry;
 use crate::{GraphError, GraphResult, Mutator, TypedIndexKind};
@@ -15,8 +15,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// value for `(label, property)` cannot be admitted to `kind`.
     pub fn create_property_index(
         &mut self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: TypedIndexKind,
     ) -> GraphResult<()> {
         self.create_property_index_named(label, property, kind, None)
@@ -25,10 +25,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Register a durable node property index with optional catalog name.
     pub fn create_property_index_named(
         &mut self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: TypedIndexKind,
-        name: Option<IStr>,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         if self
             .txn
@@ -65,7 +65,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// The operation is idempotent. Dropping an absent index succeeds and emits
     /// no WAL change.
-    pub fn drop_property_index(&mut self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn drop_property_index(&mut self, label: DbString, property: DbString) -> GraphResult<()> {
         if !self
             .txn
             .read()

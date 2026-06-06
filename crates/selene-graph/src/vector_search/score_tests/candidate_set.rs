@@ -4,7 +4,7 @@ use crate::{
     VectorNodeSearchHit,
 };
 use selene_core::{
-    CancellationChecker, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric, intern,
+    CancellationChecker, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric, db_string,
 };
 
 #[test]
@@ -126,8 +126,8 @@ fn vector_candidate_set_intersection_handles_asymmetric_sets() {
 #[test]
 fn score_vector_nodes_batch_accepts_candidate_sets() {
     let shared = SharedGraph::new(GraphId::new(982));
-    let label = intern("vector.score.candidate_set.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let label = db_string("vector.score.candidate_set.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let ids = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -175,8 +175,8 @@ fn score_vector_nodes_batch_accepts_candidate_sets() {
 #[test]
 fn score_vector_candidate_set_matches_explicit_node_scoring() {
     let shared = SharedGraph::new(GraphId::new(985));
-    let label = intern("vector.score.canonical_set.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let label = db_string("vector.score.canonical_set.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let ids = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -229,8 +229,8 @@ fn score_vector_candidate_set_matches_explicit_node_scoring() {
 #[test]
 fn score_vector_candidate_sets_batch_matches_generic_batch() {
     let shared = SharedGraph::new(GraphId::new(986));
-    let label = intern("vector.score.canonical_batch.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let label = db_string("vector.score.canonical_batch.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let ids = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -299,10 +299,10 @@ fn score_vector_candidate_sets_batch_matches_generic_batch() {
 #[test]
 fn vector_neighbor_candidates_filter_direction_and_normalize() {
     let shared = SharedGraph::new(GraphId::new(983));
-    let anchor_label = intern("vector.candidate.anchor").unwrap();
-    let doc_label = intern("vector.candidate.doc").unwrap();
-    let link = intern("DEPENDS_ON").unwrap();
-    let other_link = intern("MENTIONS").unwrap();
+    let anchor_label = db_string("vector.candidate.anchor").unwrap();
+    let doc_label = db_string("vector.candidate.doc").unwrap();
+    let link = db_string("DEPENDS_ON").unwrap();
+    let other_link = db_string("MENTIONS").unwrap();
     let (anchor, node_a, node_b, node_c) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -350,7 +350,7 @@ fn vector_neighbor_candidates_filter_direction_and_normalize() {
 
     let other = shared.vector_neighbor_candidates(
         anchor,
-        &intern("ABSENT").unwrap(),
+        &db_string("ABSENT").unwrap(),
         VectorNeighborDirection::Both,
     );
     assert!(other.is_empty());
@@ -363,10 +363,10 @@ fn vector_neighbor_candidates_filter_direction_and_normalize() {
 #[test]
 fn vector_neighbor_candidate_set_scores_like_neighbor_search() {
     let shared = SharedGraph::new(GraphId::new(984));
-    let anchor_label = intern("vector.candidate.score.anchor").unwrap();
-    let doc_label = intern("vector.candidate.score.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
-    let link = intern("SUPPORTS").unwrap();
+    let anchor_label = db_string("vector.candidate.score.anchor").unwrap();
+    let doc_label = db_string("vector.candidate.score.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let link = db_string("SUPPORTS").unwrap();
     let (anchor, near, far) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -433,11 +433,11 @@ fn vector_neighbor_candidate_set_scores_like_neighbor_search() {
 #[test]
 fn score_vector_expanded_candidate_sets_batch_matches_manual_expansion() {
     let shared = SharedGraph::new(GraphId::new(987));
-    let root_label = intern("vector.expanded.batch.root").unwrap();
-    let doc_label = intern("vector.expanded.batch.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
-    let support = intern("SUPPORTS").unwrap();
-    let other = intern("MENTIONS").unwrap();
+    let root_label = db_string("vector.expanded.batch.root").unwrap();
+    let doc_label = db_string("vector.expanded.batch.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let support = db_string("SUPPORTS").unwrap();
+    let other = db_string("MENTIONS").unwrap();
     let (root_a, root_b, near_a, far_a, near_b, wrong_label) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -552,8 +552,8 @@ fn score_vector_expanded_candidate_sets_batch_matches_manual_expansion() {
 #[test]
 fn score_vector_expanded_candidate_sets_batch_rejects_invalid_batch_shape() {
     let shared = SharedGraph::new(GraphId::new(988));
-    let embedding = intern("embedding").unwrap();
-    let link = intern("SUPPORTS").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let link = db_string("SUPPORTS").unwrap();
     let roots = [VectorCandidateSet::from_nodes([NodeId::new(1)])];
     let queries = [vector(&[0.0, 0.0]), vector(&[1.0, 0.0])];
 

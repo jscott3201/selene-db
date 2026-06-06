@@ -1,11 +1,11 @@
 //! Runtime conformance for width-specific numeric value types.
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{EmptyProcedureRegistry, ExecutorError, Session, StatementOutput};
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn first_value(source: &str) -> Value {
@@ -38,14 +38,14 @@ fn first_status(source: &str) -> String {
 fn bind_and_eval(value: Value, source: &str) -> Value {
     let graph = SharedGraph::new(GraphId::new(13_702));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("p"), value);
+    session.bind_parameter(db_string("p"), value);
     first_value_in(&mut session, source)
 }
 
 fn bind_and_error(value: Value, source: &str) -> ExecutorError {
     let graph = SharedGraph::new(GraphId::new(13_703));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("p"), value);
+    session.bind_parameter(db_string("p"), value);
     session
         .execute_source(source, &EmptyProcedureRegistry)
         .expect_err("statement errors")

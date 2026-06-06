@@ -253,8 +253,8 @@ fn function_call_with_let_shadow_does_not_misread_column() {
         ImplDefinedCaps, NonEmpty, SourceSpan, ValueExpr, runtime::evaluate_for_test,
     };
 
-    let sum = exec_common::istr("sum");
-    let x = exec_common::istr("x");
+    let sum = exec_common::db_string("sum");
+    let x = exec_common::db_string("x");
     let schema = BindingTableSchema {
         columns: vec![
             BindingTableColumn {

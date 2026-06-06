@@ -4,20 +4,20 @@
 //! snapshot-pinned `LiveIndexCatalog` (default-on), that index acceleration is
 //! semantically transparent (byte-identical rows vs the `without_index_selection`
 //! Linear path), and that EXPLAIN renders the optimized access path. This is the
-//! "would it catch the IStr admission race" bar: a divergence between the Linear
+//! "would it catch the DbString admission race" bar: a divergence between the Linear
 //! and indexed paths is the failure mode under test.
 
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{BindingTable, EmptyProcedureRegistry, Session, StatementOutput};
 use selene_graph::{SharedGraph, TypedIndexKind};
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+fn props<const N: usize>(pairs: [(DbString, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 
@@ -57,10 +57,10 @@ fn explain_dump(session: &mut Session<'_>, source: &str) -> String {
 /// Person NodeIds.
 fn build_graph() -> (SharedGraph, Vec<NodeId>) {
     let graph = SharedGraph::new(GraphId::new(901));
-    let person = istr("Person");
-    let employee = istr("Employee");
-    let robot = istr("Robot");
-    let age = istr("age");
+    let person = db_string("Person");
+    let employee = db_string("Employee");
+    let robot = db_string("Robot");
+    let age = db_string("age");
     let mut persons = Vec::new();
     {
         let mut txn = graph.begin_write();
@@ -234,8 +234,8 @@ fn correctness_corpus_indexed_matches_linear() {
 fn create_index_invalidates_cached_plan_and_re_optimizes() {
     use std::num::NonZeroUsize;
     let graph = SharedGraph::new(GraphId::new(902));
-    let person = istr("Person");
-    let age = istr("age");
+    let person = db_string("Person");
+    let age = db_string("age");
     {
         // Several distinct-age Person rows so the `age = 7` equality is
         // genuinely selective (1 of N): the OPT-5 cost gate then prefers the
@@ -315,7 +315,11 @@ fn concurrent_create_index_mid_statement_has_no_optimize_execute_skew() {
         let graph = Arc::clone(&graph);
         std::thread::spawn(move || {
             graph
-                .create_property_index(istr("Person"), istr("name"), TypedIndexKind::String)
+                .create_property_index(
+                    db_string("Person"),
+                    db_string("name"),
+                    TypedIndexKind::String,
+                )
                 .unwrap();
         })
     };

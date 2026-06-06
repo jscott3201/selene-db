@@ -1,7 +1,7 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{Criterion, Throughput};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
 use selene_graph::SharedGraph;
 
@@ -141,10 +141,10 @@ fn execute_vector_neighbor_batch(
 
 fn vector_neighbor_graph(scale: usize, dimension: usize) -> SharedGraph {
     let graph = SharedGraph::new(GraphId::new(71_003));
-    let label = istr("VectorDoc");
-    let anchor_label = istr("Anchor");
-    let embedding_key = istr("embedding");
-    let depends = istr("DEPENDS_ON");
+    let label = db_string("VectorDoc");
+    let anchor_label = db_string("Anchor");
+    let embedding_key = db_string("embedding");
+    let depends = db_string("DEPENDS_ON");
     {
         let mut txn = graph.begin_write();
         {
@@ -182,15 +182,18 @@ fn vector_neighbor_graph(scale: usize, dimension: usize) -> SharedGraph {
 
 fn bind_neighbor_inputs_for(session: &mut Session<'_>, query_index: usize) {
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
-    session.bind_parameter(istr("anchor"), Value::NodeRef(neighbor_anchor(query_index)));
+    session.bind_parameter(
+        db_string("anchor"),
+        Value::NodeRef(neighbor_anchor(query_index)),
+    );
 }
 
 fn bind_neighbor_batch_inputs(session: &mut Session<'_>) {
-    session.bind_parameter(istr("queries"), vector_query_batch());
-    session.bind_parameter(istr("anchors"), neighbor_anchor_batch());
+    session.bind_parameter(db_string("queries"), vector_query_batch());
+    session.bind_parameter(db_string("anchors"), neighbor_anchor_batch());
 }
 
 fn vector_query_batch() -> Value {
@@ -233,6 +236,6 @@ fn vector_value(seed: usize, dimension: usize) -> VectorValue {
     VectorValue::new(components).expect("bench vector is valid")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }

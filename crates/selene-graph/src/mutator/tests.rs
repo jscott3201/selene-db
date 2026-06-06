@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{
-    Change, GraphId, PredefinedValueType, PropertyValueType, Value, ValueType, intern,
+    Change, GraphId, PredefinedValueType, PropertyValueType, Value, ValueType, db_string,
 };
 
 use super::*;
@@ -35,8 +35,8 @@ fn create_node_with_two_labels_indexes_both() {
     let mut txn = shared.begin_write();
     let (a, b, id) = {
         let mut mutator = txn.mutator();
-        let a = intern("node.index.a").unwrap();
-        let b = intern("node.index.b").unwrap();
+        let a = db_string("node.index.a").unwrap();
+        let b = db_string("node.index.b").unwrap();
         let id = mutator
             .create_node(
                 LabelSet::from_iter([a.clone(), b.clone()]),
@@ -60,8 +60,8 @@ fn update_node_label_diff_updates_indexes_atomically() {
     let mut txn = shared.begin_write();
     let (old, new, id) = {
         let mut mutator = txn.mutator();
-        let old = intern("node.index.old").unwrap();
-        let new = intern("node.index.new").unwrap();
+        let old = db_string("node.index.old").unwrap();
+        let new = db_string("node.index.new").unwrap();
         let id = mutator
             .create_node(LabelSet::single(old.clone()), PropertyMap::new())
             .expect("create_node ok");
@@ -89,8 +89,8 @@ fn delete_node_removes_from_all_label_indexes() {
     let mut txn = shared.begin_write();
     let (a, b) = {
         let mut mutator = txn.mutator();
-        let a = intern("node.index.delete.a").unwrap();
-        let b = intern("node.index.delete.b").unwrap();
+        let a = db_string("node.index.delete.a").unwrap();
+        let b = db_string("node.index.delete.b").unwrap();
         let id = mutator
             .create_node(
                 LabelSet::from_iter([a.clone(), b.clone()]),
@@ -115,7 +115,7 @@ fn create_edge_with_invalid_source_fails() {
     let target = empty_node(&mut mutator);
     let err = mutator
         .create_edge(
-            intern("edge.invalid.source").unwrap(),
+            db_string("edge.invalid.source").unwrap(),
             NodeId::new(99),
             target,
             PropertyMap::new(),
@@ -132,7 +132,7 @@ fn create_edge_with_invalid_target_fails() {
     let source = empty_node(&mut mutator);
     let err = mutator
         .create_edge(
-            intern("edge.invalid.target").unwrap(),
+            db_string("edge.invalid.target").unwrap(),
             source,
             NodeId::new(99),
             PropertyMap::new(),
@@ -165,7 +165,7 @@ fn delete_node_cascades_to_incident_edges() {
         let a = empty_node(&mut mutator);
         let b = empty_node(&mut mutator);
         let edge = mutator
-            .create_edge(intern("edge.cascade").unwrap(), a, b, PropertyMap::new())
+            .create_edge(db_string("edge.cascade").unwrap(), a, b, PropertyMap::new())
             .unwrap();
         mutator.delete_node(a).unwrap();
         (a, b, edge)
@@ -182,7 +182,7 @@ fn delete_node_cascades_to_incident_edges() {
 fn delete_node_cascade_clears_edge_label_index() {
     let shared = SharedGraph::new(GraphId::new(1));
     let mut txn = shared.begin_write();
-    let label = intern("edge.index.cascade").unwrap();
+    let label = db_string("edge.index.cascade").unwrap();
     {
         let mut mutator = txn.mutator();
         let a = empty_node(&mut mutator);
@@ -207,7 +207,7 @@ fn delete_edge_updates_both_adjacencies() {
         let a = empty_node(&mut mutator);
         let b = empty_node(&mut mutator);
         let edge = mutator
-            .create_edge(intern("edge.delete").unwrap(), a, b, PropertyMap::new())
+            .create_edge(db_string("edge.delete").unwrap(), a, b, PropertyMap::new())
             .unwrap();
         mutator.delete_edge(edge).unwrap();
         (a, b, edge)
@@ -223,7 +223,7 @@ fn delete_edge_updates_both_adjacencies() {
 fn index_entry_dropped_when_bitmap_empties() {
     let shared = SharedGraph::new(GraphId::new(1));
     let mut txn = shared.begin_write();
-    let label = intern("node.index.drop-empty").unwrap();
+    let label = db_string("node.index.drop-empty").unwrap();
     {
         let mut mutator = txn.mutator();
         let id = mutator
@@ -242,8 +242,8 @@ fn index_entry_dropped_when_bitmap_empties() {
 fn update_node_with_no_label_changes_does_not_touch_indexes() {
     let shared = SharedGraph::new(GraphId::new(1));
     let mut txn = shared.begin_write();
-    let label = intern("node.index.props-only").unwrap();
-    let prop = intern("node.index.prop").unwrap();
+    let label = db_string("node.index.props-only").unwrap();
+    let prop = db_string("node.index.prop").unwrap();
     {
         let mut mutator = txn.mutator();
         let id = mutator
@@ -275,7 +275,7 @@ fn read_within_tx_sees_own_writes() {
 fn read_within_tx_sees_label_index_updates() {
     let shared = SharedGraph::new(GraphId::new(1));
     let mut txn = shared.begin_write();
-    let label = intern("node.index.tx-read").unwrap();
+    let label = db_string("node.index.tx-read").unwrap();
     let mut mutator = txn.mutator();
     let id = mutator
         .create_node(LabelSet::single(label.clone()), PropertyMap::new())
@@ -304,7 +304,7 @@ fn multi_step_tx_emits_changes_in_order() {
         mutator
             .update_node(
                 id,
-                LabelDiff::new([intern("node.updated").unwrap()], []).unwrap(),
+                LabelDiff::new([db_string("node.updated").unwrap()], []).unwrap(),
                 PropertyDiff::new([], []).unwrap(),
             )
             .unwrap();
@@ -343,9 +343,9 @@ fn update_edge_updates_properties() {
         let a = empty_node(&mut mutator);
         let b = empty_node(&mut mutator);
         let edge = mutator
-            .create_edge(intern("edge.update").unwrap(), a, b, PropertyMap::new())
+            .create_edge(db_string("edge.update").unwrap(), a, b, PropertyMap::new())
             .unwrap();
-        let prop = intern("edge.prop").unwrap();
+        let prop = db_string("edge.prop").unwrap();
         mutator
             .update_edge(
                 edge,
@@ -367,7 +367,7 @@ fn remove_node_property_removes_value_and_emits_change() {
     let mut txn = shared.begin_write();
     let (id, prop) = {
         let mut mutator = txn.mutator();
-        let prop = intern("node.remove.prop").unwrap();
+        let prop = db_string("node.remove.prop").unwrap();
         let id = mutator
             .create_node(
                 LabelSet::new(),
@@ -411,7 +411,7 @@ fn remove_node_property_absent_is_noop() {
         let mut mutator = txn.mutator();
         let id = empty_node(&mut mutator);
         mutator
-            .remove_node_property(id, intern("node.remove.absent").unwrap())
+            .remove_node_property(id, db_string("node.remove.absent").unwrap())
             .unwrap();
     }
     let outcome = txn.commit().unwrap();
@@ -427,7 +427,7 @@ fn remove_node_label_updates_index_and_emits_change() {
     let mut txn = shared.begin_write();
     let (id, label) = {
         let mut mutator = txn.mutator();
-        let label = intern("node.remove.label").unwrap();
+        let label = db_string("node.remove.label").unwrap();
         let id = mutator
             .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
@@ -454,10 +454,10 @@ fn remove_edge_property_removes_value_and_emits_change() {
         let mut mutator = txn.mutator();
         let left = empty_node(&mut mutator);
         let right = empty_node(&mut mutator);
-        let prop = intern("edge.remove.prop").unwrap();
+        let prop = db_string("edge.remove.prop").unwrap();
         let edge = mutator
             .create_edge(
-                intern("edge.remove").unwrap(),
+                db_string("edge.remove").unwrap(),
                 left,
                 right,
                 PropertyMap::from_pairs([(prop.clone(), Value::Int(9))]).unwrap(),
@@ -494,10 +494,10 @@ fn remove_edge_property_removes_value_and_emits_change() {
 
 #[test]
 fn remove_node_property_rejects_immutable_property() {
-    let serial = intern("node.remove.immutable.serial").unwrap();
-    let person = intern("node.remove.immutable.person").unwrap();
+    let serial = db_string("node.remove.immutable.serial").unwrap();
+    let person = db_string("node.remove.immutable.person").unwrap();
     let graph_type = GraphTypeDef {
-        name: intern("node.remove.immutable.graph").unwrap(),
+        name: db_string("node.remove.immutable.graph").unwrap(),
         node_types: vec![NodeTypeDef {
             name: person.clone(),
             key_labels: LabelSet::single(person.clone()),
@@ -587,13 +587,13 @@ proptest! {
     ) {
         let shared = SharedGraph::new(GraphId::new(1));
         let labels = [
-            intern("prop.label.a").unwrap(),
-            intern("prop.label.b").unwrap(),
-            intern("prop.label.c").unwrap(),
-            intern("prop.label.d").unwrap(),
+            db_string("prop.label.a").unwrap(),
+            db_string("prop.label.b").unwrap(),
+            db_string("prop.label.c").unwrap(),
+            db_string("prop.label.d").unwrap(),
         ];
         let mut txn = shared.begin_write();
-        let mut alive: std::collections::BTreeMap<NodeId, BTreeSet<IStr>> =
+        let mut alive: std::collections::BTreeMap<NodeId, BTreeSet<DbString>> =
             std::collections::BTreeMap::new();
         let mut created = Vec::new();
         {
@@ -636,7 +636,7 @@ proptest! {
                 }
             }
 
-            let mut expected: std::collections::BTreeMap<IStr, RoaringBitmap> =
+            let mut expected: std::collections::BTreeMap<DbString, RoaringBitmap> =
                 std::collections::BTreeMap::new();
             for (id, node_labels) in &alive {
                 // BRIEF-Item-4c: rows are append-assigned, so resolve each id's row

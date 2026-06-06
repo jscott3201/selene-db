@@ -1,14 +1,14 @@
 //! End-to-end coverage for native vector candidate-scoring built-ins.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
     Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -19,7 +19,7 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -45,7 +45,7 @@ fn execute_rows(
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -59,7 +59,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -72,9 +72,9 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 }
 
 fn seed_vector_graph(graph: &SharedGraph) -> Vec<NodeId> {
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
-    let other = istr("other");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
+    let other = db_string("other");
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
     let mut ids = Vec::new();
@@ -92,7 +92,7 @@ fn seed_vector_graph(graph: &SharedGraph) -> Vec<NodeId> {
         mutator
             .create_node(
                 LabelSet::single(doc),
-                props(&other, Value::String(istr("not-a-vector"))),
+                props(&other, Value::String(db_string("not-a-vector"))),
             )
             .expect("non-vector node inserts"),
     );
@@ -101,12 +101,12 @@ fn seed_vector_graph(graph: &SharedGraph) -> Vec<NodeId> {
 }
 
 fn seed_neighbor_vector_graph(graph: &SharedGraph) -> (NodeId, NodeId, Vec<NodeId>) {
-    let anchor_label = istr("Anchor");
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
-    let other = istr("other");
-    let depends = istr("DEPENDS_ON");
-    let mentions = istr("MENTIONS");
+    let anchor_label = db_string("Anchor");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
+    let other = db_string("other");
+    let depends = db_string("DEPENDS_ON");
+    let mentions = db_string("MENTIONS");
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
     let anchor = mutator
@@ -129,7 +129,7 @@ fn seed_neighbor_vector_graph(graph: &SharedGraph) -> (NodeId, NodeId, Vec<NodeI
     let non_vector = mutator
         .create_node(
             LabelSet::single(doc),
-            props(&other, Value::String(istr("not-a-vector"))),
+            props(&other, Value::String(db_string("not-a-vector"))),
         )
         .expect("non-vector node inserts");
     for &node in &[ids[5], ids[2], ids[2], ids[0], non_vector] {
@@ -153,12 +153,12 @@ fn seed_neighbor_vector_graph(graph: &SharedGraph) -> (NodeId, NodeId, Vec<NodeI
 }
 
 fn seed_expanded_candidate_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId, NodeId) {
-    let doc = istr("VectorDoc");
-    let root = istr("VectorRoot");
-    let embedding = istr("embedding");
-    let other = istr("other");
-    let support = istr("SUPPORTS");
-    let mentions = istr("MENTIONS");
+    let doc = db_string("VectorDoc");
+    let root = db_string("VectorRoot");
+    let embedding = db_string("embedding");
+    let other = db_string("other");
+    let support = db_string("SUPPORTS");
+    let mentions = db_string("MENTIONS");
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
     let root_labels = || LabelSet::from_iter([doc.clone(), root.clone()]);
@@ -201,7 +201,7 @@ fn seed_expanded_candidate_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId
     let non_vector = mutator
         .create_node(
             LabelSet::single(doc),
-            props(&other, Value::String(istr("not-a-vector"))),
+            props(&other, Value::String(db_string("not-a-vector"))),
         )
         .expect("non-vector node inserts");
     for &node in &[outgoing_near, outgoing_near] {
@@ -230,7 +230,7 @@ fn vector_score_expanded_candidates_accepts_gql_query_roots() {
     let registry = BuiltinProcedureRegistry::new();
     let (root_a, root_b, outgoing_near, outgoing_far, _) = seed_expanded_candidate_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[3.2, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[3.2, 0.0])));
 
     let table = execute_rows(
         &mut session,
@@ -261,9 +261,9 @@ fn vector_score_nodes_reranks_explicit_candidates_without_index() {
         txn.commit().expect("delete commits");
     }
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[3.2, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[3.2, 0.0])));
     session.bind_parameter(
-        istr("nodes"),
+        db_string("nodes"),
         Value::List(vec![
             Value::NodeRef(ids[5]),
             Value::NodeRef(ids[3]),
@@ -291,8 +291,8 @@ fn vector_score_nodes_returns_no_rows_for_empty_candidate_list() {
     let registry = BuiltinProcedureRegistry::new();
     seed_vector_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
-    session.bind_parameter(istr("nodes"), Value::List(Vec::new()));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("nodes"), Value::List(Vec::new()));
 
     let table = execute_rows(
         &mut session,
@@ -309,8 +309,8 @@ fn vector_score_nodes_rejects_non_node_candidates() {
     let graph = graph(330_209);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
-    session.bind_parameter(istr("nodes"), Value::List(vec![Value::Int(1)]));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("nodes"), Value::List(vec![Value::Int(1)]));
 
     let err = session
         .execute_source(
@@ -335,14 +335,14 @@ fn vector_score_nodes_batch_reranks_per_query_candidate_sets() {
     let ids = seed_vector_graph(&graph);
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[3.2, 0.0])),
             Value::Vector(vector(&[5.1, 0.0])),
         ]),
     );
     session.bind_parameter(
-        istr("nodes"),
+        db_string("nodes"),
         Value::List(vec![
             Value::List(vec![
                 Value::NodeRef(ids[5]),
@@ -378,8 +378,8 @@ fn vector_score_nodes_batch_returns_no_rows_for_empty_queries() {
     let registry = BuiltinProcedureRegistry::new();
     seed_vector_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("queries"), Value::List(Vec::new()));
-    session.bind_parameter(istr("nodes"), Value::List(Vec::new()));
+    session.bind_parameter(db_string("queries"), Value::List(Vec::new()));
+    session.bind_parameter(db_string("nodes"), Value::List(Vec::new()));
 
     let table = execute_rows(
         &mut session,
@@ -397,10 +397,10 @@ fn vector_score_nodes_batch_rejects_mismatched_query_and_node_sets() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![Value::Vector(vector(&[0.0, 0.0]))]),
     );
-    session.bind_parameter(istr("nodes"), Value::List(Vec::new()));
+    session.bind_parameter(db_string("nodes"), Value::List(Vec::new()));
 
     let err = session
         .execute_source(
@@ -424,11 +424,11 @@ fn vector_score_nodes_batch_rejects_non_nested_node_candidates() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![Value::Vector(vector(&[0.0, 0.0]))]),
     );
     session.bind_parameter(
-        istr("nodes"),
+        db_string("nodes"),
         Value::List(vec![Value::List(vec![Value::Int(1)])]),
     );
 
@@ -454,9 +454,9 @@ fn vector_score_expanded_candidates_scores_preserved_roots_and_outgoing_expansio
     let registry = BuiltinProcedureRegistry::new();
     let (root_a, root_b, outgoing_near, outgoing_far, _) = seed_expanded_candidate_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[3.2, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[3.2, 0.0])));
     session.bind_parameter(
-        istr("roots"),
+        db_string("roots"),
         Value::List(vec![
             Value::NodeRef(root_b),
             Value::NodeRef(root_a),
@@ -483,9 +483,9 @@ fn vector_score_expanded_candidates_scores_incoming_expansion() {
     let registry = BuiltinProcedureRegistry::new();
     let (root_a, root_b, _, _, incoming) = seed_expanded_candidate_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[1.1, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[1.1, 0.0])));
     session.bind_parameter(
-        istr("roots"),
+        db_string("roots"),
         Value::List(vec![Value::NodeRef(root_a), Value::NodeRef(root_b)]),
     );
 
@@ -507,8 +507,8 @@ fn vector_score_expanded_candidates_rejects_non_node_roots() {
     let graph = graph(330_219);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
-    session.bind_parameter(istr("roots"), Value::List(vec![Value::Int(1)]));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("roots"), Value::List(vec![Value::Int(1)]));
 
     let err = session
         .execute_source(
@@ -533,14 +533,14 @@ fn vector_score_expanded_candidates_batch_scores_per_query_expanded_roots() {
     let (root_a, root_b, outgoing_near, _, incoming) = seed_expanded_candidate_graph(&graph);
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[3.2, 0.0])),
             Value::Vector(vector(&[1.1, 0.0])),
         ]),
     );
     session.bind_parameter(
-        istr("roots"),
+        db_string("roots"),
         Value::List(vec![
             Value::List(vec![
                 Value::NodeRef(root_b),
@@ -578,10 +578,10 @@ fn vector_score_expanded_candidates_batch_rejects_mismatched_query_and_root_sets
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![Value::Vector(vector(&[0.0, 0.0]))]),
     );
-    session.bind_parameter(istr("roots"), Value::List(Vec::new()));
+    session.bind_parameter(db_string("roots"), Value::List(Vec::new()));
 
     let err = session
         .execute_source(
@@ -605,11 +605,11 @@ fn vector_score_expanded_candidates_batch_rejects_non_nested_node_roots() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![Value::Vector(vector(&[0.0, 0.0]))]),
     );
     session.bind_parameter(
-        istr("roots"),
+        db_string("roots"),
         Value::List(vec![Value::List(vec![Value::Int(1)])]),
     );
 
@@ -635,8 +635,8 @@ fn vector_score_neighbors_reranks_directional_graph_candidates() {
     let registry = BuiltinProcedureRegistry::new();
     let (anchor, _, ids) = seed_neighbor_vector_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[2.2, 0.0])));
-    session.bind_parameter(istr("anchor"), Value::NodeRef(anchor));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[2.2, 0.0])));
+    session.bind_parameter(db_string("anchor"), Value::NodeRef(anchor));
 
     let outgoing = execute_rows(
         &mut session,
@@ -665,14 +665,14 @@ fn vector_score_neighbors_batch_reranks_per_anchor_neighbor_sets() {
     let (anchor, second_anchor, ids) = seed_neighbor_vector_graph(&graph);
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[2.2, 0.0])),
             Value::Vector(vector(&[6.2, 0.0])),
         ]),
     );
     session.bind_parameter(
-        istr("anchors"),
+        db_string("anchors"),
         Value::List(vec![Value::NodeRef(anchor), Value::NodeRef(second_anchor)]),
     );
 
@@ -696,8 +696,8 @@ fn vector_score_neighbors_rejects_invalid_direction() {
     let registry = BuiltinProcedureRegistry::new();
     let (anchor, _, _) = seed_neighbor_vector_graph(&graph);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
-    session.bind_parameter(istr("anchor"), Value::NodeRef(anchor));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("anchor"), Value::NodeRef(anchor));
 
     let err = session
         .execute_source(

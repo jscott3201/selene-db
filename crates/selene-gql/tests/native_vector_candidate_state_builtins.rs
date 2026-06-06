@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{
-    Change, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern,
-};
+use selene_core::{Change, DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
     Session, StatementOutput,
@@ -15,15 +13,15 @@ use selene_graph::{
     VectorCandidateStateInfo,
 };
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -53,7 +51,7 @@ fn execute_rows(
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -67,7 +65,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -82,7 +80,7 @@ fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -96,7 +94,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 
 fn string_list_column(table: &BindingTable, name: &str) -> Vec<Vec<String>> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -115,10 +113,10 @@ fn string_list_column(table: &BindingTable, name: &str) -> Vec<Vec<String>> {
 }
 
 fn candidate_graph() -> (SharedGraph, Vec<NodeId>) {
-    let state_name = istr("active_docs");
-    let doc = istr("VectorDoc");
-    let superseded = istr("SUPERSEDED_BY");
-    let supports = istr("SUPPORTS");
+    let state_name = db_string("active_docs");
+    let doc = db_string("VectorDoc");
+    let superseded = db_string("SUPERSEDED_BY");
+    let supports = db_string("SUPPORTS");
     let provider = Arc::new(
         MaintainedCandidateStateProvider::new([CandidateStateSpec::new(state_name)
             .require_label(doc.clone())
@@ -129,7 +127,7 @@ fn candidate_graph() -> (SharedGraph, Vec<NodeId>) {
         .with_provider(provider as Arc<dyn IndexProvider>)
         .build()
         .expect("graph builds");
-    let embedding = istr("embedding");
+    let embedding = db_string("embedding");
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
     let mut ids = Vec::new();
@@ -161,7 +159,7 @@ fn vector_score_candidate_state_reranks_maintained_set() {
     let (graph, ids) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[2.2, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[2.2, 0.0])));
 
     let table = execute_rows(
         &mut session,
@@ -178,8 +176,8 @@ fn vector_score_candidate_state_nodes_intersects_state_with_nodes_by_default() {
     let (graph, ids) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[2.2, 0.0])));
-    session.bind_parameter(istr("nodes"), node_list(&[ids[0], ids[2], ids[4]]));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[2.2, 0.0])));
+    session.bind_parameter(db_string("nodes"), node_list(&[ids[0], ids[2], ids[4]]));
 
     let table = execute_rows(
         &mut session,
@@ -197,8 +195,8 @@ fn vector_score_candidate_state_nodes_supports_explicit_set_algebra() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
 
-    session.bind_parameter(istr("union_query"), Value::Vector(vector(&[4.2, 0.0])));
-    session.bind_parameter(istr("union_nodes"), node_list(&[ids[4]]));
+    session.bind_parameter(db_string("union_query"), Value::Vector(vector(&[4.2, 0.0])));
+    session.bind_parameter(db_string("union_nodes"), node_list(&[ids[4]]));
     let union = execute_rows(
         &mut session,
         "CALL selene.vector_score_candidate_state_nodes('embedding', $union_query, \
@@ -210,8 +208,11 @@ fn vector_score_candidate_state_nodes_supports_explicit_set_algebra() {
         vec![ids[4], ids[3], ids[2], ids[1], ids[0]]
     );
 
-    session.bind_parameter(istr("state_diff_query"), Value::Vector(vector(&[0.2, 0.0])));
-    session.bind_parameter(istr("state_diff_nodes"), node_list(&[ids[2], ids[3]]));
+    session.bind_parameter(
+        db_string("state_diff_query"),
+        Value::Vector(vector(&[0.2, 0.0])),
+    );
+    session.bind_parameter(db_string("state_diff_nodes"), node_list(&[ids[2], ids[3]]));
     let state_difference = execute_rows(
         &mut session,
         "CALL selene.vector_score_candidate_state_nodes('embedding', $state_diff_query, \
@@ -223,8 +224,11 @@ fn vector_score_candidate_state_nodes_supports_explicit_set_algebra() {
         vec![ids[0], ids[1]]
     );
 
-    session.bind_parameter(istr("nodes_diff_query"), Value::Vector(vector(&[4.2, 0.0])));
-    session.bind_parameter(istr("nodes_diff_nodes"), node_list(&[ids[2], ids[4]]));
+    session.bind_parameter(
+        db_string("nodes_diff_query"),
+        Value::Vector(vector(&[4.2, 0.0])),
+    );
+    session.bind_parameter(db_string("nodes_diff_nodes"), node_list(&[ids[2], ids[4]]));
     let nodes_difference = execute_rows(
         &mut session,
         "CALL selene.vector_score_candidate_state_nodes('embedding', $nodes_diff_query, \
@@ -239,8 +243,8 @@ fn vector_score_candidate_state_nodes_rejects_unknown_operation() {
     let (graph, ids) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
-    session.bind_parameter(istr("nodes"), node_list(&[ids[0]]));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("nodes"), node_list(&[ids[0]]));
 
     let err = session
         .execute_source(
@@ -264,8 +268,8 @@ fn vector_score_candidate_state_expanded_intersects_state_with_expanded_roots_by
     let (graph, ids) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[2.2, 0.0])));
-    session.bind_parameter(istr("roots"), node_list(&[ids[0], ids[1]]));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[2.2, 0.0])));
+    session.bind_parameter(db_string("roots"), node_list(&[ids[0], ids[1]]));
 
     let table = execute_rows(
         &mut session,
@@ -283,14 +287,14 @@ fn vector_score_candidate_state_expanded_batch_intersects_state_per_query() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[2.2, 0.0])),
             Value::Vector(vector(&[0.2, 0.0])),
         ]),
     );
     session.bind_parameter(
-        istr("roots"),
+        db_string("roots"),
         Value::List(vec![node_list(&[ids[0], ids[1]]), node_list(&[ids[0]])]),
     );
 
@@ -313,9 +317,9 @@ fn vector_score_candidate_state_expanded_supports_explicit_set_algebra() {
     let (graph, ids) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("roots"), node_list(&[ids[0], ids[1]]));
+    session.bind_parameter(db_string("roots"), node_list(&[ids[0], ids[1]]));
 
-    session.bind_parameter(istr("union_query"), Value::Vector(vector(&[4.2, 0.0])));
+    session.bind_parameter(db_string("union_query"), Value::Vector(vector(&[4.2, 0.0])));
     let union = execute_rows(
         &mut session,
         "CALL selene.vector_score_candidate_state_expanded('embedding', $union_query, \
@@ -327,7 +331,7 @@ fn vector_score_candidate_state_expanded_supports_explicit_set_algebra() {
         vec![ids[4], ids[3], ids[2], ids[1], ids[0]]
     );
 
-    session.bind_parameter(istr("diff_query"), Value::Vector(vector(&[4.2, 0.0])));
+    session.bind_parameter(db_string("diff_query"), Value::Vector(vector(&[4.2, 0.0])));
     let expanded_difference = execute_rows(
         &mut session,
         "CALL selene.vector_score_candidate_state_expanded('embedding', $diff_query, \
@@ -344,13 +348,13 @@ fn vector_score_candidate_state_expanded_batch_rejects_mismatched_roots() {
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[0.0, 0.0])),
             Value::Vector(vector(&[1.0, 0.0])),
         ]),
     );
-    session.bind_parameter(istr("roots"), Value::List(vec![node_list(&[ids[0]])]));
+    session.bind_parameter(db_string("roots"), Value::List(vec![node_list(&[ids[0]])]));
 
     let err = session
         .execute_source(
@@ -374,8 +378,8 @@ fn vector_score_candidate_state_expanded_rejects_unknown_operation() {
     let (graph, ids) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
-    session.bind_parameter(istr("roots"), node_list(&[ids[0]]));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("roots"), node_list(&[ids[0]]));
 
     let err = session
         .execute_source(
@@ -454,7 +458,7 @@ fn vector_score_candidate_state_rejects_unknown_set() {
     let (graph, _) = candidate_graph();
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let err = session
         .execute_source(
@@ -481,7 +485,7 @@ fn vector_score_candidate_state_surfaces_stale_provider_generation() {
         .expect("graph builds");
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
 
     let err = session
         .execute_source(
@@ -509,8 +513,8 @@ fn vector_score_candidate_state_nodes_surfaces_stale_provider_generation() {
         .expect("graph builds");
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
-    session.bind_parameter(istr("nodes"), node_list(&[NodeId::new(1)]));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("nodes"), node_list(&[NodeId::new(1)]));
 
     let err = session
         .execute_source(
@@ -539,8 +543,8 @@ fn vector_score_candidate_state_expanded_surfaces_stale_provider_generation() {
         .expect("graph builds");
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
-    session.bind_parameter(istr("roots"), node_list(&[NodeId::new(1)]));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(db_string("roots"), node_list(&[NodeId::new(1)]));
 
     let err = session
         .execute_source(
@@ -570,11 +574,11 @@ fn vector_score_candidate_state_expanded_batch_surfaces_stale_provider_generatio
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![Value::Vector(vector(&[0.0, 0.0]))]),
     );
     session.bind_parameter(
-        istr("roots"),
+        db_string("roots"),
         Value::List(vec![node_list(&[NodeId::new(1)])]),
     );
 
@@ -641,7 +645,7 @@ impl IndexProvider for StaleCandidateProvider {
 
     fn vector_candidate_set(
         &self,
-        _name: &IStr,
+        _name: &DbString,
         _generation: u64,
     ) -> Result<Option<selene_graph::VectorCandidateSet>, ProviderError> {
         Err(ProviderError::Inconsistent {

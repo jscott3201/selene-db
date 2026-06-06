@@ -16,7 +16,7 @@ use selene_gql::{
 };
 use selene_graph::{CommitOutcome, SeleneGraph, SharedGraph};
 
-use exec_common::istr;
+use exec_common::db_string;
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -65,9 +65,9 @@ fn fixture() -> SharedGraph {
     let graph = SharedGraph::new(GraphId::new(4242));
     let mut txn = graph.begin_write();
     {
-        let l = istr("L");
-        let keep = istr("Keep");
-        let e = istr("REL");
+        let l = db_string("L");
+        let keep = db_string("Keep");
+        let e = db_string("REL");
         let mut m = txn.mutator();
         let n0 = m
             .create_node(LabelSet::single(l.clone()), PropertyMap::new())
@@ -122,7 +122,7 @@ fn truncate_node_type_equals_detach_delete_end_to_end() {
     );
     assert!(matches!(
         &outcome.changes[0],
-        Change::NodesOfTypeTruncated { label } if *label == istr("L")
+        Change::NodesOfTypeTruncated { label } if *label == db_string("L")
     ));
 
     run_write(&detached, &planned("MATCH (n:L) DETACH DELETE n")).expect("detach delete executes");
@@ -131,7 +131,7 @@ fn truncate_node_type_equals_detach_delete_end_to_end() {
 
     // No :L nodes survive and no dangling edges remain.
     let g = truncated.read();
-    assert!(g.nodes_with_label(&istr("L")).is_none());
+    assert!(g.nodes_with_label(&db_string("L")).is_none());
     for row in g.edge_store.alive.iter() {
         let row = row as usize;
         let source = *g.edge_store.source.get(row).unwrap();
@@ -153,7 +153,7 @@ fn truncate_edge_type_writes_one_change_end_to_end() {
     assert_eq!(outcome.changes.len(), 1);
     assert!(matches!(
         &outcome.changes[0],
-        Change::EdgesOfTypeTruncated { label } if *label == istr("REL")
+        Change::EdgesOfTypeTruncated { label } if *label == db_string("REL")
     ));
     let g = graph.read();
     assert_eq!(g.edge_count(), 0, "all REL edges removed");

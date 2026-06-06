@@ -20,7 +20,7 @@ use std::{
 };
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{Change, DbString, EdgeId, LabelSet, NodeId, PropertyMap, db_string};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 use selene_testing::BenchFixture;
@@ -68,7 +68,7 @@ fn bench_case(
     fixture: &BenchFixture,
     case: ProviderCase,
 ) {
-    let label = LabelSet::single(intern("FanoutNode").expect("bench label interns"));
+    let label = LabelSet::single(db_string("FanoutNode").expect("bench label fits DB string cap"));
     group.bench_function(BenchmarkId::from_parameter(case.name), |b| {
         b.iter_batched(
             || {
@@ -303,7 +303,7 @@ fn bench_active_set_wal_edge_delete(
 
 fn active_set_shared(
     fixture: &BenchFixture,
-    label: &IStr,
+    label: &DbString,
     sources: &[NodeId],
 ) -> (SharedGraph, Arc<ActiveSetProvider>) {
     let provider = Arc::new(ActiveSetProvider::new(label.clone(), sources));
@@ -317,7 +317,7 @@ fn active_set_shared(
 
 fn active_set_wal_graph(
     fixture: &BenchFixture,
-    label: &IStr,
+    label: &DbString,
     sources: &[NodeId],
 ) -> ActiveSetWalGraph {
     let dir = fresh_active_set_wal_dir();
@@ -364,8 +364,8 @@ pub(crate) fn fresh_active_set_wal_dir() -> PathBuf {
     dir
 }
 
-fn active_set_edge_label() -> IStr {
-    intern("ACTIVE_SET_CONTRADICTS").expect("bench edge label interns")
+fn active_set_edge_label() -> DbString {
+    db_string("ACTIVE_SET_CONTRADICTS").expect("bench edge label fits DB string cap")
 }
 
 fn active_sources() -> Vec<NodeId> {
@@ -395,7 +395,7 @@ impl Drop for ActiveSetWalGraph {
 }
 
 struct ActiveSetProvider {
-    label: IStr,
+    label: DbString,
     state: Mutex<ActiveSetState>,
 }
 
@@ -405,7 +405,7 @@ struct ActiveSetState {
 }
 
 impl ActiveSetProvider {
-    fn new(label: IStr, active_nodes: &[NodeId]) -> Self {
+    fn new(label: DbString, active_nodes: &[NodeId]) -> Self {
         Self {
             label,
             state: Mutex::new(ActiveSetState {

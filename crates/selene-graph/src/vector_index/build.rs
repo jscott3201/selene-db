@@ -1,6 +1,6 @@
 //! Vector-index build and rebuild helpers.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
@@ -12,20 +12,20 @@ use super::{
 };
 
 struct VectorIndexRegistration {
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: VectorIndexKind,
     dimension: u32,
     config: VectorIndexConfig,
-    name: Option<IStr>,
+    name: Option<DbString>,
     before: VectorIndexMemoryUsage,
 }
 
 /// Build a vector index strictly with optional ANN construction config.
 pub(crate) fn build_vector_index_with_configs(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: VectorIndexKind,
     dimension: u32,
     config: VectorIndexConfig,
@@ -44,8 +44,8 @@ pub(crate) fn build_vector_index_with_configs(
 /// Build a vector index leniently with optional ANN construction config.
 pub(crate) fn build_vector_index_lenient_with_configs(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: VectorIndexKind,
     dimension: u32,
     config: VectorIndexConfig,
@@ -140,8 +140,8 @@ fn rebuild_vector_indexes_inner(
 
 fn build_vector_index_inner(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: VectorIndexKind,
     dimension: u32,
     config: VectorIndexConfig,

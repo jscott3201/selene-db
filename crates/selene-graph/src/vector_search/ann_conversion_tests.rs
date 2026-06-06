@@ -1,5 +1,5 @@
 use selene_core::{
-    CancellationChecker, GraphId, LabelSet, PropertyMap, Value, VectorValue, intern,
+    CancellationChecker, GraphId, LabelSet, PropertyMap, Value, VectorValue, db_string,
 };
 
 use super::*;
@@ -9,15 +9,15 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
 #[test]
 fn ann_row_hits_to_node_hits_filters_dead_rows_and_orders_ties_by_node_id() {
     let shared = SharedGraph::new(GraphId::new(991));
-    let doc = intern("vector.ann.convert.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.ann.convert.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let (first, second, third) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();

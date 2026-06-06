@@ -11,7 +11,7 @@ use std::fs;
 
 use selene_core::{
     Change, EdgeEndpointDef as CoreEdgeEndpointDef, GraphId, GraphTypeId, LabelSet, NodeTypeRef,
-    SchemaChange, intern,
+    SchemaChange, db_string,
 };
 use smallvec::smallvec;
 
@@ -22,27 +22,27 @@ use crate::{
 use super::{append_wal, temp_dir};
 
 fn three_node_type_graph() -> GraphTypeDef {
-    let person = intern("recover.oneof.person").unwrap();
-    let company = intern("recover.oneof.company").unwrap();
-    let school = intern("recover.oneof.school").unwrap();
+    let person = db_string("recover.oneof.person").unwrap();
+    let company = db_string("recover.oneof.company").unwrap();
+    let school = db_string("recover.oneof.school").unwrap();
     GraphTypeDef {
-        name: intern("recover.oneof.graph").unwrap(),
+        name: db_string("recover.oneof.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
                 name: person,
-                key_labels: LabelSet::single(intern("Person").unwrap()),
+                key_labels: LabelSet::single(db_string("Person").unwrap()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: company,
-                key_labels: LabelSet::single(intern("Company").unwrap()),
+                key_labels: LabelSet::single(db_string("Company").unwrap()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: school,
-                key_labels: LabelSet::single(intern("School").unwrap()),
+                key_labels: LabelSet::single(db_string("School").unwrap()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
@@ -65,7 +65,7 @@ fn wal_replay_oneof_edge_type() {
         .unwrap()
         .build()
         .unwrap();
-    let rel = intern("recover.oneof.affiliated_with").unwrap();
+    let rel = db_string("recover.oneof.affiliated_with").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -111,9 +111,9 @@ fn wal_replay_oneof_singleton_canonicalizes() {
     let dir = temp_dir("wal-replay-oneof-singleton");
     let graph_id = GraphId::new(11311);
     let base = three_node_type_graph();
-    let rel = intern("recover.oneof.singleton").unwrap();
-    let person = intern("recover.oneof.person").unwrap();
-    let company = intern("recover.oneof.company").unwrap();
+    let rel = db_string("recover.oneof.singleton").unwrap();
+    let person = db_string("recover.oneof.person").unwrap();
+    let company = db_string("recover.oneof.company").unwrap();
     append_wal(
         &dir,
         0,
@@ -154,33 +154,33 @@ fn wal_replay_edge_type_with_reordered_node_types_resolves_oneof_indices() {
     let dir = temp_dir("wal-replay-oneof-reordered");
     let graph_id = GraphId::new(11312);
     let reversed = GraphTypeDef {
-        name: intern("recover.oneof.reversed.graph").unwrap(),
+        name: db_string("recover.oneof.reversed.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
-                name: intern("recover.oneof.school").unwrap(),
-                key_labels: LabelSet::single(intern("School").unwrap()),
+                name: db_string("recover.oneof.school").unwrap(),
+                key_labels: LabelSet::single(db_string("School").unwrap()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: intern("recover.oneof.company").unwrap(),
-                key_labels: LabelSet::single(intern("Company").unwrap()),
+                name: db_string("recover.oneof.company").unwrap(),
+                key_labels: LabelSet::single(db_string("Company").unwrap()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: intern("recover.oneof.person").unwrap(),
-                key_labels: LabelSet::single(intern("Person").unwrap()),
+                name: db_string("recover.oneof.person").unwrap(),
+                key_labels: LabelSet::single(db_string("Person").unwrap()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: Vec::new(),
     };
-    let rel = intern("recover.oneof.reordered.affiliated").unwrap();
-    let person = intern("recover.oneof.person").unwrap();
-    let company = intern("recover.oneof.company").unwrap();
-    let school = intern("recover.oneof.school").unwrap();
+    let rel = db_string("recover.oneof.reordered.affiliated").unwrap();
+    let person = db_string("recover.oneof.person").unwrap();
+    let company = db_string("recover.oneof.company").unwrap();
+    let school = db_string("recover.oneof.school").unwrap();
     append_wal(
         &dir,
         0,
@@ -227,9 +227,9 @@ fn legacy_edge_type_def_v1_recovery_unchanged() {
     let dir = temp_dir("wal-replay-legacy-v1-unchanged");
     let graph_id = GraphId::new(11313);
     let base = three_node_type_graph();
-    let rel = intern("recover.oneof.legacy.knows").unwrap();
-    let person = intern("recover.oneof.person").unwrap();
-    let company = intern("recover.oneof.company").unwrap();
+    let rel = db_string("recover.oneof.legacy.knows").unwrap();
+    let person = db_string("recover.oneof.person").unwrap();
+    let company = db_string("recover.oneof.company").unwrap();
     append_wal(
         &dir,
         0,

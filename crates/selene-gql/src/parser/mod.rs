@@ -168,7 +168,7 @@ mod tests {
         clause.items.into_iter().next().unwrap()
     }
 
-    fn optional_name(value: Option<selene_core::IStr>) -> Option<String> {
+    fn optional_name(value: Option<selene_core::DbString>) -> Option<String> {
         value.map(|name| name.as_str().to_owned())
     }
 
@@ -765,7 +765,7 @@ mod tests {
     #[test]
     fn qualified_function_names_preserve_segment_boundaries() {
         // `foo."bar.baz"` and `foo.bar.baz` would collide if the AST stored
-        // the qualified name as a single dotted string. The Vec<IStr> path
+        // the qualified name as a single dotted string. The Vec<DbString> path
         // keeps them distinguishable so namespaced procedure calls resolve
         // to the right thing.
         let bare = only_item("RETURN foo.bar.baz()").expr;

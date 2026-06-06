@@ -13,7 +13,7 @@
 //! `CASCADE` (`IM_DROP_CASCADE`) truncates the instances first, then drops the
 //! type, atomically in one transaction.
 
-use selene_core::IStr;
+use selene_core::DbString;
 use selene_graph::DropBehavior as GraphDropBehavior;
 
 use crate::{
@@ -38,7 +38,7 @@ const fn graph_drop_behavior(behavior: DropBehavior) -> GraphDropBehavior {
 /// rejects (RESTRICT with surviving instances / dependency) or truncates then
 /// drops (CASCADE), all inside the caller's single write transaction.
 pub(super) fn execute_drop_node_type(
-    label: IStr,
+    label: DbString,
     if_exists: bool,
     behavior: DropBehavior,
     span: SourceSpan,
@@ -61,7 +61,7 @@ pub(super) fn execute_drop_node_type(
 /// Symmetric with [`execute_drop_node_type`]; edge types have no inbound type
 /// dependency, so RESTRICT enforces only the surviving-instance check.
 pub(super) fn execute_drop_edge_type(
-    label: IStr,
+    label: DbString,
     if_exists: bool,
     behavior: DropBehavior,
     span: SourceSpan,

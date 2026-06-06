@@ -1,23 +1,19 @@
-//! Wire-format canonical-order checks for IStr-keyed containers.
+//! Wire-format canonical-order checks for DbString-keyed containers.
 //!
-//! Before the interner removal these checks spawned two child processes to
-//! prove the wire bytes did not depend on the *global interner admission
-//! order*. With the global pool gone (IStr is now an owned `CompactString`
-//! newtype with lexicographic Ord), admission order no longer exists — the only
-//! remaining order-sensitivity is *insertion* order into a `PropertyMap`, which
-//! is canonicalized to lexicographic key order at serialize time. These are now
-//! same-process assertions that two different insertion orders of the same keys
-//! produce byte-identical canonical wire.
+//! `DbString` is an owned `CompactString` newtype with lexicographic `Ord`.
+//! These assertions prove two different insertion orders of the same keys
+//! produce byte-identical canonical wire after `PropertyMap` canonicalizes to
+//! lexicographic key order at serialize time.
 
-use selene_core::{PropertyMap, Value, intern};
+use selene_core::{PropertyMap, Value, db_string};
 
 /// Two `PropertyMap`s built from different insertion orders of the same keys
 /// serialize to byte-identical (canonical lexicographic) postcard wire.
 #[test]
 fn property_map_wire_bytes_are_independent_of_insertion_order() {
-    let apple = intern("wire.apple").unwrap();
-    let banana = intern("wire.banana").unwrap();
-    let zebra = intern("wire.zebra").unwrap();
+    let apple = db_string("wire.apple").unwrap();
+    let banana = db_string("wire.banana").unwrap();
+    let zebra = db_string("wire.zebra").unwrap();
 
     let first = PropertyMap::from_pairs([
         (zebra.clone(), Value::Int(3)),
@@ -49,9 +45,9 @@ fn property_map_wire_bytes_are_independent_of_insertion_order() {
 /// supplied in two different orders serializes identically.
 #[test]
 fn compact_property_map_wire_bytes_are_independent_of_key_order() {
-    let alpha = intern("wire.compact.alpha").unwrap();
-    let mid = intern("wire.compact.mid").unwrap();
-    let omega = intern("wire.compact.omega").unwrap();
+    let alpha = db_string("wire.compact.alpha").unwrap();
+    let mid = db_string("wire.compact.mid").unwrap();
+    let omega = db_string("wire.compact.omega").unwrap();
 
     let forward = PropertyMap::compact(
         [alpha.clone(), mid.clone(), omega.clone()],

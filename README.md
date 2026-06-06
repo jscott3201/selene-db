@@ -35,7 +35,7 @@ There is no umbrella facade crate. Use the layers directly.
 
 | Crate | Owns |
 |---|---|
-| [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, IDs, `IStr`, labels, property maps, schema metadata, codecs, origins, changesets, and core vector kernels. |
+| [`selene-core`](crates/selene-core) | Foundation types: `Value`, `VectorValue`, IDs, `DbString`, labels, property maps, schema metadata, codecs, origins, changesets, and core vector kernels. |
 | [`selene-graph`](crates/selene-graph) | Graph storage, transactions, mutation funnel, property/composite/vector/text indexes, exact and ANN vector search, BM25 search, maintained candidate state, graph type validation, compaction, and recovery providers. |
 | [`selene-persist`](crates/selene-persist) | WAL, snapshots, MANIFEST recovery, retention pruning, and audit log files. It stays below graph semantics. |
 | [`selene-algorithms`](crates/selene-algorithms) | Native graph algorithms, projection catalogs, free functions, and the `GraphAlgorithms` convenience trait. |
@@ -66,21 +66,21 @@ selene-gql = { path = "../selene-db/crates/selene-gql" }
 Create a graph, write through the mutation funnel, and query with GQL:
 
 ```rust
-use selene_core::{GraphId, LabelSet, PropertyMap, Value, intern};
+use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
 use selene_gql::{BuiltinProcedureRegistry, Session, StatementOutput};
 use selene_graph::SharedGraph;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let graph = SharedGraph::new(GraphId::new(1));
 
-    let person = intern("Person")?;
-    let name = intern("name")?;
+    let person = db_string("Person")?;
+    let name = db_string("name")?;
 
     let mut tx = graph.begin_write();
     {
         let props = PropertyMap::from_pairs([(
             name,
-            Value::String(intern("Ada")?),
+            Value::String(db_string("Ada")?),
         )])?;
         tx.mutator().create_node(LabelSet::single(person), props)?;
     }

@@ -293,7 +293,7 @@ mod tests {
         validate_formattable(&statement_with_type(GqlType::Record(RecordType::Open)))
             .expect("open record type is formattable");
         let closed = GqlType::Record(RecordType::Closed(vec![(
-            selene_core::intern("name").expect("intern name"),
+            selene_core::db_string("name").expect("db_string name"),
             GqlType::String,
         )]));
         validate_formattable(&statement_with_type(closed)).expect("closed record type formattable");
@@ -304,7 +304,7 @@ mod tests {
         // A reference type nested in a closed-record field is still AST-only and
         // must be caught by the recursive field walk.
         let closed = GqlType::Record(RecordType::Closed(vec![(
-            selene_core::intern("ref").expect("intern ref"),
+            selene_core::db_string("ref").expect("db_string ref"),
             GqlType::NodeRef,
         )]));
         assert_unsupported(closed, "NodeRef");
@@ -390,7 +390,7 @@ mod tests {
                 star: false,
                 items: vec![ReturnItem {
                     expr: ValueExpr::Parameter {
-                        name: selene_core::intern("value").expect("intern parameter name"),
+                        name: selene_core::db_string("value").expect("db_string parameter name"),
                         declared_type: Some(ty),
                         span,
                     },

@@ -6,7 +6,7 @@
 //! `SchemaChange::PropertyIndexDropped` through the single mutation funnel (Hard
 //! Rule 11). It never bypasses the funnel and never re-enters `begin_write`.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::unit_result;
@@ -54,7 +54,7 @@ pub(super) fn execute(
     Ok(unit_result())
 }
 
-fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError> {
+fn string_arg(value: &Value, name: &'static str) -> Result<DbString, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!(
             "selene.drop_index {name} must be a non-empty STRING"

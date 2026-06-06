@@ -148,12 +148,12 @@ fn parse_betweenness_args(args: &[Value]) -> Result<(String, BetweennessConfig),
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{Value, intern};
+    use selene_core::{Value, db_string};
 
     use super::*;
 
     fn projection_name() -> Value {
-        Value::String(intern("p").expect("test string interns"))
+        Value::String(db_string("p").expect("test string fits DB string cap"))
     }
 
     fn invalid_argument_detail(err: ProcedureError) -> String {

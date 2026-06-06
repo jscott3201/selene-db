@@ -49,7 +49,7 @@ fn pattern_executes_simple_cycle_through_wco_marker() {
         let mut mutator = txn.mutator();
         mutator
             .create_edge(
-                exec_common::istr("KNOWS"),
+                exec_common::db_string("KNOWS"),
                 NodeId::new(4),
                 NodeId::new(1),
                 props([(fixture.score.clone(), Value::Int(3))]),

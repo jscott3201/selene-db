@@ -507,7 +507,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use selene_core::{Change, NodeId, Origin, PropertyMap, intern};
+    use selene_core::{Change, NodeId, Origin, PropertyMap, db_string};
 
     use super::*;
     use crate::{MAX_PRINCIPAL_BYTES, WAL_FILE_HEADER_LEN, WalReader};
@@ -526,7 +526,7 @@ mod tests {
     fn changes() -> Vec<Change> {
         vec![Change::NodeCreated {
             id: NodeId::new(1),
-            labels: selene_core::LabelSet::single(intern("writer.node").unwrap()),
+            labels: selene_core::LabelSet::single(db_string("writer.node").unwrap()),
             properties: PropertyMap::new(),
         }]
     }

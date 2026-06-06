@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use roaring::RoaringBitmap;
 use selene_core::{
-    Change, EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
+    Change, DbString, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
     SchemaChange,
 };
 
@@ -104,7 +104,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Create an edge between two alive nodes.
     pub fn create_edge(
         &mut self,
-        label: IStr,
+        label: DbString,
         source: NodeId,
         target: NodeId,
         mut props: PropertyMap,
@@ -402,7 +402,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// All logic lives in the mutator (the single write funnel, hard rule 11) so
     /// future `DROP NODE TYPE CASCADE` and `DROP GRAPH` factory-reset paths can
     /// reuse it without an N+1 change storm.
-    pub fn truncate_node_type(&mut self, label: IStr) -> GraphResult<()> {
+    pub fn truncate_node_type(&mut self, label: DbString) -> GraphResult<()> {
         // Snapshot the matched node rows and derive every incident edge BEFORE
         // any removal, exactly as delete_node does — removal mutates the
         // adjacency/label structures we are iterating.
@@ -461,7 +461,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// [`Change::EdgesOfTypeTruncated`] (O(1) WAL) and stages per-row
     /// `EdgeDeleted` tombstones for fan-out. Absent label is a clean idempotent
     /// no-op.
-    pub fn truncate_edge_type(&mut self, label: IStr) -> GraphResult<()> {
+    pub fn truncate_edge_type(&mut self, label: DbString) -> GraphResult<()> {
         let matched_rows: Vec<u32> = match self.txn.read().edges_with_label(&label) {
             Some(bitmap) => bitmap.iter().collect(),
             None => return Ok(()),
@@ -608,19 +608,27 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 }
 
-fn insert_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, labels: &LabelSet) {
+fn insert_node_labels(
+    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
+    row: u32,
+    labels: &LabelSet,
+) {
     for label in labels.iter().cloned() {
         insert_index_row(index, label, row);
     }
 }
 
-fn remove_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, labels: &LabelSet) {
+fn remove_node_labels(
+    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
+    row: u32,
+    labels: &LabelSet,
+) {
     for label in labels.iter() {
         remove_index_row(index, label, row);
     }
 }
 
-fn insert_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: IStr, row: u32) {
+fn insert_index_row(index: &mut imbl::HashMap<DbString, RoaringBitmap>, label: DbString, row: u32) {
     // In-place insert via `entry().or_default()`: the rebuild path uses the same
     // idiom (see `consistency.rs` / `typed_index.rs`). `guard_mut` already gives
     // unique ownership of the bitmap (Arc::make_mut), so we never clone the whole
@@ -628,7 +636,11 @@ fn insert_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: IStr,
     index.entry(label).or_default().insert(row);
 }
 
-fn remove_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: &IStr, row: u32) {
+fn remove_index_row(
+    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
+    label: &DbString,
+    row: u32,
+) {
     if let Some(mut bitmap) = index.get(label).cloned() {
         bitmap.remove(row);
         if bitmap.is_empty() {
@@ -655,7 +667,7 @@ fn fill_node_defaults(
 
 fn fill_edge_defaults(
     graph: &crate::SeleneGraph,
-    label: IStr,
+    label: DbString,
     source: NodeId,
     target: NodeId,
     props: &mut PropertyMap,
@@ -752,7 +764,7 @@ fn node_type_index_for_node(
 
 fn reject_immutable_property_update(
     entity_id: EntityId,
-    declared_in: IStr,
+    declared_in: DbString,
     declarations: &[PropertyTypeDef],
     diff: &PropertyDiff,
 ) -> GraphResult<()> {
@@ -767,9 +779,9 @@ fn reject_immutable_property_update(
 
 fn reject_if_immutable(
     entity_id: EntityId,
-    declared_in: IStr,
+    declared_in: DbString,
     declarations: &[PropertyTypeDef],
-    property: IStr,
+    property: DbString,
 ) -> GraphResult<()> {
     if declarations
         .iter()

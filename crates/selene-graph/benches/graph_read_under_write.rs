@@ -20,7 +20,7 @@ use std::hint::black_box;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{LabelDiff, NodeId, PropertyDiff, Value, intern};
+use selene_core::{LabelDiff, NodeId, PropertyDiff, Value, db_string};
 use selene_graph::SharedGraph;
 
 /// Reader threads issuing the timed read batch.
@@ -49,7 +49,8 @@ fn bench_read_under_write(c: &mut Criterion) {
                                 let writer_done = &writer_done;
                                 let shared = &shared;
                                 scope.spawn(move || {
-                                    let score = intern("score").expect("score key interns");
+                                    let score =
+                                        db_string("score").expect("score key fits DB string cap");
                                     let mut value = 0_i64;
                                     while !writer_done.load(Ordering::Relaxed) {
                                         let mut txn = shared.begin_write();

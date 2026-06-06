@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern, PathMode,
@@ -17,7 +17,7 @@ use crate::{
 
 struct LoweredClause {
     tree: JoinTree,
-    names: BTreeSet<IStr>,
+    names: BTreeSet<DbString>,
     filters: Vec<FilterPredicate>,
 }
 
@@ -54,7 +54,7 @@ pub(super) struct RightNode {
 pub(super) struct EdgeLoweringContext<'a, 's> {
     pub(super) analyzed: &'a AnalyzedStatement,
     pub(super) filters: &'s mut Vec<FilterPredicate>,
-    pub(super) names: &'s mut BTreeSet<IStr>,
+    pub(super) names: &'s mut BTreeSet<DbString>,
     pub(super) binding_ids: &'s mut BTreeSet<BindingId>,
     pub(super) hidden: &'s mut HiddenAllocator,
 }
@@ -88,7 +88,7 @@ pub(crate) fn lower_match_prefix(
     let mut paths = Vec::new();
     let mut binding_ids = BTreeSet::new();
     let mut hidden = HiddenAllocator::default();
-    let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
+    let mut current: Option<(JoinTree, BTreeSet<DbString>)> = None;
 
     for clause in clauses {
         reject_unsupported_clause(clause)?;
@@ -164,7 +164,7 @@ pub(crate) fn lower_match_prefix(
 pub(super) fn lower_pipeline_match(
     clause: &MatchClause,
     analyzed: &AnalyzedStatement,
-    left_names: &BTreeSet<IStr>,
+    left_names: &BTreeSet<DbString>,
     max_quantifier: u32,
 ) -> Result<(PatternPlan, Vec<FilterPredicate>), PlannerError> {
     reject_unsupported_clause(clause)?;
@@ -204,7 +204,7 @@ fn lower_match_clause(
     max_quantifier: u32,
 ) -> Result<LoweredClause, PlannerError> {
     let mut filters = Vec::new();
-    let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
+    let mut current: Option<(JoinTree, BTreeSet<DbString>)> = None;
     for pattern in &clause.patterns {
         let mut ctx = GraphLoweringContext {
             path_mode: clause.path_mode,
@@ -259,7 +259,7 @@ fn lower_match_clause(
 fn lower_graph_pattern(
     pattern: &GraphPattern,
     ctx: &mut GraphLoweringContext<'_, '_>,
-) -> Result<(JoinTree, BTreeSet<IStr>), PlannerError> {
+) -> Result<(JoinTree, BTreeSet<DbString>), PlannerError> {
     if let Some(name) = &pattern.path_binding {
         let binding = binding_for_decl(
             name.clone(),
@@ -419,7 +419,7 @@ pub(super) fn right_node_predicates(
     node: &NodePattern,
     analyzed: &AnalyzedStatement,
     filters: &mut Vec<FilterPredicate>,
-    names: &mut BTreeSet<IStr>,
+    names: &mut BTreeSet<DbString>,
     binding_ids: &mut BTreeSet<BindingId>,
     hidden: &mut HiddenAllocator,
 ) -> Result<RightNode, PlannerError> {
@@ -448,7 +448,7 @@ fn node_scan(
     node: &NodePattern,
     analyzed: &AnalyzedStatement,
     filters: &mut Vec<FilterPredicate>,
-    names: &mut BTreeSet<IStr>,
+    names: &mut BTreeSet<DbString>,
     binding_ids: &mut BTreeSet<BindingId>,
     hidden: &mut HiddenAllocator,
 ) -> Result<NodeOrEdgeScan, PlannerError> {
@@ -509,7 +509,7 @@ fn edge_match(
 fn node_binding(
     node: &NodePattern,
     analyzed: &AnalyzedStatement,
-    names: &mut BTreeSet<IStr>,
+    names: &mut BTreeSet<DbString>,
     binding_ids: &mut BTreeSet<BindingId>,
 ) -> Result<Option<BindingId>, PlannerError> {
     node.binding
@@ -527,7 +527,7 @@ fn node_binding(
 pub(super) fn edge_binding(
     edge: &EdgePattern,
     analyzed: &AnalyzedStatement,
-    names: &mut BTreeSet<IStr>,
+    names: &mut BTreeSet<DbString>,
     binding_ids: &mut BTreeSet<BindingId>,
 ) -> Result<Option<BindingId>, PlannerError> {
     edge.binding
@@ -543,7 +543,7 @@ pub(super) fn edge_binding(
 }
 
 fn binding_for_pattern(
-    name: IStr,
+    name: DbString,
     span: crate::SourceSpan,
     expected: BindingDeclKind,
     analyzed: &AnalyzedStatement,
@@ -575,7 +575,7 @@ fn binding_for_pattern(
 }
 
 fn binding_for_decl(
-    name: IStr,
+    name: DbString,
     span: crate::SourceSpan,
     expected: BindingDeclKind,
     analyzed: &AnalyzedStatement,
@@ -607,7 +607,7 @@ fn same_element(found: BindingDeclKind, expected: BindingDeclKind) -> bool {
 
 fn split_optional_filters(
     filters: Vec<FilterPredicate>,
-    left_names: &BTreeSet<IStr>,
+    left_names: &BTreeSet<DbString>,
     analyzed: &AnalyzedStatement,
 ) -> (Vec<FilterPredicate>, Vec<FilterPredicate>) {
     let mut right_filters = Vec::new();
@@ -624,7 +624,7 @@ fn split_optional_filters(
 
 fn references_optional_binding(
     filter: &FilterPredicate,
-    left_names: &BTreeSet<IStr>,
+    left_names: &BTreeSet<DbString>,
     analyzed: &AnalyzedStatement,
 ) -> bool {
     filter.binding_refs.iter().any(|binding| {
@@ -632,7 +632,7 @@ fn references_optional_binding(
     })
 }
 
-fn binding_name(binding: BindingId, analyzed: &AnalyzedStatement) -> Option<IStr> {
+fn binding_name(binding: BindingId, analyzed: &AnalyzedStatement) -> Option<DbString> {
     analyzed
         .scopes
         .declarations()
@@ -816,7 +816,7 @@ fn is_min_length_shortest(selector: Option<PathSelector>) -> bool {
     )
 }
 
-fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {
+fn shared_names(left: &BTreeSet<DbString>, right: &BTreeSet<DbString>) -> Vec<DbString> {
     left.intersection(right).cloned().collect()
 }
 

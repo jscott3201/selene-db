@@ -1,7 +1,7 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{Criterion, Throughput};
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value, VectorValue};
 use selene_gql::{BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
 use selene_graph::{
     CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
@@ -222,8 +222,8 @@ fn execute_vector_ann_expanded_batch(
 }
 
 fn vector_ann_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
-    let active_fact = istr("ActiveVectorFact");
-    let state_name = istr("active_facts");
+    let active_fact = db_string("ActiveVectorFact");
+    let state_name = db_string("active_facts");
     let provider = Arc::new(
         MaintainedCandidateStateProvider::new([
             CandidateStateSpec::new(state_name).require_label(active_fact.clone())
@@ -234,10 +234,10 @@ fn vector_ann_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
         .with_provider(provider as Arc<dyn IndexProvider>)
         .build()
         .expect("bench graph builds");
-    let summary = istr("VectorSummary");
-    let fact = istr("VectorFact");
-    let embedding_key = istr("embedding");
-    let supports = istr("SUPPORTS");
+    let summary = db_string("VectorSummary");
+    let fact = db_string("VectorFact");
+    let embedding_key = db_string("embedding");
+    let supports = db_string("SUPPORTS");
     {
         let mut txn = graph.begin_write();
         {
@@ -304,13 +304,13 @@ fn vector_ann_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
 
 fn bind_ann_expanded_inputs_for(session: &mut Session<'_>, query_index: usize) {
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(query_seed(query_index), VECTOR_DIMENSION)),
     );
 }
 
 fn bind_ann_expanded_batch_inputs(session: &mut Session<'_>) {
-    session.bind_parameter(istr("queries"), vector_query_batch());
+    session.bind_parameter(db_string("queries"), vector_query_batch());
 }
 
 fn vector_query_batch() -> Value {
@@ -347,6 +347,6 @@ fn vector_value(seed: usize, dimension: usize) -> VectorValue {
     VectorValue::new(components).expect("bench vector is valid")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }

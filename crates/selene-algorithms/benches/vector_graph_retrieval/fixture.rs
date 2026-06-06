@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use selene_core::{CancellationChecker, IStr, NodeId, VectorMetric, VectorValue};
+use selene_core::{CancellationChecker, DbString, NodeId, VectorMetric, VectorValue};
 use selene_graph::{
     ApproximateVectorSearchOptions, SeleneGraph, VectorCandidateSet, VectorNodeSearchHit,
 };
@@ -119,16 +119,16 @@ fn bench_retrieval_strategies(c: &mut Criterion) {
 struct MemoryRetrievalFixture {
     graph: SeleneGraph,
     scale: usize,
-    label: IStr,
-    embedding_key: IStr,
-    support_edge: IStr,
-    scope_edge: IStr,
-    session_edge: IStr,
-    valid_edge: IStr,
-    superseded_by_edge: IStr,
-    contradicts_edge: IStr,
-    recent_edge: IStr,
-    depends_edge: IStr,
+    label: DbString,
+    embedding_key: DbString,
+    support_edge: DbString,
+    scope_edge: DbString,
+    session_edge: DbString,
+    valid_edge: DbString,
+    superseded_by_edge: DbString,
+    contradicts_edge: DbString,
+    recent_edge: DbString,
+    depends_edge: DbString,
     queries: Vec<Query>,
     metadata: HashMap<NodeId, NodeMeta>,
     graph_current_nodes: HashSet<NodeId>,

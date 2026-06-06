@@ -4,7 +4,9 @@
 
 mod exec_common;
 
-use exec_common::{column_values, execute_read, execute_read_result, first_scan, istr, planned};
+use exec_common::{
+    column_values, db_string, execute_read, execute_read_result, first_scan, planned,
+};
 use selene_core::{GraphId, PropertyValueType, Value, feature_register::FeatureId};
 use selene_gql::{
     EmptyProcedureRegistry, IndexKind, Literal, OptimizeContext, ScanAccess, Session,
@@ -63,7 +65,7 @@ fn rows_from_output(output: StatementOutput) -> selene_gql::BindingTable {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("uuid.test.graph"),
+            name: db_string("uuid.test.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -235,8 +237,8 @@ fn cast_uuid_to_unsupported_target_returns_42n01() {
 
 #[test]
 fn planner_routes_uuid_literal_equality_to_uuid_typed_index() {
-    let label = istr("Thing");
-    let property = istr("id");
+    let label = db_string("Thing");
+    let property = db_string("id");
     let expected = uuid::Uuid::parse_str(UUID_TEXT).expect("test UUID parses");
     let catalog = MockIndexCatalog::new().with_node_typed_index(label, property, IndexKind::Uuid);
     let plan = planned(&format!(
@@ -272,8 +274,8 @@ fn uuid_indexed_node_type_round_trips_catalog_and_execution() {
         )
         .expect("UUID node type creates");
 
-    let label = istr("Thing");
-    let property = istr("id");
+    let label = db_string("Thing");
+    let property = db_string("id");
     let graph_type = graph.graph_type().expect("graph has type");
     let declaration = &graph_type.node_types[0].properties[0];
     assert_eq!(declaration.value_type, PropertyValueType::Uuid);

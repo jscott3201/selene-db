@@ -93,7 +93,7 @@ fn call_subquery_correlates_with_outer_binding() {
     );
     assert_eq!(
         value_values(&table, "known"),
-        vec![Value::String(exec_common::istr("Bob")), Value::Null]
+        vec![Value::String(exec_common::db_string("Bob")), Value::Null]
     );
 }
 
@@ -256,7 +256,7 @@ fn gp03_pattern_reuse_of_import_executes_cleanly() {
 #[test]
 fn call_subquery_rejects_write_inside_body() {
     let registry = MockProcedureRegistry::new().with_procedure_mutability(
-        vec![exec_common::istr("mutate")],
+        vec![exec_common::db_string("mutate")],
         Vec::new(),
         Vec::new(),
         ProcedureMutability::SchemaWrite,

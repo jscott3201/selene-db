@@ -8,7 +8,7 @@
 //! `SharedGraph::from_graph_parts_and_snapshot` (GRAPH-06 dedup).
 
 use selene_core::{
-    HnswIndexConfig, IStr, IvfIndexConfig, SchemaChange, SchemaPropertyIndexKind,
+    DbString, HnswIndexConfig, IvfIndexConfig, SchemaChange, SchemaPropertyIndexKind,
     SchemaVectorIndexKind,
 };
 use smallvec::SmallVec;
@@ -26,20 +26,20 @@ pub(super) enum PendingIndex {
     /// Register an index for `(label, property)` of the declared `kind`.
     Create {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
         /// Declared indexable value kind.
         kind: TypedIndexKind,
         /// Optional explicit catalog name.
-        name: Option<IStr>,
+        name: Option<DbString>,
     },
     /// Drop the index registration for `(label, property)`.
     Drop {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
     },
 }
 
@@ -49,20 +49,20 @@ pub(super) enum PendingCompositeIndex {
     /// Register a composite index over `(label, properties...)`.
     Create {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property keys in declaration order.
-        properties: SmallVec<[IStr; 4]>,
+        properties: SmallVec<[DbString; 4]>,
         /// Declared indexable value kinds in declaration order.
         kinds: SmallVec<[TypedIndexKind; 4]>,
         /// Optional explicit catalog name.
-        name: Option<IStr>,
+        name: Option<DbString>,
     },
     /// Drop the composite index registration over `(label, properties...)`.
     Drop {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property keys in declaration order.
-        properties: SmallVec<[IStr; 4]>,
+        properties: SmallVec<[DbString; 4]>,
     },
 }
 
@@ -72,9 +72,9 @@ pub(super) enum PendingVectorIndex {
     /// Register a vector index for `(label, property)`.
     Create {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed vector property key.
-        property: IStr,
+        property: DbString,
         /// Declared vector index kind.
         kind: VectorIndexKind,
         /// Required vector dimensionality.
@@ -84,14 +84,14 @@ pub(super) enum PendingVectorIndex {
         /// Optional IVF construction config.
         ivf_config: Option<IvfIndexConfig>,
         /// Optional explicit catalog name.
-        name: Option<IStr>,
+        name: Option<DbString>,
     },
     /// Drop the vector index registration for `(label, property)`.
     Drop {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed vector property key.
-        property: IStr,
+        property: DbString,
     },
 }
 
@@ -101,18 +101,18 @@ pub(super) enum PendingTextIndex {
     /// Register a text index for `(label, property)`.
     Create {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed text property key.
-        property: IStr,
+        property: DbString,
         /// Optional explicit catalog name.
-        name: Option<IStr>,
+        name: Option<DbString>,
     },
     /// Drop the text index registration for `(label, property)`.
     Drop {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed text property key.
-        property: IStr,
+        property: DbString,
     },
 }
 

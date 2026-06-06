@@ -4,30 +4,30 @@ fn mentions_one_of_graph_type() -> GraphTypeDef {
     // OneOf fixture per §A.4: a MENTIONS edge whose source enumerates
     // {Document, Comment} and target is the single Topic node type.
     GraphTypeDef {
-        name: istr("closed.mentions_one_of.graph"),
+        name: db_string("closed.mentions_one_of.graph"),
         node_types: vec![
             NodeTypeDef {
-                name: istr("closed.document"),
-                key_labels: LabelSet::single(istr("Document")),
+                name: db_string("closed.document"),
+                key_labels: LabelSet::single(db_string("Document")),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("closed.comment"),
-                key_labels: LabelSet::single(istr("Comment")),
+                name: db_string("closed.comment"),
+                key_labels: LabelSet::single(db_string("Comment")),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("closed.topic"),
-                key_labels: LabelSet::single(istr("Topic")),
+                name: db_string("closed.topic"),
+                key_labels: LabelSet::single(db_string("Topic")),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![crate::EdgeTypeDef {
-            name: istr("closed.mentions"),
-            label: istr("MENTIONS"),
+            name: db_string("closed.mentions"),
+            label: db_string("MENTIONS"),
             source_node_type: EdgeEndpointDef::one_of([0, 1]),
             target_node_type: EdgeEndpointDef::NodeType(2),
             properties: Vec::new(),
@@ -50,19 +50,19 @@ fn closed_graph_one_of_endpoint_accepts_either_declared_member() {
     {
         let mut mutator = txn.mutator();
         let topic = mutator
-            .create_node(LabelSet::single(istr("Topic")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Topic")), PropertyMap::new())
             .unwrap();
         let document = mutator
-            .create_node(LabelSet::single(istr("Document")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Document")), PropertyMap::new())
             .unwrap();
         let comment = mutator
-            .create_node(LabelSet::single(istr("Comment")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Comment")), PropertyMap::new())
             .unwrap();
         mutator
-            .create_edge(istr("MENTIONS"), document, topic, PropertyMap::new())
+            .create_edge(db_string("MENTIONS"), document, topic, PropertyMap::new())
             .unwrap();
         mutator
-            .create_edge(istr("MENTIONS"), comment, topic, PropertyMap::new())
+            .create_edge(db_string("MENTIONS"), comment, topic, PropertyMap::new())
             .unwrap();
     }
     txn.commit()
@@ -81,13 +81,13 @@ fn closed_graph_one_of_endpoint_rejects_non_member_source() {
     {
         let mut mutator = txn.mutator();
         let a = mutator
-            .create_node(LabelSet::single(istr("Topic")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Topic")), PropertyMap::new())
             .unwrap();
         let b = mutator
-            .create_node(LabelSet::single(istr("Topic")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Topic")), PropertyMap::new())
             .unwrap();
         mutator
-            .create_edge(istr("MENTIONS"), a, b, PropertyMap::new())
+            .create_edge(db_string("MENTIONS"), a, b, PropertyMap::new())
             .unwrap();
     }
     assert!(matches!(

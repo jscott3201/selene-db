@@ -1,6 +1,6 @@
 //! DDL lowering.
 
-use selene_core::{IStr, intern};
+use selene_core::{DbString, db_string};
 
 use crate::{
     DdlStatement, GqlStatus, GqlType, KeyLabelSet, SourceSpan, TypePropertyConstraint,
@@ -209,7 +209,7 @@ fn resolve_key_labels(
     element: Element,
     caps: &ImplDefinedCaps,
     fallback_span: SourceSpan,
-) -> Result<Vec<IStr>, PlannerError> {
+) -> Result<Vec<DbString>, PlannerError> {
     let Some(key_label_set) = key_label_set else {
         return Ok(Vec::new());
     };
@@ -299,28 +299,28 @@ fn lower_property_constraint(
 }
 
 fn ddl_output_schema(statement: &DdlStatement) -> Result<BindingTableSchema, PlannerError> {
-    ddl_output_schema_with(statement, intern)
+    ddl_output_schema_with(statement, db_string)
 }
 
 fn ddl_output_schema_with<F, E>(
     statement: &DdlStatement,
-    intern: F,
+    db_string: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<IStr, E>,
+    F: FnMut(&str) -> Result<DbString, E>,
 {
     match statement {
         DdlStatement::ShowNodeTypes(span) => show_output_schema(
             *span,
             "static SHOW NODE TYPES column 'label'",
             "static SHOW NODE TYPES column 'definition'",
-            intern,
+            db_string,
         ),
         DdlStatement::ShowEdgeTypes(span) => show_output_schema(
             *span,
             "static SHOW EDGE TYPES column 'label'",
             "static SHOW EDGE TYPES column 'definition'",
-            intern,
+            db_string,
         ),
         DdlStatement::ShowIndexes(span) => named_output_schema(
             *span,
@@ -330,7 +330,7 @@ where
                 ("property", "static SHOW INDEXES column 'property'"),
                 ("kind", "static SHOW INDEXES column 'kind'"),
             ],
-            intern,
+            db_string,
         ),
         DdlStatement::ShowProcedures(span) => named_output_schema(
             *span,
@@ -345,7 +345,7 @@ where
                     "static SHOW PROCEDURES column 'since_version'",
                 ),
             ],
-            intern,
+            db_string,
         ),
         _ => Ok(BindingTableSchema {
             columns: Vec::new(),
@@ -356,15 +356,15 @@ where
 fn named_output_schema<F, E>(
     span: crate::SourceSpan,
     names: &[(&'static str, &'static str)],
-    mut intern: F,
+    mut db_string: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<IStr, E>,
+    F: FnMut(&str) -> Result<DbString, E>,
 {
     let mut columns = Vec::with_capacity(names.len());
     for (name, detail) in names {
         columns.push(BindingTableColumn {
-            name: Some(show_column_name(name, detail, span, &mut intern)?),
+            name: Some(show_column_name(name, detail, span, &mut db_string)?),
             hidden: None,
             ty: AnalyzedType::Resolved(GqlType::String),
         });
@@ -376,15 +376,20 @@ fn show_output_schema<F, E>(
     span: crate::SourceSpan,
     label_detail: &'static str,
     definition_detail: &'static str,
-    mut intern: F,
+    mut db_string: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<IStr, E>,
+    F: FnMut(&str) -> Result<DbString, E>,
 {
     Ok(BindingTableSchema {
         columns: vec![
             BindingTableColumn {
-                name: Some(show_column_name("label", label_detail, span, &mut intern)?),
+                name: Some(show_column_name(
+                    "label",
+                    label_detail,
+                    span,
+                    &mut db_string,
+                )?),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::String),
             },
@@ -393,7 +398,7 @@ where
                     "definition",
                     definition_detail,
                     span,
-                    &mut intern,
+                    &mut db_string,
                 )?),
                 hidden: None,
                 ty: AnalyzedType::DYNAMIC,
@@ -407,11 +412,11 @@ fn show_column_name<F, E>(
     detail: &'static str,
     span: crate::SourceSpan,
     admit_name: &mut F,
-) -> Result<IStr, PlannerError>
+) -> Result<DbString, PlannerError>
 where
-    F: FnMut(&str) -> Result<IStr, E>,
+    F: FnMut(&str) -> Result<DbString, E>,
 {
-    admit_name(value).map_err(|_err| PlannerError::InternerCapExhausted { detail, span })
+    admit_name(value).map_err(|_err| PlannerError::StaticStringConstructionFailed { detail, span })
 }
 
 #[cfg(test)]
@@ -420,16 +425,16 @@ mod defensive_tests {
     use crate::SourceSpan;
 
     #[test]
-    fn ddl_output_schema_reports_interner_cap_for_static_show_column() {
+    fn ddl_output_schema_reports_string_construction_failure_for_static_show_column() {
         let err = ddl_output_schema_with(
             &DdlStatement::ShowNodeTypes(SourceSpan::new(4, 15)),
             |_value| Err(()),
         )
-        .expect_err("static SHOW column intern failure is recoverable");
+        .expect_err("static SHOW column db_string failure is recoverable");
 
         assert!(matches!(
             err,
-            PlannerError::InternerCapExhausted {
+            PlannerError::StaticStringConstructionFailed {
                 detail: "static SHOW NODE TYPES column 'label'",
                 span,
             } if span == SourceSpan::new(4, 15)

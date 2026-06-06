@@ -10,14 +10,14 @@
 //! the `ProcedureRegistry` trait, plus coverage for new native platform
 //! built-ins added after the pack teardown.
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -46,7 +46,7 @@ fn execute_rows(
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -60,7 +60,7 @@ fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()

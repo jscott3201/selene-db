@@ -23,8 +23,8 @@ fn match_with_property_group_by_label_count_per_label() {
     assert_eq!(
         column_values(&table, "tenant"),
         vec![
-            Value::String(exec_common::istr("t1")),
-            Value::String(exec_common::istr("t2")),
+            Value::String(exec_common::db_string("t1")),
+            Value::String(exec_common::db_string("t2")),
         ]
     );
     assert_eq!(
@@ -42,7 +42,7 @@ fn match_with_group_by_having_filters_on_aggregate() {
 
     assert_eq!(
         column_values(&table, "tenant"),
-        vec![Value::String(exec_common::istr("t1"))]
+        vec![Value::String(exec_common::db_string("t1"))]
     );
     assert_eq!(column_values(&table, "c"), vec![Value::Int(2)]);
 }

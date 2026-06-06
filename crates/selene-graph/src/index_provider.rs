@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use selene_core::{Change, IStr};
+use selene_core::{Change, DbString};
 
 use crate::{SeleneGraph, VectorCandidateSet};
 
@@ -182,7 +182,7 @@ pub trait IndexProvider: Send + Sync + 'static {
     /// internally inconsistent.
     fn vector_candidate_set(
         &self,
-        _name: &IStr,
+        _name: &DbString,
         _generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
         Ok(None)
@@ -217,21 +217,21 @@ pub trait IndexProvider: Send + Sync + 'static {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VectorCandidateStateInfo {
     /// Stable set name used by callers to retrieve candidates.
-    pub name: IStr,
+    pub name: DbString,
     /// Graph generation the descriptor was derived from.
     pub generation: u64,
     /// Number of nodes currently in the candidate set.
     pub candidate_count: usize,
     /// Optional node label required for membership.
-    pub required_label: Option<IStr>,
+    pub required_label: Option<DbString>,
     /// Outgoing edge labels required on the source node.
-    pub require_outgoing: Vec<IStr>,
+    pub require_outgoing: Vec<DbString>,
     /// Incoming edge labels required on the target node.
-    pub require_incoming: Vec<IStr>,
+    pub require_incoming: Vec<DbString>,
     /// Outgoing edge labels that disqualify the source node.
-    pub exclude_outgoing: Vec<IStr>,
+    pub exclude_outgoing: Vec<DbString>,
     /// Incoming edge labels that disqualify the target node.
-    pub exclude_incoming: Vec<IStr>,
+    pub exclude_incoming: Vec<DbString>,
 }
 
 /// Errors returned by [`IndexProvider`] implementations.

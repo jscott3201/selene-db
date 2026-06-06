@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use selene_core::{HnswIndexConfig, IStr, IvfIndexConfig};
+use selene_core::{DbString, HnswIndexConfig, IvfIndexConfig};
 
 use super::{VectorIndexKind, VectorIndexMemoryUsage};
 
@@ -41,11 +41,11 @@ impl VectorIndexMaintenancePolicy {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VectorIndexRebuildEntry {
     /// Indexed node label.
-    pub label: IStr,
+    pub label: DbString,
     /// Indexed node property.
-    pub property: IStr,
+    pub property: DbString,
     /// Optional explicit index catalog name.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
     /// Rebuilt index algorithm kind.
     pub kind: VectorIndexKind,
     /// Rebuilt vector dimensionality.

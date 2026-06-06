@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::ops::Bound::{Excluded, Included, Unbounded};
 
-use selene_core::{IStr, LabelSet, Value};
+use selene_core::{DbString, LabelSet, Value};
 use selene_graph::RowIndex;
 
 use crate::{
@@ -130,7 +130,7 @@ fn label_index_rows(scan: &NodeOrEdgeScan, ctx: &EvalCtx<'_, '_, '_, '_>) -> Vec
 
 fn typed_index_rows(
     scan: &NodeOrEdgeScan,
-    property: IStr,
+    property: DbString,
     kind: IndexKind,
     bounds: &TypedIndexBounds,
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -215,7 +215,7 @@ fn typed_index_rows(
 
 fn bitmap_union_rows(
     scan: &NodeOrEdgeScan,
-    property: IStr,
+    property: DbString,
     kind: IndexKind,
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -227,7 +227,7 @@ fn bitmap_union_rows(
 
 fn union_property_eq(
     scan: &NodeOrEdgeScan,
-    property: IStr,
+    property: DbString,
     kind: IndexKind,
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -309,8 +309,8 @@ fn union_property_eq(
 
 fn composite_lookup_rows(
     scan: &NodeOrEdgeScan,
-    properties: &[(IStr, IndexKind)],
-    keys: &[(IStr, IndexKey)],
+    properties: &[(DbString, IndexKind)],
+    keys: &[(DbString, IndexKey)],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<u32>, ExecutorError> {
     // Resolve once at scan-entry: every key is matched to its declared kind
@@ -335,7 +335,7 @@ fn composite_lookup_rows(
             ctx,
         ));
     };
-    let property_keys: Vec<IStr> = properties
+    let property_keys: Vec<DbString> = properties
         .iter()
         .map(|(property, _)| property.clone())
         .collect();
@@ -368,8 +368,8 @@ fn composite_lookup_rows(
 /// NULL parameter binding). Returns `Ok(Some(values))` with `values` aligned
 /// to `properties` order.
 fn resolve_composite_values(
-    properties: &[(IStr, IndexKind)],
-    keys: &[(IStr, IndexKey)],
+    properties: &[(DbString, IndexKind)],
+    keys: &[(DbString, IndexKey)],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Option<Vec<Value>>, ExecutorError> {
     let mut out = Vec::with_capacity(properties.len());
@@ -391,7 +391,7 @@ fn resolve_composite_values(
 
 fn linear_rows_filtered_by_resolved_composite(
     scan: &NodeOrEdgeScan,
-    properties: &[(IStr, IndexKind)],
+    properties: &[(DbString, IndexKind)],
     values: &[Value],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
@@ -411,7 +411,7 @@ fn linear_rows_filtered_by_resolved_composite(
 
 fn linear_rows_filtered_by_resolved_bounds(
     scan: &NodeOrEdgeScan,
-    property: IStr,
+    property: DbString,
     resolved: &ResolvedBounds,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
@@ -538,7 +538,7 @@ pub(crate) fn label_matches_node(expr: &LabelExpr, labels: &LabelSet) -> bool {
     }
 }
 
-pub(crate) fn label_matches_edge(expr: &LabelExpr, label: IStr) -> bool {
+pub(crate) fn label_matches_edge(expr: &LabelExpr, label: DbString) -> bool {
     match expr {
         LabelExpr::Single(expected) => *expected == label,
         LabelExpr::Conjunction(parts) => parts
@@ -552,7 +552,7 @@ pub(crate) fn label_matches_edge(expr: &LabelExpr, label: IStr) -> bool {
     }
 }
 
-fn single_label(label: &Option<LabelExpr>) -> Option<IStr> {
+fn single_label(label: &Option<LabelExpr>) -> Option<DbString> {
     match label {
         Some(LabelExpr::Single(label)) => Some(label.clone()),
         _ => None,
@@ -574,7 +574,7 @@ fn entity_value(kind: ScanKind, row: u32, ctx: &EvalCtx<'_, '_, '_, '_>) -> Opti
 fn property_matches_any_resolved(
     kind: ScanKind,
     row: u32,
-    property: IStr,
+    property: DbString,
     values: &[Value],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> bool {
@@ -588,7 +588,7 @@ fn property_matches_any_resolved(
 fn property_value<'a>(
     kind: ScanKind,
     row: u32,
-    property: IStr,
+    property: DbString,
     ctx: &'a EvalCtx<'_, '_, '_, '_>,
 ) -> Option<&'a Value> {
     let snapshot = ctx.tx.snapshot();

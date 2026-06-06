@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use selene_core::{
-    EdgeId, GraphId, HnswIndexConfig, IStr, IvfIndexConfig, LabelSet, NodeId, PropertyMap, Value,
+    DbString, EdgeId, GraphId, HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, PropertyMap,
+    Value,
 };
 
 use crate::adjacency::AdjacencyEntry;
@@ -28,13 +29,13 @@ pub struct PropertyIndexEntry {
     /// Index data for the `(label, property)` registration.
     pub index: Arc<TypedIndex>,
     /// Optional explicit catalog name. `None` means the name is derived at render time.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 impl PropertyIndexEntry {
     /// Construct an index entry from the built index and optional explicit name.
     #[must_use]
-    pub fn new(index: TypedIndex, name: Option<IStr>) -> Self {
+    pub fn new(index: TypedIndex, name: Option<DbString>) -> Self {
         Self {
             index: Arc::new(index),
             name,
@@ -54,9 +55,9 @@ pub struct CompositePropertyIndexEntry {
     /// Index data for the `(label, properties...)` registration.
     pub index: Arc<CompositeTypedIndex>,
     /// Indexed properties in declaration order.
-    pub declared_properties: SmallVec<[IStr; 4]>,
+    pub declared_properties: SmallVec<[DbString; 4]>,
     /// Optional explicit catalog name. `None` means the name is derived at render time.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 impl CompositePropertyIndexEntry {
@@ -64,8 +65,8 @@ impl CompositePropertyIndexEntry {
     #[must_use]
     pub fn new(
         index: CompositeTypedIndex,
-        declared_properties: SmallVec<[IStr; 4]>,
-        name: Option<IStr>,
+        declared_properties: SmallVec<[DbString; 4]>,
+        name: Option<DbString>,
     ) -> Self {
         Self {
             index: Arc::new(index),
@@ -87,13 +88,13 @@ pub struct VectorIndexEntry {
     /// Index data for the `(label, property)` registration.
     pub index: Arc<VectorIndex>,
     /// Optional explicit catalog name. `None` means the name is derived at render time.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 impl VectorIndexEntry {
     /// Construct a vector index entry from the built index and optional name.
     #[must_use]
-    pub fn new(index: VectorIndex, name: Option<IStr>) -> Self {
+    pub fn new(index: VectorIndex, name: Option<DbString>) -> Self {
         Self {
             index: Arc::new(index),
             name,
@@ -137,13 +138,13 @@ pub struct TextIndexEntry {
     /// Index data for the `(label, property)` registration.
     pub index: Arc<TextIndex>,
     /// Optional explicit catalog name. `None` means the name is derived at render time.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 impl TextIndexEntry {
     /// Construct a text index entry from the built index and optional name.
     #[must_use]
-    pub fn new(index: TextIndex, name: Option<IStr>) -> Self {
+    pub fn new(index: TextIndex, name: Option<DbString>) -> Self {
         Self {
             index: Arc::new(index),
             name,
@@ -165,30 +166,30 @@ impl TextIndexEntry {
 
 /// Owned row returned when iterating composite property-index registrations.
 pub type CompositePropertyIndexEntryRow = (
-    IStr,
-    SmallVec<[IStr; 4]>,
+    DbString,
+    SmallVec<[DbString; 4]>,
     SmallVec<[TypedIndexKind; 4]>,
-    Option<IStr>,
+    Option<DbString>,
 );
 
 /// Owned row returned when iterating vector-index registrations.
 pub type VectorIndexEntryRow = (
-    IStr,
-    IStr,
+    DbString,
+    DbString,
     VectorIndexKind,
     u32,
     Option<HnswIndexConfig>,
     Option<IvfIndexConfig>,
-    Option<IStr>,
+    Option<DbString>,
 );
 
 /// Owned row returned when iterating text-index registrations.
 pub type TextIndexEntryRow = (
-    IStr,
-    IStr,
+    DbString,
+    DbString,
     TextIndexStats,
     TextIndexMemoryUsage,
-    Option<IStr>,
+    Option<DbString>,
 );
 
 /// Snapshot metadata.
@@ -229,18 +230,18 @@ pub struct SeleneGraph {
     /// Incoming adjacency keyed by target node.
     pub adjacency_in: HashMap<NodeId, AdjacencyEntry>,
     /// Bitmap of node rows carrying each label.
-    pub idx_label: HashMap<IStr, RoaringBitmap>,
+    pub idx_label: HashMap<DbString, RoaringBitmap>,
     /// Bitmap of edge rows carrying each edge label.
-    pub idx_edge_label: HashMap<IStr, RoaringBitmap>,
+    pub idx_edge_label: HashMap<DbString, RoaringBitmap>,
     /// Per-`(label, property)` node value indexes. See spec 03 section 5.2.
-    pub property_index: FxHashMap<(IStr, IStr), PropertyIndexEntry>,
+    pub property_index: FxHashMap<(DbString, DbString), PropertyIndexEntry>,
     /// Per-`(label, properties...)` node composite value indexes.
     pub composite_property_index:
-        FxHashMap<(IStr, SmallVec<[IStr; 4]>), CompositePropertyIndexEntry>,
+        FxHashMap<(DbString, SmallVec<[DbString; 4]>), CompositePropertyIndexEntry>,
     /// Per-`(label, property)` node vector indexes.
-    pub vector_index: FxHashMap<(IStr, IStr), VectorIndexEntry>,
+    pub vector_index: FxHashMap<(DbString, DbString), VectorIndexEntry>,
     /// Per-`(label, property)` node BM25 text indexes.
-    pub text_index: FxHashMap<(IStr, IStr), TextIndexEntry>,
+    pub text_index: FxHashMap<(DbString, DbString), TextIndexEntry>,
     /// External `NodeId -> RowIndex` lookup (the inverse of
     /// [`NodeStore::row_to_id`]). Replaces the `id.get() - 1` arithmetic so the
     /// external id can stay stable while the row is remapped by compaction
@@ -393,7 +394,7 @@ impl SeleneGraph {
 
     /// Return edge label for an alive edge.
     #[must_use]
-    pub fn edge_label(&self, id: EdgeId) -> Option<&IStr> {
+    pub fn edge_label(&self, id: EdgeId) -> Option<&DbString> {
         self.live_edge_row(id)
             .and_then(|row| self.edge_store.label.get(row))
     }
@@ -440,13 +441,13 @@ impl SeleneGraph {
 
     /// Return the bitmap of node rows carrying `label`.
     #[must_use]
-    pub fn nodes_with_label(&self, label: &IStr) -> Option<&RoaringBitmap> {
+    pub fn nodes_with_label(&self, label: &DbString) -> Option<&RoaringBitmap> {
         self.idx_label.get(label)
     }
 
     /// Return the bitmap of edge rows carrying `label`.
     #[must_use]
-    pub fn edges_with_label(&self, label: &IStr) -> Option<&RoaringBitmap> {
+    pub fn edges_with_label(&self, label: &DbString) -> Option<&RoaringBitmap> {
         self.idx_edge_label.get(label)
     }
 
@@ -464,7 +465,11 @@ impl SeleneGraph {
 
     /// Return a clone of the registered `(label, property)` index.
     #[must_use]
-    pub fn property_index_for(&self, label: &IStr, property: &IStr) -> Option<Arc<TypedIndex>> {
+    pub fn property_index_for(
+        &self,
+        label: &DbString,
+        property: &DbString,
+    ) -> Option<Arc<TypedIndex>> {
         self.property_index
             .get(&(label.clone(), property.clone()))
             .map(|entry| Arc::clone(&entry.index))
@@ -474,8 +479,8 @@ impl SeleneGraph {
     #[must_use]
     pub fn composite_property_index_for(
         &self,
-        label: &IStr,
-        properties: &[IStr],
+        label: &DbString,
+        properties: &[DbString],
     ) -> Option<Arc<CompositeTypedIndex>> {
         self.composite_property_index_entry_for(label, properties)
             .map(|entry| Arc::clone(&entry.index))
@@ -485,8 +490,8 @@ impl SeleneGraph {
     #[must_use]
     pub fn composite_property_index_entry_for(
         &self,
-        label: &IStr,
-        properties: &[IStr],
+        label: &DbString,
+        properties: &[DbString],
     ) -> Option<&CompositePropertyIndexEntry> {
         let key = composite_property_key(properties);
         self.composite_property_index.get(&(label.clone(), key))
@@ -494,7 +499,11 @@ impl SeleneGraph {
 
     /// Return a clone of the registered vector index.
     #[must_use]
-    pub fn vector_index_for(&self, label: &IStr, property: &IStr) -> Option<Arc<VectorIndex>> {
+    pub fn vector_index_for(
+        &self,
+        label: &DbString,
+        property: &DbString,
+    ) -> Option<Arc<VectorIndex>> {
         self.vector_index
             .get(&(label.clone(), property.clone()))
             .map(|entry| Arc::clone(&entry.index))
@@ -502,7 +511,7 @@ impl SeleneGraph {
 
     /// Return a clone of the registered text index.
     #[must_use]
-    pub fn text_index_for(&self, label: &IStr, property: &IStr) -> Option<Arc<TextIndex>> {
+    pub fn text_index_for(&self, label: &DbString, property: &DbString) -> Option<Arc<TextIndex>> {
         self.text_index
             .get(&(label.clone(), property.clone()))
             .map(|entry| Arc::clone(&entry.index))
@@ -537,7 +546,9 @@ impl SeleneGraph {
     /// This covers only SeleneGraph's built-in property indexes.
     /// Extension-provider index state is surfaced through that provider's own
     /// procedures.
-    pub fn iter_property_indexes(&self) -> impl Iterator<Item = (IStr, IStr, TypedIndexKind)> + '_ {
+    pub fn iter_property_indexes(
+        &self,
+    ) -> impl Iterator<Item = (DbString, DbString, TypedIndexKind)> + '_ {
         self.property_index
             .iter()
             .map(|((label, property), entry)| (label.clone(), property.clone(), entry.kind()))
@@ -546,7 +557,7 @@ impl SeleneGraph {
     /// Iterate built-in property indexes with optional explicit catalog names.
     pub fn iter_property_index_entries(
         &self,
-    ) -> impl Iterator<Item = (IStr, IStr, TypedIndexKind, Option<IStr>)> + '_ {
+    ) -> impl Iterator<Item = (DbString, DbString, TypedIndexKind, Option<DbString>)> + '_ {
         self.property_index
             .iter()
             .map(|((label, property), entry)| {
@@ -613,8 +624,8 @@ impl SeleneGraph {
     #[must_use]
     pub fn nodes_with_property_eq(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         value: &Value,
     ) -> Option<Cow<'_, RoaringBitmap>> {
         self.property_index
@@ -630,8 +641,8 @@ impl SeleneGraph {
     #[must_use]
     pub fn nodes_with_property_range<R>(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         range: R,
     ) -> Option<RoaringBitmap>
     where
@@ -649,8 +660,8 @@ impl SeleneGraph {
     #[must_use]
     pub fn nodes_with_property_prefix(
         &self,
-        label: &IStr,
-        property: &IStr,
+        label: &DbString,
+        property: &DbString,
         prefix: &str,
     ) -> Option<RoaringBitmap> {
         self.property_index
@@ -671,8 +682,8 @@ impl SeleneGraph {
     }
 }
 
-pub(crate) fn composite_property_key(properties: &[IStr]) -> SmallVec<[IStr; 4]> {
-    let mut key: SmallVec<[IStr; 4]> = properties.iter().cloned().collect();
+pub(crate) fn composite_property_key(properties: &[DbString]) -> SmallVec<[DbString; 4]> {
+    let mut key: SmallVec<[DbString; 4]> = properties.iter().cloned().collect();
     key.sort();
     key
 }
@@ -680,7 +691,7 @@ pub(crate) fn composite_property_key(properties: &[IStr]) -> SmallVec<[IStr; 4]>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::intern;
+    use selene_core::db_string;
 
     #[test]
     fn new_graph_is_empty() {
@@ -710,7 +721,7 @@ mod tests {
         assert_eq!(graph.node_labels(NodeId::new(1)), None);
         assert_eq!(graph.edge_label(EdgeId::new(1)), None);
         assert_eq!(
-            graph.nodes_with_label(&intern("graph.missing").unwrap()),
+            graph.nodes_with_label(&db_string("graph.missing").unwrap()),
             None
         );
         assert!(!graph.is_node_alive(NodeId::TOMBSTONE));
@@ -719,7 +730,7 @@ mod tests {
     #[test]
     fn node_labels_returns_some_for_alive_node() {
         let mut graph = SeleneGraph::new(GraphId::new(1));
-        let label = intern("graph.node").unwrap();
+        let label = db_string("graph.node").unwrap();
         graph
             .node_store
             .labels
@@ -746,7 +757,7 @@ mod tests {
     #[test]
     fn label_count_reports_distinct_labels_only() {
         let mut graph = SeleneGraph::new(GraphId::new(1));
-        let label = intern("graph.same").unwrap();
+        let label = db_string("graph.same").unwrap();
         let mut bitmap = RoaringBitmap::new();
         bitmap.insert(0);
         bitmap.insert(1);

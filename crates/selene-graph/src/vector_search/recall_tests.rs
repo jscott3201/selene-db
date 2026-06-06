@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use selene_core::{
-    CancellationChecker, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    Value, VectorMetric, VectorValue, intern,
+    CancellationChecker, DbString, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
+    Value, VectorMetric, VectorValue, db_string,
 };
 
 use super::ApproximateVectorSearchOptions;
@@ -52,8 +52,8 @@ fn hnsw_recall_handles_negative_inner_product_vectors() {
 
 #[test]
 fn hnsw_recall_survives_update_delete_churn() {
-    let label = intern("vector.ann.recall.churn").unwrap();
-    let property = intern("embedding").unwrap();
+    let label = db_string("vector.ann.recall.churn").unwrap();
+    let property = db_string("embedding").unwrap();
     let shared = SharedGraph::new(GraphId::new(9803));
     {
         let mut txn = shared.begin_write();
@@ -137,8 +137,8 @@ fn hnsw_recall_quality_accepts_duplicate_distance_ties() {
 
 struct RecallProfile {
     graph: SharedGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     metric: VectorMetric,
     queries: Vec<VectorValue>,
     exact: Vec<Vec<VectorNodeSearchHit>>,
@@ -154,8 +154,8 @@ impl RecallProfile {
         corpus: Vec<VectorValue>,
         queries: Vec<VectorValue>,
     ) -> Self {
-        let label = intern(label_name).unwrap();
-        let property = intern("embedding").unwrap();
+        let label = db_string(label_name).unwrap();
+        let property = db_string("embedding").unwrap();
         let graph = SharedGraph::new(GraphId::new(graph_id));
         {
             let mut txn = graph.begin_write();
@@ -178,8 +178,8 @@ impl RecallProfile {
 
     fn from_graph(
         graph: SharedGraph,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         metric: VectorMetric,
         queries: Vec<VectorValue>,
     ) -> Self {
@@ -276,7 +276,7 @@ fn overlap_count(exact: &[VectorNodeSearchHit], approximate: &[VectorNodeSearchH
         .count()
 }
 
-fn props(property: &IStr, value: Value) -> PropertyMap {
+fn props(property: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(property.clone(), value)]).unwrap()
 }
 

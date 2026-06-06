@@ -65,14 +65,14 @@ mod tests {
 
     use proptest::prelude::*;
     use selene_core::{
-        Change, EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-        Record, RecordTypeId, RecordTyped, SchemaChange, Value, intern,
+        Change, DbString, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
+        Record, RecordTypeId, RecordTyped, SchemaChange, Value, db_string,
     };
 
     use super::*;
 
-    fn provider(name: &str) -> IStr {
-        intern(name).unwrap()
+    fn provider(name: &str) -> DbString {
+        db_string(name).unwrap()
     }
 
     // A `NodeCreated` carrying a `Value::Bytes` property is the byte-payload-
@@ -107,8 +107,8 @@ mod tests {
             any::<f64>().prop_map(Value::Float),
             any::<f32>().prop_map(Value::Float32),
             any::<i64>().prop_map(|m| Value::Decimal(rust_decimal::Decimal::new(m, 3))),
-            "[a-z]{1,8}".prop_map(|s| Value::String(intern(&format!("payload.v.{s}")).unwrap())),
-            "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::String(intern(&s).unwrap())),
+            "[a-z]{1,8}".prop_map(|s| Value::String(db_string(&format!("payload.v.{s}")).unwrap())),
+            "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::String(db_string(&s).unwrap())),
             proptest::collection::vec(any::<u8>(), 0..24).prop_map(|b| Value::Bytes(Arc::from(b))),
             Just(Value::Date("2024-06-15".parse().unwrap())),
             Just(Value::LocalDateTime("2024-06-15T12:30:00".parse().unwrap())),
@@ -124,7 +124,7 @@ mod tests {
                     Value::Record(Box::new(Record::Open(
                         fields
                             .into_iter()
-                            .map(|(k, v)| (intern(&format!("payload.f.{k}")).unwrap(), v))
+                            .map(|(k, v)| (db_string(&format!("payload.f.{k}")).unwrap(), v))
                             .collect(),
                     )))
                 }),
@@ -143,7 +143,7 @@ mod tests {
         proptest::collection::vec(("[a-z]{1,6}", value_strategy()), 0..4).prop_map(|pairs| {
             let pairs = pairs
                 .into_iter()
-                .map(|(k, v)| (intern(&format!("payload.k.{k}")).unwrap(), v));
+                .map(|(k, v)| (db_string(&format!("payload.k.{k}")).unwrap(), v));
             PropertyMap::from_pairs(pairs).unwrap()
         })
     }
@@ -159,7 +159,7 @@ mod tests {
         proptest::collection::vec("[a-z]{1,6}", 0..3).prop_map(|added| {
             let added = added
                 .into_iter()
-                .map(|s| intern(&format!("payload.la.{s}")).unwrap());
+                .map(|s| db_string(&format!("payload.la.{s}")).unwrap());
             LabelDiff::new(added, []).unwrap()
         })
     }
@@ -172,10 +172,10 @@ mod tests {
             .prop_map(|(set, removed)| {
                 let set = set
                     .into_iter()
-                    .map(|(k, v)| (intern(&format!("payload.ds.{k}")).unwrap(), v));
+                    .map(|(k, v)| (db_string(&format!("payload.ds.{k}")).unwrap(), v));
                 let removed = removed
                     .into_iter()
-                    .map(|s| intern(&format!("payload.dr.{s}")).unwrap());
+                    .map(|s| db_string(&format!("payload.dr.{s}")).unwrap());
                 PropertyDiff::new(set, removed).unwrap()
             })
     }

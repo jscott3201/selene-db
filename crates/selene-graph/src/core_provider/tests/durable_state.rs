@@ -198,7 +198,7 @@ fn write_commit_without_wal_returns_zero_sequence() {
         None,
         &[Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(intern("nowal.node").unwrap()),
+            labels: LabelSet::single(db_string("nowal.node").unwrap()),
             properties: PropertyMap::new(),
         }],
         ts,

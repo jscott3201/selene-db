@@ -6,13 +6,13 @@
 //! - Exactly ONE declarative change is written regardless of N (O(1) WAL).
 //! - Empty/absent label is a clean no-op; double-truncate is idempotent.
 
-use selene_core::{Change, GraphId, NodeId, PropertyMap, Value, intern};
+use selene_core::{Change, GraphId, NodeId, PropertyMap, Value, db_string};
 
 use super::*;
 use crate::SharedGraph;
 
 fn prop(key: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(key).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
 }
 
 /// Build a fixture: K nodes of label :L (each carrying an extra label and a
@@ -26,9 +26,9 @@ fn fixture() -> SharedGraph {
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
-        let l = intern("trunc.L").unwrap();
-        let other = intern("trunc.Other").unwrap();
-        let keep = intern("trunc.Keep").unwrap();
+        let l = db_string("trunc.L").unwrap();
+        let other = db_string("trunc.Other").unwrap();
+        let keep = db_string("trunc.Keep").unwrap();
         // 4 nodes of :L (rows 0..3), 1 keep node (row 4).
         let l0 = m
             .create_node(LabelSet::single(l.clone()), prop("k", Value::Int(0)))
@@ -48,8 +48,8 @@ fn fixture() -> SharedGraph {
         let keep_node = m
             .create_node(LabelSet::single(keep), prop("k", Value::Int(9)))
             .unwrap();
-        let e1 = intern("trunc.E1").unwrap();
-        let e2 = intern("trunc.E2").unwrap();
+        let e1 = db_string("trunc.E1").unwrap();
+        let e2 = db_string("trunc.E2").unwrap();
         // Incident edges of two types: L->L, L->keep, keep->L.
         m.create_edge(e1.clone(), l0, l1, PropertyMap::new())
             .unwrap();
@@ -102,7 +102,7 @@ fn assert_same_observable_state(a: &crate::SeleneGraph, b: &crate::SeleneGraph) 
 fn truncate_node_type_matches_detach_delete_observable_state() {
     let truncated = fixture();
     let detached = fixture();
-    let l = intern("trunc.L").unwrap();
+    let l = db_string("trunc.L").unwrap();
 
     // TRUNCATE NODE TYPE :L
     {
@@ -156,7 +156,7 @@ fn truncate_node_type_matches_detach_delete_observable_state() {
 #[test]
 fn truncate_writes_exactly_one_change_regardless_of_n() {
     let shared = fixture();
-    let l = intern("trunc.L").unwrap();
+    let l = db_string("trunc.L").unwrap();
     let mut txn = shared.begin_write();
     txn.mutator().truncate_node_type(l.clone()).unwrap();
     let outcome = txn.commit().unwrap();
@@ -176,7 +176,7 @@ fn truncate_writes_exactly_one_change_regardless_of_n() {
 #[test]
 fn truncate_edge_type_writes_one_change_and_removes_only_that_type() {
     let shared = fixture();
-    let e1 = intern("trunc.E1").unwrap();
+    let e1 = db_string("trunc.E1").unwrap();
     let mut txn = shared.begin_write();
     txn.mutator().truncate_edge_type(e1.clone()).unwrap();
     let outcome = txn.commit().unwrap();
@@ -188,7 +188,7 @@ fn truncate_edge_type_writes_one_change_and_removes_only_that_type() {
     let g = shared.read();
     assert!(g.edges_with_label(&e1).is_none(), "all E1 edges removed");
     // E2 edges and all nodes untouched.
-    let e2 = intern("trunc.E2").unwrap();
+    let e2 = db_string("trunc.E2").unwrap();
     assert!(g.edges_with_label(&e2).is_some(), "E2 edges survive");
     assert_eq!(g.node_count(), 5, "truncate edge type leaves nodes intact");
 }
@@ -196,7 +196,7 @@ fn truncate_edge_type_writes_one_change_and_removes_only_that_type() {
 #[test]
 fn truncate_absent_label_is_clean_noop() {
     let shared = fixture();
-    let absent = intern("trunc.NoSuchLabel").unwrap();
+    let absent = db_string("trunc.NoSuchLabel").unwrap();
     let mut txn = shared.begin_write();
     txn.mutator().truncate_node_type(absent).unwrap();
     let outcome = txn.commit().unwrap();
@@ -207,7 +207,7 @@ fn truncate_absent_label_is_clean_noop() {
 #[test]
 fn double_truncate_is_idempotent() {
     let shared = fixture();
-    let l = intern("trunc.L").unwrap();
+    let l = db_string("trunc.L").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator().truncate_node_type(l.clone()).unwrap();

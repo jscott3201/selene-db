@@ -184,7 +184,7 @@ pub fn evaluate_for_test(
 }
 
 fn lookup_variable(
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
@@ -211,7 +211,7 @@ fn lookup_variable(
 }
 
 fn resolve_parameter(
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     declared_type: Option<&crate::GqlType>,
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -233,7 +233,7 @@ fn resolve_parameter(
 
 pub(super) fn property_access(
     target: &Value,
-    key: selene_core::IStr,
+    key: selene_core::DbString,
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
@@ -254,7 +254,11 @@ pub(super) fn property_access(
     }
 }
 
-fn property_from_node(id: NodeId, key: selene_core::IStr, ctx: &EvalCtx<'_, '_, '_, '_>) -> Value {
+fn property_from_node(
+    id: NodeId,
+    key: selene_core::DbString,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Value {
     ctx.tx
         .snapshot()
         .node_properties(id)
@@ -263,7 +267,11 @@ fn property_from_node(id: NodeId, key: selene_core::IStr, ctx: &EvalCtx<'_, '_, 
         .unwrap_or(Value::Null)
 }
 
-fn property_from_edge(id: EdgeId, key: selene_core::IStr, ctx: &EvalCtx<'_, '_, '_, '_>) -> Value {
+fn property_from_edge(
+    id: EdgeId,
+    key: selene_core::DbString,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Value {
     ctx.tx
         .snapshot()
         .edge_properties(id)

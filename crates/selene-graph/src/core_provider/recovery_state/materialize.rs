@@ -10,7 +10,7 @@
 
 use std::sync::OnceLock;
 
-use selene_core::{EdgeId, IStr, LabelSet, NodeId, PropertyMap};
+use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
 
 use crate::core_provider::sections::{EdgeRow, NodeRow};
 use crate::graph::SeleneGraph;
@@ -99,12 +99,12 @@ fn set_alive(bitmap: &mut roaring::RoaringBitmap, row_index: usize, alive: bool)
     }
 }
 
-fn edge_hole_label() -> Result<IStr, crate::GraphError> {
-    static CELL: OnceLock<IStr> = OnceLock::new();
+fn edge_hole_label() -> Result<DbString, crate::GraphError> {
+    static CELL: OnceLock<DbString> = OnceLock::new();
     if let Some(label) = CELL.get() {
         return Ok(label.clone());
     }
-    let label = selene_core::intern("__selene_hole").map_err(crate::GraphError::Core)?;
+    let label = selene_core::db_string("__selene_hole").map_err(crate::GraphError::Core)?;
     let _ = CELL.set(label.clone());
     Ok(label)
 }

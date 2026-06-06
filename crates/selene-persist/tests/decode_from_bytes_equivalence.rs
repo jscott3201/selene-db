@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern};
+use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, db_string};
 use selene_persist::{
     AuditLog, AuditRecord, MANIFEST_FILE_NAME, Manifest, SectionCompression, SnapshotBuilder,
     SnapshotConfig, SnapshotReader, WalConfig, WalReader, WalWriter, snapshot_path,
@@ -27,8 +27,8 @@ fn unique(tag: &str) -> std::path::PathBuf {
 fn changes(id: u64) -> Vec<Change> {
     vec![Change::NodeCreated {
         id: NodeId::new(id),
-        labels: LabelSet::single(intern("eq.node").unwrap()),
-        properties: PropertyMap::from_pairs([(intern("eq.p").unwrap(), Value::Int(id as i64))])
+        labels: LabelSet::single(db_string("eq.node").unwrap()),
+        properties: PropertyMap::from_pairs([(db_string("eq.p").unwrap(), Value::Int(id as i64))])
             .unwrap(),
     }]
 }
@@ -39,9 +39,9 @@ fn changes(id: u64) -> Vec<Change> {
 fn big_change() -> Vec<Change> {
     vec![Change::NodeCreated {
         id: NodeId::new(99),
-        labels: LabelSet::single(intern("eq.big").unwrap()),
+        labels: LabelSet::single(db_string("eq.big").unwrap()),
         properties: PropertyMap::from_pairs([(
-            intern("eq.bytes").unwrap(),
+            db_string("eq.bytes").unwrap(),
             Value::Bytes(Arc::from(vec![0xAB_u8; 512])),
         )])
         .unwrap(),

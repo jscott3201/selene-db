@@ -2,11 +2,11 @@
 
 use roaring::RoaringBitmap;
 use selene_algorithms::{GraphProjection, ProjectionConfig, louvain};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -26,8 +26,8 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
 
 fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
@@ -156,9 +156,9 @@ fn louvain_weighted_projection_biases_partition() {
     // toward n0's community. We use a `weight` property and a
     // weight_property projection.
     let shared = SharedGraph::new(GraphId::new(1));
-    let nlabel = istr("N");
-    let rel = istr("R");
-    let weight_key = istr("w");
+    let nlabel = db_string("N");
+    let rel = db_string("R");
+    let weight_key = db_string("w");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(3);
     for _ in 0..3 {
@@ -216,9 +216,9 @@ fn louvain_weighted_projection_biases_partition() {
 #[test]
 fn louvain_weighted_degree_invariant_and_heavy_edge_assignment() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let nlabel = istr("N");
-    let rel = istr("R");
-    let weight_key = istr("w");
+    let nlabel = db_string("N");
+    let rel = db_string("R");
+    let weight_key = db_string("w");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(3);
     for _ in 0..3 {
@@ -298,8 +298,8 @@ fn louvain_weighted_degree_invariant_and_heavy_edge_assignment() {
 fn louvain_handles_sparse_row_projection() {
     // §E26: state arrays sized by RowIndex, not max_row + 1.
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(100);
     for _ in 0..100 {

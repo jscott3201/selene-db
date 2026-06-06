@@ -2,7 +2,9 @@
 
 use std::fmt;
 
-use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId, PropertyMap, PropertyValueType, Value};
+use selene_core::{
+    Change, DbString, EdgeId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value,
+};
 
 use crate::graph::SeleneGraph;
 use crate::graph_types::{EdgeEndpointDef, GraphTypeDef, PropertyTypeDef, ValidationMode};
@@ -46,7 +48,7 @@ pub enum TypeViolation {
         /// Edge ID.
         id: EdgeId,
         /// Observed edge label.
-        label: IStr,
+        label: DbString,
     },
 
     /// Edge endpoints do not match the declared edge type endpoints.
@@ -58,7 +60,7 @@ pub enum TypeViolation {
         /// Edge ID.
         id: EdgeId,
         /// Edge label.
-        label: IStr,
+        label: DbString,
         /// Expected source endpoint.
         expected_source_type: EdgeEndpointDef,
         /// Observed source node-type index.
@@ -76,9 +78,9 @@ pub enum TypeViolation {
         /// Entity that violated the declaration.
         entity_id: EntityId,
         /// Missing property name.
-        property: IStr,
+        property: DbString,
         /// Node or edge type that declares the property.
-        declared_in: IStr,
+        declared_in: DbString,
     },
 
     /// Property value has the wrong runtime type.
@@ -88,7 +90,7 @@ pub enum TypeViolation {
         /// Entity that violated the declaration.
         entity_id: EntityId,
         /// Property name.
-        property: IStr,
+        property: DbString,
         /// Expected property value type.
         expected: PropertyValueType,
         /// Observed runtime value type.
@@ -102,7 +104,7 @@ pub enum TypeViolation {
         /// Entity that violated the declaration.
         entity_id: EntityId,
         /// Property name.
-        property: IStr,
+        property: DbString,
     },
 
     /// Property is not declared by the matched node or edge type.
@@ -112,7 +114,7 @@ pub enum TypeViolation {
         /// Entity that violated the declaration.
         entity_id: EntityId,
         /// Undeclared property name.
-        property: IStr,
+        property: DbString,
     },
 
     /// Immutable property was updated or removed.
@@ -122,9 +124,9 @@ pub enum TypeViolation {
         /// Entity that violated the declaration.
         entity_id: EntityId,
         /// Immutable property name.
-        property: IStr,
+        property: DbString,
         /// Node or edge type that declares the property.
-        declared_in: IStr,
+        declared_in: DbString,
     },
 }
 
@@ -339,7 +341,8 @@ fn validate_edge_state<'a>(
         .cloned()
         .ok_or(TypeViolation::UnknownEdgeLabel {
             id,
-            label: selene_core::intern("__selene_missing_edge_label").expect("static label admits"),
+            label: selene_core::db_string("__selene_missing_edge_label")
+                .expect("static label admits"),
         })?;
     let (source, target) =
         graph
@@ -379,7 +382,7 @@ fn validate_edge_state<'a>(
 
 fn reject_immutable_property_update(
     entity_id: EntityId,
-    declared_in: IStr,
+    declared_in: DbString,
     declarations: &[PropertyTypeDef],
     diff: &selene_core::PropertyDiff,
 ) -> Result<(), TypeViolation> {
@@ -394,9 +397,9 @@ fn reject_immutable_property_update(
 
 fn reject_if_immutable(
     entity_id: EntityId,
-    declared_in: IStr,
+    declared_in: DbString,
     declarations: &[PropertyTypeDef],
-    property: IStr,
+    property: DbString,
 ) -> Result<(), TypeViolation> {
     if declarations
         .iter()
@@ -413,7 +416,7 @@ fn reject_if_immutable(
 
 fn validate_properties(
     entity_id: EntityId,
-    declared_in: IStr,
+    declared_in: DbString,
     validation_mode: ValidationMode,
     declarations: &[PropertyTypeDef],
     properties: &PropertyMap,

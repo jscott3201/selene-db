@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use rustc_hash::FxHashSet;
-use selene_core::{IStr, NodeId, Value};
+use selene_core::{DbString, NodeId, Value};
 
 use crate::{
     AnalyzedType, BindingElement, BindingId, BindingTableColumn, BindingTableSchema,
@@ -326,7 +326,7 @@ pub(crate) fn binding_index(
     column_index(schema, binding.name.clone())
 }
 
-pub(crate) fn column_index(schema: &BindingTableSchema, name: IStr) -> Option<usize> {
+pub(crate) fn column_index(schema: &BindingTableSchema, name: DbString) -> Option<usize> {
     schema
         .columns
         .iter()
@@ -404,7 +404,7 @@ pub(crate) fn merge_rows(left: &Binding, right: &Binding, schema: &BindingTableS
 pub(crate) fn key_values(
     row: &Binding,
     schema: &BindingTableSchema,
-    key: &[IStr],
+    key: &[DbString],
 ) -> Result<Option<Vec<Value>>, ExecutorError> {
     let mut values = Vec::with_capacity(key.len());
     for name in key {
@@ -434,7 +434,7 @@ pub(crate) fn rows_match_on_key(
     left: &Binding,
     right: &Binding,
     schema: &BindingTableSchema,
-    key: &[IStr],
+    key: &[DbString],
 ) -> Result<bool, ExecutorError> {
     let Some(left_key) = key_values(left, schema, key)? else {
         return Ok(false);

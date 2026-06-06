@@ -1,6 +1,6 @@
 //! Typed parameter runtime validation regressions.
 
-use selene_core::{GraphId, IStr, NodeId, Record, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, NodeId, Record, Value, VectorValue};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlType, PipelineStatement, QueryPipeline, RecordType,
     ReturnClause, ReturnItem, Session, SourceSpan, Statement, ValueExpr, analyze,
@@ -9,11 +9,11 @@ use selene_gql::{
 use selene_graph::SharedGraph;
 use smallvec::smallvec;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn typed_parameter_statement(name: IStr, declared_type: GqlType) -> Statement {
+fn typed_parameter_statement(name: DbString, declared_type: GqlType) -> Statement {
     let span = SourceSpan::new(0, 4);
     Statement::Query(QueryPipeline {
         statements: vec![PipelineStatement::Return(ReturnClause {
@@ -41,8 +41,8 @@ fn typed_parameter_runtime_rejects_mismatched_list_elements() {
     let graph = SharedGraph::new(GraphId::new(4122));
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("vals"),
-        Value::List(vec![Value::Int(1), Value::String(istr("bad"))]),
+        db_string("vals"),
+        Value::List(vec![Value::Int(1), Value::String(db_string("bad"))]),
     );
 
     let err = session
@@ -61,7 +61,7 @@ fn typed_parameter_runtime_rejects_mismatched_list_elements() {
 
 #[test]
 fn typed_parameter_runtime_accepts_vector() {
-    let name = istr("vec");
+    let name = db_string("vec");
     let statement = typed_parameter_statement(name.clone(), GqlType::Vector);
     let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("statement analyzes");
     let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("statement plans");
@@ -78,7 +78,7 @@ fn typed_parameter_runtime_accepts_vector() {
 
 #[test]
 fn typed_parameter_runtime_rejects_non_vector() {
-    let name = istr("vec");
+    let name = db_string("vec");
     let statement = typed_parameter_statement(name.clone(), GqlType::Vector);
     let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("statement analyzes");
     let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("statement plans");
@@ -102,8 +102,8 @@ fn typed_parameter_runtime_rejects_non_vector() {
 #[test]
 fn typed_parameter_runtime_rejects_mismatched_closed_record_fields() {
     let span = SourceSpan::new(0, 4);
-    let field = istr("count");
-    let name = istr("rec");
+    let field = db_string("count");
+    let name = db_string("rec");
     let statement = Statement::Query(QueryPipeline {
         statements: vec![PipelineStatement::Return(ReturnClause {
             distinct: false,
@@ -135,7 +135,7 @@ fn typed_parameter_runtime_rejects_mismatched_closed_record_fields() {
         name.clone(),
         Value::Record(Box::new(Record::Open(smallvec![(
             field,
-            Value::String(istr("three")),
+            Value::String(db_string("three")),
         )]))),
     );
     let err = execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
@@ -157,8 +157,8 @@ fn typed_parameter_runtime_rejects_mismatched_closed_record_fields() {
 #[test]
 fn typed_parameter_runtime_accepts_matching_closed_record_fields() {
     let span = SourceSpan::new(0, 4);
-    let field = istr("count");
-    let name = istr("rec");
+    let field = db_string("count");
+    let name = db_string("rec");
     let statement = Statement::Query(QueryPipeline {
         statements: vec![PipelineStatement::Return(ReturnClause {
             distinct: false,
@@ -199,10 +199,10 @@ fn typed_parameter_runtime_renders_nested_closed_record_type() {
     let graph = SharedGraph::new(GraphId::new(4127));
     let mut session = Session::new(&graph);
     session.bind_parameter(
-        istr("records"),
+        db_string("records"),
         Value::List(vec![Value::Record(Box::new(Record::Open(smallvec![(
-            istr("count"),
-            Value::String(istr("three")),
+            db_string("count"),
+            Value::String(db_string("three")),
         )])))]),
     );
 
@@ -228,14 +228,14 @@ fn typed_parameter_runtime_renders_nested_closed_record_type() {
 
 #[test]
 fn typed_parameter_runtime_renders_internal_reference_type() {
-    let name = istr("node");
+    let name = db_string("node");
     let statement = typed_parameter_statement(name.clone(), GqlType::NodeRef);
     let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("statement analyzes");
     let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("statement plans");
     let graph = SharedGraph::new(GraphId::new(4128));
     let mut session = Session::new(&graph);
 
-    session.bind_parameter(name.clone(), Value::String(istr("not-node")));
+    session.bind_parameter(name.clone(), Value::String(db_string("not-node")));
     let err = execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
         .expect_err("reference parameter rejects mismatched value");
     let ExecutorError::InvalidParameterType {
@@ -252,7 +252,7 @@ fn typed_parameter_runtime_renders_internal_reference_type() {
     assert_eq!(actual, "STRING");
 
     let mut matching = Session::new(&graph);
-    matching.bind_parameter(istr("node"), Value::NodeRef(NodeId::new(1)));
+    matching.bind_parameter(db_string("node"), Value::NodeRef(NodeId::new(1)));
     execute_statement(&plan, &mut matching, &EmptyProcedureRegistry)
         .expect("reference parameter accepts matching value");
 }

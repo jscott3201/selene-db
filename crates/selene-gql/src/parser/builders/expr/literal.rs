@@ -1,7 +1,7 @@
 //! Literal expression builders.
 
 use pest::iterators::Pair;
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     GqlStatus,
@@ -11,7 +11,7 @@ use crate::{
 };
 
 use super::{Rule, build_value_expr};
-use crate::parser::builders::{first_child, intern_str, not_implemented, span};
+use crate::parser::builders::{db_string_from_str, first_child, not_implemented, span};
 
 pub(super) fn build_literal_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::literal);
@@ -37,7 +37,7 @@ pub(super) fn build_list_items(pair: Pair<'_, Rule>) -> Result<Vec<ValueExpr>, P
         .collect()
 }
 
-pub(super) fn parse_string_pair(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+pub(super) fn parse_string_pair(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let Literal::String(value, _) = parse_string(pair.as_str(), span(&pair))? else {
         unreachable!("parse_string returns a string literal");
     };
@@ -46,7 +46,7 @@ pub(super) fn parse_string_pair(pair: Pair<'_, Rule>) -> Result<IStr, ParserErro
 
 /// Decode a `string_lit` pair into its raw (unquoted, unescaped) text.
 ///
-/// Used by surfaces that need the decoded string value rather than an interned
+/// Used by surfaces that need the decoded string value rather than a `DbString`
 /// literal — for example the `SESSION SET TIME ZONE '<region>'` time-zone
 /// string (ISO/IEC 39075:2024 section 7.1).
 pub(super) fn decode_string_text(pair: &Pair<'_, Rule>) -> Result<String, ParserError> {
@@ -246,8 +246,8 @@ fn validate_underscores(text: &str, span: SourceSpan) -> Result<(), ParserError>
 
 fn parse_string(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
     let value = parse_string_text(text, span)?;
-    let interned = intern_str(&value, span, "string literal")?;
-    Ok(Literal::String(interned, span))
+    let db_string_value = db_string_from_str(&value, span, "string literal")?;
+    Ok(Literal::String(db_string_value, span))
 }
 
 fn temporal_text(pair: Pair<'_, Rule>) -> Result<String, ParserError> {

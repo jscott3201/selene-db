@@ -2,22 +2,28 @@
 
 use std::num::NonZeroUsize;
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value, VectorValue};
 use selene_graph::{SharedGraph, VectorIndexKind, VectorIndexMaintenancePolicy};
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn vector(components: &[f32]) -> Value {
     Value::Vector(VectorValue::new(components.to_vec()).expect("test vector is valid"))
 }
 
-fn props(property: &IStr, value: Value) -> PropertyMap {
+fn props(property: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(property.clone(), value)]).expect("test property map is valid")
 }
 
-fn insert_vectors(shared: &SharedGraph, label: &IStr, property: &IStr, count: usize, offset: f32) {
+fn insert_vectors(
+    shared: &SharedGraph,
+    label: &DbString,
+    property: &DbString,
+    count: usize,
+    offset: f32,
+) {
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();
     for value in 0..count {
@@ -34,9 +40,9 @@ fn insert_vectors(shared: &SharedGraph, label: &IStr, property: &IStr, count: us
 #[test]
 fn rebuild_recommended_vector_indexes_selects_only_drifted_ivf_indexes() {
     let shared = SharedGraph::new(GraphId::new(8_301));
-    let property = istr("embedding");
-    let hot_label = istr("vector.maintenance.hot");
-    let cold_label = istr("vector.maintenance.cold");
+    let property = db_string("embedding");
+    let hot_label = db_string("vector.maintenance.hot");
+    let cold_label = db_string("vector.maintenance.cold");
     insert_vectors(&shared, &hot_label, &property, 100, 0.0);
     insert_vectors(&shared, &cold_label, &property, 100, 10_000.0);
 
@@ -108,10 +114,10 @@ fn rebuild_recommended_vector_indexes_selects_only_drifted_ivf_indexes() {
 #[test]
 fn maintain_vector_indexes_caps_rebuilds_by_drift_pressure() {
     let shared = SharedGraph::new(GraphId::new(8_302));
-    let property = istr("embedding");
-    let high_label = istr("vector.maintenance.high");
-    let low_label = istr("vector.maintenance.low");
-    let cold_label = istr("vector.maintenance.cold");
+    let property = db_string("embedding");
+    let high_label = db_string("vector.maintenance.high");
+    let low_label = db_string("vector.maintenance.low");
+    let cold_label = db_string("vector.maintenance.cold");
     for (label, offset) in [
         (&high_label, 0.0),
         (&low_label, 10_000.0),

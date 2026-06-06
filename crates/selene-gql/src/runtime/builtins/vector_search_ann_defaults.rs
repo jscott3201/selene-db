@@ -1,6 +1,6 @@
 //! Shared ANN vector-search defaults for native vector built-ins.
 
-use selene_core::{IStr, Value, VectorMetric};
+use selene_core::{DbString, Value, VectorMetric};
 use selene_graph::SeleneGraph;
 
 use crate::procedure_registry::ProcedureError;
@@ -34,8 +34,8 @@ pub(super) fn optional_search_width_arg(
 /// Resolve the omitted ANN search-width default from the registered index kind.
 pub(super) fn default_search_width(
     graph: &SeleneGraph,
-    label: &IStr,
-    property: &IStr,
+    label: &DbString,
+    property: &DbString,
     query_dimension: usize,
     metric: VectorMetric,
 ) -> usize {
@@ -63,15 +63,15 @@ fn search_width_too_large(proc_name: &str) -> ProcedureError {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{GraphId, VectorMetric, intern};
+    use selene_core::{GraphId, VectorMetric, db_string};
     use selene_graph::{SharedGraph, VectorIndexKind};
 
     use super::{DEFAULT_HNSW_SEARCH_WIDTH, DEFAULT_IVF_SEARCH_WIDTH, default_search_width};
 
     fn graph_with_index(kind: VectorIndexKind) -> SharedGraph {
         let graph = SharedGraph::new(GraphId::new(431_001));
-        let label = intern("VectorDoc").expect("label interns");
-        let property = intern("embedding").expect("property interns");
+        let label = db_string("VectorDoc").expect("label fits DB string cap");
+        let property = db_string("embedding").expect("property fits DB string cap");
         let mut txn = graph.begin_write();
         txn.mutator()
             .create_vector_index(label, property, kind, 2)
@@ -83,8 +83,8 @@ mod tests {
     #[test]
     fn default_search_width_selects_ivf_width_for_matching_ivf_index() {
         let graph = graph_with_index(VectorIndexKind::IvfSquaredEuclidean);
-        let label = intern("VectorDoc").expect("label interns");
-        let property = intern("embedding").expect("property interns");
+        let label = db_string("VectorDoc").expect("label fits DB string cap");
+        let property = db_string("embedding").expect("property fits DB string cap");
         let snapshot = graph.read();
 
         assert_eq!(
@@ -102,8 +102,8 @@ mod tests {
     #[test]
     fn default_search_width_keeps_hnsw_width_for_matching_hnsw_index() {
         let graph = graph_with_index(VectorIndexKind::HnswSquaredEuclidean);
-        let label = intern("VectorDoc").expect("label interns");
-        let property = intern("embedding").expect("property interns");
+        let label = db_string("VectorDoc").expect("label fits DB string cap");
+        let property = db_string("embedding").expect("property fits DB string cap");
         let snapshot = graph.read();
 
         assert_eq!(
@@ -121,8 +121,8 @@ mod tests {
     #[test]
     fn default_search_width_keeps_hnsw_width_without_matching_ivf_index() {
         let graph = graph_with_index(VectorIndexKind::IvfCosine);
-        let label = intern("VectorDoc").expect("label interns");
-        let property = intern("embedding").expect("property interns");
+        let label = db_string("VectorDoc").expect("label fits DB string cap");
+        let property = db_string("embedding").expect("property fits DB string cap");
         let snapshot = graph.read();
 
         assert_eq!(

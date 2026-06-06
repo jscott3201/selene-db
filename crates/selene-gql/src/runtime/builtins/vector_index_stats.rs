@@ -4,7 +4,7 @@
 //! accounting. This stays on the implementation-defined `CALL selene.*` surface
 //! instead of changing ISO catalog statement row shapes.
 
-use selene_core::{IStr, Value, intern};
+use selene_core::{DbString, Value, db_string};
 use selene_graph::{HnswIndexConfig, IvfIndexConfig, VectorIndexKind, VectorIndexMemoryUsage};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -151,8 +151,8 @@ pub(super) fn execute(
 }
 
 struct StatsRow {
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     name: String,
     kind: String,
     dimension: u32,
@@ -221,7 +221,11 @@ impl StatsRow {
     }
 }
 
-fn render_vector_index_name(label: IStr, property: IStr, explicit: Option<IStr>) -> String {
+fn render_vector_index_name(
+    label: DbString,
+    property: DbString,
+    explicit: Option<DbString>,
+) -> String {
     explicit
         .map(|name| name.as_str().to_owned())
         .unwrap_or_else(|| {
@@ -300,9 +304,9 @@ fn usize_to_u64_saturating(value: usize) -> u64 {
 }
 
 fn string(value: &str) -> Result<Value, ProcedureError> {
-    intern(value)
+    db_string(value)
         .map(Value::String)
         .map_err(|_err| ProcedureError::Internal {
-            detail: "interner cap exhausted during selene.vector_index_stats".to_owned(),
+            detail: "string construction failed during selene.vector_index_stats".to_owned(),
         })
 }

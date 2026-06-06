@@ -1,7 +1,7 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{Criterion, Throughput};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
 use selene_graph::{
     CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
@@ -450,8 +450,8 @@ fn vector_candidate_state_graph(
     dimension: usize,
     active_count: usize,
 ) -> SharedGraph {
-    let active_doc = istr("ActiveVectorDoc");
-    let state_name = istr("active_docs");
+    let active_doc = db_string("ActiveVectorDoc");
+    let state_name = db_string("active_docs");
     let provider = Arc::new(
         MaintainedCandidateStateProvider::new([
             CandidateStateSpec::new(state_name).require_label(active_doc.clone())
@@ -462,10 +462,10 @@ fn vector_candidate_state_graph(
         .with_provider(provider as Arc<dyn IndexProvider>)
         .build()
         .expect("bench graph builds");
-    let vector_doc = istr("VectorDoc");
-    let embedding_key = istr("embedding");
-    let supports = istr("SUPPORTS");
-    let supports_half = istr("SUPPORTS_HALF");
+    let vector_doc = db_string("VectorDoc");
+    let embedding_key = db_string("embedding");
+    let supports = db_string("SUPPORTS");
+    let supports_half = db_string("SUPPORTS_HALF");
     {
         let mut txn = graph.begin_write();
         {
@@ -516,7 +516,7 @@ fn vector_candidate_state_graph(
 
 fn bind_candidate_state_inputs_for(session: &mut Session<'_>, query_index: usize) {
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
 }
@@ -527,11 +527,14 @@ fn bind_candidate_state_node_inputs_for(
     fixture: CandidateStateNodeFixture,
 ) {
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
-    session.bind_parameter(istr("nodes"), fixture.nodes());
-    session.bind_parameter(istr("operation"), Value::String(istr(fixture.operation())));
+    session.bind_parameter(db_string("nodes"), fixture.nodes());
+    session.bind_parameter(
+        db_string("operation"),
+        Value::String(db_string(fixture.operation())),
+    );
 }
 
 fn bind_candidate_state_expanded_inputs_for(
@@ -540,15 +543,18 @@ fn bind_candidate_state_expanded_inputs_for(
     fixture: CandidateStateExpandedFixture,
 ) {
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
-    session.bind_parameter(istr("roots"), fixture.roots());
+    session.bind_parameter(db_string("roots"), fixture.roots());
     session.bind_parameter(
-        istr("edge_label"),
-        Value::String(istr(fixture.edge_label())),
+        db_string("edge_label"),
+        Value::String(db_string(fixture.edge_label())),
     );
-    session.bind_parameter(istr("operation"), Value::String(istr(fixture.operation())));
+    session.bind_parameter(
+        db_string("operation"),
+        Value::String(db_string(fixture.operation())),
+    );
 }
 
 fn bind_candidate_state_expanded_batch_inputs_for(
@@ -556,7 +562,7 @@ fn bind_candidate_state_expanded_batch_inputs_for(
     fixture: CandidateStateExpandedFixture,
 ) {
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(
             (0..VECTOR_BATCH_QUERIES)
                 .map(|query_index| Value::Vector(vector_value(query_index, VECTOR_DIMENSION)))
@@ -564,14 +570,17 @@ fn bind_candidate_state_expanded_batch_inputs_for(
         ),
     );
     session.bind_parameter(
-        istr("roots"),
+        db_string("roots"),
         Value::List((0..VECTOR_BATCH_QUERIES).map(|_| fixture.roots()).collect()),
     );
     session.bind_parameter(
-        istr("edge_label"),
-        Value::String(istr(fixture.edge_label())),
+        db_string("edge_label"),
+        Value::String(db_string(fixture.edge_label())),
     );
-    session.bind_parameter(istr("operation"), Value::String(istr(fixture.operation())));
+    session.bind_parameter(
+        db_string("operation"),
+        Value::String(db_string(fixture.operation())),
+    );
 }
 
 fn node_list(start: usize, len: usize) -> Value {
@@ -596,6 +605,6 @@ fn vector_value(seed: usize, dimension: usize) -> VectorValue {
     VectorValue::new(components).expect("bench vector is valid")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }

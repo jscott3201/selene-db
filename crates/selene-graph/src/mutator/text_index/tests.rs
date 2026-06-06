@@ -1,18 +1,18 @@
 use selene_core::{
-    GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern,
+    DbString, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value,
 };
 
 use crate::{GraphError, SharedGraph};
 
-fn istr(value: &str) -> IStr {
-    intern(value).unwrap()
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).unwrap()
 }
 
-fn props(pairs: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+fn props(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
 }
 
-fn hit_ids(graph: &SharedGraph, label: &IStr, property: &IStr, query: &str) -> Vec<NodeId> {
+fn hit_ids(graph: &SharedGraph, label: &DbString, property: &DbString, query: &str) -> Vec<NodeId> {
     graph
         .read()
         .text_index_for(label, property)
@@ -26,16 +26,16 @@ fn hit_ids(graph: &SharedGraph, label: &IStr, property: &IStr, query: &str) -> V
 #[test]
 fn text_index_tracks_create_update_and_delete_documents() {
     let shared = SharedGraph::new(GraphId::new(9101));
-    let label = istr("text.index.doc");
-    let property = istr("body");
-    let other = istr("text.index.other");
+    let label = db_string("text.index.doc");
+    let property = db_string("body");
+    let other = db_string("text.index.other");
     let (doc_a, doc_b) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
         let doc_a = mutator
             .create_node(
                 LabelSet::single(label.clone()),
-                props([(property.clone(), Value::String(istr("alpha beta")))]),
+                props([(property.clone(), Value::String(db_string("alpha beta")))]),
             )
             .unwrap();
         let doc_b = mutator
@@ -59,8 +59,11 @@ fn text_index_tracks_create_update_and_delete_documents() {
             .update_node(
                 doc_b,
                 LabelDiff::new([], []).unwrap(),
-                PropertyDiff::new([(property.clone(), Value::String(istr("gamma alpha")))], [])
-                    .unwrap(),
+                PropertyDiff::new(
+                    [(property.clone(), Value::String(db_string("gamma alpha")))],
+                    [],
+                )
+                .unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -73,7 +76,8 @@ fn text_index_tracks_create_update_and_delete_documents() {
             .update_node(
                 doc_a,
                 LabelDiff::new([], []).unwrap(),
-                PropertyDiff::new([(property.clone(), Value::String(istr("delta")))], []).unwrap(),
+                PropertyDiff::new([(property.clone(), Value::String(db_string("delta")))], [])
+                    .unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -106,11 +110,11 @@ fn text_index_tracks_create_update_and_delete_documents() {
 #[test]
 fn create_text_index_rejects_duplicate_and_drop_is_idempotent() {
     let shared = SharedGraph::new(GraphId::new(9102));
-    let label = istr("text.index.duplicate");
-    let property = istr("body");
+    let label = db_string("text.index.duplicate");
+    let property = db_string("body");
 
     shared
-        .create_text_index_named(label.clone(), property.clone(), Some(istr("body_idx")))
+        .create_text_index_named(label.clone(), property.clone(), Some(db_string("body_idx")))
         .unwrap();
     let err = shared
         .create_text_index(label.clone(), property.clone())
@@ -129,7 +133,7 @@ fn create_text_index_rejects_duplicate_and_drop_is_idempotent() {
             .iter_text_index_entries()
             .next()
             .and_then(|(_, _, _, _, name)| name),
-        Some(istr("body_idx"))
+        Some(db_string("body_idx"))
     );
 
     shared
@@ -142,9 +146,9 @@ fn create_text_index_rejects_duplicate_and_drop_is_idempotent() {
 #[test]
 fn text_index_ignores_non_string_values_and_tracks_label_membership() {
     let shared = SharedGraph::new(GraphId::new(9103));
-    let label = istr("text.index.string.only");
-    let other_label = istr("text.index.other.label");
-    let property = istr("body");
+    let label = db_string("text.index.string.only");
+    let other_label = db_string("text.index.other.label");
+    let property = db_string("body");
     let doc = {
         let mut txn = shared.begin_write();
         let doc = txn
@@ -177,8 +181,11 @@ fn text_index_ignores_non_string_values_and_tracks_label_membership() {
             .update_node(
                 doc,
                 LabelDiff::new([label.clone()], [other_label]).unwrap(),
-                PropertyDiff::new([(property.clone(), Value::String(istr("needle hay")))], [])
-                    .unwrap(),
+                PropertyDiff::new(
+                    [(property.clone(), Value::String(db_string("needle hay")))],
+                    [],
+                )
+                .unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();

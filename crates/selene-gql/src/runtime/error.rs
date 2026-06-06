@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError, SourceSpan};
 
@@ -194,7 +194,7 @@ pub enum ExecutorError {
     #[diagnostic(code(SLENE_X_22G03))]
     UnboundParameter {
         /// Parameter name without the leading `$`.
-        name: IStr,
+        name: DbString,
         /// Source span requiring the parameter.
         #[label("unbound parameter")]
         span: SourceSpan,
@@ -207,7 +207,7 @@ pub enum ExecutorError {
     #[diagnostic(code(SLENE_X_22G03))]
     InvalidParameterType {
         /// Parameter name without the leading `$`.
-        name: IStr,
+        name: DbString,
         /// Human-readable expected type.
         expected: Cow<'static, str>,
         /// Human-readable actual type.
@@ -284,7 +284,7 @@ pub enum ExecutorError {
         /// Object class.
         kind: &'static str,
         /// Colliding object name.
-        name: IStr,
+        name: DbString,
         /// Source span of the duplicate name.
         #[label("duplicate object name")]
         span: SourceSpan,

@@ -23,7 +23,7 @@ pub(super) fn cast_to_record(
             _ => Err(non_record_source_cast(span)),
         },
         RecordType::Closed(fields) => {
-            let mut out: SmallVec<[(selene_core::IStr, Value); 4]> =
+            let mut out: SmallVec<[(selene_core::DbString, Value); 4]> =
                 SmallVec::with_capacity(fields.len());
             match value {
                 Value::Record(record) => {

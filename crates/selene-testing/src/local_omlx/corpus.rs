@@ -1,6 +1,6 @@
 //! Reusable corpora for opt-in embedding benchmark rows.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 
 mod code_alias;
 mod project_code;
@@ -165,17 +165,17 @@ impl CorpusInput {
 }
 
 /// Return the graph label used for `topic` in benchmark fixtures.
-pub fn topic_label(topic: Topic) -> IStr {
+pub fn topic_label(topic: Topic) -> DbString {
     match topic {
-        Topic::Gql => istr("OmlxTopicGql"),
-        Topic::Vector => istr("OmlxTopicVector"),
-        Topic::AgentMemory => istr("OmlxTopicAgentMemory"),
-        Topic::Code => istr("OmlxTopicCode"),
+        Topic::Gql => db_string("OmlxTopicGql"),
+        Topic::Vector => db_string("OmlxTopicVector"),
+        Topic::AgentMemory => db_string("OmlxTopicAgentMemory"),
+        Topic::Code => db_string("OmlxTopicCode"),
     }
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("local embedding fixture strings fit the interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("local embedding fixture strings fit DB string cap")
 }
 
 fn tiny_inputs() -> Vec<CorpusInput> {

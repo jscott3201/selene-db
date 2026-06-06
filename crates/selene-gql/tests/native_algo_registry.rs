@@ -7,14 +7,14 @@
 //! identically to the pack era, with the registry swapped behind the
 //! `ProcedureRegistry` trait.
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -43,7 +43,7 @@ fn execute_rows(
 
 fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -57,7 +57,7 @@ fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -178,7 +178,9 @@ fn wcc_count_yields_single_component_for_connected_graph() {
         &registry,
     );
 
-    let index = table.column_index(istr("count")).expect("count column");
+    let index = table
+        .column_index(db_string("count"))
+        .expect("count column");
     let count = match table.rows()[0].values().get(index) {
         Some(Value::Uint(value)) => *value,
         other => panic!("expected uint count, got {other:?}"),

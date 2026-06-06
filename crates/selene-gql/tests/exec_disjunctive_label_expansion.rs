@@ -20,7 +20,7 @@
 
 use std::collections::BTreeMap;
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     BindingTable, EmptyProcedureRegistry, ExecutionPlan, ExecutorError, OptimizeContext, Session,
     StatementOutput, analyze, execute_statement, optimize, parse, plan,
@@ -28,11 +28,11 @@ use selene_gql::{
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+fn props<const N: usize>(pairs: [(DbString, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 
@@ -87,12 +87,12 @@ struct LabelFamilyFixture {
 
 impl LabelFamilyFixture {
     fn build() -> Self {
-        let person = istr("Person");
-        let robot = istr("Robot");
-        let alien = istr("Alien");
-        let email = istr("email");
-        let age = istr("age");
-        let department = istr("department");
+        let person = db_string("Person");
+        let robot = db_string("Robot");
+        let alien = db_string("Alien");
+        let email = db_string("email");
+        let age = db_string("age");
+        let department = db_string("department");
 
         let graph = SharedGraph::new(GraphId::new(1550));
         {
@@ -108,9 +108,9 @@ impl LabelFamilyFixture {
                     .create_node(
                         LabelSet::single(person.clone()),
                         props([
-                            (email.clone(), Value::String(istr(name))),
+                            (email.clone(), Value::String(db_string(name))),
                             (age.clone(), Value::Int(person_age)),
-                            (department.clone(), Value::String(istr("engineering"))),
+                            (department.clone(), Value::String(db_string("engineering"))),
                         ]),
                     )
                     .expect("Person inserts");
@@ -120,9 +120,9 @@ impl LabelFamilyFixture {
                     .create_node(
                         LabelSet::single(robot.clone()),
                         props([
-                            (email.clone(), Value::String(istr(name))),
+                            (email.clone(), Value::String(db_string(name))),
                             (age.clone(), Value::Int(robot_age)),
-                            (department.clone(), Value::String(istr("engineering"))),
+                            (department.clone(), Value::String(db_string("engineering"))),
                         ]),
                     )
                     .expect("Robot inserts");
@@ -131,9 +131,9 @@ impl LabelFamilyFixture {
                 .create_node(
                     LabelSet::single(alien),
                     props([
-                        (email.clone(), Value::String(istr("zorblax"))),
+                        (email.clone(), Value::String(db_string("zorblax"))),
                         (age.clone(), Value::Int(99_999)),
-                        (department, Value::String(istr("xenobiology"))),
+                        (department, Value::String(db_string("xenobiology"))),
                     ]),
                 )
                 .expect("Alien inserts");
@@ -211,7 +211,7 @@ fn row_set_equivalence_with_manual_union_all() {
 fn composition_with_parameterized_index() {
     let fixture = LabelFamilyFixture::build();
     let mut session = Session::new(&fixture.graph);
-    session.bind_parameter(istr("target"), Value::String(istr("r2d2")));
+    session.bind_parameter(db_string("target"), Value::String(db_string("r2d2")));
 
     let plan = optimized(
         "MATCH (n:Person|Robot) WHERE n.email = $target RETURN n",
@@ -227,7 +227,7 @@ fn composition_with_parameterized_index() {
 fn composition_with_parameterized_typed_range() {
     let fixture = LabelFamilyFixture::build();
     let mut session = Session::new(&fixture.graph);
-    session.bind_parameter(istr("min_age"), Value::Int(50));
+    session.bind_parameter(db_string("min_age"), Value::Int(50));
 
     let plan = optimized(
         "MATCH (n:Person|Robot) WHERE n.age >= $min_age RETURN n",
@@ -247,7 +247,7 @@ fn composition_with_parameterized_typed_range() {
 fn composition_with_string_equality_probe() {
     let fixture = LabelFamilyFixture::build();
     let mut session = Session::new(&fixture.graph);
-    session.bind_parameter(istr("target"), Value::String(istr("alice")));
+    session.bind_parameter(db_string("target"), Value::String(db_string("alice")));
 
     let plan = optimized(
         "MATCH (n:Person|Robot) WHERE n.email = $target RETURN n",
@@ -335,7 +335,7 @@ fn composition_with_downstream_group_by() {
     let row = &table.rows()[0];
     assert_eq!(
         row.get(dept_index).cloned().unwrap_or(Value::Null),
-        Value::String(istr("engineering"))
+        Value::String(db_string("engineering"))
     );
     assert_eq!(
         row.get(count_index).cloned().unwrap_or(Value::Null),
@@ -362,9 +362,9 @@ fn multi_label_node_dedups_at_disjunctive_scan_join_tree_level() {
     // binding table matches the unexpanded
     // `LabelExpr::Disjunction(any(...))` semantics, which visit each node
     // once.
-    let person = istr("Multi1Person");
-    let robot = istr("Multi1Robot");
-    let email = istr("email");
+    let person = db_string("Multi1Person");
+    let robot = db_string("Multi1Robot");
+    let email = db_string("email");
 
     let graph = SharedGraph::new(GraphId::new(1551));
     {
@@ -373,13 +373,13 @@ fn multi_label_node_dedups_at_disjunctive_scan_join_tree_level() {
         mutator
             .create_node(
                 LabelSet::from_iter([person.clone(), robot.clone()]),
-                props([(email.clone(), Value::String(istr("hybrid")))]),
+                props([(email.clone(), Value::String(db_string("hybrid")))]),
             )
             .expect("multi-label node inserts");
         mutator
             .create_node(
                 LabelSet::single(person.clone()),
-                props([(email.clone(), Value::String(istr("hybrid")))]),
+                props([(email.clone(), Value::String(db_string("hybrid")))]),
             )
             .expect("Person-only node inserts");
         txn.commit().expect("fixture commits");
@@ -434,9 +434,9 @@ fn catalog_present_vs_absent_produces_identical_row_set() {
     // matching branch in the expanded plan and exactly once in the
     // unexpanded baseline — directly observable via COUNT / LIMIT /
     // aggregates.
-    let person = istr("InvPerson");
-    let robot = istr("InvRobot");
-    let email = istr("email");
+    let person = db_string("InvPerson");
+    let robot = db_string("InvRobot");
+    let email = db_string("email");
 
     let graph = SharedGraph::new(GraphId::new(1552));
     {
@@ -449,20 +449,20 @@ fn catalog_present_vs_absent_produces_identical_row_set() {
             mutator
                 .create_node(
                     LabelSet::from_iter([person.clone(), robot.clone()]),
-                    props([(email.clone(), Value::String(istr(tag)))]),
+                    props([(email.clone(), Value::String(db_string(tag)))]),
                 )
                 .expect("multi-label node inserts");
         }
         mutator
             .create_node(
                 LabelSet::single(person.clone()),
-                props([(email.clone(), Value::String(istr("gamma")))]),
+                props([(email.clone(), Value::String(db_string("gamma")))]),
             )
             .expect("Person-only node inserts");
         mutator
             .create_node(
                 LabelSet::single(robot.clone()),
-                props([(email.clone(), Value::String(istr("delta")))]),
+                props([(email.clone(), Value::String(db_string("delta")))]),
             )
             .expect("Robot-only node inserts");
         txn.commit().expect("fixture commits");

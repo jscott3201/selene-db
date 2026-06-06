@@ -13,7 +13,7 @@ fn int_table(name: &str, values: &[i64]) -> BindingTable {
     BindingTable::new(
         BindingTableSchema {
             columns: vec![BindingTableColumn {
-                name: Some(exec_common::istr(name)),
+                name: Some(exec_common::db_string(name)),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::Integer),
             }],
@@ -132,7 +132,7 @@ fn chain_rhs_sees_same_snapshot_as_lhs() {
                 LabelSet::single(fixture.person.clone()),
                 props([(
                     fixture.name.clone(),
-                    Value::String(exec_common::istr("Dina")),
+                    Value::String(exec_common::db_string("Dina")),
                 )]),
             )
             .expect("late node inserts");
@@ -144,7 +144,7 @@ fn chain_rhs_sees_same_snapshot_as_lhs() {
     let names = column_values(&table, "name");
 
     assert_eq!(names.len(), 3);
-    assert!(!names.contains(&Value::String(exec_common::istr("Dina"))));
+    assert!(!names.contains(&Value::String(exec_common::db_string("Dina"))));
 }
 
 #[test]

@@ -1,8 +1,8 @@
 //! Sorted label sets per spec 02 section 5.3.
 //!
-//! Labels are ordered in memory lexicographically by [`IStr`] (through the
+//! Labels are ordered in memory lexicographically by [`DbString`] (through the
 //! inner `CompactString`). On the wire, labels serialize in that same canonical
-//! lexicographic order by [`IStr::as_str`] and deserialize by *validating* that
+//! lexicographic order by [`DbString::as_str`] and deserialize by *validating* that
 //! canonical order — a non-ascending or duplicate payload is rejected as
 //! malformed (the in-memory order is already lexicographic, so no re-sort is
 //! needed). The inline capacity of 3 matches the common
@@ -22,18 +22,18 @@ use rkyv::{
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
-use crate::IStr;
+use crate::DbString;
 
 /// Sorted set of graph labels.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct LabelSet(SmallVec<[IStr; 3]>);
+pub struct LabelSet(SmallVec<[DbString; 3]>);
 
 #[derive(Debug)]
 struct InvalidArchivedLabelSet;
 
 impl fmt::Display for InvalidArchivedLabelSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("archived LabelSet must be sorted by IStr order with no duplicates")
+        f.write_str("archived LabelSet must be sorted by DbString order with no duplicates")
     }
 }
 
@@ -49,13 +49,13 @@ impl LabelSet {
     /// Construct a label set from an iterator, sorting and deduplicating.
     #[allow(clippy::should_implement_trait)]
     #[must_use]
-    pub fn from_iter(labels: impl IntoIterator<Item = IStr>) -> Self {
+    pub fn from_iter(labels: impl IntoIterator<Item = DbString>) -> Self {
         labels.into_iter().collect()
     }
 
     /// Construct a single-label set.
     #[must_use]
-    pub fn single(label: IStr) -> Self {
+    pub fn single(label: DbString) -> Self {
         let mut labels = SmallVec::new();
         labels.push(label);
         Self(labels)
@@ -63,12 +63,12 @@ impl LabelSet {
 
     /// Construct the one-label view used by edge APIs.
     #[must_use]
-    pub fn edge(label: IStr) -> Self {
+    pub fn edge(label: DbString) -> Self {
         Self::single(label)
     }
 
     /// Insert a label, returning true when it was not already present.
-    pub fn insert(&mut self, label: IStr) -> bool {
+    pub fn insert(&mut self, label: DbString) -> bool {
         match self.0.binary_search(&label) {
             Ok(_) => false,
             Err(idx) => {
@@ -79,7 +79,7 @@ impl LabelSet {
     }
 
     /// Remove a label, returning true when it was present.
-    pub fn remove(&mut self, label: &IStr) -> bool {
+    pub fn remove(&mut self, label: &DbString) -> bool {
         match self.0.binary_search(label) {
             Ok(idx) => {
                 self.0.remove(idx);
@@ -91,7 +91,7 @@ impl LabelSet {
 
     /// Return true if `label` is present.
     #[must_use]
-    pub fn contains(&self, label: &IStr) -> bool {
+    pub fn contains(&self, label: &DbString) -> bool {
         self.0.binary_search(label).is_ok()
     }
 
@@ -107,8 +107,8 @@ impl LabelSet {
         self.0.is_empty()
     }
 
-    /// Iterate labels in sorted `IStr` order.
-    pub fn iter(&self) -> impl Iterator<Item = &IStr> {
+    /// Iterate labels in sorted `DbString` order.
+    pub fn iter(&self) -> impl Iterator<Item = &DbString> {
         self.0.iter()
     }
 
@@ -134,8 +134,8 @@ impl Serialize for LabelSet {
     where
         S: Serializer,
     {
-        // No resort: labels are kept in lexicographic `IStr` order in memory
-        // (`insert` maintains the sorted-deduped invariant), and `IStr` Ord is
+        // No resort: labels are kept in lexicographic `DbString` order in memory
+        // (`insert` maintains the sorted-deduped invariant), and `DbString` Ord is
         // lexicographic, so this emits the canonical wire order directly —
         // byte-identical to the old `sort_by(as_str())`.
         self.0.serialize(serializer)
@@ -150,11 +150,11 @@ impl<'de> Deserialize<'de> for LabelSet {
         // The wire is canonical (strictly-ascending, dedup'd) by construction;
         // validate that invariant rather than re-sorting. A non-canonical or
         // duplicate-bearing payload is rejected as malformed.
-        let raw: SmallVec<[IStr; 3]> = SmallVec::deserialize(deserializer)?;
+        let raw: SmallVec<[DbString; 3]> = SmallVec::deserialize(deserializer)?;
         for window in raw.windows(2) {
             if window[0] >= window[1] {
                 return Err(serde::de::Error::custom(
-                    "LabelSet must be sorted by IStr order with no duplicate labels",
+                    "LabelSet must be sorted by DbString order with no duplicate labels",
                 ));
             }
         }
@@ -163,7 +163,7 @@ impl<'de> Deserialize<'de> for LabelSet {
 }
 
 impl Archive for LabelSet {
-    type Archived = ArchivedVec<Archived<IStr>>;
+    type Archived = ArchivedVec<Archived<DbString>>;
     type Resolver = VecResolver;
 
     fn resolve(&self, resolver: Self::Resolver, out: Place<Self::Archived>) {
@@ -174,7 +174,7 @@ impl Archive for LabelSet {
 impl<S> RkyvSerialize<S> for LabelSet
 where
     S: Fallible + Allocator + Writer + ?Sized,
-    IStr: RkyvSerialize<S>,
+    DbString: RkyvSerialize<S>,
 {
     fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
         // No resort: in-memory order is already canonical lexicographic order
@@ -183,14 +183,14 @@ where
     }
 }
 
-impl<D> RkyvDeserialize<LabelSet, D> for ArchivedVec<Archived<IStr>>
+impl<D> RkyvDeserialize<LabelSet, D> for ArchivedVec<Archived<DbString>>
 where
     D: Fallible + ?Sized,
     D::Error: Source,
-    Archived<IStr>: RkyvDeserialize<IStr, D>,
+    Archived<DbString>: RkyvDeserialize<DbString, D>,
 {
     fn deserialize(&self, deserializer: &mut D) -> Result<LabelSet, D::Error> {
-        let mut raw: SmallVec<[IStr; 3]> = SmallVec::new();
+        let mut raw: SmallVec<[DbString; 3]> = SmallVec::new();
         for label in self.as_slice() {
             raw.push(label.deserialize(deserializer)?);
         }
@@ -205,8 +205,8 @@ where
     }
 }
 
-impl FromIterator<IStr> for LabelSet {
-    fn from_iter<T: IntoIterator<Item = IStr>>(iter: T) -> Self {
+impl FromIterator<DbString> for LabelSet {
+    fn from_iter<T: IntoIterator<Item = DbString>>(iter: T) -> Self {
         let mut set = Self::new();
         for label in iter {
             set.insert(label);
@@ -220,10 +220,10 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::intern;
+    use crate::db_string;
 
-    fn label(name: &str) -> IStr {
-        intern(name).unwrap()
+    fn label(name: &str) -> DbString {
+        db_string(name).unwrap()
     }
 
     #[test]
@@ -328,8 +328,8 @@ mod tests {
         // sorted-deduped invariant. "apple" < "zebra" lexicographically.
         let b = label("ls.de.canon.zebra");
         let a = label("ls.de.canon.apple");
-        let bytes = postcard::to_allocvec::<SmallVec<[IStr; 3]>>(&{
-            let mut v = SmallVec::<[IStr; 3]>::new();
+        let bytes = postcard::to_allocvec::<SmallVec<[DbString; 3]>>(&{
+            let mut v = SmallVec::<[DbString; 3]>::new();
             v.push(a.clone());
             v.push(b.clone());
             v
@@ -347,8 +347,8 @@ mod tests {
         // resort).
         let zebra = label("ls.de.noncanon.zebra");
         let apple = label("ls.de.noncanon.apple");
-        let bytes = postcard::to_allocvec::<SmallVec<[IStr; 3]>>(&{
-            let mut v = SmallVec::<[IStr; 3]>::new();
+        let bytes = postcard::to_allocvec::<SmallVec<[DbString; 3]>>(&{
+            let mut v = SmallVec::<[DbString; 3]>::new();
             v.push(zebra);
             v.push(apple);
             v
@@ -361,8 +361,8 @@ mod tests {
     #[test]
     fn deserialize_rejects_duplicate_payload() {
         let a = label("ls.de.dup.a");
-        let bytes = postcard::to_allocvec::<SmallVec<[IStr; 3]>>(&{
-            let mut v = SmallVec::<[IStr; 3]>::new();
+        let bytes = postcard::to_allocvec::<SmallVec<[DbString; 3]>>(&{
+            let mut v = SmallVec::<[DbString; 3]>::new();
             v.push(a.clone());
             v.push(a);
             v
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(LabelSet::single(label("ls.one")).len(), 1);
         let large = LabelSet::from_iter((0..100).map(|idx| {
             let name = format!("ls.large.{idx}");
-            intern(&name).unwrap()
+            db_string(&name).unwrap()
         }));
         assert_eq!(large.len(), 100);
         assert!(large.sorted_deduped_invariant_holds());
@@ -433,7 +433,7 @@ mod tests {
             let mut expected = std::collections::BTreeSet::new();
             for value in raw {
                 let name = format!("ls.prop.{value}");
-                let label = intern(&name).unwrap();
+                let label = db_string(&name).unwrap();
                 let inserted = set.insert(label.clone());
                 prop_assert_eq!(inserted, expected.insert(label));
                 prop_assert!(set.sorted_deduped_invariant_holds());

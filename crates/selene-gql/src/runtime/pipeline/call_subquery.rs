@@ -128,7 +128,7 @@ fn null_outer_binding_is_plan_pattern_binding(
     Ok(false)
 }
 
-fn plan_binds_name(plan: &ExecutionPlan, name: selene_core::IStr) -> bool {
+fn plan_binds_name(plan: &ExecutionPlan, name: selene_core::DbString) -> bool {
     plan.pattern_plan
         .as_ref()
         .is_some_and(|pattern| pattern_binds_name(pattern, name.clone()))
@@ -138,7 +138,7 @@ fn plan_binds_name(plan: &ExecutionPlan, name: selene_core::IStr) -> bool {
             .any(|op| op_binds_name(op, name.clone()))
 }
 
-fn op_binds_name(op: &PipelineOp, name: selene_core::IStr) -> bool {
+fn op_binds_name(op: &PipelineOp, name: selene_core::DbString) -> bool {
     match op {
         PipelineOp::Match(pattern) | PipelineOp::OptionalMatch(pattern) => {
             pattern_binds_name(pattern, name)
@@ -151,7 +151,7 @@ fn op_binds_name(op: &PipelineOp, name: selene_core::IStr) -> bool {
     }
 }
 
-fn pattern_binds_name(pattern: &PatternPlan, name: selene_core::IStr) -> bool {
+fn pattern_binds_name(pattern: &PatternPlan, name: selene_core::DbString) -> bool {
     pattern.bindings.iter().any(|binding| binding.name == name)
 }
 
@@ -167,7 +167,7 @@ fn yield_indices(
 
 fn source_index(
     schema: &BindingTableSchema,
-    name: selene_core::IStr,
+    name: selene_core::DbString,
 ) -> Result<usize, ExecutorError> {
     pattern::column_index(schema, name).ok_or(ExecutorError::ImplementationDefined {
         detail: "CALL subquery binding missing from source row",

@@ -1,6 +1,6 @@
 //! Expression Flagger walk.
 
-use selene_core::{IStr, feature_register::FeatureId};
+use selene_core::{DbString, feature_register::FeatureId};
 
 use crate::{
     NonEmpty, ValueExpr,
@@ -130,7 +130,7 @@ fn value_children(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
     value.for_each_child(&mut |child| self::value(child, uses));
 }
 
-fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
+fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
     if name.len() != 1 {
         return None;
     }
@@ -148,7 +148,7 @@ fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
     }
 }
 
-fn aggregate_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
+fn aggregate_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
     if name.len() != 1 {
         return None;
     }
@@ -335,7 +335,7 @@ mod tests {
         // the `for_each_child` delegation recurses into children.
         let expr = ValueExpr::ListAccess {
             target: ValueExpr::Variable {
-                name: selene_core::intern("list").expect("interns"),
+                name: selene_core::db_string("list").expect("string fits DB string cap"),
                 span: span(0),
             }
             .into(),
@@ -388,7 +388,7 @@ mod tests {
         // ordering `for_each_child` alone cannot express, hence the explicit
         // `IsCheck` arm.
         let typed_param = |name: &str, offset: u32| ValueExpr::Parameter {
-            name: selene_core::intern(name).expect("interns"),
+            name: selene_core::db_string(name).expect("string fits DB string cap"),
             declared_type: Some(crate::ast::types::GqlType::Int8),
             span: span(offset),
         };

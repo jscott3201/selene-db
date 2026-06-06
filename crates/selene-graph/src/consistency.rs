@@ -22,7 +22,7 @@
 
 use roaring::RoaringBitmap;
 
-use selene_core::{EdgeId, IStr, NodeId};
+use selene_core::{DbString, EdgeId, NodeId};
 
 use crate::adjacency::AdjacencyEdge;
 use crate::graph::SeleneGraph;
@@ -120,7 +120,7 @@ impl SeleneGraph {
 
     /// Family (1a): node label bitmaps.
     fn check_label_index(&self) -> Result<(), String> {
-        let mut reference: imbl::HashMap<IStr, RoaringBitmap> = imbl::HashMap::new();
+        let mut reference: imbl::HashMap<DbString, RoaringBitmap> = imbl::HashMap::new();
         for row in self.node_store.alive.iter() {
             let Some(labels) = self.node_store.labels.get(row as usize) else {
                 return Err(format!("alive node row {row} has no label column entry"));
@@ -134,7 +134,7 @@ impl SeleneGraph {
 
     /// Family (1b): edge label bitmaps.
     fn check_edge_label_index(&self) -> Result<(), String> {
-        let mut reference: imbl::HashMap<IStr, RoaringBitmap> = imbl::HashMap::new();
+        let mut reference: imbl::HashMap<DbString, RoaringBitmap> = imbl::HashMap::new();
         for row in self.edge_store.alive.iter() {
             let Some(label) = self.edge_store.label.get(row as usize) else {
                 return Err(format!("alive edge row {row} has no label column entry"));
@@ -290,13 +290,13 @@ impl SeleneGraph {
     }
 }
 
-/// Compare a maintained `IStr`-keyed bitmap index against a re-derivation,
+/// Compare a maintained `DbString`-keyed bitmap index against a re-derivation,
 /// failing on any key difference, bitmap difference, or empty maintained
 /// bucket.
 fn compare_bitmap_index(
     name: &str,
-    maintained: &imbl::HashMap<IStr, RoaringBitmap>,
-    reference: &imbl::HashMap<IStr, RoaringBitmap>,
+    maintained: &imbl::HashMap<DbString, RoaringBitmap>,
+    reference: &imbl::HashMap<DbString, RoaringBitmap>,
 ) -> Result<(), String> {
     for (label, bitmap) in maintained {
         if bitmap.is_empty() {
@@ -375,7 +375,7 @@ fn compare_adjacency(
     Ok(())
 }
 
-fn adjacency_sort_key(edge: &AdjacencyEdge) -> (IStr, NodeId, EdgeId) {
+fn adjacency_sort_key(edge: &AdjacencyEdge) -> (DbString, NodeId, EdgeId) {
     (edge.label.clone(), edge.neighbor, edge.edge_id)
 }
 

@@ -56,7 +56,7 @@ fn hash_join_handles_multiple_matches_per_key() {
         let mut mutator = txn.mutator();
         mutator
             .create_edge(
-                exec_common::istr("KNOWS"),
+                exec_common::db_string("KNOWS"),
                 NodeId::new(1),
                 NodeId::new(3),
                 props([(fixture.score.clone(), Value::Int(7))]),

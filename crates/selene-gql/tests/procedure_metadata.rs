@@ -1,13 +1,13 @@
 //! BRIEF-120 procedure metadata coverage.
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, GqlType, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn full_registry() -> BuiltinProcedureRegistry {
@@ -36,7 +36,7 @@ fn execute_rows(
 
 fn column_strings(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -249,7 +249,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
 #[test]
 fn text_score_nodes_metadata_has_node_candidates() {
     let registry = full_registry();
-    let name = [istr("selene"), istr("text_score_nodes")];
+    let name = [db_string("selene"), db_string("text_score_nodes")];
     let metadata = registry.lookup(&name).expect("text_score_nodes resolves");
 
     let arity = metadata.signature.arity();
@@ -278,7 +278,7 @@ fn text_score_nodes_metadata_has_node_candidates() {
 #[test]
 fn text_score_nodes_batch_metadata_has_nested_node_candidates() {
     let registry = full_registry();
-    let name = [istr("selene"), istr("text_score_nodes_batch")];
+    let name = [db_string("selene"), db_string("text_score_nodes_batch")];
     let metadata = registry
         .lookup(&name)
         .expect("text_score_nodes_batch resolves");
@@ -315,8 +315,8 @@ fn text_score_nodes_batch_metadata_has_nested_node_candidates() {
 fn text_score_candidate_state_expanded_batch_metadata_has_state_roots() {
     let registry = full_registry();
     let name = [
-        istr("selene"),
-        istr("text_score_candidate_state_expanded_batch"),
+        db_string("selene"),
+        db_string("text_score_candidate_state_expanded_batch"),
     ];
     let metadata = registry
         .lookup(&name)
@@ -365,7 +365,7 @@ fn text_score_candidate_state_expanded_batch_metadata_has_state_roots() {
 #[test]
 fn vector_score_nodes_batch_metadata_has_nested_node_candidates() {
     let registry = full_registry();
-    let name = [istr("selene"), istr("vector_score_nodes_batch")];
+    let name = [db_string("selene"), db_string("vector_score_nodes_batch")];
     let metadata = registry
         .lookup(&name)
         .expect("vector_score_nodes_batch resolves");
@@ -403,7 +403,7 @@ fn vector_score_nodes_batch_metadata_has_nested_node_candidates() {
 #[test]
 fn vector_candidate_states_metadata_has_descriptor_columns() {
     let registry = full_registry();
-    let name = [istr("selene"), istr("vector_candidate_states")];
+    let name = [db_string("selene"), db_string("vector_candidate_states")];
     let metadata = registry
         .lookup(&name)
         .expect("vector_candidate_states resolves");
@@ -434,7 +434,10 @@ fn vector_candidate_states_metadata_has_descriptor_columns() {
 #[test]
 fn vector_score_candidate_state_nodes_metadata_has_composition_args() {
     let registry = full_registry();
-    let name = [istr("selene"), istr("vector_score_candidate_state_nodes")];
+    let name = [
+        db_string("selene"),
+        db_string("vector_score_candidate_state_nodes"),
+    ];
     let metadata = registry
         .lookup(&name)
         .expect("vector_score_candidate_state_nodes resolves");
@@ -474,8 +477,8 @@ fn vector_score_candidate_state_nodes_metadata_has_composition_args() {
 fn vector_score_candidate_state_expanded_metadata_has_expansion_and_composition_args() {
     let registry = full_registry();
     let name = [
-        istr("selene"),
-        istr("vector_score_candidate_state_expanded"),
+        db_string("selene"),
+        db_string("vector_score_candidate_state_expanded"),
     ];
     let metadata = registry
         .lookup(&name)
@@ -522,8 +525,8 @@ fn vector_score_candidate_state_expanded_metadata_has_expansion_and_composition_
 fn vector_score_candidate_state_expanded_batch_metadata_has_batch_args() {
     let registry = full_registry();
     let name = [
-        istr("selene"),
-        istr("vector_score_candidate_state_expanded_batch"),
+        db_string("selene"),
+        db_string("vector_score_candidate_state_expanded_batch"),
     ];
     let metadata = registry
         .lookup(&name)
@@ -575,8 +578,8 @@ fn vector_score_candidate_state_expanded_batch_metadata_has_batch_args() {
 fn vector_search_candidate_state_expanded_ann_metadata_has_state_and_ann_args() {
     let registry = full_registry();
     let name = [
-        istr("selene"),
-        istr("vector_search_candidate_state_expanded_ann"),
+        db_string("selene"),
+        db_string("vector_search_candidate_state_expanded_ann"),
     ];
     let metadata = registry
         .lookup(&name)

@@ -53,7 +53,7 @@ pub(in crate::core_provider) fn decode_graph_types(
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{GraphId, LabelSet, PropertyValueType, intern};
+    use selene_core::{GraphId, LabelSet, PropertyValueType, db_string};
 
     use super::*;
     use crate::SharedGraph;
@@ -64,9 +64,9 @@ mod tests {
 
     #[test]
     fn encode_graph_types_writes_version_byte() {
-        let person = intern("VersionPerson").unwrap();
+        let person = db_string("VersionPerson").unwrap();
         let graph_type = GraphTypeDef {
-            name: intern("version.graph").unwrap(),
+            name: db_string("version.graph").unwrap(),
             node_types: vec![NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),
@@ -95,12 +95,12 @@ mod tests {
         // decode a GraphTypeDef with an OneOf edge endpoint and assert structural equality
         // including OneOf payload sort order, so a future variant-reorder regression
         // surfaces here rather than as silent on-disk corruption.
-        let person = intern("V3OneOfPerson").unwrap();
-        let company = intern("V3OneOfCompany").unwrap();
-        let school = intern("V3OneOfSchool").unwrap();
-        let affiliated = intern("V3_AFFILIATED").unwrap();
+        let person = db_string("V3OneOfPerson").unwrap();
+        let company = db_string("V3OneOfCompany").unwrap();
+        let school = db_string("V3OneOfSchool").unwrap();
+        let affiliated = db_string("V3_AFFILIATED").unwrap();
         let graph_type = GraphTypeDef {
-            name: intern("v3.oneof.graph").unwrap(),
+            name: db_string("v3.oneof.graph").unwrap(),
             node_types: vec![
                 NodeTypeDef {
                     name: person.clone(),
@@ -159,12 +159,12 @@ mod tests {
         // A closed/typed RECORD property descriptor must survive the GTYP rkyv archive,
         // including nested LIST and RECORD field types (exercises the bytecheck recursion
         // bounds on RecordFieldType across the archive).
-        let person = intern("RecordPerson").unwrap();
-        let config = intern("config").unwrap();
-        let host = intern("host").unwrap();
-        let ports = intern("ports").unwrap();
-        let nested = intern("nested").unwrap();
-        let flag = intern("flag").unwrap();
+        let person = db_string("RecordPerson").unwrap();
+        let config = db_string("config").unwrap();
+        let host = db_string("host").unwrap();
+        let ports = db_string("ports").unwrap();
+        let nested = db_string("nested").unwrap();
+        let flag = db_string("flag").unwrap();
         let record_field_types = RecordFieldTypes(vec![
             RecordFieldTypeDef {
                 name: host,
@@ -191,7 +191,7 @@ mod tests {
             },
         ]);
         let graph_type = GraphTypeDef {
-            name: intern("record.graph").unwrap(),
+            name: db_string("record.graph").unwrap(),
             node_types: vec![NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),
@@ -234,9 +234,9 @@ mod tests {
         // The clean break rejects any non-current version byte (e.g. the retired 0xB7 V3
         // magic) and an empty section, rather than silently falling through to a legacy
         // decoder or treating it as zero rows.
-        let person = intern("UnknownVersionPerson").unwrap();
+        let person = db_string("UnknownVersionPerson").unwrap();
         let graph_type = GraphTypeDef {
-            name: intern("unknown.version.graph").unwrap(),
+            name: db_string("unknown.version.graph").unwrap(),
             node_types: vec![NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),

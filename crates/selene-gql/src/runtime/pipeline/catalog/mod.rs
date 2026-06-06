@@ -8,7 +8,7 @@ mod index_ddl;
 mod procedure;
 mod property;
 
-use selene_core::{IStr, LabelSet, Value, intern};
+use selene_core::{DbString, LabelSet, Value, db_string};
 use selene_graph::{
     EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
     TypedIndexKind, ValidationMode as GraphValidationMode,
@@ -241,7 +241,7 @@ pub(super) fn execute(
                         .map_err(|source| catalog_graph_error(source, *span))?;
                 }
                 IndexPath::Composite { properties, kinds } => {
-                    let properties = properties.into_iter().collect::<SmallVec<[IStr; 4]>>();
+                    let properties = properties.into_iter().collect::<SmallVec<[DbString; 4]>>();
                     let kinds = kinds.into_iter().collect::<SmallVec<[TypedIndexKind; 4]>>();
                     ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                         .create_composite_property_index_named(
@@ -310,7 +310,7 @@ const fn graph_validation_mode(mode: Option<crate::ValidationMode>) -> GraphVali
 /// `key_labels` is a validated singleton equal to the type-name label; the
 /// resulting `LabelSet` is byte-identical to the pre-GG21 `LabelSet::single`
 /// (no snapshot/WAL format change — content only).
-fn key_label_set(key_labels: &[IStr], label: IStr) -> LabelSet {
+fn key_label_set(key_labels: &[DbString], label: DbString) -> LabelSet {
     if key_labels.is_empty() {
         LabelSet::single(label)
     } else {
@@ -322,11 +322,11 @@ fn key_label_set(key_labels: &[IStr], label: IStr) -> LabelSet {
 /// from the planned key labels, falling back to the implied type-name label.
 /// Under the IL003 singleton cap a non-empty `key_labels` carries exactly one
 /// label equal to the type name.
-fn edge_key_label(key_labels: &[IStr], label: IStr) -> IStr {
+fn edge_key_label(key_labels: &[DbString], label: DbString) -> DbString {
     key_labels.first().cloned().unwrap_or(label)
 }
 
-fn node_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
+fn node_type_exists(graph_type: Option<&GraphTypeDef>, label: DbString) -> bool {
     graph_type
         .map(|graph_type| {
             graph_type
@@ -337,7 +337,7 @@ fn node_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
         .unwrap_or(false)
 }
 
-fn edge_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
+fn edge_type_exists(graph_type: Option<&GraphTypeDef>, label: DbString) -> bool {
     graph_type
         .map(|graph_type| {
             graph_type
@@ -444,10 +444,10 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
         .into_iter()
         .map(|(name, label, property, kind)| {
             Ok(Binding::new([
-                Value::String(intern_runtime(&name)?),
+                Value::String(runtime_db_string(&name)?),
                 Value::String(label),
                 Value::String(property),
-                Value::String(intern_runtime(&kind)?),
+                Value::String(runtime_db_string(&kind)?),
             ]))
         })
         .collect::<Result<Vec<_>, ExecutorError>>()?;
@@ -481,8 +481,8 @@ fn show_procedures(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
 
 fn show_row(label: &str, definition: &str) -> Result<Binding, ExecutorError> {
     Ok(Binding::new([
-        Value::String(intern_runtime(label)?),
-        Value::String(intern_runtime(definition)?),
+        Value::String(runtime_db_string(label)?),
+        Value::String(runtime_db_string(definition)?),
     ]))
 }
 
@@ -490,12 +490,12 @@ fn show_schema() -> Result<BindingTableSchema, ExecutorError> {
     Ok(BindingTableSchema {
         columns: vec![
             BindingTableColumn {
-                name: Some(intern_runtime("label")?),
+                name: Some(runtime_db_string("label")?),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::String),
             },
             BindingTableColumn {
-                name: Some(intern_runtime("definition")?),
+                name: Some(runtime_db_string("definition")?),
                 hidden: None,
                 ty: AnalyzedType::DYNAMIC,
             },
@@ -508,7 +508,7 @@ fn string_schema(names: &[&str]) -> Result<BindingTableSchema, ExecutorError> {
         .iter()
         .map(|name| {
             Ok(BindingTableColumn {
-                name: Some(intern_runtime(name)?),
+                name: Some(runtime_db_string(name)?),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::String),
             })
@@ -517,9 +517,9 @@ fn string_schema(names: &[&str]) -> Result<BindingTableSchema, ExecutorError> {
     Ok(BindingTableSchema { columns })
 }
 
-pub(super) fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
-    intern(value).map_err(|_err| ExecutorError::ImplementationDefined {
-        detail: "interner cap exhausted during catalog rendering",
+pub(super) fn runtime_db_string(value: &str) -> Result<DbString, ExecutorError> {
+    db_string(value).map_err(|_err| ExecutorError::ImplementationDefined {
+        detail: "string construction failed during catalog rendering",
     })
 }
 

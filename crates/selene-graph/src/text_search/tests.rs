@@ -2,45 +2,51 @@ use std::time::{Duration, Instant};
 
 use selene_core::{
     CancellationChecker, CancellationToken, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff,
-    PropertyMap, Value, intern,
+    PropertyMap, Value,
 };
 
 use super::*;
 use crate::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
 #[test]
 fn exact_text_search_ranks_labelled_string_nodes() {
     let graph = SharedGraph::new(GraphId::new(431_001));
-    let doc = istr("TextDoc");
-    let other = istr("OtherDoc");
-    let body = istr("body");
+    let doc = db_string("TextDoc");
+    let other = db_string("OtherDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory graph retrieval"))),
+                props(
+                    &body,
+                    Value::String(db_string("graph memory graph retrieval")),
+                ),
             )
             .unwrap();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("vector retrieval retrieval"))),
+                props(
+                    &body,
+                    Value::String(db_string("vector retrieval retrieval")),
+                ),
             )
             .unwrap();
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph search"))),
+                props(&body, Value::String(db_string("graph search"))),
             )
             .unwrap();
         mutator
@@ -49,7 +55,7 @@ fn exact_text_search_ranks_labelled_string_nodes() {
         mutator
             .create_node(
                 LabelSet::single(other),
-                props(&body, Value::String(istr("graph retrieval"))),
+                props(&body, Value::String(db_string("graph retrieval"))),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -70,8 +76,8 @@ fn exact_text_search_ranks_labelled_string_nodes() {
 #[test]
 fn exact_text_search_tokenizes_case_and_punctuation() {
     let graph = SharedGraph::new(GraphId::new(431_002));
-    let doc = istr("TextTokenDoc");
-    let body = istr("body");
+    let doc = db_string("TextTokenDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
@@ -79,7 +85,7 @@ fn exact_text_search_tokenizes_case_and_punctuation() {
                 LabelSet::single(doc.clone()),
                 props(
                     &body,
-                    Value::String(istr("Agentic-memory, Graph_Retrieval!")),
+                    Value::String(db_string("Agentic-memory, Graph_Retrieval!")),
                 ),
             )
             .unwrap();
@@ -98,8 +104,8 @@ fn exact_text_search_tokenizes_case_and_punctuation() {
 #[test]
 fn exact_text_search_tracks_update_and_delete_visibility() {
     let graph = SharedGraph::new(GraphId::new(431_003));
-    let doc = istr("TextMutableDoc");
-    let body = istr("body");
+    let doc = db_string("TextMutableDoc");
+    let body = db_string("body");
     let stale;
     let fresh;
     {
@@ -108,13 +114,13 @@ fn exact_text_search_tracks_update_and_delete_visibility() {
         stale = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("stale memory"))),
+                props(&body, Value::String(db_string("stale memory"))),
             )
             .unwrap();
         fresh = mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("fresh memory"))),
+                props(&body, Value::String(db_string("fresh memory"))),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -135,8 +141,11 @@ fn exact_text_search_tracks_update_and_delete_visibility() {
             .update_node(
                 stale,
                 LabelDiff::new([], []).unwrap(),
-                PropertyDiff::new([(body.clone(), Value::String(istr("fresh updated")))], [])
-                    .unwrap(),
+                PropertyDiff::new(
+                    [(body.clone(), Value::String(db_string("fresh updated")))],
+                    [],
+                )
+                .unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -170,14 +179,14 @@ fn exact_text_search_tracks_update_and_delete_visibility() {
 #[test]
 fn exact_text_search_empty_query_and_zero_k_are_empty() {
     let graph = SharedGraph::new(GraphId::new(431_004));
-    let doc = istr("TextEmptyDoc");
-    let body = istr("body");
+    let doc = db_string("TextEmptyDoc");
+    let body = db_string("body");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&body, Value::String(istr("graph memory"))),
+                props(&body, Value::String(db_string("graph memory"))),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -200,8 +209,8 @@ fn exact_text_search_empty_query_and_zero_k_are_empty() {
 #[test]
 fn exact_text_search_checked_observes_cancelled_token_before_scan() {
     let graph = SharedGraph::new(GraphId::new(431_005));
-    let doc = istr("TextCancelDoc");
-    let body = istr("body");
+    let doc = db_string("TextCancelDoc");
+    let body = db_string("body");
     let token = CancellationToken::new();
     token.cancel();
     let checker = CancellationChecker::new(Some(&token), None);
@@ -216,8 +225,8 @@ fn exact_text_search_checked_observes_cancelled_token_before_scan() {
 #[test]
 fn exact_text_search_checked_observes_elapsed_deadline_before_scan() {
     let graph = SharedGraph::new(GraphId::new(431_006));
-    let doc = istr("TextTimeoutDoc");
-    let body = istr("body");
+    let doc = db_string("TextTimeoutDoc");
+    let body = db_string("body");
     let checker = CancellationChecker::new(None, Some(Instant::now() - Duration::from_secs(1)));
 
     let err = graph

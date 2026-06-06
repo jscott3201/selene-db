@@ -135,7 +135,7 @@ pub fn from_nodes(nodes: impl IntoIterator<Item = NodeId>) -> Self {
                 r#"crates/selene-graph/src/vector_search/score.rs
 pub fn score_vector_expanded_candidate_sets_batch_checked(
     &self,
-    property: &IStr,
+    property: &DbString,
     queries: &[VectorValue],
     root_sets: &[VectorCandidateSet],
     options: VectorNeighborSearchOptions<'_>,
@@ -182,18 +182,18 @@ pub fn score_vector_expanded_candidate_sets_batch_checked(
             (
                 r#"crates/selene-graph/src/candidate_state.rs
 pub struct CandidateStateSpec {
-    pub name: IStr,
-    pub required_label: Option<IStr>,
-    pub require_outgoing: Vec<IStr>,
-    pub require_incoming: Vec<IStr>,
-    pub exclude_outgoing: Vec<IStr>,
-    pub exclude_incoming: Vec<IStr>,
+    pub name: DbString,
+    pub required_label: Option<DbString>,
+    pub require_outgoing: Vec<DbString>,
+    pub require_incoming: Vec<DbString>,
+    pub exclude_outgoing: Vec<DbString>,
+    pub exclude_incoming: Vec<DbString>,
 }"#,
                 Some("src-memory-state-spec"),
             ),
             (
                 r#"crates/selene-graph/src/candidate_state.rs
-pub fn exclude_outgoing(mut self, edge_label: IStr) -> Self {
+pub fn exclude_outgoing(mut self, edge_label: DbString) -> Self {
     self.exclude_outgoing.push(edge_label);
     self
 }"#,
@@ -201,11 +201,11 @@ pub fn exclude_outgoing(mut self, edge_label: IStr) -> Self {
             ),
             (
                 r#"crates/selene-graph/src/candidate_state.rs
-pub fn require_incoming(mut self, edge_label: IStr) -> Self {
+pub fn require_incoming(mut self, edge_label: DbString) -> Self {
     self.require_incoming.push(edge_label);
     self
 }
-pub fn require_outgoing(mut self, edge_label: IStr) -> Self {
+pub fn require_outgoing(mut self, edge_label: DbString) -> Self {
     self.require_outgoing.push(edge_label);
     self
 }"#,
@@ -213,7 +213,7 @@ pub fn require_outgoing(mut self, edge_label: IStr) -> Self {
             ),
             (
                 r#"crates/selene-graph/src/candidate_state.rs
-pub fn candidate_set(&self, name: &IStr) -> Option<VectorCandidateSet> {
+pub fn candidate_set(&self, name: &DbString) -> Option<VectorCandidateSet> {
     self.state.lock().members.get(name).map(|members| {
         VectorCandidateSet::from_canonical_nodes(members.iter().copied().collect())
     })

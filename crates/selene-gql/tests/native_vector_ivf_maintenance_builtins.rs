@@ -1,20 +1,20 @@
 //! End-to-end coverage for IVF vector-index maintenance built-ins.
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value, VectorValue};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -40,7 +40,7 @@ fn execute_rows(
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -54,7 +54,7 @@ fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -66,7 +66,13 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
         .collect()
 }
 
-fn insert_vectors(graph: &SharedGraph, label: &IStr, property: &IStr, count: usize, offset: f32) {
+fn insert_vectors(
+    graph: &SharedGraph,
+    label: &DbString,
+    property: &DbString,
+    count: usize,
+    offset: f32,
+) {
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
     for value in 0..count {
@@ -88,10 +94,10 @@ fn rebuild_recommended_vector_indexes_accepts_optional_cap() {
     let graph = SharedGraph::new(GraphId::new(330_157));
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let high = istr("HighVectorDoc");
-    let low = istr("LowVectorDoc");
-    let cold = istr("ColdVectorDoc");
-    let embedding = istr("embedding");
+    let high = db_string("HighVectorDoc");
+    let low = db_string("LowVectorDoc");
+    let cold = db_string("ColdVectorDoc");
+    let embedding = db_string("embedding");
     for (label, offset) in [(&high, 0.0), (&low, 10_000.0), (&cold, 20_000.0)] {
         insert_vectors(&graph, label, &embedding, 100, offset);
     }

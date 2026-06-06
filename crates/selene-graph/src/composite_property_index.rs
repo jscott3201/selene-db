@@ -1,7 +1,7 @@
 //! Commit-path maintenance for built-in composite node property indexes.
 
 use rustc_hash::FxHashMap;
-use selene_core::{IStr, LabelSet, PropertyMap, Value};
+use selene_core::{DbString, LabelSet, PropertyMap, Value};
 use smallvec::SmallVec;
 
 use crate::composite_typed_index::CompositeIndexValueError;
@@ -9,7 +9,8 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::{CompositePropertyIndexEntry, composite_property_key};
 use crate::{CompositeTypedIndex, TypedIndexKind};
 
-type CompositeIndexMap = FxHashMap<(IStr, SmallVec<[IStr; 4]>), CompositePropertyIndexEntry>;
+type CompositeIndexMap =
+    FxHashMap<(DbString, SmallVec<[DbString; 4]>), CompositePropertyIndexEntry>;
 
 pub(crate) fn apply_node_create(
     indexes: &mut CompositeIndexMap,
@@ -75,8 +76,8 @@ pub(crate) fn apply_node_update(
 /// Build a composite property index strictly.
 pub(crate) fn build_composite_property_index(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    properties: SmallVec<[IStr; 4]>,
+    label: DbString,
+    properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
 ) -> GraphResult<CompositeTypedIndex> {
     build_composite_property_index_inner(graph, label, properties, kinds, BuildPolicy::Strict)
@@ -85,8 +86,8 @@ pub(crate) fn build_composite_property_index(
 /// Build a composite property index leniently.
 pub(crate) fn build_composite_property_index_lenient(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    properties: SmallVec<[IStr; 4]>,
+    label: DbString,
+    properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
 ) -> GraphResult<CompositeTypedIndex> {
     build_composite_property_index_inner(graph, label, properties, kinds, BuildPolicy::Lenient)
@@ -133,8 +134,8 @@ enum BuildPolicy {
 
 fn build_composite_property_index_inner(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    properties: SmallVec<[IStr; 4]>,
+    label: DbString,
+    properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
     policy: BuildPolicy,
 ) -> GraphResult<CompositeTypedIndex> {
@@ -179,7 +180,7 @@ fn build_composite_property_index_inner(
 fn indexes_for_labels<'a>(
     indexes: &'a mut CompositeIndexMap,
     labels: &'a LabelSet,
-) -> impl Iterator<Item = (IStr, &'a mut CompositePropertyIndexEntry)> {
+) -> impl Iterator<Item = (DbString, &'a mut CompositePropertyIndexEntry)> {
     indexes
         .iter_mut()
         .filter_map(|((label, _), entry)| labels.contains(label).then_some((label.clone(), entry)))
@@ -187,7 +188,7 @@ fn indexes_for_labels<'a>(
 
 fn indexable_values<'a>(
     props: &'a PropertyMap,
-    properties: &[IStr],
+    properties: &[DbString],
 ) -> Option<SmallVec<[&'a Value; 4]>> {
     properties
         .iter()
@@ -210,7 +211,7 @@ fn values_share_key(
 }
 
 fn insert_commit(
-    label: IStr,
+    label: DbString,
     entry: &mut CompositePropertyIndexEntry,
     values: &[&Value],
     row: u32,
@@ -222,7 +223,7 @@ fn insert_commit(
 }
 
 fn remove_commit(
-    label: IStr,
+    label: DbString,
     entry: &mut CompositePropertyIndexEntry,
     values: &[&Value],
     row: u32,
@@ -239,8 +240,8 @@ fn remove_commit(
 /// `warn_rejected` lenient skip. Build paths handle `ArityMismatch`
 /// separately via [`index_rejection`] under the strict policy.
 fn demote_or_promote(
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     row: u32,
     op: &'static str,
     err: CompositeIndexValueError,
@@ -254,7 +255,11 @@ fn demote_or_promote(
     }
 }
 
-fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueError) -> GraphError {
+fn index_rejection(
+    label: DbString,
+    properties: &[DbString],
+    err: CompositeIndexValueError,
+) -> GraphError {
     match err {
         CompositeIndexValueError::ArityMismatch { expected, observed } => {
             GraphError::Inconsistent {
@@ -281,8 +286,8 @@ fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueErr
 
 fn warn_rejected(
     op: &'static str,
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     row: u32,
     err: &CompositeIndexValueError,
 ) {

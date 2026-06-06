@@ -3,7 +3,7 @@
 //! Mutation-tier procedure dropping a maintained BM25 text index through the
 //! single mutation funnel.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::unit_result;
@@ -55,7 +55,7 @@ pub(super) fn execute(
     Ok(unit_result())
 }
 
-fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError> {
+fn string_arg(value: &Value, name: &'static str) -> Result<DbString, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!(
             "{PROC_NAME} {name} must be a non-empty STRING"

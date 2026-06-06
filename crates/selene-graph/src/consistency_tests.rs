@@ -2,19 +2,19 @@
 //!
 //! These construct a `SeleneGraph` by hand, corrupt exactly one derived index,
 //! and assert the checker catches the drift. This is the "would it catch the
-//! IStr admission race" bar for the safety net itself: a checker that never
+//! DbString admission race" bar for the safety net itself: a checker that never
 //! fails is worthless.
 
 use roaring::RoaringBitmap;
-use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, db_string};
 use smallvec::smallvec;
 
 use crate::adjacency::AdjacencyEdge;
 use crate::graph::{CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph};
 use crate::{CompositeTypedIndex, SharedGraph, TypedIndex, TypedIndexKind};
 
-fn label(name: &str) -> IStr {
-    intern(name).unwrap()
+fn label(name: &str) -> DbString {
+    db_string(name).unwrap()
 }
 
 /// Build a tiny consistent graph: two alive nodes (one labeled `Person` with
@@ -155,7 +155,7 @@ fn drifted_composite_index_is_caught() {
     let person = label("consistency.person");
     let age = label("consistency.age");
     let name = label("consistency.name");
-    let props: smallvec::SmallVec<[IStr; 4]> = smallvec![age, name];
+    let props: smallvec::SmallVec<[DbString; 4]> = smallvec![age, name];
     let kinds: smallvec::SmallVec<[TypedIndexKind; 4]> =
         smallvec![TypedIndexKind::I64, TypedIndexKind::String];
     // No node carries both age AND name, so the consistent index is empty.

@@ -13,7 +13,7 @@
 //! into the rejected shape and drive the planner directly — making each
 //! defensive guard live and pinning its exact tag.
 
-use selene_core::intern;
+use selene_core::db_string;
 use selene_gql::{
     AnalyzedStatement, AnalyzedStatementKind, EmptyProcedureRegistry, JoinTree, MatchClause,
     MatchMode, MutationStatement, PatternElement, PipelineStatement, PlannerError, WriteKind,
@@ -245,7 +245,9 @@ fn call_subquery_yield_of_unknown_column_is_a_metadata_mismatch() {
     mutate_call_subquery(&mut analyzed, |call| {
         let span = call.span;
         call.yield_items = vec![YieldItem {
-            column: YieldColumn::Named(intern("missing_column").expect("interns")),
+            column: YieldColumn::Named(
+                db_string("missing_column").expect("string fits DB string cap"),
+            ),
             alias: None,
             span,
         }];

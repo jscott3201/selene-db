@@ -4,7 +4,7 @@ use selene_core::Value;
 use selene_gql::{BindingTable, BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
 use selene_testing::local_omlx::Topic;
 
-use super::{OmlxGqlQueryRootFixture, TOP_K, istr};
+use super::{OmlxGqlQueryRootFixture, TOP_K, db_string};
 
 #[path = "query_exec/shape.rs"]
 mod shape;
@@ -411,8 +411,8 @@ impl OmlxGqlQueryRootFixture {
             .queries
             .get(query_index)
             .expect("oMLX GQL bench query index is valid");
-        session.bind_parameter(istr("query"), Value::Vector(query.vector.clone()));
-        session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
+        session.bind_parameter(db_string("query"), Value::Vector(query.vector.clone()));
+        session.bind_parameter(db_string("query_index"), Value::Int(query_index as i64));
         match session
             .execute_source(QUERY_ROOT_SOURCE, registry)
             .expect("oMLX GQL query-root vector procedure executes")
@@ -483,8 +483,8 @@ impl OmlxGqlQueryRootFixture {
             .queries
             .get(query_index)
             .expect("oMLX GQL bench query index is valid");
-        session.bind_parameter(istr("query"), Value::Vector(query.vector.clone()));
-        session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
+        session.bind_parameter(db_string("query"), Value::Vector(query.vector.clone()));
+        session.bind_parameter(db_string("query_index"), Value::Int(query_index as i64));
         match session.execute_source(source, registry).expect(expected) {
             StatementOutput::Rows(table) => table,
             other => panic!("unexpected output: {other:?}"),
@@ -503,8 +503,8 @@ impl OmlxGqlQueryRootFixture {
             .queries
             .get(query_index)
             .expect("oMLX GQL bench query index is valid");
-        session.bind_parameter(istr("query"), Value::Vector(query.vector.clone()));
-        session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
+        session.bind_parameter(db_string("query"), Value::Vector(query.vector.clone()));
+        session.bind_parameter(db_string("query_index"), Value::Int(query_index as i64));
         match session.execute_source(source, registry).expect(expected) {
             StatementOutput::Rows(table) => table,
             other => panic!("unexpected output: {other:?}"),
@@ -569,7 +569,7 @@ impl OmlxGqlQueryRootFixture {
 
     fn precision(&self, topic: Topic, table: &BindingTable) -> usize {
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table
             .iter()
@@ -587,7 +587,7 @@ impl OmlxGqlQueryRootFixture {
 
     fn current_precision(&self, topic: Topic, table: &BindingTable) -> usize {
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table
             .iter()
@@ -606,10 +606,10 @@ impl OmlxGqlQueryRootFixture {
 
     fn batch_precision(&self, table: &BindingTable) -> usize {
         let query_column = table
-            .column_index(istr("query_index"))
+            .column_index(db_string("query_index"))
             .expect("query_index column exists");
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table
             .iter()
@@ -631,10 +631,10 @@ impl OmlxGqlQueryRootFixture {
 
     fn batch_current_precision(&self, table: &BindingTable) -> usize {
         let query_column = table
-            .column_index(istr("query_index"))
+            .column_index(db_string("query_index"))
             .expect("query_index column exists");
         let node_column = table
-            .column_index(istr("node_id"))
+            .column_index(db_string("node_id"))
             .expect("node_id column exists");
         table
             .iter()

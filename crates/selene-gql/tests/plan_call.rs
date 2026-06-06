@@ -1,31 +1,31 @@
 //! BRIEF-27 CALL planner lowering tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     AnalyzedStatement, AnalyzedType, EmptyProcedureRegistry, GqlType, PipelineOp, PlannerError,
     ProcedureOutputColumn, ProcedureParameter, YieldKind, analyze, parse, plan,
 };
 use selene_testing::MockProcedureRegistry;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn registry() -> MockProcedureRegistry {
     MockProcedureRegistry::new()
         .with_procedure(
-            vec![istr("pkg"), istr("all")],
+            vec![db_string("pkg"), db_string("all")],
             Vec::new(),
             vec![
-                ProcedureOutputColumn::new(istr("outA"), GqlType::String),
-                ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
+                ProcedureOutputColumn::new(db_string("outA"), GqlType::String),
+                ProcedureOutputColumn::new(db_string("outB"), GqlType::Integer),
             ],
         )
         .with_procedure(
-            vec![istr("pkg"), istr("args")],
+            vec![db_string("pkg"), db_string("args")],
             vec![
-                ProcedureParameter::new(istr("a"), GqlType::Integer, false),
-                ProcedureParameter::new(istr("b"), GqlType::String, false),
+                ProcedureParameter::new(db_string("a"), GqlType::Integer, false),
+                ProcedureParameter::new(db_string("b"), GqlType::String, false),
             ],
             Vec::new(),
         )
@@ -123,12 +123,12 @@ fn yield_star_duplicate_after_registry_drift_is_defensive_error() {
     let registry = registry();
     let analyzed = analyzed("CALL pkg.all() YIELD *, outA AS first", &registry);
     let drifted = MockProcedureRegistry::new().with_procedure(
-        vec![istr("pkg"), istr("all")],
+        vec![db_string("pkg"), db_string("all")],
         Vec::new(),
         vec![
-            ProcedureOutputColumn::new(istr("outA"), GqlType::String),
-            ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
-            ProcedureOutputColumn::new(istr("first"), GqlType::String),
+            ProcedureOutputColumn::new(db_string("outA"), GqlType::String),
+            ProcedureOutputColumn::new(db_string("outB"), GqlType::Integer),
+            ProcedureOutputColumn::new(db_string("first"), GqlType::String),
         ],
     );
 

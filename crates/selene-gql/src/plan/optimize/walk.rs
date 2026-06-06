@@ -534,7 +534,7 @@ fn walk_pattern_element(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::IStr;
+    use selene_core::DbString;
 
     use crate::{
         BinaryOp, Literal, SourceSpan,
@@ -542,8 +542,8 @@ mod tests {
         plan::{BindingElement, FilterPredicateKind},
     };
 
-    fn istr(value: &str) -> IStr {
-        selene_core::intern(value).expect("test string interns")
+    fn db_string(value: &str) -> DbString {
+        selene_core::db_string(value).expect("test string fits DB string cap")
     }
 
     fn span() -> SourceSpan {
@@ -553,7 +553,7 @@ mod tests {
     fn binding(raw: u32, name: &str) -> BindingDef {
         BindingDef {
             binding: BindingId::new(raw),
-            name: istr(name),
+            name: db_string(name),
             element: BindingElement::Node,
             ty: AnalyzedType::DYNAMIC,
             label_predicate: None,
@@ -563,7 +563,7 @@ mod tests {
 
     fn variable(name: &str) -> ValueExpr {
         ValueExpr::Variable {
-            name: istr(name),
+            name: db_string(name),
             span: span(),
         }
     }
@@ -632,7 +632,7 @@ mod tests {
             binding_refs: vec![n],
             kind: FilterPredicateKind::PropertyEquals {
                 binding: Some(n),
-                key: istr("age"),
+                key: db_string("age"),
             },
             index_consumed: false,
             span: span(),
@@ -657,7 +657,7 @@ mod tests {
         let n = bindings[0].binding;
         let m = bindings[1].binding;
         let mut init = PropertyInit {
-            key: istr("age"),
+            key: db_string("age"),
             value: dynamic_project(binary_refs("n", "m"), vec![n, m]),
             span: span(),
         };

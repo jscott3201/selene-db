@@ -32,7 +32,7 @@ fn parse_with_source_reports_unsupported_feature() {
 
 #[test]
 fn diagnostic_report_wraps_complexity_limit_exceeded() {
-    // Retargeted from the removed interner-budget render test: proves the
+    // Retargeted from the removed string-cap render test: proves the
     // 5GQL1 PROGRAM_LIMIT_EXCEEDED class still renders for a surviving
     // parser DoS-guard error variant (the #218 bracket-depth guard).
     let error = ParserError::ComplexityLimitExceeded {

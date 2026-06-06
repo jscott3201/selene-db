@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, thread};
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry,
     ExecutionPlan, ExecutorError, ExpectedType, GqlStatus, GqlType, LimitValue, OptimizeContext,
@@ -12,11 +12,11 @@ use selene_gql::{
 use selene_graph::SharedGraph;
 use serde_json::Value as JsonValue;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+fn props<const N: usize>(pairs: [(DbString, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 
@@ -89,10 +89,10 @@ fn sample_uuid_value() -> Value {
 
 fn graph_with_sensors(id: u64) -> SharedGraph {
     let graph = SharedGraph::new(GraphId::new(id));
-    let sensor = istr("Sensor");
-    let id_key = istr("id");
-    let value_key = istr("value");
-    let name_key = istr("name");
+    let sensor = db_string("Sensor");
+    let id_key = db_string("id");
+    let value_key = db_string("value");
+    let name_key = db_string("name");
     let uuid_value = sample_uuid_value();
     {
         let mut txn = graph.begin_write();
@@ -106,7 +106,7 @@ fn graph_with_sensors(id: u64) -> SharedGraph {
                         (value_key.clone(), Value::Int(index * 10)),
                         (
                             name_key.clone(),
-                            Value::String(istr(&format!("sensor-{index}"))),
+                            Value::String(db_string(&format!("sensor-{index}"))),
                         ),
                     ]),
                 )
@@ -116,7 +116,7 @@ fn graph_with_sensors(id: u64) -> SharedGraph {
             .create_node(
                 LabelSet::single(sensor.clone()),
                 props([
-                    (id_key.clone(), Value::String(istr("string-id"))),
+                    (id_key.clone(), Value::String(db_string("string-id"))),
                     (value_key.clone(), Value::Int(60)),
                 ]),
             )
@@ -280,7 +280,7 @@ fn typed_limit_parameter_rejects_unsatisfiable_declared_types_at_analysis() {
 fn typed_parameter_runtime_rejects_bare_reference_inherited_from_declaration() {
     let graph = SharedGraph::new(GraphId::new(4120));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("x"), Value::String(istr("abc")));
+    session.bind_parameter(db_string("x"), Value::String(db_string("abc")));
 
     let err = execute(
         &mut session,
@@ -302,13 +302,13 @@ fn typed_parameter_runtime_rejects_bare_reference_inherited_from_declaration() {
 fn typed_parameter_runtime_accepts_and_rejects_declared_value_type() {
     let graph = SharedGraph::new(GraphId::new(4117));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("id"), Value::Int(42));
+    session.bind_parameter(db_string("id"), Value::Int(42));
     assert_eq!(
         single_value(&mut session, "RETURN $id :: INT AS id"),
         Value::Int(42)
     );
 
-    session.bind_parameter(istr("id"), Value::String(istr("abc")));
+    session.bind_parameter(db_string("id"), Value::String(db_string("abc")));
     let err = execute(&mut session, "RETURN $id :: INT AS id")
         .expect_err("typed parameter rejects mismatched value");
     assert!(matches!(
@@ -342,7 +342,7 @@ fn typed_parameter_python_shape_fixture() {
     );
     assert_eq!(
         table.rows()[0].values(),
-        &[Value::Int(42), Value::String(istr("thermostat"))]
+        &[Value::Int(42), Value::String(db_string("thermostat"))]
     );
 }
 
@@ -350,7 +350,7 @@ fn typed_parameter_python_shape_fixture() {
 fn typed_limit_parameter_runtime_checks_declared_type_first() {
     let graph = graph_with_sensors(4118);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("count"), Value::Float(3.0));
+    session.bind_parameter(db_string("count"), Value::Float(3.0));
 
     let err = execute(
         &mut session,
@@ -372,20 +372,20 @@ fn typed_limit_parameter_runtime_checks_declared_type_first() {
 fn typed_parameter_plan_cache_reuses_same_type_and_partitions_different_types() {
     let graph = SharedGraph::new(GraphId::new(4119));
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());
-    session.bind_parameter(istr("a"), Value::Int(1));
+    session.bind_parameter(db_string("a"), Value::Int(1));
     assert_eq!(
         single_value(&mut session, "RETURN $a :: INT AS a"),
         Value::Int(1)
     );
-    session.bind_parameter(istr("a"), Value::Int(2));
+    session.bind_parameter(db_string("a"), Value::Int(2));
     assert_eq!(
         single_value(&mut session, "RETURN $a :: INT AS a"),
         Value::Int(2)
     );
-    session.bind_parameter(istr("a"), Value::String(istr("x")));
+    session.bind_parameter(db_string("a"), Value::String(db_string("x")));
     assert_eq!(
         single_value(&mut session, "RETURN $a :: STRING AS a"),
-        Value::String(istr("x"))
+        Value::String(db_string("x"))
     );
 
     let stats = session.plan_cache_stats().expect("cache enabled");
@@ -399,7 +399,7 @@ fn bind_parameter_per_value_variant() {
     let mut session = Session::new(&graph);
 
     for (index, make_value) in Value::ALL.iter().enumerate() {
-        let name = istr(&format!("p{index}"));
+        let name = db_string(&format!("p{index}"));
         let value = make_value();
         session.bind_parameter(name.clone(), value.clone());
 
@@ -413,7 +413,7 @@ fn bind_parameter_per_value_variant() {
 fn limit_parameter_int() {
     let graph = graph_with_sensors(4101);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("count"), Value::Int(3));
+    session.bind_parameter(db_string("count"), Value::Int(3));
 
     let table = rows(execute(&mut session, "MATCH (n:Sensor) RETURN n LIMIT $count").unwrap());
 
@@ -424,7 +424,7 @@ fn limit_parameter_int() {
 fn limit_parameter_negative_rejected() {
     let graph = graph_with_sensors(4102);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("count"), Value::Int(-1));
+    session.bind_parameter(db_string("count"), Value::Int(-1));
 
     let err = execute(&mut session, "MATCH (n:Sensor) RETURN n LIMIT $count")
         .expect_err("negative limit is rejected");
@@ -444,7 +444,7 @@ fn limit_parameter_negative_rejected() {
 fn limit_parameter_non_integer_rejected() {
     let graph = graph_with_sensors(4103);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("count"), Value::String(istr("five")));
+    session.bind_parameter(db_string("count"), Value::String(db_string("five")));
 
     let err = execute(&mut session, "MATCH (n:Sensor) RETURN n LIMIT $count")
         .expect_err("string limit is rejected");
@@ -463,7 +463,7 @@ fn limit_parameter_non_integer_rejected() {
 fn order_by_limit_parameter_uses_top_k_path() {
     let graph = graph_with_sensors(4104);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("count"), Value::Int(2));
+    session.bind_parameter(db_string("count"), Value::Int(2));
     let plan =
         optimized_plan("MATCH (n:Sensor) RETURN n.value AS value ORDER BY value DESC LIMIT $count");
 
@@ -484,12 +484,12 @@ fn order_by_limit_parameter_uses_top_k_path() {
 fn property_match_parameter_polymorphic() {
     let graph = graph_with_sensors(4105);
     let mut session = Session::new(&graph);
-    let id = istr("id");
+    let id = db_string("id");
     let uuid_value = sample_uuid_value();
 
     for value in [
         Value::Int(1),
-        Value::String(istr("string-id")),
+        Value::String(db_string("string-id")),
         uuid_value.clone(),
     ] {
         session.bind_parameter(id.clone(), value);
@@ -519,7 +519,7 @@ fn unbound_parameter_error_carries_span() {
 fn unreferenced_parameter_is_lenient() {
     let graph = SharedGraph::new(GraphId::new(4107));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("unused"), Value::Int(1));
+    session.bind_parameter(db_string("unused"), Value::Int(1));
 
     assert_eq!(
         single_value(&mut session, "RETURN 42 AS value"),
@@ -535,7 +535,7 @@ fn per_session_isolation() {
 
     let first = thread::spawn(move || {
         let mut session = Session::new(&first_graph);
-        session.bind_parameter(istr("id"), Value::Int(1));
+        session.bind_parameter(db_string("id"), Value::Int(1));
         for _ in 0..25 {
             assert_eq!(
                 single_value(&mut session, "RETURN $id AS id"),
@@ -545,7 +545,7 @@ fn per_session_isolation() {
     });
     let second = thread::spawn(move || {
         let mut session = Session::new(&second_graph);
-        session.bind_parameter(istr("id"), Value::Int(2));
+        session.bind_parameter(db_string("id"), Value::Int(2));
         for _ in 0..25 {
             assert_eq!(
                 single_value(&mut session, "RETURN $id AS id"),
@@ -562,8 +562,8 @@ fn per_session_isolation() {
 fn mutation_parameters() {
     let graph = SharedGraph::new(GraphId::new(4109));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("id"), Value::Int(42));
-    session.bind_parameter(istr("name"), Value::String(istr("thermostat")));
+    session.bind_parameter(db_string("id"), Value::Int(42));
+    session.bind_parameter(db_string("name"), Value::String(db_string("thermostat")));
 
     let table = rows(
         execute(
@@ -576,7 +576,7 @@ fn mutation_parameters() {
     assert_eq!(table.row_count(), 1);
     assert_eq!(
         table.rows()[0].values(),
-        &[Value::Int(42), Value::String(istr("thermostat"))]
+        &[Value::Int(42), Value::String(db_string("thermostat"))]
     );
 }
 
@@ -584,7 +584,7 @@ fn mutation_parameters() {
 fn rebinding_is_upsert() {
     let graph = SharedGraph::new(GraphId::new(4110));
     let mut session = Session::new(&graph);
-    let id = istr("id");
+    let id = db_string("id");
 
     assert_eq!(session.bind_parameter(id.clone(), Value::Int(1)), None);
     assert_eq!(
@@ -605,11 +605,11 @@ fn rebinding_is_upsert() {
 fn clear_parameter_apis_remove_bindings() {
     let graph = SharedGraph::new(GraphId::new(4111));
     let mut session = Session::new(&graph);
-    let id = istr("id");
-    let name = istr("name");
+    let id = db_string("id");
+    let name = db_string("name");
 
     session.bind_parameter(id.clone(), Value::Int(1));
-    session.bind_parameter(name, Value::String(istr("sensor")));
+    session.bind_parameter(name, Value::String(db_string("sensor")));
     assert_eq!(session.clear_parameter(&id), Some(Value::Int(1)));
     assert!(matches!(
         execute(&mut session, "RETURN $id AS id"),
@@ -627,7 +627,7 @@ fn clear_parameter_apis_remove_bindings() {
 fn parameters_preserved_across_tx_boundaries() {
     let graph = SharedGraph::new(GraphId::new(4112));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("id"), Value::Int(42));
+    session.bind_parameter(db_string("id"), Value::Int(42));
 
     assert_eq!(
         single_value(&mut session, "RETURN $id AS id"),
@@ -690,7 +690,7 @@ fn runtime_error_in_tx_sets_aborted() {
 fn plan_cache_hits_across_param_value_changes() {
     let graph = graph_with_sensors(4114);
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());
-    let id = istr("id");
+    let id = db_string("id");
     let source = "MATCH (n {id: $id}) RETURN n";
     session.bind_parameter(id.clone(), Value::Int(1));
     assert_eq!(rows(execute(&mut session, source).unwrap()).row_count(), 1);
@@ -707,12 +707,12 @@ fn plan_cache_hits_across_param_value_changes() {
 fn plan_cache_runtime_type_check_with_dynamic() {
     let graph = graph_with_sensors(4115);
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());
-    let id = istr("id");
+    let id = db_string("id");
     let source = "MATCH (n {id: $id}) RETURN n";
     session.bind_parameter(id.clone(), Value::Int(1));
     assert_eq!(rows(execute(&mut session, source).unwrap()).row_count(), 1);
 
-    session.bind_parameter(id, Value::String(istr("not-present")));
+    session.bind_parameter(id, Value::String(db_string("not-present")));
     assert_eq!(rows(execute(&mut session, source).unwrap()).row_count(), 0);
 
     let stats = session.plan_cache_stats().expect("cache enabled");
@@ -739,13 +739,13 @@ fn python_shape_fixture() {
     );
     assert_eq!(
         table.rows()[0].values(),
-        &[Value::Int(42), Value::String(istr("thermostat"))]
+        &[Value::Int(42), Value::String(db_string("thermostat"))]
     );
 }
 
 fn bind_json_params(session: &mut Session<'_>, params: HashMap<&str, JsonValue>) {
     for (name, value) in params {
-        session.bind_parameter(istr(name), json_to_value(value));
+        session.bind_parameter(db_string(name), json_to_value(value));
     }
 }
 
@@ -762,7 +762,7 @@ fn json_to_value(value: JsonValue) -> Value {
                 Value::Float(value.as_f64().expect("json number is finite"))
             }
         }
-        JsonValue::String(value) => Value::String(istr(&value)),
+        JsonValue::String(value) => Value::String(db_string(&value)),
         JsonValue::Array(values) => Value::List(values.into_iter().map(json_to_value).collect()),
         JsonValue::Object(_) => Value::Null,
     }

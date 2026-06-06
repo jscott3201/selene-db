@@ -11,7 +11,7 @@ pub(crate) mod query;
 pub(crate) mod session;
 pub(crate) mod transaction;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     ProcedureRegistry, SourceSpan, Statement, ValueExpr,
@@ -204,7 +204,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_strict_typed(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         ty: AnalyzedType,
     ) -> Result<BindingId, AnalysisError> {
@@ -215,7 +215,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_or_reuse(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
     ) -> Result<BindingId, AnalysisError> {
         self.declare_or_reuse_with_labels(kind, name, span, None)
@@ -224,7 +224,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_or_reuse_with_labels(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         labels: Option<crate::LabelExpr>,
     ) -> Result<BindingId, AnalysisError> {
@@ -235,7 +235,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_or_reuse_with_labels_info(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         labels: Option<crate::LabelExpr>,
     ) -> Result<(BindingId, bool), AnalysisError> {
@@ -251,7 +251,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_or_reuse_with_labels_typed_info(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         ty: AnalyzedType,
         labels: Option<crate::LabelExpr>,
@@ -277,7 +277,7 @@ impl<'ctx> BindContext<'ctx> {
 
     pub(crate) fn resolve(
         &mut self,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         kind: BindingUseKind,
     ) -> Result<BindingId, AnalysisError> {
@@ -342,7 +342,7 @@ impl<'ctx> BindContext<'ctx> {
     /// are rejected by [`BindingScopeTree::import_binding`].
     pub(crate) fn with_imported_scope<T>(
         &mut self,
-        imports: &[IStr],
+        imports: &[DbString],
         span: SourceSpan,
         f: impl FnOnce(&mut Self) -> Result<T, AnalysisError>,
     ) -> Result<T, AnalysisError> {

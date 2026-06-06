@@ -1,33 +1,33 @@
 //! SHOW PROCEDURES row rendering.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     Binding, ExecutorError, ProcedureMetadata, ProcedureMutability, ProcedureSignature,
     ProcedureTier,
 };
 
-use super::{intern_runtime, render_gql_type};
+use super::{render_gql_type, runtime_db_string};
 
 pub(super) fn procedure_row(
-    name: &[IStr],
+    name: &[DbString],
     metadata: &ProcedureMetadata,
 ) -> Result<Binding, ExecutorError> {
     let name = render_procedure_name(name);
     Ok(Binding::new([
-        Value::String(intern_runtime(&name)?),
-        Value::String(intern_runtime(render_tier(metadata.tier))?),
-        Value::String(intern_runtime(render_mutability(metadata.mutability))?),
-        Value::String(intern_runtime(&render_signature(
+        Value::String(runtime_db_string(&name)?),
+        Value::String(runtime_db_string(render_tier(metadata.tier))?),
+        Value::String(runtime_db_string(render_mutability(metadata.mutability))?),
+        Value::String(runtime_db_string(&render_signature(
             &name,
             &metadata.signature,
         ))?),
-        Value::String(intern_runtime(metadata.description)?),
-        Value::String(intern_runtime(metadata.signature.since_version)?),
+        Value::String(runtime_db_string(metadata.description)?),
+        Value::String(runtime_db_string(metadata.signature.since_version)?),
     ]))
 }
 
-pub(super) fn render_procedure_name(name: &[IStr]) -> String {
+pub(super) fn render_procedure_name(name: &[DbString]) -> String {
     name.iter()
         .map(|part| part.as_str())
         .collect::<Vec<_>>()

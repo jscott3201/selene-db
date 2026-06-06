@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use selene_core::{IStr, intern};
+use selene_core::{DbString, db_string};
 
 use crate::{
     ReturnItem, ValueExpr,
@@ -17,7 +17,7 @@ use super::expr;
 #[derive(Default)]
 pub(super) struct AggregateRewrite {
     pub(super) aggregates: Vec<Aggregate>,
-    pub(super) names_by_expr_id: HashMap<ExprId, IStr>,
+    pub(super) names_by_expr_id: HashMap<ExprId, DbString>,
 }
 
 /// Emit a `GroupBy` op when grouping is required.
@@ -54,7 +54,7 @@ pub(super) fn push_grouping(
 pub(super) fn project_items(
     items: &[ReturnItem],
     analyzed: &AnalyzedStatement,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
 ) -> Result<Vec<ProjectExpr>, PlannerError> {
     items
         .iter()
@@ -72,7 +72,7 @@ pub(super) fn project_items(
 pub(super) fn filter_predicate(
     original: &ValueExpr,
     analyzed: &AnalyzedStatement,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
 ) -> Result<FilterPredicate, PlannerError> {
     let (expr_id, ty) = expr::expr_cell(original, analyzed)?;
     Ok(FilterPredicate {
@@ -230,9 +230,9 @@ fn collect_is_check_aggregates(
 fn synthesized_aggregate_name(
     expr_id: ExprId,
     span: crate::SourceSpan,
-) -> Result<IStr, PlannerError> {
+) -> Result<DbString, PlannerError> {
     let name = format!("agg_{}", expr_id.get());
-    intern(&name).map_err(|_err| PlannerError::InternerCapExhausted {
+    db_string(&name).map_err(|_err| PlannerError::StaticStringConstructionFailed {
         detail: "aggregate synthesized column",
         span,
     })
@@ -240,9 +240,9 @@ fn synthesized_aggregate_name(
 
 fn project_expr(
     original: &ValueExpr,
-    alias: Option<IStr>,
+    alias: Option<DbString>,
     analyzed: &AnalyzedStatement,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
 ) -> Result<ProjectExpr, PlannerError> {
     let (expr_id, ty) = expr::expr_cell(original, analyzed)?;
     Ok(ProjectExpr {
@@ -257,7 +257,7 @@ fn project_expr(
 
 fn rewrite_aggregate_refs(
     value: &ValueExpr,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
     analyzed: &AnalyzedStatement,
 ) -> ValueExpr {
     if let Some(name) = analyzed
@@ -418,7 +418,7 @@ fn rewrite_aggregate_refs(
 
 fn rewrite_exprs(
     values: &[ValueExpr],
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
     analyzed: &AnalyzedStatement,
 ) -> Vec<ValueExpr> {
     values
@@ -429,7 +429,7 @@ fn rewrite_exprs(
 
 fn rewrite_is_check_kind(
     kind: &crate::IsCheckKind,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
     analyzed: &AnalyzedStatement,
 ) -> crate::IsCheckKind {
     match kind {
@@ -448,7 +448,7 @@ fn rewrite_is_check_kind(
     }
 }
 
-fn group_key_alias(expr: &ValueExpr, items: &[ReturnItem]) -> Option<IStr> {
+fn group_key_alias(expr: &ValueExpr, items: &[ReturnItem]) -> Option<DbString> {
     items
         .iter()
         .find(|item| item.expr == *expr)
@@ -456,7 +456,7 @@ fn group_key_alias(expr: &ValueExpr, items: &[ReturnItem]) -> Option<IStr> {
         .or_else(|| column_name(expr, None))
 }
 
-fn column_name(expr: &ValueExpr, alias: Option<IStr>) -> Option<IStr> {
+fn column_name(expr: &ValueExpr, alias: Option<DbString>) -> Option<DbString> {
     alias.or(match expr {
         ValueExpr::Variable { name, .. } => Some(name.clone()),
         _ => None,

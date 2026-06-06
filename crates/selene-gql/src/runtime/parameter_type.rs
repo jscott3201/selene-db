@@ -1,6 +1,6 @@
 //! Runtime validation for typed parameter declarations.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     GqlType, SourceSpan,
@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub(crate) fn validate_declared_type(
-    name: IStr,
+    name: DbString,
     value: &Value,
     declared_type: &GqlType,
     span: SourceSpan,

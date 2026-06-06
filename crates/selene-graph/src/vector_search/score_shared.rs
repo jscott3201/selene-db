@@ -1,4 +1,4 @@
-use selene_core::{CancellationChecker, IStr, NodeId, VectorMetric, VectorValue};
+use selene_core::{CancellationChecker, DbString, NodeId, VectorMetric, VectorValue};
 
 use crate::error::GraphResult;
 use crate::shared::SharedGraph;
@@ -15,7 +15,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_nodes`].
     pub fn score_vector_nodes(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &[NodeId],
         metric: VectorMetric,
@@ -29,7 +29,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_nodes_checked`].
     pub fn score_vector_nodes_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &[NodeId],
         metric: VectorMetric,
@@ -46,7 +46,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_nodes_batch`].
     pub fn score_vector_nodes_batch<C>(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         candidate_sets: &[C],
         metric: VectorMetric,
@@ -63,7 +63,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_nodes_batch_checked`].
     pub fn score_vector_nodes_batch_checked<C>(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         candidate_sets: &[C],
         metric: VectorMetric,
@@ -89,7 +89,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_candidate_set`].
     pub fn score_vector_candidate_set(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &VectorCandidateSet,
         metric: VectorMetric,
@@ -103,7 +103,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_candidate_set_checked`].
     pub fn score_vector_candidate_set_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         candidates: &VectorCandidateSet,
         metric: VectorMetric,
@@ -120,7 +120,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_candidate_sets_batch`].
     pub fn score_vector_candidate_sets_batch(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         candidate_sets: &[VectorCandidateSet],
         metric: VectorMetric,
@@ -134,7 +134,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_candidate_sets_batch_checked`].
     pub fn score_vector_candidate_sets_batch_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         candidate_sets: &[VectorCandidateSet],
         metric: VectorMetric,
@@ -154,7 +154,7 @@ impl SharedGraph {
     /// Score vector-valued neighbors reached from one anchor in the current snapshot.
     pub fn score_vector_neighbors(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         anchor: NodeId,
         options: VectorNeighborSearchOptions<'_>,
@@ -167,7 +167,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_neighbors_checked`].
     pub fn score_vector_neighbors_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         query: &VectorValue,
         anchor: NodeId,
         options: VectorNeighborSearchOptions<'_>,
@@ -180,7 +180,7 @@ impl SharedGraph {
     /// Score one anchor's vector-valued neighbors for each query in the current snapshot.
     pub fn score_vector_neighbors_batch(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         anchors: &[NodeId],
         options: VectorNeighborSearchOptions<'_>,
@@ -193,7 +193,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_neighbors_batch_checked`].
     pub fn score_vector_neighbors_batch_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         anchors: &[NodeId],
         options: VectorNeighborSearchOptions<'_>,
@@ -209,7 +209,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_expanded_candidate_sets_batch`].
     pub fn score_vector_expanded_candidate_sets_batch(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         root_sets: &[VectorCandidateSet],
         options: VectorNeighborSearchOptions<'_>,
@@ -222,7 +222,7 @@ impl SharedGraph {
     /// [`crate::SeleneGraph::score_vector_expanded_candidate_sets_batch_checked`].
     pub fn score_vector_expanded_candidate_sets_batch_checked(
         &self,
-        property: &IStr,
+        property: &DbString,
         queries: &[VectorValue],
         root_sets: &[VectorCandidateSet],
         options: VectorNeighborSearchOptions<'_>,
@@ -240,7 +240,7 @@ impl SharedGraph {
     pub fn vector_neighbor_candidates(
         &self,
         anchor: NodeId,
-        edge_label: &IStr,
+        edge_label: &DbString,
         direction: VectorNeighborDirection,
     ) -> VectorCandidateSet {
         self.read()
@@ -252,7 +252,7 @@ impl SharedGraph {
     pub fn expand_vector_candidate_set(
         &self,
         roots: &VectorCandidateSet,
-        edge_label: &IStr,
+        edge_label: &DbString,
         direction: VectorNeighborDirection,
     ) -> VectorCandidateSet {
         self.read()
@@ -264,7 +264,7 @@ impl SharedGraph {
     pub fn expand_vector_candidate_set_checked(
         &self,
         roots: &VectorCandidateSet,
-        edge_label: &IStr,
+        edge_label: &DbString,
         direction: VectorNeighborDirection,
         checker: CancellationChecker<'_>,
     ) -> Result<VectorCandidateSet, VectorSearchError> {

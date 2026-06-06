@@ -1,16 +1,15 @@
 //! End-to-end coverage for IVF native vector built-ins.
 
 use selene_core::{
-    GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, VectorValue,
-    intern,
+    DbString, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, VectorValue,
 };
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -21,7 +20,7 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
@@ -47,7 +46,7 @@ fn execute_rows(
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -61,7 +60,7 @@ fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -75,7 +74,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 
 fn bool_column(table: &BindingTable, name: &str) -> Vec<bool> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -89,7 +88,7 @@ fn bool_column(table: &BindingTable, name: &str) -> Vec<bool> {
 
 fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -103,7 +102,7 @@ fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -120,8 +119,8 @@ fn create_vector_index_can_register_ivf_metric_kind() {
     let graph = graph(330_151);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         txn.mutator()
@@ -149,8 +148,8 @@ fn vector_index_stats_reports_ivf_memory_and_cardinality() {
     let graph = graph(330_152);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -231,8 +230,8 @@ fn vector_index_stats_recommends_ivf_rebuild_after_scale_aware_drift() {
     let graph = graph(330_153);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -295,9 +294,9 @@ fn rebuild_recommended_vector_indexes_selects_only_recommended_ivf_indexes() {
     let graph = graph(330_156);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let hot = istr("HotVectorDoc");
-    let cold = istr("ColdVectorDoc");
-    let embedding = istr("embedding");
+    let hot = db_string("HotVectorDoc");
+    let cold = db_string("ColdVectorDoc");
+    let embedding = db_string("embedding");
     for (label, offset) in [(&hot, 0.0), (&cold, 10_000.0)] {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -396,8 +395,8 @@ fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     let graph = graph(330_154);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
     let ids = {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -522,8 +521,8 @@ fn vector_search_nodes_ann_uses_registered_ivf_index() {
     let graph = graph(330_153);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
 
     {
         let mut txn = graph.begin_write();
@@ -547,7 +546,7 @@ fn vector_search_nodes_ann_uses_registered_ivf_index() {
         )
         .expect("ivf vector index creation executes");
 
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[4.1, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[4.1, 0.0])));
     let table = execute_rows(
         &mut session,
         "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 3, 'squared_euclidean', 64) \
@@ -569,8 +568,8 @@ fn vector_search_nodes_ann_uses_ivf_default_when_width_is_omitted_or_null() {
     let graph = graph(330_155);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
 
     {
         let mut txn = graph.begin_write();
@@ -592,7 +591,7 @@ fn vector_search_nodes_ann_uses_ivf_default_when_width_is_omitted_or_null() {
         )
         .expect("ivf vector index creation executes");
 
-    session.bind_parameter(istr("query"), Value::Vector(vector(&[4.1, 0.0])));
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[4.1, 0.0])));
     let omitted = execute_rows(
         &mut session,
         "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 3) \
@@ -622,8 +621,8 @@ fn vector_search_nodes_ann_batch_uses_ivf_default_when_width_is_omitted() {
     let graph = graph(330_156);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
-    let doc = istr("VectorDoc");
-    let embedding = istr("embedding");
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
 
     {
         let mut txn = graph.begin_write();
@@ -645,7 +644,7 @@ fn vector_search_nodes_ann_batch_uses_ivf_default_when_width_is_omitted() {
         )
         .expect("ivf vector index creation executes");
     session.bind_parameter(
-        istr("queries"),
+        db_string("queries"),
         Value::List(vec![
             Value::Vector(vector(&[4.1, 0.0])),
             Value::Vector(vector(&[12.2, 0.0])),

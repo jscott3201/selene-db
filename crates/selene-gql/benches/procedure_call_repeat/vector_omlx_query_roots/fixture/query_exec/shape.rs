@@ -3,7 +3,7 @@ use std::{num::NonZeroUsize, sync::Arc};
 use selene_core::Value;
 use selene_gql::{BindingTable, BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
 
-use super::super::{OmlxGqlQueryRootFixture, istr};
+use super::super::{OmlxGqlQueryRootFixture, db_string};
 
 const QUERY_ANCHOR_LOOKUP_SOURCE: &str =
     "MATCH (anchor:OmlxQueryAnchor) WHERE anchor.query_index = $query_index RETURN anchor";
@@ -331,7 +331,7 @@ fn execute_query_index_source_in_session(
     registry: &BuiltinProcedureRegistry,
     expected: &'static str,
 ) -> BindingTable {
-    session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
+    session.bind_parameter(db_string("query_index"), Value::Int(query_index as i64));
     match session.execute_source(source, registry).expect(expected) {
         StatementOutput::Rows(table) => table,
         other => panic!("unexpected output: {other:?}"),
@@ -340,7 +340,7 @@ fn execute_query_index_source_in_session(
 
 fn root_count(table: &BindingTable) -> usize {
     let roots_column = table
-        .column_index(istr("roots"))
+        .column_index(db_string("roots"))
         .expect("roots column exists");
     table
         .iter()

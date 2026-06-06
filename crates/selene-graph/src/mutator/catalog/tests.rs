@@ -1,5 +1,5 @@
 use selene_core::{
-    Change, GraphId, LabelSet, PropertyMap, PropertyValueType, SchemaChange, intern,
+    Change, GraphId, LabelSet, PropertyMap, PropertyValueType, SchemaChange, db_string,
 };
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
 fn closed_empty_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: intern("catalog.empty").unwrap(),
+            name: db_string("catalog.empty").unwrap(),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -20,9 +20,9 @@ fn closed_empty_graph(id: u64) -> SharedGraph {
 }
 
 fn person_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
+    let person = db_string("Person").unwrap();
     GraphTypeDef {
-        name: intern("catalog.person.graph").unwrap(),
+        name: db_string("catalog.person.graph").unwrap(),
         node_types: vec![NodeTypeDef {
             name: person.clone(),
             key_labels: LabelSet::single(person),
@@ -34,11 +34,11 @@ fn person_type() -> GraphTypeDef {
 }
 
 fn person_company_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
-    let company = intern("Company").unwrap();
-    let works_at = intern("WORKS_AT").unwrap();
+    let person = db_string("Person").unwrap();
+    let company = db_string("Company").unwrap();
+    let works_at = db_string("WORKS_AT").unwrap();
     GraphTypeDef {
-        name: intern("catalog.company.graph").unwrap(),
+        name: db_string("catalog.company.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
                 name: person.clone(),
@@ -67,8 +67,8 @@ fn person_company_type() -> GraphTypeDef {
 #[test]
 fn create_node_type_updates_bound_type_and_emits_schema_change() {
     let shared = closed_empty_graph(10);
-    let person = intern("Person").unwrap();
-    let name = intern("name").unwrap();
+    let person = db_string("Person").unwrap();
+    let name = db_string("name").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         {
@@ -123,7 +123,7 @@ fn create_edge_type_resolves_closed_type_and_emits_schema_change() {
         .unwrap()
         .build()
         .unwrap();
-    let knows = intern("KNOWS").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -160,7 +160,7 @@ fn drop_node_type_refuses_endpoint_reindexing() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("Person").unwrap(), DropBehavior::Restrict)
+        .drop_node_type(db_string("Person").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
     // Person is referenced directly by WORKS_AT's source endpoint, so the
@@ -180,7 +180,7 @@ fn drop_edge_type_removes_type_and_emits_schema_change() {
         .unwrap()
         .build()
         .unwrap();
-    let works_at = intern("WORKS_AT").unwrap();
+    let works_at = db_string("WORKS_AT").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -203,7 +203,7 @@ fn drop_edge_type_removes_type_and_emits_schema_change() {
 fn catalog_type_ddl_on_open_graph_is_rejected() {
     let shared = SharedGraph::new(GraphId::new(14));
     let mut txn = shared.begin_write();
-    let person = intern("Person").unwrap();
+    let person = db_string("Person").unwrap();
     let err = txn
         .mutator()
         .create_node_type(
@@ -235,7 +235,7 @@ fn drop_node_type_restrict_rejects_early_with_surviving_instances() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(intern("Person").unwrap()),
+                LabelSet::single(db_string("Person").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
@@ -245,7 +245,7 @@ fn drop_node_type_restrict_rejects_early_with_surviving_instances() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("Person").unwrap(), DropBehavior::Restrict)
+        .drop_node_type(db_string("Person").unwrap(), DropBehavior::Restrict)
         .expect_err("RESTRICT rejects the drop op itself");
     assert!(matches!(
         err,
@@ -270,14 +270,14 @@ fn drop_node_type_cascade_truncates_then_drops_in_one_txn() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(intern("Person").unwrap()),
+                LabelSet::single(db_string("Person").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         txn.commit().unwrap();
     }
 
-    let person = intern("Person").unwrap();
+    let person = db_string("Person").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -309,8 +309,8 @@ fn drop_edge_type_restrict_rejects_early_with_surviving_instances() {
         .unwrap()
         .build()
         .unwrap();
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     {
         let mut txn = shared.begin_write();
         let a = txn
@@ -349,8 +349,8 @@ fn drop_edge_type_cascade_truncates_then_drops_in_one_txn() {
         .unwrap()
         .build()
         .unwrap();
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     {
         let mut txn = shared.begin_write();
         let a = txn
@@ -392,10 +392,10 @@ fn drop_edge_type_cascade_truncates_then_drops_in_one_txn() {
 }
 
 fn person_self_knows_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     GraphTypeDef {
-        name: intern("catalog.person.knows.graph").unwrap(),
+        name: db_string("catalog.person.knows.graph").unwrap(),
         node_types: vec![NodeTypeDef {
             name: person.clone(),
             key_labels: LabelSet::single(person),
@@ -414,12 +414,12 @@ fn person_self_knows_type() -> GraphTypeDef {
 }
 
 fn person_company_school_with_oneof_edge_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
-    let company = intern("Company").unwrap();
-    let school = intern("School").unwrap();
-    let affiliated_with = intern("AFFILIATED_WITH").unwrap();
+    let person = db_string("Person").unwrap();
+    let company = db_string("Company").unwrap();
+    let school = db_string("School").unwrap();
+    let affiliated_with = db_string("AFFILIATED_WITH").unwrap();
     GraphTypeDef {
-        name: intern("catalog.oneof.graph").unwrap(),
+        name: db_string("catalog.oneof.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
                 name: person.clone(),
@@ -465,7 +465,7 @@ fn drop_node_type_rejects_when_oneof_endpoint_references_dropped_type() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("Company").unwrap(), DropBehavior::Restrict)
+        .drop_node_type(db_string("Company").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
     // Company (index 1) is directly carried by OneOf([1, 2]); the dependency
@@ -490,7 +490,7 @@ fn drop_node_type_rejects_when_oneof_endpoint_references_tail_type() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("School").unwrap(), DropBehavior::Restrict)
+        .drop_node_type(db_string("School").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
     // School (index 2) is also directly carried by OneOf([1, 2]); the dependency

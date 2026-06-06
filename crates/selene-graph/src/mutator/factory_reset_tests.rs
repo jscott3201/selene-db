@@ -9,13 +9,13 @@
 //! - Exactly ONE `Change::GraphReset` is written regardless of N (O(1) WAL).
 //! - Idempotent: a second DROP GRAPH on an empty + open graph is a clean no-op.
 
-use selene_core::{Change, GraphId, NodeId, PropertyMap, Value, intern};
+use selene_core::{Change, GraphId, NodeId, PropertyMap, Value, db_string};
 
 use super::*;
 use crate::SharedGraph;
 
 fn prop(key: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(key).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
 }
 
 /// Open (GG01) fixture mixing TYPED-looking and UNTYPED nodes/edges, plus an
@@ -26,8 +26,8 @@ fn open_fixture() -> SharedGraph {
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
-        let labelled = intern("fr.Labelled").unwrap();
-        let other = intern("fr.Other").unwrap();
+        let labelled = db_string("fr.Labelled").unwrap();
+        let other = db_string("fr.Other").unwrap();
         let a = m
             .create_node(LabelSet::single(labelled.clone()), prop("k", Value::Int(0)))
             .unwrap();
@@ -41,7 +41,7 @@ fn open_fixture() -> SharedGraph {
         let untyped = m
             .create_node(LabelSet::new(), prop("k", Value::Int(2)))
             .unwrap();
-        let e = intern("fr.E").unwrap();
+        let e = db_string("fr.E").unwrap();
         m.create_edge(e.clone(), a, b, PropertyMap::new()).unwrap();
         // Edge touching the untyped node — must still be wiped.
         m.create_edge(e.clone(), b, untyped, PropertyMap::new())
@@ -95,12 +95,12 @@ fn factory_reset_resets_closed_graph_to_open() {
 
     // A closed (GG02) graph with a strict Person type requiring `name`.
     let graph_type = GraphTypeDef {
-        name: intern("fr.person.graph").unwrap(),
+        name: db_string("fr.person.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: intern("Person").unwrap(),
-            key_labels: LabelSet::single(intern("Person").unwrap()),
+            name: db_string("Person").unwrap(),
+            key_labels: LabelSet::single(db_string("Person").unwrap()),
             properties: vec![PropertyTypeDef {
-                name: intern("name").unwrap(),
+                name: db_string("name").unwrap(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
@@ -125,8 +125,8 @@ fn factory_reset_resets_closed_graph_to_open() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(intern("Person").unwrap()),
-                prop("name", Value::String(intern("Alice").unwrap())),
+                LabelSet::single(db_string("Person").unwrap()),
+                prop("name", Value::String(db_string("Alice").unwrap())),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -147,7 +147,7 @@ fn factory_reset_resets_closed_graph_to_open() {
     let mut txn = shared.begin_write();
     txn.mutator()
         .create_node(
-            LabelSet::single(intern("Person").unwrap()),
+            LabelSet::single(db_string("Person").unwrap()),
             PropertyMap::new(),
         )
         .unwrap();

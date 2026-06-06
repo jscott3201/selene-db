@@ -165,12 +165,12 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use selene_algorithms::Parallelism;
-    use selene_core::{NodeId, Value, intern};
+    use selene_core::{NodeId, Value, db_string};
 
     use super::*;
 
     fn projection_name() -> Value {
-        Value::String(intern("p").expect("test string interns"))
+        Value::String(db_string("p").expect("test string fits DB string cap"))
     }
 
     #[test]

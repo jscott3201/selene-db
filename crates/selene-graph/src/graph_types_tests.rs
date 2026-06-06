@@ -1,9 +1,9 @@
-use selene_core::{PropertyValueType, Value, intern};
+use selene_core::{PropertyValueType, Value, db_string};
 
 use super::*;
 
-fn label(name: &str) -> IStr {
-    intern(name).unwrap()
+fn label(name: &str) -> DbString {
+    db_string(name).unwrap()
 }
 
 fn property(name: &str) -> PropertyTypeDef {

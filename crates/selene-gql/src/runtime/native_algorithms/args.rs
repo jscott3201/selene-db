@@ -7,7 +7,7 @@
 //! contract. Any drift here silently changes a procedure's accepted arguments,
 //! so the edge-case tests are ported verbatim alongside them.
 
-use selene_core::{IStr, NodeId, Value};
+use selene_core::{DbString, NodeId, Value};
 
 use super::error::invalid_argument;
 use crate::ProcedureError;
@@ -54,12 +54,12 @@ pub(super) fn required_node_ref(
     }
 }
 
-pub(super) fn nullable_istr(
+pub(super) fn nullable_db_string(
     procedure: &'static str,
     args: &[Value],
     index: usize,
     name: &'static str,
-) -> Result<Option<IStr>, ProcedureError> {
+) -> Result<Option<DbString>, ProcedureError> {
     match &args[index] {
         Value::Null => Ok(None),
         Value::String(value) => Ok(Some(value.clone())),
@@ -69,12 +69,12 @@ pub(super) fn nullable_istr(
     }
 }
 
-pub(super) fn nullable_istr_list(
+pub(super) fn nullable_db_string_list(
     procedure: &'static str,
     args: &[Value],
     index: usize,
     name: &'static str,
-) -> Result<Vec<IStr>, ProcedureError> {
+) -> Result<Vec<DbString>, ProcedureError> {
     match &args[index] {
         Value::Null => Ok(Vec::new()),
         Value::List(values) => values

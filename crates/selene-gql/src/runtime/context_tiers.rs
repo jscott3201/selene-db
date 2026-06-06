@@ -2,7 +2,7 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use selene_core::{BindingTableId, CancellationChecker, IStr};
+use selene_core::{BindingTableId, CancellationChecker, DbString};
 use selene_graph::{
     CANDIDATE_STATE_PROVIDER_TAG, GraphResult, IndexProvider, Mutator, ProviderError, ProviderTag,
     SeleneGraph, SharedGraph, VectorCandidateSet, VectorCandidateStateInfo,
@@ -66,7 +66,7 @@ impl<'a> GraphContext<'a> {
     /// but cannot prove it has applied through the graph snapshot generation.
     pub fn vector_candidate_set(
         &self,
-        name: &IStr,
+        name: &DbString,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
         let Some(provider) = self.index_provider_by_tag(ProviderTag(CANDIDATE_STATE_PROVIDER_TAG))
         else {

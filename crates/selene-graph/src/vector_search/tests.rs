@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use selene_core::{
     CancellationChecker, CancellationToken, CoreError, GraphId, LabelDiff, LabelSet, PropertyDiff,
-    PropertyMap, Value, VectorValue, intern,
+    PropertyMap, Value, VectorValue, db_string,
 };
 
 use super::*;
@@ -12,16 +12,16 @@ fn vector(components: &[f32]) -> VectorValue {
     VectorValue::new(components.to_vec()).expect("test vector is valid")
 }
 
-fn props(key: &IStr, value: Value) -> PropertyMap {
+fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
 #[test]
 fn exact_vector_search_ranks_labelled_vector_nodes() {
     let shared = SharedGraph::new(GraphId::new(91));
-    let doc = intern("vector.doc").unwrap();
-    let other = intern("vector.other").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.doc").unwrap();
+    let other = db_string("vector.other").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -40,7 +40,7 @@ fn exact_vector_search_ranks_labelled_vector_nodes() {
         mutator
             .create_node(
                 LabelSet::single(doc.clone()),
-                props(&embedding, Value::String(intern("skip").unwrap())),
+                props(&embedding, Value::String(db_string("skip").unwrap())),
             )
             .unwrap();
         mutator
@@ -80,9 +80,9 @@ fn exact_vector_search_ranks_labelled_vector_nodes() {
 #[test]
 fn exact_vector_search_zero_k_and_missing_label_are_empty() {
     let shared = SharedGraph::new(GraphId::new(92));
-    let doc = intern("vector.empty.doc").unwrap();
-    let missing = intern("vector.empty.missing").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.empty.doc").unwrap();
+    let missing = db_string("vector.empty.missing").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -117,8 +117,8 @@ fn exact_vector_search_zero_k_and_missing_label_are_empty() {
 #[test]
 fn exact_vector_search_checked_observes_cancelled_token_before_scan() {
     let shared = SharedGraph::new(GraphId::new(93));
-    let doc = intern("vector.cancel.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.cancel.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -150,8 +150,8 @@ fn exact_vector_search_checked_observes_cancelled_token_before_scan() {
 #[test]
 fn exact_vector_search_checked_observes_elapsed_deadline_before_scan() {
     let shared = SharedGraph::new(GraphId::new(94));
-    let doc = intern("vector.timeout.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.timeout.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -181,8 +181,8 @@ fn exact_vector_search_checked_observes_elapsed_deadline_before_scan() {
 #[test]
 fn exact_vector_search_uses_node_id_tie_breaks() {
     let shared = SharedGraph::new(GraphId::new(93));
-    let doc = intern("vector.tie.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.tie.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -225,8 +225,8 @@ fn exact_vector_search_uses_node_id_tie_breaks() {
 #[test]
 fn exact_vector_search_flat_index_parallel_matches_unindexed_ordering() {
     let shared = SharedGraph::new(GraphId::new(9301));
-    let doc = intern("vector.parallel.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.parallel.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -260,8 +260,8 @@ fn exact_vector_search_flat_index_parallel_matches_unindexed_ordering() {
 #[test]
 fn exact_vector_search_tracks_update_and_delete_visibility() {
     let shared = SharedGraph::new(GraphId::new(94));
-    let doc = intern("vector.visible.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.visible.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let (first, second) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -317,8 +317,8 @@ fn exact_vector_search_tracks_update_and_delete_visibility() {
 #[test]
 fn exact_vector_search_surfaces_metric_errors() {
     let shared = SharedGraph::new(GraphId::new(95));
-    let doc = intern("vector.error.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.error.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -349,8 +349,8 @@ fn exact_vector_search_surfaces_metric_errors() {
 #[test]
 fn exact_vector_search_surfaces_cosine_zero_norm() {
     let shared = SharedGraph::new(GraphId::new(96));
-    let doc = intern("vector.cosine.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.cosine.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -381,8 +381,8 @@ fn exact_vector_search_surfaces_cosine_zero_norm() {
 #[test]
 fn approximate_vector_search_uses_hnsw_index() {
     let shared = SharedGraph::new(GraphId::new(97));
-    let doc = intern("vector.ann.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.ann.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -426,8 +426,8 @@ fn approximate_vector_search_uses_hnsw_index() {
 #[test]
 fn approximate_vector_search_uses_ivf_index() {
     let shared = SharedGraph::new(GraphId::new(972));
-    let doc = intern("vector.ann.ivf.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.ann.ivf.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -470,8 +470,8 @@ fn approximate_vector_search_uses_ivf_index() {
 #[test]
 fn approximate_vector_search_batch_matches_single_queries() {
     let shared = SharedGraph::new(GraphId::new(971));
-    let doc = intern("vector.ann.batch.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.ann.batch.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -530,8 +530,8 @@ fn approximate_vector_search_batch_matches_single_queries() {
 #[test]
 fn approximate_vector_search_tracks_update_and_delete_visibility() {
     let shared = SharedGraph::new(GraphId::new(99));
-    let doc = intern("vector.ann.visible.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.ann.visible.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     let (first, second) = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -598,8 +598,8 @@ fn approximate_vector_search_meets_recall_floor_against_exact_oracle() {
     const QUERY_VALUES: &[f32] = &[3.25, 31.4, 72.8, 127.1, 180.6, 244.2];
 
     let shared = SharedGraph::new(GraphId::new(9701));
-    let doc = intern("vector.ann.recall.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.ann.recall.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -659,8 +659,8 @@ fn approximate_vector_search_meets_recall_floor_against_exact_oracle() {
 #[test]
 fn approximate_vector_search_rejects_missing_or_wrong_metric_index() {
     let shared = SharedGraph::new(GraphId::new(98));
-    let doc = intern("vector.ann.missing.doc").unwrap();
-    let embedding = intern("embedding").unwrap();
+    let doc = db_string("vector.ann.missing.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()

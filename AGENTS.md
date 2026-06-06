@@ -69,7 +69,7 @@ and benchmark profiles for dev-dependencies.
 
 | Crate | Owns |
 |---|---|
-| `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, vector metrics/top-k helpers, `IStr`, schema/value types, feature register, property maps, codecs, and changesets. |
+| `selene-core` | Foundation values and identifiers: `Value`, `VectorValue`, vector metrics/top-k helpers, `DbString`, schema/value types, feature register, property maps, codecs, and changesets. |
 | `selene-graph` | In-memory graph storage, `SharedGraph`, `Mutator`, row/id maps, property/composite indexes, vector indexes, exact/ANN/candidate vector search, exact BM25 text search, reusable BM25 postings indexes, recovery provider, compaction, and graph type enforcement. |
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
 | `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |

@@ -22,7 +22,7 @@
 //! - the edge store mirrors all three cases and adjacency rebuilds from the
 //!   positional external ids.
 
-use selene_core::{Change, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{Change, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, db_string};
 
 use super::{append_wal, node_created, sample_shared_graph, temp_dir, write_snapshot};
 use crate::store::RowIndex;
@@ -31,9 +31,9 @@ use crate::{SeleneGraph, SharedGraph};
 /// Hand-build a graph whose external ids are not `row + 1`, with an interior
 /// hole (aborted-tx) and a deleted-but-kept row in both stores.
 fn non_identity_graph() -> SeleneGraph {
-    let nlabel = intern("nidr.node").unwrap();
-    let elabel = intern("nidr.edge").unwrap();
-    let hole_elabel = intern("__selene_hole").unwrap();
+    let nlabel = db_string("nidr.node").unwrap();
+    let elabel = db_string("nidr.edge").unwrap();
+    let hole_elabel = db_string("__selene_hole").unwrap();
 
     let mut g = SeleneGraph::new(GraphId::new(1));
 
@@ -139,7 +139,7 @@ fn non_identity_snapshot_round_trips_positionally() {
             .iter()
             .cloned()
             .collect::<Vec<_>>(),
-        vec![intern("nidr.node").unwrap()]
+        vec![db_string("nidr.node").unwrap()]
     );
 
     // --- Allocator floor survives so future ids never collide. ---
@@ -181,7 +181,7 @@ fn non_identity_snapshot_round_trips_positionally() {
 /// the case that exercises `insert_node_row`'s `set`-overwrites-a-pad branch
 /// (the reason the sorted-by-id wire guarantee was dropped).
 fn descending_first_graph() -> SeleneGraph {
-    let nlabel = intern("nidr2.node").unwrap();
+    let nlabel = db_string("nidr2.node").unwrap();
     let mut g = SeleneGraph::new(GraphId::new(2));
     for id in [10u64, 3, 7] {
         let row = g.node_store.row_to_id.len() as u32;
@@ -236,7 +236,7 @@ fn recovered_store_continues_id_allocation_without_clobber() {
         let id = {
             let mut m = txn.mutator();
             m.create_node(
-                LabelSet::single(intern("nidr.node").unwrap()),
+                LabelSet::single(db_string("nidr.node").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap()
@@ -367,7 +367,7 @@ fn post_compaction_wal_edge_create_recovers_dense_without_rebloat() {
     write_snapshot(&dir, &shared, 3);
     let edge = Change::EdgeCreated {
         id: EdgeId::new(2),
-        label: intern("recover.wal.edge").unwrap(),
+        label: db_string("recover.wal.edge").unwrap(),
         source: NodeId::new(1),
         target: NodeId::new(4),
         properties: PropertyMap::new(),

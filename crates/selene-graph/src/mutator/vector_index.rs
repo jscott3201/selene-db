@@ -1,6 +1,6 @@
 //! Vector-index mutation methods for the transaction mutator.
 
-use selene_core::{Change, HnswIndexConfig, IStr, SchemaChange, SchemaVectorIndexKind};
+use selene_core::{Change, DbString, HnswIndexConfig, SchemaChange, SchemaVectorIndexKind};
 
 use crate::graph::VectorIndexEntry;
 use crate::{GraphError, GraphResult, Mutator, VectorIndexConfig, VectorIndexKind};
@@ -16,8 +16,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// value for `(label, property)` is not a vector with `dimension`.
     pub fn create_vector_index(
         &mut self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: VectorIndexKind,
         dimension: u32,
     ) -> GraphResult<()> {
@@ -27,11 +27,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Register a durable node vector index with optional catalog name.
     pub fn create_vector_index_named(
         &mut self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: VectorIndexKind,
         dimension: u32,
-        name: Option<IStr>,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         self.create_vector_index_named_with_config(label, property, kind, dimension, name, None)
     }
@@ -39,11 +39,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Register a durable node vector index with optional HNSW construction config.
     pub fn create_vector_index_named_with_config(
         &mut self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: VectorIndexKind,
         dimension: u32,
-        name: Option<IStr>,
+        name: Option<DbString>,
         hnsw_config: Option<HnswIndexConfig>,
     ) -> GraphResult<()> {
         self.create_vector_index_named_with_configs(
@@ -59,11 +59,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Register a durable node vector index with optional ANN construction config.
     pub fn create_vector_index_named_with_configs(
         &mut self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: VectorIndexKind,
         dimension: u32,
-        name: Option<IStr>,
+        name: Option<DbString>,
         config: VectorIndexConfig,
     ) -> GraphResult<()> {
         if self
@@ -108,7 +108,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// The operation is idempotent. Dropping an absent index succeeds and emits
     /// no WAL change.
-    pub fn drop_vector_index(&mut self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn drop_vector_index(&mut self, label: DbString, property: DbString) -> GraphResult<()> {
         if !self
             .txn
             .read()

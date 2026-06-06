@@ -1,16 +1,16 @@
 //! End-to-end coverage for batched BM25 scoring over GQL-produced candidates.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn props(entries: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+fn props(entries: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(entries).expect("test property map is valid")
 }
 
@@ -35,7 +35,7 @@ fn execute_rows(
 
 fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -49,7 +49,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -67,7 +67,7 @@ fn text_score_nodes_batch_accepts_gql_query_candidate_sets() {
     let registry = BuiltinProcedureRegistry::new();
     let (graph_strong, graph_weak, memory_strong) = seed_batched_text_root_graph(&graph);
     graph
-        .create_text_index(istr("TextDoc"), istr("body"))
+        .create_text_index(db_string("TextDoc"), db_string("body"))
         .expect("text index registers");
     let mut session = Session::new(&graph);
 
@@ -93,51 +93,54 @@ fn text_score_nodes_batch_accepts_gql_query_candidate_sets() {
 }
 
 fn seed_batched_text_root_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId) {
-    let root = istr("TextRoot");
-    let doc = istr("TextDoc");
-    let query_anchor = istr("TextQueryAnchor");
-    let body = istr("body");
-    let query_text = istr("query_text");
-    let query_index = istr("query_index");
-    let depends = istr("DEPENDS_ON");
-    let supports = istr("SUPPORTS");
+    let root = db_string("TextRoot");
+    let doc = db_string("TextDoc");
+    let query_anchor = db_string("TextQueryAnchor");
+    let body = db_string("body");
+    let query_text = db_string("query_text");
+    let query_index = db_string("query_index");
+    let depends = db_string("DEPENDS_ON");
+    let supports = db_string("SUPPORTS");
     let mut txn = graph.begin_write();
     let mut mutator = txn.mutator();
     let root_labels = || LabelSet::from_iter([doc.clone(), root.clone()]);
     let graph_root = mutator
         .create_node(
             root_labels(),
-            props([(body.clone(), Value::String(istr("graph root")))]),
+            props([(body.clone(), Value::String(db_string("graph root")))]),
         )
         .expect("graph root inserts");
     let memory_root = mutator
         .create_node(
             root_labels(),
-            props([(body.clone(), Value::String(istr("memory root")))]),
+            props([(body.clone(), Value::String(db_string("memory root")))]),
         )
         .expect("memory root inserts");
     let graph_strong = mutator
         .create_node(
             LabelSet::single(doc.clone()),
-            props([(body.clone(), Value::String(istr("graph graph memory")))]),
+            props([(body.clone(), Value::String(db_string("graph graph memory")))]),
         )
         .expect("graph strong inserts");
     let graph_weak = mutator
         .create_node(
             LabelSet::single(doc.clone()),
-            props([(body.clone(), Value::String(istr("graph retrieval")))]),
+            props([(body.clone(), Value::String(db_string("graph retrieval")))]),
         )
         .expect("graph weak inserts");
     let memory_strong = mutator
         .create_node(
             LabelSet::single(doc.clone()),
-            props([(body.clone(), Value::String(istr("memory memory notes")))]),
+            props([(
+                body.clone(),
+                Value::String(db_string("memory memory notes")),
+            )]),
         )
         .expect("memory strong inserts");
     let no_match = mutator
         .create_node(
             LabelSet::single(doc),
-            props([(body, Value::String(istr("vector only")))]),
+            props([(body, Value::String(db_string("vector only")))]),
         )
         .expect("non-match inserts");
     for (index, text, root_node) in [(0, "graph", graph_root), (1, "memory", memory_root)] {
@@ -146,7 +149,7 @@ fn seed_batched_text_root_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId)
                 LabelSet::single(query_anchor.clone()),
                 props([
                     (query_index.clone(), Value::Int(index)),
-                    (query_text.clone(), Value::String(istr(text))),
+                    (query_text.clone(), Value::String(db_string(text))),
                 ]),
             )
             .expect("query anchor inserts");

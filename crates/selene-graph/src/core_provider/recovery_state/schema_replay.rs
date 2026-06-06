@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use selene_core::{
-    EdgeEndpointDef as CoreEdgeEndpointDef, IStr, LabelSet, PredefinedValueType, PropertyValueType,
-    SchemaChange, ValueType,
+    DbString, EdgeEndpointDef as CoreEdgeEndpointDef, LabelSet, PredefinedValueType,
+    PropertyValueType, SchemaChange, ValueType,
 };
 
 use crate::core_provider::inconsistent;
@@ -116,7 +116,7 @@ fn apply_schema_change(
 }
 
 fn runtime_node_type_def(
-    label: IStr,
+    label: DbString,
     def: &selene_core::NodeTypeDef,
 ) -> Result<NodeTypeDef, crate::ProviderError> {
     Ok(NodeTypeDef {
@@ -129,7 +129,7 @@ fn runtime_node_type_def(
 
 fn runtime_edge_type_def(
     graph_type: &GraphTypeDef,
-    label: IStr,
+    label: DbString,
     def: &selene_core::EdgeTypeDef,
 ) -> Result<EdgeTypeDef, crate::ProviderError> {
     Ok(EdgeTypeDef {

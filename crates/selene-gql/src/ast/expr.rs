@@ -1,6 +1,6 @@
 //! Expression AST nodes.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::ast::{
     pattern::LabelExpr, pattern::MatchClause, span::SourceSpan, statement::QueryPipeline,
@@ -15,15 +15,15 @@ pub enum ValueExpr {
     Literal(Literal),
     /// Variable reference parsed from an identifier token.
     Variable {
-        /// Interned variable name.
-        name: IStr,
+        /// Database-string variable name.
+        name: DbString,
         /// Source span of the variable reference.
         span: SourceSpan,
     },
     /// Query parameter reference, such as `$name`.
     Parameter {
-        /// Interned parameter name without the leading `$`.
-        name: IStr,
+        /// Database-string parameter name without the leading `$`.
+        name: DbString,
         /// Optional inline declared parameter type.
         declared_type: Option<GqlType>,
         /// Source span of the parameter reference.
@@ -33,8 +33,8 @@ pub enum ValueExpr {
     PropertyAccess {
         /// Target expression.
         target: Box<ValueExpr>,
-        /// Interned property key.
-        key: IStr,
+        /// Database-string property key.
+        key: DbString,
         /// Source span of the full property access.
         span: SourceSpan,
     },
@@ -57,7 +57,7 @@ pub enum ValueExpr {
     /// Record literal.
     RecordLiteral {
         /// Record fields in source order.
-        fields: Vec<(IStr, ValueExpr)>,
+        fields: Vec<(DbString, ValueExpr)>,
         /// Source span of the record.
         span: SourceSpan,
     },
@@ -83,14 +83,14 @@ pub enum ValueExpr {
     },
     /// Function call, including aggregate-looking calls.
     FunctionCall {
-        /// Qualified function name as a list of interned segments.
+        /// Qualified function name as a list of database-string segments.
         ///
         /// Stored as a path so that `foo."bar.baz"` and `foo.bar.baz`
         /// (which a flat string would alias) parse to distinguishable
         /// values. Bare functions (`count(...)`) are a single-element
         /// path; namespaced calls (`db.bar()`, `pkg.subpkg.fn()`) preserve
         /// every segment.
-        name: NonEmpty<IStr>,
+        name: NonEmpty<DbString>,
         /// Function arguments.
         args: Vec<ValueExpr>,
         /// `true` for `count(*)`.
@@ -149,8 +149,8 @@ pub enum ValueExpr {
     PropertyExists {
         /// Target expression.
         target: Box<ValueExpr>,
-        /// Interned property key.
-        key: IStr,
+        /// Database-string property key.
+        key: DbString,
         /// Source span of the predicate.
         span: SourceSpan,
     },
@@ -424,8 +424,8 @@ pub enum Literal {
     Integer(i64, SourceSpan),
     /// 64-bit floating-point literal.
     Float(f64, SourceSpan),
-    /// Interned string literal.
-    String(IStr, SourceSpan),
+    /// Database-string literal.
+    String(DbString, SourceSpan),
     /// UUID literal.
     Uuid(uuid::Uuid, SourceSpan),
     /// Zoned datetime literal.

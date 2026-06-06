@@ -3,7 +3,7 @@
 mod exec_common;
 
 use exec_common::{
-    ExecFixture, LARGE_COUNTER_B, execute_pattern, istr, node_ids, optimized, planned,
+    ExecFixture, LARGE_COUNTER_B, db_string, execute_pattern, node_ids, optimized, planned,
     set_first_scan_access,
 };
 use selene_gql::{IndexHandle, IndexKey, IndexKind, Literal, ScanAccess, SourceSpan};
@@ -22,7 +22,7 @@ fn bitmap_union_scan_returns_small_in_list_matches() {
     assert!(matches!(
         &scan.access,
         ScanAccess::BitmapUnion { property, keys, .. }
-            if *property == istr("email") && keys.len() == 2
+            if *property == db_string("email") && keys.len() == 2
     ));
     let ctx = fixture.context_caps(&plan);
     let table = execute_pattern(pattern, &ctx);

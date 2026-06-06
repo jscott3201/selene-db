@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId};
+use selene_core::{Change, DbString, EdgeId, LabelSet, NodeId};
 
 use crate::index_provider::{
     IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
@@ -32,23 +32,23 @@ const SUB_TAGS: &[SubTag] = &[SubTag(CANDIDATE_STATE_SUB)];
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CandidateStateSpec {
     /// Stable set name used by callers to retrieve candidates.
-    pub name: IStr,
+    pub name: DbString,
     /// Optional node label required for membership.
-    pub required_label: Option<IStr>,
+    pub required_label: Option<DbString>,
     /// Outgoing edge labels required on the source node.
-    pub require_outgoing: Vec<IStr>,
+    pub require_outgoing: Vec<DbString>,
     /// Incoming edge labels required on the target node.
-    pub require_incoming: Vec<IStr>,
+    pub require_incoming: Vec<DbString>,
     /// Outgoing edge labels that disqualify the source node.
-    pub exclude_outgoing: Vec<IStr>,
+    pub exclude_outgoing: Vec<DbString>,
     /// Incoming edge labels that disqualify the target node.
-    pub exclude_incoming: Vec<IStr>,
+    pub exclude_incoming: Vec<DbString>,
 }
 
 impl CandidateStateSpec {
     /// Construct an unconstrained named candidate set.
     #[must_use]
-    pub fn new(name: IStr) -> Self {
+    pub fn new(name: DbString) -> Self {
         Self {
             name,
             required_label: None,
@@ -61,35 +61,35 @@ impl CandidateStateSpec {
 
     /// Require `label` for candidate membership.
     #[must_use]
-    pub fn require_label(mut self, label: IStr) -> Self {
+    pub fn require_label(mut self, label: DbString) -> Self {
         self.required_label = Some(label);
         self
     }
 
     /// Require an outgoing edge carrying `label`.
     #[must_use]
-    pub fn require_outgoing(mut self, label: IStr) -> Self {
+    pub fn require_outgoing(mut self, label: DbString) -> Self {
         insert_sorted_unique(&mut self.require_outgoing, label);
         self
     }
 
     /// Require an incoming edge carrying `label`.
     #[must_use]
-    pub fn require_incoming(mut self, label: IStr) -> Self {
+    pub fn require_incoming(mut self, label: DbString) -> Self {
         insert_sorted_unique(&mut self.require_incoming, label);
         self
     }
 
     /// Exclude nodes with an outgoing edge carrying `label`.
     #[must_use]
-    pub fn exclude_outgoing(mut self, label: IStr) -> Self {
+    pub fn exclude_outgoing(mut self, label: DbString) -> Self {
         insert_sorted_unique(&mut self.exclude_outgoing, label);
         self
     }
 
     /// Exclude nodes with an incoming edge carrying `label`.
     #[must_use]
-    pub fn exclude_incoming(mut self, label: IStr) -> Self {
+    pub fn exclude_incoming(mut self, label: DbString) -> Self {
         insert_sorted_unique(&mut self.exclude_incoming, label);
         self
     }
@@ -188,13 +188,13 @@ impl MaintainedCandidateStateProvider {
 
     /// Return the configured spec named `name`.
     #[must_use]
-    pub fn spec(&self, name: &IStr) -> Option<&CandidateStateSpec> {
+    pub fn spec(&self, name: &DbString) -> Option<&CandidateStateSpec> {
         self.specs.iter().find(|spec| &spec.name == name)
     }
 
     /// Return the current candidate set for `name`.
     #[must_use]
-    pub fn candidate_set(&self, name: &IStr) -> Option<VectorCandidateSet> {
+    pub fn candidate_set(&self, name: &DbString) -> Option<VectorCandidateSet> {
         let state = self.state.lock();
         state.members.get(name).map(|members| {
             VectorCandidateSet::from_canonical_nodes(members.iter().copied().collect())
@@ -215,7 +215,7 @@ impl MaintainedCandidateStateProvider {
     /// mutation through `generation`.
     pub fn candidate_set_at_generation(
         &self,
-        name: &IStr,
+        name: &DbString,
         generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
         let state = self.state.lock();
@@ -265,7 +265,7 @@ impl MaintainedCandidateStateProvider {
 
     /// Return true when `node` is currently a member of the named set.
     #[must_use]
-    pub fn contains(&self, name: &IStr, node: NodeId) -> bool {
+    pub fn contains(&self, name: &DbString, node: NodeId) -> bool {
         self.state
             .lock()
             .members
@@ -379,7 +379,7 @@ impl IndexProvider for MaintainedCandidateStateProvider {
 
     fn vector_candidate_set(
         &self,
-        name: &IStr,
+        name: &DbString,
         generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
         self.candidate_set_at_generation(name, generation)
@@ -399,7 +399,7 @@ impl IndexProvider for MaintainedCandidateStateProvider {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct TrackedEdge {
-    label: IStr,
+    label: DbString,
     source: NodeId,
     target: NodeId,
 }
@@ -418,9 +418,9 @@ struct CandidateState {
     generation: u64,
     node_labels: BTreeMap<NodeId, LabelSet>,
     edges: BTreeMap<EdgeId, TrackedEdge>,
-    outgoing_counts: BTreeMap<(NodeId, IStr), usize>,
-    incoming_counts: BTreeMap<(NodeId, IStr), usize>,
-    members: BTreeMap<IStr, BTreeSet<NodeId>>,
+    outgoing_counts: BTreeMap<(NodeId, DbString), usize>,
+    incoming_counts: BTreeMap<(NodeId, DbString), usize>,
+    members: BTreeMap<DbString, BTreeSet<NodeId>>,
 }
 
 impl CandidateState {
@@ -629,14 +629,14 @@ fn validate_unique_specs(specs: &[CandidateStateSpec]) -> Result<(), ProviderErr
     Ok(())
 }
 
-fn empty_members(specs: &[CandidateStateSpec]) -> BTreeMap<IStr, BTreeSet<NodeId>> {
+fn empty_members(specs: &[CandidateStateSpec]) -> BTreeMap<DbString, BTreeSet<NodeId>> {
     specs
         .iter()
         .map(|spec| (spec.name.clone(), BTreeSet::new()))
         .collect()
 }
 
-fn watches_label(specs: &[CandidateStateSpec], label: &IStr) -> bool {
+fn watches_label(specs: &[CandidateStateSpec], label: &DbString) -> bool {
     specs.iter().any(|spec| {
         spec.require_outgoing.binary_search(label).is_ok()
             || spec.require_incoming.binary_search(label).is_ok()
@@ -645,13 +645,13 @@ fn watches_label(specs: &[CandidateStateSpec], label: &IStr) -> bool {
     })
 }
 
-fn has_count(counts: &BTreeMap<(NodeId, IStr), usize>, node: NodeId, label: &IStr) -> bool {
+fn has_count(counts: &BTreeMap<(NodeId, DbString), usize>, node: NodeId, label: &DbString) -> bool {
     counts
         .get(&(node, label.clone()))
         .is_some_and(|count| *count > 0)
 }
 
-fn decrement_count(counts: &mut BTreeMap<(NodeId, IStr), usize>, key: (NodeId, IStr)) {
+fn decrement_count(counts: &mut BTreeMap<(NodeId, DbString), usize>, key: (NodeId, DbString)) {
     if let Some(count) = counts.get_mut(&key) {
         *count = count.saturating_sub(1);
         if *count == 0 {
@@ -660,14 +660,14 @@ fn decrement_count(counts: &mut BTreeMap<(NodeId, IStr), usize>, key: (NodeId, I
     }
 }
 
-fn insert_sorted_unique(labels: &mut Vec<IStr>, label: IStr) {
+fn insert_sorted_unique(labels: &mut Vec<DbString>, label: DbString) {
     match labels.binary_search(&label) {
         Ok(_) => {}
         Err(index) => labels.insert(index, label),
     }
 }
 
-fn canonicalize_labels(labels: &mut Vec<IStr>) {
+fn canonicalize_labels(labels: &mut Vec<DbString>) {
     labels.sort_unstable();
     labels.dedup();
 }

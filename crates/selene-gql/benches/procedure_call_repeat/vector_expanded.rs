@@ -1,7 +1,7 @@
 use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{Criterion, Throughput};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
 use selene_gql::{BuiltinProcedureRegistry, CallPlanCache, Session, StatementOutput};
 use selene_graph::SharedGraph;
 
@@ -190,11 +190,11 @@ fn execute_vector_expanded_query_roots_score(
 
 fn vector_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
     let graph = SharedGraph::new(GraphId::new(71_004));
-    let label = istr("VectorDoc");
-    let root_label = istr("VectorRoot");
-    let embedding_key = istr("embedding");
-    let query_index_key = istr("query_index");
-    let supports = istr("SUPPORTS");
+    let label = db_string("VectorDoc");
+    let root_label = db_string("VectorRoot");
+    let embedding_key = db_string("embedding");
+    let query_index_key = db_string("query_index");
+    let supports = db_string("SUPPORTS");
     {
         let mut txn = graph.begin_write();
         {
@@ -242,23 +242,23 @@ fn vector_expanded_graph(scale: usize, dimension: usize) -> SharedGraph {
 
 fn bind_expanded_inputs_for(session: &mut Session<'_>, query_index: usize) {
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
-    session.bind_parameter(istr("roots"), expanded_roots(query_index));
+    session.bind_parameter(db_string("roots"), expanded_roots(query_index));
 }
 
 fn bind_expanded_query_root_inputs_for(session: &mut Session<'_>, query_index: usize) {
     session.bind_parameter(
-        istr("query"),
+        db_string("query"),
         Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
     );
-    session.bind_parameter(istr("query_index"), Value::Int(query_index as i64));
+    session.bind_parameter(db_string("query_index"), Value::Int(query_index as i64));
 }
 
 fn bind_expanded_batch_inputs(session: &mut Session<'_>) {
-    session.bind_parameter(istr("queries"), vector_query_batch());
-    session.bind_parameter(istr("roots"), expanded_root_batch());
+    session.bind_parameter(db_string("queries"), vector_query_batch());
+    session.bind_parameter(db_string("roots"), expanded_root_batch());
 }
 
 fn vector_query_batch() -> Value {
@@ -314,6 +314,6 @@ fn vector_value(seed: usize, dimension: usize) -> VectorValue {
     VectorValue::new(components).expect("bench vector is valid")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }

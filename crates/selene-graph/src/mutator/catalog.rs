@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use selene_core::{
-    Change, EdgeEndpointDef as CoreEdgeEndpointDef, GraphTypeId, IStr, LabelSet,
+    Change, DbString, EdgeEndpointDef as CoreEdgeEndpointDef, GraphTypeId, LabelSet,
     PredefinedValueType, PropertyDef, PropertyValueType, SchemaChange, ValueType,
 };
 use smallvec::SmallVec;
@@ -27,7 +27,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// already exists, or the resulting graph type is structurally invalid.
     pub fn create_node_type(
         &mut self,
-        name: IStr,
+        name: DbString,
         key_labels: LabelSet,
         properties: Vec<PropertyTypeDef>,
         validation_mode: ValidationMode,
@@ -72,8 +72,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// type is structurally invalid.
     pub fn create_edge_type(
         &mut self,
-        name: IStr,
-        label: IStr,
+        name: DbString,
+        label: DbString,
         source_node_type: EdgeEndpointDef,
         target_node_type: EdgeEndpointDef,
         properties: Vec<PropertyTypeDef>,
@@ -134,7 +134,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// does not exist, `Restrict` finds surviving instances or an inbound edge
     /// dependency, or any edge endpoint would require positional endpoint
     /// reindexing.
-    pub fn drop_node_type(&mut self, name: IStr, behavior: DropBehavior) -> GraphResult<()> {
+    pub fn drop_node_type(&mut self, name: DbString, behavior: DropBehavior) -> GraphResult<()> {
         let graph_type = self.current_graph_type()?;
         let removed_index = graph_type
             .node_type_index_for(name.clone())
@@ -232,7 +232,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Returns [`GraphError::Inconsistent`] when the graph is open, the type
     /// does not exist, `Restrict` finds surviving instances, or the resulting
     /// graph type is structurally invalid.
-    pub fn drop_edge_type(&mut self, name: IStr, behavior: DropBehavior) -> GraphResult<()> {
+    pub fn drop_edge_type(&mut self, name: DbString, behavior: DropBehavior) -> GraphResult<()> {
         let graph_type = self.current_graph_type()?;
         if graph_type.edge_type_index_for(name.clone()).is_none() {
             return Err(GraphError::Inconsistent {
@@ -352,7 +352,7 @@ fn core_edge_type_def(
 
 fn core_edge_endpoint_def(
     graph_type: &GraphTypeDef,
-    edge_name: IStr,
+    edge_name: DbString,
     endpoint: &EdgeEndpointDef,
 ) -> GraphResult<CoreEdgeEndpointDef> {
     match endpoint {

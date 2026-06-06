@@ -217,7 +217,7 @@ IVF pressure IDs use
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
 | `graph_node_fetch` | 8.22 ns | 8.79 ns | 9.02 ns | Near-flat O(1) columnar fetch. |
-| `graph_label_index_lookup` | 7.83 ns | 7.88 ns | 8.09 ns | Flat; `IStr`-keyed hash lookup. |
+| `graph_label_index_lookup` | 7.83 ns | 7.88 ns | 8.09 ns | Flat; `DbString`-keyed hash lookup. |
 | `graph_typed_index_point` | 15.25 ns | 15.05 ns | 15.26 ns | Flat tri-state `lookup_eq`. |
 | `graph_typed_index_range` | 7.05 µs | 37.89 µs | 55.74 µs | Sub-linear range scan. |
 | `graph_composite_index_proxy` | 82.8 ns | 177.1 ns | 313.9 ns | Linear. |

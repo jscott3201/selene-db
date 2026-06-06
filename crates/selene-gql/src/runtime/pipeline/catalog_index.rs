@@ -1,18 +1,18 @@
 //! Inline property-index helpers for catalog DDL.
 
-use selene_core::{HnswIndexConfig, IStr, IvfIndexConfig};
+use selene_core::{DbString, HnswIndexConfig, IvfIndexConfig};
 use selene_graph::{TypedIndexKind, VectorIndexKind};
 use smallvec::SmallVec;
 
-use super::catalog::intern_runtime;
+use super::catalog::runtime_db_string;
 use crate::{
     ExecutorError, GqlType, PlannedTypePropertyConstraint, PlannedTypePropertyDef, SourceSpan,
 };
 
 pub(super) struct InlineIndexSpec {
-    pub(super) property: IStr,
+    pub(super) property: DbString,
     pub(super) kind: TypedIndexKind,
-    pub(super) name: Option<IStr>,
+    pub(super) name: Option<DbString>,
     pub(super) span: SourceSpan,
 }
 
@@ -24,12 +24,12 @@ pub(super) struct IndexConflictReport {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum DropTarget {
     Single {
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
     },
     Composite {
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
+        label: DbString,
+        properties: SmallVec<[DbString; 4]>,
     },
 }
 
@@ -53,7 +53,7 @@ pub(super) fn inline_index_specs(
 }
 
 pub(super) fn validate_index_name_collisions(
-    label: IStr,
+    label: DbString,
     indexes: &[InlineIndexSpec],
     graph: &selene_graph::SeleneGraph,
 ) -> Result<(), ExecutorError> {
@@ -78,7 +78,7 @@ pub(super) fn validate_index_name_collisions(
     for index in indexes {
         let rendered = render_index_name(label.clone(), index.property.clone(), index.name.clone());
         if used.iter().any(|name| name == &rendered) {
-            let name = index.name.clone().unwrap_or(intern_runtime(&rendered)?);
+            let name = index.name.clone().unwrap_or(runtime_db_string(&rendered)?);
             return Err(ExecutorError::DuplicateObject {
                 kind: "index",
                 name,
@@ -92,9 +92,9 @@ pub(super) fn validate_index_name_collisions(
 
 pub(super) fn lookup_index_entries(
     graph: &selene_graph::SeleneGraph,
-    ident: IStr,
-    label: IStr,
-    properties: &[IStr],
+    ident: DbString,
+    label: DbString,
+    properties: &[DbString],
 ) -> IndexConflictReport {
     let mut same_pair_name = None;
     let mut other_name_matches = Vec::new();
@@ -140,7 +140,7 @@ pub(super) fn lookup_index_entries(
 
 pub(super) fn resolve_drop_index_matches(
     graph: &selene_graph::SeleneGraph,
-    ident: IStr,
+    ident: DbString,
 ) -> Vec<DropTarget> {
     let mut matches = graph
         .iter_property_index_entries()
@@ -183,16 +183,20 @@ fn gql_type_to_index_kind(
     }
 }
 
-pub(super) fn render_index_name(label: IStr, property: IStr, explicit: Option<IStr>) -> String {
+pub(super) fn render_index_name(
+    label: DbString,
+    property: DbString,
+    explicit: Option<DbString>,
+) -> String {
     explicit
         .map(|name| name.as_str().to_owned())
         .unwrap_or_else(|| render_auto_index_name(label, property))
 }
 
 pub(super) fn render_composite_index_name(
-    label: IStr,
-    properties: &[IStr],
-    explicit: Option<IStr>,
+    label: DbString,
+    properties: &[DbString],
+    explicit: Option<DbString>,
 ) -> String {
     explicit
         .map(|name| name.as_str().to_owned())
@@ -200,16 +204,16 @@ pub(super) fn render_composite_index_name(
 }
 
 pub(super) fn render_vector_index_name(
-    label: IStr,
-    property: IStr,
-    explicit: Option<IStr>,
+    label: DbString,
+    property: DbString,
+    explicit: Option<DbString>,
 ) -> String {
     explicit
         .map(|name| name.as_str().to_owned())
         .unwrap_or_else(|| render_vector_auto_index_name(label, property))
 }
 
-fn render_auto_index_name(label: IStr, property: IStr) -> String {
+fn render_auto_index_name(label: DbString, property: DbString) -> String {
     let label = label.as_str();
     let property = property.as_str();
     format!(
@@ -221,7 +225,7 @@ fn render_auto_index_name(label: IStr, property: IStr) -> String {
     )
 }
 
-fn render_vector_auto_index_name(label: IStr, property: IStr) -> String {
+fn render_vector_auto_index_name(label: DbString, property: DbString) -> String {
     let label = label.as_str();
     let property = property.as_str();
     format!(
@@ -233,7 +237,7 @@ fn render_vector_auto_index_name(label: IStr, property: IStr) -> String {
     )
 }
 
-fn render_composite_auto_index_name(label: IStr, properties: &[IStr]) -> String {
+fn render_composite_auto_index_name(label: DbString, properties: &[DbString]) -> String {
     let label = label.as_str();
     let mut rendered = format!("idx:{}:{}:c{}", label.len(), label, properties.len());
     for property in properties {
@@ -260,7 +264,7 @@ pub(super) fn render_drop_target(target: &DropTarget) -> String {
     }
 }
 
-fn same_property_set(lhs: &[IStr], rhs: &[IStr]) -> bool {
+fn same_property_set(lhs: &[DbString], rhs: &[DbString]) -> bool {
     if lhs.len() != rhs.len() {
         return false;
     }

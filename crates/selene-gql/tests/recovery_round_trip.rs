@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{
-    Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern,
+    Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, db_string,
 };
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
@@ -119,9 +119,9 @@ fn recover_from_wal_only_via_runtime_mutation_pipeline() {
 
     let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
     let snapshot = recovered.read();
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
-    let name = intern("name").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
+    let name = db_string("name").unwrap();
 
     assert!(matches!(
         outcome.changes.as_slice(),
@@ -142,13 +142,13 @@ fn recover_from_wal_only_via_runtime_mutation_pipeline() {
         snapshot
             .node_properties(alice)
             .and_then(|props| props.get(&name)),
-        Some(&Value::String(intern("alice").unwrap()))
+        Some(&Value::String(db_string("alice").unwrap()))
     );
     assert_eq!(
         snapshot
             .node_properties(bob)
             .and_then(|props| props.get(&name)),
-        Some(&Value::String(intern("bob").unwrap()))
+        Some(&Value::String(db_string("bob").unwrap()))
     );
     assert_eq!(
         snapshot.edge_label(selene_core::EdgeId::new(1)),

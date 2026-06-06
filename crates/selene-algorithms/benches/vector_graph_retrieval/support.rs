@@ -6,7 +6,7 @@ use selene_algorithms::{
     GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, label_propagation, louvain,
     pagerank, wcc,
 };
-use selene_core::{GraphId, IStr, NodeId, VectorValue, intern};
+use selene_core::{DbString, GraphId, NodeId, VectorValue};
 use selene_graph::SeleneGraph;
 use selene_testing::BenchProfile;
 
@@ -26,8 +26,8 @@ pub(super) fn graph_id_for_scale(requested_scale: usize) -> GraphId {
 
 pub(super) fn pagerank_scores(
     graph: &SeleneGraph,
-    label: &IStr,
-    support_edge: &IStr,
+    label: &DbString,
+    support_edge: &DbString,
 ) -> HashMap<NodeId, f64> {
     let projection = GraphProjection::build(
         graph,
@@ -58,9 +58,9 @@ pub(super) fn pagerank_scores(
 
 pub(super) fn component_candidates(
     graph: &SeleneGraph,
-    label: &IStr,
-    support_edge: &IStr,
-    superseded_by_edge: &IStr,
+    label: &DbString,
+    support_edge: &DbString,
+    superseded_by_edge: &DbString,
 ) -> (HashMap<NodeId, u64>, HashMap<u64, Vec<NodeId>>) {
     let projection = GraphProjection::build(
         graph,
@@ -84,9 +84,9 @@ pub(super) fn component_candidates(
 
 pub(super) fn louvain_candidates(
     graph: &SeleneGraph,
-    label: &IStr,
-    support_edge: &IStr,
-    superseded_by_edge: &IStr,
+    label: &DbString,
+    support_edge: &DbString,
+    superseded_by_edge: &DbString,
 ) -> (HashMap<NodeId, u64>, HashMap<u64, Vec<NodeId>>) {
     let projection = GraphProjection::build(
         graph,
@@ -108,9 +108,9 @@ pub(super) fn louvain_candidates(
 
 pub(super) fn label_propagation_candidates(
     graph: &SeleneGraph,
-    label: &IStr,
-    support_edge: &IStr,
-    superseded_by_edge: &IStr,
+    label: &DbString,
+    support_edge: &DbString,
+    superseded_by_edge: &DbString,
 ) -> (HashMap<NodeId, u64>, HashMap<u64, Vec<NodeId>>) {
     let projection = GraphProjection::build(
         graph,
@@ -211,6 +211,6 @@ pub(super) fn basis_points(numerator: usize, denominator: usize) -> usize {
         .unwrap_or(10_000)
 }
 
-pub(super) fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
+pub(super) fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }

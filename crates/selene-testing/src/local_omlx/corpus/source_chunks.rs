@@ -129,7 +129,7 @@ pub fn from_nodes(nodes: impl IntoIterator<Item = NodeId>) -> Self {
             r#"crates/selene-graph/src/vector_search/score.rs
 pub fn score_vector_expanded_candidate_sets_batch_checked(
     &self,
-    property: &IStr,
+    property: &DbString,
     queries: &[VectorValue],
     root_sets: &[VectorCandidateSet],
     options: VectorNeighborSearchOptions<'_>,
@@ -164,22 +164,22 @@ fn memory_docs() -> &'static [(&'static str, Option<&'static str>)] {
         (
             r#"crates/selene-graph/src/candidate_state.rs
 pub struct CandidateStateSpec {
-    pub name: IStr,
-    pub required_label: Option<IStr>,
-    pub require_outgoing: Vec<IStr>,
-    pub require_incoming: Vec<IStr>,
-    pub exclude_outgoing: Vec<IStr>,
-    pub exclude_incoming: Vec<IStr>,
+    pub name: DbString,
+    pub required_label: Option<DbString>,
+    pub require_outgoing: Vec<DbString>,
+    pub require_incoming: Vec<DbString>,
+    pub exclude_outgoing: Vec<DbString>,
+    pub exclude_incoming: Vec<DbString>,
 }"#,
             Some("chunk-memory-state-spec-fields"),
         ),
         (
             r#"crates/selene-graph/src/candidate_state.rs
-pub fn require_outgoing(mut self, label: IStr) -> Self {
+pub fn require_outgoing(mut self, label: DbString) -> Self {
     insert_sorted_unique(&mut self.require_outgoing, label);
     self
 }
-pub fn exclude_outgoing(mut self, label: IStr) -> Self {
+pub fn exclude_outgoing(mut self, label: DbString) -> Self {
     insert_sorted_unique(&mut self.exclude_outgoing, label);
     self
 }"#,
@@ -200,7 +200,7 @@ fn apply_change(&mut self, specs: &[CandidateStateSpec], change: &Change) -> Res
             r#"crates/selene-graph/src/candidate_state_shared.rs
 pub fn vector_candidate_set(
     &self,
-    name: &IStr,
+    name: &DbString,
     snapshot: &SeleneGraph,
 ) -> Result<Option<VectorCandidateSet>, ProviderError> {
     provider.vector_candidate_set(name, snapshot.meta.generation)

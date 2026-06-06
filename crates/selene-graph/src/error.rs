@@ -1,6 +1,6 @@
 //! Graph-layer error types and GQLSTATUS mappings.
 
-use selene_core::{CoreError, EdgeId, IStr, NodeId};
+use selene_core::{CoreError, DbString, EdgeId, NodeId};
 use selene_persist::PersistError;
 use smallvec::SmallVec;
 
@@ -77,9 +77,9 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_007))]
     PropertyIndexAlreadyExists {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
     },
 
     /// The named property index does not exist.
@@ -87,9 +87,9 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_008))]
     PropertyIndexNotFound {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
     },
 
     /// A value cannot be admitted to the declared property index kind.
@@ -99,9 +99,9 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_009))]
     IndexValueRejected {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
         /// Registered index kind.
         expected_kind: TypedIndexKind,
         /// Observed value kind or `"NaN"`.
@@ -113,16 +113,16 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_020))]
     CompositePropertyIndexAlreadyExists {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property keys in declaration order.
         ///
         /// Boxed so this variant does not inflate `GraphError` past clippy's
-        /// `result_large_err` byte threshold: an inline `SmallVec<[IStr; 4]>`
-        /// is ~104 B (four owned `CompactString` `IStr`s plus header), and
-        /// since `IStr` became an owned 24-byte type the variant otherwise
+        /// `result_large_err` byte threshold: an inline `SmallVec<[DbString; 4]>`
+        /// is ~104 B (four owned `CompactString` `DbString`s plus header), and
+        /// since `DbString` became an owned 24-byte type the variant otherwise
         /// drove every `GraphResult<T>` stack slot over the limit. The `Box`
         /// pushes the allocation onto the cold error-construction path.
-        properties: Box<SmallVec<[IStr; 4]>>,
+        properties: Box<SmallVec<[DbString; 4]>>,
     },
 
     /// A vector property index already exists for this `(label, property)`.
@@ -130,9 +130,9 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_021))]
     VectorIndexAlreadyExists {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed vector property key.
-        property: IStr,
+        property: DbString,
     },
 
     /// A vector index was declared with an invalid dimensionality.
@@ -174,9 +174,9 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_023))]
     VectorIndexValueRejected {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed vector property key.
-        property: IStr,
+        property: DbString,
         /// Registered vector dimensionality.
         expected_dimension: u32,
         /// Observed value kind or dimensionality.
@@ -188,9 +188,9 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_026))]
     TextIndexAlreadyExists {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed string property key.
-        property: IStr,
+        property: DbString,
     },
 
     /// A closed graph mutation violates its bound graph type.
@@ -263,7 +263,7 @@ impl GraphError {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    use selene_core::intern;
+    use selene_core::db_string;
 
     use super::*;
     use crate::ProviderError;
@@ -283,22 +283,22 @@ mod tests {
     )]
     #[case(
         GraphError::PropertyIndexAlreadyExists {
-            label: intern("err.label").unwrap(),
-            property: intern("err.property").unwrap(),
+            label: db_string("err.label").unwrap(),
+            property: db_string("err.property").unwrap(),
         },
         "22G03"
     )]
     #[case(
         GraphError::PropertyIndexNotFound {
-            label: intern("err.label.missing").unwrap(),
-            property: intern("err.property.missing").unwrap(),
+            label: db_string("err.label.missing").unwrap(),
+            property: db_string("err.property.missing").unwrap(),
         },
         "22G03"
     )]
     #[case(
         GraphError::IndexValueRejected {
-            label: intern("err.label.rejected").unwrap(),
-            property: intern("err.property.rejected").unwrap(),
+            label: db_string("err.label.rejected").unwrap(),
+            property: db_string("err.property.rejected").unwrap(),
             expected_kind: TypedIndexKind::I64,
             observed: "String",
         },
@@ -306,8 +306,8 @@ mod tests {
     )]
     #[case(
         GraphError::VectorIndexAlreadyExists {
-            label: intern("err.label.vector.exists").unwrap(),
-            property: intern("err.property.vector.exists").unwrap(),
+            label: db_string("err.label.vector.exists").unwrap(),
+            property: db_string("err.property.vector.exists").unwrap(),
         },
         "22G03"
     )]
@@ -329,8 +329,8 @@ mod tests {
     )]
     #[case(
         GraphError::VectorIndexValueRejected {
-            label: intern("err.label.vector.rejected").unwrap(),
-            property: intern("err.property.vector.rejected").unwrap(),
+            label: db_string("err.label.vector.rejected").unwrap(),
+            property: db_string("err.property.vector.rejected").unwrap(),
             expected_dimension: 3,
             observed: "VECTOR<4>".to_owned(),
         },
@@ -338,15 +338,15 @@ mod tests {
     )]
     #[case(
         GraphError::TextIndexAlreadyExists {
-            label: intern("err.label.text.exists").unwrap(),
-            property: intern("err.property.text.exists").unwrap(),
+            label: db_string("err.label.text.exists").unwrap(),
+            property: db_string("err.property.text.exists").unwrap(),
         },
         "22G03"
     )]
     #[case(
         GraphError::TypeViolation(TypeViolation::UnknownEdgeLabel {
             id: EdgeId::new(1),
-            label: intern("err.edge.label").unwrap(),
+            label: db_string("err.edge.label").unwrap(),
         }),
         "G2000"
     )]
@@ -393,8 +393,8 @@ mod tests {
         use crate::graph_types::EdgeEndpointDef;
         use crate::type_validator::EntityId;
 
-        let lbl = intern("codes.label").unwrap();
-        let prop = intern("codes.property").unwrap();
+        let lbl = db_string("codes.label").unwrap();
+        let prop = db_string("codes.property").unwrap();
 
         // One representative of every code-carrying GraphError variant (the
         // transparent `TypeViolation`/`Core`/`Persist`/`Provider` wrappers carry

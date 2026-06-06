@@ -5,7 +5,7 @@
 
 use std::mem::size_of;
 
-use selene_core::{IStr, Value, intern};
+use selene_core::{DbString, Value, db_string};
 use selene_graph::{TextIndexMemoryUsage, TextIndexStats};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -99,8 +99,8 @@ pub(super) fn execute(
 
 struct StatsRow {
     name: String,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     stats: TextIndexStats,
     usage: TextIndexMemoryUsage,
 }
@@ -130,7 +130,11 @@ impl StatsRow {
     }
 }
 
-fn render_text_index_name(label: IStr, property: IStr, explicit: Option<IStr>) -> String {
+fn render_text_index_name(
+    label: DbString,
+    property: DbString,
+    explicit: Option<DbString>,
+) -> String {
     explicit
         .map(|name| name.as_str().to_owned())
         .unwrap_or_else(|| {
@@ -147,8 +151,8 @@ fn render_text_index_name(label: IStr, property: IStr, explicit: Option<IStr>) -
 }
 
 fn string(value: &str) -> Result<Value, ProcedureError> {
-    let string = intern(value).map_err(|_| ProcedureError::Internal {
-        detail: "interner cap exhausted during selene.text_index_stats".to_owned(),
+    let string = db_string(value).map_err(|_| ProcedureError::Internal {
+        detail: "string construction failed during selene.text_index_stats".to_owned(),
     })?;
     Ok(Value::String(string))
 }
