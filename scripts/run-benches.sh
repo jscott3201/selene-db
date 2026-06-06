@@ -13,6 +13,7 @@
 #   run-benches.sh                               # FULL run, all benches (slow)
 #   run-benches.sh --smoke                       # curated <~60s tripwire subset
 #   run-benches.sh --bench wal                   # just one bench bin (scoped compile)
+#   run-benches.sh --bench vector_graph_retrieval --compile-only  # compile tripwire, no Criterion run
 #   run-benches.sh --crate selene-graph          # just one crate's benches
 #   run-benches.sh --bench wal --filter append_batch     # one criterion group
 #   run-benches.sh --bench graph_hub_delete --save-baseline pre-graph05
@@ -109,6 +110,7 @@ PROFILE=""
 SMOKE_MODE=0
 LIST_MODE=0
 DRY_RUN=0
+COMPILE_ONLY=0
 SAVE_BASELINE=""
 BASELINE=""
 FILTER=""
@@ -139,6 +141,7 @@ while [ "$#" -gt 0 ]; do
     --smoke)            SMOKE_MODE=1; shift ;;
     --list)             LIST_MODE=1; shift ;;
     --dry-run)          DRY_RUN=1; shift ;;
+    --compile-only)     COMPILE_ONLY=1; shift ;;
     -h|--help)          usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; echo "Run with --help for usage." >&2; exit 2 ;;
   esac
@@ -391,7 +394,9 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "==> DRY RUN (profile=$PROFILE) — resolved invocations, nothing executed:"
   while IFS='|' read -r crate bench harness filt; do
     [ -n "$crate" ] || continue
-    resolve_args "$crate" "$bench" "$harness" "$filt" 0
+    no_run=0
+    [ "$COMPILE_ONLY" -eq 1 ] && no_run=1
+    resolve_args "$crate" "$bench" "$harness" "$filt" "$no_run"
     echo "  $(bench_env_prefix "$bench" "$filt") cargo ${RESOLVED[*]}"
   done <<< "$SELECTED"
   exit 0
@@ -422,6 +427,11 @@ while IFS='|' read -r crate bench harness filt; do
   echo "  cargo ${RESOLVED[*]}"
   run_cargo_for_bench "$bench" "$filt"
 done <<< "$SELECTED"
+
+if [ "$COMPILE_ONLY" -eq 1 ]; then
+  echo "==> Compile-only complete; Criterion run pass skipped."
+  exit 0
+fi
 
 # Run pass — STRICTLY SEQUENTIAL (no `&`, no --workspace, no xargs -P).
 while IFS='|' read -r crate bench harness filt; do

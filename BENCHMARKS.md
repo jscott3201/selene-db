@@ -30,6 +30,7 @@ run-benches.sh --list                          # enumerate registered benches + 
 run-benches.sh --smoke                          # curated <~60s tripwire subset (profile quick)
 run-benches.sh                                  # FULL run, every bench (the north-star sweep)
 run-benches.sh --bench wal                      # one bench bin (scoped compile + run)
+run-benches.sh --bench vector_graph_retrieval --compile-only  # compile tripwire, no Criterion run
 run-benches.sh --crate selene-graph             # every bench in one crate
 run-benches.sh --bench wal --filter body_size   # one criterion group within a bin
 run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   # A/B fidelity knobs
