@@ -150,6 +150,8 @@ Vectors are first-class values:
 
 - node properties can store `Value::Vector(VectorValue)`;
 - GQL can produce vectors through `CAST(<LIST<numeric>> AS VECTOR)`;
+- `VECTOR` properties can use numeric list defaults, for example
+  `embedding :: VECTOR DEFAULT [0.0, 0.0, 0.0]`;
 - components are finite `f32` values behind shared storage;
 - supported metrics are `squared_euclidean`, `cosine`, and
   `negative_inner_product`;

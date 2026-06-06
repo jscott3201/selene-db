@@ -70,6 +70,15 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
             PropertyDefaultValue::Duration(db_string("PT1H2S").unwrap()),
         ),
     ];
+    let vector_defaults = [(
+        db_string("embedding").unwrap(),
+        selene_core::PropertyValueType::Vector,
+        PropertyDefaultValue::Vector(vec![
+            1.0_f32.to_bits(),
+            0.0_f32.to_bits(),
+            2.5_f32.to_bits(),
+        ]),
+    )];
     let changes = {
         let mut txn = shared.begin_write();
         let mut properties = base_properties(&serial, &payload, &device_id, &score, &small_score);
@@ -77,6 +86,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
             exact_numeric_defaults
                 .iter()
                 .chain(temporal_defaults.iter())
+                .chain(vector_defaults.iter())
                 .map(|(name, value_type, default)| PropertyTypeDef {
                     name: name.clone(),
                     value_type: *value_type,
@@ -134,6 +144,12 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     let temporal_start = 5 + exact_numeric_defaults.len();
     for (offset, (name, _value_type, default)) in temporal_defaults.iter().enumerate() {
         let property = &graph_type.node_types[0].properties[temporal_start + offset];
+        assert_eq!(&property.name, name);
+        assert_eq!(property.default.as_ref(), Some(default));
+    }
+    let vector_start = temporal_start + temporal_defaults.len();
+    for (offset, (name, _value_type, default)) in vector_defaults.iter().enumerate() {
+        let property = &graph_type.node_types[0].properties[vector_start + offset];
         assert_eq!(&property.name, name);
         assert_eq!(property.default.as_ref(), Some(default));
     }

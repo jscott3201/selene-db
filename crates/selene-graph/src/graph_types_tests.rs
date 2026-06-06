@@ -1,4 +1,4 @@
-use selene_core::{PropertyValueType, Value, db_string};
+use selene_core::{PropertyValueType, Value, VectorValue, db_string};
 
 use super::*;
 
@@ -136,6 +136,39 @@ fn property_default_decimal_descriptor_rejects_invalid_text() {
         PropertyDefaultValue::Decimal(label("not-decimal")).to_value(),
         Err(GraphError::Inconsistent { reason })
             if reason.contains("DECIMAL property default is invalid")
+    ));
+}
+
+#[test]
+fn property_default_vector_descriptor_materializes_values() {
+    let vector = VectorValue::new(vec![1.0, -0.0, 2.5]).unwrap();
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Vector(vector)),
+        Some(PropertyDefaultValue::Vector(vec![
+            1.0_f32.to_bits(),
+            0.0_f32.to_bits(),
+            2.5_f32.to_bits(),
+        ]))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Vector(vec![1.0_f32.to_bits(), 2.5_f32.to_bits()])
+            .to_value()
+            .unwrap(),
+        Value::Vector(VectorValue::new(vec![1.0, 2.5]).unwrap())
+    );
+}
+
+#[test]
+fn property_default_vector_descriptor_rejects_invalid_bits() {
+    assert!(matches!(
+        PropertyDefaultValue::Vector(Vec::new()).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("VECTOR property default is invalid")
+    ));
+    assert!(matches!(
+        PropertyDefaultValue::Vector(vec![f32::INFINITY.to_bits()]).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("VECTOR property default is invalid")
     ));
 }
 
