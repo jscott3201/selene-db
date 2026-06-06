@@ -577,6 +577,46 @@ scripts/run-benches.sh --profile quick --bench wal --filter payload_shape
 | `persist_wal_payload_shape_no_fsync` | 1.084 ms | 1.677 ms | 1.826 ms | 2.185 ms | Append path only; no fsync in timed body. |
 | `persist_wal_payload_shape_replay` | 1.433 ms | 2.870 ms | 2.514 ms | 2.908 ms | Reader open + checksum + optional decompression + postcard decode. |
 
+#### `persist_wal_payload_compression_sweep` — compression threshold pressure
+
+Benchmark-only codec sweep for the future WAL rewrite. The fixture serializes
+`ChangeSet` payloads with `postcard` outside the timed body, then the timed body
+applies a candidate compression threshold, optionally runs zstd level 1, and
+computes the xxh3 checksum over the bytes that would be framed in the WAL. This
+does not write to disk and does not measure fsync.
+
+Command:
+
+```bash
+scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_payload_compression_sweep
+```
+
+Quick profile on 2026-06-06. `current128` is the current production
+`COMPRESS_THRESHOLD`; `never` is checksum-only. `always` mostly confirms the
+cost of compressing sub-threshold bodies, so the table keeps representative
+threshold rows and calls out sub-threshold compression in the notes.
+
+| Payload | batch | current128 | 512 | 4096 | never | Notes |
+|---|---:|---:|---:|---:|---:|---|
+| scalar i64 | 1 | 2.23 ns | 2.23 ns | 2.23 ns | 2.23 ns | `always` compressed the tiny body at 1.19 us. |
+| scalar i64 | 10 | 1.19 us | 10.1 ns | 10.1 ns | 10.1 ns | 512 avoids compression that current128 takes. |
+| scalar i64 | 100 | 5.99 us | 6.01 us | 6.00 us | 96.4 ns | Crosses all swept thresholds below `never`. |
+| JSON metadata | 1 | 3.87 us | 6.63 ns | 6.63 ns | 6.62 ns | Single JSON record crosses current128 only. |
+| JSON metadata | 10 | 4.91 us | 4.91 us | 51.0 ns | 51.0 ns | 4096 avoids compression for this batch. |
+| JSON metadata | 100 | 15.1 us | 14.9 us | 14.8 us | 552 ns | Crosses all swept thresholds below `never`. |
+| vector128 | 1 | 4.92 us | 4.91 us | 11.3 ns | 11.3 ns | 4096 avoids single-vector compression. |
+| vector128 | 10 | 9.86 us | 9.87 us | 9.89 us | 113 ns | Crosses all swept thresholds below `never`. |
+| vector128 | 100 | 21.4 us | 21.4 us | 21.5 us | 1.18 us | Checksum-only cost rises with body size. |
+| vector768 | 1 | 7.48 us | 7.50 us | 62.3 ns | 62.3 ns | 4096 avoids single-vector compression. |
+| vector768 | 10 | 13.8 us | 13.8 us | 13.8 us | 654 ns | Crosses all swept thresholds below `never`. |
+| vector768 | 100 | 35.6 us | 35.7 us | 35.7 us | 6.59 us | Large vector batches dominate checksum too. |
+
+Decision signal: the existing 128-byte threshold is aggressive for scalar,
+single JSON, and single-vector entries. Raising the threshold would avoid
+microsecond-scale zstd work on many small writes, but this benchmark is only a
+codec threshold surface; an actual WAL format or policy change still needs
+end-to-end append/replay and recovery evidence.
+
 #### `persist_wal_sync_sweep` — sync-policy sweep
 
 Append + explicit `flush()` across sync policies. The fsync-frequent policies

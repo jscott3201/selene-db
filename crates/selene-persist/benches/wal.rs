@@ -9,7 +9,10 @@ mod common;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{HlcTimestamp, Origin};
-use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalReader, WalWriter};
+use selene_persist::{
+    COMPRESS_THRESHOLD, DEFAULT_WAL_FILE_NAME, FLAG_PAYLOAD_COMPRESSED, SyncPolicy, WalConfig,
+    WalReader, WalWriter,
+};
 use selene_testing::BenchProfile;
 
 fn bench_wal_append_single(c: &mut Criterion) {
@@ -283,6 +286,104 @@ fn bench_wal_payload_shape_no_fsync(c: &mut Criterion) {
     group.finish();
 }
 
+#[derive(Clone, Copy)]
+struct CompressionThreshold {
+    name: &'static str,
+    bytes: Option<usize>,
+}
+
+fn compression_thresholds() -> &'static [CompressionThreshold] {
+    &[
+        CompressionThreshold {
+            name: "always",
+            bytes: Some(0),
+        },
+        CompressionThreshold {
+            name: "current128",
+            bytes: Some(COMPRESS_THRESHOLD),
+        },
+        CompressionThreshold {
+            name: "512",
+            bytes: Some(512),
+        },
+        CompressionThreshold {
+            name: "4096",
+            bytes: Some(4_096),
+        },
+        CompressionThreshold {
+            name: "never",
+            bytes: None,
+        },
+    ]
+}
+
+fn compression_batch_sizes() -> &'static [usize] {
+    match BenchProfile::from_env() {
+        BenchProfile::Quick => &[1, 10, 100],
+        _ => &[1, 10, 100, 1_000],
+    }
+}
+
+struct CompressionFixture {
+    raw: Vec<u8>,
+    threshold: CompressionThreshold,
+}
+
+struct CompressionOutcome {
+    len: usize,
+    checksum_lo: u32,
+    flags: u8,
+}
+
+fn encode_with_threshold(raw: &[u8], threshold: CompressionThreshold) -> CompressionOutcome {
+    if threshold.bytes.is_some_and(|bytes| raw.len() >= bytes) {
+        let bytes = zstd::stream::encode_all(raw, 1).expect("bench zstd compression succeeds");
+        CompressionOutcome {
+            len: bytes.len(),
+            checksum_lo: checksum_lo(&bytes),
+            flags: FLAG_PAYLOAD_COMPRESSED,
+        }
+    } else {
+        CompressionOutcome {
+            len: raw.len(),
+            checksum_lo: checksum_lo(raw),
+            flags: 0,
+        }
+    }
+}
+
+fn checksum_lo(bytes: &[u8]) -> u32 {
+    (xxhash_rust::xxh3::xxh3_64(bytes) & 0xFFFF_FFFF) as u32
+}
+
+fn bench_wal_payload_compression_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("persist_wal_payload_compression_sweep");
+    for &shape in common::payload_shapes() {
+        for &batch_size in compression_batch_sizes() {
+            let changes = common::changes_with_payload(batch_size, shape);
+            let raw = postcard::to_stdvec(&changes).expect("bench WAL payload serializes");
+            group.throughput(Throughput::Bytes(raw.len() as u64));
+            for &threshold in compression_thresholds() {
+                let fixture = CompressionFixture {
+                    raw: raw.clone(),
+                    threshold,
+                };
+                group.bench_with_input(
+                    BenchmarkId::new(shape.name(), format!("b{batch_size}_{}", threshold.name)),
+                    &fixture,
+                    |b, fixture| {
+                        b.iter(|| {
+                            let outcome = encode_with_threshold(&fixture.raw, fixture.threshold);
+                            std::hint::black_box((outcome.len, outcome.checksum_lo, outcome.flags));
+                        });
+                    },
+                );
+            }
+        }
+    }
+    group.finish();
+}
+
 fn bench_wal_sync_policy_sweep(c: &mut Criterion) {
     let mut group = c.benchmark_group("persist_wal_sync_sweep");
     for (name, sync_policy) in [
@@ -430,6 +531,7 @@ criterion_group! {
     targets = bench_wal_append_single, bench_wal_append_batch_1000,
         bench_wal_append_single_no_fsync, bench_wal_append_batch_1000_no_fsync,
         bench_wal_body_size_no_fsync, bench_wal_payload_shape_no_fsync,
-        bench_wal_sync_policy_sweep, bench_wal_payload_shape_replay, bench_wal_replay
+        bench_wal_payload_compression_sweep, bench_wal_sync_policy_sweep,
+        bench_wal_payload_shape_replay, bench_wal_replay
 }
 criterion_main!(wal_group);
