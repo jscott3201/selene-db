@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_54_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_55_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 54);
+    assert_eq!(procedures.len(), 55);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 54);
+    assert_eq!(table.row_count(), 55);
 
     let names = column_strings(&table, "name");
     let signatures = column_strings(&table, "signature");
@@ -149,6 +149,11 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
     );
     assert!(names.iter().any(|name| name == "selene.vector_index_stats"));
     assert!(names.iter().any(|name| name == "selene.text_index_stats"));
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.json_contains_nodes")
+    );
     assert!(names.iter().any(|name| name == "selene.create_text_index"));
     assert!(names.iter().any(|name| name == "selene.drop_text_index"));
     assert!(names.iter().any(|name| name == "selene.text_search_nodes"));
@@ -263,6 +268,33 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
         column_strings(&table, "mutability")[rebuild_recommended],
         "maintenance_write"
     );
+}
+
+#[test]
+fn json_contains_nodes_metadata_has_json_candidate() {
+    let registry = full_registry();
+    let name = [db_string("selene"), db_string("json_contains_nodes")];
+    let metadata = registry
+        .lookup(&name)
+        .expect("json_contains_nodes resolves");
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 4);
+    assert_eq!(arity.maximum, 4);
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters[0].name.as_str(), "label");
+    assert_eq!(parameters[0].ty, GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "property");
+    assert_eq!(parameters[1].ty, GqlType::String);
+    assert_eq!(parameters[2].name.as_str(), "candidate");
+    assert_eq!(parameters[2].ty, GqlType::Json);
+    assert_eq!(parameters[3].name.as_str(), "k");
+    assert_eq!(parameters[3].ty, GqlType::Integer);
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 1);
+    assert_eq!(columns[0].name.as_str(), "node_id");
+    assert_eq!(columns[0].ty, GqlType::NodeRef);
 }
 
 #[test]

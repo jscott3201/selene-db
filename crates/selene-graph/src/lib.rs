@@ -28,6 +28,7 @@ pub mod graph;
 pub mod graph_types;
 pub mod id_allocator;
 pub mod index_provider;
+pub mod json_search;
 pub mod mutator;
 pub(crate) mod panic_payload;
 pub(crate) mod property_index;
@@ -74,6 +75,7 @@ pub use id_allocator::IdAllocator;
 pub use index_provider::{
     IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
 };
+pub use json_search::{JsonContainmentHit, JsonSearchError};
 pub use mutator::Mutator;
 pub use selene_core::{HnswIndexConfig, IvfIndexConfig};
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};

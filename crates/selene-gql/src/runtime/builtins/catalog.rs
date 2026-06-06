@@ -9,13 +9,14 @@ use crate::{
 
 use super::{
     create_index, create_text_index, create_vector_index, drop_index, drop_text_index,
-    drop_vector_index, feature_status, health, rebuild_vector_indexes, text_index_stats,
-    text_search, vector_candidate_states, vector_index_stats, vector_score_candidate_state,
-    vector_score_candidate_state_expanded, vector_score_candidate_state_expanded_batch,
-    vector_score_candidate_state_nodes, vector_score_expanded_candidates,
-    vector_score_expanded_candidates_batch, vector_score_neighbors, vector_score_neighbors_batch,
-    vector_score_nodes, vector_score_nodes_batch, vector_search, vector_search_ann,
-    vector_search_ann_batch, vector_search_batch, vector_search_candidate_state_expanded_ann,
+    drop_vector_index, feature_status, health, json_contains_nodes, rebuild_vector_indexes,
+    text_index_stats, text_search, vector_candidate_states, vector_index_stats,
+    vector_score_candidate_state, vector_score_candidate_state_expanded,
+    vector_score_candidate_state_expanded_batch, vector_score_candidate_state_nodes,
+    vector_score_expanded_candidates, vector_score_expanded_candidates_batch,
+    vector_score_neighbors, vector_score_neighbors_batch, vector_score_nodes,
+    vector_score_nodes_batch, vector_search, vector_search_ann, vector_search_ann_batch,
+    vector_search_batch, vector_search_candidate_state_expanded_ann,
     vector_search_expanded_candidates_ann, vector_search_expanded_candidates_ann_batch, verify,
 };
 
@@ -72,6 +73,8 @@ pub(in crate::runtime) enum BuiltinKind {
     VectorIndexStats,
     /// `selene.text_index_stats` — text index memory/cardinality stats.
     TextIndexStats,
+    /// `selene.json_contains_nodes` — exact JSON containment over node properties.
+    JsonContainsNodes,
     /// `selene.rebuild_vector_indexes` — vector index derived-state rebuild.
     RebuildVectorIndexes,
     /// `selene.rebuild_recommended_vector_indexes` — recommended vector-index rebuild.
@@ -150,6 +153,7 @@ impl BuiltinKind {
             | Self::VectorSearchExpandedCandidatesAnnBatch
             | Self::VectorIndexStats
             | Self::TextIndexStats
+            | Self::JsonContainsNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
@@ -192,6 +196,7 @@ impl BuiltinKind {
             | Self::VectorSearchExpandedCandidatesAnnBatch
             | Self::VectorIndexStats
             | Self::TextIndexStats
+            | Self::JsonContainsNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
@@ -245,6 +250,7 @@ impl BuiltinKind {
             }
             Self::VectorIndexStats => vector_index_stats::signature(),
             Self::TextIndexStats => text_index_stats::signature(),
+            Self::JsonContainsNodes => json_contains_nodes::signature(),
             Self::RebuildVectorIndexes => rebuild_vector_indexes::signature(),
             Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::recommended_signature()
@@ -305,6 +311,7 @@ impl BuiltinKind {
             }
             Self::VectorIndexStats => vector_index_stats::output_columns(),
             Self::TextIndexStats => text_index_stats::output_columns(),
+            Self::JsonContainsNodes => json_contains_nodes::output_columns(),
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::output_columns()
             }
@@ -374,6 +381,7 @@ impl BuiltinKind {
             }
             Self::VectorIndexStats => vector_index_stats::execute(ctx, args),
             Self::TextIndexStats => text_index_stats::execute(ctx, args),
+            Self::JsonContainsNodes => json_contains_nodes::execute(ctx, args),
             Self::TextSearchNodes => text_search::execute(ctx, args),
             Self::TextScoreNodes => text_search::execute_score(ctx, args),
             Self::TextScoreNodesBatch => text_search::execute_score_batch(ctx, args),
@@ -435,6 +443,7 @@ impl BuiltinKind {
             | Self::VectorSearchExpandedCandidatesAnnBatch
             | Self::VectorIndexStats
             | Self::TextIndexStats
+            | Self::JsonContainsNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
@@ -485,6 +494,7 @@ impl BuiltinKind {
             | Self::VectorSearchExpandedCandidatesAnnBatch
             | Self::VectorIndexStats
             | Self::TextIndexStats
+            | Self::JsonContainsNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch

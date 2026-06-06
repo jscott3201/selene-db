@@ -15,10 +15,10 @@
 //! expanded-candidate vector scoring, approximate vector-search, batched
 //! approximate vector-search, ANN-expanded vector-search, batched ANN-expanded
 //! vector-search, vector-index stats, vector-index procedures, maintained
-//! text-index stats/procedures, BM25 text-search, candidate BM25 scoring, and
-//! batched candidate BM25 scoring, plus maintained-state graph-expanded BM25
-//! batch scoring are new native engine functionality on the same concrete
-//! built-in dispatch path.
+//! text-index stats/procedures, BM25 text-search, candidate BM25 scoring,
+//! batched candidate BM25 scoring, maintained-state graph-expanded BM25 batch
+//! scoring, and JSON containment node search are new native engine
+//! functionality on the same concrete built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify`, and
@@ -38,7 +38,8 @@
 //!   `selene.vector_search_candidate_state_expanded_ann`,
 //!   `selene.vector_search_expanded_candidates_ann_batch`,
 //!   `selene.vector_index_stats`, `selene.text_index_stats`,
-//!   `selene.text_search_nodes`, `selene.text_score_nodes`, and
+//!   `selene.json_contains_nodes`, `selene.text_search_nodes`,
+//!   `selene.text_score_nodes`, and
 //!   `selene.text_score_nodes_batch`,
 //!   `selene.text_score_candidate_state_expanded_batch` are read-only graph-tier
 //!   ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]); they never
@@ -69,6 +70,7 @@ mod drop_text_index;
 mod drop_vector_index;
 mod feature_status;
 mod health;
+mod json_contains_nodes;
 mod meta;
 mod rebuild_vector_indexes;
 mod text_index_stats;
