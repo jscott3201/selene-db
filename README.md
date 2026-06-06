@@ -138,6 +138,13 @@ Native procedures are part of the engine, not loadable extensions. Tests can
 inject alternate `ProcedureRegistry` implementations, but production code uses
 the in-tree `BuiltinProcedureRegistry`.
 
+Closed graph schemas support typed property declarations with durable literal
+defaults. Scalar defaults cover the implemented value families, `JSON` defaults
+canonicalize from JSON string images, `VECTOR` defaults use numeric list
+literals, and `LIST<T>` defaults use recursively validated list literals such as
+`tags :: LIST<STRING> DEFAULT ['agentic', 'memory']` or
+`embeddings :: LIST<VECTOR> DEFAULT [[1, 0], [0, 1]]`.
+
 ## Native Retrieval
 
 The retrieval stack is deliberately composable. selene-db provides graph,
