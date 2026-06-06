@@ -217,6 +217,27 @@ pub(crate) fn write_wal_with_payload_compression(
     writer.flush().expect("wal flush succeeds");
 }
 
+pub(crate) fn wal_file_len_with_payload_compression(
+    entries: usize,
+    batch_size: usize,
+    shape: PayloadShape,
+    compression: WalCompression,
+) -> u64 {
+    let dir = TempDir::new("wal-compression-policy-size");
+    write_wal_with_payload_compression(
+        dir.path(),
+        entries,
+        batch_size,
+        shape,
+        0,
+        SyncPolicy::OnFlushOnly,
+        compression,
+    );
+    fs::metadata(dir.path().join(DEFAULT_WAL_FILE_NAME))
+        .expect("wal file metadata reads")
+        .len()
+}
+
 pub(crate) fn write_snapshot(dir: &Path, sequence: u64, bytes: usize) -> PathBuf {
     let mut builder = SnapshotBuilder::new(SnapshotConfig {
         dir: dir.to_path_buf(),

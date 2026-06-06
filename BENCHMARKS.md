@@ -620,9 +620,11 @@ end-to-end append/replay and recovery evidence.
 #### `persist_wal_payload_compression_policy_*` — real writer policy sweep
 
 End-to-end companion to the codec threshold sweep. These rows use the real
-`WalWriter::open_with_compression` path added after the codec-only baseline, so
-append rows include postcard serialization, policy selection, optional zstd,
+`WalWriter::open_with_compression` path added after the codec-only baseline.
+Append rows include postcard serialization, policy selection, optional zstd,
 header framing, checksum, and file writes with `SyncPolicy::OnFlushOnly`.
+Flush rows add one explicit `WalWriter::flush()` durability barrier at the end
+of the append cycle and include deterministic WAL file sizes in the row IDs.
 Replay rows build a WAL file with the selected policy in setup, then time
 reader iteration, checksum, optional decompression, and postcard decode.
 
@@ -630,6 +632,7 @@ Command:
 
 ```bash
 scripts/run-benches.sh --profile quick --bench wal --filter compression_policy
+scripts/run-benches.sh --profile quick --bench wal --filter compression_policy_flush
 ```
 
 Quick profile on 2026-06-06. `total=1000` changes. `batch` is changes per WAL
@@ -647,12 +650,25 @@ uncompressed.
 | vector768 / b1 | 10.54 ms | 3.85 ms | 3.77 ms | 4.65 ms | 1.64 ms | 1.55 ms | Single 768-dim vectors strongly favor no compression. |
 | vector768 / b100 | 1.84 ms | 2.11 ms | 2.20 ms | 2.88 ms | 2.93 ms | 2.58 ms | Current compression can help large append bytes; replay still favors no decompression. |
 
-Decision signal: a higher threshold such as 4096 bytes looks clearly better
-for small scalar/JSON/vector writes and preserves compressed large batches.
-Disabling compression entirely is not an obvious global win because large vector
-append rows can benefit from compressed writes. The next production decision
-needs file-size ratios and a durability-inclusive row before changing the
-default policy.
+Flush-inclusive companion rows, with bytes-on-disk from the row IDs:
+
+| Payload / batch | file current128 | file 4096 | file disabled | flush current128 | flush 4096 | flush disabled | Signal |
+|---|---:|---:|---:|---:|---:|---:|---|
+| scalar i64 / b1 | 81,016 B | 81,016 B | 81,016 B | 7.01 ms | 7.61 ms | 7.27 ms | Tiny scalar rows do not cross either compression threshold. |
+| scalar i64 / b100 | 4,386 B | 4,386 B | 48,706 B | 5.20 ms | 5.22 ms | 5.23 ms | Large scalar batches compress heavily without a flush penalty. |
+| JSON metadata / b1 | 239,016 B | 293,016 B | 293,016 B | 11.02 ms | 7.99 ms | 7.97 ms | Current128 saves bytes but is slower for single JSON records. |
+| JSON metadata / b100 | 17,056 B | 17,056 B | 264,406 B | 6.03 ms | 6.47 ms | 6.53 ms | Large JSON batches keep the compression size win. |
+| vector128 / b1 | 439,016 B | 594,016 B | 594,016 B | 11.66 ms | 7.96 ms | 7.77 ms | Current128 saves bytes but is slower for single vectors. |
+| vector128 / b100 | 61,126 B | 61,126 B | 561,346 B | 6.03 ms | 6.10 ms | 5.72 ms | Compression gives a ~9x size win; latency is fsync/noise level. |
+| vector768 / b1 | 1,962,016 B | 3,154,016 B | 3,154,016 B | 14.98 ms | 9.03 ms | 8.56 ms | Current128 saves bytes but strongly hurts single large vectors. |
+| vector768 / b100 | 63,296 B | 63,296 B | 3,121,346 B | 6.41 ms | 6.94 ms | 7.36 ms | Compression gives a ~49x size win and remains competitive. |
+
+Decision signal: a higher threshold such as 4096 bytes looks better than the
+current 128-byte default for small JSON/vector writes, replay, and flush cycles.
+Disabling compression entirely is still not a clear global win because larger
+JSON/vector batches save substantial bytes with similar durability-inclusive
+latency. A production default change should prefer a higher threshold over
+fully disabling WAL payload compression.
 
 #### `persist_wal_sync_sweep` — sync-policy sweep
 
