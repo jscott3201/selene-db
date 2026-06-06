@@ -231,6 +231,33 @@ fn bench_exact_json_path_exists_scan(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_exact_json_path_value_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_json_path_value_scan");
+    for &scale in BenchProfile::from_env().scales() {
+        let fixture = JsonFixture::build(scale);
+        group.throughput(Throughput::Elements(fixture.scale() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("nested_score_path_k10", fixture.scale()),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_path_value_nodes(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.path(),
+                            10,
+                        )
+                        .expect("JSON path-value scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 fn bench_ann_recall(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_ann_recall_validation");
     for scale in vector_scan_scales() {
@@ -545,6 +572,7 @@ criterion_group! {
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
         bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
         bench_exact_json_contains_scan, bench_exact_json_path_exists_scan,
-        single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall
+        bench_exact_json_path_value_scan, single_graph_candidate_set::bench_vector_candidate_set,
+        bench_ann_recall
 }
 criterion_main!(graph_reads);

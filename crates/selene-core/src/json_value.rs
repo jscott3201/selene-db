@@ -103,14 +103,19 @@ impl JsonValue {
     /// abort the entire candidate search.
     #[must_use]
     pub fn path_exists(&self, path: &[JsonPathSelector]) -> bool {
-        let mut current = self.as_serde();
-        for selector in path {
-            let Some(next) = select_json_child(current, selector) else {
-                return false;
-            };
-            current = next;
-        }
-        true
+        select_json_path(self.as_serde(), path).is_some()
+    }
+
+    /// Return the JSON subvalue selected by `path`.
+    ///
+    /// Stored-value shape mismatches return [`None`]. A selected JSON `null`
+    /// still returns `Some(JsonValue)`, which lets callers distinguish present
+    /// null values from absent paths.
+    #[must_use]
+    pub fn path_value(&self, path: &[JsonPathSelector]) -> Option<Self> {
+        select_json_path(self.as_serde(), path).map(|value| Self {
+            value: Arc::new(value.clone()),
+        })
     }
 
     /// Return the result of applying an RFC 7396 JSON Merge Patch document.
@@ -142,6 +147,16 @@ impl JsonValue {
     pub fn apply_patch(&self, patch: &Self) -> CoreResult<Self> {
         Self::new(apply_json_patch(self.as_serde(), patch.as_serde())?)
     }
+}
+
+fn select_json_path<'a>(
+    mut current: &'a SerdeJsonValue,
+    path: &[JsonPathSelector],
+) -> Option<&'a SerdeJsonValue> {
+    for selector in path {
+        current = select_json_child(current, selector)?;
+    }
+    Some(current)
 }
 
 fn select_json_child<'a>(
@@ -394,6 +409,44 @@ mod tests {
             JsonPathSelector::Key(db_string("facts").unwrap()),
             JsonPathSelector::UnsignedIndex(9),
         ]));
+    }
+
+    #[test]
+    fn path_value_returns_selected_json_subvalue() {
+        let target = JsonValue::new(serde_json::json!({
+            "memory": {
+                "facts": [{"title": "old"}, {"title": "current"}],
+                "score": null
+            }
+        }))
+        .unwrap();
+
+        let selected = target
+            .path_value(&[
+                JsonPathSelector::Key(db_string("memory").unwrap()),
+                JsonPathSelector::Key(db_string("facts").unwrap()),
+                JsonPathSelector::Index(-1),
+                JsonPathSelector::Key(db_string("title").unwrap()),
+            ])
+            .expect("path selects a value");
+        assert_eq!(selected.as_serde(), &serde_json::json!("current"));
+
+        let null_value = target
+            .path_value(&[
+                JsonPathSelector::Key(db_string("memory").unwrap()),
+                JsonPathSelector::Key(db_string("score").unwrap()),
+            ])
+            .expect("JSON null is present");
+        assert_eq!(null_value.as_serde(), &serde_json::Value::Null);
+
+        assert!(
+            target
+                .path_value(&[
+                    JsonPathSelector::Key(db_string("memory").unwrap()),
+                    JsonPathSelector::Key(db_string("missing").unwrap()),
+                ])
+                .is_none()
+        );
     }
 
     #[test]

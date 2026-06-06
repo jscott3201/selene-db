@@ -1,6 +1,6 @@
-//! `selene.json_path_exists_nodes` native built-in.
+//! `selene.json_path_value_nodes` native built-in.
 //!
-//! Read-only graph-tier procedure exposing exact JSON path-existence search over
+//! Read-only graph-tier procedure exposing exact JSON path-value search over
 //! JSON-valued node properties. The path is a JSON array of string object keys
 //! and integer array indexes; this deliberately stays smaller than JSONPath.
 
@@ -12,9 +12,9 @@ use super::vector_common::{cardinality_arg, invalid_arg, string_arg};
 use crate::procedure_registry::ProcedureError;
 use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, ProcedureResult};
 
-const PROC_NAME: &str = "selene.json_path_exists_nodes";
+const PROC_NAME: &str = "selene.json_path_value_nodes";
 
-static JSON_PATH_EXISTS_PARAMS: [StaticParameter; 4] = [
+static JSON_PATH_VALUE_PARAMS: [StaticParameter; 4] = [
     StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
     StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
     StaticParameter::new("path", GqlType::Json, false)
@@ -22,11 +22,14 @@ static JSON_PATH_EXISTS_PARAMS: [StaticParameter; 4] = [
     StaticParameter::new("k", GqlType::Integer, false).with_description("Maximum result count."),
 ];
 
-static JSON_PATH_EXISTS_OUTPUTS: [StaticOutputColumn; 1] =
-    [StaticOutputColumn::new("node_id", GqlType::NodeRef).with_description("Matched node id.")];
+static JSON_PATH_VALUE_OUTPUTS: [StaticOutputColumn; 2] = [
+    StaticOutputColumn::new("node_id", GqlType::NodeRef).with_description("Matched node id."),
+    StaticOutputColumn::new("value", GqlType::Json)
+        .with_description("JSON value selected by the path."),
+];
 
 pub(super) fn signature() -> Vec<ProcedureParameter> {
-    JSON_PATH_EXISTS_PARAMS
+    JSON_PATH_VALUE_PARAMS
         .iter()
         .cloned()
         .map(StaticParameter::into_parameter)
@@ -34,7 +37,7 @@ pub(super) fn signature() -> Vec<ProcedureParameter> {
 }
 
 pub(super) fn output_columns() -> Vec<ProcedureOutputColumn> {
-    JSON_PATH_EXISTS_OUTPUTS
+    JSON_PATH_VALUE_OUTPUTS
         .iter()
         .cloned()
         .map(StaticOutputColumn::into_output_column)
@@ -56,18 +59,18 @@ pub(super) fn execute(
 
     let hits = ctx
         .snapshot()
-        .exact_json_path_exists_nodes_checked(
+        .exact_json_path_value_nodes_checked(
             &label,
             &property,
             &path,
             k,
             ctx.cancellation_checker(),
         )
-        .map_err(|err| json_search_error("JSON path search", err))?;
+        .map_err(|err| json_search_error("JSON path-value search", err))?;
     Ok(ProcedureResult {
         rows: hits
             .into_iter()
-            .map(|hit| vec![Value::NodeRef(hit.node_id)])
+            .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Json(hit.value)])
             .collect(),
     })
 }

@@ -34,6 +34,15 @@ pub struct JsonPathHit {
     pub node_id: NodeId,
 }
 
+/// One JSON path-value node hit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct JsonPathValueHit {
+    /// Matched node id.
+    pub node_id: NodeId,
+    /// JSON value selected by the requested path.
+    pub value: JsonValue,
+}
+
 /// Error returned by checked JSON search APIs.
 #[derive(Debug, thiserror::Error)]
 pub enum JsonSearchError {
@@ -221,6 +230,82 @@ impl SeleneGraph {
         }
         Ok(top_k.into_path_hits())
     }
+
+    /// Exhaustively find JSON-valued node properties where `path` selects a value.
+    pub fn exact_json_path_value_nodes(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        path: &[JsonPathSelector],
+        k: usize,
+    ) -> GraphResult<Vec<JsonPathValueHit>> {
+        self.exact_json_path_value_nodes_checked(
+            label,
+            property,
+            path,
+            k,
+            CancellationChecker::disabled(),
+        )
+        .map_err(JsonSearchError::into_graph_error)
+    }
+
+    /// Exhaustively find JSON path values with cancellation checks.
+    pub fn exact_json_path_value_nodes_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        path: &[JsonPathSelector],
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<JsonPathValueHit>, JsonSearchError> {
+        checker.check()?;
+        if k == 0 || path.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(label_rows) = self.nodes_with_label(label) else {
+            return Ok(Vec::new());
+        };
+
+        let mut top_k = JsonPathValueTopK::new(k);
+        let mut rows_since_check = 0usize;
+        for raw_row in label_rows.iter() {
+            rows_since_check += 1;
+            if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
+                checker.check()?;
+                rows_since_check = 0;
+            }
+            if !self.node_store.is_alive(raw_row) {
+                continue;
+            }
+            let row = RowIndex::new(raw_row);
+            let node_id = self
+                .node_id_for_row(row)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "label index row {raw_row} for {} has no node id",
+                        label.as_str()
+                    ),
+                })?;
+            let properties = self
+                .node_store
+                .properties
+                .get(raw_row as usize)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "JSON search row {raw_row} for {} has no property row",
+                        label.as_str()
+                    ),
+                })?;
+            let Some(Value::Json(value)) = properties.get(property) else {
+                continue;
+            };
+            let Some(value) = value.path_value(path) else {
+                continue;
+            };
+            top_k.push(node_id, value);
+        }
+        Ok(top_k.into_hits())
+    }
 }
 
 impl SharedGraph {
@@ -273,6 +358,31 @@ impl SharedGraph {
         self.read()
             .exact_json_path_exists_nodes_checked(label, property, path, k, checker)
     }
+
+    /// Exhaustively find JSON-valued node properties where `path` selects a value.
+    pub fn exact_json_path_value_nodes(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        path: &[JsonPathSelector],
+        k: usize,
+    ) -> GraphResult<Vec<JsonPathValueHit>> {
+        self.read()
+            .exact_json_path_value_nodes(label, property, path, k)
+    }
+
+    /// Exhaustively find JSON path values with cancellation checks.
+    pub fn exact_json_path_value_nodes_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        path: &[JsonPathSelector],
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<JsonPathValueHit>, JsonSearchError> {
+        self.read()
+            .exact_json_path_value_nodes_checked(label, property, path, k, checker)
+    }
 }
 
 struct JsonContainmentTopK {
@@ -321,196 +431,72 @@ impl JsonContainmentTopK {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use selene_core::{
-        CancellationChecker, CancellationToken, GraphId, JsonPathSelector, JsonValue, LabelSet,
-        NodeId, PropertyMap, Value, db_string,
-    };
+struct JsonPathValueCandidate {
+    node_id: NodeId,
+    value: JsonValue,
+}
 
-    use crate::SharedGraph;
-
-    fn label(value: &str) -> selene_core::DbString {
-        db_string(value).expect("test string fits DB string cap")
-    }
-
-    fn json(value: serde_json::Value) -> Value {
-        Value::Json(JsonValue::new(value).expect("JSON is valid"))
-    }
-
-    fn seed_docs(
-        graph: &SharedGraph,
-        doc: &selene_core::DbString,
-        payload: &selene_core::DbString,
-    ) {
-        let mut txn = graph.begin_write();
-        let mut mutator = txn.mutator();
-        for value in [
-            json(
-                serde_json::json!({"memory": {"facts": [{"title": "old"}, {"title": "current"}]}}),
-            ),
-            json(serde_json::json!({"memory": {"facts": [{"title": "only"}]}})),
-            Value::String(label("not json")),
-            json(serde_json::json!(["agent", {"memory": {"facts": [{"title": "current"}]}}])),
-        ] {
-            mutator
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    PropertyMap::from_pairs([(payload.clone(), value)])
-                        .expect("properties are valid"),
-                )
-                .expect("node inserts");
-        }
-        txn.commit().expect("seed commits");
-    }
-
-    #[test]
-    fn exact_json_contains_nodes_matches_nested_candidates() {
-        let doc = label("Doc");
-        let payload = label("payload");
-        let graph = SharedGraph::new(GraphId::new(1));
-        let mut txn = graph.begin_write();
-        let mut mutator = txn.mutator();
-        for value in [
-            json(serde_json::json!({"memory": {"kind": "episodic", "score": 7}})),
-            json(serde_json::json!({"memory": {"kind": "semantic"}})),
-            Value::String(label("not json")),
-            json(serde_json::json!(["agent", {"memory": {"kind": "episodic"}}])),
-        ] {
-            mutator
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    PropertyMap::from_pairs([(payload.clone(), value)])
-                        .expect("properties are valid"),
-                )
-                .expect("node inserts");
-        }
-        txn.commit().expect("seed commits");
-
-        let candidate =
-            JsonValue::new(serde_json::json!({"memory": {"kind": "episodic"}})).unwrap();
-        let hits = graph
-            .exact_json_contains_nodes(&doc, &payload, &candidate, 10)
-            .expect("search succeeds");
-
-        assert_eq!(
-            hits.into_iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
-            vec![NodeId::new(1), NodeId::new(4)]
-        );
-    }
-
-    #[test]
-    fn exact_json_contains_nodes_observes_zero_k_and_cancellation() {
-        let doc = label("Doc");
-        let payload = label("payload");
-        let graph = SharedGraph::new(GraphId::new(2));
-        let mut txn = graph.begin_write();
-        txn.mutator()
-            .create_node(
-                LabelSet::single(doc.clone()),
-                PropertyMap::from_pairs([(
-                    payload.clone(),
-                    json(serde_json::json!({"kind": "memory"})),
-                )])
-                .expect("properties are valid"),
-            )
-            .expect("node inserts");
-        txn.commit().expect("seed commits");
-        let candidate = JsonValue::new(serde_json::json!({"kind": "memory"})).unwrap();
-
-        assert!(
-            graph
-                .exact_json_contains_nodes(&doc, &payload, &candidate, 0)
-                .expect("zero-k search succeeds")
-                .is_empty()
-        );
-
-        let token = CancellationToken::new();
-        token.cancel();
-        let err = graph
-            .exact_json_contains_nodes_checked(
-                &doc,
-                &payload,
-                &candidate,
-                10,
-                CancellationChecker::new(Some(&token), None),
-            )
-            .expect_err("cancelled search reports cancellation");
-        assert!(matches!(err, crate::JsonSearchError::Cancelled));
-    }
-
-    #[test]
-    fn exact_json_path_exists_nodes_matches_nested_paths() {
-        let doc = label("Doc");
-        let payload = label("payload");
-        let graph = SharedGraph::new(GraphId::new(3));
-        seed_docs(&graph, &doc, &payload);
-        let path = vec![
-            JsonPathSelector::Key(label("memory")),
-            JsonPathSelector::Key(label("facts")),
-            JsonPathSelector::Index(1),
-            JsonPathSelector::Key(label("title")),
-        ];
-
-        let hits = graph
-            .exact_json_path_exists_nodes(&doc, &payload, &path, 10)
-            .expect("search succeeds");
-
-        assert_eq!(
-            hits.into_iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
-            vec![NodeId::new(1)]
-        );
-    }
-
-    #[test]
-    fn exact_json_path_exists_nodes_supports_reverse_array_index() {
-        let doc = label("Doc");
-        let payload = label("payload");
-        let graph = SharedGraph::new(GraphId::new(4));
-        seed_docs(&graph, &doc, &payload);
-        let path = vec![
-            JsonPathSelector::Key(label("memory")),
-            JsonPathSelector::Key(label("facts")),
-            JsonPathSelector::Index(-1),
-            JsonPathSelector::Key(label("title")),
-        ];
-
-        let hits = graph
-            .exact_json_path_exists_nodes(&doc, &payload, &path, 10)
-            .expect("search succeeds");
-
-        assert_eq!(
-            hits.into_iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
-            vec![NodeId::new(1), NodeId::new(2)]
-        );
-    }
-
-    #[test]
-    fn exact_json_path_exists_nodes_observes_zero_k_and_cancellation() {
-        let doc = label("Doc");
-        let payload = label("payload");
-        let graph = SharedGraph::new(GraphId::new(5));
-        seed_docs(&graph, &doc, &payload);
-        let path = [JsonPathSelector::Key(label("memory"))];
-
-        assert!(
-            graph
-                .exact_json_path_exists_nodes(&doc, &payload, &path, 0)
-                .expect("zero-k search succeeds")
-                .is_empty()
-        );
-
-        let token = CancellationToken::new();
-        token.cancel();
-        let err = graph
-            .exact_json_path_exists_nodes_checked(
-                &doc,
-                &payload,
-                &path,
-                10,
-                CancellationChecker::new(Some(&token), None),
-            )
-            .expect_err("cancelled search reports cancellation");
-        assert!(matches!(err, crate::JsonSearchError::Cancelled));
+impl PartialEq for JsonPathValueCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.node_id == other.node_id
     }
 }
+
+impl Eq for JsonPathValueCandidate {}
+
+impl PartialOrd for JsonPathValueCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JsonPathValueCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.node_id.cmp(&other.node_id)
+    }
+}
+
+struct JsonPathValueTopK {
+    k: usize,
+    nodes: BinaryHeap<JsonPathValueCandidate>,
+}
+
+impl JsonPathValueTopK {
+    fn new(k: usize) -> Self {
+        Self {
+            k,
+            nodes: BinaryHeap::new(),
+        }
+    }
+
+    fn push(&mut self, node_id: NodeId, value: JsonValue) {
+        if self.k == 0 {
+            return;
+        }
+        let candidate = JsonPathValueCandidate { node_id, value };
+        if self.nodes.len() < self.k {
+            self.nodes.push(candidate);
+            return;
+        }
+        let Some(mut max_node) = self.nodes.peek_mut() else {
+            return;
+        };
+        if candidate.node_id < max_node.node_id {
+            *max_node = candidate;
+        }
+    }
+
+    fn into_hits(self) -> Vec<JsonPathValueHit> {
+        self.nodes
+            .into_sorted_vec()
+            .into_iter()
+            .map(|hit| JsonPathValueHit {
+                node_id: hit.node_id,
+                value: hit.value,
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests;
