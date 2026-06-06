@@ -19,7 +19,7 @@ pub(in crate::runtime) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 37] = [
+pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 38] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -85,6 +85,12 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 37] = [
         description: "Exact JSON path-existence search over node properties.",
         since_version: "1.1.0",
         kind: BuiltinKind::JsonPathExistsNodes,
+    },
+    BuiltinSpec {
+        name: &["selene", "json_path_value_nodes"],
+        description: "Exact JSON path-value search over node properties.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::JsonPathValueNodes,
     },
     BuiltinSpec {
         name: &["selene", "rebuild_vector_indexes"],
