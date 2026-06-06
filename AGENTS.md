@@ -182,6 +182,10 @@ JSON is native engine data for agentic workloads:
 - Serde/postcard boundaries encode canonical JSON text and validate on decode.
 - `PropertyValueType::Json` / `PredefinedValueType::Json` allow graph schema
   declarations such as `payload :: JSON`.
+- JSON property defaults are accepted through JSON-typed string literals such as
+  `payload :: JSON DEFAULT '{"kind":"episodic"}'`; the catalog validates and
+  canonicalizes the JSON text and `SHOW` renders it as an escaped string
+  literal.
 - `selene-gql` exposes `JSON` as an implementation-defined type name with typed
   parameters, `IS TYPED JSON`, `CAST(<string> AS JSON)`, `CAST(<json> AS
   STRING)`, and scalar functions `json`, `json_parse`, `json_stringify`,

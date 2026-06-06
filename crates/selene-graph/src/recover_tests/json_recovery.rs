@@ -90,7 +90,7 @@ fn recover_closed_wal_only_preserves_json_property_type() {
                     value_type: PropertyValueType::Json,
                     list_element_type: None,
                     required: true,
-                    default: None,
+                    default: Some(PropertyDefaultValue::from_value(&json_value()).unwrap()),
                     immutable: false,
                     record_field_types: None,
                 }],
@@ -107,6 +107,12 @@ fn recover_closed_wal_only_preserves_json_property_type() {
     assert_eq!(property.name, payload);
     assert_eq!(property.value_type, PropertyValueType::Json);
     assert_eq!(property.list_element_type, None);
+    assert_eq!(
+        property.default,
+        Some(PropertyDefaultValue::Json(
+            db_string(r#"{"kind":"episodic","score":7,"tags":["agent","memory"]}"#).unwrap()
+        ))
+    );
     assert!(property.required);
     let _ = fs::remove_dir_all(dir);
 }

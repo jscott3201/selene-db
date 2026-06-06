@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use selene_core::PropertyValueType;
+use selene_core::{JsonValue, PropertyValueType, db_string};
 use selene_graph::{
     PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
     RecordFieldTypeDef, RecordFieldTypes,
@@ -60,6 +60,9 @@ fn property_def(
     }
     let (value_type, list_element_type, record_field_types) =
         gql_type_to_property_value_type(&property.gql_type)?;
+    let default = default
+        .map(|default| coerce_property_default_value(value_type, default, default_span))
+        .transpose()?;
     if let Some(default) = &default {
         validate_default_value(
             property.name.clone(),
@@ -115,6 +118,40 @@ fn property_default_value(
     }
 }
 
+fn coerce_property_default_value(
+    value_type: PropertyValueType,
+    default: PropertyDefaultValue,
+    span: crate::SourceSpan,
+) -> Result<PropertyDefaultValue, ExecutorError> {
+    match (value_type, default) {
+        (PropertyValueType::Json, PropertyDefaultValue::String(value)) => {
+            let parsed = serde_json::from_str(value.as_str()).map_err(|_| {
+                ExecutorError::data_exception(
+                    DataExceptionSubclass::InvalidCharacterValueForCast,
+                    "JSON DEFAULT string is not valid JSON",
+                    span,
+                )
+            })?;
+            let json = JsonValue::new(parsed).map_err(|err| {
+                ExecutorError::data_exception(
+                    DataExceptionSubclass::DataException,
+                    format!("JSON DEFAULT value is invalid: {err}"),
+                    span,
+                )
+            })?;
+            let canonical = db_string(&json.to_canonical_string()).map_err(|err| {
+                ExecutorError::data_exception(
+                    DataExceptionSubclass::DataException,
+                    format!("JSON DEFAULT value is invalid: {err}"),
+                    span,
+                )
+            })?;
+            Ok(PropertyDefaultValue::Json(canonical))
+        }
+        (_, default) => Ok(default),
+    }
+}
+
 fn validate_default_value(
     property: selene_core::DbString,
     value_type: PropertyValueType,
@@ -122,7 +159,13 @@ fn validate_default_value(
     default: &PropertyDefaultValue,
     span: crate::SourceSpan,
 ) -> Result<(), ExecutorError> {
-    let value = default.to_value();
+    let value = default.to_value().map_err(|err| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            format!("DEFAULT value is invalid: {err}"),
+            span,
+        )
+    })?;
     if matches!(value, selene_core::Value::Null) {
         if required {
             return Err(default_type_error(
@@ -342,12 +385,24 @@ pub(super) fn render_property_default_value(
         PropertyDefaultValue::Null => Ok("NULL".to_owned()),
         PropertyDefaultValue::Boolean(value) => Ok(value.to_string().to_uppercase()),
         PropertyDefaultValue::Integer(value) => Ok(value.to_string()),
-        PropertyDefaultValue::String(value) => Ok(format!("'{}'", value.as_str())),
+        PropertyDefaultValue::String(value) | PropertyDefaultValue::Json(value) => {
+            Ok(render_string_literal(value.as_str()))
+        }
         PropertyDefaultValue::Bytes(value) => Ok(render_byte_string_literal(value)),
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "unsupported property default value in catalog DDL rendering",
         }),
     }
+}
+
+fn render_string_literal(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+        .replace('\'', "''");
+    format!("'{escaped}'")
 }
 
 fn render_byte_string_literal(bytes: &[u8]) -> String {

@@ -171,10 +171,6 @@ fn render_bool(value: bool) -> String {
 fn render_default(default: Option<&PropertyDefaultValue>) -> String {
     match default {
         None => "none".to_owned(),
-        Some(PropertyDefaultValue::Null) => "NULL".to_owned(),
-        Some(PropertyDefaultValue::Boolean(value)) => value.to_string().to_uppercase(),
-        Some(PropertyDefaultValue::Integer(value)) => value.to_string(),
-        Some(PropertyDefaultValue::String(value)) => format!("'{}'", value.as_str()),
         Some(value) => render_property_default_value(value)
             .unwrap_or_else(|_| "<unsupported-default>".to_owned()),
     }

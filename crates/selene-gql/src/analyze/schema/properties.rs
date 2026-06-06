@@ -90,6 +90,9 @@ pub(super) fn validate_required_properties(
     check: RequiredPropertyCheck<'_>,
 ) -> Result<(), AnalysisError> {
     for declaration in check.declarations.iter().filter(|decl| decl.required) {
+        if declaration.default.is_some() {
+            continue;
+        }
         if check
             .properties
             .iter()

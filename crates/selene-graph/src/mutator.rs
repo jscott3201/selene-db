@@ -696,7 +696,7 @@ fn fill_property_defaults(
             continue;
         }
         if let Some(default) = &declaration.default {
-            props.set(declaration.name.clone(), default.to_value())?;
+            props.set(declaration.name.clone(), default.to_value()?)?;
         }
     }
     Ok(())

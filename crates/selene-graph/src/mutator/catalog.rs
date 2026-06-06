@@ -394,7 +394,11 @@ fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
                 property.required,
             )?,
             nullable: !property.required,
-            default: property.default.as_ref().map(|default| default.to_value()),
+            default: property
+                .default
+                .as_ref()
+                .map(|default| default.to_value())
+                .transpose()?,
             immutable: property.immutable,
             record_fields: core_record_fields(
                 property.value_type,
@@ -416,7 +420,11 @@ fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
                 property.required,
             )?,
             nullable: !property.required,
-            default: property.default.as_ref().map(|default| default.to_value()),
+            default: property
+                .default
+                .as_ref()
+                .map(|default| default.to_value())
+                .transpose()?,
             immutable: property.immutable,
             record_fields: core_record_fields(
                 property.value_type,
