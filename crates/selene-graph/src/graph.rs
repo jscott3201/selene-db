@@ -308,6 +308,15 @@ impl SeleneGraph {
         self.edge_store.alive.len() as usize
     }
 
+    /// Return current row-space pressure for compaction planning.
+    ///
+    /// This is a cheap read over store lengths and liveness bitmaps; it does not
+    /// rebuild indexes or allocate a dense graph.
+    #[must_use]
+    pub fn compaction_stats(&self) -> crate::compaction::CompactionStats {
+        crate::compaction::CompactionStats::from_graph(self)
+    }
+
     /// Bitmap of alive edge *row indices*.
     ///
     /// The edge-side sibling of [`Self::live_nodes`]. The returned bitmap is
