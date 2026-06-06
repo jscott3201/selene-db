@@ -6,8 +6,8 @@
 //! the projection catalog) directly, with **no** `ExternalGraphProcedure`
 //! indirection. Argument coercion (`args`), error translation (`error`),
 //! parallelism parsing (`parallel`), and per-`GraphId` projection state (`state`)
-//! are ported verbatim from the pack so the user-visible procedure signatures,
-//! row shapes, and error strings are byte-identical.
+//! are ported from the pack so the native procedure metadata, row shapes, and
+//! error strings preserve the historical algorithm contract.
 //!
 //! Every procedure is read-only graph-tier ([`ProcedureTier::Graph`] +
 //! [`ProcedureMutability::Read`]) and increments [`metrics::ALGORITHM_RUNS_TOTAL`]

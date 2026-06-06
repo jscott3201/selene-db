@@ -3,8 +3,9 @@
 //! These mirror the historical pack's `parameter` / `output` helpers plus its
 //! `external_parameter` / `external_output_column` conversion: a nullable
 //! parameter carries the `"NULL (use procedure default)"` default-doc and every
-//! parameter / column carries the same boilerplate description the pack emitted,
-//! so `SHOW PROCEDURES` introspection is byte-identical.
+//! parameter / column carries the same boilerplate description the pack emitted.
+//! Current catalog rendering is owned by the engine-level `SHOW PROCEDURES`
+//! renderer.
 
 use selene_core::db_string;
 

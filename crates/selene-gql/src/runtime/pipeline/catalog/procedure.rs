@@ -3,7 +3,7 @@
 use selene_core::{DbString, Value};
 
 use crate::{
-    Binding, ExecutorError, ProcedureMetadata, ProcedureMutability, ProcedureSignature,
+    Binding, ExecutorError, ProcedureMetadata, ProcedureMutability, ProcedureOutputSchema,
     ProcedureTier,
 };
 
@@ -18,10 +18,7 @@ pub(super) fn procedure_row(
         Value::String(runtime_db_string(&name)?),
         Value::String(runtime_db_string(render_tier(metadata.tier))?),
         Value::String(runtime_db_string(render_mutability(metadata.mutability))?),
-        Value::String(runtime_db_string(&render_signature(
-            &name,
-            &metadata.signature,
-        ))?),
+        Value::String(runtime_db_string(&render_signature(&name, metadata))?),
         Value::String(runtime_db_string(metadata.description)?),
         Value::String(runtime_db_string(metadata.signature.since_version)?),
     ]))
@@ -50,8 +47,9 @@ fn render_mutability(mutability: ProcedureMutability) -> &'static str {
     }
 }
 
-fn render_signature(name: &str, signature: &ProcedureSignature) -> String {
-    let params = signature
+fn render_signature(name: &str, metadata: &ProcedureMetadata) -> String {
+    let params = metadata
+        .signature
         .parameters
         .iter()
         .map(|parameter| {
@@ -65,5 +63,27 @@ fn render_signature(name: &str, signature: &ProcedureSignature) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ");
-    format!("{name}({params})")
+    let outputs = render_outputs(&metadata.output_schema);
+    if outputs.is_empty() {
+        format!("{name}({params})")
+    } else {
+        format!("{name}({params}) YIELD {outputs}")
+    }
+}
+
+fn render_outputs(output_schema: &ProcedureOutputSchema) -> String {
+    output_schema
+        .columns
+        .iter()
+        .map(|column| {
+            let nullable = if column.nullable { "?" } else { "" };
+            format!(
+                "{}: {}{}",
+                column.name,
+                render_gql_type(&column.ty),
+                nullable
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

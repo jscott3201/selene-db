@@ -1,10 +1,10 @@
 //! Static metadata builders for the native platform built-ins.
 //!
-//! Ported verbatim from the historical procedure-pack built-in module
-//! (`StaticParameter`, `StaticOutputColumn`) plus the pack registry's
-//! `parameter` / `output_column` storage conversion. Keeping the
-//! `with_description` / `with_default_doc` / `with_default` shape identical means
-//! the relocated built-ins expose byte-identical `SHOW PROCEDURES` metadata.
+//! Ported from the historical procedure-pack built-in module (`StaticParameter`,
+//! `StaticOutputColumn`) plus the pack registry's `parameter` / `output_column`
+//! storage conversion. Keeping the `with_description` / `with_default_doc` /
+//! `with_default` shape aligned preserves the native procedure metadata contract
+//! while catalog rendering stays owned by the current engine.
 
 use selene_core::db_string;
 
