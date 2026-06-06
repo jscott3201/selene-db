@@ -154,6 +154,70 @@ fn json_get_selects_objects_and_arrays() {
 }
 
 #[test]
+fn json_get_path_selects_nested_objects_and_arrays() {
+    let value = json_value(
+        r#"RETURN json_get_path(json('{"memory":{"events":[{"score":7},{"score":9}]}}'), 'memory', 'events', 1, 'score') AS value"#,
+    );
+    assert_eq!(value.to_canonical_string(), "9");
+    assert_eq!(
+        string_value(
+            r#"RETURN json_get_path_text(json('{"events":[{"kind":"semantic"},{"kind":"episodic"}]}'), 'events', -1, 'kind') AS value"#,
+        ),
+        "episodic"
+    );
+    let null_value = json_value(
+        r#"RETURN json_get_path(json('{"memory":{"score":null}}'), 'memory', 'score') AS value"#,
+    );
+    assert_eq!(null_value.to_canonical_string(), "null");
+    assert_eq!(
+        string_value(
+            r#"RETURN json_get_path_text(json('{"a":{"b":[true,{"c":[1,2]}]}}'), 'a', 'b', 1, 'c') AS value"#,
+        ),
+        "[1,2]"
+    );
+}
+
+#[test]
+fn json_get_path_returns_sql_null_for_absent_or_inapplicable_paths() {
+    for source in [
+        r#"RETURN json_get_path(json('{"a":{"b":1}}'), 'a', 'missing') AS value"#,
+        r#"RETURN json_get_path(json('{"a":{"b":1}}'), 'a', NULL, 'b') AS value"#,
+        r#"RETURN json_get_path(NULL, 'a', 'b') AS value"#,
+        r#"RETURN json_get_path(json('[{"a":1}]'), 99, 'a') AS value"#,
+        r#"RETURN json_get_path(json('{"a":1}'), 'a', 'b') AS value"#,
+        r#"RETURN json_get_path_text(json('{"a":{"b":null}}'), 'a', 'b') AS value"#,
+    ] {
+        assert_eq!(single_value(source, "value"), Value::Null, "{source}");
+    }
+}
+
+#[test]
+fn json_get_path_reports_data_exceptions_for_bad_selectors() {
+    for source in [
+        r#"RETURN json_get_path(json('{"a":1}'), 7) AS value"#,
+        r#"RETURN json_get_path(json('[1,2]'), 'bad') AS value"#,
+        r#"RETURN json_get_path(7, 'a') AS value"#,
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
+fn json_get_path_enforces_selector_depth_cap() {
+    let selectors = vec!["'a'"; 65].join(", ");
+    let source = format!("RETURN json_get_path(json('{{}}'), {selectors}) AS value");
+    let err = execute_read_result(&source).expect_err("over-wide JSON path should fail");
+    assert!(matches!(
+        err,
+        ExecutorError::FunctionArityMismatch {
+            expected: "2 to 65",
+            actual: 66,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn json_get_returns_sql_null_for_absent_or_inapplicable_paths() {
     for source in [
         r#"RETURN json_get(json('{"a":1}'), 'missing') AS value"#,
@@ -212,6 +276,8 @@ fn json_feature_flags_cover_functions_and_type_names() {
         r#"RETURN json_type(json('{"a":1}')) AS value"#,
         r#"RETURN json_get(json('{"a":1}'), 'a') AS value"#,
         r#"RETURN json_get_text(json('{"a":1}'), 'a') AS value"#,
+        r#"RETURN json_get_path(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
+        r#"RETURN json_get_path_text(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
         "RETURN NULL IS TYPED JSON AS value",
         "CREATE NODE TYPE :Thing (payload :: JSON)",
     ] {

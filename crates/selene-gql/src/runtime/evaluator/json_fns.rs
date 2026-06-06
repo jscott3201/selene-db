@@ -12,6 +12,10 @@ use super::{
     cast::parse_json_value,
 };
 
+const MAX_JSON_PATH_SELECTORS: usize = 64;
+
+pub(super) const JSON_PATH_MAX_ARGS: usize = MAX_JSON_PATH_SELECTORS + 1;
+
 pub(super) fn eval_json_parse(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
     let value = args.into_iter().next().expect("arity checked");
     if matches!(value, Value::Null) {
@@ -43,21 +47,52 @@ pub(super) fn eval_json_type(args: Vec<Value>, span: SourceSpan) -> Result<Value
 }
 
 pub(super) fn eval_json_get(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let Some(value) = select_json_value(&args, span)? else {
+    let Some(value) = select_json_path(&args, "json_get", span)? else {
         return Ok(Value::Null);
     };
-    JsonValue::new(value.clone())
-        .map(Value::Json)
-        .map_err(|err| data_exception_value(format!("selected JSON value is invalid: {err}"), span))
+    selected_json_value(value, span)
 }
 
 pub(super) fn eval_json_get_text(
     args: Vec<Value>,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let Some(value) = select_json_value(&args, span)? else {
+    let Some(value) = select_json_path(&args, "json_get_text", span)? else {
         return Ok(Value::Null);
     };
+    selected_json_text(value, span)
+}
+
+pub(super) fn eval_json_get_path(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Some(value) = select_json_path(&args, "json_get_path", span)? else {
+        return Ok(Value::Null);
+    };
+    selected_json_value(value, span)
+}
+
+pub(super) fn eval_json_get_path_text(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Some(value) = select_json_path(&args, "json_get_path_text", span)? else {
+        return Ok(Value::Null);
+    };
+    selected_json_text(value, span)
+}
+
+fn selected_json_value(
+    value: &serde_json::Value,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    JsonValue::new(value.clone())
+        .map(Value::Json)
+        .map_err(|err| data_exception_value(format!("selected JSON value is invalid: {err}"), span))
+}
+
+fn selected_json_text(value: &serde_json::Value, span: SourceSpan) -> Result<Value, ExecutorError> {
     match value {
         serde_json::Value::Null => Ok(Value::Null),
         serde_json::Value::String(value) => string_value(value, span),
@@ -70,28 +105,53 @@ pub(super) fn eval_json_get_text(
     }
 }
 
-fn select_json_value(
-    args: &[Value],
+fn select_json_path<'a>(
+    args: &'a [Value],
+    function: &'static str,
     span: SourceSpan,
-) -> Result<Option<&serde_json::Value>, ExecutorError> {
-    debug_assert_eq!(args.len(), 2);
-    if matches!(args[0], Value::Null) || matches!(args[1], Value::Null) {
+) -> Result<Option<&'a serde_json::Value>, ExecutorError> {
+    debug_assert!(args.len() >= 2);
+    debug_assert!(args.len() <= JSON_PATH_MAX_ARGS);
+    if matches!(args[0], Value::Null) {
         return Ok(None);
     }
     let Value::Json(value) = &args[0] else {
-        return data_exception("json_get target is not JSON", span);
+        return Err(data_exception_value(
+            format!("{function} target is not JSON"),
+            span,
+        ));
     };
-    match (value.as_serde(), &args[1]) {
+    let mut current = value.as_serde();
+    for selector in &args[1..] {
+        if matches!(selector, Value::Null) {
+            return Ok(None);
+        }
+        let Some(next) = select_json_child(current, selector, function, span)? else {
+            return Ok(None);
+        };
+        current = next;
+    }
+    Ok(Some(current))
+}
+
+fn select_json_child<'a>(
+    current: &'a serde_json::Value,
+    selector: &Value,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Option<&'a serde_json::Value>, ExecutorError> {
+    match (current, selector) {
         (serde_json::Value::Object(values), Value::String(key)) => Ok(values.get(key.as_str())),
         (serde_json::Value::Array(values), index) => {
-            let Some(index) = json_array_index(index, values.len(), span)? else {
+            let Some(index) = json_array_index(index, values.len(), function, span)? else {
                 return Ok(None);
             };
             Ok(values.get(index))
         }
-        (serde_json::Value::Object(_), _) => {
-            data_exception("json_get object key is not a string", span)
-        }
+        (serde_json::Value::Object(_), _) => Err(data_exception_value(
+            format!("{function} object key is not a string"),
+            span,
+        )),
         _ => Ok(None),
     }
 }
@@ -99,6 +159,7 @@ fn select_json_value(
 fn json_array_index(
     value: &Value,
     len: usize,
+    function: &'static str,
     span: SourceSpan,
 ) -> Result<Option<usize>, ExecutorError> {
     match value {
@@ -113,6 +174,9 @@ fn json_array_index(
             Ok((offset <= len).then_some(len - offset))
         }
         Value::Uint(value) => Ok(usize::try_from(*value).ok().filter(|idx| *idx < len)),
-        _ => data_exception("json_get array index is not an integer", span),
+        _ => Err(data_exception_value(
+            format!("{function} array index is not an integer"),
+            span,
+        )),
     }
 }

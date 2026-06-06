@@ -59,15 +59,7 @@ pub(super) fn eval_range_args(
     if args.len() < min || args.len() > max {
         return Err(ExecutorError::FunctionArityMismatch {
             name: name.to_owned(),
-            expected: if min == max {
-                match min {
-                    1 => "1",
-                    2 => "2",
-                    _ => "fixed",
-                }
-            } else {
-                "2 or 3"
-            },
+            expected: arity_expected(min, max),
             actual: args.len(),
             span,
         });
@@ -75,6 +67,24 @@ pub(super) fn eval_range_args(
     args.iter()
         .map(|arg| evaluate(arg, binding, schema, ctx))
         .collect()
+}
+
+fn arity_expected(min: usize, max: usize) -> &'static str {
+    if min == max {
+        return match min {
+            0 => "0",
+            1 => "1",
+            2 => "2",
+            3 => "3",
+            _ => "fixed",
+        };
+    }
+    match (min, max) {
+        (1, 2) => "1 or 2",
+        (2, 3) => "2 or 3",
+        (2, 65) => "2 to 65",
+        _ => "variable",
+    }
 }
 
 pub(super) fn eval_length(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
