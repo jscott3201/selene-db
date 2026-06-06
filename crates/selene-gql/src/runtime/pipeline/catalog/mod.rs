@@ -664,8 +664,9 @@ fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorE
                 None => String::new(),
             };
             let immutable = if property.immutable { " IMMUTABLE" } else { "" };
+            let unique = if property.unique { " UNIQUE" } else { "" };
             Ok(format!(
-                "{} :: {}{}{}{}",
+                "{} :: {}{}{}{}{}",
                 property.name,
                 render_property_value_type(
                     property.value_type,
@@ -674,7 +675,8 @@ fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorE
                 ),
                 nullability,
                 default,
-                immutable
+                immutable,
+                unique
             ))
         })
         .collect::<Result<Vec<_>, ExecutorError>>()?;

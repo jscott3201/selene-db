@@ -508,6 +508,8 @@ pub struct PropertyTypeDef {
     pub default: Option<PropertyDefaultValue>,
     /// Whether updates to this property are forbidden after creation.
     pub immutable: bool,
+    /// Whether non-null property values must be unique within the declaring type.
+    pub unique: bool,
     /// Declared field types when [`PropertyTypeDef::value_type`] is `RecordTyped`.
     /// `Some` only for closed/typed `RECORD` declarations; `None` for open `Record`
     /// and every non-record value type (symmetric to

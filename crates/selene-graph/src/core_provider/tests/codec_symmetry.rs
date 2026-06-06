@@ -170,6 +170,7 @@ fn bytecheck_rejects_corrupted_gtyp_rkyv_body() {
                 required: false,
                 default: None,
                 immutable: false,
+                unique: false,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,

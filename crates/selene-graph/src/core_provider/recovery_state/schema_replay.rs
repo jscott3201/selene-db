@@ -222,6 +222,7 @@ fn runtime_properties(
                 required: !property.nullable || property.value_type.not_null,
                 default: runtime_default_value(property.default.as_ref())?,
                 immutable: property.immutable,
+                unique: property.unique,
                 record_field_types,
             })
         })

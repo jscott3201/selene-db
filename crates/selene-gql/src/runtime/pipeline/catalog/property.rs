@@ -34,6 +34,7 @@ fn property_def(
     let mut default = None;
     let mut default_span = property.span;
     let mut immutable = false;
+    let mut unique = false;
     for constraint in &property.constraints {
         match constraint {
             PlannedTypePropertyConstraint::NotNull(_) => required = true,
@@ -48,16 +49,7 @@ fn property_def(
                 default_span = *span;
             }
             PlannedTypePropertyConstraint::Immutable(_) => immutable = true,
-            // UNIQUE is an ISO-relevant property constraint (ISO/IEC 39075:2024
-            // §18) but enforcement of property uniqueness is not yet implemented;
-            // surface it as an honest capability-gap deferral (42N01) rather than
-            // a generic internal error, mirroring the inline-INDEXED-on-edge path.
-            PlannedTypePropertyConstraint::Unique(span) => {
-                return Err(ExecutorError::FeatureNotSupportedYet {
-                    feature: "UNIQUE property constraint",
-                    span: *span,
-                });
-            }
+            PlannedTypePropertyConstraint::Unique(_) => unique = true,
             PlannedTypePropertyConstraint::Indexed { span, .. } if !allow_inline_indexed => {
                 return Err(ExecutorError::FeatureNotSupportedYet {
                     feature: "inline INDEXED on edge properties",
@@ -88,6 +80,7 @@ fn property_def(
         required,
         default,
         immutable,
+        unique,
         record_field_types,
     })
 }

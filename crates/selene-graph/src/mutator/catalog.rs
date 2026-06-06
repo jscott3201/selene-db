@@ -400,6 +400,7 @@ fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
                 .map(|default| default.to_value())
                 .transpose()?,
             immutable: property.immutable,
+            unique: property.unique,
             record_fields: core_record_fields(
                 property.value_type,
                 property.record_field_types.as_ref(),
@@ -426,6 +427,7 @@ fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
                 .map(|default| default.to_value())
                 .transpose()?,
             immutable: property.immutable,
+            unique: property.unique,
             record_fields: core_record_fields(
                 property.value_type,
                 property.record_field_types.as_ref(),

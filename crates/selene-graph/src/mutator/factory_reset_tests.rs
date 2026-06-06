@@ -186,7 +186,7 @@ fn factory_reset_resets_closed_graph_to_open() {
                 required: true,
                 immutable: false,
                 default: None,
-
+                unique: false,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,

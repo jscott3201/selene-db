@@ -5,6 +5,9 @@ use selene_core::{ExtensionTypeId, GraphId, Record, RecordTypeId, RecordTyped, V
 use super::*;
 use crate::{GraphError, RecordFieldType, RecordFieldTypeDef, RecordFieldTypes, SharedGraph};
 
+#[path = "type_validator_tests/unique.rs"]
+mod unique;
+
 fn db_string(name: &str) -> DbString {
     selene_core::db_string(name).unwrap()
 }
@@ -27,6 +30,7 @@ fn graph_type() -> GraphTypeDef {
                     required: true,
                     default: None,
                     immutable: false,
+                    unique: false,
                     record_field_types: None,
                 }],
                 validation_mode: ValidationMode::Strict,
@@ -41,6 +45,7 @@ fn graph_type() -> GraphTypeDef {
                     required: true,
                     default: None,
                     immutable: false,
+                    unique: false,
                     record_field_types: None,
                 }],
                 validation_mode: ValidationMode::Strict,
@@ -58,6 +63,7 @@ fn graph_type() -> GraphTypeDef {
                 required: false,
                 default: None,
                 immutable: false,
+                unique: false,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -114,6 +120,7 @@ fn validate_entity_state_accepts_vector_property() {
                 required: true,
                 default: None,
                 immutable: false,
+                unique: false,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -264,6 +271,7 @@ fn legacy_untyped_list_declaration_accepts_any_list_elements() {
         required: false,
         default: None,
         immutable: false,
+        unique: false,
         record_field_types: None,
     };
 
@@ -283,6 +291,7 @@ fn vector_declaration_matches_only_vector_values() {
         required: false,
         default: None,
         immutable: false,
+        unique: false,
         record_field_types: None,
     };
 
@@ -373,6 +382,7 @@ fn closed_record_declaration() -> PropertyTypeDef {
         required: false,
         default: None,
         immutable: false,
+        unique: false,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
                 name: db_string("host"),
@@ -447,6 +457,7 @@ fn closed_record_accepts_and_rejects_nested() {
         required: true,
         default: None,
         immutable: false,
+        unique: false,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
                 name: db_string("id"),
@@ -577,6 +588,7 @@ fn open_bare_record_declaration_accepts_any_record() {
         required: false,
         default: None,
         immutable: false,
+        unique: false,
         record_field_types: None,
     };
     assert!(property_value_matches(
