@@ -38,6 +38,48 @@ fn cast_bound_in_zone(value: Value, target: &str, zone: &str) -> Value {
     table.rows()[0].values()[0].clone()
 }
 
+fn current_date(session: &mut Session<'_>) -> jiff::civil::Date {
+    let output = session
+        .execute_source("RETURN current_date() AS d", &EmptyProcedureRegistry)
+        .expect("current date");
+    let StatementOutput::Rows(table) = output else {
+        panic!("current_date produced non-row output");
+    };
+    let Value::Date(value) = table.rows()[0].values()[0].clone() else {
+        panic!("current_date produced non-date value");
+    };
+    value
+}
+
+fn cast_bound_with_date_window(
+    session: &mut Session<'_>,
+    value: Value,
+    target: &str,
+) -> (Value, jiff::civil::Date, jiff::civil::Date) {
+    let before = current_date(session);
+    session.bind_parameter(intern("p").expect("intern param"), value);
+    let source = format!("RETURN CAST($p AS {target}) AS v");
+    let output = session
+        .execute_source(&source, &EmptyProcedureRegistry)
+        .expect("temporal cast succeeds");
+    let after = current_date(session);
+    let StatementOutput::Rows(table) = output else {
+        panic!("temporal cast produced non-row output");
+    };
+    (table.rows()[0].values()[0].clone(), before, after)
+}
+
+fn assert_current_date_window(
+    actual: jiff::civil::Date,
+    before: jiff::civil::Date,
+    after: jiff::civil::Date,
+) {
+    assert!(
+        actual == before || actual == after,
+        "expected {actual} to match current-date window {before}..={after}"
+    );
+}
+
 fn cast_bound_to_string(value: Value) -> String {
     let Value::String(value) = cast_bound(value, "STRING") else {
         panic!("temporal string cast did not return STRING");
@@ -238,6 +280,54 @@ fn cast_list_elements_preserve_session_time_zone() {
     };
     assert_eq!(value.datetime().to_string(), "2026-05-07T12:34:56");
     assert_eq!(value.offset().seconds(), 3600 + 15 * 60);
+}
+
+#[test]
+fn cast_times_to_datetimes_use_current_session_date() {
+    let graph = SharedGraph::new(GraphId::new(13_813));
+    let mut session = Session::new(&graph);
+    session
+        .execute_source("SESSION SET TIME ZONE '+09:00'", &EmptyProcedureRegistry)
+        .expect("set session time zone");
+
+    let local_time = "23:45:01".parse().unwrap();
+    let (value, before, after) =
+        cast_bound_with_date_window(&mut session, Value::LocalTime(local_time), "LOCAL DATETIME");
+    let Value::LocalDateTime(value) = value else {
+        panic!("expected local datetime");
+    };
+    assert_eq!(value.time(), local_time);
+    assert_current_date_window(value.date(), before, after);
+
+    let local_time = "08:09:10".parse().unwrap();
+    let (value, before, after) =
+        cast_bound_with_date_window(&mut session, Value::LocalTime(local_time), "ZONED DATETIME");
+    let Value::ZonedDateTime(value) = value else {
+        panic!("expected zoned datetime");
+    };
+    assert_eq!(value.time(), local_time);
+    assert_eq!(value.offset().seconds(), 9 * 3600);
+    assert_current_date_window(value.date(), before, after);
+
+    let zoned_time = Value::ZonedTime(Box::new(
+        "1970-01-01T08:09:10-07:00[Etc/GMT+7]".parse().unwrap(),
+    ));
+    let (value, before, after) =
+        cast_bound_with_date_window(&mut session, zoned_time.clone(), "LOCAL DATETIME");
+    let Value::LocalDateTime(value) = value else {
+        panic!("expected local datetime");
+    };
+    assert_eq!(value.time().to_string(), "08:09:10");
+    assert_current_date_window(value.date(), before, after);
+
+    let (value, before, after) =
+        cast_bound_with_date_window(&mut session, zoned_time, "ZONED DATETIME");
+    let Value::ZonedDateTime(value) = value else {
+        panic!("expected zoned datetime");
+    };
+    assert_eq!(value.time().to_string(), "08:09:10");
+    assert_eq!(value.offset().seconds(), -7 * 3600);
+    assert_current_date_window(value.date(), before, after);
 }
 
 #[test]
