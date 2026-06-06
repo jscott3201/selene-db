@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use selene_core::{DbString, GraphId, Value};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, CatalogOp, EmptyProcedureRegistry, PipelineOp,
     ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
@@ -56,8 +56,62 @@ fn column_strings(table: &BindingTable, name: &str) -> Vec<String> {
         .collect()
 }
 
+fn column_uints(table: &BindingTable, name: &str) -> Vec<u64> {
+    let index = table
+        .column_index(db_string(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::Uint(value)) => *value,
+            other => panic!("expected uint in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
+fn column_bools(table: &BindingTable, name: &str) -> Vec<bool> {
+    let index = table
+        .column_index(db_string(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::Bool(value)) => *value,
+            other => panic!("expected bool in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
 fn full_registry() -> BuiltinProcedureRegistry {
     BuiltinProcedureRegistry::new()
+}
+
+fn create_deleted_row_pressure(graph: &SharedGraph) {
+    let label = db_string("CompactionSurfaceNode");
+    let edge = db_string("COMPACTION_SURFACE_EDGE");
+    let mut txn = graph.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let a = mutator
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+            .expect("create a");
+        let b = mutator
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+            .expect("create b");
+        let c = mutator
+            .create_node(LabelSet::single(label), PropertyMap::new())
+            .expect("create c");
+        mutator
+            .create_edge(edge.clone(), a, b, PropertyMap::new())
+            .expect("create edge a->b");
+        mutator
+            .create_edge(edge, b, c, PropertyMap::new())
+            .expect("create edge b->c");
+        mutator.delete_node(b).expect("delete middle node");
+    }
+    txn.commit().expect("deleted-row fixture commits");
 }
 
 #[test]
@@ -91,7 +145,8 @@ fn show_procedures_lists_default_registry() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = column_strings(&table, "name");
 
-    assert_eq!(table.row_count(), 58);
+    assert_eq!(table.row_count(), 60);
+    assert!(names.contains(&"selene.compaction_stats".to_owned()));
     assert!(names.contains(&"selene.feature_status".to_owned()));
     assert!(names.contains(&"selene.verify".to_owned()));
     assert!(names.contains(&"selene.vector_search_nodes".to_owned()));
@@ -124,11 +179,49 @@ fn show_procedures_lists_default_registry() {
     assert!(names.contains(&"selene.text_index_stats".to_owned()));
     assert!(names.contains(&"selene.rebuild_vector_indexes".to_owned()));
     assert!(names.contains(&"selene.rebuild_recommended_vector_indexes".to_owned()));
+    assert!(names.contains(&"selene.compact".to_owned()));
     assert!(names.contains(&"selene.create_vector_index".to_owned()));
     assert!(names.contains(&"selene.drop_vector_index".to_owned()));
     assert!(names.contains(&"selene.create_text_index".to_owned()));
     assert!(names.contains(&"selene.drop_text_index".to_owned()));
     assert!(names.contains(&"algo.pagerank".to_owned()));
+}
+
+#[test]
+fn compaction_procedures_execute_through_call_surface() {
+    let graph = graph(118_007);
+    create_deleted_row_pressure(&graph);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let before = execute_rows(
+        &mut session,
+        "CALL selene.compaction_stats() YIELD reclaimable_rows, dense",
+        &registry,
+    );
+    assert_eq!(column_uints(&before, "reclaimable_rows"), vec![3]);
+    assert_eq!(column_bools(&before, "dense"), vec![false]);
+
+    let compact = execute_rows(
+        &mut session,
+        "CALL selene.compact() \
+         YIELD before_reclaimable_rows, reclaimed_nodes, reclaimed_edges, \
+               after_reclaimable_rows, after_dense",
+        &registry,
+    );
+    assert_eq!(column_uints(&compact, "before_reclaimable_rows"), vec![3]);
+    assert_eq!(column_uints(&compact, "reclaimed_nodes"), vec![1]);
+    assert_eq!(column_uints(&compact, "reclaimed_edges"), vec![2]);
+    assert_eq!(column_uints(&compact, "after_reclaimable_rows"), vec![0]);
+    assert_eq!(column_bools(&compact, "after_dense"), vec![true]);
+
+    let after = execute_rows(
+        &mut session,
+        "CALL selene.compaction_stats() YIELD reclaimable_rows, dense",
+        &registry,
+    );
+    assert_eq!(column_uints(&after, "reclaimable_rows"), vec![0]);
+    assert_eq!(column_bools(&after, "dense"), vec![true]);
 }
 
 #[test]

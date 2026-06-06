@@ -8,7 +8,7 @@ use crate::{
 };
 
 use super::{
-    create_index, create_text_index, create_vector_index, drop_index, drop_text_index,
+    compaction, create_index, create_text_index, create_vector_index, drop_index, drop_text_index,
     drop_vector_index, feature_status, health, json_contains_nodes, json_path_contains_nodes,
     json_path_exists_nodes, json_path_value_nodes, rebuild_vector_indexes, text_index_stats,
     text_search, vector_candidate_states, vector_index_stats, vector_score_candidate_state,
@@ -33,6 +33,8 @@ pub(in crate::runtime) enum BuiltinKind {
     FeatureStatus,
     /// `selene.verify` — read-only graph integrity check.
     Verify,
+    /// `selene.compaction_stats` — read-only graph compaction pressure stats.
+    CompactionStats,
     /// `selene.vector_search_nodes` — exact vector node search.
     VectorSearchNodes,
     /// `selene.vector_search_nodes_batch` — batched exact vector node search.
@@ -85,6 +87,8 @@ pub(in crate::runtime) enum BuiltinKind {
     RebuildVectorIndexes,
     /// `selene.rebuild_recommended_vector_indexes` — recommended vector-index rebuild.
     RebuildRecommendedVectorIndexes,
+    /// `selene.compact` — graph row compaction maintenance.
+    Compact,
     /// `selene.create_index` — mutation-tier property-index creation.
     CreateIndex,
     /// `selene.drop_index` — mutation-tier property-index drop.
@@ -139,6 +143,7 @@ impl BuiltinKind {
             Self::Health
             | Self::FeatureStatus
             | Self::Verify
+            | Self::CompactionStats
             | Self::VectorSearchNodes
             | Self::VectorSearchNodesBatch
             | Self::VectorScoreNodes
@@ -167,7 +172,7 @@ impl BuiltinKind {
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
             | Self::TextScoreCandidateStateExpandedBatch => ProcedureTier::Graph,
-            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes | Self::Compact => {
                 ProcedureTier::Maintenance
             }
             Self::CreateIndex
@@ -185,6 +190,7 @@ impl BuiltinKind {
             Self::Health
             | Self::FeatureStatus
             | Self::Verify
+            | Self::CompactionStats
             | Self::VectorSearchNodes
             | Self::VectorSearchNodesBatch
             | Self::VectorScoreNodes
@@ -213,7 +219,7 @@ impl BuiltinKind {
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
             | Self::TextScoreCandidateStateExpandedBatch => ProcedureMutability::Read,
-            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes | Self::Compact => {
                 ProcedureMutability::MaintenanceWrite
             }
             Self::CreateIndex
@@ -230,6 +236,7 @@ impl BuiltinKind {
             Self::Health => health::signature(),
             Self::FeatureStatus => feature_status::signature(),
             Self::Verify => verify::signature(),
+            Self::CompactionStats | Self::Compact => compaction::signature(),
             Self::VectorSearchNodes => vector_search::signature(),
             Self::VectorSearchNodesBatch => vector_search_batch::signature(),
             Self::VectorScoreNodes => vector_score_nodes::signature(),
@@ -290,6 +297,7 @@ impl BuiltinKind {
             Self::Health => health::output_columns(),
             Self::FeatureStatus => feature_status::output_columns(),
             Self::Verify => verify::output_columns(),
+            Self::CompactionStats => compaction::output_columns(),
             Self::VectorSearchNodes => vector_search::output_columns(),
             Self::VectorSearchNodesBatch => vector_search_batch::output_columns(),
             Self::VectorScoreNodes => vector_score_nodes::output_columns(),
@@ -333,6 +341,7 @@ impl BuiltinKind {
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::output_columns()
             }
+            Self::Compact => compaction::compact_output_columns(),
             Self::CreateIndex => create_index::output_columns(),
             Self::DropIndex => drop_index::output_columns(),
             Self::CreateVectorIndex => create_vector_index::output_columns(),
@@ -363,6 +372,7 @@ impl BuiltinKind {
             Self::Health => health::execute(ctx, args),
             Self::FeatureStatus => feature_status::execute(ctx, args),
             Self::Verify => verify::execute(ctx, args),
+            Self::CompactionStats => compaction::execute_stats(ctx, args),
             Self::VectorSearchNodes => vector_search::execute(ctx, args),
             Self::VectorSearchNodesBatch => vector_search_batch::execute(ctx, args),
             Self::VectorScoreNodes => vector_score_nodes::execute(ctx, args),
@@ -418,7 +428,7 @@ impl BuiltinKind {
                 expected: ProcedureTier::Mutation,
                 actual: ProcedureTier::Graph,
             }),
-            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes | Self::Compact => {
                 Err(ProcedureError::TierMismatch {
                     expected: ProcedureTier::Maintenance,
                     actual: ProcedureTier::Graph,
@@ -444,6 +454,7 @@ impl BuiltinKind {
             Self::Health
             | Self::FeatureStatus
             | Self::Verify
+            | Self::CompactionStats
             | Self::VectorSearchNodes
             | Self::VectorSearchNodesBatch
             | Self::VectorScoreNodes
@@ -475,7 +486,7 @@ impl BuiltinKind {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Mutation,
             }),
-            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes | Self::Compact => {
                 Err(ProcedureError::TierMismatch {
                     expected: ProcedureTier::Maintenance,
                     actual: ProcedureTier::Mutation,
@@ -495,9 +506,11 @@ impl BuiltinKind {
             Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::execute_recommended(ctx, args)
             }
+            Self::Compact => compaction::execute_compact(ctx, args),
             Self::Health
             | Self::FeatureStatus
             | Self::Verify
+            | Self::CompactionStats
             | Self::VectorSearchNodes
             | Self::VectorSearchNodesBatch
             | Self::VectorScoreNodes
