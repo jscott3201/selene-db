@@ -2,7 +2,7 @@
 
 use selene_core::{GraphId, Value, db_string};
 use selene_gql::{EmptyProcedureRegistry, GqlStatus, Session, StatementOutput};
-use selene_graph::SharedGraph;
+use selene_graph::{GraphTypeDef, SharedGraph};
 
 fn cast_bound(value: Value, target: &str) -> Value {
     let graph = SharedGraph::new(GraphId::new(13_810));
@@ -16,6 +16,25 @@ fn cast_bound(value: Value, target: &str) -> Value {
         panic!("temporal cast produced non-row output");
     };
     table.rows()[0].values()[0].clone()
+}
+
+fn empty_closed_graph(id: u64) -> SharedGraph {
+    SharedGraph::builder(GraphId::new(id))
+        .bound_to(GraphTypeDef {
+            name: db_string("temporal.default.graph").expect("graph name fits"),
+            node_types: Vec::new(),
+            edge_types: Vec::new(),
+        })
+        .expect("graph type is valid")
+        .build()
+        .expect("closed graph builds")
+}
+
+fn rows(output: StatementOutput) -> selene_gql::BindingTable {
+    let StatementOutput::Rows(table) = output else {
+        panic!("expected row output");
+    };
+    table
 }
 
 fn cast_bound_in_zone(value: Value, target: &str, zone: &str) -> Value {
@@ -146,6 +165,69 @@ fn cast_durations_to_iso_strings() {
     assert_eq!(
         cast_bound_to_string(Value::Duration(Box::new("PT1H2S".parse().unwrap()))),
         "PT1H2S"
+    );
+}
+
+#[test]
+fn temporal_default_literals_materialize_and_round_trip() {
+    let graph = empty_closed_graph(13_814);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Event (d :: DATE DEFAULT DATE '2026-05-07', \
+             ldt :: LOCAL DATETIME DEFAULT LOCAL DATETIME '2026-05-07T12:34:56', \
+             zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04:00', \
+             lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
+             zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04:00', \
+             dur :: DURATION DEFAULT DURATION 'PT1H2S')",
+            &EmptyProcedureRegistry,
+        )
+        .expect("temporal defaults are accepted");
+
+    session
+        .execute_source("INSERT (:Event)", &EmptyProcedureRegistry)
+        .expect("temporal defaults materialize");
+    let table = rows(
+        session
+            .execute_source(
+                "MATCH (n:Event) RETURN CAST(n.d AS STRING) AS d, \
+                 CAST(n.ldt AS STRING) AS ldt, CAST(n.zdt AS STRING) AS zdt, \
+                 CAST(n.lt AS STRING) AS lt, CAST(n.zt AS STRING) AS zt, \
+                 CAST(n.dur AS STRING) AS dur",
+                &EmptyProcedureRegistry,
+            )
+            .expect("defaulted temporal values read"),
+    );
+    assert_eq!(
+        table.rows()[0].values(),
+        &[
+            Value::String(db_string("2026-05-07").unwrap()),
+            Value::String(db_string("2026-05-07T12:34:56").unwrap()),
+            Value::String(db_string("2026-05-07T12:34:56-04").unwrap()),
+            Value::String(db_string("12:34:56").unwrap()),
+            Value::String(db_string("12:34:56-04").unwrap()),
+            Value::String(db_string("PT1H2S").unwrap()),
+        ]
+    );
+
+    let table = rows(
+        session
+            .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
+            .expect("SHOW NODE TYPES executes"),
+    );
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(
+            db_string(
+                "CREATE NODE TYPE :Event (d :: DATE DEFAULT DATE '2026-05-07', \
+             ldt :: LOCAL DATETIME DEFAULT LOCAL DATETIME '2026-05-07T12:34:56', \
+             zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04', \
+             lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
+             zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04', \
+             dur :: DURATION DEFAULT DURATION 'PT1H2S')"
+            )
+            .unwrap()
+        )
     );
 }
 

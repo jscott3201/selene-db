@@ -283,61 +283,105 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     let device_id = db_string("device_id").unwrap();
     let score = db_string("score").unwrap();
     let small_score = db_string("small_score").unwrap();
+    let temporal_defaults = [
+        (
+            db_string("event_date").unwrap(),
+            selene_core::PropertyValueType::Date,
+            PropertyDefaultValue::Date(db_string("2026-05-07").unwrap()),
+        ),
+        (
+            db_string("event_local_dt").unwrap(),
+            selene_core::PropertyValueType::LocalDateTime,
+            PropertyDefaultValue::LocalDateTime(db_string("2026-05-07T12:34:56").unwrap()),
+        ),
+        (
+            db_string("event_zoned_dt").unwrap(),
+            selene_core::PropertyValueType::ZonedDateTime,
+            PropertyDefaultValue::ZonedDateTime(db_string("2026-05-07T12:34:56-04").unwrap()),
+        ),
+        (
+            db_string("event_local_time").unwrap(),
+            selene_core::PropertyValueType::LocalTime,
+            PropertyDefaultValue::LocalTime(db_string("12:34:56").unwrap()),
+        ),
+        (
+            db_string("event_zoned_time").unwrap(),
+            selene_core::PropertyValueType::ZonedTime,
+            PropertyDefaultValue::ZonedTime(db_string("12:34:56-04").unwrap()),
+        ),
+        (
+            db_string("event_duration").unwrap(),
+            selene_core::PropertyValueType::Duration,
+            PropertyDefaultValue::Duration(db_string("PT1H2S").unwrap()),
+        ),
+    ];
     let changes = {
         let mut txn = shared.begin_write();
+        let mut properties = vec![
+            PropertyTypeDef {
+                name: serial.clone(),
+                value_type: selene_core::PropertyValueType::String,
+                list_element_type: None,
+                required: false,
+                default: Some(PropertyDefaultValue::String(db_string("unknown").unwrap())),
+                immutable: true,
+                record_field_types: None,
+            },
+            PropertyTypeDef {
+                name: payload.clone(),
+                value_type: selene_core::PropertyValueType::Bytes,
+                list_element_type: None,
+                required: false,
+                default: Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE])),
+                immutable: false,
+                record_field_types: None,
+            },
+            PropertyTypeDef {
+                name: device_id.clone(),
+                value_type: selene_core::PropertyValueType::Uuid,
+                list_element_type: None,
+                required: false,
+                default: Some(PropertyDefaultValue::Uuid(
+                    db_string("018f1b6d-7b89-7cc0-9f40-2c6f8d4df101").unwrap(),
+                )),
+                immutable: false,
+                record_field_types: None,
+            },
+            PropertyTypeDef {
+                name: score.clone(),
+                value_type: selene_core::PropertyValueType::Float,
+                list_element_type: None,
+                required: false,
+                default: Some(PropertyDefaultValue::Float(1.5_f64.to_bits())),
+                immutable: false,
+                record_field_types: None,
+            },
+            PropertyTypeDef {
+                name: small_score.clone(),
+                value_type: selene_core::PropertyValueType::Float32,
+                list_element_type: None,
+                required: false,
+                default: Some(PropertyDefaultValue::Float32(2.25_f32.to_bits())),
+                immutable: false,
+                record_field_types: None,
+            },
+        ];
+        properties.extend(temporal_defaults.iter().map(|(name, value_type, default)| {
+            PropertyTypeDef {
+                name: name.clone(),
+                value_type: *value_type,
+                list_element_type: None,
+                required: false,
+                default: Some(default.clone()),
+                immutable: false,
+                record_field_types: None,
+            }
+        }));
         txn.mutator()
             .create_node_type(
                 sensor.clone(),
                 LabelSet::single(sensor.clone()),
-                vec![
-                    PropertyTypeDef {
-                        name: serial.clone(),
-                        value_type: selene_core::PropertyValueType::String,
-                        list_element_type: None,
-                        required: false,
-                        default: Some(PropertyDefaultValue::String(db_string("unknown").unwrap())),
-                        immutable: true,
-                        record_field_types: None,
-                    },
-                    PropertyTypeDef {
-                        name: payload.clone(),
-                        value_type: selene_core::PropertyValueType::Bytes,
-                        list_element_type: None,
-                        required: false,
-                        default: Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE])),
-                        immutable: false,
-                        record_field_types: None,
-                    },
-                    PropertyTypeDef {
-                        name: device_id.clone(),
-                        value_type: selene_core::PropertyValueType::Uuid,
-                        list_element_type: None,
-                        required: false,
-                        default: Some(PropertyDefaultValue::Uuid(
-                            db_string("018f1b6d-7b89-7cc0-9f40-2c6f8d4df101").unwrap(),
-                        )),
-                        immutable: false,
-                        record_field_types: None,
-                    },
-                    PropertyTypeDef {
-                        name: score.clone(),
-                        value_type: selene_core::PropertyValueType::Float,
-                        list_element_type: None,
-                        required: false,
-                        default: Some(PropertyDefaultValue::Float(1.5_f64.to_bits())),
-                        immutable: false,
-                        record_field_types: None,
-                    },
-                    PropertyTypeDef {
-                        name: small_score.clone(),
-                        value_type: selene_core::PropertyValueType::Float32,
-                        list_element_type: None,
-                        required: false,
-                        default: Some(PropertyDefaultValue::Float32(2.25_f32.to_bits())),
-                        immutable: false,
-                        record_field_types: None,
-                    },
-                ],
+                properties,
                 ValidationMode::Warn,
             )
             .unwrap();
@@ -392,6 +436,11 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         graph_type.node_types[0].properties[4].default,
         Some(PropertyDefaultValue::Float32(2.25_f32.to_bits()))
     );
+    for (offset, (name, _value_type, default)) in temporal_defaults.iter().enumerate() {
+        let property = &graph_type.node_types[0].properties[5 + offset];
+        assert_eq!(&property.name, name);
+        assert_eq!(property.default.as_ref(), Some(default));
+    }
     let _ = fs::remove_dir_all(dir);
 }
 

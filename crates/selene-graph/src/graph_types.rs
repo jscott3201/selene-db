@@ -606,6 +606,18 @@ pub enum PropertyDefaultValue {
     Float(u64),
     /// Distinct 32-bit floating-point value, stored as canonical IEEE 754 binary32 bits.
     Float32(u32),
+    /// Zoned datetime default, stored as canonical temporal text.
+    ZonedDateTime(DbString),
+    /// Local datetime default, stored as canonical temporal text.
+    LocalDateTime(DbString),
+    /// Date default, stored as canonical temporal text.
+    Date(DbString),
+    /// Zoned time default, stored as canonical temporal text.
+    ZonedTime(DbString),
+    /// Local time default, stored as canonical temporal text.
+    LocalTime(DbString),
+    /// Duration default, stored as canonical temporal text.
+    Duration(DbString),
 }
 
 impl PropertyDefaultValue {
@@ -614,8 +626,8 @@ impl PropertyDefaultValue {
     /// # Errors
     ///
     /// Returns [`GraphError::Inconsistent`] if a persisted float default is not
-    /// finite, or if a persisted UUID/JSON default no longer parses as a valid
-    /// value.
+    /// finite, or if a persisted UUID/JSON/temporal default no longer parses as
+    /// a valid value.
     pub fn to_value(&self) -> GraphResult<Value> {
         Ok(match self {
             Self::Null => Value::Null,
@@ -639,6 +651,36 @@ impl PropertyDefaultValue {
                 }
                 Value::Float32(value)
             }
+            Self::ZonedDateTime(value) => Value::ZonedDateTime(Box::new(
+                parse_zoned_datetime_default(value.as_str(), "ZONED DATETIME")?,
+            )),
+            Self::LocalDateTime(value) => Value::LocalDateTime(
+                value
+                    .as_str()
+                    .parse()
+                    .map_err(|err| invalid_temporal_default("LOCAL DATETIME", err))?,
+            ),
+            Self::Date(value) => Value::Date(
+                value
+                    .as_str()
+                    .parse()
+                    .map_err(|err| invalid_temporal_default("DATE", err))?,
+            ),
+            Self::ZonedTime(value) => {
+                Value::ZonedTime(Box::new(parse_zoned_time_default(value.as_str())?))
+            }
+            Self::LocalTime(value) => Value::LocalTime(
+                value
+                    .as_str()
+                    .parse()
+                    .map_err(|err| invalid_temporal_default("LOCAL TIME", err))?,
+            ),
+            Self::Duration(value) => Value::Duration(Box::new(
+                value
+                    .as_str()
+                    .parse()
+                    .map_err(|err| invalid_temporal_default("DURATION", err))?,
+            )),
             Self::String(value) => Value::String(value.clone()),
             Self::Bytes(value) => Value::Bytes(value.clone().into()),
             Self::Uuid(value) => {
@@ -674,6 +716,18 @@ impl PropertyDefaultValue {
             Value::Float32(value) if value.is_finite() => {
                 Some(Self::Float32(canonical_f32_bits(*value)))
             }
+            Value::ZonedDateTime(value) => db_string(&zoned_datetime_image(value))
+                .ok()
+                .map(Self::ZonedDateTime),
+            Value::LocalDateTime(value) => {
+                db_string(&value.to_string()).ok().map(Self::LocalDateTime)
+            }
+            Value::Date(value) => db_string(&value.to_string()).ok().map(Self::Date),
+            Value::ZonedTime(value) => db_string(&zoned_time_image(value))
+                .ok()
+                .map(Self::ZonedTime),
+            Value::LocalTime(value) => db_string(&value.to_string()).ok().map(Self::LocalTime),
+            Value::Duration(value) => db_string(&value.to_string()).ok().map(Self::Duration),
             Value::String(value) => Some(Self::String(value.clone())),
             Value::Bytes(value) => Some(Self::Bytes(value.to_vec())),
             Value::Uuid(value) => db_string(&value.to_string()).ok().map(Self::Uuid),
@@ -696,6 +750,46 @@ fn canonical_f32_bits(value: f32) -> u32 {
         0.0_f32.to_bits()
     } else {
         value.to_bits()
+    }
+}
+
+fn zoned_datetime_image(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.datetime(), value.offset())
+}
+
+fn zoned_time_image(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.time(), value.offset())
+}
+
+fn parse_zoned_datetime_default(text: &str, kind: &'static str) -> GraphResult<jiff::Zoned> {
+    let pieces = jiff::fmt::temporal::DateTimeParser::new()
+        .parse_pieces(text)
+        .map_err(|err| invalid_temporal_default(kind, err))?;
+    let time = pieces.time().ok_or_else(|| GraphError::Inconsistent {
+        reason: format!("persisted {kind} property default requires a time"),
+    })?;
+    let zone = pieces
+        .to_time_zone()
+        .map_err(|err| invalid_temporal_default(kind, err))?
+        .or_else(|| pieces.to_numeric_offset().map(jiff::tz::TimeZone::fixed))
+        .ok_or_else(|| GraphError::Inconsistent {
+            reason: format!("persisted {kind} property default requires a time zone displacement"),
+        })?;
+    pieces
+        .date()
+        .to_datetime(time)
+        .to_zoned(zone)
+        .map_err(|err| invalid_temporal_default(kind, err))
+}
+
+fn parse_zoned_time_default(text: &str) -> GraphResult<jiff::Zoned> {
+    let anchored = format!("1970-01-01T{text}");
+    parse_zoned_datetime_default(&anchored, "ZONED TIME")
+}
+
+fn invalid_temporal_default(kind: &'static str, err: impl std::fmt::Display) -> GraphError {
+    GraphError::Inconsistent {
+        reason: format!("persisted {kind} property default is invalid: {err}"),
     }
 }
 
