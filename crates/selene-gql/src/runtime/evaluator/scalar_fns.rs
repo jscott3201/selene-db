@@ -267,6 +267,14 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
+        "json_array_length" => json_fns::eval_json_array_length(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_object_keys" => json_fns::eval_json_object_keys(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
         "json_contains" => json_fns::eval_json_contains(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
             span,
