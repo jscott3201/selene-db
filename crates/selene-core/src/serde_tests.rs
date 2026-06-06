@@ -125,6 +125,7 @@ fn all_values() -> Vec<Value> {
         Value::Null,
         Value::Uuid(uuid::Uuid::nil()),
         Value::Vector(VectorValue::new(vec![1.0, 2.0, 3.0]).unwrap()),
+        Value::Json(JsonValue::new(serde_json::json!({"serde": ["json", 1]})).unwrap()),
     ]
 }
 

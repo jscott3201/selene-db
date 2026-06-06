@@ -277,6 +277,7 @@ fn value_kind_label(value: &Value) -> &'static str {
         Value::Duration(_) => "DURATION",
         Value::Uuid(_) => "UUID",
         Value::Vector(_) => "VECTOR",
+        Value::Json(_) => "JSON",
         Value::Extended { .. } => "EXTENDED",
         Value::Null => "NULL",
         _ => "UNKNOWN",

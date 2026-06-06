@@ -169,6 +169,7 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
         // parameters" per §17.7, not CAST), and the UUID target type records
         // IM_UUID; both are observed here.
         ("IMU-uuid-cast.gql", &["GA05", "IM_UUID"]),
+        ("IMJ-json-functions.gql", &["IM_JSON"]),
     ];
 
     let cases = load_default_corpus().expect("corpus loads");

@@ -21,6 +21,7 @@ pest.workspace = true
 pest_derive.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 smallvec.workspace = true
 rustc-hash.workspace = true
 thiserror.workspace = true

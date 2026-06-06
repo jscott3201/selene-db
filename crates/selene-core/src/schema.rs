@@ -541,6 +541,8 @@ pub enum PredefinedValueType {
     Extended(ExtensionTypeId),
     /// Native dense vector.
     Vector,
+    /// Native JSON.
+    Json,
 }
 
 /// Minimal v1.0 value cardinality.

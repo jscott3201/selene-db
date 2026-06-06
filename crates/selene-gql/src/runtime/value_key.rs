@@ -196,6 +196,7 @@ fn hash_value_variant_strict<H: Hasher>(value: &Value, state: &mut H) {
                 hash_f32_canonical(*component, state);
             }
         }
+        Value::Json(value) => value.to_canonical_string().hash(state),
         _ => format!("{value:?}").hash(state),
     }
 }

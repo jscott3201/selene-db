@@ -743,6 +743,7 @@ const fn value_kind_name(value: &Value) -> &'static str {
         Value::Extended { .. } => "Extended",
         Value::Uuid(_) => "Uuid",
         Value::Vector(_) => "Vector",
+        Value::Json(_) => "Json",
         _ => "Unknown",
     }
 }

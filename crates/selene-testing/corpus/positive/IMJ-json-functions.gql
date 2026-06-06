@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: IM_JSON
+// expects: parse-ok
+RETURN json('{"kind":"memory","score":7}') AS payload

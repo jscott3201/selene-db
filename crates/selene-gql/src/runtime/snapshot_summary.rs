@@ -209,6 +209,7 @@ fn raw_value_key(value: &Value) -> String {
                 .iter()
                 .map(|component| format!("{:08x}", canonical_f32_bits(*component))),
         ),
+        Value::Json(value) => format!("json:{}", value.to_canonical_string()),
         _ => "<value::unknown>".to_owned(),
     }
 }
@@ -360,6 +361,7 @@ fn render_value(value: &Value, placeholders: &mut PlaceholderTable) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        Value::Json(value) => format!("JSON {}", value.to_canonical_string()),
         _ => "<value::unknown>".to_owned(),
     }
 }

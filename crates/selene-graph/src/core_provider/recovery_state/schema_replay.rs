@@ -383,6 +383,7 @@ fn runtime_predefined_value_type(
         PredefinedValueType::Path => PropertyValueType::Path,
         PredefinedValueType::Uuid => PropertyValueType::Uuid,
         PredefinedValueType::Vector => PropertyValueType::Vector,
+        PredefinedValueType::Json => PropertyValueType::Json,
         PredefinedValueType::Extended(_) => {
             return Err(inconsistent(
                 "WAL property definition uses unsupported extended value type",

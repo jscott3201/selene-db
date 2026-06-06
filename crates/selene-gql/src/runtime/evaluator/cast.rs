@@ -25,7 +25,7 @@
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source or
 //!   any cast whose target is `NULL` / `NOTHING`).
 
-use selene_core::Value;
+use selene_core::{JsonValue, Value};
 
 use crate::{
     GqlType, SourceSpan,
@@ -132,6 +132,12 @@ pub(super) fn eval_cast(
                 span,
             ));
         }
+        Value::Json(_) if !matches!(target_type, GqlType::Json | GqlType::String) => {
+            return Err(non_iso_combination(
+                "CAST from JSON to this target is not a valid type combination",
+                span,
+            ));
+        }
         _ => {}
     }
 
@@ -157,6 +163,7 @@ pub(super) fn eval_cast(
         GqlType::String => cast_to_string(value, span),
         GqlType::Bytes => cast_to_bytes(value, span),
         GqlType::Uuid => cast_to_uuid(value, span),
+        GqlType::Json => cast_to_json(value, span),
         GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date
@@ -219,6 +226,7 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
         Value::ZonedTime(v) => format!("{}{}", v.time(), v.offset()),
         Value::LocalTime(v) => v.to_string(),
         Value::Duration(v) => v.to_string(),
+        Value::Json(v) => v.to_canonical_string(),
         _ => {
             return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST source not supported for STRING target",
@@ -236,6 +244,34 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
             span,
         )),
     }
+}
+
+fn cast_to_json(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match value {
+        Value::Json(value) => Ok(Value::Json(value)),
+        Value::String(value) => parse_json_value(value.as_str(), span),
+        _ => Err(non_iso_combination(
+            "CAST from this source to JSON is not a valid type combination",
+            span,
+        )),
+    }
+}
+
+pub(super) fn parse_json_value(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
+    let value = serde_json::from_str(text).map_err(|_| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::InvalidCharacterValueForCast,
+            "STRING value is not valid JSON",
+            span,
+        )
+    })?;
+    JsonValue::new(value).map(Value::Json).map_err(|err| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            format!("JSON value exceeds implementation-defined limits: {err}"),
+            span,
+        )
+    })
 }
 
 fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -330,6 +366,7 @@ fn cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::LocalTime => "CAST to LOCAL TIME",
         GqlType::Duration => "CAST to DURATION",
         GqlType::Vector => "CAST to VECTOR",
+        GqlType::Json => "CAST to JSON",
         GqlType::Record(_) => "CAST to RECORD",
         GqlType::Path => "CAST to PATH",
         GqlType::GraphRef => "CAST to GRAPH",

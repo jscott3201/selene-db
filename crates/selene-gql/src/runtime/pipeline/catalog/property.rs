@@ -291,6 +291,7 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::Decimal => PropertyValueType::Decimal,
         GqlType::Bytes => PropertyValueType::Bytes,
         GqlType::Uuid => PropertyValueType::Uuid,
+        GqlType::Json => PropertyValueType::Json,
         GqlType::ZonedDateTime => PropertyValueType::ZonedDateTime,
         GqlType::LocalDateTime => PropertyValueType::LocalDateTime,
         GqlType::Date => PropertyValueType::Date,
@@ -426,5 +427,6 @@ fn scalar_property_value_type_name(value_type: PropertyValueType) -> &'static st
         PropertyValueType::Null => "NULL",
         PropertyValueType::Uuid => "UUID",
         PropertyValueType::Vector => "VECTOR",
+        PropertyValueType::Json => "JSON",
     }
 }

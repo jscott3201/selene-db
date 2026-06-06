@@ -14,6 +14,7 @@ use crate::db_string::DbString;
 use crate::error::{CoreError, CoreResult};
 use crate::extension_type_ids::ExtensionTypeId;
 use crate::identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
+use crate::json_value::JsonValue;
 
 /// Maximum component count for a native dense vector value.
 ///
@@ -112,6 +113,8 @@ pub enum Value {
     Uuid(uuid::Uuid),
     /// Native dense vector value.
     Vector(VectorValue),
+    /// Native JSON value.
+    Json(JsonValue),
 }
 
 /// Compile-time ceiling on `size_of::<Value>` — a zero-cost re-bloat tripwire.
@@ -177,6 +180,7 @@ impl Value {
         || Self::Null,
         || Self::Uuid(uuid::Uuid::nil()),
         || Self::Vector(VectorValue::new(vec![0.0]).expect("fixture vector is valid")),
+        || Self::Json(JsonValue::new(serde_json::json!({"fixture": true})).unwrap()),
     ];
 
     /// Number of known [`Value`] variants in this build.
@@ -217,6 +221,7 @@ impl Value {
             Self::Null => "Null",
             Self::Uuid(_) => "Uuid",
             Self::Vector(_) => "Vector",
+            Self::Json(_) => "Json",
         }
     }
 }
@@ -273,6 +278,7 @@ impl PartialEq for Value {
             (Self::Null, Self::Null) => true,
             (Self::Uuid(lhs), Self::Uuid(rhs)) => lhs == rhs,
             (Self::Vector(lhs), Self::Vector(rhs)) => lhs == rhs,
+            (Self::Json(lhs), Self::Json(rhs)) => lhs == rhs,
             _ => false,
         }
     }
@@ -491,6 +497,7 @@ mod tests {
             Value::Null,
             Value::Uuid(uuid::Uuid::nil()),
             Value::Vector(VectorValue::new(vec![1.0, 2.0]).unwrap()),
+            Value::Json(JsonValue::new(serde_json::json!({"ok": true})).unwrap()),
         ];
         for value in values {
             assert_eq!(value.clone(), value);
@@ -527,7 +534,7 @@ mod tests {
 
     #[test]
     fn value_all_covers_every_variant() {
-        assert_eq!(Value::VARIANT_COUNT, 28);
+        assert_eq!(Value::VARIANT_COUNT, 29);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in Value::ALL {
@@ -608,6 +615,20 @@ mod tests {
                 max: MAX_VECTOR_DIMENSION
             }) if got == MAX_VECTOR_DIMENSION + 1
         ));
+    }
+
+    #[test]
+    fn json_value_exposes_canonical_rendering_and_type() {
+        let json = JsonValue::new(serde_json::json!({"b": [2, true], "a": null})).unwrap();
+        assert_eq!(json.json_type_name(), "object");
+        assert_eq!(json.to_canonical_string(), r#"{"a":null,"b":[2,true]}"#);
+        assert_eq!(
+            json.as_serde()
+                .as_object()
+                .expect("fixture is object")
+                .get("b"),
+            Some(&serde_json::json!([2, true]))
+        );
     }
 
     proptest! {

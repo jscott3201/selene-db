@@ -54,6 +54,7 @@ fn value_gql_type_name(value: &Value) -> &'static str {
         Value::Null => "NULL",
         Value::Uuid(_) => "UUID",
         Value::Vector(_) => "VECTOR",
+        Value::Json(_) => "JSON",
         _ => "UNKNOWN",
     }
 }

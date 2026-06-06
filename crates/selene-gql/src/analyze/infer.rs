@@ -611,6 +611,7 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Float64
         | GqlType::Bytes
         | GqlType::Uuid
+        | GqlType::Json
         | GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date

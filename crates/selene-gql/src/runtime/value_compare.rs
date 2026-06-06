@@ -545,9 +545,10 @@ fn value_rank(value: &Value) -> u8 {
         Value::Null => 25,
         Value::Uuid(_) => 26,
         Value::Vector(_) => 27,
+        Value::Json(_) => 28,
         // Any future `Value` variant ranks after every enumerated one so it
-        // never silently ties with `Vector` (27) in the sort fallback.
-        _ => 28,
+        // never silently ties with `Json` (28) in the sort fallback.
+        _ => 29,
     }
 }
 
