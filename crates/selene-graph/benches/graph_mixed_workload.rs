@@ -44,15 +44,15 @@ struct ScalarMixedFixture {
 
 impl ScalarMixedFixture {
     fn build(fixture: &BenchFixture) -> Self {
-        let scale = fixture.scale().max(READS_PER_CYCLE.max(WRITES_PER_CYCLE));
+        let node_count = fixture.graph().node_count().max(1);
         Self {
             shared: SharedGraph::from_graph(fixture.graph().clone()),
             score_key: fixture.score_key(),
             read_ids: (0..READS_PER_CYCLE)
-                .map(|idx| NodeId::new((idx % scale) as u64 + 1))
+                .map(|idx| NodeId::new((idx % node_count) as u64 + 1))
                 .collect(),
             update_ids: (0..WRITES_PER_CYCLE)
-                .map(|idx| NodeId::new((idx % scale) as u64 + 1))
+                .map(|idx| NodeId::new((idx % node_count) as u64 + 1))
                 .collect(),
         }
     }
