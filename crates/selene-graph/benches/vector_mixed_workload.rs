@@ -52,6 +52,17 @@ fn bench_vector_mixed_workload(c: &mut Criterion) {
                 );
             },
         );
+        group.bench_with_input(
+            BenchmarkId::new("point_read_ivf_update_r60w40_dim128", scale),
+            &scale,
+            |b, &scale| {
+                b.iter_batched(
+                    || MixedVectorFixture::build(scale),
+                    |fixture| black_box(fixture.run_point_read_update_cycle()),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
         group.throughput(Throughput::Elements(
             (OPS_PER_CYCLE * MAINTENANCE_CYCLES) as u64,
         ));
@@ -77,16 +88,18 @@ struct MixedVectorFixture {
     label: IStr,
     embedding_key: IStr,
     queries: Vec<VectorValue>,
+    read_ids: Vec<NodeId>,
     update_ids: Vec<NodeId>,
     update_vectors: Vec<VectorValue>,
 }
 
 impl MixedVectorFixture {
     fn build(scale: usize) -> Self {
-        let scale = scale.max(WRITES_PER_CYCLE);
+        let scale = scale.max(READS_PER_CYCLE);
         let label = intern("VectorDoc").expect("bench label is valid");
         let embedding_key = intern("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(12_000 + scale as u64));
+        let mut read_ids = Vec::with_capacity(READS_PER_CYCLE);
         let mut update_ids = Vec::with_capacity(WRITES_PER_CYCLE);
         {
             let mut txn = shared.begin_write();
@@ -98,6 +111,9 @@ impl MixedVectorFixture {
                 let node_id = mutator
                     .create_node(LabelSet::single(label.clone()), props)
                     .expect("bench vector node insert succeeds");
+                if read_ids.len() < READS_PER_CYCLE {
+                    read_ids.push(node_id);
+                }
                 if update_ids.len() < WRITES_PER_CYCLE {
                     update_ids.push(node_id);
                 }
@@ -117,6 +133,7 @@ impl MixedVectorFixture {
             label,
             embedding_key,
             queries: (0..READS_PER_CYCLE).map(vector_value).collect(),
+            read_ids,
             update_ids,
             update_vectors: (0..WRITES_PER_CYCLE)
                 .map(|idx| vector_value(scale + idx + 1))
@@ -125,12 +142,20 @@ impl MixedVectorFixture {
     }
 
     fn run_cycle(self) -> usize {
+        self.run_cycle_with_reads(VectorReadMode::Ann)
+    }
+
+    fn run_point_read_update_cycle(self) -> usize {
+        self.run_cycle_with_reads(VectorReadMode::Point)
+    }
+
+    fn run_cycle_with_reads(self, mode: VectorReadMode) -> usize {
         let mut read_idx = 0;
         let mut write_idx = 0;
         let mut observed = 0;
         for slot in 0..OPS_PER_CYCLE {
             if slot % 5 < 3 {
-                observed += self.read_once(read_idx);
+                observed += mode.read_once(&self, read_idx);
                 read_idx += 1;
             } else {
                 self.write_once(write_idx);
@@ -140,7 +165,7 @@ impl MixedVectorFixture {
         observed
     }
 
-    fn read_once(&self, idx: usize) -> usize {
+    fn read_ann_once(&self, idx: usize) -> usize {
         let options =
             ApproximateVectorSearchOptions::new(VectorMetric::Cosine, TOP_K, IVF_SEARCH_WIDTH);
         self.shared
@@ -153,6 +178,13 @@ impl MixedVectorFixture {
             )
             .expect("bench ANN search succeeds")
             .len()
+    }
+
+    fn read_point_once(&self, idx: usize) -> usize {
+        self.shared
+            .read()
+            .node_properties(self.read_ids[idx])
+            .is_some() as usize
     }
 
     fn write_once(&self, idx: usize) {
@@ -174,6 +206,21 @@ impl MixedVectorFixture {
             )
             .expect("bench vector update succeeds");
         txn.commit().expect("bench vector update commit succeeds");
+    }
+}
+
+#[derive(Clone, Copy)]
+enum VectorReadMode {
+    Ann,
+    Point,
+}
+
+impl VectorReadMode {
+    fn read_once(self, fixture: &MixedVectorFixture, idx: usize) -> usize {
+        match self {
+            Self::Ann => fixture.read_ann_once(idx),
+            Self::Point => fixture.read_point_once(idx),
+        }
     }
 }
 
