@@ -83,6 +83,16 @@ pub(super) fn eval_json_get_path_text(
     selected_json_text(value, span)
 }
 
+pub(super) fn eval_json_has_path(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match json_path_exists(&args, "json_has_path", span)? {
+        Some(exists) => Ok(Value::Bool(exists)),
+        None => Ok(Value::Null),
+    }
+}
+
 fn selected_json_value(
     value: &serde_json::Value,
     span: SourceSpan,
@@ -132,6 +142,35 @@ fn select_json_path<'a>(
         current = next;
     }
     Ok(Some(current))
+}
+
+fn json_path_exists(
+    args: &[Value],
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Option<bool>, ExecutorError> {
+    debug_assert!(args.len() >= 2);
+    debug_assert!(args.len() <= JSON_PATH_MAX_ARGS);
+    if matches!(args[0], Value::Null) {
+        return Ok(None);
+    }
+    let Value::Json(value) = &args[0] else {
+        return Err(data_exception_value(
+            format!("{function} target is not JSON"),
+            span,
+        ));
+    };
+    let mut current = value.as_serde();
+    for selector in &args[1..] {
+        if matches!(selector, Value::Null) {
+            return Ok(None);
+        }
+        let Some(next) = select_json_child(current, selector, function, span)? else {
+            return Ok(Some(false));
+        };
+        current = next;
+    }
+    Ok(Some(true))
 }
 
 fn select_json_child<'a>(
