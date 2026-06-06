@@ -62,10 +62,7 @@ pub(super) fn eval_json_contains(
     let Value::Json(candidate) = candidate else {
         return data_exception("json_contains candidate is not JSON", span);
     };
-    Ok(Value::Bool(json_contains_value(
-        target.as_serde(),
-        candidate.as_serde(),
-    )))
+    Ok(Value::Bool(target.contains(&candidate)))
 }
 
 pub(super) fn eval_json_get(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -134,25 +131,6 @@ fn selected_json_text(value: &serde_json::Value, span: SourceSpan) -> Result<Val
             })?;
             string_value(&json.to_canonical_string(), span)
         }
-    }
-}
-
-fn json_contains_value(target: &serde_json::Value, candidate: &serde_json::Value) -> bool {
-    match (target, candidate) {
-        (serde_json::Value::Object(target), serde_json::Value::Object(candidate)) => {
-            candidate.iter().all(|(key, value)| {
-                target
-                    .get(key)
-                    .is_some_and(|found| json_contains_value(found, value))
-            })
-        }
-        (serde_json::Value::Array(target), serde_json::Value::Array(candidate)) => candidate
-            .iter()
-            .all(|value| target.iter().any(|found| json_contains_value(found, value))),
-        (serde_json::Value::Array(target), candidate) => target
-            .iter()
-            .any(|found| json_contains_value(found, candidate)),
-        _ => target == candidate,
     }
 }
 

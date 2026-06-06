@@ -56,6 +56,17 @@ impl JsonValue {
             SerdeJsonValue::Object(_) => "object",
         }
     }
+
+    /// Return true when this JSON value recursively contains `candidate`.
+    ///
+    /// Objects contain candidates whose keys are present and whose values are
+    /// themselves contained. Arrays contain array candidates when each
+    /// candidate element is contained by at least one target element. A scalar
+    /// or object candidate also matches any containing target array element.
+    #[must_use]
+    pub fn contains(&self, candidate: &Self) -> bool {
+        json_contains_value(self.as_serde(), candidate.as_serde())
+    }
 }
 
 impl TryFrom<SerdeJsonValue> for JsonValue {
@@ -145,6 +156,25 @@ fn ensure_json_container_len(len: usize) -> CoreResult<()> {
     Ok(())
 }
 
+fn json_contains_value(target: &SerdeJsonValue, candidate: &SerdeJsonValue) -> bool {
+    match (target, candidate) {
+        (SerdeJsonValue::Object(target), SerdeJsonValue::Object(candidate)) => {
+            candidate.iter().all(|(key, value)| {
+                target
+                    .get(key)
+                    .is_some_and(|found| json_contains_value(found, value))
+            })
+        }
+        (SerdeJsonValue::Array(target), SerdeJsonValue::Array(candidate)) => candidate
+            .iter()
+            .all(|value| target.iter().any(|found| json_contains_value(found, value))),
+        (SerdeJsonValue::Array(target), candidate) => target
+            .iter()
+            .any(|found| json_contains_value(found, candidate)),
+        _ => target == candidate,
+    }
+}
+
 fn write_json_canonical(value: &SerdeJsonValue, output: &mut String) {
     match value {
         SerdeJsonValue::Null => output.push_str("null"),
@@ -191,5 +221,25 @@ mod tests {
         assert_eq!(encoded, serde_json::json!({"a": null, "b": [2, true]}));
         let decoded: JsonValue = serde_json::from_value(encoded).expect("JSON value deserializes");
         assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn contains_matches_nested_subset_and_array_membership() {
+        let target = JsonValue::new(serde_json::json!({
+            "memory": {"kind": "episodic", "score": 7},
+            "tags": ["agent", "graph", {"scope": "current"}]
+        }))
+        .unwrap();
+
+        assert!(target.contains(
+            &JsonValue::new(serde_json::json!({"memory": {"kind": "episodic"}})).unwrap()
+        ));
+        assert!(target.contains(&JsonValue::new(serde_json::json!({"tags": "graph"})).unwrap()));
+        assert!(target.contains(
+            &JsonValue::new(serde_json::json!({"tags": [{"scope": "current"}, "agent"]})).unwrap()
+        ));
+        assert!(!target.contains(
+            &JsonValue::new(serde_json::json!({"memory": {"kind": "semantic"}})).unwrap()
+        ));
     }
 }

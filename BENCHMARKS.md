@@ -175,7 +175,9 @@ computes query-local BM25 statistics, and returns deterministic top-k text hits.
 `graph_text_bm25_indexed/*` compares a reusable in-memory postings index against
 the oracle: `prebuilt_*` is the repeated-query path, while `transient_*` includes
 index construction so build cost stays visible. Fixture setup is excluded from
-the reported Criterion duration.
+the reported Criterion duration. `graph_json_contains_scan/*` is the exact JSON
+metadata containment oracle over JSON-valued node properties before maintained
+JSON/path indexes exist.
 `graph_snapshot_read_loops/*` amortizes thread setup over many
 `SharedGraph::read()` calls so the ArcSwap snapshot hot path is visible; the
 older `graph_concurrent_reads` row remains a legacy spawn/join smoke row.
@@ -239,6 +241,12 @@ PR-local quick text baseline:
 | `graph_text_bm25_exact/topic_query/n1000_k10` | 327.59 µs (quick) | Exact BM25 scan over 1,000 string-valued document nodes with Unicode-aware tokenization, query-local document frequencies, and deterministic score/node-id ordering. This is the oracle for postings-index and hybrid BM25/vector rows. |
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 34.665 µs (quick) | Repeated query over a prebuilt `TextIndex` postings structure. Same BM25 tokenizer/scorer/order as the exact oracle; about 9.5x faster than the exact scan on this fixture. |
 | `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 456.56 µs (quick) | Build a transient postings index from the graph snapshot, then query it once. Slower than exact for one-off 1k queries; useful as the build-cost envelope and as the bridge toward durable maintained registrations. |
+
+PR-local quick JSON baseline:
+
+| Bench | 1k | Notes |
+|---|---:|---|
+| `graph_json_contains_scan/nested_metadata_k10/1000` | 21.731 µs (quick) | Exact scan over 1,000 JSON metadata payloads with one-quarter matching nested current episodic facts, skipping non-JSON properties. This is the oracle for future maintained JSON/path indexes and JSON/vector/text candidate composition. |
 
 PR-local quick vector baseline:
 

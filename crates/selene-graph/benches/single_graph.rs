@@ -11,7 +11,8 @@ mod single_graph_candidate_set;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    DbString, GraphId, LabelSet, PropertyMap, Value, VectorMetric, VectorValue, db_string,
+    DbString, GraphId, JsonValue, LabelSet, PropertyMap, Value, VectorMetric, VectorValue,
+    db_string,
 };
 use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind, VectorIndexMemoryUsage};
 use selene_testing::BenchProfile;
@@ -176,6 +177,33 @@ fn bench_exact_vector_scan(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_exact_json_contains_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_json_contains_scan");
+    for &scale in BenchProfile::from_env().scales() {
+        let fixture = JsonFixture::build(scale);
+        group.throughput(Throughput::Elements(fixture.scale() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("nested_metadata_k10", fixture.scale()),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_contains_nodes(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.candidate(),
+                            10,
+                        )
+                        .expect("JSON containment scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 fn bench_ann_recall(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_ann_recall_validation");
     for scale in vector_scan_scales() {
@@ -248,6 +276,86 @@ fn vector_scan_scales() -> Vec<usize> {
             (!scales.is_empty()).then_some(scales)
         })
         .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
+}
+
+#[derive(Clone, Debug)]
+struct JsonFixture {
+    scale: usize,
+    graph: SeleneGraph,
+    label: DbString,
+    payload_key: DbString,
+    candidate: JsonValue,
+}
+
+impl JsonFixture {
+    fn build(scale: usize) -> Self {
+        let scale = scale.max(1);
+        let label = db_string("JsonDoc").expect("bench label is valid");
+        let payload_key = db_string("payload").expect("bench key is valid");
+        let candidate =
+            JsonValue::new(serde_json::json!({"memory": {"kind": "episodic"}, "state": "current"}))
+                .expect("bench JSON candidate is valid");
+        let shared = SharedGraph::new(GraphId::new(9_500 + scale as u64));
+        {
+            let mut txn = shared.begin_write();
+            let mut mutator = txn.mutator();
+            for idx in 0..scale {
+                let value = match idx % 4 {
+                    0 => json_value(serde_json::json!({
+                        "memory": {"kind": "episodic", "score": idx},
+                        "state": "current",
+                        "tags": ["agent", "graph", "json"]
+                    })),
+                    1 => json_value(serde_json::json!({
+                        "memory": {"kind": "semantic", "score": idx},
+                        "state": "current"
+                    })),
+                    2 => json_value(serde_json::json!({
+                        "memory": {"kind": "episodic", "score": idx},
+                        "state": "stale"
+                    })),
+                    _ => Value::String(db_string("not-json").expect("bench string is valid")),
+                };
+                let props = PropertyMap::from_pairs([(payload_key.clone(), value)])
+                    .expect("bench JSON properties are valid");
+                mutator
+                    .create_node(LabelSet::single(label.clone()), props)
+                    .expect("bench JSON node insert succeeds");
+            }
+            txn.commit().expect("bench JSON fixture commit succeeds");
+        }
+        Self {
+            scale,
+            graph: shared.read().as_ref().clone(),
+            label,
+            payload_key,
+            candidate,
+        }
+    }
+
+    const fn graph(&self) -> &SeleneGraph {
+        &self.graph
+    }
+
+    const fn scale(&self) -> usize {
+        self.scale
+    }
+
+    const fn label(&self) -> &DbString {
+        &self.label
+    }
+
+    const fn payload_key(&self) -> &DbString {
+        &self.payload_key
+    }
+
+    const fn candidate(&self) -> &JsonValue {
+        &self.candidate
+    }
+}
+
+fn json_value(value: serde_json::Value) -> Value {
+    Value::Json(JsonValue::new(value).expect("bench JSON is valid"))
 }
 
 #[derive(Clone, Debug)]
@@ -399,6 +507,7 @@ criterion_group! {
     config = common::criterion_config();
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
         bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
-        single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall
+        bench_exact_json_contains_scan, single_graph_candidate_set::bench_vector_candidate_set,
+        bench_ann_recall
 }
 criterion_main!(graph_reads);
