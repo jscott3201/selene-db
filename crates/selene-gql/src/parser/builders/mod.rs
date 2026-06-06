@@ -375,9 +375,10 @@ pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, 
             Rule::group_by_clause => clause.group_by = Some(build_group_by(child)?),
             Rule::having_clause => clause.having = Some(build_having(child)?),
             Rule::no_bindings => {
-                return Err(not_implemented(
-                    &child,
-                    "RETURN NO BINDINGS is not yet supported",
+                return Err(ParserError::not_implemented(
+                    "RETURN NO BINDINGS is an ISO specification device, not user GQL syntax",
+                    span(&child),
+                    Some("use FINISH for write pipelines that intentionally omit a result"),
                 ));
             }
             _ => return Err(unexpected_pair(child, "unexpected RETURN child")),

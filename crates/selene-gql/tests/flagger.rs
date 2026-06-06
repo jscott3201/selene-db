@@ -379,10 +379,9 @@ fn or_replace_catalog_ddl_is_not_implemented() {
 
 #[test]
 fn deferred_grammar_surfaces_report_not_implemented_with_42n01() {
-    // PARSE-17: `RETURN NO BINDINGS` and `SELECT FROM <graph-name>` parse at the
-    // grammar level but their builders are deferred (builders::mod.rs). Sibling
-    // deferrals (MERGE/FOR) are pinned; these two had zero coverage. Pin the
-    // exact NotImplemented variant + the 42N01 (FEATURE_NOT_SUPPORTED) status.
+    // PARSE-17: `RETURN NO BINDINGS` and `SELECT FROM <graph-name>` parse at
+    // the grammar level but are not available as user GQL. Pin the exact
+    // NotImplemented variant + the 42N01 (FEATURE_NOT_SUPPORTED) status.
     for source in ["MATCH (n) RETURN NO BINDINGS", "SELECT * FROM my_graph"] {
         let error = parse(source).expect_err(source);
         assert!(
