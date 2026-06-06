@@ -591,10 +591,11 @@ Command:
 scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_payload_compression_sweep
 ```
 
-Quick profile on 2026-06-06. `current128` is the current production
-`COMPRESS_THRESHOLD`; `never` is checksum-only. `always` mostly confirms the
-cost of compressing sub-threshold bodies, so the table keeps representative
-threshold rows and calls out sub-threshold compression in the notes.
+Quick profile on 2026-06-06 before the default threshold was raised to 4096
+bytes. `current128` was the production `COMPRESS_THRESHOLD` at measurement
+time; `never` is checksum-only. `always` mostly confirms the cost of
+compressing sub-threshold bodies, so the table keeps representative threshold
+rows and calls out sub-threshold compression in the notes.
 
 | Payload | batch | current128 | 512 | 4096 | never | Notes |
 |---|---:|---:|---:|---:|---:|---|
@@ -635,8 +636,9 @@ scripts/run-benches.sh --profile quick --bench wal --filter compression_policy
 scripts/run-benches.sh --profile quick --bench wal --filter compression_policy_flush
 ```
 
-Quick profile on 2026-06-06. `total=1000` changes. `batch` is changes per WAL
-entry. `current128` is the production default, `threshold4096` avoids
+Quick profile on 2026-06-06 before the default threshold was raised to 4096
+bytes. `total=1000` changes. `batch` is changes per WAL entry. `current128`
+was the production default at measurement time, `threshold4096` avoids
 single-record JSON/vector compression, and `disabled` leaves every payload
 uncompressed.
 
@@ -663,12 +665,11 @@ Flush-inclusive companion rows, with bytes-on-disk from the row IDs:
 | vector768 / b1 | 1,962,016 B | 3,154,016 B | 3,154,016 B | 14.98 ms | 9.03 ms | 8.56 ms | Current128 saves bytes but strongly hurts single large vectors. |
 | vector768 / b100 | 63,296 B | 63,296 B | 3,121,346 B | 6.41 ms | 6.94 ms | 7.36 ms | Compression gives a ~49x size win and remains competitive. |
 
-Decision signal: a higher threshold such as 4096 bytes looks better than the
-current 128-byte default for small JSON/vector writes, replay, and flush cycles.
-Disabling compression entirely is still not a clear global win because larger
-JSON/vector batches save substantial bytes with similar durability-inclusive
-latency. A production default change should prefer a higher threshold over
-fully disabling WAL payload compression.
+Decision signal: the follow-up production policy raises the default threshold
+from 128 bytes to 4096 bytes. Disabling compression entirely is still not a
+clear global win because larger JSON/vector batches save substantial bytes with
+similar durability-inclusive latency. Future reruns compare the old policy as
+`threshold128` against the new default as `default4096`.
 
 #### `persist_wal_sync_sweep` — sync-policy sweep
 

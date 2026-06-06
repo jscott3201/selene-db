@@ -300,7 +300,11 @@ fn compression_thresholds() -> &'static [CompressionThreshold] {
             bytes: Some(0),
         },
         CompressionThreshold {
-            name: "current128",
+            name: "threshold128",
+            bytes: Some(128),
+        },
+        CompressionThreshold {
+            name: "default",
             bytes: Some(COMPRESS_THRESHOLD),
         },
         CompressionThreshold {
