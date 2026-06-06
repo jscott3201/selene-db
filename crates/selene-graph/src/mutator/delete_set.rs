@@ -15,12 +15,15 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// clean no-ops, matching set-oriented query deletion where duplicate rows
     /// may reference the same graph element more than once. IDs that were never
     /// allocated still return the same not-found errors as single-element
-    /// delete calls.
+    /// delete calls. The full set is validated before the first row is removed,
+    /// so a mixed set cannot partially mutate the transaction before surfacing a
+    /// missing-id error.
     pub fn delete_elements(
         &mut self,
         nodes: BTreeSet<NodeId>,
         edges: BTreeSet<EdgeId>,
     ) -> GraphResult<()> {
+        self.validate_delete_set(&nodes, &edges)?;
         for node in nodes {
             if self.node_can_be_deleted(node)? {
                 self.delete_node(node)?;
@@ -30,6 +33,20 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             if self.edge_can_be_deleted(edge)? {
                 self.delete_edge(edge)?;
             }
+        }
+        Ok(())
+    }
+
+    fn validate_delete_set(
+        &self,
+        nodes: &BTreeSet<NodeId>,
+        edges: &BTreeSet<EdgeId>,
+    ) -> GraphResult<()> {
+        for node in nodes {
+            self.node_can_be_deleted(*node)?;
+        }
+        for edge in edges {
+            self.edge_can_be_deleted(*edge)?;
         }
         Ok(())
     }
