@@ -117,6 +117,14 @@ pub enum CoreError {
         /// Parser diagnostic.
         message: String,
     },
+
+    /// A JSON Patch document or operation is invalid.
+    #[error("invalid JSON Patch: {message}")]
+    #[diagnostic(code(SLENE_C_016))]
+    JsonPatch {
+        /// Patch diagnostic.
+        message: String,
+    },
 }
 
 impl CoreError {
@@ -138,6 +146,7 @@ impl CoreError {
             Self::CompactKeyValueLengthMismatch { .. } => "0G008",
             Self::OverlappingDiff { .. } => "0G009",
             Self::JsonParse { .. } => "22018",
+            Self::JsonPatch { .. } => "22G03",
         }
     }
 }
@@ -197,6 +206,11 @@ mod tests {
         CoreError::JsonParse { message: "expected value".to_owned() },
         "22018",
         "SLENE_C_015"
+    )]
+    #[case(
+        CoreError::JsonPatch { message: "missing op".to_owned() },
+        "22G03",
+        "SLENE_C_016"
     )]
     fn gqlstatus_and_diagnostic_code_match(
         #[case] error: CoreError,

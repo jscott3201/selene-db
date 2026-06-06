@@ -26,6 +26,7 @@ pub mod feature_register;
 pub mod gqlstatus;
 pub mod hlc;
 pub mod identity;
+mod json_patch;
 mod json_value;
 pub mod label_set;
 pub mod metrics;
