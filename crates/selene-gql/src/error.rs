@@ -89,6 +89,8 @@ impl GqlStatus {
     /// counted shortest path/group count (§16.6, §22.4 GR7) is not a positive
     /// integer.
     pub const INVALID_NUMBER_OF_PATHS_OR_GROUPS: Self = Self(*b"22G0F");
+    /// Maps to GQLSTATUS 22G0H per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DURATION_FORMAT: Self = Self(*b"22G0H");
     /// Maps to GQLSTATUS 22G0M per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY: Self = Self(*b"22G0M");
     /// Maps to GQLSTATUS 22G0S per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -419,6 +421,7 @@ mod tests {
             (GqlStatus::TRIM_ERROR, "22027", *b"22"),
             (GqlStatus::VALUES_NOT_COMPARABLE, "22G04", *b"22"),
             (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
+            (GqlStatus::INVALID_DURATION_FORMAT, "22G0H", *b"22"),
             (
                 GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY,
                 "22G0M",

@@ -39,6 +39,8 @@ pub enum DataExceptionSubclass {
     ValuesNotComparable,
     /// List element error (`22G0C`).
     ListElementError,
+    /// Invalid duration format (`22G0H`).
+    InvalidDurationFormat,
     /// Multiple assignments to a graph element property (`22G0M`).
     MultipleAssignmentsToGraphElementProperty,
     /// Number of node properties exceeds supported maximum (`22G0S`).
@@ -71,6 +73,7 @@ impl DataExceptionSubclass {
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
             Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
+            Self::InvalidDurationFormat => GqlStatus::INVALID_DURATION_FORMAT,
             Self::MultipleAssignmentsToGraphElementProperty => {
                 GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY
             }
