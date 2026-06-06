@@ -103,6 +103,10 @@ name = "graph_hub_delete"
 harness = false
 
 [[bench]]
+name = "graph_delete_reclamation"
+harness = false
+
+[[bench]]
 name = "graph_snapshot_roundtrip"
 harness = false
 

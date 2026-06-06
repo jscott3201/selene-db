@@ -439,8 +439,8 @@ PR-local mixed vector read/write spot-check:
 ## §3 selene-graph — write pipeline & concurrency
 
 Bench bins: `write_txn_lifecycle`, `provider_fanout`, `bound_type_validation`,
-`concurrent_writers`, `graph_hub_delete`, `graph_read_under_write`,
-`graph_mixed_workload`.
+`concurrent_writers`, `graph_hub_delete`, `graph_delete_reclamation`,
+`graph_read_under_write`, `graph_mixed_workload`.
 
 ### §3a Write-pipeline microbenches
 
@@ -491,7 +491,22 @@ linear (10× degree → ~9× time). This sweeps the **degree** axis (not node sc
 |---|---:|---:|---:|---|
 | `graph_hub_delete` | 54.0 µs | 496 µs | 4.54 ms | Linear after GRAPH-05. Was 64.3 µs / 1.62 ms / 132.7 ms (O(D²)) — **30× faster at degree 10k**. |
 
-### §3c `graph_read_under_write` — lock-free reads under contention (D10)
+### §3c `graph_delete_reclamation` — delete payload clearing and compaction
+
+`graph_delete_reclamation/*` isolates the storage side of deletes from vector
+index maintenance. The fixture stores 768-dim `Value::Vector` payloads on
+embedding nodes, deletes 10% of nodes, and reports the logical vector payload
+cleared at delete time in the Criterion id suffix. Delete clears heavyweight
+properties immediately while retaining dead rows for stable id mapping;
+`compact_after_vector_delete` then measures row densification and asserts the
+`CompactionReport` reclaims those dead rows.
+
+| Bench | quick 1k | Notes |
+|---|---:|---|
+| `graph_delete_reclamation/vector_payload_delete/n1k_del100_dim768_payload300k` | 105.98 µs | Deletes 100 vector-bearing nodes and clears ~300 KiB of vector payload from the per-iteration graph; fixture clone/setup excluded. |
+| `graph_delete_reclamation/compact_after_vector_delete/n1k_del100_dim768_payload300k` | 146.40 µs | Compacts the post-delete graph and asserts 100 dead node rows are reclaimed; delete setup excluded from the timed body. |
+
+### §3d `graph_read_under_write` — lock-free reads under contention (D10)
 
 Times a fixed read batch (8 threads × 20k = 160k reads) while one background
 writer churns commits on the `ArcSwap` snapshot. The D10 promise is that a held
@@ -502,7 +517,7 @@ lock collapses this. Dual of `concurrent_writers` (which times the writers).
 |---|---:|---:|---:|---|
 | `graph_read_under_write` | 17.1 ms | 21.5 ms | 24.5 ms | ~107–153 ns/read; rises only with snapshot footprint, not lock contention. |
 
-### §3d `concurrent_writers` — serialized writer queueing under contention
+### §3e `concurrent_writers` — serialized writer queueing under contention
 
 Thread fan-in arms sweep `[1, 2, 4, 8, 16, 32]` (representative `1/8/32` shown).
 Two axes:

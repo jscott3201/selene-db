@@ -74,6 +74,7 @@ selene-graph|provider_fanout|0
 selene-graph|bound_type_validation|0
 selene-graph|concurrent_writers|0
 selene-graph|graph_hub_delete|0
+selene-graph|graph_delete_reclamation|0
 selene-graph|graph_snapshot_roundtrip|0
 selene-graph|graph_read_under_write|0
 selene-graph|graph_mixed_workload|0
