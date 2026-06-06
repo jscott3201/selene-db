@@ -12,7 +12,7 @@ use crate::entry_header::{
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::Manifest;
-use crate::payload::{encode_changes, verify_checksum};
+use crate::payload::{WalCompression, encode_changes_with_compression, verify_checksum};
 use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
 use crate::writer_rotation::{RotationInputs, WalRotationOutcome, rotate_with_manifest};
@@ -120,6 +120,7 @@ pub struct WalWriter {
     last_sequence: u64,
     snapshot_seq: u64,
     sync_policy: SyncPolicy,
+    compression: WalCompression,
     entries_since_fsync: u32,
     /// File offset of the last fully-committed entry's end. On any
     /// append-time error, the file is truncated and re-seeked to this
@@ -143,6 +144,24 @@ impl WalWriter {
     /// Returns I/O, header, sequence, lock, or checksum errors encountered
     /// while opening and validating the WAL.
     pub fn open(path: &Path, config: WalConfig) -> PersistResult<Self> {
+        Self::open_with_compression(path, config, WalCompression::default())
+    }
+
+    /// Open a WAL file with an explicit payload compression policy.
+    ///
+    /// This keeps the same file format as [`Self::open`]; only the append-time
+    /// decision to compress each serialized payload changes. Existing readers
+    /// continue to use the per-entry compression flag stored in the header.
+    ///
+    /// # Errors
+    ///
+    /// Returns I/O, header, sequence, lock, or checksum errors encountered
+    /// while opening and validating the WAL.
+    pub fn open_with_compression(
+        path: &Path,
+        config: WalConfig,
+        compression: WalCompression,
+    ) -> PersistResult<Self> {
         let sync_policy = config.sync_policy.normalized();
         let mut file = OpenOptions::new()
             .create(true)
@@ -191,6 +210,7 @@ impl WalWriter {
             last_sequence,
             snapshot_seq: header_snapshot_seq,
             sync_policy,
+            compression,
             entries_since_fsync: 0,
             committed_offset: scan.truncate_to,
         })
@@ -217,7 +237,7 @@ impl WalWriter {
         changes: &[Change],
     ) -> PersistResult<u64> {
         validate_principal(principal.as_deref())?;
-        let payload = encode_changes(changes)?;
+        let payload = encode_changes_with_compression(changes, self.compression)?;
         let sequence = self.last_sequence + 1;
         let header = WalEntryHeader::new(
             payload.bytes.len(),
