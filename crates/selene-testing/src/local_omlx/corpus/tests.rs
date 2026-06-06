@@ -62,6 +62,11 @@ fn project_workspace_source_profile_targets_existing_documents() {
 }
 
 #[test]
+fn project_migration_profile_targets_existing_documents() {
+    assert_targeted_profile(CorpusProfile::ProjectMigrationMemory, 16);
+}
+
+#[test]
 fn project_source_chunk_profile_keeps_graph_roots_target_free() {
     assert_graph_roots_target_free(CorpusProfile::ProjectSourceChunkMemory);
 }
@@ -69,6 +74,26 @@ fn project_source_chunk_profile_keeps_graph_roots_target_free() {
 #[test]
 fn project_workspace_source_profile_keeps_graph_roots_target_free() {
     assert_graph_roots_target_free(CorpusProfile::ProjectWorkspaceSourceMemory);
+}
+
+#[test]
+fn project_migration_profile_keeps_graph_roots_target_free() {
+    assert_graph_roots_target_free(CorpusProfile::ProjectMigrationMemory);
+}
+
+#[test]
+fn project_migration_profile_contains_current_state_decoys() {
+    let inputs = CorpusProfile::ProjectMigrationMemory.inputs();
+    let decoys = inputs
+        .iter()
+        .filter(|input| {
+            input.is_document
+                && input.target_key.is_none()
+                && contains_current_state_negative_marker(input.text())
+        })
+        .count();
+
+    assert_eq!(decoys, 8);
 }
 
 #[test]
@@ -121,6 +146,10 @@ fn parses_corpus_profile_values() {
     assert!(matches!(
         CorpusProfile::from_value("selene_workspace_source"),
         CorpusProfile::ProjectWorkspaceSourceMemory
+    ));
+    assert!(matches!(
+        CorpusProfile::from_value("selene_project_migration"),
+        CorpusProfile::ProjectMigrationMemory
     ));
     assert!(matches!(
         CorpusProfile::from_value("scaled_ambiguous_memory"),
@@ -181,4 +210,11 @@ fn target_doc<'a>(inputs: &'a [CorpusInput], target: &str) -> &'a CorpusInput {
         .iter()
         .find(|input| input.is_document && input.target_key == Some(target))
         .expect("target document exists")
+}
+
+fn contains_current_state_negative_marker(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    ["stale", "superseded", "contradict"]
+        .iter()
+        .any(|marker| text.contains(marker))
 }
