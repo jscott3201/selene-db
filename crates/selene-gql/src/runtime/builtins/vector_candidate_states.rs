@@ -29,6 +29,7 @@ pub(super) fn output_columns() -> Vec<ProcedureOutputColumn> {
         StaticOutputColumn::new("candidate_count", GqlType::Uint64)
             .with_description("Current candidate node count."),
         StaticOutputColumn::new("required_label", GqlType::String)
+            .with_nullable(true)
             .with_description("Required node label, or NULL when unconstrained."),
         StaticOutputColumn::new("require_outgoing", GqlType::List(Box::new(GqlType::String)))
             .with_description("Outgoing edge labels required on the source node."),

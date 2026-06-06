@@ -1,7 +1,7 @@
 use selene_core::Value;
 
 use crate::{
-    GqlType, PlannedCall, ProcedureError, YieldKind,
+    PlannedCall, ProcedureError, ProcedureOutputColumn, YieldKind,
     runtime::{ExecutorError, value_type_match::value_matches_gql_type},
 };
 
@@ -55,7 +55,7 @@ fn validate_output_row(call: &PlannedCall, row: &[Value]) -> Result<(), Executor
     }
 
     for (index, (value, column)) in row.iter().zip(&call.output_schema.columns).enumerate() {
-        if !matches_gql_type(value, &column.ty) {
+        if !matches_gql_type(value, column) {
             return Err(procedure_error(
                 ProcedureError::Internal {
                     detail: format!("registry returned value with wrong type for column {index}"),
@@ -75,15 +75,13 @@ fn output_column_index(call: &PlannedCall, name: selene_core::DbString) -> Optio
         .position(|column| column.name == name)
 }
 
-fn matches_gql_type(value: &Value, ty: &GqlType) -> bool {
-    if matches!(ty, GqlType::Nothing) {
+fn matches_gql_type(value: &Value, column: &ProcedureOutputColumn) -> bool {
+    if matches!(&column.ty, crate::GqlType::Nothing) {
         return false;
     }
-    // Output schemas do not model nullability yet, and native metadata procedures use
-    // NULL in typed columns for optional fields.
     if matches!(value, Value::Null) {
-        return true;
+        return column.nullable;
     }
 
-    value_matches_gql_type(value, ty)
+    value_matches_gql_type(value, &column.ty)
 }
