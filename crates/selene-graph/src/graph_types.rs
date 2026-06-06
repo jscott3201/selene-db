@@ -602,6 +602,10 @@ pub enum PropertyDefaultValue {
     Uuid(DbString),
     /// Canonical JSON text default.
     Json(DbString),
+    /// Default floating-point value, stored as canonical IEEE 754 binary64 bits.
+    Float(u64),
+    /// Distinct 32-bit floating-point value, stored as canonical IEEE 754 binary32 bits.
+    Float32(u32),
 }
 
 impl PropertyDefaultValue {
@@ -609,13 +613,32 @@ impl PropertyDefaultValue {
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::Inconsistent`] if a persisted UUID/JSON default no
-    /// longer parses as a valid value.
+    /// Returns [`GraphError::Inconsistent`] if a persisted float default is not
+    /// finite, or if a persisted UUID/JSON default no longer parses as a valid
+    /// value.
     pub fn to_value(&self) -> GraphResult<Value> {
         Ok(match self {
             Self::Null => Value::Null,
             Self::Boolean(value) => Value::Bool(*value),
             Self::Integer(value) => Value::Int(*value),
+            Self::Float(bits) => {
+                let value = f64::from_bits(*bits);
+                if !value.is_finite() {
+                    return Err(GraphError::Inconsistent {
+                        reason: "persisted FLOAT property default is not finite".to_owned(),
+                    });
+                }
+                Value::Float(value)
+            }
+            Self::Float32(bits) => {
+                let value = f32::from_bits(*bits);
+                if !value.is_finite() {
+                    return Err(GraphError::Inconsistent {
+                        reason: "persisted FLOAT32 property default is not finite".to_owned(),
+                    });
+                }
+                Value::Float32(value)
+            }
             Self::String(value) => Value::String(value.clone()),
             Self::Bytes(value) => Value::Bytes(value.clone().into()),
             Self::Uuid(value) => {
@@ -645,12 +668,34 @@ impl PropertyDefaultValue {
             Value::Null => Some(Self::Null),
             Value::Bool(value) => Some(Self::Boolean(*value)),
             Value::Int(value) => Some(Self::Integer(*value)),
+            Value::Float(value) if value.is_finite() => {
+                Some(Self::Float(canonical_f64_bits(*value)))
+            }
+            Value::Float32(value) if value.is_finite() => {
+                Some(Self::Float32(canonical_f32_bits(*value)))
+            }
             Value::String(value) => Some(Self::String(value.clone())),
             Value::Bytes(value) => Some(Self::Bytes(value.to_vec())),
             Value::Uuid(value) => db_string(&value.to_string()).ok().map(Self::Uuid),
             Value::Json(value) => db_string(&value.to_canonical_string()).ok().map(Self::Json),
             _ => None,
         }
+    }
+}
+
+fn canonical_f64_bits(value: f64) -> u64 {
+    if value == 0.0 {
+        0.0_f64.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
+
+fn canonical_f32_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0_f32.to_bits()
+    } else {
+        value.to_bits()
     }
 }
 

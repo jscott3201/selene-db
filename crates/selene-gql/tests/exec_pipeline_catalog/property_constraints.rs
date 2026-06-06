@@ -196,13 +196,40 @@ fn json_default_property_constraint_rejects_invalid_json_string() {
 }
 
 #[test]
-fn unsupported_default_literal_returns_feature_not_supported() {
+fn float_default_property_constraint_accepts_float_literal() {
     let graph = empty_closed_graph(3724);
-    let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5)");
+    let plan = planned(
+        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5, small :: FLOAT32 DEFAULT 2.25)",
+    );
 
-    let err = run_write(&graph, &plan).expect_err("float default unsupported");
+    run_write(&graph, &plan)
+        .expect("float defaults execute")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(PropertyDefaultValue::Float(1.5_f64.to_bits()))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[1].default,
+        Some(PropertyDefaultValue::Float32(2.25_f32.to_bits()))
+    );
+}
 
-    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+#[test]
+fn float_default_property_constraint_rejects_non_finite_literal() {
+    let graph = empty_closed_graph(3731);
+    let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.0e9999)");
+
+    let err = run_write(&graph, &plan).expect_err("non-finite float default rejected");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("FLOAT DEFAULT literal must be finite")
+    ));
 }
 
 #[test]

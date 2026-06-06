@@ -281,6 +281,8 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     let serial = db_string("serial").unwrap();
     let payload = db_string("payload").unwrap();
     let device_id = db_string("device_id").unwrap();
+    let score = db_string("score").unwrap();
+    let small_score = db_string("small_score").unwrap();
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()
@@ -314,6 +316,24 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                         default: Some(PropertyDefaultValue::Uuid(
                             db_string("018f1b6d-7b89-7cc0-9f40-2c6f8d4df101").unwrap(),
                         )),
+                        immutable: false,
+                        record_field_types: None,
+                    },
+                    PropertyTypeDef {
+                        name: score.clone(),
+                        value_type: selene_core::PropertyValueType::Float,
+                        list_element_type: None,
+                        required: false,
+                        default: Some(PropertyDefaultValue::Float(1.5_f64.to_bits())),
+                        immutable: false,
+                        record_field_types: None,
+                    },
+                    PropertyTypeDef {
+                        name: small_score.clone(),
+                        value_type: selene_core::PropertyValueType::Float32,
+                        list_element_type: None,
+                        required: false,
+                        default: Some(PropertyDefaultValue::Float32(2.25_f32.to_bits())),
                         immutable: false,
                         record_field_types: None,
                     },
@@ -361,6 +381,16 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         Some(PropertyDefaultValue::Uuid(
             db_string("018f1b6d-7b89-7cc0-9f40-2c6f8d4df101").unwrap()
         ))
+    );
+    assert_eq!(graph_type.node_types[0].properties[3].name, score);
+    assert_eq!(
+        graph_type.node_types[0].properties[3].default,
+        Some(PropertyDefaultValue::Float(1.5_f64.to_bits()))
+    );
+    assert_eq!(graph_type.node_types[0].properties[4].name, small_score);
+    assert_eq!(
+        graph_type.node_types[0].properties[4].default,
+        Some(PropertyDefaultValue::Float32(2.25_f32.to_bits()))
     );
     let _ = fs::remove_dir_all(dir);
 }
