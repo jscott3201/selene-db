@@ -16,6 +16,16 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             crate::Literal::Float(value, _) => write!(out, "{value}")?,
             crate::Literal::String(value, _) => write!(out, "'{}'", escape_string(value.as_str()))?,
             crate::Literal::Uuid(value, _) => write!(out, "UUID '{value}'")?,
+            crate::Literal::ZonedDateTime(value, _) => {
+                write!(out, "ZONED DATETIME '{}'", format_zoned_datetime(value))?;
+            }
+            crate::Literal::LocalDateTime(value, _) => write!(out, "LOCAL DATETIME '{value}'")?,
+            crate::Literal::Date(value, _) => write!(out, "DATE '{value}'")?,
+            crate::Literal::ZonedTime(value, _) => {
+                write!(out, "ZONED TIME '{}'", format_zoned_time(value))?;
+            }
+            crate::Literal::LocalTime(value, _) => write!(out, "LOCAL TIME '{value}'")?,
+            crate::Literal::Duration(value, _) => write!(out, "DURATION '{value}'")?,
             crate::Literal::Null(_) => out.push_str("null"),
         },
         ValueExpr::Variable { name, .. } => out.push_str(&fmt_ident(name.clone())),
@@ -207,6 +217,14 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
         } => cast::fmt_cast(out, value, target_type)?,
     }
     Ok(())
+}
+
+fn format_zoned_datetime(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.datetime(), value.offset())
+}
+
+fn format_zoned_time(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.time(), value.offset())
 }
 
 fn fmt_variadic(out: &mut String, name: &str, items: &[ValueExpr]) -> fmt::Result {

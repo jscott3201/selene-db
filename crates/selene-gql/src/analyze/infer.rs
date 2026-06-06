@@ -23,6 +23,12 @@ pub(crate) fn literal(literal: &Literal) -> AnalyzedType {
         Literal::Float(..) => AnalyzedType::Resolved(GqlType::Float),
         Literal::String(..) => AnalyzedType::Resolved(GqlType::String),
         Literal::Uuid(..) => AnalyzedType::Resolved(GqlType::Uuid),
+        Literal::ZonedDateTime(..) => AnalyzedType::Resolved(GqlType::ZonedDateTime),
+        Literal::LocalDateTime(..) => AnalyzedType::Resolved(GqlType::LocalDateTime),
+        Literal::Date(..) => AnalyzedType::Resolved(GqlType::Date),
+        Literal::ZonedTime(..) => AnalyzedType::Resolved(GqlType::ZonedTime),
+        Literal::LocalTime(..) => AnalyzedType::Resolved(GqlType::LocalTime),
+        Literal::Duration(..) => AnalyzedType::Resolved(GqlType::Duration),
         Literal::Null(..) => AnalyzedType::Resolved(GqlType::Null),
     }
 }

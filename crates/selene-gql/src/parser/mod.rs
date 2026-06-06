@@ -361,14 +361,13 @@ mod tests {
     }
 
     #[test]
-    fn temporal_literal_reports_not_implemented() {
-        // Temporal keyword literals still parse at the grammar level but their
-        // builders land in a later brief; surface them as NotImplemented
-        // (42N01) so callers can distinguish a capability gap from a typo.
-        let err = parse("RETURN DATE '2020-01-01'")
-            .expect_err("temporal literal should report not implemented");
-        assert!(matches!(err, ParserError::NotImplemented { .. }));
-        assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+    fn parse_temporal_literal() {
+        let item = only_item("RETURN DATE '2020-01-01'");
+        let ValueExpr::Literal(Literal::Date(value, span)) = item.expr else {
+            panic!("expected DATE literal");
+        };
+        assert_eq!(value.to_string(), "2020-01-01");
+        assert_eq!(span, SourceSpan::new(7, 17));
     }
 
     #[test]

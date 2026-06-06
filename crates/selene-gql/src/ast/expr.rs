@@ -415,7 +415,7 @@ pub enum TrimSpec {
 }
 
 /// Literal expression.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub enum Literal {
     /// Boolean literal.
@@ -428,8 +428,62 @@ pub enum Literal {
     String(IStr, SourceSpan),
     /// UUID literal.
     Uuid(uuid::Uuid, SourceSpan),
+    /// Zoned datetime literal.
+    ZonedDateTime(Box<jiff::Zoned>, SourceSpan),
+    /// Local datetime literal.
+    LocalDateTime(jiff::civil::DateTime, SourceSpan),
+    /// Date literal.
+    Date(jiff::civil::Date, SourceSpan),
+    /// Zoned time literal.
+    ZonedTime(Box<jiff::Zoned>, SourceSpan),
+    /// Local time literal.
+    LocalTime(jiff::civil::Time, SourceSpan),
+    /// Duration literal.
+    Duration(Box<jiff::Span>, SourceSpan),
     /// Null literal.
     Null(SourceSpan),
+}
+
+impl PartialEq for Literal {
+    fn eq(&self, rhs: &Self) -> bool {
+        match (self, rhs) {
+            (Self::Bool(lhs, lhs_span), Self::Bool(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Integer(lhs, lhs_span), Self::Integer(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Float(lhs, lhs_span), Self::Float(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::String(lhs, lhs_span), Self::String(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Uuid(lhs, lhs_span), Self::Uuid(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::ZonedDateTime(lhs, lhs_span), Self::ZonedDateTime(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::LocalDateTime(lhs, lhs_span), Self::LocalDateTime(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Date(lhs, lhs_span), Self::Date(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::ZonedTime(lhs, lhs_span), Self::ZonedTime(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::LocalTime(lhs, lhs_span), Self::LocalTime(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Duration(lhs, lhs_span), Self::Duration(rhs, rhs_span)) => {
+                lhs.fieldwise() == rhs.fieldwise() && lhs_span == rhs_span
+            }
+            (Self::Null(lhs_span), Self::Null(rhs_span)) => lhs_span == rhs_span,
+            _ => false,
+        }
+    }
 }
 
 impl Literal {
@@ -442,6 +496,12 @@ impl Literal {
             | Self::Float(_, span)
             | Self::String(_, span)
             | Self::Uuid(_, span)
+            | Self::ZonedDateTime(_, span)
+            | Self::LocalDateTime(_, span)
+            | Self::Date(_, span)
+            | Self::ZonedTime(_, span)
+            | Self::LocalTime(_, span)
+            | Self::Duration(_, span)
             | Self::Null(span) => *span,
         }
     }
@@ -458,6 +518,12 @@ impl Literal {
             | Self::Float(_, span)
             | Self::String(_, span)
             | Self::Uuid(_, span)
+            | Self::ZonedDateTime(_, span)
+            | Self::LocalDateTime(_, span)
+            | Self::Date(_, span)
+            | Self::ZonedTime(_, span)
+            | Self::LocalTime(_, span)
+            | Self::Duration(_, span)
             | Self::Null(span) => span,
         }
     }

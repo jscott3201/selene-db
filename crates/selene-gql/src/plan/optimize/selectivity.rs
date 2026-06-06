@@ -87,6 +87,12 @@ fn equality_literal_value(expr: &ValueExpr) -> Option<Value> {
         Literal::Float(value, _) => Some(Value::Float(*value)),
         Literal::String(value, _) => Some(Value::String(value.clone())),
         Literal::Uuid(value, _) => Some(Value::Uuid(*value)),
+        Literal::ZonedDateTime(value, _) => Some(Value::ZonedDateTime(value.clone())),
+        Literal::LocalDateTime(value, _) => Some(Value::LocalDateTime(*value)),
+        Literal::Date(value, _) => Some(Value::Date(*value)),
+        Literal::ZonedTime(value, _) => Some(Value::ZonedTime(value.clone())),
+        Literal::LocalTime(value, _) => Some(Value::LocalTime(*value)),
+        Literal::Duration(value, _) => Some(Value::Duration(value.clone())),
         Literal::Null(_) => None,
     }
 }

@@ -581,9 +581,9 @@ primary = {
   | normalize_expr
   | trim_expr
   | aggregate_expr
+  | literal
   | function_call
   | paren_expr
-  | literal
   | typed_param_ref
   | var_ref
 }

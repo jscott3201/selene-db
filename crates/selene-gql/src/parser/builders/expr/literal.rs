@@ -4,6 +4,7 @@ use pest::iterators::Pair;
 use selene_core::IStr;
 
 use crate::{
+    GqlStatus,
     ast::{Literal, SourceSpan, ValueExpr},
     error::ParserError,
 };
@@ -80,6 +81,14 @@ fn build_literal_child(child: Pair<'_, Rule>) -> Result<Literal, ParserError> {
         Rule::float_lit => parse_f64(child.as_str(), child_span),
         Rule::string_lit => parse_string(child.as_str(), child_span),
         Rule::uuid_lit => parse_uuid_lit(child, child_span),
+        Rule::date_lit => parse_date_lit(child, child_span),
+        Rule::local_datetime_lit => parse_local_datetime_lit(child, child_span),
+        Rule::zoned_datetime_lit => parse_zoned_datetime_lit(child, child_span),
+        Rule::datetime_bare_lit => parse_datetime_lit(child, child_span),
+        Rule::local_time_lit => parse_local_time_lit(child, child_span),
+        Rule::zoned_time_lit => parse_zoned_time_lit(child, child_span),
+        Rule::time_lit => parse_time_lit(child, child_span),
+        Rule::duration_lit => parse_duration_lit(child, child_span),
         _ => Err(not_implemented(
             &child,
             "literal builder lands in a later brief",
@@ -95,6 +104,109 @@ fn parse_uuid_lit(pair: Pair<'_, Rule>, source_span: SourceSpan) -> Result<Liter
         .map_err(|error| {
             ParserError::syntax(format!("invalid UUID literal: {error}"), source_span, None)
         })
+}
+
+fn parse_date_lit(pair: Pair<'_, Rule>, source_span: SourceSpan) -> Result<Literal, ParserError> {
+    let value = temporal_text(pair)?;
+    value
+        .parse::<jiff::civil::Date>()
+        .map(|date| Literal::Date(date, source_span))
+        .map_err(|error| temporal_error("DATE", error, source_span))
+}
+
+fn parse_local_datetime_lit(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Literal, ParserError> {
+    let value = temporal_text(pair)?;
+    let pieces = parse_datetime_pieces(&value, "LOCAL DATETIME", source_span)?;
+    reject_datetime_zone(&pieces, "LOCAL DATETIME", source_span)?;
+    let time = pieces
+        .time()
+        .ok_or_else(|| temporal_message("LOCAL DATETIME literal requires a time", source_span))?;
+    Ok(Literal::LocalDateTime(
+        pieces.date().to_datetime(time),
+        source_span,
+    ))
+}
+
+fn parse_zoned_datetime_lit(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Literal, ParserError> {
+    let value = temporal_text(pair)?;
+    parse_zoned_datetime_text(&value, "ZONED DATETIME", source_span)
+        .map(|zoned| Literal::ZonedDateTime(Box::new(zoned), source_span))
+}
+
+fn parse_datetime_lit(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Literal, ParserError> {
+    let value = temporal_text(pair)?;
+    let pieces = parse_datetime_pieces(&value, "DATETIME", source_span)?;
+    if has_datetime_zone(&pieces, source_span)? {
+        parse_zoned_datetime_text(&value, "DATETIME", source_span)
+            .map(|zoned| Literal::ZonedDateTime(Box::new(zoned), source_span))
+    } else {
+        let time = pieces
+            .time()
+            .ok_or_else(|| temporal_message("DATETIME literal requires a time", source_span))?;
+        Ok(Literal::LocalDateTime(
+            pieces.date().to_datetime(time),
+            source_span,
+        ))
+    }
+}
+
+fn parse_local_time_lit(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Literal, ParserError> {
+    let value = temporal_text(pair)?;
+    if time_has_zone_designator(&value) {
+        return Err(temporal_message(
+            "LOCAL TIME literal must not include a time zone displacement",
+            source_span,
+        ));
+    }
+    value
+        .parse::<jiff::civil::Time>()
+        .map(|time| Literal::LocalTime(time, source_span))
+        .map_err(|error| temporal_error("LOCAL TIME", error, source_span))
+}
+
+fn parse_zoned_time_lit(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Literal, ParserError> {
+    let value = temporal_text(pair)?;
+    parse_zoned_time_text(&value, source_span)
+        .map(|zoned| Literal::ZonedTime(Box::new(zoned), source_span))
+}
+
+fn parse_time_lit(pair: Pair<'_, Rule>, source_span: SourceSpan) -> Result<Literal, ParserError> {
+    let value = temporal_text(pair)?;
+    if time_has_zone_designator(&value) {
+        parse_zoned_time_text(&value, source_span)
+            .map(|zoned| Literal::ZonedTime(Box::new(zoned), source_span))
+    } else {
+        value
+            .parse::<jiff::civil::Time>()
+            .map(|time| Literal::LocalTime(time, source_span))
+            .map_err(|error| temporal_error("TIME", error, source_span))
+    }
+}
+
+fn parse_duration_lit(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<Literal, ParserError> {
+    let value = temporal_text(pair)?;
+    value
+        .parse::<jiff::Span>()
+        .map(|span| Literal::Duration(Box::new(span), source_span))
+        .map_err(|error| temporal_error("DURATION", error, source_span))
 }
 
 fn parse_i64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
@@ -160,6 +272,87 @@ fn parse_string(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
     Ok(Literal::String(interned, span))
 }
 
+fn temporal_text(pair: Pair<'_, Rule>) -> Result<String, ParserError> {
+    let string_pair = first_child(pair)?;
+    parse_string_text(string_pair.as_str(), span(&string_pair))
+}
+
+fn parse_zoned_datetime_text(
+    text: &str,
+    kind: &'static str,
+    source_span: SourceSpan,
+) -> Result<jiff::Zoned, ParserError> {
+    let pieces = parse_datetime_pieces(text, kind, source_span)?;
+    let time = pieces
+        .time()
+        .ok_or_else(|| temporal_message(format!("{kind} literal requires a time"), source_span))?;
+    let zone = pieces
+        .to_time_zone()
+        .map_err(|error| temporal_error(kind, error, source_span))?
+        .or_else(|| pieces.to_numeric_offset().map(jiff::tz::TimeZone::fixed))
+        .ok_or_else(|| {
+            temporal_message(
+                format!("{kind} literal requires a time zone displacement"),
+                source_span,
+            )
+        })?;
+    pieces
+        .date()
+        .to_datetime(time)
+        .to_zoned(zone)
+        .map_err(|error| temporal_error(kind, error, source_span))
+}
+
+fn parse_zoned_time_text(text: &str, source_span: SourceSpan) -> Result<jiff::Zoned, ParserError> {
+    if !time_has_zone_designator(text) {
+        return Err(temporal_message(
+            "ZONED TIME literal requires a time zone displacement",
+            source_span,
+        ));
+    }
+    let anchored = format!("1970-01-01T{text}");
+    parse_zoned_datetime_text(&anchored, "ZONED TIME", source_span)
+}
+
+fn parse_datetime_pieces<'a>(
+    text: &'a str,
+    kind: &'static str,
+    source_span: SourceSpan,
+) -> Result<jiff::fmt::temporal::Pieces<'a>, ParserError> {
+    jiff::fmt::temporal::DateTimeParser::new()
+        .parse_pieces(text)
+        .map_err(|error| temporal_error(kind, error, source_span))
+}
+
+fn reject_datetime_zone(
+    pieces: &jiff::fmt::temporal::Pieces<'_>,
+    kind: &'static str,
+    source_span: SourceSpan,
+) -> Result<(), ParserError> {
+    if has_datetime_zone(pieces, source_span)? {
+        return Err(temporal_message(
+            format!("{kind} literal must not include a time zone displacement"),
+            source_span,
+        ));
+    }
+    Ok(())
+}
+
+fn has_datetime_zone(
+    pieces: &jiff::fmt::temporal::Pieces<'_>,
+    source_span: SourceSpan,
+) -> Result<bool, ParserError> {
+    Ok(pieces.to_numeric_offset().is_some()
+        || pieces
+            .to_time_zone()
+            .map_err(|error| temporal_error("DATETIME", error, source_span))?
+            .is_some())
+}
+
+fn time_has_zone_designator(text: &str) -> bool {
+    text.ends_with(['Z', 'z']) || text.contains('[') || text.bytes().any(|b| b == b'+' || b == b'-')
+}
+
 fn parse_string_text(text: &str, span: SourceSpan) -> Result<String, ParserError> {
     let inner = text
         .strip_prefix('\'')
@@ -184,6 +377,18 @@ fn decode_single_quoted(inner: &str, span: SourceSpan) -> Result<String, ParserE
     }
 
     Ok(out)
+}
+
+fn temporal_error(
+    kind: &'static str,
+    error: impl std::fmt::Display,
+    span: SourceSpan,
+) -> ParserError {
+    temporal_message(format!("invalid {kind} literal: {error}"), span)
+}
+
+fn temporal_message(message: impl Into<String>, span: SourceSpan) -> ParserError {
+    ParserError::syntax_with_status(GqlStatus::INVALID_DATETIME_FORMAT, message, span, None)
 }
 
 fn decode_escape(

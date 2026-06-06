@@ -274,6 +274,12 @@ fn literal_to_value(literal: &Literal) -> Option<Value> {
         Literal::Float(value, _) => Value::Float(*value),
         Literal::String(value, _) => Value::String(value.clone()),
         Literal::Uuid(value, _) => Value::Uuid(*value),
+        Literal::ZonedDateTime(value, _) => Value::ZonedDateTime(value.clone()),
+        Literal::LocalDateTime(value, _) => Value::LocalDateTime(*value),
+        Literal::Date(value, _) => Value::Date(*value),
+        Literal::ZonedTime(value, _) => Value::ZonedTime(value.clone()),
+        Literal::LocalTime(value, _) => Value::LocalTime(*value),
+        Literal::Duration(value, _) => Value::Duration(value.clone()),
         Literal::Null(_) => return None,
     })
 }
