@@ -154,6 +154,59 @@ fn exact_json_path_exists_nodes_supports_reverse_array_index() {
 }
 
 #[test]
+fn exact_json_path_contains_nodes_matches_selected_subvalues() {
+    let doc = label("Doc");
+    let payload = label("payload");
+    let graph = SharedGraph::new(GraphId::new(8));
+    seed_docs(&graph, &doc, &payload);
+    let path = vec![
+        JsonPathSelector::Key(label("memory")),
+        JsonPathSelector::Key(label("facts")),
+    ];
+    let candidate = JsonValue::new(serde_json::json!({"title": "current"})).unwrap();
+
+    let hits = graph
+        .exact_json_path_contains_nodes(&doc, &payload, &path, &candidate, 10)
+        .expect("search succeeds");
+
+    assert_eq!(
+        hits.into_iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
+        vec![NodeId::new(1)]
+    );
+}
+
+#[test]
+fn exact_json_path_contains_nodes_observes_zero_k_and_cancellation() {
+    let doc = label("Doc");
+    let payload = label("payload");
+    let graph = SharedGraph::new(GraphId::new(9));
+    seed_docs(&graph, &doc, &payload);
+    let path = [JsonPathSelector::Key(label("memory"))];
+    let candidate = JsonValue::new(serde_json::json!({"facts": []})).unwrap();
+
+    assert!(
+        graph
+            .exact_json_path_contains_nodes(&doc, &payload, &path, &candidate, 0)
+            .expect("zero-k search succeeds")
+            .is_empty()
+    );
+
+    let token = CancellationToken::new();
+    token.cancel();
+    let err = graph
+        .exact_json_path_contains_nodes_checked(
+            &doc,
+            &payload,
+            &path,
+            &candidate,
+            10,
+            CancellationChecker::new(Some(&token), None),
+        )
+        .expect_err("cancelled search reports cancellation");
+    assert!(matches!(err, crate::JsonSearchError::Cancelled));
+}
+
+#[test]
 fn exact_json_path_value_nodes_returns_selected_values() {
     let doc = label("Doc");
     let payload = label("payload");

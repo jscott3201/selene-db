@@ -247,6 +247,9 @@ JSON is native engine data for agentic workloads:
   graph-tier candidate producer for JSON selector-array path existence. Path
   arrays use string object keys and integer array indexes, including negative
   indexes from the end; this is intentionally not JSONPath.
+- `selene.json_path_contains_nodes(label, property, path, candidate, k)` is the
+  exact graph-tier candidate producer for recursive containment over the JSON
+  value selected by a selector-array path.
 - `selene.json_path_value_nodes(label, property, path, k)` is the exact
   graph-tier companion that returns `node_id` plus the selected JSON `value`.
   JSON null path values are returned as `Value::Json`, not SQL `NULL`, so

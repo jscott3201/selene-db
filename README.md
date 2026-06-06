@@ -238,10 +238,10 @@ JSON is a first-class value for structured agent payloads and metadata:
   array/object shape introspection, bounded path selectors, existence checks,
   recursive containment, RFC 7396 merge-patch updates, and RFC 6902 JSON Patch
   updates;
-- `selene.json_contains_nodes`, `selene.json_path_exists_nodes`, and
-  `selene.json_path_value_nodes` turn JSON metadata predicates into graph node
-  candidates for vector/text reranking and can return selected JSON path values
-  without a second graph lookup.
+- `selene.json_contains_nodes`, `selene.json_path_exists_nodes`,
+  `selene.json_path_contains_nodes`, and `selene.json_path_value_nodes` turn
+  JSON metadata predicates into graph node candidates for vector/text reranking
+  and can return selected JSON path values without a second graph lookup.
 
 Representative GQL calls:
 
@@ -256,6 +256,14 @@ RETURN node_id
 ```gql
 CALL selene.json_path_exists_nodes(
   'Document', 'payload', json_array('memory', 'score'), 10
+)
+YIELD node_id
+RETURN node_id
+```
+
+```gql
+CALL selene.json_path_contains_nodes(
+  'Document', 'payload', json_array('memory'), json('{"kind":"episodic"}'), 10
 )
 YIELD node_id
 RETURN node_id

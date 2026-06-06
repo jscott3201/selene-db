@@ -231,6 +231,34 @@ fn bench_exact_json_path_exists_scan(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_exact_json_path_contains_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_json_path_contains_scan");
+    for &scale in BenchProfile::from_env().scales() {
+        let fixture = JsonFixture::build(scale);
+        group.throughput(Throughput::Elements(fixture.scale() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("nested_memory_path_k10", fixture.scale()),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_path_contains_nodes(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.contains_path(),
+                            fixture.path_candidate(),
+                            10,
+                        )
+                        .expect("JSON path-containment scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 fn bench_exact_json_path_value_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_json_path_value_scan");
     for &scale in BenchProfile::from_env().scales() {
@@ -340,6 +368,8 @@ struct JsonFixture {
     payload_key: DbString,
     candidate: JsonValue,
     path: Vec<JsonPathSelector>,
+    contains_path: Vec<JsonPathSelector>,
+    path_candidate: JsonValue,
 }
 
 impl JsonFixture {
@@ -354,6 +384,11 @@ impl JsonFixture {
             JsonPathSelector::Key(db_string("memory").expect("bench path key is valid")),
             JsonPathSelector::Key(db_string("score").expect("bench path key is valid")),
         ];
+        let contains_path = vec![JsonPathSelector::Key(
+            db_string("memory").expect("bench path key is valid"),
+        )];
+        let path_candidate = JsonValue::new(serde_json::json!({"kind": "episodic"}))
+            .expect("bench JSON path candidate is valid");
         let shared = SharedGraph::new(GraphId::new(9_500 + scale as u64));
         {
             let mut txn = shared.begin_write();
@@ -390,6 +425,8 @@ impl JsonFixture {
             payload_key,
             candidate,
             path,
+            contains_path,
+            path_candidate,
         }
     }
 
@@ -415,6 +452,14 @@ impl JsonFixture {
 
     fn path(&self) -> &[JsonPathSelector] {
         &self.path
+    }
+
+    fn contains_path(&self) -> &[JsonPathSelector] {
+        &self.contains_path
+    }
+
+    const fn path_candidate(&self) -> &JsonValue {
+        &self.path_candidate
     }
 }
 
@@ -572,7 +617,7 @@ criterion_group! {
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
         bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
         bench_exact_json_contains_scan, bench_exact_json_path_exists_scan,
-        bench_exact_json_path_value_scan, single_graph_candidate_set::bench_vector_candidate_set,
-        bench_ann_recall
+        bench_exact_json_path_contains_scan, bench_exact_json_path_value_scan,
+        single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall
 }
 criterion_main!(graph_reads);

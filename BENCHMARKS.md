@@ -175,10 +175,10 @@ computes query-local BM25 statistics, and returns deterministic top-k text hits.
 `graph_text_bm25_indexed/*` compares a reusable in-memory postings index against
 the oracle: `prebuilt_*` is the repeated-query path, while `transient_*` includes
 index construction so build cost stays visible. Fixture setup is excluded from
-the reported Criterion duration. `graph_json_contains_scan/*` and
-`graph_json_path_exists_scan/*` and `graph_json_path_value_scan/*` are exact
-JSON metadata oracles over JSON-valued node properties before maintained
-JSON/path indexes exist.
+the reported Criterion duration. `graph_json_contains_scan/*`,
+`graph_json_path_exists_scan/*`, `graph_json_path_contains_scan/*`, and
+`graph_json_path_value_scan/*` are exact JSON metadata oracles over JSON-valued
+node properties before maintained JSON/path indexes exist.
 `graph_snapshot_read_loops/*` amortizes thread setup over many
 `SharedGraph::read()` calls so the ArcSwap snapshot hot path is visible; the
 older `graph_concurrent_reads` row remains a legacy spawn/join smoke row.
@@ -249,6 +249,7 @@ PR-local quick JSON baseline:
 |---|---:|---|
 | `graph_json_contains_scan/nested_metadata_k10/1000` | 21.731 µs (quick) | Exact scan over 1,000 JSON metadata payloads with one-quarter matching nested current episodic facts, skipping non-JSON properties. This is the oracle for future maintained JSON/path indexes and JSON/vector/text candidate composition. |
 | `graph_json_path_exists_scan/nested_score_path_k10/1000` | 17.559 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory","score"]`, skipping non-JSON properties. This is the oracle for path-existence candidate production before maintained JSON/path indexes. |
+| `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.263 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory"]`, applying recursive containment to the selected subvalue. This is the oracle for path-scoped JSON containment before maintained JSON/path indexes. |
 | `graph_json_path_value_scan/nested_score_path_k10/1000` | 22.855 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory","score"]`, returning node ids plus selected JSON values. This measures the candidate-plus-value path before maintained JSON/path indexes. |
 
 PR-local quick vector baseline:
