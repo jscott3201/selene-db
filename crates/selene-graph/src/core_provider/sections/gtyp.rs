@@ -202,6 +202,7 @@ mod tests {
                     required: false,
                     default: None,
                     immutable: false,
+                    unique: false,
                     record_field_types: Some(record_field_types.clone()),
                 }],
                 validation_mode: ValidationMode::Strict,

@@ -124,7 +124,7 @@ impl NodeTypeDef {
 /// This freezes the pre-v1.1 catalog-DDL payload shape. New WAL entries use
 /// [`SchemaChange::NodeTypeAddedV2`](crate::SchemaChange::NodeTypeAddedV2)
 /// with [`NodeTypeDef`]; recovery upgrades this shape with
-/// [`ValidationMode::Strict`] and non-immutable properties.
+/// [`ValidationMode::Strict`] plus non-immutable, non-unique properties.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct NodeTypeDefV1 {
     /// Label set required by this node type.
@@ -260,7 +260,7 @@ impl EdgeTypeDef {
 /// This freezes the pre-v1.1 catalog-DDL payload shape. New WAL entries use
 /// [`SchemaChange::EdgeTypeAddedV2`](crate::SchemaChange::EdgeTypeAddedV2)
 /// with [`EdgeTypeDef`]; recovery upgrades this shape with
-/// [`ValidationMode::Strict`] and non-immutable properties.
+/// [`ValidationMode::Strict`] plus non-immutable, non-unique properties.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EdgeTypeDefV1 {
     /// Single edge label.
@@ -387,6 +387,9 @@ pub struct PropertyDef {
     /// Whether updates to this property are forbidden after creation.
     #[serde(default)]
     pub immutable: bool,
+    /// Whether non-null property values must be unique within the declaring type.
+    #[serde(default)]
+    pub unique: bool,
     /// Inline RECORD field structure when [`PropertyDef::value_type`] resolves to a
     /// `RecordTyped` property. `None` for every non-record property; `Some(Open)` for an
     /// open/bare `RECORD`; `Some(Closed(..))` for a closed/typed `RECORD{..}`. The
@@ -421,6 +424,7 @@ impl From<PropertyDefV1> for PropertyDef {
             nullable: value.nullable,
             default: value.default,
             immutable: false,
+            unique: false,
             record_fields: None,
         }
     }

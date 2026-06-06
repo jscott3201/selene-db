@@ -30,6 +30,7 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
         required,
         default: None,
         immutable: false,
+        unique: false,
         record_field_types: None,
     }
 }
@@ -44,6 +45,7 @@ fn host_record_graph_type() -> GraphTypeDef {
         required: false,
         default: None,
         immutable: false,
+        unique: false,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
                 name: db_string("host"),

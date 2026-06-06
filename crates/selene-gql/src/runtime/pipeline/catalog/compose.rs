@@ -144,6 +144,16 @@ fn check_property_match(
             span,
         ));
     }
+    if parent.unique != child.unique {
+        return Err(property_conflict(
+            parent,
+            child_type,
+            "UNIQUE constraint",
+            render_bool(parent.unique),
+            render_bool(child.unique),
+            span,
+        ));
+    }
     Ok(())
 }
 

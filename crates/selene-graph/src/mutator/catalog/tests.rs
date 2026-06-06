@@ -84,7 +84,7 @@ fn create_node_type_updates_bound_type_and_emits_schema_change() {
                         required: true,
                         default: None,
                         immutable: false,
-
+                        unique: false,
                         record_field_types: None,
                     }],
                     ValidationMode::Strict,

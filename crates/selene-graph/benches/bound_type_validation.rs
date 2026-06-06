@@ -25,9 +25,11 @@ fn bench_bound_type_validation(c: &mut Criterion) {
     group.throughput(Throughput::Elements(UPDATE_BATCH as u64));
     for &scale in BenchProfile::from_env().scales() {
         let simple = simple_graph_type();
+        let unique = unique_graph_type();
         let rich = rich_graph_type();
         let unbound_graph = graph_snapshot(scale, None, &[label("SimpleNode")], 3);
         let simple_graph = graph_snapshot(scale, Some(simple), &[label("SimpleNode")], 3);
+        let unique_graph = graph_snapshot(scale, Some(unique), &[label("UniqueNode")], 3);
         let rich_labels = (0..10)
             .map(|idx| label(&format!("RichNode{idx}")))
             .collect::<Vec<_>>();
@@ -35,6 +37,7 @@ fn bench_bound_type_validation(c: &mut Criterion) {
 
         bench_update_case(&mut group, "unbound_commit", scale, unbound_graph);
         bench_update_case(&mut group, "bound_commit_simple", scale, simple_graph);
+        bench_update_case(&mut group, "bound_commit_unique", scale, unique_graph);
         bench_update_case(&mut group, "bound_commit_rich", scale, rich_graph.clone());
         bench_schema_change_case(&mut group, scale, rich_graph);
     }
@@ -161,6 +164,21 @@ fn simple_graph_type() -> GraphTypeDef {
     }
 }
 
+fn unique_graph_type() -> GraphTypeDef {
+    let mut properties = property_defs(3);
+    properties[1].unique = true;
+    GraphTypeDef {
+        name: label("bench.unique.graph"),
+        node_types: vec![NodeTypeDef {
+            name: label("bench.unique.node"),
+            key_labels: LabelSet::single(label("UniqueNode")),
+            properties,
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    }
+}
+
 fn rich_graph_type() -> GraphTypeDef {
     GraphTypeDef {
         name: label("bench.rich.graph"),
@@ -198,7 +216,7 @@ fn property_defs(count: usize) -> Vec<PropertyTypeDef> {
             required: idx < 3,
             default: None,
             immutable: false,
-
+            unique: false,
             record_field_types: None,
         })
         .collect()

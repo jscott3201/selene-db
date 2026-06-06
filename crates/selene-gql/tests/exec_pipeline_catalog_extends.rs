@@ -212,8 +212,8 @@ fn node_extends_allows_parent_only_child_only_and_multilevel_shapes() {
 fn exact_match_redeclaration_succeeds_without_duplicate_property() {
     let graph = empty_closed_graph(13_905);
     let plan = plan_with_prefix(
-        "CREATE NODE TYPE :Child EXTENDS :Parent (a :: INT NOT NULL)",
-        &["CREATE NODE TYPE :Parent (a :: INT NOT NULL)"],
+        "CREATE NODE TYPE :Child EXTENDS :Parent (a :: INT NOT NULL UNIQUE)",
+        &["CREATE NODE TYPE :Parent (a :: INT NOT NULL UNIQUE)"],
     );
 
     run_write(&graph, &plan).expect("matching redeclaration succeeds");
@@ -243,6 +243,11 @@ fn property_conflicts_name_each_mismatched_field() {
             "CREATE NODE TYPE :Parent (a :: INT IMMUTABLE)",
             "CREATE NODE TYPE :Child EXTENDS :Parent (a :: INT)",
             "property 'a' redeclared with different IMMUTABLE constraint (parent: true, child: false) on child type Child",
+        ),
+        (
+            "CREATE NODE TYPE :Parent (a :: INT UNIQUE)",
+            "CREATE NODE TYPE :Child EXTENDS :Parent (a :: INT)",
+            "property 'a' redeclared with different UNIQUE constraint (parent: true, child: false) on child type Child",
         ),
         (
             "CREATE NODE TYPE :Parent (a :: LIST<INT>)",

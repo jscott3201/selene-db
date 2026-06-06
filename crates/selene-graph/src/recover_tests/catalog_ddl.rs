@@ -129,6 +129,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                     required: false,
                     default: Some(default.clone()),
                     immutable: false,
+                    unique: false,
                     record_field_types: None,
                 }),
         );
@@ -140,6 +141,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 required: false,
                 default: Some(default.clone()),
                 immutable: false,
+                unique: false,
                 record_field_types: None,
             }
         }));
@@ -151,6 +153,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 required: false,
                 default: Some(default.clone()),
                 immutable: false,
+                unique: false,
                 record_field_types: Some(field_types.clone()),
             }
         }));
@@ -164,13 +167,16 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
             .unwrap();
         txn.commit().unwrap().changes
     };
-    assert!(matches!(
-        changes.as_slice(),
-        [Change::SchemaChanged {
-            change: selene_core::SchemaChange::NodeTypeAddedV2 { .. },
+    let [
+        Change::SchemaChanged {
+            change: selene_core::SchemaChange::NodeTypeAddedV2 { def, .. },
             ..
-        }]
-    ));
+        },
+    ] = changes.as_slice()
+    else {
+        panic!("expected one NodeTypeAddedV2 schema change");
+    };
+    assert!(def.properties[0].unique);
     append_wal(&dir, 0, &changes);
 
     let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
@@ -242,6 +248,7 @@ fn base_properties(
             required: false,
             default: Some(PropertyDefaultValue::String(db_string("unknown").unwrap())),
             immutable: true,
+            unique: true,
             record_field_types: None,
         },
         PropertyTypeDef {
@@ -251,6 +258,7 @@ fn base_properties(
             required: false,
             default: Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE])),
             immutable: false,
+            unique: false,
             record_field_types: None,
         },
         PropertyTypeDef {
@@ -262,6 +270,7 @@ fn base_properties(
                 db_string("018f1b6d-7b89-7cc0-9f40-2c6f8d4df101").unwrap(),
             )),
             immutable: false,
+            unique: false,
             record_field_types: None,
         },
         PropertyTypeDef {
@@ -271,6 +280,7 @@ fn base_properties(
             required: false,
             default: Some(PropertyDefaultValue::Float(1.5_f64.to_bits())),
             immutable: false,
+            unique: false,
             record_field_types: None,
         },
         PropertyTypeDef {
@@ -280,6 +290,7 @@ fn base_properties(
             required: false,
             default: Some(PropertyDefaultValue::Float32(2.25_f32.to_bits())),
             immutable: false,
+            unique: false,
             record_field_types: None,
         },
     ]
@@ -299,6 +310,7 @@ fn assert_base_properties(
         Some(PropertyDefaultValue::String(db_string("unknown").unwrap()))
     );
     assert!(properties[0].immutable);
+    assert!(properties[0].unique);
     assert_eq!(properties[1].name, *payload);
     assert_eq!(
         properties[1].default,

@@ -92,6 +92,7 @@ fn recover_closed_wal_only_preserves_json_property_type() {
                     required: true,
                     default: Some(PropertyDefaultValue::from_value(&json_value()).unwrap()),
                     immutable: false,
+                    unique: false,
                     record_field_types: None,
                 }],
                 ValidationMode::Strict,

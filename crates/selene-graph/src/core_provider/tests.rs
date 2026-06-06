@@ -178,7 +178,7 @@ fn graph_type() -> crate::GraphTypeDef {
                 required: true,
                 default: None,
                 immutable: false,
-
+                unique: false,
                 record_field_types: None,
             }],
             validation_mode: crate::ValidationMode::Strict,

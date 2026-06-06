@@ -33,6 +33,7 @@ fn property_def(name: &str) -> PropertyDef {
         nullable: false,
         default: None,
         immutable: false,
+        unique: false,
         record_fields: None,
     }
 }
@@ -67,6 +68,13 @@ fn graph_type() -> GraphType {
         },
     );
     graph_type
+}
+
+#[test]
+fn property_def_unique_flag_postcard_round_trip() {
+    let mut property = property_def("serde.unique");
+    property.unique = true;
+    rt(&property);
 }
 
 fn all_values() -> Vec<Value> {
@@ -416,6 +424,7 @@ fn record_fields_none_open_closed_postcard_round_trip() {
         nullable: false,
         default: None,
         immutable: false,
+        unique: false,
         record_fields: None,
     };
     rt(&not_record);
@@ -426,6 +435,7 @@ fn record_fields_none_open_closed_postcard_round_trip() {
         nullable: true,
         default: None,
         immutable: false,
+        unique: false,
         record_fields: Some(Box::new(RecordFieldStructure::Open)),
     };
     rt(&bare_record);
@@ -436,6 +446,7 @@ fn record_fields_none_open_closed_postcard_round_trip() {
         nullable: false,
         default: None,
         immutable: false,
+        unique: false,
         record_fields: Some(Box::new(RecordFieldStructure::Closed(vec![
             RecordFieldStructureDef {
                 name: dbs("core-11.field.scalar"),
@@ -486,6 +497,7 @@ fn nested_record_field_structure_postcard_round_trip() {
         nullable: false,
         default: None,
         immutable: false,
+        unique: false,
         record_fields: Some(Box::new(structure)),
     };
     rt(&def);

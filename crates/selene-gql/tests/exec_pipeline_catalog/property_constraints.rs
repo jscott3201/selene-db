@@ -1,11 +1,12 @@
 //! Catalog property constraint/default tests split out of the root pipeline catalog
 //! binary to keep both files under the repository file-size cap.
 
+use selene_core::Value;
 use selene_gql::{
     CatalogOp, ExecutorError, GqlStatus, GqlType, PipelineOp, PlannedTypePropertyConstraint,
     PlannedTypePropertyDef, RecordType, SourceSpan,
 };
-use selene_graph::PropertyDefaultValue;
+use selene_graph::{GraphError, PropertyDefaultValue, TypeViolation};
 
 use super::{db_string, empty_closed_graph, planned, run_write};
 
@@ -29,22 +30,49 @@ fn or_replace_catalog_ddl_is_deferred() {
 }
 
 #[test]
-fn unique_property_constraint_is_deferred() {
+fn unique_property_constraint_is_accepted_and_rendered() {
     let graph = empty_closed_graph(3714);
     let plan = planned("CREATE NODE TYPE :Sensor (v :: STRING UNIQUE)");
 
-    // UNIQUE is ISO-relevant but uniqueness enforcement is not yet implemented;
-    // it surfaces as an honest 42N01 capability-gap deferral (not a generic
-    // 5GQL0 internal error), mirroring the inline-INDEXED-on-edge deferral.
-    let err = run_write(&graph, &plan).expect_err("UNIQUE property constraint is deferred");
+    run_write(&graph, &plan)
+        .expect("UNIQUE property constraint executes")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert!(graph_type.node_types[0].properties[0].unique);
+
+    let (table, outcome) = run_write(&graph, &planned("SHOW NODE TYPES")).expect("show executes");
+    outcome.expect("show commit succeeds");
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string("CREATE NODE TYPE :Sensor (v :: STRING UNIQUE)"))
+    );
+}
+
+#[test]
+fn unique_property_constraint_rejects_duplicate_insert() {
+    let graph = empty_closed_graph(3745);
+    run_write(
+        &graph,
+        &planned("CREATE NODE TYPE :Sensor (serial :: STRING UNIQUE)"),
+    )
+    .expect("catalog executes")
+    .1
+    .expect("catalog commit succeeds");
+    run_write(&graph, &planned("INSERT (:Sensor {serial: 'A'}) FINISH"))
+        .expect("first insert executes")
+        .1
+        .expect("first insert commits");
+
+    let (_table, outcome) = run_write(&graph, &planned("INSERT (:Sensor {serial: 'A'}) FINISH"))
+        .expect("duplicate insert executes");
+    let err = outcome.expect_err("duplicate unique value rejects commit");
+
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotSupportedYet {
-            feature: "UNIQUE property constraint",
-            ..
-        }
+        GraphError::TypeViolation(TypeViolation::UniquePropertyDuplicate { property, .. })
+            if property == db_string("serial")
     ));
-    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
 }
 
 #[test]
