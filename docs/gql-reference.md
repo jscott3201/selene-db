@@ -203,8 +203,9 @@ LIMIT 10
 ```
 
 Projections may be aliased (`expr AS name`). `RETURN *` returns every
-in-scope binding. `RETURN NO BINDINGS` produces an empty binding table
-(useful for write pipelines that don't need to surface rows).
+in-scope binding. ISO defines `RETURN NO BINDINGS` only as an internal
+specification device for transformations; Selene rejects it as user syntax.
+Use `FINISH` for write pipelines that intentionally omit a result.
 
 ### `WITH`
 
