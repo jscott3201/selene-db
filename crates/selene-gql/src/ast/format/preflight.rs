@@ -273,7 +273,6 @@ fn ast_only_type_variant(ty: &GqlType) -> Option<&'static str> {
         GqlType::NodeRef => Some("NodeRef"),
         GqlType::EdgeRef => Some("EdgeRef"),
         GqlType::TableRef => Some("TableRef"),
-        GqlType::Vector => Some("Vector"),
         _ => None,
     }
 }
@@ -300,6 +299,18 @@ mod tests {
     }
 
     #[test]
+    fn preflight_accepts_vector_types() {
+        validate_formattable(&statement_with_type(GqlType::Vector))
+            .expect("vector type is formattable");
+        validate_formattable(&statement_with_type(GqlType::List(Box::new(
+            GqlType::Vector,
+        ))))
+        .expect("list of vector type is formattable");
+        validate_formattable(&parameter_statement_with_type(GqlType::Vector))
+            .expect("typed vector parameter is formattable");
+    }
+
+    #[test]
     fn preflight_rejects_reference_type_inside_closed_record_field() {
         // A reference type nested in a closed-record field is still AST-only and
         // must be caught by the recursive field walk.
@@ -308,26 +319,6 @@ mod tests {
             GqlType::NodeRef,
         )]));
         assert_unsupported(closed, "NodeRef");
-    }
-
-    #[test]
-    fn preflight_rejects_vector_type() {
-        assert_unsupported(GqlType::Vector, "Vector");
-    }
-
-    #[test]
-    fn preflight_rejects_vector_type_inside_list() {
-        assert_unsupported(GqlType::List(Box::new(GqlType::Vector)), "Vector");
-    }
-
-    #[test]
-    fn preflight_rejects_ast_only_type_on_typed_parameter() {
-        let err = validate_formattable(&parameter_statement_with_type(GqlType::Vector))
-            .expect_err("typed parameter vector type is unsupported");
-        match err {
-            FormatError::Unsupported { variant } => assert_eq!(variant, "Vector"),
-            FormatError::Fmt(_) => panic!("expected unsupported variant"),
-        }
     }
 
     #[test]

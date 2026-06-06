@@ -679,6 +679,7 @@ type_name = {
   | ^"STRING" | ^"VARCHAR"
   | ^"UUID"
   | ^"JSON"
+  | ^"VECTOR"
   | ^"BYTES" | ^"BYTEA"
   | ^"ZONED" ~ ^"DATETIME" | ^"LOCAL" ~ ^"DATETIME"
   | ^"ZONED" ~ ^"TIME" | ^"LOCAL" ~ ^"TIME"

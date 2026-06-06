@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: IM_VECTOR
+// also-covers: GA05
+// expects: parse-ok
+RETURN CAST([1, 2, 3] AS VECTOR) AS embedding

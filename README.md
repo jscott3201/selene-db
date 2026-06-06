@@ -149,6 +149,7 @@ policy that fits their application.
 Vectors are first-class values:
 
 - node properties can store `Value::Vector(VectorValue)`;
+- GQL can produce vectors through `CAST(<LIST<numeric>> AS VECTOR)`;
 - components are finite `f32` values behind shared storage;
 - supported metrics are `squared_euclidean`, `cosine`, and
   `negative_inner_product`;
@@ -158,6 +159,10 @@ Vectors are first-class values:
 - rebuild and stats procedures make derived index state observable.
 
 Representative GQL calls:
+
+```gql
+RETURN CAST([0.12, 0.34, 0.56] AS VECTOR) AS query_embedding
+```
 
 ```gql
 CALL selene.create_vector_index('Document', 'embedding', 1536, 'hnsw', NULL, 'cosine')
@@ -270,7 +275,8 @@ optional feature status.
 
 Important boundaries:
 
-- vectors are implementation-defined values, not grammar extensions;
+- vectors are implementation-defined values surfaced through the `VECTOR` type
+  name, casts, properties, parameters, and native procedures;
 - open and closed graph modes are supported;
 - default isolation is serializable for one graph instance;
 - ISO GQL does not define a wire format, so this repository does not ship one;
