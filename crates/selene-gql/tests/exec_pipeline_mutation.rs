@@ -4,9 +4,9 @@ mod exec_common;
 
 use selene_core::{Change, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{
-    AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema, EdgeDirection,
-    EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, GqlType, MutationOp,
-    PipelineOp, TxContext, analyze, execute_pattern, execute_pipeline, parse, plan,
+    AnalysisError, AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema,
+    EdgeDirection, EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, GqlType,
+    MutationOp, PipelineOp, TxContext, analyze, execute_pattern, execute_pipeline, parse, plan,
 };
 use selene_graph::{CommitOutcome, SharedGraph};
 
@@ -100,6 +100,42 @@ fn graph_with_edge() -> SharedGraph {
         mutator
             .create_edge(rel, a, b, PropertyMap::new())
             .expect("edge inserts");
+        txn.commit().expect("fixture commits");
+    }
+    graph
+}
+
+fn graph_with_extra_incident_edges() -> SharedGraph {
+    let graph = empty_graph();
+    {
+        let victim = db_string("Victim");
+        let other = db_string("Other");
+        let hint = db_string("Hint");
+        let rel = db_string("REL");
+        let extra = db_string("HINT");
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let a = mutator
+            .create_node(LabelSet::single(victim), PropertyMap::new())
+            .expect("victim inserts");
+        let b = mutator
+            .create_node(LabelSet::single(other), PropertyMap::new())
+            .expect("other inserts");
+        let c = mutator
+            .create_node(LabelSet::single(hint.clone()), PropertyMap::new())
+            .expect("hint inserts");
+        let d = mutator
+            .create_node(LabelSet::single(hint), PropertyMap::new())
+            .expect("hint inserts");
+        mutator
+            .create_edge(rel, a, b, PropertyMap::new())
+            .expect("rel inserts");
+        mutator
+            .create_edge(extra.clone(), a, c, PropertyMap::new())
+            .expect("extra inserts");
+        mutator
+            .create_edge(extra, a, d, PropertyMap::new())
+            .expect("extra inserts");
         txn.commit().expect("fixture commits");
     }
     graph
@@ -455,6 +491,49 @@ fn delete_edge_removes_edge_only() {
 }
 
 #[test]
+fn bare_delete_node_and_its_edge_succeeds_as_one_delete_set() {
+    let graph = graph_with_edge();
+    let plan = planned("MATCH (a:Victim)-[e:REL]->(b:Other) DELETE a, e FINISH");
+
+    let (_, _) = run_write(&graph, &plan).expect("write executes");
+
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 1);
+    assert_eq!(snapshot.edge_count(), 0);
+    assert!(snapshot.node_properties(NodeId::new(2)).is_some());
+}
+
+#[test]
+fn duplicate_delete_edge_rows_are_deduplicated() {
+    let graph = graph_with_extra_incident_edges();
+    let plan = planned("MATCH (a:Victim)-[e:REL]->(:Other), (a)-[:HINT]->(:Hint) DELETE e FINISH");
+
+    let (_, _) = run_write(&graph, &plan).expect("write executes");
+
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 4);
+    assert_eq!(snapshot.edge_count(), 2);
+    assert!(snapshot.edge_properties(EdgeId::new(1)).is_none());
+}
+
+#[test]
+fn bare_delete_node_and_some_edges_rejects_outside_incident_edge_atomically() {
+    let graph = graph_with_extra_incident_edges();
+    let plan = planned("MATCH (a:Victim)-[e:REL]->(:Other) DELETE a, e FINISH");
+
+    let err = run_write(&graph, &plan).expect_err("outside incident edge rejects");
+
+    assert!(matches!(
+        err,
+        ExecutorError::DependentObjectStillExists { .. }
+    ));
+    assert_eq!(err.gqlstatus(), GqlStatus::DEPENDENT_OBJECT_STILL_EXISTS);
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 4);
+    assert_eq!(snapshot.edge_count(), 3);
+}
+
+#[test]
 fn match_after_insert_in_same_statement_sees_inserted_node() {
     let graph = empty_graph();
     let plan = planned("INSERT (n:Person {name: 'Zed'}) RETURN n.name AS name");
@@ -531,19 +610,17 @@ fn insert_with_label_disjunction_returns_feature_not_in_v1_1() {
 }
 
 #[test]
-fn delete_path_target_returns_feature_not_in_v1_1() {
-    let graph = graph_with_edge();
-    let plan = planned("MATCH p = (a)-[:REL]->(b) DELETE p FINISH");
+fn delete_path_target_rejects_at_analysis() {
+    let statement = parse("MATCH p = (a)-[:REL]->(b) DELETE p FINISH").expect("parses");
 
-    let err = run_write(&graph, &plan).expect_err("path delete errors");
+    let err = analyze(statement, &EmptyProcedureRegistry, None).expect_err("path delete rejects");
 
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotSupportedYet {
-            feature: "DELETE path target",
-            ..
-        }
+        AnalysisError::InvalidReference { ref message, .. }
+            if message.contains("DELETE target must be a node or edge binding")
     ));
+    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_REFERENCE);
 }
 
 #[test]

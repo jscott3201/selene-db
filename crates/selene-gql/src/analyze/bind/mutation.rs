@@ -181,6 +181,12 @@ fn bind_delete(
     for item in &statement.items {
         let target = ctx.resolve(item.clone(), statement.span, BindingUseKind::DeleteTarget)?;
         let element = ctx.element_kind(target);
+        if matches!(element, ElementKind::Path | ElementKind::Alias) {
+            return Err(AnalysisError::InvalidReference {
+                message: "DELETE target must be a node or edge binding".to_owned(),
+                span: statement.span,
+            });
+        }
         ctx.record_write(
             statement_index,
             statement.span,

@@ -58,6 +58,17 @@ pub struct PropertyInit {
     pub span: SourceSpan,
 }
 
+/// One target in a planned `DELETE` statement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeleteTargetPlan {
+    /// Target binding.
+    pub target: BindingId,
+    /// Target element kind.
+    pub element: ElementKind,
+    /// Planner-assigned input column containing the target element ID.
+    pub target_column_index: u32,
+}
+
 /// Mutation operation over the upstream binding table.
 ///
 /// `#[non_exhaustive]` so future write-side surfaces (MERGE, conditional
@@ -159,14 +170,10 @@ pub enum MutationOp {
         /// Source span.
         span: SourceSpan,
     },
-    /// Delete a node, edge, or path target.
-    DeleteTarget {
-        /// Target binding.
-        target: BindingId,
-        /// Target element kind.
-        element: ElementKind,
-        /// Planner-assigned input column containing the target element ID.
-        target_column_index: u32,
+    /// Delete one or more node/edge targets from one `DELETE` statement.
+    DeleteTargets {
+        /// Planned targets in source order.
+        targets: Vec<DeleteTargetPlan>,
         /// Delete mode.
         mode: DeleteMode,
         /// Source span.

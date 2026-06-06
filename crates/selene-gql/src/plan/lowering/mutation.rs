@@ -10,8 +10,8 @@ use crate::{
         MutationWriteSet, WriteKind, WriteSetEntry,
     },
     plan::{
-        BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps, InsertEndpointRef,
-        InsertSiteId, MutationOp, PipelineOp, PlannerError, PropertyInit,
+        BindingTableColumn, BindingTableSchema, DeleteTargetPlan, ExecutionPlan, ImplDefinedCaps,
+        InsertEndpointRef, InsertSiteId, MutationOp, PipelineOp, PlannerError, PropertyInit,
     },
 };
 
@@ -66,26 +66,30 @@ pub(crate) fn lower_mutation(
                 lower_remove_items(items, write_set, &mut cursor, analyzed, &visible, &mut ops)?;
             }
             MutationStatement::Delete(statement) => {
+                let mut targets = Vec::with_capacity(statement.items.len());
                 for _ in &statement.items {
                     let entry = consume_entry(write_set, &mut cursor, statement.span)?;
                     let WriteKind::DeleteTarget {
                         target,
                         element,
-                        mode,
+                        mode: _,
                     } = entry.kind
                     else {
                         return Err(mismatch(entry.span));
                     };
                     let target_column_index =
                         mutation_target_column_index(target, element, analyzed, &visible)?;
-                    ops.push(PipelineOp::Mutation(MutationOp::DeleteTarget {
+                    targets.push(DeleteTargetPlan {
                         target,
                         element,
                         target_column_index,
-                        mode,
-                        span: entry.span,
-                    }));
+                    });
                 }
+                ops.push(PipelineOp::Mutation(MutationOp::DeleteTargets {
+                    targets,
+                    mode: statement.mode,
+                    span: statement.span,
+                }));
             }
         }
     }
