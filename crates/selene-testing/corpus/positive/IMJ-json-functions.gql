@@ -2,5 +2,6 @@
 // feature: IM_JSON
 // expects: parse-ok
 RETURN json('{"kind":"memory","score":7}') AS payload,
+       json_contains(json('{"kind":"memory","score":7}'), json('{"kind":"memory"}')) AS has_kind,
        json_get_path(json('{"memory":{"score":7}}'), 'memory', 'score') AS score,
        json_has_path(json('{"memory":{"score":7}}'), 'memory', 'score') AS has_score

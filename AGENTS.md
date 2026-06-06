@@ -185,7 +185,7 @@ JSON is native engine data for agentic workloads:
 - `selene-gql` exposes `JSON` as an implementation-defined type name with typed
   parameters, `IS TYPED JSON`, `CAST(<string> AS JSON)`, `CAST(<json> AS
   STRING)`, and scalar functions `json`, `json_parse`, `json_stringify`,
-  `json_type`, `json_get`, `json_get_text`, `json_get_path`, and
+  `json_type`, `json_contains`, `json_get`, `json_get_text`, `json_get_path`,
   `json_get_path_text`, and `json_has_path`.
 - JSON equality is value equality. JSON is not an order-comparable family; range
   comparisons must reject rather than inventing nested document order.
@@ -195,8 +195,12 @@ JSON is native engine data for agentic workloads:
   JSONPath.
 - `json_has_path` is the companion bounded existence predicate. It returns true
   for selected JSON null values and false for absent paths.
+- `json_contains` is recursive subset containment over JSON values: object
+  candidates require matching contained keys, array candidates require each
+  candidate element to be contained by some target element, and scalar candidates
+  match by value or by membership in a target array.
 
-Keep JSON grammar strict. Defer JSON literals, RFC 9535 JSONPath, containment,
+Keep JSON grammar strict. Defer JSON literals, RFC 9535 JSONPath,
 candidate-producing path/existence search, maintained JSON indexes, and hybrid
 JSON/text/vector retrieval surfaces until they have focused design, recovery
 semantics, tests, and benchmarks.

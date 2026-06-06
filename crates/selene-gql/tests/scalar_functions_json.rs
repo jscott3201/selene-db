@@ -134,6 +134,40 @@ fn json_type_reports_top_level_shape() {
 }
 
 #[test]
+fn json_contains_matches_nested_object_and_array_subsets() {
+    for source in [
+        r#"RETURN json_contains(json('{"memory":{"kind":"episodic","score":7},"tags":["agent","graph"]}'), json('{"memory":{"kind":"episodic"}}')) AS value"#,
+        r#"RETURN json_contains(json('["agent","graph",{"kind":"memory","score":7}]'), json('[{"kind":"memory"},"agent"]')) AS value"#,
+        r#"RETURN json_contains(json('["agent","graph"]'), json('"graph"')) AS value"#,
+        r#"RETURN json_contains(json('{"b":2,"a":1}'), json('{"a":1,"b":2}')) AS value"#,
+    ] {
+        assert!(bool_value(source), "{source}");
+    }
+}
+
+#[test]
+fn json_contains_rejects_missing_or_mismatched_candidates() {
+    for source in [
+        r#"RETURN json_contains(json('{"memory":{"kind":"semantic"}}'), json('{"memory":{"kind":"episodic"}}')) AS value"#,
+        r#"RETURN json_contains(json('{"memory":{"kind":"episodic"}}'), json('{"memory":{"score":7}}')) AS value"#,
+        r#"RETURN json_contains(json('["agent","graph"]'), json('"memory"')) AS value"#,
+        r#"RETURN json_contains(json('{"a":1}'), json('[1]')) AS value"#,
+    ] {
+        assert!(!bool_value(source), "{source}");
+    }
+}
+
+#[test]
+fn json_contains_propagates_sql_null_arguments() {
+    for source in [
+        r#"RETURN json_contains(NULL, json('{}')) AS value"#,
+        r#"RETURN json_contains(json('{}'), NULL) AS value"#,
+    ] {
+        assert_eq!(single_value(source, "value"), Value::Null, "{source}");
+    }
+}
+
+#[test]
 fn json_get_selects_objects_and_arrays() {
     let value = json_value(
         r#"RETURN json_get(json('{"memory":{"score":7,"kind":"episodic"}}'), 'memory') AS value"#,
@@ -300,6 +334,8 @@ fn json_functions_report_data_exceptions_for_bad_inputs() {
         "RETURN json(7) AS value",
         "RETURN json_stringify(7) AS value",
         "RETURN json_type(7) AS value",
+        "RETURN json_contains(7, json('{}')) AS value",
+        "RETURN json_contains(json('{}'), 7) AS value",
         r#"RETURN json_get(json('{"a":1}'), 7) AS value"#,
         r#"RETURN json_get(json('[1,2]'), 'bad') AS value"#,
         "RETURN CAST(7 AS JSON) AS value",
@@ -316,6 +352,7 @@ fn json_feature_flags_cover_functions_and_type_names() {
         r#"RETURN json_parse('{"a":1}') AS value"#,
         r#"RETURN json_stringify(json('{"a":1}')) AS value"#,
         r#"RETURN json_type(json('{"a":1}')) AS value"#,
+        r#"RETURN json_contains(json('{"a":1}'), json('{"a":1}')) AS value"#,
         r#"RETURN json_get(json('{"a":1}'), 'a') AS value"#,
         r#"RETURN json_get_text(json('{"a":1}'), 'a') AS value"#,
         r#"RETURN json_get_path(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
