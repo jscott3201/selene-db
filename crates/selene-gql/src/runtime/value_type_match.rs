@@ -21,6 +21,7 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
     match ty {
         GqlType::String => matches!(value, Value::String(_)),
         GqlType::Uuid => matches!(value, Value::Uuid(_)),
+        GqlType::Json => matches!(value, Value::Json(_)),
         GqlType::Boolean => matches!(value, Value::Bool(_)),
         GqlType::Integer | GqlType::Int64 | GqlType::BigInt => matches!(value, Value::Int(_)),
         GqlType::Int8 => matches!(value, Value::Int(value) if i8::try_from(*value).is_ok()),

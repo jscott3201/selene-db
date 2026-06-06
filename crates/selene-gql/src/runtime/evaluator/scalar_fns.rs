@@ -16,7 +16,7 @@ use super::{
         data_exception, data_exception_value, data_exception_value_with, data_exception_with,
         eval_binary, numeric_to_f64,
     },
-    identity_length_fns,
+    identity_length_fns, json_fns,
     string_fns::{self, eval_fixed_args, eval_range_args},
     temporal_fns, uuid_fns,
 };
@@ -253,6 +253,26 @@ pub(super) fn eval_function_call(
         )?),
         "uuid" => uuid_fns::eval_uuid(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json" | "json_parse" => json_fns::eval_json_parse(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_stringify" => json_fns::eval_json_stringify(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_type" => json_fns::eval_json_type(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_get" => json_fns::eval_json_get(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_get_text" => json_fns::eval_json_get_text(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
             span,
         ),
         // ISO/IEC 39075:2024 section 20.27 current-datetime functions. Each is

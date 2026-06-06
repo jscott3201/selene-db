@@ -346,6 +346,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         (&["STRING"], GqlType::String),
         (&["VARCHAR"], GqlType::String),
         (&["UUID"], GqlType::Uuid),
+        (&["JSON"], GqlType::Json),
         (&["BYTES"], GqlType::Bytes),
         (&["BYTEA"], GqlType::Bytes),
         (&["ZONED", "DATETIME"], GqlType::ZonedDateTime),

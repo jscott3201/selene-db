@@ -662,6 +662,7 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::Nothing => 36u8.hash(state),
         GqlType::Uuid => 37u8.hash(state),
         GqlType::Vector => 38u8.hash(state),
+        GqlType::Json => 39u8.hash(state),
     }
 }
 

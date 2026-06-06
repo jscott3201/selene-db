@@ -52,6 +52,8 @@ pub enum GqlType {
     Bytes,
     /// `UUID`.
     Uuid,
+    /// Native JSON value.
+    Json,
     /// `ZONED DATETIME`.
     ZonedDateTime,
     /// `LOCAL DATETIME`.

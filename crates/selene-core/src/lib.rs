@@ -26,6 +26,7 @@ pub mod feature_register;
 pub mod gqlstatus;
 pub mod hlc;
 pub mod identity;
+mod json_value;
 pub mod label_set;
 pub mod metrics;
 pub mod origin;
@@ -50,6 +51,7 @@ pub use extension_type_ids::{
 pub use gqlstatus::{ALL_GQLSTATUS_NAMES, gqlstatus_name};
 pub use hlc::HlcTimestamp;
 pub use identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
+pub use json_value::JsonValue;
 pub use label_set::LabelSet;
 pub use origin::Origin;
 pub use property_map::{PropertyMap, PropertyMapIter, PropertyMapKeys, PropertyMapValues};

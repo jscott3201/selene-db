@@ -41,6 +41,9 @@ mod record_recovery;
 #[path = "recover_tests/vector_recovery.rs"]
 mod vector_recovery;
 
+#[path = "recover_tests/json_recovery.rs"]
+mod json_recovery;
+
 #[path = "recover_tests/text_recovery.rs"]
 mod text_recovery;
 

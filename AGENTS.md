@@ -172,6 +172,29 @@ where vector-only ANN/exact search fails under ambiguous language; the remaining
 work is better root production, maintained-state ownership, and
 invalidation/recovery, not piling on ANN fallback surfaces.
 
+## JSON
+
+JSON is native engine data for agentic workloads:
+
+- `Value::Json(JsonValue)` is the native value variant.
+- `JsonValue` stores validated RFC 8259 JSON behind shared storage and renders
+  deterministic compact JSON with sorted object keys.
+- Serde/postcard boundaries encode canonical JSON text and validate on decode.
+- `PropertyValueType::Json` / `PredefinedValueType::Json` allow graph schema
+  declarations such as `payload :: JSON`.
+- `selene-gql` exposes `JSON` as an implementation-defined type name with typed
+  parameters, `IS TYPED JSON`, `CAST(<string> AS JSON)`, `CAST(<json> AS
+  STRING)`, and scalar functions `json`, `json_parse`, `json_stringify`,
+  `json_type`, `json_get`, and `json_get_text`.
+- JSON equality is value equality. JSON is not an order-comparable family; range
+  comparisons must reject rather than inventing nested document order.
+- `json_get` is a shallow object-key / array-index selector; it is not JSONPath.
+
+Keep JSON grammar strict. Defer JSON literals, RFC 9535 JSONPath, containment,
+existence search, maintained JSON indexes, and hybrid JSON/text/vector retrieval
+surfaces until they have focused design, recovery semantics, tests, and
+benchmarks.
+
 ## BM25 / Full Text
 
 BM25/full-text is now a native first slice, not grammar syntax:

@@ -87,6 +87,8 @@ pub enum PropertyValueType {
     Uuid,
     /// Native dense vector value.
     Vector,
+    /// Native JSON value.
+    Json,
 }
 
 impl PropertyValueType {
@@ -125,6 +127,7 @@ impl PropertyValueType {
             Value::Null => Some(Self::Null),
             Value::Uuid(_) => Some(Self::Uuid),
             Value::Vector(_) => Some(Self::Vector),
+            Value::Json(_) => Some(Self::Json),
         }
     }
 
@@ -174,6 +177,7 @@ impl PropertyValueType {
             Self::Null => "Null",
             Self::Uuid => "Uuid",
             Self::Vector => "Vector",
+            Self::Json => "Json",
         }
     }
 }
@@ -192,8 +196,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BindingTableId, EdgeDirection, EdgeId, ExtensionTypeId, GraphId, NodeId, Path, PathSegment,
-        Record, RecordTypeId, RecordTyped, VectorValue, db_string,
+        BindingTableId, EdgeDirection, EdgeId, ExtensionTypeId, GraphId, JsonValue, NodeId, Path,
+        PathSegment, Record, RecordTypeId, RecordTyped, VectorValue, db_string,
     };
 
     fn sample_values() -> Vec<(PropertyValueType, Value)> {
@@ -294,6 +298,10 @@ mod tests {
             (
                 PropertyValueType::Vector,
                 Value::Vector(VectorValue::new(vec![1.0, 2.0, 3.0]).unwrap()),
+            ),
+            (
+                PropertyValueType::Json,
+                Value::Json(JsonValue::new(serde_json::json!({"kind": "sample"})).unwrap()),
             ),
         ]
     }

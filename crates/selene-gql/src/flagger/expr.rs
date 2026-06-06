@@ -144,6 +144,9 @@ fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
         "cardinality" => Some(FeatureId::GF12),
         "size" => Some(FeatureId::GF13),
         "uuid" | "uuid_v4" | "uuid_v7" => Some(FeatureId::IM_UUID),
+        "json" | "json_parse" | "json_stringify" | "json_type" | "json_get" | "json_get_text" => {
+            Some(FeatureId::IM_JSON)
+        }
         _ => None,
     }
 }
@@ -206,6 +209,7 @@ fn is_check(kind: &IsCheckKind, span: crate::SourceSpan, uses: &mut Vec<FeatureU
 pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
     match ty {
         GqlType::Uuid => record_feature(uses, FeatureId::IM_UUID, span),
+        GqlType::Json => record_feature(uses, FeatureId::IM_JSON, span),
         GqlType::String | GqlType::Boolean | GqlType::Integer | GqlType::Float => {}
         GqlType::Uint8 => {
             record_feature(uses, FeatureId::GV01, span);

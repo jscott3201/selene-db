@@ -546,6 +546,7 @@ fn render_gql_type(ty: &GqlType) -> String {
         GqlType::Float64 => "FLOAT64".to_owned(),
         GqlType::Bytes => "BYTES".to_owned(),
         GqlType::Uuid => "UUID".to_owned(),
+        GqlType::Json => "JSON".to_owned(),
         GqlType::ZonedDateTime => "ZONED DATETIME".to_owned(),
         GqlType::LocalDateTime => "LOCAL DATETIME".to_owned(),
         GqlType::Date => "DATE".to_owned(),
