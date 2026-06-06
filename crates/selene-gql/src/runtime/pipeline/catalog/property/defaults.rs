@@ -1,21 +1,24 @@
 //! Property default lowering, coercion, validation, and rendering.
 
 mod lists;
+mod records;
 
 use std::fmt::Write as _;
 
 use rust_decimal::Decimal;
 use selene_core::{JsonValue, PropertyValueType, Value, db_string};
-use selene_graph::{PropertyDefaultValue, PropertyElementType};
+use selene_graph::{PropertyDefaultValue, PropertyElementType, RecordFieldTypes};
 
 use crate::{DataExceptionSubclass, ExecutorError, Literal, ProjectExpr, ValueExpr};
 
 use lists::{list_default_value, render_list_literal, render_vector_literal, vector_default_value};
+use records::{record_default_value, render_record_literal};
 
 pub(super) fn property_default_value(
     project: &ProjectExpr,
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
+    record_field_types: Option<&RecordFieldTypes>,
     span: crate::SourceSpan,
 ) -> Result<PropertyDefaultValue, ExecutorError> {
     let ValueExpr::Literal(literal) = &project.expr else {
@@ -32,6 +35,12 @@ pub(super) fn property_default_value(
             }
             (ValueExpr::ListLiteral { .. }, _) => Err(ExecutorError::ImplementationDefined {
                 detail: "LIST DEFAULT is only supported for LIST and VECTOR properties",
+            }),
+            (ValueExpr::RecordLiteral { fields, .. }, PropertyValueType::RecordTyped) => {
+                record_default_value(fields, record_field_types, span)
+            }
+            (ValueExpr::RecordLiteral { .. }, _) => Err(ExecutorError::ImplementationDefined {
+                detail: "RECORD DEFAULT is only supported for RECORD properties",
             }),
             _ => Err(ExecutorError::ImplementationDefined {
                 detail: "DEFAULT constraint must lower to a literal expression",
@@ -135,6 +144,7 @@ pub(super) fn validate_default_value(
     property: selene_core::DbString,
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
+    record_field_types: Option<&RecordFieldTypes>,
     required: bool,
     default: &PropertyDefaultValue,
     span: crate::SourceSpan,
@@ -158,7 +168,7 @@ pub(super) fn validate_default_value(
         }
         return Ok(());
     }
-    if default_matches_value(value_type, list_element_type, &value) {
+    if default_matches_value(value_type, list_element_type, record_field_types, &value) {
         return Ok(());
     }
     Err(default_type_error(
@@ -186,6 +196,7 @@ pub(in crate::runtime::pipeline::catalog) fn render_property_default_value(
         }
         PropertyDefaultValue::Bytes(value) => Ok(render_byte_string_literal(value)),
         PropertyDefaultValue::List(values) => render_list_literal(values),
+        PropertyDefaultValue::Record(fields) => render_record_literal(fields),
         PropertyDefaultValue::Uuid(value) => {
             Ok(format!("UUID {}", render_string_literal(value.as_str())))
         }
@@ -223,6 +234,7 @@ pub(in crate::runtime::pipeline::catalog) fn render_property_default_value(
 fn default_matches_value(
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
+    record_field_types: Option<&RecordFieldTypes>,
     value: &Value,
 ) -> bool {
     match value_type {
@@ -233,6 +245,15 @@ fn default_matches_value(
             match value {
                 Value::List(values) => values.iter().all(|value| element_type.matches(value)),
                 _ => false,
+            }
+        }
+        PropertyValueType::Record | PropertyValueType::RecordTyped => {
+            if !matches!(value, Value::Record(_) | Value::RecordTyped(_)) {
+                return false;
+            }
+            match record_field_types {
+                Some(fields) => fields.matches(value),
+                None => true,
             }
         }
         _ => value_type.matches(value),

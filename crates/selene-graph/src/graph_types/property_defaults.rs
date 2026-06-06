@@ -1,9 +1,41 @@
 //! Persistable default-value descriptors for closed graph property declarations.
 
-use selene_core::{DbString, JsonValue, Value, VectorValue, db_string};
+use std::collections::BTreeSet;
+
+use selene_core::{DbString, JsonValue, Record, Value, VectorValue, db_string};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::error::{GraphError, GraphResult};
+
+/// One field in a persistable record default descriptor.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+#[rkyv(
+    bytecheck(bounds(
+        __C: rkyv::validation::ArchiveContext,
+        <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source
+    )),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source)
+)]
+pub struct PropertyDefaultRecordField {
+    /// Field name.
+    pub name: DbString,
+    /// Field default descriptor.
+    #[rkyv(omit_bounds)]
+    pub value: Box<PropertyDefaultValue>,
+}
 
 /// Persistable default-value descriptor for closed graph property declarations.
 #[derive(
@@ -21,7 +53,7 @@ use crate::error::{GraphError, GraphResult};
 #[rkyv(
     bytecheck(bounds(__C: rkyv::validation::ArchiveContext)),
     deserialize_bounds(__D::Error: rkyv::rancor::Source),
-    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator)
+    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator, __S::Error: rkyv::rancor::Source)
 )]
 #[non_exhaustive]
 pub enum PropertyDefaultValue {
@@ -37,6 +69,8 @@ pub enum PropertyDefaultValue {
     Bytes(Vec<u8>),
     /// List default with recursively materializable default descriptors.
     List(#[rkyv(omit_bounds)] Vec<Box<PropertyDefaultValue>>),
+    /// Open record default with recursively materializable field descriptors.
+    Record(#[rkyv(omit_bounds)] Vec<PropertyDefaultRecordField>),
     /// Canonical UUID text default.
     Uuid(DbString),
     /// Canonical JSON text default.
@@ -151,6 +185,22 @@ impl PropertyDefaultValue {
                     .map(|value| value.to_value())
                     .collect::<GraphResult<Vec<_>>>()?,
             ),
+            Self::Record(fields) => {
+                let mut seen = BTreeSet::new();
+                let mut values = SmallVec::<[(DbString, Value); 4]>::new();
+                for field in fields {
+                    if !seen.insert(field.name.clone()) {
+                        return Err(GraphError::Inconsistent {
+                            reason: format!(
+                                "persisted RECORD property default contains duplicate field {}",
+                                field.name
+                            ),
+                        });
+                    }
+                    values.push((field.name.clone(), field.value.to_value()?));
+                }
+                Value::Record(Box::new(Record::Open(values)))
+            }
             Self::Uuid(value) => {
                 Value::Uuid(
                     value
@@ -216,6 +266,26 @@ impl PropertyDefaultValue {
                 .map(|value| value.map(Box::new))
                 .collect::<Option<Vec<_>>>()
                 .map(Self::List),
+            Value::Record(record) => match record.as_ref() {
+                Record::Open(fields) => {
+                    let mut seen = BTreeSet::new();
+                    fields
+                        .iter()
+                        .map(|(name, value)| {
+                            if !seen.insert(name.clone()) {
+                                return None;
+                            }
+                            Some(PropertyDefaultRecordField {
+                                name: name.clone(),
+                                value: Box::new(Self::from_value(value)?),
+                            })
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .map(Self::Record)
+                }
+                _ => None,
+            },
+            Value::RecordTyped(_) => None,
             Value::Uuid(value) => db_string(&value.to_string()).ok().map(Self::Uuid),
             Value::Json(value) => db_string(&value.to_canonical_string()).ok().map(Self::Json),
             Value::Vector(value) => Some(Self::Vector(

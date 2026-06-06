@@ -430,14 +430,14 @@ fn build_type_prop_constraint(pair: Pair<'_, Rule>) -> Result<TypePropertyConstr
         return Ok(TypePropertyConstraint::NotNull(source_span));
     }
     if keyword_starts_with(text, "DEFAULT") {
-        let literal = pair
+        let value = pair
             .into_inner()
-            .find(|child| child.as_rule() == Rule::literal)
+            .find(|child| matches!(child.as_rule(), Rule::literal | Rule::record_constructor))
             .ok_or_else(|| {
-                ParserError::syntax("DEFAULT constraint is missing literal", source_span, None)
+                ParserError::syntax("DEFAULT constraint is missing value", source_span, None)
             })?;
         return Ok(TypePropertyConstraint::Default(
-            expr::build_value_expr(literal)?,
+            expr::build_value_expr(value)?,
             source_span,
         ));
     }

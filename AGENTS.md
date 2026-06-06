@@ -68,6 +68,9 @@ preserve the same value invariants as runtime writes:
   elements against `PropertyElementType`, including nested lists and
   `LIST<VECTOR>`, instead of relying on container-only
   `PropertyValueType::matches`.
+- `RECORD` property defaults are recursive field descriptors. Open records
+  preserve source field names; closed records must validate against
+  `RecordFieldTypes`, including nested records, lists, vectors, and JSON fields.
 - `SHOW NODE TYPES`, insert materialization, WAL replay, and graph snapshots are
   part of the same default-value contract.
 

@@ -5,9 +5,26 @@
 //! 700-LOC cap; reuses the parent binary's `planned`/`run_write`/`empty_closed_graph`.
 
 use selene_core::Value;
-use selene_gql::parse;
+use selene_gql::{ExecutorError, parse};
+use selene_graph::{PropertyDefaultRecordField, PropertyDefaultValue};
 
-use super::{empty_closed_graph, planned, run_write};
+use super::{db_string, empty_closed_graph, planned, run_write};
+
+fn list_default(items: Vec<PropertyDefaultValue>) -> PropertyDefaultValue {
+    PropertyDefaultValue::List(items.into_iter().map(Box::new).collect())
+}
+
+fn record_default(fields: Vec<(&str, PropertyDefaultValue)>) -> PropertyDefaultValue {
+    PropertyDefaultValue::Record(
+        fields
+            .into_iter()
+            .map(|(name, value)| PropertyDefaultRecordField {
+                name: db_string(name),
+                value: Box::new(value),
+            })
+            .collect(),
+    )
+}
 
 #[test]
 fn show_node_types_renders_closed_record_field_structure() {
@@ -68,4 +85,175 @@ fn record_value_data_write_validates_against_closed_record_property() {
     let (_table, outcome) = run_write(&graph, &violating).expect("violating record write executes");
     let error = outcome.expect_err("non-conforming record value is rejected at commit");
     assert_eq!(error.gqlstatus(), "G2000");
+}
+
+#[test]
+fn closed_record_default_accepts_typed_record_literal() {
+    let graph = empty_closed_graph(3720);
+    let plan = planned(
+        r#"CREATE NODE TYPE :Host (
+            config :: RECORD{
+                host :: STRING,
+                port :: UINT64,
+                payload :: JSON,
+                embedding :: VECTOR,
+                tags :: LIST<STRING>,
+                nested :: RECORD{flag :: BOOLEAN},
+                vectors :: LIST<VECTOR>
+            } DEFAULT RECORD{
+                host: 'h',
+                port: 42,
+                payload: '{"b":2,"a":1}',
+                embedding: [1, 0],
+                tags: ['agent', 'memory'],
+                nested: RECORD{flag: true},
+                vectors: [[1, 0], [0, 1]]
+            }
+        )"#,
+    );
+
+    run_write(&graph, &plan)
+        .expect("RECORD default executes")
+        .1
+        .expect("RECORD default commits");
+
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(record_default(vec![
+            ("host", PropertyDefaultValue::String(db_string("h"))),
+            ("port", PropertyDefaultValue::Uint(42)),
+            (
+                "payload",
+                PropertyDefaultValue::Json(db_string(r#"{"a":1,"b":2}"#))
+            ),
+            (
+                "embedding",
+                PropertyDefaultValue::Vector(vec![1.0_f32.to_bits(), 0.0_f32.to_bits()])
+            ),
+            (
+                "tags",
+                list_default(vec![
+                    PropertyDefaultValue::String(db_string("agent")),
+                    PropertyDefaultValue::String(db_string("memory")),
+                ])
+            ),
+            (
+                "nested",
+                record_default(vec![("flag", PropertyDefaultValue::Boolean(true))])
+            ),
+            (
+                "vectors",
+                list_default(vec![
+                    PropertyDefaultValue::Vector(vec![1.0_f32.to_bits(), 0.0_f32.to_bits()]),
+                    PropertyDefaultValue::Vector(vec![0.0_f32.to_bits(), 1.0_f32.to_bits()]),
+                ])
+            ),
+        ]))
+    );
+}
+
+#[test]
+fn open_record_default_accepts_recursive_untyped_record_literal() {
+    let graph = empty_closed_graph(3721);
+    let plan = planned(
+        "CREATE NODE TYPE :Doc (payload :: RECORD DEFAULT \
+         RECORD{kind: 'open', counts: [1, 2], nested: RECORD{ok: true}})",
+    );
+
+    run_write(&graph, &plan)
+        .expect("open RECORD default executes")
+        .1
+        .expect("open RECORD default commits");
+
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(record_default(vec![
+            ("kind", PropertyDefaultValue::String(db_string("open"))),
+            (
+                "counts",
+                list_default(vec![
+                    PropertyDefaultValue::Integer(1),
+                    PropertyDefaultValue::Integer(2),
+                ])
+            ),
+            (
+                "nested",
+                record_default(vec![("ok", PropertyDefaultValue::Boolean(true))])
+            ),
+        ]))
+    );
+}
+
+#[test]
+fn record_default_rejects_missing_required_field() {
+    let graph = empty_closed_graph(3722);
+    let plan = planned(
+        "CREATE NODE TYPE :Host (config :: RECORD{host :: STRING, port :: INTEGER} \
+         DEFAULT RECORD{host: 'h'})",
+    );
+
+    let err = run_write(&graph, &plan).expect_err("missing RECORD default field rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G0U");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("missing required field port")
+    ));
+}
+
+#[test]
+fn record_default_rejects_extra_field() {
+    let graph = empty_closed_graph(3723);
+    let plan = planned(
+        "CREATE NODE TYPE :Host (config :: RECORD{host :: STRING, port :: INTEGER} \
+         DEFAULT RECORD{host: 'h', port: 1, extra: true})",
+    );
+
+    let err = run_write(&graph, &plan).expect_err("extra RECORD default field rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G0U");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("field extra is not declared")
+    ));
+}
+
+#[test]
+fn record_default_rejects_unassignable_field() {
+    let graph = empty_closed_graph(3724);
+    let plan = planned(
+        "CREATE NODE TYPE :Host (config :: RECORD{host :: STRING, port :: INTEGER} \
+         DEFAULT RECORD{host: 'h', port: 'x'})",
+    );
+
+    let err = run_write(&graph, &plan).expect_err("unassignable RECORD default field rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G0X");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("not assignable to declared field type")
+    ));
+}
+
+#[test]
+fn record_default_rejects_duplicate_field() {
+    let graph = empty_closed_graph(3725);
+    let plan = planned(
+        "CREATE NODE TYPE :Host (config :: RECORD{host :: STRING} \
+         DEFAULT RECORD{host: 'h', host: 'again'})",
+    );
+
+    let err = run_write(&graph, &plan).expect_err("duplicate RECORD default field rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G0X");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("duplicate RECORD DEFAULT field: host")
+    ));
 }

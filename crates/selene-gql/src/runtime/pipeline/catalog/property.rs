@@ -42,6 +42,7 @@ fn property_def(
                     project,
                     value_type,
                     list_element_type.as_ref(),
+                    record_field_types.as_ref(),
                     *span,
                 )?);
                 default_span = *span;
@@ -74,6 +75,7 @@ fn property_def(
             property.name.clone(),
             value_type,
             list_element_type.as_ref(),
+            record_field_types.as_ref(),
             required,
             default,
             default_span,

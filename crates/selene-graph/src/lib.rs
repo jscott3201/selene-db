@@ -68,8 +68,8 @@ pub use graph::{
 };
 pub use graph_types::{
     DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_RECORD_TYPE_NESTING, NodeTypeDef,
-    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
-    RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
+    PropertyDefaultRecordField, PropertyDefaultValue, PropertyElementType, PropertyTypeDef,
+    RecordFieldType, RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 pub use id_allocator::IdAllocator;
 pub use index_provider::{
