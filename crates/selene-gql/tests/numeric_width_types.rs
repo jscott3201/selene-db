@@ -178,6 +178,67 @@ fn cast_to_signed_integer_width_checks_range() {
 }
 
 #[test]
+fn cast_to_int128_accepts_wide_numeric_sources() {
+    assert_eq!(
+        bind_and_eval(Value::Int128(i128::MIN), "RETURN CAST($p AS INT128) AS p"),
+        Value::Int128(i128::MIN)
+    );
+    assert_eq!(
+        bind_and_eval(
+            Value::Uint128(i128::MAX as u128),
+            "RETURN CAST($p AS INT128) AS p"
+        ),
+        Value::Int128(i128::MAX)
+    );
+    assert_eq!(
+        bind_and_eval(Value::Float(3.7), "RETURN CAST($p AS INT128) AS p"),
+        Value::Int128(3)
+    );
+    assert_eq!(
+        bind_and_eval(
+            Value::Decimal("-12.9".parse().expect("valid decimal")),
+            "RETURN CAST($p AS INT128) AS p"
+        ),
+        Value::Int128(-12)
+    );
+
+    assert_eq!(
+        bind_and_status(
+            Value::Uint128((i128::MAX as u128) + 1),
+            "RETURN CAST($p AS INT128) AS p"
+        ),
+        "22003"
+    );
+    assert_eq!(
+        bind_and_status(Value::Float(f64::NAN), "RETURN CAST($p AS INT128) AS p"),
+        "22018"
+    );
+}
+
+#[test]
+fn cast_string_to_int128_checks_parse_and_range() {
+    assert_eq!(
+        first_value("RETURN CAST('170141183460469231731687303715884105727' AS INT128) AS v"),
+        Value::Int128(i128::MAX)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('-170141183460469231731687303715884105728' AS INT128) AS v"),
+        Value::Int128(i128::MIN)
+    );
+
+    for source in [
+        "RETURN CAST('170141183460469231731687303715884105728' AS INT128) AS v",
+        "RETURN CAST('-170141183460469231731687303715884105729' AS INT128) AS v",
+    ] {
+        assert_eq!(first_status(source), "22003", "{source}");
+    }
+    assert_eq!(
+        first_status("RETURN CAST('not-a-number' AS INT128) AS v"),
+        "22018"
+    );
+}
+
+#[test]
 fn cast_to_unsigned_integer_width_checks_range() {
     assert_eq!(
         first_value("RETURN CAST(255 AS UINT8) AS v"),
@@ -219,6 +280,10 @@ fn cast_string_to_unsigned_integer_checks_parse_and_range() {
         assert_eq!(first_status(source), "22018", "{source}");
     }
     assert_eq!(first_status("RETURN CAST('256' AS UINT8) AS v"), "22003");
+    assert_eq!(
+        first_status("RETURN CAST('340282366920938463463374607431768211456' AS UINT128) AS v"),
+        "22003"
+    );
 }
 
 #[test]
@@ -263,4 +328,5 @@ fn cast_bound_numeric_sources_to_unsigned_integer() {
 #[test]
 fn cast_boolean_to_unsigned_integer_returns_22g03() {
     assert_eq!(first_status("RETURN CAST(true AS UINT8) AS v"), "22G03");
+    assert_eq!(first_status("RETURN CAST(true AS INT128) AS v"), "22G03");
 }

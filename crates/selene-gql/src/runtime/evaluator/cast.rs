@@ -33,8 +33,10 @@ use crate::{
 use super::uuid_fns::parse_uuid_string;
 
 mod decimal;
+mod signed128;
 mod unsigned;
 
+use signed128::cast_to_int128;
 use unsigned::{UnsignedIntegerTarget, cast_to_unsigned_integer};
 
 /// Evaluate an explicit CAST.
@@ -121,6 +123,7 @@ pub(super) fn eval_cast(
             cast_to_signed_integer(value, SignedIntegerTarget::I16, span)
         }
         GqlType::Int32 => cast_to_signed_integer(value, SignedIntegerTarget::I32, span),
+        GqlType::Int128 => cast_to_int128(value, span),
         GqlType::Uint8 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U8, span),
         GqlType::Uint16 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U16, span),
         GqlType::Uint32 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U32, span),
@@ -526,7 +529,6 @@ fn cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::NodeRef => "CAST to NODE",
         GqlType::EdgeRef => "CAST to EDGE",
         GqlType::TableRef => "CAST to TABLE",
-        GqlType::Int128 => "CAST to 128-bit integer",
         _ => "CAST to unsupported target type",
     }
 }
