@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map as SerdeJsonMap, Value as SerdeJsonValue};
 
-use crate::{CoreError, CoreResult, db_string::MAX_DB_STRING_BYTES};
+use crate::{CoreError, CoreResult, db_string::MAX_DB_STRING_BYTES, json_patch::apply_json_patch};
 
 /// Native JSON payload stored as a first-class [`crate::Value`].
 ///
@@ -94,6 +94,21 @@ impl JsonValue {
         let mut target = self.as_serde().clone();
         merge_patch_value(&mut target, patch.as_serde());
         Self::new(target)
+    }
+
+    /// Return the result of applying an RFC 6902 JSON Patch document.
+    ///
+    /// The operation is atomic from the caller's perspective: this value and
+    /// `patch` are left unchanged, and an invalid patch returns an error
+    /// without exposing any intermediate document state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::JsonPatch`] when the patch document is malformed or
+    /// an operation fails. Returns the usual value-limit errors if the patched
+    /// result exceeds engine caps.
+    pub fn apply_patch(&self, patch: &Self) -> CoreResult<Self> {
+        Self::new(apply_json_patch(self.as_serde(), patch.as_serde())?)
     }
 }
 
