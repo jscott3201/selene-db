@@ -77,6 +77,12 @@ const CASES: &[ExpressionCase] = &[
     },
     ExpressionCase {
         group: "json",
+        name: "nested_get_path_scalar",
+        source: "RETURN json_get_path_scalar($payload, 'memory', 'score') AS v",
+        parameters: ParameterSet::JsonPayload,
+    },
+    ExpressionCase {
+        group: "json",
         name: "has_path_miss",
         source: "RETURN json_has_path($payload, 'memory', 'facts', 0, 'missing') AS v",
         parameters: ParameterSet::JsonPayload,

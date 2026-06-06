@@ -319,6 +319,10 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
             span,
         ),
+        "json_get_scalar" => json_fns::eval_json_get_scalar(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
         "json_get_path" => json_fns::eval_json_get_path(
             eval_range_args(
                 &display_name,
@@ -332,6 +336,18 @@ pub(super) fn eval_function_call(
             span,
         ),
         "json_get_path_text" => json_fns::eval_json_get_path_text(
+            eval_range_args(
+                &display_name,
+                args,
+                2..=json_fns::JSON_PATH_MAX_ARGS,
+                span,
+                binding,
+                schema,
+                ctx,
+            )?,
+            span,
+        ),
+        "json_get_path_scalar" => json_fns::eval_json_get_path_scalar(
             eval_range_args(
                 &display_name,
                 args,
