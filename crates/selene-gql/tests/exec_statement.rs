@@ -207,6 +207,39 @@ fn catalog_bytes_default_property_materializes_on_insert() {
 }
 
 #[test]
+fn catalog_float_default_properties_materialize_and_round_trip() {
+    let graph = empty_closed_graph(3825);
+    let mut session = Session::new(&graph);
+
+    execute(
+        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5, small :: FLOAT32 DEFAULT 2.25)",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute("INSERT (n:Metric) FINISH", &mut session).expect("insert succeeds");
+    let table = rows(
+        execute(
+            "MATCH (n:Metric) RETURN n.score AS score, n.small AS small",
+            &mut session,
+        )
+        .expect("match succeeds"),
+    );
+
+    assert_eq!(
+        table.rows()[0].values(),
+        &[Value::Float(1.5), Value::Float32(2.25_f32)]
+    );
+
+    let table = rows(execute("SHOW NODE TYPES", &mut session).expect("show succeeds"));
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5, small :: FLOAT32 DEFAULT 2.25)"
+        ))
+    );
+}
+
+#[test]
 fn catalog_immutable_property_rejects_gql_set() {
     let graph = empty_closed_graph(3815);
     let mut session = Session::new(&graph);

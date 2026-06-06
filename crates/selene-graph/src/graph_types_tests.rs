@@ -52,6 +52,46 @@ fn validate_accepts_well_formed_type() {
 }
 
 #[test]
+fn property_default_float_descriptors_materialize_finite_values() {
+    assert_eq!(
+        PropertyDefaultValue::Float(1.5_f64.to_bits())
+            .to_value()
+            .unwrap(),
+        Value::Float(1.5)
+    );
+    assert_eq!(
+        PropertyDefaultValue::Float32(2.25_f32.to_bits())
+            .to_value()
+            .unwrap(),
+        Value::Float32(2.25_f32)
+    );
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Float(-0.0)),
+        Some(PropertyDefaultValue::Float(0.0_f64.to_bits()))
+    );
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Float32(-0.0)),
+        Some(PropertyDefaultValue::Float32(0.0_f32.to_bits()))
+    );
+}
+
+#[test]
+fn property_default_float_descriptors_reject_non_finite_values() {
+    assert!(PropertyDefaultValue::from_value(&Value::Float(f64::INFINITY)).is_none());
+    assert!(PropertyDefaultValue::from_value(&Value::Float32(f32::NAN)).is_none());
+    assert!(matches!(
+        PropertyDefaultValue::Float(f64::NAN.to_bits()).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("FLOAT property default is not finite")
+    ));
+    assert!(matches!(
+        PropertyDefaultValue::Float32(f32::INFINITY.to_bits()).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("FLOAT32 property default is not finite")
+    ));
+}
+
+#[test]
 fn validate_rejects_duplicate_node_type_names() {
     let mut graph_type = valid_type();
     graph_type.node_types[1].name = graph_type.node_types[0].name.clone();

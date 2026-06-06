@@ -107,10 +107,7 @@ fn property_default_value(
                     span,
                 )
             }),
-        Literal::Float(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "floating-point DEFAULT literals",
-            span,
-        }),
+        Literal::Float(value, _) => float_default_value(*value, span),
         Literal::ZonedDateTime(_, _)
         | Literal::LocalDateTime(_, _)
         | Literal::Date(_, _)
@@ -129,6 +126,24 @@ fn coerce_property_default_value(
     span: crate::SourceSpan,
 ) -> Result<PropertyDefaultValue, ExecutorError> {
     match (value_type, default) {
+        (PropertyValueType::Float32, PropertyDefaultValue::Float(bits)) => {
+            let value = f64::from_bits(bits);
+            if !value.is_finite() {
+                return Err(float_default_out_of_range(
+                    "FLOAT DEFAULT literal must be finite",
+                    span,
+                ));
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let narrowed = value as f32;
+            if !narrowed.is_finite() {
+                return Err(float_default_out_of_range(
+                    "FLOAT DEFAULT literal exceeds FLOAT32 range",
+                    span,
+                ));
+            }
+            Ok(PropertyDefaultValue::Float32(canonical_f32_bits(narrowed)))
+        }
         (PropertyValueType::Json, PropertyDefaultValue::String(value)) => {
             let parsed = serde_json::from_str(value.as_str()).map_err(|_| {
                 ExecutorError::data_exception(
@@ -154,6 +169,39 @@ fn coerce_property_default_value(
             Ok(PropertyDefaultValue::Json(canonical))
         }
         (_, default) => Ok(default),
+    }
+}
+
+fn float_default_value(
+    value: f64,
+    span: crate::SourceSpan,
+) -> Result<PropertyDefaultValue, ExecutorError> {
+    if !value.is_finite() {
+        return Err(float_default_out_of_range(
+            "FLOAT DEFAULT literal must be finite",
+            span,
+        ));
+    }
+    Ok(PropertyDefaultValue::Float(canonical_f64_bits(value)))
+}
+
+fn float_default_out_of_range(message: &'static str, span: crate::SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(DataExceptionSubclass::NumericValueOutOfRange, message, span)
+}
+
+fn canonical_f64_bits(value: f64) -> u64 {
+    if value == 0.0 {
+        0.0_f64.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
+
+fn canonical_f32_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0_f32.to_bits()
+    } else {
+        value.to_bits()
     }
 }
 
@@ -397,10 +445,27 @@ pub(super) fn render_property_default_value(
         PropertyDefaultValue::Uuid(value) => {
             Ok(format!("UUID {}", render_string_literal(value.as_str())))
         }
+        PropertyDefaultValue::Float(bits) => render_float_literal(f64::from_bits(*bits)),
+        PropertyDefaultValue::Float32(bits) => {
+            render_float_literal(f64::from(f32::from_bits(*bits)))
+        }
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "unsupported property default value in catalog DDL rendering",
         }),
     }
+}
+
+fn render_float_literal(value: f64) -> Result<String, ExecutorError> {
+    if !value.is_finite() {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "non-finite property default value in catalog DDL rendering",
+        });
+    }
+    let mut rendered = value.to_string();
+    if !rendered.contains(|ch| ['.', 'e', 'E'].contains(&ch)) {
+        rendered.push_str(".0");
+    }
+    Ok(rendered)
 }
 
 fn render_string_literal(value: &str) -> String {
