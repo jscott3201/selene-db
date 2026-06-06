@@ -108,15 +108,27 @@ fn property_default_value(
                 )
             }),
         Literal::Float(value, _) => float_default_value(*value, span),
-        Literal::ZonedDateTime(_, _)
-        | Literal::LocalDateTime(_, _)
-        | Literal::Date(_, _)
-        | Literal::ZonedTime(_, _)
-        | Literal::LocalTime(_, _)
-        | Literal::Duration(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "temporal DEFAULT literals",
-            span,
-        }),
+        Literal::ZonedDateTime(value, _) => {
+            temporal_default_value("ZONED DATETIME", zoned_datetime_image(value), span)
+                .map(PropertyDefaultValue::ZonedDateTime)
+        }
+        Literal::LocalDateTime(value, _) => {
+            temporal_default_value("LOCAL DATETIME", value.to_string(), span)
+                .map(PropertyDefaultValue::LocalDateTime)
+        }
+        Literal::Date(value, _) => {
+            temporal_default_value("DATE", value.to_string(), span).map(PropertyDefaultValue::Date)
+        }
+        Literal::ZonedTime(value, _) => {
+            temporal_default_value("ZONED TIME", zoned_time_image(value), span)
+                .map(PropertyDefaultValue::ZonedTime)
+        }
+        Literal::LocalTime(value, _) => {
+            temporal_default_value("LOCAL TIME", value.to_string(), span)
+                .map(PropertyDefaultValue::LocalTime)
+        }
+        Literal::Duration(value, _) => temporal_default_value("DURATION", value.to_string(), span)
+            .map(PropertyDefaultValue::Duration),
     }
 }
 
@@ -203,6 +215,28 @@ fn canonical_f32_bits(value: f32) -> u32 {
     } else {
         value.to_bits()
     }
+}
+
+fn temporal_default_value(
+    kind: &'static str,
+    text: String,
+    span: crate::SourceSpan,
+) -> Result<selene_core::DbString, ExecutorError> {
+    db_string(&text).map_err(|err| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            format!("{kind} DEFAULT value is invalid: {err}"),
+            span,
+        )
+    })
+}
+
+fn zoned_datetime_image(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.datetime(), value.offset())
+}
+
+fn zoned_time_image(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.time(), value.offset())
 }
 
 fn validate_default_value(
@@ -449,6 +483,26 @@ pub(super) fn render_property_default_value(
         PropertyDefaultValue::Float32(bits) => {
             render_float_literal(f64::from(f32::from_bits(*bits)))
         }
+        PropertyDefaultValue::ZonedDateTime(value) => Ok(render_keyword_string_literal(
+            "ZONED DATETIME",
+            value.as_str(),
+        )),
+        PropertyDefaultValue::LocalDateTime(value) => Ok(render_keyword_string_literal(
+            "LOCAL DATETIME",
+            value.as_str(),
+        )),
+        PropertyDefaultValue::Date(value) => {
+            Ok(render_keyword_string_literal("DATE", value.as_str()))
+        }
+        PropertyDefaultValue::ZonedTime(value) => {
+            Ok(render_keyword_string_literal("ZONED TIME", value.as_str()))
+        }
+        PropertyDefaultValue::LocalTime(value) => {
+            Ok(render_keyword_string_literal("LOCAL TIME", value.as_str()))
+        }
+        PropertyDefaultValue::Duration(value) => {
+            Ok(render_keyword_string_literal("DURATION", value.as_str()))
+        }
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "unsupported property default value in catalog DDL rendering",
         }),
@@ -466,6 +520,10 @@ fn render_float_literal(value: f64) -> Result<String, ExecutorError> {
         rendered.push_str(".0");
     }
     Ok(rendered)
+}
+
+fn render_keyword_string_literal(keyword: &'static str, value: &str) -> String {
+    format!("{keyword} {}", render_string_literal(value))
 }
 
 fn render_string_literal(value: &str) -> String {

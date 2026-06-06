@@ -92,6 +92,73 @@ fn property_default_float_descriptors_reject_non_finite_values() {
 }
 
 #[test]
+fn property_default_temporal_descriptors_materialize_values() {
+    let zoned = Value::ZonedDateTime(Box::new(
+        "2026-05-07T12:34:56-04:00[America/New_York]"
+            .parse()
+            .unwrap(),
+    ));
+    assert_eq!(
+        PropertyDefaultValue::from_value(&zoned),
+        Some(PropertyDefaultValue::ZonedDateTime(label(
+            "2026-05-07T12:34:56-04"
+        )))
+    );
+    assert_eq!(
+        PropertyDefaultValue::ZonedDateTime(label("2026-05-07T12:34:56-04"))
+            .to_value()
+            .unwrap()
+            .variant_name(),
+        "ZonedDateTime"
+    );
+    assert_eq!(
+        PropertyDefaultValue::LocalDateTime(label("2026-05-07T12:34:56"))
+            .to_value()
+            .unwrap(),
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        PropertyDefaultValue::Date(label("2026-05-07"))
+            .to_value()
+            .unwrap(),
+        Value::Date("2026-05-07".parse().unwrap())
+    );
+    assert_eq!(
+        PropertyDefaultValue::ZonedTime(label("12:34:56-04"))
+            .to_value()
+            .unwrap()
+            .variant_name(),
+        "ZonedTime"
+    );
+    assert_eq!(
+        PropertyDefaultValue::LocalTime(label("12:34:56"))
+            .to_value()
+            .unwrap(),
+        Value::LocalTime("12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        PropertyDefaultValue::Duration(label("PT1H2S"))
+            .to_value()
+            .unwrap(),
+        Value::Duration(Box::new("PT1H2S".parse().unwrap()))
+    );
+}
+
+#[test]
+fn property_default_temporal_descriptors_reject_invalid_text() {
+    assert!(matches!(
+        PropertyDefaultValue::Date(label("not-date")).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("DATE property default is invalid")
+    ));
+    assert!(matches!(
+        PropertyDefaultValue::ZonedTime(label("12:34:56")).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("ZONED TIME property default requires a time zone displacement")
+    ));
+}
+
+#[test]
 fn validate_rejects_duplicate_node_type_names() {
     let mut graph_type = valid_type();
     graph_type.node_types[1].name = graph_type.node_types[0].name.clone();

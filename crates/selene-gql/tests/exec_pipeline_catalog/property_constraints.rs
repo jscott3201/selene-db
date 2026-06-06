@@ -233,6 +233,53 @@ fn float_default_property_constraint_rejects_non_finite_literal() {
 }
 
 #[test]
+fn temporal_default_property_constraint_accepts_temporal_literals() {
+    let graph = empty_closed_graph(3732);
+    let plan = planned(
+        "CREATE NODE TYPE :Event (d :: DATE DEFAULT DATE '2026-05-07', \
+         ldt :: LOCAL DATETIME DEFAULT LOCAL DATETIME '2026-05-07T12:34:56', \
+         zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04:00', \
+         lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
+         zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04:00', \
+         dur :: DURATION DEFAULT DURATION 'PT1H2S')",
+    );
+
+    run_write(&graph, &plan)
+        .expect("temporal defaults execute")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(PropertyDefaultValue::Date(db_string("2026-05-07")))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[1].default,
+        Some(PropertyDefaultValue::LocalDateTime(db_string(
+            "2026-05-07T12:34:56"
+        )))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[2].default,
+        Some(PropertyDefaultValue::ZonedDateTime(db_string(
+            "2026-05-07T12:34:56-04"
+        )))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[3].default,
+        Some(PropertyDefaultValue::LocalTime(db_string("12:34:56")))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[4].default,
+        Some(PropertyDefaultValue::ZonedTime(db_string("12:34:56-04")))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[5].default,
+        Some(PropertyDefaultValue::Duration(db_string("PT1H2S")))
+    );
+}
+
+#[test]
 fn default_literal_must_match_declared_property_type() {
     let graph = empty_closed_graph(3725);
     let plan = planned("CREATE NODE TYPE :Person (active :: BOOLEAN DEFAULT 1)");
