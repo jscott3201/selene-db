@@ -737,6 +737,12 @@ fixture and so scale with N; the single-node arms are flat.
 | `write_e2e/direct_insert_single_node_with_wal_flush` | 4.20 ms | 4.30 ms | 4.17 ms | Direct mutation + one WAL flush. |
 | `write_e2e/direct_insert_single_node_with_wal_flush_every10` | 30.5 ms | 32.2 ms | 32.4 ms | Ten direct inserts over one flush. |
 
+PR-local quick JSON mixed row:
+
+| Bench | Median | Notes |
+|---|---:|---|
+| `write_e2e/gql_cached_json_read_patch_r60w40/1000` | 4.486 ms (quick) | One warm-plan-cache in-memory cycle over property-backed JSON payloads: 60 indexed `bench_id` point reads extracting nested JSON metadata and 40 indexed point updates applying an idempotent three-op `json_patch` over `payload`. Payload seeding runs outside the timed body. |
+
 ## §6 selene-algorithms
 
 Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:

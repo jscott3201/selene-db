@@ -19,9 +19,9 @@ mod common;
 use std::num::NonZeroUsize;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{DbString, Value, db_string};
+use selene_core::{DbString, JsonValue, LabelDiff, PropertyDiff, Value, db_string};
 use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};
-use selene_graph::TypedIndexKind;
+use selene_graph::{RowIndex, SharedGraph, TypedIndexKind};
 use selene_persist::SyncPolicy;
 use selene_testing::{BenchProfile, WriteCorpus};
 
@@ -30,6 +30,9 @@ const WRITES_PER_MIXED_CYCLE: usize = 40;
 const OPS_PER_MIXED_CYCLE: usize = READS_PER_MIXED_CYCLE + WRITES_PER_MIXED_CYCLE;
 const MIXED_READ_SOURCE: &str = "MATCH (n:Person) FILTER n.bench_id = $id RETURN n.score AS score";
 const MIXED_WRITE_SOURCE: &str = "MATCH (n:Person) FILTER n.bench_id = $id SET n.score = $score";
+const JSON_MIXED_READ_SOURCE: &str = "MATCH (n:Person) FILTER n.bench_id = $id RETURN json_get_path_text(n.payload, 'memory', 'facts', 1, 'title') AS title, json_has_path(n.payload, 'memory', 'source') AS has_source";
+const JSON_MIXED_WRITE_SOURCE: &str =
+    "MATCH (n:Person) FILTER n.bench_id = $id SET n.payload = json_patch(n.payload, $patch)";
 
 fn bench_write_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("write_e2e");
@@ -68,6 +71,7 @@ fn bench_write_e2e(c: &mut Criterion) {
             WriteCorpus::match_delete(),
         );
         bench_gql_cached_mixed_read_write(&mut group, scale);
+        bench_gql_cached_json_mixed_read_write(&mut group, scale);
         bench_gql_multi_statement(&mut group, scale);
         bench_explicit_txn_3_inserts_rust_api(&mut group, scale);
         bench_explicit_txn_3_inserts_rollback(&mut group, scale);
@@ -160,6 +164,21 @@ fn bench_gql_cached_mixed_read_write(
     std::hint::black_box(&state);
 }
 
+fn bench_gql_cached_json_mixed_read_write(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    scale: usize,
+) {
+    group.throughput(Throughput::Elements(OPS_PER_MIXED_CYCLE as u64));
+    let state = common::gql_write_state_in_memory(scale);
+    seed_json_payloads(&state.graph);
+    let mut fixture = GqlJsonMixedFixture::new(&state.graph, scale);
+    group.bench_function(
+        BenchmarkId::new("gql_cached_json_read_patch_r60w40", scale),
+        |b| b.iter(|| std::hint::black_box(fixture.run_cycle())),
+    );
+    std::hint::black_box(&state);
+}
+
 struct GqlMixedFixture<'g> {
     session: Session<'g>,
     id_key: DbString,
@@ -228,11 +247,143 @@ impl<'g> GqlMixedFixture<'g> {
     }
 }
 
+struct GqlJsonMixedFixture<'g> {
+    session: Session<'g>,
+    id_key: DbString,
+    read_ids: Vec<i64>,
+    write_ids: Vec<i64>,
+}
+
+impl<'g> GqlJsonMixedFixture<'g> {
+    fn new(graph: &'g SharedGraph, scale: usize) -> Self {
+        let id_key = db_string("id").expect("parameter name fits DB string cap");
+        let patch_key = db_string("patch").expect("parameter name fits DB string cap");
+        let mut session =
+            Session::new(graph).with_plan_cache(NonZeroUsize::new(8).expect("nonzero"));
+        session.bind_parameter(id_key.clone(), Value::Int(0));
+        session.bind_parameter(patch_key.clone(), json_patch_value());
+        execute_cached_source(
+            &mut session,
+            JSON_MIXED_READ_SOURCE,
+            &EmptyProcedureRegistry,
+        );
+        execute_cached_source(
+            &mut session,
+            JSON_MIXED_WRITE_SOURCE,
+            &EmptyProcedureRegistry,
+        );
+        Self {
+            session,
+            id_key,
+            read_ids: person_bench_ids(scale, READS_PER_MIXED_CYCLE),
+            write_ids: person_bench_ids(scale, WRITES_PER_MIXED_CYCLE),
+        }
+    }
+
+    fn run_cycle(&mut self) -> usize {
+        let mut read_idx = 0;
+        let mut write_idx = 0;
+        let mut observed = 0;
+        for slot in 0..OPS_PER_MIXED_CYCLE {
+            if slot % 5 < 3 {
+                observed += self.read_once(read_idx);
+                read_idx += 1;
+            } else {
+                observed += self.write_once(write_idx);
+                write_idx += 1;
+            }
+        }
+        observed
+    }
+
+    fn read_once(&mut self, idx: usize) -> usize {
+        self.session
+            .bind_parameter(self.id_key.clone(), Value::Int(self.read_ids[idx]));
+        execute_cached_source(
+            &mut self.session,
+            JSON_MIXED_READ_SOURCE,
+            &EmptyProcedureRegistry,
+        )
+    }
+
+    fn write_once(&mut self, idx: usize) -> usize {
+        self.session
+            .bind_parameter(self.id_key.clone(), Value::Int(self.write_ids[idx]));
+        execute_cached_source(
+            &mut self.session,
+            JSON_MIXED_WRITE_SOURCE,
+            &EmptyProcedureRegistry,
+        )
+    }
+}
+
 fn person_bench_ids(scale: usize, count: usize) -> Vec<i64> {
     let person_count = scale.div_ceil(3).max(1);
     (0..count)
         .map(|idx| (3 * (idx % person_count)) as i64)
         .collect()
+}
+
+fn seed_json_payloads(graph: &SharedGraph) {
+    let person_label = db_string("Person").expect("Person label fits DB string cap");
+    let payload_key = db_string("payload").expect("payload key fits DB string cap");
+    let node_ids = {
+        let snapshot = graph.read();
+        snapshot
+            .nodes_with_label(&person_label)
+            .into_iter()
+            .flatten()
+            .filter_map(|row| snapshot.node_id_for_row(RowIndex::new(row)))
+            .collect::<Vec<_>>()
+    };
+    let payload = json_payload_value();
+    let mut txn = graph.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        for node_id in node_ids {
+            mutator
+                .update_node(
+                    node_id,
+                    LabelDiff::new([], []).expect("empty label diff builds"),
+                    PropertyDiff::new([(payload_key.clone(), payload.clone())], [])
+                        .expect("payload property diff builds"),
+                )
+                .expect("payload seed update succeeds");
+        }
+    }
+    txn.commit().expect("payload seed commit succeeds");
+}
+
+fn json_payload_value() -> Value {
+    json_value(
+        r#"{
+            "memory":{
+                "kind":"episodic",
+                "current":false,
+                "revision":0,
+                "score":7,
+                "facts":[
+                    {"kind":"semantic","title":"old"},
+                    {"kind":"episodic","title":"current"}
+                ]
+            },
+            "tags":["agent","graph"]
+        }"#,
+    )
+}
+
+fn json_patch_value() -> Value {
+    json_value(
+        r#"[
+            {"op":"replace","path":"/memory/current","value":true},
+            {"op":"add","path":"/memory/source","value":"graph"},
+            {"op":"replace","path":"/memory/revision","value":1}
+        ]"#,
+    )
+}
+
+fn json_value(source: &str) -> Value {
+    Value::Json(JsonValue::parse_str(source).expect("write bench JSON value parses"))
 }
 
 fn execute_cached_source(
