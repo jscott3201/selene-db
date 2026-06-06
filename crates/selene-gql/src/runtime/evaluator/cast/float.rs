@@ -92,18 +92,46 @@ fn string_to_float(
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
     let normalized = normalize_signed_numeric_text(text, target.name(), span)?;
-    normalized
+    let image = normalized
         .strip_suffix(['f', 'd', 'F', 'D'])
-        .unwrap_or(normalized.as_ref())
+        .unwrap_or(normalized.as_ref());
+    if is_non_numeric_float_token(image) {
+        return Err(invalid_character(text, target.name(), span));
+    }
+    let value = image
         .parse::<f64>()
-        .map_err(|_| invalid_character(text, target.name(), span))
-        .and_then(|value| target.value(value, span))
+        .map_err(|_| invalid_character(text, target.name(), span))?;
+    if value.is_nan() {
+        return Err(invalid_character(text, target.name(), span));
+    }
+    if value.is_infinite() {
+        return Err(string_float_out_of_range(target, span));
+    }
+    target.value(value, span)
+}
+
+fn is_non_numeric_float_token(image: &str) -> bool {
+    let unsigned = match image.as_bytes().first().copied() {
+        Some(b'+' | b'-') => &image[1..],
+        _ => image,
+    };
+    unsigned.eq_ignore_ascii_case("nan")
+        || unsigned.eq_ignore_ascii_case("inf")
+        || unsigned.eq_ignore_ascii_case("infinity")
 }
 
 fn float_out_of_range(span: SourceSpan) -> ExecutorError {
     ExecutorError::data_exception(
         DataExceptionSubclass::NumericValueOutOfRange,
         "DECIMAL value has no FLOAT image during CAST",
+        span,
+    )
+}
+
+fn string_float_out_of_range(target: FloatTarget, span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(
+        DataExceptionSubclass::NumericValueOutOfRange,
+        format!("STRING value exceeds {} range during CAST", target.name()),
         span,
     )
 }

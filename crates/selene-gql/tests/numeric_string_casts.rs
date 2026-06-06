@@ -96,3 +96,25 @@ fn string_numeric_cast_overflow_allows_digit_separators() {
         "22003"
     );
 }
+
+#[test]
+fn string_float_casts_reject_non_literal_special_tokens() {
+    for source in [
+        "RETURN CAST('NaN' AS FLOAT) AS v",
+        "RETURN CAST('nan' AS FLOAT32) AS v",
+        "RETURN CAST('inf' AS FLOAT) AS v",
+        "RETURN CAST('+Infinity' AS FLOAT) AS v",
+        "RETURN CAST('-Infinity' AS FLOAT32) AS v",
+    ] {
+        assert_eq!(first_status(source), "22018", "{source}");
+    }
+}
+
+#[test]
+fn string_float_casts_report_numeric_overflow() {
+    assert_eq!(first_status("RETURN CAST('1e9999' AS FLOAT) AS v"), "22003");
+    assert_eq!(
+        first_status("RETURN CAST('1e9999' AS FLOAT32) AS v"),
+        "22003"
+    );
+}
