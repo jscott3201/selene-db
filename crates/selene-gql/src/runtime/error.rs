@@ -17,6 +17,8 @@ pub enum DataExceptionSubclass {
     DataException,
     /// Numeric value out of range (`22003`).
     NumericValueOutOfRange,
+    /// Invalid datetime format (`22007`).
+    InvalidDatetimeFormat,
     /// Substring error (`22011`).
     SubstringError,
     /// Division by zero (`22012`).
@@ -56,6 +58,7 @@ impl DataExceptionSubclass {
         match self {
             Self::DataException => GqlStatus::DATA_EXCEPTION,
             Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
+            Self::InvalidDatetimeFormat => GqlStatus::INVALID_DATETIME_FORMAT,
             Self::SubstringError => GqlStatus::SUBSTRING_ERROR,
             Self::DivisionByZero => GqlStatus::DIVISION_BY_ZERO,
             Self::InvalidArgumentForNaturalLogarithm => {

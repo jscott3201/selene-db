@@ -32,6 +32,7 @@ fn status_for(source: &str) -> String {
 fn data_exception_subclasses_map_to_folded_table8_codes() {
     let cases = [
         (DataExceptionSubclass::NumericValueOutOfRange, "22003"),
+        (DataExceptionSubclass::InvalidDatetimeFormat, "22007"),
         (DataExceptionSubclass::DivisionByZero, "22012"),
         (
             DataExceptionSubclass::InvalidArgumentForNaturalLogarithm,
