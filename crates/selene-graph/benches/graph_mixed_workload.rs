@@ -67,6 +67,21 @@ fn bench_scalar_mixed_workload(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new(
+                "candidate_state_metadata_edge_update_r60w40",
+                fixture.scale(),
+            ),
+            &fixture,
+            |b, fixture| {
+                let scale = fixture.scale();
+                b.iter_batched(
+                    || CandidateStateMixedFixture::build(scale),
+                    |fixture| std::hint::black_box(fixture.run_metadata_cycle()),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("point_read_update_r60w40_wal", fixture.scale()),
             &fixture,
             |b, fixture| {
@@ -170,12 +185,38 @@ impl CandidateStateMixedFixture {
         observed
     }
 
+    fn run_metadata_cycle(self) -> usize {
+        let mut read_idx = 0;
+        let mut write_idx = 0;
+        let mut observed = 0;
+        for slot in 0..OPS_PER_CYCLE {
+            if slot % 5 < 3 {
+                observed += self.read_metadata_once(read_idx);
+                read_idx += 1;
+            } else {
+                self.write_once(write_idx);
+                write_idx += 1;
+            }
+        }
+        observed
+    }
+
     fn read_once(&self, _idx: usize) -> usize {
         self.shared
             .vector_candidate_set(&self.set_name)
             .expect("bench candidate-state provider is current")
             .expect("bench candidate-state set exists")
             .len()
+    }
+
+    fn read_metadata_once(&self, _idx: usize) -> usize {
+        self.shared
+            .vector_candidate_state_infos()
+            .expect("bench candidate-state provider metadata is current")
+            .into_iter()
+            .find(|info| info.name == self.set_name)
+            .expect("bench candidate-state metadata exists")
+            .candidate_count
     }
 
     fn write_once(&self, idx: usize) {
