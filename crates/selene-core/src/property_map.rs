@@ -1,7 +1,7 @@
 //! Property maps per spec 02 section 5.2.
 //!
-//! Keys are ordered in memory lexicographically by [`DbString`] (through the inner
-//! `CompactString`) for fast binary-search lookups. Serialize canonicalizes
+//! Keys are ordered in memory lexicographically by [`DbString`] for fast
+//! binary-search lookups. Serialize canonicalizes
 //! (sorts) the keys before emitting — a no-op for the common case (construction
 //! keeps them sorted) but load-bearing because the `Standard`/`Compact` variants
 //! are public and can be built non-canonically. Deserialize then *validates* the
@@ -674,8 +674,8 @@ mod tests {
     fn serialize_emits_canonical_wire_bytes() {
         // Wire-invariance proof: a PropertyMap built from out-of-order pairs
         // (`from_pairs` sorts on construction) serializes to the exact canonical
-        // (sorted) wire bytes — the wire is byte-identical to the pre-removal
-        // format because the in-memory order is already lexicographic.
+        // (sorted) wire bytes because the in-memory order is already
+        // lexicographic.
         let zebra = key("pm.wire.zebra");
         let apple = key("pm.wire.apple");
         let mango = key("pm.wire.mango");
@@ -845,7 +845,8 @@ mod tests {
                     map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 let expected: Vec<(DbString, Value)> =
                     oracle.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                // Both are key-handle-sorted (BTreeMap by DbString Ord, map by invariant).
+                // Both are sorted by DbString Ord: BTreeMap by construction,
+                // PropertyMap by invariant.
                 prop_assert_eq!(observed, expected);
             }
         }

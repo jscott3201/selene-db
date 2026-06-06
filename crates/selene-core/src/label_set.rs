@@ -1,11 +1,11 @@
 //! Sorted label sets per spec 02 section 5.3.
 //!
-//! Labels are ordered in memory lexicographically by [`DbString`] (through the
-//! inner `CompactString`). On the wire, labels serialize in that same canonical
-//! lexicographic order by [`DbString::as_str`] and deserialize by *validating* that
-//! canonical order — a non-ascending or duplicate payload is rejected as
-//! malformed (the in-memory order is already lexicographic, so no re-sort is
-//! needed). The inline capacity of 3 matches the common
+//! Labels are ordered in memory lexicographically by [`DbString`]. On the wire,
+//! labels serialize in that same canonical lexicographic order by
+//! [`DbString::as_str`] and deserialize by *validating* that canonical order — a
+//! non-ascending or duplicate payload is rejected as malformed (the in-memory
+//! order is already lexicographic, so no re-sort is needed). The inline capacity
+//! of 3 matches the common
 //! node-label case; larger sets spill cleanly to the heap. Edges semantically
 //! carry exactly one label, but that constraint is enforced by `selene-graph`,
 //! not by this plain set type.

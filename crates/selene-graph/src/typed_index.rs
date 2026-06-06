@@ -437,8 +437,8 @@ impl TypedIndex {
 
     /// Return the union of string-key rows whose key starts with `prefix`.
     ///
-    /// `DbString` orders **lexicographically** (through the inner `CompactString`),
-    /// so every key starting with `prefix` forms a contiguous run beginning at
+    /// `DbString` orders **lexicographically**, so every key starting with
+    /// `prefix` forms a contiguous run beginning at
     /// the first key `>= prefix`. This seeks that run with `BTreeMap::range`
     /// (`Included(prefix)`, [`Bound::Unbounded`]) and stops at the first key
     /// that no longer starts with `prefix` — O(log n + matched) rather than the

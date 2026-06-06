@@ -1,6 +1,6 @@
 //! Wire-format canonical-order checks for DbString-keyed containers.
 //!
-//! `DbString` is an owned `CompactString` newtype with lexicographic `Ord`.
+//! `DbString` is an owned string newtype with lexicographic `Ord`.
 //! These assertions prove two different insertion orders of the same keys
 //! produce byte-identical canonical wire after `PropertyMap` canonicalizes to
 //! lexicographic key order at serialize time.

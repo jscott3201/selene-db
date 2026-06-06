@@ -118,10 +118,10 @@ pub enum GraphError {
         ///
         /// Boxed so this variant does not inflate `GraphError` past clippy's
         /// `result_large_err` byte threshold: an inline `SmallVec<[DbString; 4]>`
-        /// is ~104 B (four owned `CompactString` `DbString`s plus header), and
-        /// since `DbString` became an owned 24-byte type the variant otherwise
-        /// drove every `GraphResult<T>` stack slot over the limit. The `Box`
-        /// pushes the allocation onto the cold error-construction path.
+        /// is ~104 B (four owned string values plus header), and the variant
+        /// otherwise drives every `GraphResult<T>` stack slot over the limit.
+        /// The `Box` pushes the allocation onto the cold error-construction
+        /// path.
         properties: Box<SmallVec<[DbString; 4]>>,
     },
 
