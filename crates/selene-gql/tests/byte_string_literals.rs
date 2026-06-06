@@ -126,6 +126,16 @@ fn byte_string_literal_rejects_odd_hex_digit_count() {
 }
 
 #[test]
+fn byte_string_literal_rejects_plain_space_between_chunks() {
+    parse("RETURN X'CA' 'FE' AS payload").expect_err("chunk separator requires a newline");
+}
+
+#[test]
+fn byte_string_literal_rejects_non_hex_digit() {
+    parse("RETURN X'0G' AS payload").expect_err("non-hex digit is rejected");
+}
+
+#[test]
 fn non_identity_bytes_casts_remain_unsupported() {
     assert_eq!(
         first_status("RETURN CAST('00' AS BYTES) AS payload"),
