@@ -13,6 +13,7 @@ use selene_core::{Change, GraphId, NodeId, PropertyMap, Value, db_string};
 
 use super::*;
 use crate::SharedGraph;
+use crate::store::RowIndex;
 
 fn prop(key: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
@@ -52,6 +53,60 @@ fn open_fixture() -> SharedGraph {
     shared
 }
 
+fn compacted_open_fixture_with_non_identity_ids() -> (SharedGraph, NodeId, NodeId) {
+    let shared = SharedGraph::new(GraphId::new(4));
+    let label = db_string("fr.compact.Labelled").unwrap();
+    let edge_label = db_string("fr.compact.Edge").unwrap();
+    let (keep_a, keep_b) = {
+        let mut txn = shared.begin_write();
+        let ids = {
+            let mut m = txn.mutator();
+            let keep_a = m
+                .create_node(LabelSet::single(label.clone()), prop("k", Value::Int(1)))
+                .unwrap();
+            let dead = m
+                .create_node(LabelSet::single(label.clone()), prop("k", Value::Int(2)))
+                .unwrap();
+            let keep_b = m
+                .create_node(LabelSet::new(), prop("k", Value::Int(3)))
+                .unwrap();
+            m.create_edge(edge_label, keep_a, keep_b, PropertyMap::new())
+                .unwrap();
+            m.delete_node(dead).unwrap();
+            (keep_a, keep_b)
+        };
+        txn.commit().unwrap();
+        ids
+    };
+
+    shared.compact().unwrap();
+    {
+        let g = shared.read();
+        let row = g
+            .row_for_node_id(keep_b)
+            .expect("keep_b survives compaction");
+        assert_ne!(
+            u64::from(row.get()) + 1,
+            keep_b.get(),
+            "fixture must prove row/id identity is false after compaction"
+        );
+    }
+
+    (shared, keep_a, keep_b)
+}
+
+fn live_node_ids(graph: &crate::SeleneGraph) -> Vec<NodeId> {
+    graph
+        .live_nodes()
+        .iter()
+        .map(|row| {
+            graph
+                .node_id_for_row(RowIndex::new(row))
+                .expect("live node row has external id")
+        })
+        .collect()
+}
+
 #[test]
 fn factory_reset_wipes_all_nodes_and_edges_including_untyped() {
     let shared = open_fixture();
@@ -72,6 +127,31 @@ fn factory_reset_wipes_all_nodes_and_edges_including_untyped() {
             .all(roaring::RoaringBitmap::is_empty),
         "edge-label index buckets cleared"
     );
+    assert!(g.adjacency_out.is_empty(), "outgoing adjacency cleared");
+    assert!(g.adjacency_in.is_empty(), "incoming adjacency cleared");
+}
+
+#[test]
+fn factory_reset_after_compaction_uses_external_id_maps() {
+    let (shared, keep_a, keep_b) = compacted_open_fixture_with_non_identity_ids();
+
+    let mut txn = shared.begin_write();
+    txn.mutator().factory_reset().unwrap();
+    let outcome = txn.commit().unwrap();
+
+    assert_eq!(outcome.changes.len(), 1);
+    assert!(matches!(outcome.changes[0], Change::GraphReset {}));
+    let g = shared.read();
+    assert_eq!(g.node_count(), 0);
+    assert_eq!(g.edge_count(), 0);
+    assert!(!g.is_node_alive(keep_a));
+    assert!(!g.is_node_alive(keep_b));
+    assert!(
+        g.row_for_node_id(keep_b).is_some(),
+        "reset leaves deleted ids mapped to dead rows until compaction"
+    );
+    assert!(g.idx_label.is_empty(), "node label index cleared");
+    assert!(g.idx_edge_label.is_empty(), "edge label index cleared");
     assert!(g.adjacency_out.is_empty(), "outgoing adjacency cleared");
     assert!(g.adjacency_in.is_empty(), "incoming adjacency cleared");
 }
@@ -192,12 +272,7 @@ fn factory_reset_matches_detach_delete_plus_schema_drop_observable_state() {
     }
     {
         let mut txn = manual.begin_write();
-        let ids: Vec<NodeId> = txn
-            .read()
-            .live_nodes()
-            .iter()
-            .map(|row| NodeId::new(u64::from(row) + 1))
-            .collect();
+        let ids = live_node_ids(txn.read());
         {
             let mut m = txn.mutator();
             for id in ids {

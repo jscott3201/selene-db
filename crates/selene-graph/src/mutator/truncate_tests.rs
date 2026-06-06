@@ -6,10 +6,11 @@
 //! - Exactly ONE declarative change is written regardless of N (O(1) WAL).
 //! - Empty/absent label is a clean no-op; double-truncate is idempotent.
 
-use selene_core::{Change, GraphId, NodeId, PropertyMap, Value, db_string};
+use selene_core::{Change, EdgeId, GraphId, NodeId, PropertyMap, Value, db_string};
 
 use super::*;
 use crate::SharedGraph;
+use crate::store::RowIndex;
 
 fn prop(key: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
@@ -67,6 +68,104 @@ fn fixture() -> SharedGraph {
     shared
 }
 
+fn compacted_fixture_with_non_identity_ids() -> (
+    SharedGraph,
+    DbString,
+    NodeId,
+    NodeId,
+    NodeId,
+    NodeId,
+    EdgeId,
+) {
+    let shared = SharedGraph::new(GraphId::new(2));
+    let target_label = db_string("trunc.compact.Target").unwrap();
+    let keep_label = db_string("trunc.compact.Keep").unwrap();
+    let edge_label = db_string("trunc.compact.Edge").unwrap();
+    let (keep_a, target_a, target_b, keep_b, survivor_edge) = {
+        let mut txn = shared.begin_write();
+        let ids = {
+            let mut m = txn.mutator();
+            let keep_a = m
+                .create_node(
+                    LabelSet::single(keep_label.clone()),
+                    prop("k", Value::Int(1)),
+                )
+                .unwrap();
+            let dead = m
+                .create_node(
+                    LabelSet::single(keep_label.clone()),
+                    prop("k", Value::Int(2)),
+                )
+                .unwrap();
+            let target_a = m
+                .create_node(
+                    LabelSet::single(target_label.clone()),
+                    prop("k", Value::Int(3)),
+                )
+                .unwrap();
+            let target_b = m
+                .create_node(
+                    LabelSet::single(target_label.clone()),
+                    prop("k", Value::Int(4)),
+                )
+                .unwrap();
+            let keep_b = m
+                .create_node(LabelSet::single(keep_label), prop("k", Value::Int(5)))
+                .unwrap();
+            m.create_edge(edge_label.clone(), keep_a, target_a, PropertyMap::new())
+                .unwrap();
+            m.create_edge(edge_label.clone(), target_a, target_b, PropertyMap::new())
+                .unwrap();
+            let survivor_edge = m
+                .create_edge(edge_label, keep_a, keep_b, PropertyMap::new())
+                .unwrap();
+            m.delete_node(dead).unwrap();
+            (keep_a, target_a, target_b, keep_b, survivor_edge)
+        };
+        txn.commit().unwrap();
+        ids
+    };
+
+    shared.compact().unwrap();
+    {
+        let g = shared.read();
+        let row = g
+            .row_for_node_id(target_a)
+            .expect("target_a survives compaction");
+        assert_ne!(
+            u64::from(row.get()) + 1,
+            target_a.get(),
+            "fixture must prove row/id identity is false after compaction"
+        );
+    }
+
+    (
+        shared,
+        target_label,
+        keep_a,
+        target_a,
+        target_b,
+        keep_b,
+        survivor_edge,
+    )
+}
+
+fn live_node_ids_with_label(graph: &crate::SeleneGraph, label: &DbString) -> Vec<NodeId> {
+    graph
+        .nodes_with_label(label)
+        .map(|bitmap| {
+            bitmap
+                .iter()
+                .map(|row| {
+                    graph
+                        .node_id_for_row(RowIndex::new(row))
+                        .expect("live label-index row has external id")
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Compare the observable state of two graphs that should be identical after a
 /// truncate vs DETACH DELETE of the same set.
 fn assert_same_observable_state(a: &crate::SeleneGraph, b: &crate::SeleneGraph) {
@@ -114,16 +213,7 @@ fn truncate_node_type_matches_detach_delete_observable_state() {
     // then per-row delete_node (which cascades incident edges).
     {
         let mut txn = detached.begin_write();
-        let matched: Vec<NodeId> = txn
-            .read()
-            .nodes_with_label(&l)
-            .map(|bitmap| {
-                bitmap
-                    .iter()
-                    .map(|row| NodeId::new(u64::from(row) + 1))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let matched = live_node_ids_with_label(txn.read(), &l);
         {
             let mut m = txn.mutator();
             for id in matched {
@@ -151,6 +241,42 @@ fn truncate_node_type_matches_detach_delete_observable_state() {
             "edge row {row} has dangling target"
         );
     }
+}
+
+#[test]
+fn truncate_node_type_after_compaction_uses_external_id_maps() {
+    let (shared, target_label, keep_a, target_a, target_b, keep_b, survivor_edge) =
+        compacted_fixture_with_non_identity_ids();
+
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .truncate_node_type(target_label.clone())
+        .unwrap();
+    let outcome = txn.commit().unwrap();
+
+    assert_eq!(outcome.changes.len(), 1);
+    assert!(matches!(
+        &outcome.changes[0],
+        Change::NodesOfTypeTruncated { label } if *label == target_label
+    ));
+    let g = shared.read();
+    assert!(g.is_node_alive(keep_a));
+    assert!(g.is_node_alive(keep_b));
+    assert!(!g.is_node_alive(target_a));
+    assert!(!g.is_node_alive(target_b));
+    assert!(
+        g.row_for_node_id(target_a).is_some(),
+        "truncate leaves the deleted id mapped to its dead row until compaction"
+    );
+    assert!(
+        g.nodes_with_label(&target_label).is_none(),
+        "target label index must be fully cleared"
+    );
+    assert!(
+        g.is_edge_alive(survivor_edge),
+        "edge between surviving non-target nodes must remain alive"
+    );
+    assert_eq!(g.edge_count(), 1, "all target-incident edges cascade away");
 }
 
 #[test]
