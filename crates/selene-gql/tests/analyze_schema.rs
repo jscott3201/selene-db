@@ -71,6 +71,21 @@ fn host_record_graph_type() -> GraphTypeDef {
     .expect("host record fixture graph type is valid")
 }
 
+fn json_graph_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: db_string("fixture.json"),
+        node_types: vec![NodeTypeDef {
+            name: db_string("Thing"),
+            key_labels: LabelSet::single(db_string("Thing")),
+            properties: vec![property("payload", PropertyValueType::Json, true)],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    }
+    .validate()
+    .expect("JSON fixture graph type is valid")
+}
+
 fn analyze_source(
     source: &str,
     schema: Option<&GraphTypeDef>,
@@ -487,6 +502,35 @@ fn validates_static_candidate_sets_when_candidates_agree() {
         .expect("all Person candidates agree on name");
     analyze_with_schema("MATCH (n:Person) REMOVE n.nickname", &graph_type)
         .expect("all Person candidates agree nickname is optional");
+}
+
+#[test]
+fn validates_resolved_json_property_writes() {
+    let graph_type = json_graph_type();
+    analyze_with_schema(
+        r#"INSERT (:Thing {payload: CAST('{"a":1}' AS JSON)})"#,
+        &graph_type,
+    )
+    .expect("resolved JSON insert satisfies JSON property");
+    analyze_with_schema(
+        r#"MATCH (n:Thing) SET n.payload = CAST('{"a":2}' AS JSON)"#,
+        &graph_type,
+    )
+    .expect("resolved JSON SET satisfies JSON property");
+
+    let mismatch = schema_error(
+        r#"MATCH (n:Thing) SET n.payload = CAST('{"a":2}' AS STRING)"#,
+        &graph_type,
+    );
+    assert!(matches!(
+        mismatch,
+        AnalysisError::SchemaPropertyTypeMismatch { .. }
+    ));
+    let removed = schema_error("MATCH (n:Thing) REMOVE n.payload", &graph_type);
+    assert!(matches!(
+        removed,
+        AnalysisError::SchemaRequiredPropertyRemoved { .. }
+    ));
 }
 
 #[test]
