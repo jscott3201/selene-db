@@ -53,7 +53,7 @@ pub use candidate_state::{
 };
 pub use chunked_vec::ChunkedVec;
 pub use committer_batch::CommitBatching;
-pub use compaction::{CompactedCore, CompactionReport, compact_core};
+pub use compaction::{CompactedCore, CompactionReport, CompactionStats, compact_core};
 pub use composite_typed_index::{
     CompositeIndexValueError, CompositeKey, CompositeKeyComponent, CompositeTypedIndex,
 };

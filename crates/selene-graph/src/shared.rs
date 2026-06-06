@@ -279,6 +279,15 @@ impl SharedGraph {
         self.snapshot.load_full()
     }
 
+    /// Return compaction pressure for the current published snapshot.
+    ///
+    /// This is a lock-free read of row counts and liveness counters. It does not
+    /// compact, rebuild indexes, or take the writer lock.
+    #[must_use]
+    pub fn compaction_stats(&self) -> crate::compaction::CompactionStats {
+        self.read().compaction_stats()
+    }
+
     /// Compact the live graph in place: reclaim every dead / hole row, renumber
     /// rows dense, and atomically republish the result so the RAM held by deleted
     /// rows is reclaimed immediately (BRIEF-Item-4c — the live-densify half of

@@ -68,6 +68,36 @@ fn compact_densifies_live_graph_and_reclaims_dead_rows() {
 }
 
 #[test]
+fn compaction_stats_track_delete_pressure_and_dense_rebuild() {
+    let shared = churned_graph();
+
+    let before = shared.compaction_stats();
+    assert_eq!(before.allocated_nodes, 5);
+    assert_eq!(before.live_nodes, 3);
+    assert_eq!(before.reclaimable_nodes, 2);
+    assert_eq!(before.allocated_edges, 0);
+    assert_eq!(before.live_edges, 0);
+    assert_eq!(before.reclaimable_edges, 0);
+    assert_eq!(before.allocated_rows(), 5);
+    assert_eq!(before.live_rows(), 3);
+    assert_eq!(before.reclaimable_rows(), 2);
+    assert!(!before.is_dense());
+
+    let report = shared.compact().unwrap();
+    assert_eq!(report.reclaimed_nodes, before.reclaimable_nodes);
+    assert_eq!(report.reclaimed_edges, before.reclaimable_edges);
+
+    let after = shared.compaction_stats();
+    assert_eq!(after.allocated_nodes, 3);
+    assert_eq!(after.live_nodes, 3);
+    assert_eq!(after.reclaimable_nodes, 0);
+    assert_eq!(after.allocated_rows(), 3);
+    assert_eq!(after.live_rows(), 3);
+    assert_eq!(after.reclaimable_rows(), 0);
+    assert!(after.is_dense());
+}
+
+#[test]
 fn compact_preserves_observable_reads() {
     let shared = churned_graph();
     let before = shared.read();
@@ -176,8 +206,14 @@ fn compact_preserves_edges_and_adjacency() {
         ids
     };
 
+    let before = shared.compaction_stats();
+    assert_eq!(before.reclaimable_nodes, 1);
+    assert_eq!(before.reclaimable_edges, 1);
+    assert_eq!(before.reclaimable_rows(), 2);
+
     let report = shared.compact().unwrap();
-    assert!(report.reclaimed_nodes >= 1 && report.reclaimed_edges >= 1);
+    assert_eq!(report.reclaimed_nodes, before.reclaimable_nodes);
+    assert_eq!(report.reclaimed_edges, before.reclaimable_edges);
     let g = shared.read();
 
     // Surviving edges resolve to renumbered dense rows with intact endpoints.

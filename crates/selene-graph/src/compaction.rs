@@ -56,6 +56,72 @@ pub struct CompactionReport {
     pub reclaimed_edges: u64,
 }
 
+/// Cheap snapshot of row-space pressure before compaction.
+///
+/// Deletes clear heavyweight row payloads immediately, but the row slots and
+/// stable id mappings remain until compaction. These counters let maintenance
+/// policy decide whether a dense rebuild is worth scheduling without first
+/// performing that rebuild.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CompactionStats {
+    /// Allocated node rows, including live rows and reclaimable dead rows.
+    pub allocated_nodes: u64,
+    /// Alive node rows.
+    pub live_nodes: u64,
+    /// Dead node rows that a compaction pass can reclaim.
+    pub reclaimable_nodes: u64,
+    /// Allocated edge rows, including live rows and reclaimable dead rows.
+    pub allocated_edges: u64,
+    /// Alive edge rows.
+    pub live_edges: u64,
+    /// Dead edge rows that a compaction pass can reclaim.
+    pub reclaimable_edges: u64,
+}
+
+impl CompactionStats {
+    /// Build compaction counters for `graph` without rebuilding any rows.
+    #[must_use]
+    pub fn from_graph(graph: &SeleneGraph) -> Self {
+        let allocated_nodes = graph.node_store.len() as u64;
+        let live_nodes = graph.node_count() as u64;
+        let allocated_edges = graph.edge_store.len() as u64;
+        let live_edges = graph.edge_count() as u64;
+        Self {
+            allocated_nodes,
+            live_nodes,
+            reclaimable_nodes: allocated_nodes.saturating_sub(live_nodes),
+            allocated_edges,
+            live_edges,
+            reclaimable_edges: allocated_edges.saturating_sub(live_edges),
+        }
+    }
+
+    /// Total allocated node and edge rows.
+    #[must_use]
+    pub const fn allocated_rows(self) -> u64 {
+        self.allocated_nodes.saturating_add(self.allocated_edges)
+    }
+
+    /// Total alive node and edge rows.
+    #[must_use]
+    pub const fn live_rows(self) -> u64 {
+        self.live_nodes.saturating_add(self.live_edges)
+    }
+
+    /// Total reclaimable dead node and edge rows.
+    #[must_use]
+    pub const fn reclaimable_rows(self) -> u64 {
+        self.reclaimable_nodes
+            .saturating_add(self.reclaimable_edges)
+    }
+
+    /// True when no dead rows remain to compact.
+    #[must_use]
+    pub const fn is_dense(self) -> bool {
+        self.reclaimable_nodes == 0 && self.reclaimable_edges == 0
+    }
+}
+
 /// The product of compacting the CORE store.
 pub struct CompactedCore {
     /// The dense, fully-rebuilt compacted graph (no dead/hole rows).
@@ -171,9 +237,10 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         edges.alive.insert(new_row);
     }
 
+    let stats = CompactionStats::from_graph(graph);
     let report = CompactionReport {
-        reclaimed_nodes: (graph.node_store.len() as u64).saturating_sub(u64::from(node_len)),
-        reclaimed_edges: (graph.edge_store.len() as u64).saturating_sub(u64::from(edge_len)),
+        reclaimed_nodes: stats.reclaimable_nodes,
+        reclaimed_edges: stats.reclaimable_edges,
     };
 
     // Assemble the dense graph. meta is preserved VERBATIM — the monotonic
