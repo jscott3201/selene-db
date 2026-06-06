@@ -157,6 +157,20 @@ Label expressions support `:Foo|Bar` (or), `:Foo&Bar` (and), `:!Foo`
 `*2..`) control variable-length matching with an implementation-defined
 upper bound of 100 (Annex B `IL018`).
 
+Quantified edge variables are bound as path-ordered lists of edge references.
+Property access over that binding maps across the list and preserves path
+order:
+
+```gql
+MATCH (p:Person)-[r:KNOWS*1..3]->(friend)
+RETURN r.score AS path_scores
+```
+
+Each row's `path_scores` value is a list. Missing edge properties become
+`NULL` at the corresponding list position. `PROPERTY_EXISTS` remains scalar
+over graph elements and records; use `UNWIND` when per-element existence checks
+are needed.
+
 ### `OPTIONAL MATCH`
 
 ```gql

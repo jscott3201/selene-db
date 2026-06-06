@@ -151,6 +151,12 @@ pub(super) fn eval_property_exists(
     if matches!(target, Value::Null) {
         return Ok(Value::Null);
     }
+    if matches!(target, Value::List(_)) {
+        return data_exception(
+            "PROPERTY_EXISTS target is not a node, edge, or record",
+            span,
+        );
+    }
     let value = property_access(&target, key, span, ctx)?;
     Ok(Value::Bool(!matches!(value, Value::Null)))
 }

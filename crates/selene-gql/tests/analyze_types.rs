@@ -97,9 +97,15 @@ fn quantified_edge_binding_is_edge_ref_list() {
 }
 
 #[test]
-fn group_variable_property_access_is_rejected() {
-    let err = analyze_one("MATCH (a)-[r:K*1..2]->(b) RETURN r.weight")
-        .expect_err("GQ17 group-variable property access is rejected");
+fn group_variable_property_access_is_dynamic() {
+    let analyzed = analyze_one("MATCH (a)-[r:K*1..2]->(b) RETURN r.weight AS weights").unwrap();
+    assert_eq!(projection_type(&analyzed, "weights"), AnalyzedType::Dynamic);
+}
+
+#[test]
+fn group_variable_property_exists_is_rejected() {
+    let err = analyze_one("MATCH (a)-[r:K*1..2]->(b) RETURN PROPERTY_EXISTS(r, 'weight')")
+        .expect_err("PROPERTY_EXISTS over graph-element lists remains unsupported");
     assert!(matches!(err, AnalysisError::NotImplemented { .. }));
     assert_eq!(err.gqlstatus().as_str(), "42N01");
 }
