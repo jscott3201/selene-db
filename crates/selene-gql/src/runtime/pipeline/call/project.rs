@@ -1,6 +1,9 @@
 use selene_core::Value;
 
-use crate::{GqlType, PlannedCall, ProcedureError, YieldKind, runtime::ExecutorError};
+use crate::{
+    GqlType, PlannedCall, ProcedureError, YieldKind,
+    runtime::{ExecutorError, value_type_match::value_matches_gql_type},
+};
 
 use super::context::procedure_error;
 
@@ -76,50 +79,11 @@ fn matches_gql_type(value: &Value, ty: &GqlType) -> bool {
     if matches!(ty, GqlType::Nothing) {
         return false;
     }
+    // Output schemas do not model nullability yet, and native metadata procedures use
+    // NULL in typed columns for optional fields.
     if matches!(value, Value::Null) {
         return true;
     }
 
-    match ty {
-        GqlType::String => matches!(value, Value::String(_)),
-        GqlType::Uuid => matches!(value, Value::Uuid(_)),
-        GqlType::Boolean => matches!(value, Value::Bool(_)),
-        GqlType::Integer
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::SmallInt
-        | GqlType::BigInt => matches!(value, Value::Int(_)),
-        GqlType::Int128 => matches!(value, Value::Int128(_)),
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            matches!(value, Value::Uint(_))
-        }
-        GqlType::Uint128 => matches!(value, Value::Uint128(_)),
-        GqlType::Float | GqlType::Float64 => matches!(value, Value::Float(_)),
-        GqlType::Float32 => matches!(value, Value::Float32(_)),
-        GqlType::Decimal => matches!(value, Value::Decimal(_)),
-        GqlType::Bytes => matches!(value, Value::Bytes(_)),
-        GqlType::ZonedDateTime => matches!(value, Value::ZonedDateTime(_)),
-        GqlType::LocalDateTime => matches!(value, Value::LocalDateTime(_)),
-        GqlType::Date => matches!(value, Value::Date(_)),
-        GqlType::ZonedTime => matches!(value, Value::ZonedTime(_)),
-        GqlType::LocalTime => matches!(value, Value::LocalTime(_)),
-        GqlType::Duration => matches!(value, Value::Duration(_)),
-        GqlType::Vector => matches!(value, Value::Vector(_)),
-        GqlType::Record(_) => matches!(value, Value::Record(_) | Value::RecordTyped(_)),
-        GqlType::List(inner) => {
-            let Value::List(values) = value else {
-                return false;
-            };
-            values.iter().all(|value| matches_gql_type(value, inner))
-        }
-        GqlType::Path => matches!(value, Value::Path(_)),
-        GqlType::GraphRef => matches!(value, Value::GraphRef(_)),
-        GqlType::NodeRef => matches!(value, Value::NodeRef(_)),
-        GqlType::EdgeRef => matches!(value, Value::EdgeRef(_)),
-        GqlType::TableRef => matches!(value, Value::TableRef(_)),
-        GqlType::Null => matches!(value, Value::Null),
-        GqlType::Nothing => false,
-    }
+    value_matches_gql_type(value, ty)
 }
