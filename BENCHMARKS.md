@@ -685,6 +685,7 @@ fixture and so scale with N; the single-node arms are flat.
 | `write_e2e/gql_insert_node_with_edge_preplanned` | 1.67 ms | 11.75 ms | 24.86 ms | Preplanned insert + matched source + edge (scans). |
 | `write_e2e/gql_match_set_preplanned` | 1.76 ms | 11.74 ms | 24.12 ms | Indexed match + property update (scans). |
 | `write_e2e/gql_match_delete_preplanned` | 1.68 ms | 12.25 ms | 24.97 ms | Fresh fixture per iter (target deleted). |
+| `write_e2e/gql_cached_point_read_set_r60w40` | 8.717 ms | 6.781 ms | 9.318 ms | One warm-plan-cache in-memory cycle: 60 indexed `bench_id` point reads plus 40 indexed `SET score = $score` writes over two parameterized source strings. |
 | `write_e2e/gql_multi_statement_txn_preplanned` | 280 µs | 191 µs | 350 µs | START, three INSERTs, COMMIT. |
 | `write_e2e/explicit_txn_3_inserts_rust_api` | 275 µs | 223 µs | 363 µs | Three inserts via the Rust txn API. |
 | `write_e2e/explicit_txn_3_inserts_rollback` | 279 µs | 198 µs | 355 µs | Same, rolled back. |
