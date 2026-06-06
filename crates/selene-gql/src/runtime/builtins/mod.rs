@@ -40,6 +40,7 @@
 //!   `selene.vector_index_stats`, `selene.text_index_stats`,
 //!   `selene.json_contains_nodes`, `selene.json_path_exists_nodes`,
 //!   `selene.json_path_contains_nodes`, `selene.json_path_value_nodes`,
+//!   `selene.compaction_stats`,
 //!   `selene.text_search_nodes`, `selene.text_score_nodes`,
 //!   `selene.text_score_nodes_batch`, and
 //!   `selene.text_score_candidate_state_expanded_batch` are read-only
@@ -52,17 +53,19 @@
 //!   route every write through [`MutationContext::mutator`] — emitting index
 //!   schema changes through the single mutation funnel (Hard Rule 11). They
 //!   never bypass the funnel and never re-enter `begin_write`.
-//! - `selene.rebuild_vector_indexes` and
-//!   `selene.rebuild_recommended_vector_indexes` are maintenance-tier
+//! - `selene.rebuild_vector_indexes`,
+//!   `selene.rebuild_recommended_vector_indexes`, and `selene.compact` are
+//!   maintenance-tier
 //!   ([`ProcedureTier::Maintenance`] +
 //!   [`ProcedureMutability::MaintenanceWrite`]); they rebuild derived vector
-//!   index state through [`MaintenanceContext`] without graph changes, WAL
-//!   entries, or schema-version bumps.
+//!   index state or compact dead graph rows through [`MaintenanceContext`]
+//!   without graph changes, WAL entries, or schema-version bumps.
 //!
 //! `pack_history` is **not** relocated: it read the pack-lifecycle audit, which
 //! is removed in the teardown.
 
 mod catalog;
+mod compaction;
 mod create_index;
 mod create_text_index;
 mod create_vector_index;

@@ -1,7 +1,7 @@
 use selene_core::{DbString, db_string};
 
 use super::*;
-use crate::ProcedureRegistry;
+use crate::{ProcedureMutability, ProcedureRegistry, ProcedureTier};
 
 fn name(segments: &[&str]) -> Vec<DbString> {
     segments
@@ -11,18 +11,18 @@ fn name(segments: &[&str]) -> Vec<DbString> {
 }
 
 #[test]
-fn registers_all_fifty_eight_procedures() {
+fn registers_all_sixty_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        58,
-        "expected 19 algo procedures + 39 platform built-ins"
+        60,
+        "expected 19 algo procedures + 41 platform built-ins"
     );
 }
 
 #[test]
-fn iter_handles_yields_all_thirty_nine_platform_builtins() {
+fn iter_handles_yields_all_forty_one_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -36,6 +36,7 @@ fn iter_handles_yields_all_thirty_nine_platform_builtins() {
         ["selene", "health"],
         ["selene", "feature_status"],
         ["selene", "verify"],
+        ["selene", "compaction_stats"],
         ["selene", "create_index"],
         ["selene", "drop_index"],
         ["selene", "vector_search_nodes"],
@@ -64,6 +65,7 @@ fn iter_handles_yields_all_thirty_nine_platform_builtins() {
         ["selene", "json_path_value_nodes"],
         ["selene", "rebuild_vector_indexes"],
         ["selene", "rebuild_recommended_vector_indexes"],
+        ["selene", "compact"],
         ["selene", "create_vector_index"],
         ["selene", "drop_vector_index"],
         ["selene", "create_text_index"],
@@ -79,6 +81,54 @@ fn iter_handles_yields_all_thirty_nine_platform_builtins() {
             "SHOW PROCEDURES must list {expected:?}"
         );
     }
+}
+
+#[test]
+fn compaction_stats_signature_is_zero_arg_read() {
+    let registry = BuiltinProcedureRegistry::new();
+    let metadata = registry
+        .lookup(&name(&["selene", "compaction_stats"]))
+        .expect("compaction_stats resolves");
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 0);
+    assert_eq!(arity.maximum, 0);
+    assert_eq!(metadata.tier, ProcedureTier::Graph);
+    assert_eq!(metadata.mutability, ProcedureMutability::Read);
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 10);
+    assert_eq!(columns[0].name.as_str(), "allocated_nodes");
+    assert_eq!(columns[0].ty, crate::GqlType::Uint64);
+    assert_eq!(columns[2].name.as_str(), "reclaimable_nodes");
+    assert_eq!(columns[2].ty, crate::GqlType::Uint64);
+    assert_eq!(columns[8].name.as_str(), "reclaimable_rows");
+    assert_eq!(columns[8].ty, crate::GqlType::Uint64);
+    assert_eq!(columns[9].name.as_str(), "dense");
+    assert_eq!(columns[9].ty, crate::GqlType::Boolean);
+}
+
+#[test]
+fn compact_signature_is_zero_arg_maintenance() {
+    let registry = BuiltinProcedureRegistry::new();
+    let metadata = registry
+        .lookup(&name(&["selene", "compact"]))
+        .expect("compact resolves");
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 0);
+    assert_eq!(arity.maximum, 0);
+    assert_eq!(metadata.tier, ProcedureTier::Maintenance);
+    assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 22);
+    assert_eq!(columns[0].name.as_str(), "before_allocated_nodes");
+    assert_eq!(columns[0].ty, crate::GqlType::Uint64);
+    assert_eq!(columns[10].name.as_str(), "reclaimed_nodes");
+    assert_eq!(columns[10].ty, crate::GqlType::Uint64);
+    assert_eq!(columns[11].name.as_str(), "reclaimed_edges");
+    assert_eq!(columns[11].ty, crate::GqlType::Uint64);
+    assert_eq!(columns[21].name.as_str(), "after_dense");
+    assert_eq!(columns[21].ty, crate::GqlType::Boolean);
 }
 
 #[test]

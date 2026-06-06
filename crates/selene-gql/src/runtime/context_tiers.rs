@@ -4,9 +4,9 @@ use std::{rc::Rc, sync::Arc};
 
 use selene_core::{BindingTableId, CancellationChecker, DbString};
 use selene_graph::{
-    CANDIDATE_STATE_PROVIDER_TAG, GraphResult, IndexProvider, Mutator, ProviderError, ProviderTag,
-    SeleneGraph, SharedGraph, VectorCandidateSet, VectorCandidateStateInfo,
-    VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
+    CANDIDATE_STATE_PROVIDER_TAG, CompactionReport, CompactionStats, GraphResult, IndexProvider,
+    Mutator, ProviderError, ProviderTag, SeleneGraph, SharedGraph, VectorCandidateSet,
+    VectorCandidateStateInfo, VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
 };
 
 use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureTier};
@@ -236,6 +236,21 @@ impl<'a, 'g> MaintenanceContext<'a, 'g> {
         policy: VectorIndexMaintenancePolicy,
     ) -> GraphResult<VectorIndexRebuildReport> {
         self.graph.maintain_vector_indexes(policy)
+    }
+
+    /// Return current graph compaction pressure.
+    #[must_use]
+    pub fn compaction_stats(&self) -> CompactionStats {
+        self.graph.compaction_stats()
+    }
+
+    /// Compact dead rows out of the live graph.
+    ///
+    /// # Errors
+    ///
+    /// Returns graph errors raised by compaction consistency validation.
+    pub fn compact(&self) -> GraphResult<CompactionReport> {
+        self.graph.compact()
     }
 
     /// Register a binding table for this procedure call's statement.

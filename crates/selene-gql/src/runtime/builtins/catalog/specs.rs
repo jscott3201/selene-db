@@ -19,7 +19,7 @@ pub(in crate::runtime) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 39] = [
+pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 41] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -49,6 +49,12 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 39] = [
         description: "Drop a property index.",
         since_version: "1.0.0",
         kind: BuiltinKind::DropIndex,
+    },
+    BuiltinSpec {
+        name: &["selene", "compaction_stats"],
+        description: "Report graph row compaction pressure.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::CompactionStats,
     },
     BuiltinSpec {
         name: &["selene", "vector_search_nodes"],
@@ -109,6 +115,12 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 39] = [
         description: "Rebuild vector indexes whose diagnostics recommend maintenance.",
         since_version: "1.1.0",
         kind: BuiltinKind::RebuildRecommendedVectorIndexes,
+    },
+    BuiltinSpec {
+        name: &["selene", "compact"],
+        description: "Compact dead graph rows out of the live store.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::Compact,
     },
     BuiltinSpec {
         name: &["selene", "create_vector_index"],
