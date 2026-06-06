@@ -110,13 +110,14 @@ pub(super) fn eval_cast(
     }
 
     match target_type {
-        GqlType::Integer
-        | GqlType::Int64
-        | GqlType::BigInt
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::SmallInt => cast_to_integer(value, span),
+        GqlType::Integer | GqlType::Int64 | GqlType::BigInt => {
+            cast_to_signed_integer(value, SignedIntegerTarget::I64, span)
+        }
+        GqlType::Int8 => cast_to_signed_integer(value, SignedIntegerTarget::I8, span),
+        GqlType::Int16 | GqlType::SmallInt => {
+            cast_to_signed_integer(value, SignedIntegerTarget::I16, span)
+        }
+        GqlType::Int32 => cast_to_signed_integer(value, SignedIntegerTarget::I32, span),
         GqlType::Float | GqlType::Float64 | GqlType::Float32 => cast_to_float(value, span),
         GqlType::Decimal => decimal::numeric_to_decimal(value, span),
         GqlType::Boolean => cast_to_boolean(value, span),
@@ -155,6 +156,52 @@ fn cast_to_integer(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
             span,
         }),
     }
+}
+
+#[derive(Clone, Copy)]
+enum SignedIntegerTarget {
+    I8,
+    I16,
+    I32,
+    I64,
+}
+
+impl SignedIntegerTarget {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::I8 => "INT8",
+            Self::I16 => "INT16",
+            Self::I32 => "INT32",
+            Self::I64 => "INTEGER",
+        }
+    }
+
+    fn contains(self, value: i64) -> bool {
+        match self {
+            Self::I8 => i8::try_from(value).is_ok(),
+            Self::I16 => i16::try_from(value).is_ok(),
+            Self::I32 => i32::try_from(value).is_ok(),
+            Self::I64 => true,
+        }
+    }
+}
+
+fn cast_to_signed_integer(
+    value: Value,
+    target: SignedIntegerTarget,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Value::Int(value) = cast_to_integer(value, span)? else {
+        unreachable!("cast_to_integer returns Value::Int on success");
+    };
+    if target.contains(value) {
+        return Ok(Value::Int(value));
+    }
+    Err(ExecutorError::data_exception(
+        DataExceptionSubclass::NumericValueOutOfRange,
+        format!("INTEGER value exceeds {} range during CAST", target.name()),
+        span,
+    ))
 }
 
 fn cast_to_float(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
