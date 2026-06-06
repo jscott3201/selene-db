@@ -13,8 +13,11 @@ use super::{
 };
 
 const MAX_JSON_PATH_SELECTORS: usize = 64;
+const MAX_JSON_CONSTRUCTOR_ARGS: usize = 64;
 
 pub(super) const JSON_PATH_MAX_ARGS: usize = MAX_JSON_PATH_SELECTORS + 1;
+pub(super) const JSON_ARRAY_MAX_ARGS: usize = MAX_JSON_CONSTRUCTOR_ARGS;
+pub(super) const JSON_OBJECT_MAX_ARGS: usize = MAX_JSON_CONSTRUCTOR_ARGS * 2;
 
 pub(super) fn eval_json_parse(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
     let value = args.into_iter().next().expect("arity checked");
@@ -44,6 +47,42 @@ pub(super) fn eval_json_type(args: Vec<Value>, span: SourceSpan) -> Result<Value
         Value::Json(value) => string_value(value.json_type_name(), span),
         _ => data_exception("json_type argument is not JSON", span),
     }
+}
+
+pub(super) fn eval_json_array(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    let mut values = Vec::with_capacity(args.len());
+    for value in args {
+        values.push(gql_value_to_json(value, "json_array", span)?);
+    }
+    json_value_from_serde(
+        serde_json::Value::Array(values),
+        "constructed JSON value",
+        span,
+    )
+}
+
+pub(super) fn eval_json_object(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if !args.len().is_multiple_of(2) {
+        return data_exception("json_object requires key/value argument pairs", span);
+    }
+
+    let mut object = serde_json::Map::with_capacity(args.len() / 2);
+    let mut args = args.into_iter();
+    while let Some(key) = args.next() {
+        let value = args.next().expect("even argument count checked");
+        let Value::String(key) = key else {
+            return data_exception("json_object key is not a string", span);
+        };
+        object.insert(
+            key.as_str().to_owned(),
+            gql_value_to_json(value, "json_object", span)?,
+        );
+    }
+    json_value_from_serde(
+        serde_json::Value::Object(object),
+        "constructed JSON value",
+        span,
+    )
 }
 
 pub(super) fn eval_json_array_length(
@@ -155,9 +194,7 @@ fn selected_json_value(
     value: &serde_json::Value,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    JsonValue::new(value.clone())
-        .map(Value::Json)
-        .map_err(|err| data_exception_value(format!("selected JSON value is invalid: {err}"), span))
+    json_value_from_serde(value.clone(), "selected JSON value", span)
 }
 
 fn selected_json_text(value: &serde_json::Value, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -200,6 +237,69 @@ fn select_json_path<'a>(
         current = next;
     }
     Ok(Some(current))
+}
+
+fn gql_value_to_json(
+    value: Value,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<serde_json::Value, ExecutorError> {
+    Ok(match value {
+        Value::Null => serde_json::Value::Null,
+        Value::Bool(value) => serde_json::Value::Bool(value),
+        Value::Int(value) => serde_json::Value::Number(value.into()),
+        Value::Uint(value) => serde_json::Value::Number(value.into()),
+        Value::Float(value) => serde_json::Value::Number(json_number(value, function, span)?),
+        Value::Float32(value) => {
+            serde_json::Value::Number(json_number(f64::from(value), function, span)?)
+        }
+        Value::String(value) => serde_json::Value::String(value.as_str().to_owned()),
+        Value::Json(value) => value.as_serde().clone(),
+        Value::List(values) => {
+            let mut output = Vec::with_capacity(values.len());
+            for value in values {
+                output.push(gql_value_to_json(value, function, span)?);
+            }
+            serde_json::Value::Array(output)
+        }
+        Value::Int128(_) | Value::Uint128(_) | Value::Decimal(_) => {
+            return data_exception(
+                format!(
+                    "{function} exact numeric value cannot be represented as JSON without precision loss"
+                ),
+                span,
+            );
+        }
+        other => {
+            return data_exception(
+                format!("{function} cannot convert {} to JSON", other.variant_name()),
+                span,
+            );
+        }
+    })
+}
+
+fn json_number(
+    value: f64,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<serde_json::Number, ExecutorError> {
+    serde_json::Number::from_f64(value).ok_or_else(|| {
+        data_exception_value(
+            format!("{function} numeric value cannot be represented as a JSON number"),
+            span,
+        )
+    })
+}
+
+fn json_value_from_serde(
+    value: serde_json::Value,
+    context: &'static str,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    JsonValue::new(value)
+        .map(Value::Json)
+        .map_err(|err| data_exception_value(format!("{context} is invalid: {err}"), span))
 }
 
 fn json_path_exists(

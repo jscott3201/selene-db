@@ -144,9 +144,11 @@ fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
         "cardinality" => Some(FeatureId::GF12),
         "size" => Some(FeatureId::GF13),
         "uuid" | "uuid_v4" | "uuid_v7" => Some(FeatureId::IM_UUID),
-        "json" | "json_parse" | "json_stringify" | "json_type" | "json_array_length"
-        | "json_object_keys" | "json_contains" | "json_get" | "json_get_text" | "json_get_path"
-        | "json_get_path_text" | "json_has_path" => Some(FeatureId::IM_JSON),
+        "json" | "json_parse" | "json_stringify" | "json_type" | "json_array" | "json_object"
+        | "json_array_length" | "json_object_keys" | "json_contains" | "json_get"
+        | "json_get_text" | "json_get_path" | "json_get_path_text" | "json_has_path" => {
+            Some(FeatureId::IM_JSON)
+        }
         _ => None,
     }
 }

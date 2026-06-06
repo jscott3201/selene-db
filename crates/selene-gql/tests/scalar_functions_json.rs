@@ -154,6 +154,41 @@ fn json_type_reports_top_level_shape() {
 }
 
 #[test]
+fn json_array_constructs_canonical_json_values() {
+    let value = json_value(
+        r#"RETURN json_array(7, TRUE, NULL, 'agent', json('{"b":2,"a":1}'), [1, 2, NULL]) AS value"#,
+    );
+
+    assert_eq!(
+        value.to_canonical_string(),
+        r#"[7,true,null,"agent",{"a":1,"b":2},[1,2,null]]"#
+    );
+    assert_eq!(
+        json_value("RETURN json_array() AS value").to_canonical_string(),
+        "[]"
+    );
+}
+
+#[test]
+fn json_object_constructs_canonical_json_values() {
+    let value = json_value(
+        "RETURN json_object(\
+         'kind', 'episodic', \
+         'score', 7, \
+         'meta', json_object('current', TRUE, 'tags', json_array('agent', 'graph'))) AS value",
+    );
+
+    assert_eq!(
+        value.to_canonical_string(),
+        r#"{"kind":"episodic","meta":{"current":true,"tags":["agent","graph"]},"score":7}"#
+    );
+    assert_eq!(
+        json_value("RETURN json_object() AS value").to_canonical_string(),
+        "{}"
+    );
+}
+
+#[test]
 fn json_array_length_counts_array_elements() {
     assert_eq!(
         int_value(r#"RETURN json_array_length(json('[1,{"a":2},null]')) AS value"#),
@@ -378,6 +413,11 @@ fn json_functions_report_data_exceptions_for_bad_inputs() {
         "RETURN json(7) AS value",
         "RETURN json_stringify(7) AS value",
         "RETURN json_type(7) AS value",
+        "RETURN json_object('a') AS value",
+        "RETURN json_object(NULL, 1) AS value",
+        "RETURN json_object(7, 1) AS value",
+        "RETURN json_array(DATE '2026-01-01') AS value",
+        "RETURN json_array(CAST('123.45' AS DECIMAL)) AS value",
         "RETURN json_array_length(7) AS value",
         "RETURN json_array_length(json('{}')) AS value",
         "RETURN json_object_keys(7) AS value",
@@ -394,12 +434,31 @@ fn json_functions_report_data_exceptions_for_bad_inputs() {
 }
 
 #[test]
+fn json_array_rejects_more_than_sixty_four_arguments() {
+    let args = (0..65).map(|_| "NULL").collect::<Vec<_>>().join(", ");
+    let source = format!("RETURN json_array({args}) AS value");
+    let err = execute_read_result(&source).expect_err("over-wide JSON constructor should fail");
+
+    assert!(matches!(
+        err,
+        ExecutorError::FunctionArityMismatch {
+            ref name,
+            expected: "variable",
+            actual: 65,
+            ..
+        } if name == "json_array"
+    ));
+}
+
+#[test]
 fn json_feature_flags_cover_functions_and_type_names() {
     for source in [
         r#"RETURN json('{"a":1}') AS value"#,
         r#"RETURN json_parse('{"a":1}') AS value"#,
         r#"RETURN json_stringify(json('{"a":1}')) AS value"#,
         r#"RETURN json_type(json('{"a":1}')) AS value"#,
+        "RETURN json_array(1, 'two') AS value",
+        "RETURN json_object('a', 1) AS value",
         r#"RETURN json_array_length(json('[1,2]')) AS value"#,
         r#"RETURN json_object_keys(json('{"a":1}')) AS value"#,
         r#"RETURN json_contains(json('{"a":1}'), json('{"a":1}')) AS value"#,
