@@ -1,5 +1,7 @@
 use super::*;
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
 struct ReentrantProvider {
     tag: ProviderTag,
     shared: Mutex<Option<Arc<SharedGraph>>>,
@@ -240,10 +242,7 @@ struct ConditionallyTagPanickingProvider {
 
 impl IndexProvider for ConditionallyTagPanickingProvider {
     fn provider_tag(&self) -> ProviderTag {
-        if self
-            .panic_during_fanout
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
+        if self.panic_during_fanout.load(Ordering::Acquire) {
             panic!("synthetic provider_tag() panic during fanout");
         }
         self.tag
@@ -269,7 +268,7 @@ impl IndexProvider for ConditionallyTagPanickingProvider {
 
 #[test]
 fn provider_tag_panic_short_circuits_on_change_for_that_provider() {
-    let panic_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let panic_flag = Arc::new(AtomicBool::new(false));
     let on_change_called = Arc::new(Mutex::new(false));
     let other_seen = Arc::new(Mutex::new(Vec::new()));
     let shared = SharedGraph::builder(GraphId::new(1))
@@ -286,7 +285,7 @@ fn provider_tag_panic_short_circuits_on_change_for_that_provider() {
         .unwrap();
 
     // Arm the panic only after the build-time uniqueness check has run.
-    panic_flag.store(true, std::sync::atomic::Ordering::Release);
+    panic_flag.store(true, Ordering::Release);
 
     let mut txn = shared.begin_write();
     {
@@ -302,6 +301,173 @@ fn provider_tag_panic_short_circuits_on_change_for_that_provider() {
     );
     // The non-panicking provider after the panicking one still ran.
     assert_eq!(other_seen.lock().len(), 1);
+}
+
+struct WatermarkCandidateProvider {
+    fail_fanout: bool,
+    batch: bool,
+    watermark: AtomicU64,
+    changes_seen: AtomicU64,
+    commit_applied_calls: AtomicU64,
+}
+
+impl WatermarkCandidateProvider {
+    fn new(fail_fanout: bool, batch: bool) -> Self {
+        Self {
+            fail_fanout,
+            batch,
+            watermark: AtomicU64::new(0),
+            changes_seen: AtomicU64::new(0),
+            commit_applied_calls: AtomicU64::new(0),
+        }
+    }
+
+    fn watermark(&self) -> u64 {
+        self.watermark.load(Ordering::Acquire)
+    }
+
+    fn changes_seen(&self) -> u64 {
+        self.changes_seen.load(Ordering::Acquire)
+    }
+
+    fn commit_applied_calls(&self) -> u64 {
+        self.commit_applied_calls.load(Ordering::Acquire)
+    }
+}
+
+impl IndexProvider for WatermarkCandidateProvider {
+    fn provider_tag(&self) -> ProviderTag {
+        ProviderTag(crate::CANDIDATE_STATE_PROVIDER_TAG)
+    }
+
+    fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+        Ok(Vec::new())
+    }
+
+    fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
+        self.changes_seen.fetch_add(1, Ordering::AcqRel);
+        if self.fail_fanout {
+            Err(ProviderError::Inconsistent {
+                reason: "synthetic candidate-state change failure".to_owned(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn handles_change_batches(&self) -> bool {
+        self.batch
+    }
+
+    fn on_changes(&self, changes: &[Change]) -> Result<(), ProviderError> {
+        self.changes_seen
+            .fetch_add(changes.len() as u64, Ordering::AcqRel);
+        if self.fail_fanout {
+            Err(ProviderError::Inconsistent {
+                reason: "synthetic candidate-state batch failure".to_owned(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn on_commit_applied(&self, generation: u64) -> Result<(), ProviderError> {
+        self.commit_applied_calls.fetch_add(1, Ordering::AcqRel);
+        self.watermark.store(generation, Ordering::Release);
+        Ok(())
+    }
+
+    fn vector_candidate_state_infos(
+        &self,
+        generation: u64,
+    ) -> Result<Vec<crate::VectorCandidateStateInfo>, ProviderError> {
+        let watermark = self.watermark();
+        if watermark != generation {
+            return Err(ProviderError::Inconsistent {
+                reason: format!(
+                    "candidate-state generation {watermark} does not match graph generation {generation}"
+                ),
+            });
+        }
+        Ok(vec![crate::VectorCandidateStateInfo {
+            name: db_string("watermark"),
+            generation,
+            candidate_count: 0,
+            required_label: None,
+            require_outgoing: Vec::new(),
+            require_incoming: Vec::new(),
+            exclude_outgoing: Vec::new(),
+            exclude_incoming: Vec::new(),
+        }])
+    }
+
+    fn declared_sub_tags(&self) -> &[SubTag] {
+        &[]
+    }
+}
+
+fn commit_one_node_with_provider(provider: Arc<WatermarkCandidateProvider>) -> SharedGraph {
+    let shared = SharedGraph::builder(GraphId::new(2))
+        .with_provider(provider as Arc<dyn IndexProvider>)
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(LabelSet::new(), PropertyMap::new())
+        .expect("create_node ok");
+    let outcome = txn.commit().expect("provider fanout does not fail commit");
+    assert_eq!(outcome.generation, 1);
+    assert_eq!(shared.read().meta.generation, 1);
+    shared
+}
+
+#[test]
+fn provider_generation_watermark_advances_after_successful_fanout() {
+    let provider = Arc::new(WatermarkCandidateProvider::new(false, false));
+    let shared = commit_one_node_with_provider(Arc::clone(&provider));
+
+    assert_eq!(provider.changes_seen(), 1);
+    assert_eq!(provider.commit_applied_calls(), 1);
+    assert_eq!(provider.watermark(), 1);
+    let infos = shared
+        .vector_candidate_state_infos()
+        .expect("successful provider advertises current generation");
+    assert_eq!(infos.len(), 1);
+    assert_eq!(infos[0].generation, 1);
+}
+
+#[test]
+fn provider_generation_watermark_stays_stale_after_change_error() {
+    let provider = Arc::new(WatermarkCandidateProvider::new(true, false));
+    let shared = commit_one_node_with_provider(Arc::clone(&provider));
+
+    assert_eq!(provider.changes_seen(), 1);
+    assert_eq!(provider.commit_applied_calls(), 0);
+    assert_eq!(provider.watermark(), 0);
+    let err = shared
+        .vector_candidate_state_infos()
+        .expect_err("stale candidate provider must not advertise current state");
+    assert!(matches!(err, ProviderError::Inconsistent { reason }
+            if reason.contains("candidate-state generation 0 does not match graph generation 1")));
+}
+
+#[test]
+fn provider_generation_watermark_stays_stale_after_batch_error() {
+    let provider = Arc::new(WatermarkCandidateProvider::new(true, true));
+    let shared = commit_one_node_with_provider(Arc::clone(&provider));
+
+    assert_eq!(provider.changes_seen(), 1);
+    assert_eq!(provider.commit_applied_calls(), 0);
+    assert_eq!(provider.watermark(), 0);
+    let err = shared
+        .vector_candidate_state_infos()
+        .expect_err("stale batch provider must not advertise current state");
+    assert!(matches!(err, ProviderError::Inconsistent { reason }
+            if reason.contains("candidate-state generation 0 does not match graph generation 1")));
 }
 
 #[test]
