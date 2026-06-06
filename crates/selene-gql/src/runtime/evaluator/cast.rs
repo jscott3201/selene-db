@@ -21,8 +21,8 @@
 //!   ISO does not define a `CAST` for.
 //! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source,
-//!   bytes sources, cross-temporal conversions, or any cast whose target is
-//!   `NULL` / `NOTHING`).
+//!   bytes sources, session-dependent temporal conversions, or any cast whose
+//!   target is `NULL` / `NOTHING`).
 
 use selene_core::{Record, Value};
 use smallvec::SmallVec;
@@ -242,8 +242,23 @@ fn cast_to_temporal(
 ) -> Result<Value, ExecutorError> {
     match (value, target_type) {
         (Value::ZonedDateTime(value), GqlType::ZonedDateTime) => Ok(Value::ZonedDateTime(value)),
+        (Value::ZonedDateTime(value), GqlType::LocalDateTime) => {
+            Ok(Value::LocalDateTime(value.datetime()))
+        }
+        (Value::ZonedDateTime(value), GqlType::Date) => Ok(Value::Date(value.datetime().date())),
+        (Value::ZonedDateTime(value), GqlType::ZonedTime) => {
+            let text = format!("{}{}", value.time(), value.offset());
+            temporal_parse::parse_zoned_time(&text)
+                .map(|value| Value::ZonedTime(Box::new(value)))
+                .map_err(|error| invalid_datetime_format(error, span))
+        }
         (Value::LocalDateTime(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(value)),
+        (Value::LocalDateTime(value), GqlType::Date) => Ok(Value::Date(value.date())),
+        (Value::LocalDateTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value.time())),
         (Value::Date(value), GqlType::Date) => Ok(Value::Date(value)),
+        (Value::Date(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(
+            value.to_datetime(jiff::civil::Time::midnight()),
+        )),
         (Value::ZonedTime(value), GqlType::ZonedTime) => Ok(Value::ZonedTime(value)),
         (Value::LocalTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value)),
         (Value::Duration(value), GqlType::Duration) => Ok(Value::Duration(value)),
