@@ -8,7 +8,10 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::{invalid_character, non_iso_combination, numeric_text::normalize_signed_numeric_text};
+use super::{
+    invalid_character, non_iso_combination,
+    numeric_text::{NumericText, classify_signed_numeric_text},
+};
 
 const I128_MAX_EXCLUSIVE_UPPER_BOUND: f64 = 170_141_183_460_469_231_731_687_303_715_884_105_728.0;
 const I128_MIN_INCLUSIVE_LOWER_BOUND: f64 = -170_141_183_460_469_231_731_687_303_715_884_105_728.0;
@@ -67,13 +70,28 @@ fn decimal_to_int128(
 }
 
 fn string_to_int128(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let normalized = normalize_signed_numeric_text(text, "INT128", span)?;
+    match classify_signed_numeric_text(text, "INT128", span)? {
+        NumericText::Integer(image) => string_integer_text_to_int128(image.as_ref(), text, span),
+        NumericText::Decimal(image) => image
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_| invalid_character(text, "INT128", span))
+            .and_then(|value| decimal_to_int128(value, span)),
+        NumericText::Approximate(image) => image
+            .parse::<f64>()
+            .map_err(|_| invalid_character(text, "INT128", span))
+            .and_then(|value| float_to_int128(value, span)),
+    }
+}
+
+fn string_integer_text_to_int128(
+    normalized: &str,
+    original: &str,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     match normalized.parse::<i128>() {
         Ok(value) => Ok(Value::Int128(value)),
-        Err(_) if integer_literal_overflows_i128(normalized.as_ref()) => {
-            Err(int128_out_of_range(span))
-        }
-        Err(_) => Err(invalid_character(text, "INT128", span)),
+        Err(_) if integer_literal_overflows_i128(normalized) => Err(int128_out_of_range(span)),
+        Err(_) => Err(invalid_character(original, "INT128", span)),
     }
 }
 

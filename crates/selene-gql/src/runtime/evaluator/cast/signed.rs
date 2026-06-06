@@ -8,7 +8,8 @@ use crate::{
 };
 
 use super::{
-    decimal, invalid_character, non_iso_combination, numeric_text::normalize_signed_numeric_text,
+    decimal, invalid_character, non_iso_combination,
+    numeric_text::{NumericText, classify_signed_numeric_text},
 };
 
 #[derive(Clone, Copy)]
@@ -108,13 +109,31 @@ fn float_to_integer(value: f64, span: SourceSpan) -> Result<Value, ExecutorError
 }
 
 fn string_to_integer(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let normalized = normalize_signed_numeric_text(text, "INTEGER", span)?;
+    match classify_signed_numeric_text(text, "INTEGER", span)? {
+        NumericText::Integer(image) => string_integer_text_to_integer(image.as_ref(), text, span),
+        NumericText::Decimal(image) => image
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_| invalid_character(text, "INTEGER", span))
+            .and_then(|value| decimal::decimal_to_int(value, span)),
+        NumericText::Approximate(image) => image
+            .parse::<f64>()
+            .map_err(|_| invalid_character(text, "INTEGER", span))
+            .and_then(|value| float_to_integer(value, span)),
+    }
+}
+
+fn string_integer_text_to_integer(
+    normalized: &str,
+    original: &str,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     match normalized.parse::<i64>() {
         Ok(value) => Ok(Value::Int(value)),
-        Err(_) if signed_integer_literal_overflows_i64(normalized.as_ref()) => Err(
-            signed_out_of_range(span, "STRING value exceeds INTEGER range during CAST"),
-        ),
-        Err(_) => Err(invalid_character(text, "INTEGER", span)),
+        Err(_) if signed_integer_literal_overflows_i64(normalized) => Err(signed_out_of_range(
+            span,
+            "STRING value exceeds INTEGER range during CAST",
+        )),
+        Err(_) => Err(invalid_character(original, "INTEGER", span)),
     }
 }
 

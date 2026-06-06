@@ -33,7 +33,7 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::numeric_text::normalize_signed_numeric_text;
+use super::numeric_text::{NumericText, classify_signed_numeric_text};
 
 /// Out-of-target-range overflow (`22003` numeric value out of range).
 fn out_of_range(message: &'static str, span: SourceSpan) -> ExecutorError {
@@ -78,9 +78,7 @@ pub(super) fn numeric_to_decimal(value: Value, span: SourceSpan) -> Result<Value
         }
         Value::Float(f) => float_to_decimal(f, span)?,
         Value::Float32(f) => float_to_decimal(f64::from(f), span)?,
-        Value::String(s) => normalize_signed_numeric_text(s.as_str(), "DECIMAL", span)?
-            .parse::<Decimal>()
-            .map_err(|_| invalid_decimal_text(s.as_str(), span))?,
+        Value::String(s) => string_to_decimal(s.as_str(), span)?,
         // DECIMAL is signed-exact numeric (Table-4 `EN`), so a BOOLEAN source
         // is a Table-4 `N` cell exactly like BOOL→INTEGER/FLOAT — an invalid
         // type combination (22G03), not an unimplemented feature (42N01).
@@ -114,6 +112,18 @@ fn float_to_decimal(f: f64, span: SourceSpan) -> Result<Decimal, ExecutorError> 
     // magnitude — both are a loss of a leading significant digit → 22003.
     Decimal::from_f64_retain(f)
         .ok_or_else(|| out_of_range("FLOAT value exceeds DECIMAL range during CAST", span))
+}
+
+fn string_to_decimal(text: &str, span: SourceSpan) -> Result<Decimal, ExecutorError> {
+    match classify_signed_numeric_text(text, "DECIMAL", span)? {
+        NumericText::Integer(image) | NumericText::Decimal(image) => image
+            .parse::<Decimal>()
+            .map_err(|_| invalid_decimal_text(text, span)),
+        NumericText::Approximate(image) => image
+            .parse::<f64>()
+            .map_err(|_| invalid_decimal_text(text, span))
+            .and_then(|value| float_to_decimal(value, span)),
+    }
 }
 
 // ---------------------------------------------------------------------------

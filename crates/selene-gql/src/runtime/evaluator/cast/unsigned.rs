@@ -9,7 +9,8 @@ use crate::{
 };
 
 use super::{
-    invalid_character, non_iso_combination, numeric_text::normalize_unsigned_numeric_text,
+    invalid_character, non_iso_combination,
+    numeric_text::{NumericText, classify_unsigned_numeric_text},
 };
 
 #[derive(Clone, Copy)]
@@ -141,13 +142,33 @@ fn string_to_unsigned_integer(
     target: UnsignedIntegerTarget,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let normalized = normalize_unsigned_numeric_text(text, target.name(), span)?;
+    match classify_unsigned_numeric_text(text, target.name(), span)? {
+        NumericText::Integer(image) => {
+            string_integer_text_to_unsigned_integer(image.as_ref(), text, target, span)
+        }
+        NumericText::Decimal(image) => image
+            .parse::<rust_decimal::Decimal>()
+            .map_err(|_| invalid_character(text, target.name(), span))
+            .and_then(|value| decimal_to_unsigned_integer(value, target, span)),
+        NumericText::Approximate(image) => image
+            .parse::<f64>()
+            .map_err(|_| invalid_character(text, target.name(), span))
+            .and_then(|value| float_to_unsigned_integer(value, target, span)),
+    }
+}
+
+fn string_integer_text_to_unsigned_integer(
+    normalized: &str,
+    original: &str,
+    target: UnsignedIntegerTarget,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     match normalized.parse::<u128>() {
         Ok(value) => target.cast_u128(value, span),
-        Err(_) if unsigned_integer_literal_overflows_u128(normalized.as_ref()) => {
+        Err(_) if unsigned_integer_literal_overflows_u128(normalized) => {
             Err(unsigned_out_of_range(target, span))
         }
-        Err(_) => Err(invalid_character(text, target.name(), span)),
+        Err(_) => Err(invalid_character(original, target.name(), span)),
     }
 }
 
