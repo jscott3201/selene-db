@@ -23,8 +23,7 @@
 //!   ISO does not define a `CAST` for.
 //! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source,
-//!   bytes sources, time-only-to-datetime temporal conversions, or any cast
-//!   whose target is `NULL` / `NOTHING`).
+//!   bytes sources, or any cast whose target is `NULL` / `NOTHING`).
 
 use selene_core::{Record, Value};
 use smallvec::SmallVec;
@@ -272,7 +271,23 @@ fn cast_to_temporal(
                 .map(|value| Value::ZonedDateTime(Box::new(value)))
         }
         (Value::ZonedTime(value), GqlType::ZonedTime) => Ok(Value::ZonedTime(value)),
+        (Value::ZonedTime(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(
+            current_session_date(ctx).to_datetime(value.time()),
+        )),
+        (Value::ZonedTime(value), GqlType::ZonedDateTime) => {
+            let datetime = current_session_date(ctx).to_datetime(value.time());
+            zoned_from_datetime_and_zone(datetime, value.offset().to_time_zone(), span)
+                .map(|value| Value::ZonedDateTime(Box::new(value)))
+        }
         (Value::LocalTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value)),
+        (Value::LocalTime(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(
+            current_session_date(ctx).to_datetime(value),
+        )),
+        (Value::LocalTime(value), GqlType::ZonedDateTime) => {
+            let datetime = current_session_date(ctx).to_datetime(value);
+            zoned_from_local_datetime(datetime, ctx, span)
+                .map(|value| Value::ZonedDateTime(Box::new(value)))
+        }
         (Value::LocalTime(value), GqlType::ZonedTime) => {
             zoned_from_local_time(value, ctx, span).map(|value| Value::ZonedTime(Box::new(value)))
         }
@@ -464,8 +479,16 @@ fn zoned_from_local_datetime(
     ctx: &EvalCtx<'_, '_, '_, '_>,
     span: SourceSpan,
 ) -> Result<jiff::Zoned, ExecutorError> {
+    zoned_from_datetime_and_zone(value, ctx.tx.session_time_zone().clone(), span)
+}
+
+fn zoned_from_datetime_and_zone(
+    value: jiff::civil::DateTime,
+    zone: jiff::tz::TimeZone,
+    span: SourceSpan,
+) -> Result<jiff::Zoned, ExecutorError> {
     value
-        .to_zoned(ctx.tx.session_time_zone().clone())
+        .to_zoned(zone)
         .map_err(|error| invalid_datetime_format(format!("invalid ZONED DATETIME: {error}"), span))
 }
 
@@ -476,6 +499,12 @@ fn zoned_from_local_time(
 ) -> Result<jiff::Zoned, ExecutorError> {
     let anchor = jiff::civil::Date::constant(1970, 1, 1).to_datetime(value);
     zoned_from_local_datetime(anchor, ctx, span)
+}
+
+fn current_session_date(ctx: &EvalCtx<'_, '_, '_, '_>) -> jiff::civil::Date {
+    jiff::Timestamp::now()
+        .to_zoned(ctx.tx.session_time_zone().clone())
+        .date()
 }
 
 fn format_float(f: f64) -> String {
