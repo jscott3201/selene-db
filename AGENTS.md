@@ -214,8 +214,8 @@ JSON is native engine data for agentic workloads:
   STRING)`, and scalar functions `json`, `json_parse`, `json_stringify`,
   `json_type`, `json_array`, `json_object`, `json_array_length`,
   `json_object_keys`, `json_contains`, `json_merge_patch`, `json_patch`,
-  `json_get`, `json_get_text`, `json_get_path`, `json_get_path_text`, and
-  `json_has_path`.
+  `json_get`, `json_get_text`, `json_get_scalar`, `json_get_path`,
+  `json_get_path_text`, `json_get_path_scalar`, and `json_has_path`.
 - `json_array` and `json_object` construct JSON through the scalar-function
   surface. They convert SQL null/bool/string/i64/u64/finite-float/list/JSON
   values to JSON; wider exact numerics, temporal values, bytes, graph
@@ -226,6 +226,9 @@ JSON is native engine data for agentic workloads:
 - `json_get_path` / `json_get_path_text` are bounded variadic path selectors over
   object keys and array indexes with a 64-selector cap; they are also not
   JSONPath.
+- `json_get_scalar` / `json_get_path_scalar` extract selected JSON null,
+  boolean, number, and string leaves as native GQL scalar values. They reject
+  selected arrays/objects instead of canonical-stringifying containers.
 - `json_has_path` is the companion bounded existence predicate. It returns true
   for selected JSON null values and false for absent paths.
 - `json_contains` is recursive subset containment over JSON values: object

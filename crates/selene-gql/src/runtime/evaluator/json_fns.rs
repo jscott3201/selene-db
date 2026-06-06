@@ -200,6 +200,16 @@ pub(super) fn eval_json_get_text(
     selected_json_text(value, span)
 }
 
+pub(super) fn eval_json_get_scalar(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Some(value) = select_json_path(&args, "json_get_scalar", span)? else {
+        return Ok(Value::Null);
+    };
+    selected_json_scalar(value, "json_get_scalar", span)
+}
+
 pub(super) fn eval_json_get_path(
     args: Vec<Value>,
     span: SourceSpan,
@@ -218,6 +228,16 @@ pub(super) fn eval_json_get_path_text(
         return Ok(Value::Null);
     };
     selected_json_text(value, span)
+}
+
+pub(super) fn eval_json_get_path_scalar(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Some(value) = select_json_path(&args, "json_get_path_scalar", span)? else {
+        return Ok(Value::Null);
+    };
+    selected_json_scalar(value, "json_get_path_scalar", span)
 }
 
 pub(super) fn eval_json_has_path(
@@ -248,6 +268,45 @@ fn selected_json_text(value: &serde_json::Value, span: SourceSpan) -> Result<Val
             string_value(&json.to_canonical_string(), span)
         }
     }
+}
+
+fn selected_json_scalar(
+    value: &serde_json::Value,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match value {
+        serde_json::Value::Null => Ok(Value::Null),
+        serde_json::Value::Bool(value) => Ok(Value::Bool(*value)),
+        serde_json::Value::Number(value) => json_scalar_number(value, function, span),
+        serde_json::Value::String(value) => string_value(value, span),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => data_exception(
+            format!("{function} selected value is not a JSON scalar"),
+            span,
+        ),
+    }
+}
+
+fn json_scalar_number(
+    value: &serde_json::Number,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    if let Some(value) = value.as_i64() {
+        return Ok(Value::Int(value));
+    }
+    if let Some(value) = value.as_u64() {
+        return Ok(Value::Uint(value));
+    }
+    if let Some(value) = value.as_f64()
+        && value.is_finite()
+    {
+        return Ok(Value::Float(value));
+    }
+    data_exception(
+        format!("{function} selected JSON number is outside supported scalar ranges"),
+        span,
+    )
 }
 
 fn select_json_path<'a>(

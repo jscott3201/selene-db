@@ -274,6 +274,48 @@ fn json_get_selects_objects_and_arrays() {
 }
 
 #[test]
+fn json_get_scalar_returns_native_leaf_values() {
+    for (source, expected) in [
+        (
+            r#"RETURN json_get_scalar(json('{"ok":true}'), 'ok') AS value"#,
+            Value::Bool(true),
+        ),
+        (
+            r#"RETURN json_get_scalar(json('{"score":7}'), 'score') AS value"#,
+            Value::Int(7),
+        ),
+        (
+            r#"RETURN json_get_scalar(json('{"id":18446744073709551615}'), 'id') AS value"#,
+            Value::Uint(u64::MAX),
+        ),
+        (
+            r#"RETURN json_get_scalar(json('{"name":"alpha"}'), 'name') AS value"#,
+            Value::String(db_string("alpha")),
+        ),
+        (
+            r#"RETURN json_get_scalar(json('{"a":null}'), 'a') AS value"#,
+            Value::Null,
+        ),
+    ] {
+        assert_eq!(single_value(source, "value"), expected, "{source}");
+    }
+    match single_value(
+        r#"RETURN json_get_path_scalar(json('{"memory":{"score":1.5,"current":true}}'), 'memory', 'score') AS value"#,
+        "value",
+    ) {
+        Value::Float(value) => assert_eq!(value, 1.5),
+        other => panic!("expected FLOAT value, got {other:?}"),
+    }
+    assert_eq!(
+        single_value(
+            r#"RETURN json_get_path_scalar(json('{"memory":{"current":true}}'), 'memory', 'current') AS value"#,
+            "value",
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn json_get_path_selects_nested_objects_and_arrays() {
     let value = json_value(
         r#"RETURN json_get_path(json('{"memory":{"events":[{"score":7},{"score":9}]}}'), 'memory', 'events', 1, 'score') AS value"#,
@@ -381,6 +423,8 @@ fn json_get_returns_sql_null_for_absent_or_inapplicable_paths() {
         r#"RETURN json_get(json('[1,2]'), 99) AS value"#,
         r#"RETURN json_get(json('"not-container"'), 'a') AS value"#,
         r#"RETURN json_get_text(json('{"a":null}'), 'a') AS value"#,
+        r#"RETURN json_get_scalar(json('{"a":1}'), 'missing') AS value"#,
+        r#"RETURN json_get_path_scalar(json('{"a":{"b":null}}'), 'a', 'b') AS value"#,
     ] {
         assert_eq!(single_value(source, "value"), Value::Null, "{source}");
     }
@@ -430,6 +474,8 @@ fn json_functions_report_data_exceptions_for_bad_inputs() {
         "RETURN json_patch(json('{}'), 7) AS value",
         r#"RETURN json_get(json('{"a":1}'), 7) AS value"#,
         r#"RETURN json_get(json('[1,2]'), 'bad') AS value"#,
+        r#"RETURN json_get_scalar(json('{"a":{}}'), 'a') AS value"#,
+        r#"RETURN json_get_path_scalar(json('{"a":[1]}'), 'a') AS value"#,
         "RETURN CAST(7 AS JSON) AS value",
         "RETURN CAST(json('{}') AS INTEGER) AS value",
     ] {
@@ -470,8 +516,10 @@ fn json_feature_flags_cover_functions_and_type_names() {
         r#"RETURN json_patch(json('{"a":1}'), json('[{"op":"add","path":"/b","value":2}]')) AS value"#,
         r#"RETURN json_get(json('{"a":1}'), 'a') AS value"#,
         r#"RETURN json_get_text(json('{"a":1}'), 'a') AS value"#,
+        r#"RETURN json_get_scalar(json('{"a":1}'), 'a') AS value"#,
         r#"RETURN json_get_path(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
         r#"RETURN json_get_path_text(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
+        r#"RETURN json_get_path_scalar(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
         r#"RETURN json_has_path(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
         "RETURN NULL IS TYPED JSON AS value",
         "CREATE NODE TYPE :Thing (payload :: JSON)",
