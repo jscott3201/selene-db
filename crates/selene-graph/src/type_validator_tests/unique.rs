@@ -22,6 +22,118 @@ fn unique_node_graph_type() -> GraphTypeDef {
     }
 }
 
+fn unique_node_with_score_graph_type() -> GraphTypeDef {
+    let mut graph_type = unique_node_graph_type();
+    graph_type.node_types[0].properties.push(PropertyTypeDef {
+        name: db_string("score"),
+        value_type: PropertyValueType::Int,
+        list_element_type: None,
+        required: false,
+        default: None,
+        immutable: false,
+        unique: false,
+        record_field_types: None,
+    });
+    graph_type
+}
+
+fn device_with_serial_and_score(graph_id: u64) -> (SharedGraph, selene_core::NodeId) {
+    let shared = SharedGraph::builder(GraphId::new(graph_id))
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    let id = txn
+        .mutator()
+        .create_node(
+            LabelSet::single(db_string("Device")),
+            PropertyMap::from_pairs([
+                (db_string("serial"), Value::String(db_string("A"))),
+                (db_string("score"), Value::Int(1)),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+    (shared, id)
+}
+
+#[test]
+fn unique_property_check_required_skips_unrelated_node_update() {
+    let graph_type = unique_node_with_score_graph_type();
+    let (shared, id) = device_with_serial_and_score(1201);
+    let changes = [selene_core::Change::NodeUpdated {
+        id,
+        labels_diff: selene_core::LabelDiff::new([], []).unwrap(),
+        properties_diff: selene_core::PropertyDiff::new([(db_string("score"), Value::Int(2))], [])
+            .unwrap(),
+    }];
+
+    assert!(
+        !unique_property_check_required(&changes, shared.read().as_ref(), &graph_type).unwrap()
+    );
+}
+
+#[test]
+fn unique_property_check_required_flags_unique_node_set() {
+    let graph_type = unique_node_with_score_graph_type();
+    let (shared, id) = device_with_serial_and_score(1202);
+    let changes = [selene_core::Change::NodeUpdated {
+        id,
+        labels_diff: selene_core::LabelDiff::new([], []).unwrap(),
+        properties_diff: selene_core::PropertyDiff::new(
+            [(db_string("serial"), Value::String(db_string("B")))],
+            [],
+        )
+        .unwrap(),
+    }];
+
+    assert!(unique_property_check_required(&changes, shared.read().as_ref(), &graph_type).unwrap());
+}
+
+#[test]
+fn unique_property_check_required_flags_label_change_into_unique_type() {
+    let graph_type = unique_node_graph_type();
+    let shared = SharedGraph::builder(GraphId::new(1203)).build().unwrap();
+    let mut txn = shared.begin_write();
+    let id = txn
+        .mutator()
+        .create_node(
+            LabelSet::single(db_string("Device")),
+            prop("serial", Value::String(db_string("A"))),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+    let changes = [selene_core::Change::NodeUpdated {
+        id,
+        labels_diff: selene_core::LabelDiff::new([db_string("Device")], [db_string("Other")])
+            .unwrap(),
+        properties_diff: selene_core::PropertyDiff::new([], []).unwrap(),
+    }];
+
+    assert!(unique_property_check_required(&changes, shared.read().as_ref(), &graph_type).unwrap());
+}
+
+#[test]
+fn unique_property_check_required_flags_label_removal_into_unique_type() {
+    let graph_type = unique_node_graph_type();
+    let shared = SharedGraph::builder(GraphId::new(1204)).build().unwrap();
+    let mut txn = shared.begin_write();
+    let id = txn
+        .mutator()
+        .create_node(
+            LabelSet::single(db_string("Device")),
+            prop("serial", Value::String(db_string("A"))),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+    let changes = [selene_core::Change::NodeLabelRemoved {
+        id,
+        label: db_string("Other"),
+    }];
+
+    assert!(unique_property_check_required(&changes, shared.read().as_ref(), &graph_type).unwrap());
+}
+
 #[test]
 fn validate_entity_state_rejects_duplicate_unique_node_property() {
     let shared = SharedGraph::builder(GraphId::new(12)).build().unwrap();

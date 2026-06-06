@@ -315,7 +315,11 @@ impl<'g> WriteTxn<'g> {
                         .into_iter()
                         .map(|warning| CommitWarning { warning }),
                 );
-            } else if crate::type_validator::graph_type_has_unique_properties(type_def) {
+            } else if crate::type_validator::unique_property_check_required(
+                &self.changes,
+                self.read(),
+                type_def,
+            )? {
                 crate::type_validator::validate_unique_property_state(self.read(), type_def)?;
             }
         }
