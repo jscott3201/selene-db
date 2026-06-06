@@ -23,15 +23,15 @@
 //!   ISO does not define a `CAST` for.
 //! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source,
-//!   bytes sources, session-dependent temporal conversions, or any cast whose
-//!   target is `NULL` / `NOTHING`).
+//!   bytes sources, time-only-to-datetime temporal conversions, or any cast
+//!   whose target is `NULL` / `NOTHING`).
 
 use selene_core::{Record, Value};
 use smallvec::SmallVec;
 
 use crate::{
     GqlType, RecordType, SourceSpan,
-    runtime::{DataExceptionSubclass, ExecutorError},
+    runtime::{DataExceptionSubclass, EvalCtx, ExecutorError},
     temporal_parse,
 };
 
@@ -61,6 +61,7 @@ pub(super) fn eval_cast(
     value: Value,
     target_type: &GqlType,
     span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     // §22 universal: NULL casts to NULL regardless of target.
     if matches!(value, Value::Null) {
@@ -88,7 +89,7 @@ pub(super) fn eval_cast(
     // Table 4 the only valid source for a record target is a record (R -> R), so a record
     // source reaching a record target must not be spuriously rejected below.
     if let GqlType::Record(record_type) = target_type {
-        return cast_to_record(value, record_type, span);
+        return cast_to_record(value, record_type, span, ctx);
     }
 
     // Source-level rejections (graph-element / path / record).
@@ -150,8 +151,8 @@ pub(super) fn eval_cast(
         | GqlType::Date
         | GqlType::ZonedTime
         | GqlType::LocalTime
-        | GqlType::Duration => cast_to_temporal(value, target_type, span),
-        GqlType::List(element_type) => cast_to_list(value, element_type, span),
+        | GqlType::Duration => cast_to_temporal(value, target_type, span, ctx),
+        GqlType::List(element_type) => cast_to_list(value, element_type, span, ctx),
         other => Err(ExecutorError::FeatureNotSupportedYet {
             feature: cast_to_type_feature(other),
             span,
@@ -241,6 +242,7 @@ fn cast_to_temporal(
     value: Value,
     target_type: &GqlType,
     span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     match (value, target_type) {
         (Value::ZonedDateTime(value), GqlType::ZonedDateTime) => Ok(Value::ZonedDateTime(value)),
@@ -257,12 +259,23 @@ fn cast_to_temporal(
         (Value::LocalDateTime(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(value)),
         (Value::LocalDateTime(value), GqlType::Date) => Ok(Value::Date(value.date())),
         (Value::LocalDateTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value.time())),
+        (Value::LocalDateTime(value), GqlType::ZonedDateTime) => {
+            zoned_from_local_datetime(value, ctx, span)
+                .map(|value| Value::ZonedDateTime(Box::new(value)))
+        }
         (Value::Date(value), GqlType::Date) => Ok(Value::Date(value)),
         (Value::Date(value), GqlType::LocalDateTime) => Ok(Value::LocalDateTime(
             value.to_datetime(jiff::civil::Time::midnight()),
         )),
+        (Value::Date(value), GqlType::ZonedDateTime) => {
+            zoned_from_local_datetime(value.to_datetime(jiff::civil::Time::midnight()), ctx, span)
+                .map(|value| Value::ZonedDateTime(Box::new(value)))
+        }
         (Value::ZonedTime(value), GqlType::ZonedTime) => Ok(Value::ZonedTime(value)),
         (Value::LocalTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value)),
+        (Value::LocalTime(value), GqlType::ZonedTime) => {
+            zoned_from_local_time(value, ctx, span).map(|value| Value::ZonedTime(Box::new(value)))
+        }
         (Value::Duration(value), GqlType::Duration) => Ok(Value::Duration(value)),
         (Value::String(value), GqlType::ZonedDateTime) => {
             temporal_parse::parse_zoned_datetime(value.as_str().trim())
@@ -303,6 +316,7 @@ fn cast_to_list(
     value: Value,
     element_type: &GqlType,
     span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let Value::List(items) = value else {
         return Err(ExecutorError::FeatureNotSupportedYet {
@@ -316,7 +330,7 @@ fn cast_to_list(
         // ISO §22.7. Stack-grown via `stacker::maybe_grow` to bound the
         // worst-case nested-LIST depth.
         out.push(stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
-            eval_cast(item, element_type, span)
+            eval_cast(item, element_type, span, ctx)
         })?);
     }
     Ok(Value::List(out))
@@ -340,6 +354,7 @@ fn cast_to_record(
     value: Value,
     target: &RecordType,
     span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     match target {
         RecordType::Open => match value {
@@ -362,7 +377,7 @@ fn cast_to_record(
                         };
                         let source_value = source_value.clone();
                         let casted = stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
-                            eval_cast(source_value, ty, span)
+                            eval_cast(source_value, ty, span, ctx)
                         })?;
                         out.push((name.clone(), casted));
                     }
@@ -444,6 +459,25 @@ fn invalid_duration_format(message: String, span: SourceSpan) -> ExecutorError {
     ExecutorError::data_exception(DataExceptionSubclass::InvalidDurationFormat, message, span)
 }
 
+fn zoned_from_local_datetime(
+    value: jiff::civil::DateTime,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+    span: SourceSpan,
+) -> Result<jiff::Zoned, ExecutorError> {
+    value
+        .to_zoned(ctx.tx.session_time_zone().clone())
+        .map_err(|error| invalid_datetime_format(format!("invalid ZONED DATETIME: {error}"), span))
+}
+
+fn zoned_from_local_time(
+    value: jiff::civil::Time,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+    span: SourceSpan,
+) -> Result<jiff::Zoned, ExecutorError> {
+    let anchor = jiff::civil::Date::constant(1970, 1, 1).to_datetime(value);
+    zoned_from_local_datetime(anchor, ctx, span)
+}
+
 fn format_float(f: f64) -> String {
     if f.is_nan() {
         "NaN".to_owned()
@@ -481,17 +515,43 @@ mod tests {
     //! `crates/selene-gql/tests/cast.rs` covers every grammar-reachable
     //! path; these tests close the remaining BF-class gaps (NaN, overflow,
     //! ±Infinity) where the grammar has no literal for the input value.
+    use std::sync::Arc;
+
     use super::*;
-    use crate::SourceSpan;
-    use crate::runtime::ExecutorError;
+    use selene_core::GraphId;
+    use selene_graph::SeleneGraph;
+
+    use crate::{
+        EmptyProcedureRegistry, ImplDefinedCaps, SourceSpan, SubqueryRegistry,
+        analyze::ExprIdLookup,
+        runtime::{ExecutorError, TxContext},
+    };
 
     fn span() -> SourceSpan {
         SourceSpan::default()
     }
 
+    fn eval_cast_for_test(
+        value: Value,
+        target: &GqlType,
+        span: SourceSpan,
+    ) -> Result<Value, ExecutorError> {
+        let caps = ImplDefinedCaps::default();
+        let graph = Arc::new(SeleneGraph::new(GraphId::new(9_411)));
+        let tx = TxContext::read_only(graph, &caps, &EmptyProcedureRegistry, &[]);
+        let expr_ids = ExprIdLookup::default();
+        let subqueries = SubqueryRegistry::default();
+        let ctx = EvalCtx {
+            tx: &tx,
+            expr_ids: &expr_ids,
+            subqueries: &subqueries,
+        };
+        super::eval_cast(value, target, span, &ctx)
+    }
+
     #[test]
     fn float_nan_to_integer_returns_22018() {
-        let err = eval_cast(Value::Float(f64::NAN), &GqlType::Integer, span())
+        let err = eval_cast_for_test(Value::Float(f64::NAN), &GqlType::Integer, span())
             .expect_err("NaN cast is rejected");
         let ExecutorError::DataException { subclass, .. } = err else {
             panic!("expected DataException, got {err:?}");
@@ -504,7 +564,7 @@ mod tests {
 
     #[test]
     fn float_overflow_to_integer_returns_22003() {
-        let err = eval_cast(Value::Float(1e30_f64), &GqlType::Integer, span())
+        let err = eval_cast_for_test(Value::Float(1e30_f64), &GqlType::Integer, span())
             .expect_err("overflow cast is rejected");
         let ExecutorError::DataException { subclass, .. } = err else {
             panic!("expected DataException, got {err:?}");
@@ -514,7 +574,7 @@ mod tests {
 
     #[test]
     fn float_negative_overflow_to_integer_returns_22003() {
-        let err = eval_cast(Value::Float(-1e30_f64), &GqlType::Integer, span())
+        let err = eval_cast_for_test(Value::Float(-1e30_f64), &GqlType::Integer, span())
             .expect_err("negative overflow cast is rejected");
         let ExecutorError::DataException { subclass, .. } = err else {
             panic!("expected DataException, got {err:?}");
@@ -524,7 +584,7 @@ mod tests {
 
     #[test]
     fn float_positive_infinity_to_integer_returns_22003() {
-        let err = eval_cast(Value::Float(f64::INFINITY), &GqlType::Integer, span())
+        let err = eval_cast_for_test(Value::Float(f64::INFINITY), &GqlType::Integer, span())
             .expect_err("+inf cast is rejected");
         let ExecutorError::DataException { subclass, .. } = err else {
             panic!("expected DataException, got {err:?}");
@@ -534,7 +594,7 @@ mod tests {
 
     #[test]
     fn float_negative_infinity_to_integer_returns_22003() {
-        let err = eval_cast(Value::Float(f64::NEG_INFINITY), &GqlType::Integer, span())
+        let err = eval_cast_for_test(Value::Float(f64::NEG_INFINITY), &GqlType::Integer, span())
             .expect_err("-inf cast is rejected");
         let ExecutorError::DataException { subclass, .. } = err else {
             panic!("expected DataException, got {err:?}");
@@ -555,7 +615,8 @@ mod tests {
         }));
         let field = selene_core::intern("a").expect("intern field");
         let target = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
-        let err = eval_cast(value, &target, span()).expect_err("RecordTyped source rejected");
+        let err =
+            eval_cast_for_test(value, &target, span()).expect_err("RecordTyped source rejected");
         assert!(
             matches!(err, ExecutorError::FeatureNotSupportedYet { .. }),
             "expected FeatureNotSupportedYet, got {err:?}"
@@ -575,11 +636,11 @@ mod tests {
     use rust_decimal::prelude::FromPrimitive;
 
     fn cast(value: Value, target: &GqlType) -> Value {
-        eval_cast(value, target, span()).expect("cast succeeds")
+        eval_cast_for_test(value, target, span()).expect("cast succeeds")
     }
 
     fn cast_status(value: Value, target: &GqlType) -> String {
-        eval_cast(value, target, span())
+        eval_cast_for_test(value, target, span())
             .expect_err("cast rejected")
             .gqlstatus()
             .as_str()
