@@ -8,7 +8,7 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::{invalid_character, non_iso_combination};
+use super::{invalid_character, non_iso_combination, numeric_text::normalize_signed_numeric_text};
 
 #[derive(Clone, Copy)]
 pub(super) enum FloatTarget {
@@ -91,9 +91,10 @@ fn string_to_float(
     target: FloatTarget,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    // Trim whitespace per ecosystem precedent (Postgres/Neo4j/SQLite); see
-    // BRIEF-135a §O Q2-deviation.
-    text.trim()
+    let normalized = normalize_signed_numeric_text(text, target.name(), span)?;
+    normalized
+        .strip_suffix(['f', 'd', 'F', 'D'])
+        .unwrap_or(normalized.as_ref())
         .parse::<f64>()
         .map_err(|_| invalid_character(text, target.name(), span))
         .and_then(|value| target.value(value, span))

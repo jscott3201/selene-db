@@ -34,6 +34,7 @@ use super::uuid_fns::parse_uuid_string;
 
 mod decimal;
 mod float;
+mod numeric_text;
 mod signed;
 mod signed128;
 mod unsigned;

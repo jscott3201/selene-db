@@ -8,7 +8,9 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::{invalid_character, non_iso_combination};
+use super::{
+    invalid_character, non_iso_combination, numeric_text::normalize_unsigned_numeric_text,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum UnsignedIntegerTarget {
@@ -139,10 +141,10 @@ fn string_to_unsigned_integer(
     target: UnsignedIntegerTarget,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let trimmed = text.trim();
-    match trimmed.parse::<u128>() {
+    let normalized = normalize_unsigned_numeric_text(text, target.name(), span)?;
+    match normalized.parse::<u128>() {
         Ok(value) => target.cast_u128(value, span),
-        Err(_) if unsigned_integer_literal_overflows_u128(trimmed) => {
+        Err(_) if unsigned_integer_literal_overflows_u128(normalized.as_ref()) => {
             Err(unsigned_out_of_range(target, span))
         }
         Err(_) => Err(invalid_character(text, target.name(), span)),
@@ -150,12 +152,11 @@ fn string_to_unsigned_integer(
 }
 
 fn unsigned_integer_literal_overflows_u128(text: &str) -> bool {
-    let digits = text.strip_prefix('+').unwrap_or(text);
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
         return false;
     }
     let mut value = 0_u128;
-    for byte in digits.bytes() {
+    for byte in text.bytes() {
         let digit = u128::from(byte - b'0');
         if value > (u128::MAX - digit) / 10 {
             return true;

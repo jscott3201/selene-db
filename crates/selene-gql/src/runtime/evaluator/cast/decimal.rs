@@ -33,6 +33,8 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
+use super::numeric_text::normalize_signed_numeric_text;
+
 /// Out-of-target-range overflow (`22003` numeric value out of range).
 fn out_of_range(message: &'static str, span: SourceSpan) -> ExecutorError {
     ExecutorError::data_exception(DataExceptionSubclass::NumericValueOutOfRange, message, span)
@@ -76,9 +78,7 @@ pub(super) fn numeric_to_decimal(value: Value, span: SourceSpan) -> Result<Value
         }
         Value::Float(f) => float_to_decimal(f, span)?,
         Value::Float32(f) => float_to_decimal(f64::from(f), span)?,
-        Value::String(s) => s
-            .as_str()
-            .trim()
+        Value::String(s) => normalize_signed_numeric_text(s.as_str(), "DECIMAL", span)?
             .parse::<Decimal>()
             .map_err(|_| invalid_decimal_text(s.as_str(), span))?,
         // DECIMAL is signed-exact numeric (Table-4 `EN`), so a BOOLEAN source
