@@ -42,6 +42,7 @@ mod signed;
 mod signed128;
 mod temporal;
 mod unsigned;
+mod vector;
 
 use float::{FloatTarget, cast_to_float};
 use record::cast_to_record;
@@ -49,6 +50,7 @@ use signed::{SignedIntegerTarget, cast_to_signed_integer};
 use signed128::cast_to_int128;
 use temporal::cast_to_temporal;
 use unsigned::{UnsignedIntegerTarget, cast_to_unsigned_integer};
+use vector::cast_to_vector;
 
 /// Evaluate an explicit CAST.
 ///
@@ -164,6 +166,7 @@ pub(super) fn eval_cast(
         GqlType::Bytes => cast_to_bytes(value, span),
         GqlType::Uuid => cast_to_uuid(value, span),
         GqlType::Json => cast_to_json(value, span),
+        GqlType::Vector => cast_to_vector(value, span),
         GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date

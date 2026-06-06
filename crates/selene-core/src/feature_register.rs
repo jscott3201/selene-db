@@ -103,6 +103,7 @@ feature_ids! {
     GF13 = "GF13" => "SIZE function";
     IM_UUID = "IM_UUID" => "selene-db UUID extension";
     IM_JSON = "IM_JSON" => "selene-db JSON extension";
+    IM_VECTOR = "IM_VECTOR" => "selene-db VECTOR extension";
     IM_EXTENDS = "IM_EXTENDS" => "selene-db EXTENDS type composition extension";
     IM_INDEX_DDL = "IM_INDEX_DDL" => "selene-db named index DDL extension";
     IM_TYPED_PARAMS = "IM_TYPED_PARAMS" => "selene-db inline typed parameter declaration extension";
@@ -255,6 +256,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GF13,
     FeatureId::IM_UUID,
     FeatureId::IM_JSON,
+    FeatureId::IM_VECTOR,
     FeatureId::IM_EXTENDS,
     FeatureId::IM_INDEX_DDL,
     FeatureId::IM_TYPED_PARAMS,

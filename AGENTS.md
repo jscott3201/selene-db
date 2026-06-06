@@ -102,6 +102,10 @@ Vectors are first-class engine data:
 
 - `Value::Vector(VectorValue)` is the native value variant.
 - `VectorValue` stores finite, non-empty `f32` components behind shared storage.
+- GQL admits `VECTOR` as an implementation-defined type name.
+- `CAST(<LIST<numeric>> AS VECTOR)` is the native GQL producer for finite `f32`
+  vector values; keep vector-literal grammar out unless a later spec/design
+  decision explicitly earns it.
 - `MAX_VECTOR_DIMENSION` is `u16::MAX`.
 - Supported metrics are lower-is-better `squared_euclidean`, `cosine`, and
   `negative_inner_product`.

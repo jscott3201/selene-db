@@ -212,6 +212,7 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
     match ty {
         GqlType::Uuid => record_feature(uses, FeatureId::IM_UUID, span),
         GqlType::Json => record_feature(uses, FeatureId::IM_JSON, span),
+        GqlType::Vector => record_feature(uses, FeatureId::IM_VECTOR, span),
         GqlType::String | GqlType::Boolean | GqlType::Integer | GqlType::Float => {}
         GqlType::Uint8 => {
             record_feature(uses, FeatureId::GV01, span);
@@ -297,11 +298,7 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
         GqlType::Path => record_feature(uses, FeatureId::GV55, span),
         GqlType::GraphRef => record_feature(uses, FeatureId::GV60, span),
         GqlType::TableRef => record_feature(uses, FeatureId::GV61, span),
-        GqlType::NodeRef
-        | GqlType::EdgeRef
-        | GqlType::Null
-        | GqlType::Nothing
-        | GqlType::Vector => {}
+        GqlType::NodeRef | GqlType::EdgeRef | GqlType::Null | GqlType::Nothing => {}
     }
 }
 

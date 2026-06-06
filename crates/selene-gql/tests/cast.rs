@@ -125,13 +125,12 @@ fn parser_rejects_cast_with_invalid_grammar() {
 }
 
 #[test]
-fn cast_to_vector_type_is_syntax_error() {
-    // `VECTOR` was removed-subsystem residue (post-#196 no-extensions pivot): it
-    // is no longer a `type_name` alternative, so `CAST(x AS VECTOR)` fails to
-    // match the grammar and reports a clean 42001 syntax error rather than a
-    // deep not-implemented rejection.
-    let err = parse("RETURN CAST(1 AS VECTOR) AS v").expect_err("CAST to VECTOR is rejected");
-    assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
+fn parser_accepts_cast_to_vector_target_type() {
+    let analyzed = analyze_or_panic("RETURN CAST([1.0] AS VECTOR) AS v");
+    let ValueExpr::Cast { target_type, .. } = first_return_item_expr(&analyzed) else {
+        panic!("expected CAST node");
+    };
+    assert_eq!(target_type.as_ref(), &GqlType::Vector);
 }
 
 #[test]
