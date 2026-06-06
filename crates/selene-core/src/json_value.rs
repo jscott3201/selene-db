@@ -118,6 +118,17 @@ impl JsonValue {
         })
     }
 
+    /// Return true when `path` selects a JSON value that contains `candidate`.
+    ///
+    /// Stored-value shape mismatches return false, matching
+    /// [`Self::path_exists`]. Containment follows [`Self::contains`] semantics
+    /// on the selected subvalue.
+    #[must_use]
+    pub fn path_contains(&self, path: &[JsonPathSelector], candidate: &Self) -> bool {
+        select_json_path(self.as_serde(), path)
+            .is_some_and(|value| json_contains_value(value, candidate.as_serde()))
+    }
+
     /// Return the result of applying an RFC 7396 JSON Merge Patch document.
     ///
     /// The operation is copy-on-write: this value and `patch` are left
@@ -447,6 +458,37 @@ mod tests {
                 ])
                 .is_none()
         );
+    }
+
+    #[test]
+    fn path_contains_applies_containment_to_selected_subvalue() {
+        let target = JsonValue::new(serde_json::json!({
+            "memory": {
+                "facts": [
+                    {"title": "old", "tags": ["archive"]},
+                    {"title": "current", "tags": ["agent", {"scope": "fresh"}]}
+                ]
+            }
+        }))
+        .unwrap();
+        let path = [
+            JsonPathSelector::Key(db_string("memory").unwrap()),
+            JsonPathSelector::Key(db_string("facts").unwrap()),
+            JsonPathSelector::Index(-1),
+        ];
+
+        assert!(target.path_contains(
+            &path,
+            &JsonValue::new(serde_json::json!({"tags": [{"scope": "fresh"}]})).unwrap()
+        ));
+        assert!(!target.path_contains(
+            &path,
+            &JsonValue::new(serde_json::json!({"tags": "archive"})).unwrap()
+        ));
+        assert!(!target.path_contains(
+            &[JsonPathSelector::Key(db_string("missing").unwrap())],
+            &JsonValue::new(serde_json::json!(null)).unwrap()
+        ));
     }
 
     #[test]

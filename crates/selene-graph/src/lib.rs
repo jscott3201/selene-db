@@ -76,7 +76,8 @@ pub use index_provider::{
     IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
 };
 pub use json_search::{
-    JSON_PATH_SELECTOR_LIMIT, JsonContainmentHit, JsonPathHit, JsonPathValueHit, JsonSearchError,
+    JSON_PATH_SELECTOR_LIMIT, JsonContainmentHit, JsonPathContainmentHit, JsonPathHit,
+    JsonPathValueHit, JsonSearchError,
 };
 pub use mutator::Mutator;
 pub use selene_core::JsonPathSelector;

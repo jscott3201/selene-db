@@ -191,6 +191,50 @@ fn json_path_exists_nodes_supports_array_indexes_and_k() {
 }
 
 #[test]
+fn json_path_contains_nodes_returns_selected_subvalue_candidates() {
+    let graph = graph(514_110);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    seed_json_docs(&graph);
+
+    let table = execute_rows(
+        &mut session,
+        r#"CALL selene.json_path_contains_nodes(
+             'JsonDoc',
+             'payload',
+             json_array('memory'),
+             json('{"kind":"episodic"}'),
+             10
+           ) YIELD node_id"#,
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id"), vec![NodeId::new(1)]);
+}
+
+#[test]
+fn json_path_contains_nodes_supports_array_indexes_and_k() {
+    let graph = graph(514_111);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    seed_json_docs(&graph);
+
+    let table = execute_rows(
+        &mut session,
+        r#"CALL selene.json_path_contains_nodes(
+             'JsonDoc',
+             'payload',
+             json_array(1, 'memory'),
+             json('{"kind":"episodic"}'),
+             1
+           ) YIELD node_id"#,
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id"), vec![NodeId::new(4)]);
+}
+
+#[test]
 fn json_contains_nodes_metadata_has_json_candidate() {
     let registry = BuiltinProcedureRegistry::new();
     let name = [db_string("selene"), db_string("json_contains_nodes")];
@@ -237,6 +281,35 @@ fn json_path_exists_nodes_metadata_has_json_path() {
     assert_eq!(parameters[2].ty, GqlType::Json);
     assert_eq!(parameters[3].name.as_str(), "k");
     assert_eq!(parameters[3].ty, GqlType::Integer);
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 1);
+    assert_eq!(columns[0].name.as_str(), "node_id");
+    assert_eq!(columns[0].ty, GqlType::NodeRef);
+}
+
+#[test]
+fn json_path_contains_nodes_metadata_has_json_path_and_candidate() {
+    let registry = BuiltinProcedureRegistry::new();
+    let name = [db_string("selene"), db_string("json_path_contains_nodes")];
+    let metadata = registry
+        .lookup(&name)
+        .expect("json_path_contains_nodes resolves");
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 5);
+    assert_eq!(arity.maximum, 5);
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters[0].name.as_str(), "label");
+    assert_eq!(parameters[0].ty, GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "property");
+    assert_eq!(parameters[1].ty, GqlType::String);
+    assert_eq!(parameters[2].name.as_str(), "path");
+    assert_eq!(parameters[2].ty, GqlType::Json);
+    assert_eq!(parameters[3].name.as_str(), "candidate");
+    assert_eq!(parameters[3].ty, GqlType::Json);
+    assert_eq!(parameters[4].name.as_str(), "k");
+    assert_eq!(parameters[4].ty, GqlType::Integer);
 
     let columns = &metadata.output_schema.columns;
     assert_eq!(columns.len(), 1);
@@ -343,6 +416,31 @@ fn json_contains_nodes_rejects_non_json_candidate() {
         source:
             AnalysisError::TypeMismatch {
                 context: TypeMismatchContext::ProcedureArgument { position: 2, .. },
+                ..
+            },
+    } = err
+    else {
+        panic!("expected analyzer JSON argument type mismatch, got {err:?}");
+    };
+}
+
+#[test]
+fn json_path_contains_nodes_rejects_non_json_candidate() {
+    let graph = graph(514_112);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let err = session
+        .execute_source(
+            "CALL selene.json_path_contains_nodes('JsonDoc', 'payload', json_array('memory'), 'not json', 10)",
+            &registry,
+        )
+        .expect_err("non-JSON candidate should fail");
+
+    let ExecutorError::Analysis {
+        source:
+            AnalysisError::TypeMismatch {
+                context: TypeMismatchContext::ProcedureArgument { position: 3, .. },
                 ..
             },
     } = err

@@ -34,6 +34,13 @@ pub struct JsonPathHit {
     pub node_id: NodeId,
 }
 
+/// One JSON path-containment node hit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct JsonPathContainmentHit {
+    /// Matched node id.
+    pub node_id: NodeId,
+}
+
 /// One JSON path-value node hit.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JsonPathValueHit {
@@ -231,6 +238,85 @@ impl SeleneGraph {
         Ok(top_k.into_path_hits())
     }
 
+    /// Exhaustively find JSON-valued node properties whose selected path
+    /// contains `candidate`.
+    pub fn exact_json_path_contains_nodes(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        path: &[JsonPathSelector],
+        candidate: &JsonValue,
+        k: usize,
+    ) -> GraphResult<Vec<JsonPathContainmentHit>> {
+        self.exact_json_path_contains_nodes_checked(
+            label,
+            property,
+            path,
+            candidate,
+            k,
+            CancellationChecker::disabled(),
+        )
+        .map_err(JsonSearchError::into_graph_error)
+    }
+
+    /// Exhaustively find JSON path containment matches with cancellation checks.
+    pub fn exact_json_path_contains_nodes_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        path: &[JsonPathSelector],
+        candidate: &JsonValue,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<JsonPathContainmentHit>, JsonSearchError> {
+        checker.check()?;
+        if k == 0 || path.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(label_rows) = self.nodes_with_label(label) else {
+            return Ok(Vec::new());
+        };
+
+        let mut top_k = JsonContainmentTopK::new(k);
+        let mut rows_since_check = 0usize;
+        for raw_row in label_rows.iter() {
+            rows_since_check += 1;
+            if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
+                checker.check()?;
+                rows_since_check = 0;
+            }
+            if !self.node_store.is_alive(raw_row) {
+                continue;
+            }
+            let row = RowIndex::new(raw_row);
+            let node_id = self
+                .node_id_for_row(row)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "label index row {raw_row} for {} has no node id",
+                        label.as_str()
+                    ),
+                })?;
+            let properties = self
+                .node_store
+                .properties
+                .get(raw_row as usize)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "JSON search row {raw_row} for {} has no property row",
+                        label.as_str()
+                    ),
+                })?;
+            let Some(Value::Json(value)) = properties.get(property) else {
+                continue;
+            };
+            if value.path_contains(path, candidate) {
+                top_k.push(node_id);
+            }
+        }
+        Ok(top_k.into_path_containment_hits())
+    }
+
     /// Exhaustively find JSON-valued node properties where `path` selects a value.
     pub fn exact_json_path_value_nodes(
         &self,
@@ -359,6 +445,34 @@ impl SharedGraph {
             .exact_json_path_exists_nodes_checked(label, property, path, k, checker)
     }
 
+    /// Exhaustively find JSON-valued node properties whose selected path
+    /// contains `candidate`.
+    pub fn exact_json_path_contains_nodes(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        path: &[JsonPathSelector],
+        candidate: &JsonValue,
+        k: usize,
+    ) -> GraphResult<Vec<JsonPathContainmentHit>> {
+        self.read()
+            .exact_json_path_contains_nodes(label, property, path, candidate, k)
+    }
+
+    /// Exhaustively find JSON path containment matches with cancellation checks.
+    pub fn exact_json_path_contains_nodes_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        path: &[JsonPathSelector],
+        candidate: &JsonValue,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<JsonPathContainmentHit>, JsonSearchError> {
+        self.read()
+            .exact_json_path_contains_nodes_checked(label, property, path, candidate, k, checker)
+    }
+
     /// Exhaustively find JSON-valued node properties where `path` selects a value.
     pub fn exact_json_path_value_nodes(
         &self,
@@ -427,6 +541,14 @@ impl JsonContainmentTopK {
             .into_sorted_vec()
             .into_iter()
             .map(|node_id| JsonPathHit { node_id })
+            .collect()
+    }
+
+    fn into_path_containment_hits(self) -> Vec<JsonPathContainmentHit> {
+        self.nodes
+            .into_sorted_vec()
+            .into_iter()
+            .map(|node_id| JsonPathContainmentHit { node_id })
             .collect()
     }
 }

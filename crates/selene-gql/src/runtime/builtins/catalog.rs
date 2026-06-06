@@ -9,9 +9,9 @@ use crate::{
 
 use super::{
     create_index, create_text_index, create_vector_index, drop_index, drop_text_index,
-    drop_vector_index, feature_status, health, json_contains_nodes, json_path_exists_nodes,
-    json_path_value_nodes, rebuild_vector_indexes, text_index_stats, text_search,
-    vector_candidate_states, vector_index_stats, vector_score_candidate_state,
+    drop_vector_index, feature_status, health, json_contains_nodes, json_path_contains_nodes,
+    json_path_exists_nodes, json_path_value_nodes, rebuild_vector_indexes, text_index_stats,
+    text_search, vector_candidate_states, vector_index_stats, vector_score_candidate_state,
     vector_score_candidate_state_expanded, vector_score_candidate_state_expanded_batch,
     vector_score_candidate_state_nodes, vector_score_expanded_candidates,
     vector_score_expanded_candidates_batch, vector_score_neighbors, vector_score_neighbors_batch,
@@ -77,6 +77,8 @@ pub(in crate::runtime) enum BuiltinKind {
     JsonContainsNodes,
     /// `selene.json_path_exists_nodes` — exact JSON path-existence over node properties.
     JsonPathExistsNodes,
+    /// `selene.json_path_contains_nodes` — exact JSON path-containment over node properties.
+    JsonPathContainsNodes,
     /// `selene.json_path_value_nodes` — exact JSON path-value search over node properties.
     JsonPathValueNodes,
     /// `selene.rebuild_vector_indexes` — vector index derived-state rebuild.
@@ -159,6 +161,7 @@ impl BuiltinKind {
             | Self::TextIndexStats
             | Self::JsonContainsNodes
             | Self::JsonPathExistsNodes
+            | Self::JsonPathContainsNodes
             | Self::JsonPathValueNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
@@ -204,6 +207,7 @@ impl BuiltinKind {
             | Self::TextIndexStats
             | Self::JsonContainsNodes
             | Self::JsonPathExistsNodes
+            | Self::JsonPathContainsNodes
             | Self::JsonPathValueNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
@@ -260,6 +264,7 @@ impl BuiltinKind {
             Self::TextIndexStats => text_index_stats::signature(),
             Self::JsonContainsNodes => json_contains_nodes::signature(),
             Self::JsonPathExistsNodes => json_path_exists_nodes::signature(),
+            Self::JsonPathContainsNodes => json_path_contains_nodes::signature(),
             Self::JsonPathValueNodes => json_path_value_nodes::signature(),
             Self::RebuildVectorIndexes => rebuild_vector_indexes::signature(),
             Self::RebuildRecommendedVectorIndexes => {
@@ -323,6 +328,7 @@ impl BuiltinKind {
             Self::TextIndexStats => text_index_stats::output_columns(),
             Self::JsonContainsNodes => json_contains_nodes::output_columns(),
             Self::JsonPathExistsNodes => json_path_exists_nodes::output_columns(),
+            Self::JsonPathContainsNodes => json_path_contains_nodes::output_columns(),
             Self::JsonPathValueNodes => json_path_value_nodes::output_columns(),
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::output_columns()
@@ -395,6 +401,7 @@ impl BuiltinKind {
             Self::TextIndexStats => text_index_stats::execute(ctx, args),
             Self::JsonContainsNodes => json_contains_nodes::execute(ctx, args),
             Self::JsonPathExistsNodes => json_path_exists_nodes::execute(ctx, args),
+            Self::JsonPathContainsNodes => json_path_contains_nodes::execute(ctx, args),
             Self::JsonPathValueNodes => json_path_value_nodes::execute(ctx, args),
             Self::TextSearchNodes => text_search::execute(ctx, args),
             Self::TextScoreNodes => text_search::execute_score(ctx, args),
@@ -459,6 +466,7 @@ impl BuiltinKind {
             | Self::TextIndexStats
             | Self::JsonContainsNodes
             | Self::JsonPathExistsNodes
+            | Self::JsonPathContainsNodes
             | Self::JsonPathValueNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
@@ -512,6 +520,7 @@ impl BuiltinKind {
             | Self::TextIndexStats
             | Self::JsonContainsNodes
             | Self::JsonPathExistsNodes
+            | Self::JsonPathContainsNodes
             | Self::JsonPathValueNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes

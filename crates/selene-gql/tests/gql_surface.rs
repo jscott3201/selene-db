@@ -91,7 +91,7 @@ fn show_procedures_lists_default_registry() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = column_strings(&table, "name");
 
-    assert_eq!(table.row_count(), 57);
+    assert_eq!(table.row_count(), 58);
     assert!(names.contains(&"selene.feature_status".to_owned()));
     assert!(names.contains(&"selene.verify".to_owned()));
     assert!(names.contains(&"selene.vector_search_nodes".to_owned()));
@@ -101,6 +101,7 @@ fn show_procedures_lists_default_registry() {
     assert!(names.contains(&"selene.text_search_nodes".to_owned()));
     assert!(names.contains(&"selene.json_contains_nodes".to_owned()));
     assert!(names.contains(&"selene.json_path_exists_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_path_contains_nodes".to_owned()));
     assert!(names.contains(&"selene.json_path_value_nodes".to_owned()));
     assert!(names.contains(&"selene.text_score_nodes".to_owned()));
     assert!(names.contains(&"selene.text_score_nodes_batch".to_owned()));
