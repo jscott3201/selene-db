@@ -18,6 +18,11 @@ use crate::error::{GraphError, GraphResult};
     rkyv::Serialize,
     Serialize,
 )]
+#[rkyv(
+    bytecheck(bounds(__C: rkyv::validation::ArchiveContext)),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    serialize_bounds(__S: rkyv::ser::Writer + rkyv::ser::Allocator)
+)]
 #[non_exhaustive]
 pub enum PropertyDefaultValue {
     /// Null default.
@@ -30,6 +35,8 @@ pub enum PropertyDefaultValue {
     String(DbString),
     /// Byte-string default.
     Bytes(Vec<u8>),
+    /// List default with recursively materializable default descriptors.
+    List(#[rkyv(omit_bounds)] Vec<Box<PropertyDefaultValue>>),
     /// Canonical UUID text default.
     Uuid(DbString),
     /// Canonical JSON text default.
@@ -138,6 +145,12 @@ impl PropertyDefaultValue {
             )),
             Self::String(value) => Value::String(value.clone()),
             Self::Bytes(value) => Value::Bytes(value.clone().into()),
+            Self::List(values) => Value::List(
+                values
+                    .iter()
+                    .map(|value| value.to_value())
+                    .collect::<GraphResult<Vec<_>>>()?,
+            ),
             Self::Uuid(value) => {
                 Value::Uuid(
                     value
@@ -197,6 +210,12 @@ impl PropertyDefaultValue {
             Value::Duration(value) => db_string(&value.to_string()).ok().map(Self::Duration),
             Value::String(value) => Some(Self::String(value.clone())),
             Value::Bytes(value) => Some(Self::Bytes(value.to_vec())),
+            Value::List(values) => values
+                .iter()
+                .map(Self::from_value)
+                .map(|value| value.map(Box::new))
+                .collect::<Option<Vec<_>>>()
+                .map(Self::List),
             Value::Uuid(value) => db_string(&value.to_string()).ok().map(Self::Uuid),
             Value::Json(value) => db_string(&value.to_canonical_string()).ok().map(Self::Json),
             Value::Vector(value) => Some(Self::Vector(

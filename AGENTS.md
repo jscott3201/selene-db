@@ -57,6 +57,20 @@ uses Rust edition 2024 and a pinned stable toolchain.
 Use GQLSTATUS codes for query/runtime errors. Do not introduce SQLSTATE-style
 codes or SQL-only syntax.
 
+## Values And Defaults
+
+Native values are engine data, not side channels. Property-default support must
+preserve the same value invariants as runtime writes:
+
+- `PropertyDefaultValue` is durable schema metadata and must stay serde/rkyv
+  round-trippable.
+- `LIST<T>` property defaults are recursive list descriptors. Validate their
+  elements against `PropertyElementType`, including nested lists and
+  `LIST<VECTOR>`, instead of relying on container-only
+  `PropertyValueType::matches`.
+- `SHOW NODE TYPES`, insert materialization, WAL replay, and graph snapshots are
+  part of the same default-value contract.
+
 ## Workspace Map
 
 There is no umbrella crate. Keep dependency direction intentional:
@@ -263,6 +277,10 @@ Expected workload shape is read-heavy but write-relevant, roughly 60% reads and
   engine allocator requires a measured decision.
 - WAL durability is often the write-side cost center. Do not over-optimize
   provider/index maintenance paths when durability dominates.
+- A larger WAL rewrite/refactor is queued after the current value/spec work.
+  Ground it in scalar/vector/JSON payload benchmarks, compression and checksum
+  research, replay locality, group commit, and segment/snapshot trade-offs
+  before changing the persistence format.
 - Prefer product-shaped benchmark rows once API boundaries are correct.
 - Treat local oMLX rows as local-only validation. CI must compile those code
   paths but must not require localhost embedding services or secret `.env`

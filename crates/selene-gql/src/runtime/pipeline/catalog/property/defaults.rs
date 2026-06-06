@@ -1,16 +1,21 @@
 //! Property default lowering, coercion, validation, and rendering.
 
+mod lists;
+
 use std::fmt::Write as _;
 
 use rust_decimal::Decimal;
-use selene_core::{CoreError, JsonValue, PropertyValueType, VectorValue, db_string};
-use selene_graph::PropertyDefaultValue;
+use selene_core::{JsonValue, PropertyValueType, Value, db_string};
+use selene_graph::{PropertyDefaultValue, PropertyElementType};
 
-use crate::{DataExceptionSubclass, ExecutorError, Literal, ProjectExpr, UnaryOp, ValueExpr};
+use crate::{DataExceptionSubclass, ExecutorError, Literal, ProjectExpr, ValueExpr};
+
+use lists::{list_default_value, render_list_literal, render_vector_literal, vector_default_value};
 
 pub(super) fn property_default_value(
     project: &ProjectExpr,
     value_type: PropertyValueType,
+    list_element_type: Option<&PropertyElementType>,
     span: crate::SourceSpan,
 ) -> Result<PropertyDefaultValue, ExecutorError> {
     let ValueExpr::Literal(literal) = &project.expr else {
@@ -18,14 +23,28 @@ pub(super) fn property_default_value(
             (ValueExpr::ListLiteral { items, .. }, PropertyValueType::Vector) => {
                 vector_default_value(items, span)
             }
+            (ValueExpr::ListLiteral { items, .. }, PropertyValueType::List) => {
+                let element_type =
+                    list_element_type.ok_or(ExecutorError::ImplementationDefined {
+                        detail: "LIST DEFAULT requires a declared LIST element type",
+                    })?;
+                list_default_value(items, element_type, span)
+            }
             (ValueExpr::ListLiteral { .. }, _) => Err(ExecutorError::ImplementationDefined {
-                detail: "LIST DEFAULT is only supported for VECTOR properties",
+                detail: "LIST DEFAULT is only supported for LIST and VECTOR properties",
             }),
             _ => Err(ExecutorError::ImplementationDefined {
                 detail: "DEFAULT constraint must lower to a literal expression",
             }),
         };
     };
+    literal_property_default_value(literal, span)
+}
+
+pub(super) fn literal_property_default_value(
+    literal: &Literal,
+    span: crate::SourceSpan,
+) -> Result<PropertyDefaultValue, ExecutorError> {
     match literal {
         Literal::Null(_) => Ok(PropertyDefaultValue::Null),
         Literal::Bool(value, _) => Ok(PropertyDefaultValue::Boolean(*value)),
@@ -115,6 +134,7 @@ pub(super) fn coerce_property_default_value(
 pub(super) fn validate_default_value(
     property: selene_core::DbString,
     value_type: PropertyValueType,
+    list_element_type: Option<&PropertyElementType>,
     required: bool,
     default: &PropertyDefaultValue,
     span: crate::SourceSpan,
@@ -138,7 +158,7 @@ pub(super) fn validate_default_value(
         }
         return Ok(());
     }
-    if value_type.matches(&value) {
+    if default_matches_value(value_type, list_element_type, &value) {
         return Ok(());
     }
     Err(default_type_error(
@@ -165,6 +185,7 @@ pub(in crate::runtime::pipeline::catalog) fn render_property_default_value(
             Ok(render_string_literal(value.as_str()))
         }
         PropertyDefaultValue::Bytes(value) => Ok(render_byte_string_literal(value)),
+        PropertyDefaultValue::List(values) => render_list_literal(values),
         PropertyDefaultValue::Uuid(value) => {
             Ok(format!("UUID {}", render_string_literal(value.as_str())))
         }
@@ -196,6 +217,25 @@ pub(in crate::runtime::pipeline::catalog) fn render_property_default_value(
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "unsupported property default value in catalog DDL rendering",
         }),
+    }
+}
+
+fn default_matches_value(
+    value_type: PropertyValueType,
+    list_element_type: Option<&PropertyElementType>,
+    value: &Value,
+) -> bool {
+    match value_type {
+        PropertyValueType::List => {
+            let Some(element_type) = list_element_type else {
+                return matches!(value, Value::List(_));
+            };
+            match value {
+                Value::List(values) => values.iter().all(|value| element_type.matches(value)),
+                _ => false,
+            }
+        }
+        _ => value_type.matches(value),
     }
 }
 
@@ -364,98 +404,6 @@ fn coerce_string_to_json(
     Ok(PropertyDefaultValue::Json(canonical))
 }
 
-fn vector_default_value(
-    items: &[ValueExpr],
-    span: crate::SourceSpan,
-) -> Result<PropertyDefaultValue, ExecutorError> {
-    let components = items
-        .iter()
-        .map(|item| vector_component(item, span))
-        .collect::<Result<Vec<_>, _>>()?;
-    let vector = VectorValue::new(components).map_err(|err| vector_default_error(err, span))?;
-    Ok(PropertyDefaultValue::Vector(
-        vector
-            .as_slice()
-            .iter()
-            .copied()
-            .map(canonical_f32_bits)
-            .collect(),
-    ))
-}
-
-fn vector_component(expr: &ValueExpr, span: crate::SourceSpan) -> Result<f32, ExecutorError> {
-    match expr {
-        ValueExpr::Literal(Literal::Integer(value, _)) => Ok(*value as f32),
-        ValueExpr::Literal(Literal::Float(value, _)) => finite_f64_to_f32(*value, span),
-        ValueExpr::UnaryOp {
-            op: UnaryOp::Negate,
-            operand,
-            ..
-        } => negated_vector_component(operand, span),
-        _ => Err(vector_default_invalid_type(
-            "VECTOR DEFAULT list elements must be numeric literals",
-            span,
-        )),
-    }
-}
-
-fn negated_vector_component(
-    expr: &ValueExpr,
-    span: crate::SourceSpan,
-) -> Result<f32, ExecutorError> {
-    match expr {
-        ValueExpr::Literal(Literal::Integer(value, _)) => Ok(-(*value as f32)),
-        ValueExpr::Literal(Literal::Float(value, _)) => finite_f64_to_f32(-*value, span),
-        _ => Err(vector_default_invalid_type(
-            "VECTOR DEFAULT negation must apply to a numeric literal",
-            span,
-        )),
-    }
-}
-
-fn finite_f64_to_f32(value: f64, span: crate::SourceSpan) -> Result<f32, ExecutorError> {
-    if !value.is_finite() {
-        return Err(vector_default_out_of_range(
-            "VECTOR DEFAULT component must be finite",
-            span,
-        ));
-    }
-    #[allow(clippy::cast_possible_truncation)]
-    let narrowed = value as f32;
-    if !narrowed.is_finite() {
-        return Err(vector_default_out_of_range(
-            "VECTOR DEFAULT component exceeds FLOAT32 range",
-            span,
-        ));
-    }
-    Ok(narrowed)
-}
-
-fn vector_default_error(err: CoreError, span: crate::SourceSpan) -> ExecutorError {
-    match err {
-        CoreError::VectorEmpty | CoreError::VectorTooLarge { .. } => vector_default_invalid_type(
-            "VECTOR DEFAULT must be a non-empty dimension-bounded numeric list",
-            span,
-        ),
-        CoreError::VectorComponentNotFinite { .. } => {
-            vector_default_out_of_range("VECTOR DEFAULT component must be finite", span)
-        }
-        _ => ExecutorError::data_exception(
-            DataExceptionSubclass::DataException,
-            format!("VECTOR DEFAULT value is invalid: {err}"),
-            span,
-        ),
-    }
-}
-
-fn vector_default_invalid_type(message: &'static str, span: crate::SourceSpan) -> ExecutorError {
-    ExecutorError::data_exception(DataExceptionSubclass::InvalidValueType, message, span)
-}
-
-fn vector_default_out_of_range(message: &'static str, span: crate::SourceSpan) -> ExecutorError {
-    ExecutorError::data_exception(DataExceptionSubclass::NumericValueOutOfRange, message, span)
-}
-
 fn float_default_value(
     value: f64,
     span: crate::SourceSpan,
@@ -615,27 +563,4 @@ fn render_byte_string_literal(bytes: &[u8]) -> String {
     }
     rendered.push('\'');
     rendered
-}
-
-fn render_vector_literal(bits: &[u32]) -> Result<String, ExecutorError> {
-    if bits.is_empty() {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "empty VECTOR property default in catalog DDL rendering",
-        });
-    }
-    let mut rendered = String::from("[");
-    for (index, bits) in bits.iter().copied().enumerate() {
-        if index > 0 {
-            rendered.push_str(", ");
-        }
-        let value = f32::from_bits(bits);
-        if !value.is_finite() {
-            return Err(ExecutorError::ImplementationDefined {
-                detail: "non-finite VECTOR property default in catalog DDL rendering",
-            });
-        }
-        rendered.push_str(&render_float_literal(f64::from(value))?);
-    }
-    rendered.push(']');
-    Ok(rendered)
 }

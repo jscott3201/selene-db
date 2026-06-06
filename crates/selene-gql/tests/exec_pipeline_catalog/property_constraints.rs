@@ -9,6 +9,10 @@ use selene_graph::PropertyDefaultValue;
 
 use super::{db_string, empty_closed_graph, planned, run_write};
 
+fn list_default(items: Vec<PropertyDefaultValue>) -> PropertyDefaultValue {
+    PropertyDefaultValue::List(items.into_iter().map(Box::new).collect())
+}
+
 #[test]
 fn or_replace_catalog_ddl_is_deferred() {
     let graph = empty_closed_graph(3714);
@@ -257,6 +261,91 @@ fn vector_default_property_constraint_rejects_out_of_range_component() {
         err,
         ExecutorError::DataException { message, .. }
             if message.contains("VECTOR DEFAULT component must be finite")
+    ));
+}
+
+#[test]
+fn list_default_property_constraint_accepts_typed_list_literals() {
+    let graph = empty_closed_graph(3742);
+    let plan = planned(
+        r#"CREATE NODE TYPE :Doc (
+            tags :: LIST<STRING> DEFAULT ['alpha', 'beta'],
+            counts :: LIST<UINT64> DEFAULT [42],
+            payloads :: LIST<JSON> DEFAULT ['{"b":2,"a":1}'],
+            matrix :: LIST<LIST<INTEGER>> DEFAULT [[1, 2], [3]],
+            embeddings :: LIST<VECTOR> DEFAULT [[1, 0], [0, 1]]
+        )"#,
+    );
+
+    run_write(&graph, &plan)
+        .expect("LIST defaults execute")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    let properties = &graph_type.node_types[0].properties;
+    assert_eq!(
+        properties[0].default,
+        Some(list_default(vec![
+            PropertyDefaultValue::String(db_string("alpha")),
+            PropertyDefaultValue::String(db_string("beta")),
+        ]))
+    );
+    assert_eq!(
+        properties[1].default,
+        Some(list_default(vec![PropertyDefaultValue::Uint(42)]))
+    );
+    assert_eq!(
+        properties[2].default,
+        Some(list_default(vec![PropertyDefaultValue::Json(db_string(
+            r#"{"a":1,"b":2}"#
+        ))]))
+    );
+    assert_eq!(
+        properties[3].default,
+        Some(list_default(vec![
+            list_default(vec![
+                PropertyDefaultValue::Integer(1),
+                PropertyDefaultValue::Integer(2),
+            ]),
+            list_default(vec![PropertyDefaultValue::Integer(3)]),
+        ]))
+    );
+    assert_eq!(
+        properties[4].default,
+        Some(list_default(vec![
+            PropertyDefaultValue::Vector(vec![1.0_f32.to_bits(), 0.0_f32.to_bits()]),
+            PropertyDefaultValue::Vector(vec![0.0_f32.to_bits(), 1.0_f32.to_bits()]),
+        ]))
+    );
+}
+
+#[test]
+fn list_default_property_constraint_rejects_element_mismatch() {
+    let graph = empty_closed_graph(3743);
+    let plan = planned("CREATE NODE TYPE :Doc (scores :: LIST<INTEGER> DEFAULT ['x'])");
+
+    let err = run_write(&graph, &plan).expect_err("LIST element mismatch rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("LIST DEFAULT element is not assignable")
+    ));
+}
+
+#[test]
+fn list_default_property_constraint_rejects_nested_shape_mismatch() {
+    let graph = empty_closed_graph(3744);
+    let plan = planned("CREATE NODE TYPE :Doc (matrix :: LIST<LIST<INTEGER>> DEFAULT [1])");
+
+    let err = run_write(&graph, &plan).expect_err("nested LIST shape mismatch rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("nested LIST DEFAULT elements must be list literals")
     ));
 }
 

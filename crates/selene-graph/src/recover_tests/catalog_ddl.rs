@@ -79,6 +79,14 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
             2.5_f32.to_bits(),
         ]),
     )];
+    let list_defaults = [(
+        db_string("tags").unwrap(),
+        PropertyElementType::Scalar(selene_core::PropertyValueType::String),
+        PropertyDefaultValue::List(vec![
+            Box::new(PropertyDefaultValue::String(db_string("alpha").unwrap())),
+            Box::new(PropertyDefaultValue::String(db_string("beta").unwrap())),
+        ]),
+    )];
     let changes = {
         let mut txn = shared.begin_write();
         let mut properties = base_properties(&serial, &payload, &device_id, &score, &small_score);
@@ -97,6 +105,17 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                     record_field_types: None,
                 }),
         );
+        properties.extend(list_defaults.iter().map(|(name, element_type, default)| {
+            PropertyTypeDef {
+                name: name.clone(),
+                value_type: selene_core::PropertyValueType::List,
+                list_element_type: Some(element_type.clone()),
+                required: false,
+                default: Some(default.clone()),
+                immutable: false,
+                record_field_types: None,
+            }
+        }));
         txn.mutator()
             .create_node_type(
                 sensor.clone(),
@@ -151,6 +170,13 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     for (offset, (name, _value_type, default)) in vector_defaults.iter().enumerate() {
         let property = &graph_type.node_types[0].properties[vector_start + offset];
         assert_eq!(&property.name, name);
+        assert_eq!(property.default.as_ref(), Some(default));
+    }
+    let list_start = vector_start + vector_defaults.len();
+    for (offset, (name, element_type, default)) in list_defaults.iter().enumerate() {
+        let property = &graph_type.node_types[0].properties[list_start + offset];
+        assert_eq!(&property.name, name);
+        assert_eq!(property.list_element_type.as_ref(), Some(element_type));
         assert_eq!(property.default.as_ref(), Some(default));
     }
     let _ = fs::remove_dir_all(dir);

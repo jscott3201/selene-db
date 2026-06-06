@@ -18,6 +18,10 @@ fn property(name: &str) -> PropertyTypeDef {
     }
 }
 
+fn list_default(items: Vec<PropertyDefaultValue>) -> PropertyDefaultValue {
+    PropertyDefaultValue::List(items.into_iter().map(Box::new).collect())
+}
+
 fn valid_type() -> GraphTypeDef {
     GraphTypeDef {
         name: label("types.graph"),
@@ -170,6 +174,33 @@ fn property_default_vector_descriptor_rejects_invalid_bits() {
         Err(GraphError::Inconsistent { reason })
             if reason.contains("VECTOR property default is invalid")
     ));
+}
+
+#[test]
+fn property_default_list_descriptors_materialize_nested_values() {
+    let value = Value::List(vec![
+        Value::String(label("alpha")),
+        Value::List(vec![Value::Int(1), Value::Int(2)]),
+        Value::Vector(VectorValue::new(vec![1.0, 0.0]).unwrap()),
+    ]);
+    let expected = list_default(vec![
+        PropertyDefaultValue::String(label("alpha")),
+        list_default(vec![
+            PropertyDefaultValue::Integer(1),
+            PropertyDefaultValue::Integer(2),
+        ]),
+        PropertyDefaultValue::Vector(vec![1.0_f32.to_bits(), 0.0_f32.to_bits()]),
+    ]);
+
+    assert_eq!(
+        PropertyDefaultValue::from_value(&value),
+        Some(expected.clone())
+    );
+    assert_eq!(expected.to_value().unwrap(), value);
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&expected).unwrap();
+    let decoded = rkyv::from_bytes::<PropertyDefaultValue, rkyv::rancor::Error>(&bytes).unwrap();
+    assert_eq!(decoded, expected);
+    assert!(PropertyDefaultValue::from_value(&Value::List(vec![Value::Float(f64::NAN)])).is_none());
 }
 
 #[test]

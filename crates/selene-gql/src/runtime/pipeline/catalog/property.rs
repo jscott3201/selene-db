@@ -38,7 +38,12 @@ fn property_def(
         match constraint {
             PlannedTypePropertyConstraint::NotNull(_) => required = true,
             PlannedTypePropertyConstraint::Default(project, span) => {
-                default = Some(property_default_value(project, value_type, *span)?);
+                default = Some(property_default_value(
+                    project,
+                    value_type,
+                    list_element_type.as_ref(),
+                    *span,
+                )?);
                 default_span = *span;
             }
             PlannedTypePropertyConstraint::Immutable(_) => immutable = true,
@@ -68,6 +73,7 @@ fn property_def(
         validate_default_value(
             property.name.clone(),
             value_type,
+            list_element_type.as_ref(),
             required,
             default,
             default_span,
