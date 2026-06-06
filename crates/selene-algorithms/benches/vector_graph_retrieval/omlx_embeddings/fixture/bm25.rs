@@ -46,7 +46,7 @@ impl OmlxVectorFixture {
         let expanded = self.topic_hint_expansion_set(query);
         VectorCandidateSet::from_nodes(
             self.text_index
-                .search_candidates(query.text, expanded.as_nodes(), k)
+                .search_candidates(&query.text, expanded.as_nodes(), k)
                 .into_iter()
                 .map(|hit| hit.node_id),
         )

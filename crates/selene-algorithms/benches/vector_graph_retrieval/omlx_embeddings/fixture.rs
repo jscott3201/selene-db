@@ -93,7 +93,7 @@ impl OmlxVectorFixture {
                         continue;
                     }
                     let props = PropertyMap::from_pairs([
-                        (body_key.clone(), Value::String(istr(input.text))),
+                        (body_key.clone(), Value::String(istr(input.text()))),
                         (embedding_key.clone(), Value::Vector(vector.clone())),
                     ])
                     .expect("oMLX bench document properties fit");
@@ -190,7 +190,7 @@ impl OmlxVectorFixture {
                     QueryVector {
                         anchor: anchor.node,
                         topic: input.topic,
-                        text: input.text,
+                        text: input.text.clone(),
                         vector,
                     }
                 })
