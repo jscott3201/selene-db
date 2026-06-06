@@ -35,6 +35,26 @@ fn string_value(source: &str) -> String {
     }
 }
 
+fn int_value(source: &str) -> i64 {
+    match single_value(source, "value") {
+        Value::Int(value) => value,
+        other => panic!("expected INTEGER value, got {other:?}"),
+    }
+}
+
+fn string_list_value(source: &str) -> Vec<String> {
+    match single_value(source, "value") {
+        Value::List(values) => values
+            .into_iter()
+            .map(|value| match value {
+                Value::String(value) => value.to_string(),
+                other => panic!("expected STRING list item, got {other:?}"),
+            })
+            .collect(),
+        other => panic!("expected LIST value, got {other:?}"),
+    }
+}
+
 fn bool_value(source: &str) -> bool {
     match single_value(source, "value") {
         Value::Bool(value) => value,
@@ -131,6 +151,30 @@ fn json_type_reports_top_level_shape() {
     ] {
         assert_eq!(string_value(source), expected, "{source}");
     }
+}
+
+#[test]
+fn json_array_length_counts_array_elements() {
+    assert_eq!(
+        int_value(r#"RETURN json_array_length(json('[1,{"a":2},null]')) AS value"#),
+        3
+    );
+    assert_eq!(
+        single_value("RETURN json_array_length(NULL) AS value", "value"),
+        Value::Null
+    );
+}
+
+#[test]
+fn json_object_keys_returns_sorted_string_list() {
+    assert_eq!(
+        string_list_value(r#"RETURN json_object_keys(json('{"b":2,"a":1,"c":null}')) AS value"#),
+        vec!["a", "b", "c"]
+    );
+    assert_eq!(
+        single_value("RETURN json_object_keys(NULL) AS value", "value"),
+        Value::Null
+    );
 }
 
 #[test]
@@ -334,6 +378,10 @@ fn json_functions_report_data_exceptions_for_bad_inputs() {
         "RETURN json(7) AS value",
         "RETURN json_stringify(7) AS value",
         "RETURN json_type(7) AS value",
+        "RETURN json_array_length(7) AS value",
+        "RETURN json_array_length(json('{}')) AS value",
+        "RETURN json_object_keys(7) AS value",
+        "RETURN json_object_keys(json('[]')) AS value",
         "RETURN json_contains(7, json('{}')) AS value",
         "RETURN json_contains(json('{}'), 7) AS value",
         r#"RETURN json_get(json('{"a":1}'), 7) AS value"#,
@@ -352,6 +400,8 @@ fn json_feature_flags_cover_functions_and_type_names() {
         r#"RETURN json_parse('{"a":1}') AS value"#,
         r#"RETURN json_stringify(json('{"a":1}')) AS value"#,
         r#"RETURN json_type(json('{"a":1}')) AS value"#,
+        r#"RETURN json_array_length(json('[1,2]')) AS value"#,
+        r#"RETURN json_object_keys(json('{"a":1}')) AS value"#,
         r#"RETURN json_contains(json('{"a":1}'), json('{"a":1}')) AS value"#,
         r#"RETURN json_get(json('{"a":1}'), 'a') AS value"#,
         r#"RETURN json_get_text(json('{"a":1}'), 'a') AS value"#,

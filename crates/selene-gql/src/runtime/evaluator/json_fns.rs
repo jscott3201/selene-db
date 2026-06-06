@@ -1,6 +1,6 @@
 //! Implementation-defined JSON scalar functions.
 
-use selene_core::{JsonValue, Value};
+use selene_core::{JsonValue, Value, db_string};
 
 use crate::{
     SourceSpan,
@@ -43,6 +43,45 @@ pub(super) fn eval_json_type(args: Vec<Value>, span: SourceSpan) -> Result<Value
         Value::Null => Ok(Value::Null),
         Value::Json(value) => string_value(value.json_type_name(), span),
         _ => data_exception("json_type argument is not JSON", span),
+    }
+}
+
+pub(super) fn eval_json_array_length(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match args.into_iter().next().expect("arity checked") {
+        Value::Null => Ok(Value::Null),
+        Value::Json(value) => match value.as_serde() {
+            serde_json::Value::Array(values) => Ok(Value::Int(values.len() as i64)),
+            _ => data_exception("json_array_length argument is not a JSON array", span),
+        },
+        _ => data_exception("json_array_length argument is not JSON", span),
+    }
+}
+
+pub(super) fn eval_json_object_keys(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match args.into_iter().next().expect("arity checked") {
+        Value::Null => Ok(Value::Null),
+        Value::Json(value) => match value.as_serde() {
+            serde_json::Value::Object(values) => {
+                let mut keys = values.keys().collect::<Vec<_>>();
+                keys.sort_unstable();
+                let mut output = Vec::with_capacity(keys.len());
+                for key in keys {
+                    let key = db_string(key).map_err(|err| {
+                        data_exception_value(format!("JSON object key is invalid: {err}"), span)
+                    })?;
+                    output.push(Value::String(key));
+                }
+                Ok(Value::List(output))
+            }
+            _ => data_exception("json_object_keys argument is not a JSON object", span),
+        },
+        _ => data_exception("json_object_keys argument is not JSON", span),
     }
 }
 
