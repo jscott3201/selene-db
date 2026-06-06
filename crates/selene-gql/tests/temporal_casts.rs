@@ -91,6 +91,10 @@ fn cast_strings_to_temporal_values() {
         Value::Date("2026-05-07".parse().unwrap())
     );
     assert_eq!(
+        cast_string(" 2026-05-07 ", "DATE"),
+        Value::Date("2026-05-07".parse().unwrap())
+    );
+    assert_eq!(
         cast_string("2026-05-07T12:34:56", "LOCAL DATETIME"),
         Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
     );
@@ -100,6 +104,10 @@ fn cast_strings_to_temporal_values() {
     );
     assert_eq!(
         cast_string("PT1H2S", "DURATION"),
+        Value::Duration(Box::new("PT1H2S".parse().unwrap()))
+    );
+    assert_eq!(
+        cast_string(" PT1H2S ", "DURATION"),
         Value::Duration(Box::new("PT1H2S".parse().unwrap()))
     );
 
@@ -181,5 +189,13 @@ fn cast_invalid_strings_to_temporal_values_returns_22007() {
     assert_eq!(
         cast_string_status("12:34:56", "ZONED TIME"),
         GqlStatus::INVALID_DATETIME_FORMAT
+    );
+}
+
+#[test]
+fn cast_invalid_strings_to_duration_returns_22g0h() {
+    assert_eq!(
+        cast_string_status("not-duration", "DURATION"),
+        GqlStatus::INVALID_DURATION_FORMAT
     );
 }

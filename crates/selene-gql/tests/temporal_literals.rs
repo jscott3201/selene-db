@@ -89,3 +89,9 @@ fn invalid_temporal_literal_formats_report_data_exception() {
         assert_eq!(err.gqlstatus(), GqlStatus::INVALID_DATETIME_FORMAT);
     }
 }
+
+#[test]
+fn invalid_duration_literal_format_reports_duration_status() {
+    let err = parse("RETURN DURATION 'not-duration'").expect_err("duration should be rejected");
+    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_DURATION_FORMAT);
+}

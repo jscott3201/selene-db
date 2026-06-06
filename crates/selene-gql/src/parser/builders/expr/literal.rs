@@ -184,7 +184,7 @@ fn parse_duration_lit(
     let value = temporal_text(pair)?;
     temporal_parse::parse_duration(&value)
         .map(|span| Literal::Duration(Box::new(span), source_span))
-        .map_err(|error| temporal_message(error, source_span))
+        .map_err(|error| duration_message(error, source_span))
 }
 
 fn parse_i64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
@@ -283,6 +283,10 @@ fn decode_single_quoted(inner: &str, span: SourceSpan) -> Result<String, ParserE
 
 fn temporal_message(message: impl Into<String>, span: SourceSpan) -> ParserError {
     ParserError::syntax_with_status(GqlStatus::INVALID_DATETIME_FORMAT, message, span, None)
+}
+
+fn duration_message(message: impl Into<String>, span: SourceSpan) -> ParserError {
+    ParserError::syntax_with_status(GqlStatus::INVALID_DURATION_FORMAT, message, span, None)
 }
 
 fn decode_escape(

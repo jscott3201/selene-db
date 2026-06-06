@@ -12,7 +12,9 @@
 //!   (string→numeric/boolean/decimal) and NaN→integer/decimal (per ISO §20.8,
 //!   NaN has no representable exact image).
 //! - `22007` (`InvalidDatetimeFormat`) — strict-parse failure for
-//!   string→date/time/datetime/duration casts.
+//!   string→date/time/datetime casts.
+//! - `22G0H` (`InvalidDurationFormat`) — strict-parse failure for
+//!   string→duration casts.
 //! - `22003` (`NumericValueOutOfRange`) — overflow on numeric→numeric,
 //!   float→integer, or any widening/Decimal conversion that loses a leading
 //!   significant digit (the value does not fit the target's range).
@@ -263,31 +265,33 @@ fn cast_to_temporal(
         (Value::LocalTime(value), GqlType::LocalTime) => Ok(Value::LocalTime(value)),
         (Value::Duration(value), GqlType::Duration) => Ok(Value::Duration(value)),
         (Value::String(value), GqlType::ZonedDateTime) => {
-            temporal_parse::parse_zoned_datetime(value.as_str())
+            temporal_parse::parse_zoned_datetime(value.as_str().trim())
                 .map(|value| Value::ZonedDateTime(Box::new(value)))
                 .map_err(|error| invalid_datetime_format(error, span))
         }
         (Value::String(value), GqlType::LocalDateTime) => {
-            temporal_parse::parse_local_datetime(value.as_str())
+            temporal_parse::parse_local_datetime(value.as_str().trim())
                 .map(Value::LocalDateTime)
                 .map_err(|error| invalid_datetime_format(error, span))
         }
-        (Value::String(value), GqlType::Date) => temporal_parse::parse_date(value.as_str())
+        (Value::String(value), GqlType::Date) => temporal_parse::parse_date(value.as_str().trim())
             .map(Value::Date)
             .map_err(|error| invalid_datetime_format(error, span)),
         (Value::String(value), GqlType::ZonedTime) => {
-            temporal_parse::parse_zoned_time(value.as_str())
+            temporal_parse::parse_zoned_time(value.as_str().trim())
                 .map(|value| Value::ZonedTime(Box::new(value)))
                 .map_err(|error| invalid_datetime_format(error, span))
         }
         (Value::String(value), GqlType::LocalTime) => {
-            temporal_parse::parse_local_time(value.as_str())
+            temporal_parse::parse_local_time(value.as_str().trim())
                 .map(Value::LocalTime)
                 .map_err(|error| invalid_datetime_format(error, span))
         }
-        (Value::String(value), GqlType::Duration) => temporal_parse::parse_duration(value.as_str())
-            .map(|value| Value::Duration(Box::new(value)))
-            .map_err(|error| invalid_datetime_format(error, span)),
+        (Value::String(value), GqlType::Duration) => {
+            temporal_parse::parse_duration(value.as_str().trim())
+                .map(|value| Value::Duration(Box::new(value)))
+                .map_err(|error| invalid_duration_format(error, span))
+        }
         (_, target) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: cast_to_type_feature(target),
             span,
@@ -434,6 +438,10 @@ fn invalid_character(text: &str, target: &str, span: SourceSpan) -> ExecutorErro
 
 fn invalid_datetime_format(message: String, span: SourceSpan) -> ExecutorError {
     ExecutorError::data_exception(DataExceptionSubclass::InvalidDatetimeFormat, message, span)
+}
+
+fn invalid_duration_format(message: String, span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(DataExceptionSubclass::InvalidDurationFormat, message, span)
 }
 
 fn format_float(f: f64) -> String {
