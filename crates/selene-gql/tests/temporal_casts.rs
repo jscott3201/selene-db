@@ -118,6 +118,53 @@ fn cast_strings_to_temporal_values() {
 }
 
 #[test]
+fn cast_between_deterministic_temporal_instants() {
+    assert_eq!(
+        cast_bound(
+            Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap()),
+            "DATE"
+        ),
+        Value::Date("2026-05-07".parse().unwrap())
+    );
+    assert_eq!(
+        cast_bound(
+            Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap()),
+            "LOCAL TIME"
+        ),
+        Value::LocalTime("12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        cast_bound(Value::Date("2026-05-07".parse().unwrap()), "LOCAL DATETIME"),
+        Value::LocalDateTime("2026-05-07T00:00:00".parse().unwrap())
+    );
+
+    let zoned_datetime = "2026-05-07T12:34:56-04:00[America/New_York]";
+    assert_eq!(
+        cast_bound(
+            Value::ZonedDateTime(Box::new(zoned_datetime.parse().unwrap())),
+            "DATE"
+        ),
+        Value::Date("2026-05-07".parse().unwrap())
+    );
+    assert_eq!(
+        cast_bound(
+            Value::ZonedDateTime(Box::new(zoned_datetime.parse().unwrap())),
+            "LOCAL DATETIME"
+        ),
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+    );
+
+    let Value::ZonedTime(value) = cast_bound(
+        Value::ZonedDateTime(Box::new(zoned_datetime.parse().unwrap())),
+        "ZONED TIME",
+    ) else {
+        panic!("expected zoned time");
+    };
+    assert_eq!(value.time().to_string(), "12:34:56");
+    assert_eq!(value.offset().to_string(), "-04");
+}
+
+#[test]
 fn cast_invalid_strings_to_temporal_values_returns_22007() {
     assert_eq!(
         cast_string_status("not-date", "DATE"),
