@@ -437,6 +437,11 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
             value.hash(state);
             span.hash(state);
         }
+        Literal::Bytes(value, span) => {
+            12u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
         Literal::Null(span) => {
             4u8.hash(state);
             span.hash(state);

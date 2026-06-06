@@ -90,6 +90,7 @@ pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
         Literal::LocalDateTime(_, _) => Some(IndexKind::LocalDateTime),
         Literal::Uuid(_, _) => Some(IndexKind::Uuid),
         Literal::Bool(_, _)
+        | Literal::Bytes(_, _)
         | Literal::ZonedDateTime(_, _)
         | Literal::ZonedTime(_, _)
         | Literal::LocalTime(_, _)

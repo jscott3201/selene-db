@@ -96,6 +96,10 @@ fn property_default_value(
             feature: "floating-point DEFAULT literals",
             span,
         }),
+        Literal::Bytes(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
+            feature: "BYTES DEFAULT literals",
+            span,
+        }),
         Literal::Uuid(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "UUID DEFAULT literals",
             span,

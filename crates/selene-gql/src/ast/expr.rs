@@ -1,5 +1,7 @@
 //! Expression AST nodes.
 
+use std::sync::Arc;
+
 use selene_core::DbString;
 
 use crate::ast::{
@@ -426,6 +428,8 @@ pub enum Literal {
     Float(f64, SourceSpan),
     /// Database-string literal.
     String(DbString, SourceSpan),
+    /// Byte-string literal.
+    Bytes(Arc<[u8]>, SourceSpan),
     /// UUID literal.
     Uuid(uuid::Uuid, SourceSpan),
     /// Zoned datetime literal.
@@ -457,6 +461,9 @@ impl PartialEq for Literal {
                 lhs == rhs && lhs_span == rhs_span
             }
             (Self::String(lhs, lhs_span), Self::String(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Bytes(lhs, lhs_span), Self::Bytes(rhs, rhs_span)) => {
                 lhs == rhs && lhs_span == rhs_span
             }
             (Self::Uuid(lhs, lhs_span), Self::Uuid(rhs, rhs_span)) => {
@@ -495,6 +502,7 @@ impl Literal {
             | Self::Integer(_, span)
             | Self::Float(_, span)
             | Self::String(_, span)
+            | Self::Bytes(_, span)
             | Self::Uuid(_, span)
             | Self::ZonedDateTime(_, span)
             | Self::LocalDateTime(_, span)
@@ -517,6 +525,7 @@ impl Literal {
             | Self::Integer(_, span)
             | Self::Float(_, span)
             | Self::String(_, span)
+            | Self::Bytes(_, span)
             | Self::Uuid(_, span)
             | Self::ZonedDateTime(_, span)
             | Self::LocalDateTime(_, span)
