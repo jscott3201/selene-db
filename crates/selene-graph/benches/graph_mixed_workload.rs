@@ -39,6 +39,17 @@ fn bench_scalar_mixed_workload(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new("point_read_indexed_update_r60w40", fixture.scale()),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || ScalarMixedFixture::build_indexed_property(fixture),
+                    |fixture| std::hint::black_box(fixture.run_cycle()),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("point_read_update_r60w40_wal", fixture.scale()),
             &fixture,
             |b, fixture| {
@@ -55,7 +66,8 @@ fn bench_scalar_mixed_workload(c: &mut Criterion) {
 
 struct ScalarMixedFixture {
     shared: SharedGraph,
-    score_key: selene_core::IStr,
+    update_key: selene_core::IStr,
+    update_base: i64,
     read_ids: Vec<NodeId>,
     update_ids: Vec<NodeId>,
 }
@@ -65,17 +77,26 @@ impl ScalarMixedFixture {
         Self::from_shared(SharedGraph::from_graph(fixture.graph().clone()), fixture)
     }
 
+    fn build_indexed_property(fixture: &BenchFixture) -> Self {
+        let shared = SharedGraph::from_graph(fixture.graph().clone());
+        let node_count = fixture.graph().node_count().max(1);
+        Self {
+            shared,
+            update_key: fixture.age_key(),
+            update_base: 10_000,
+            read_ids: point_node_ids(node_count),
+            update_ids: person_node_ids(node_count),
+        }
+    }
+
     fn from_shared(shared: SharedGraph, fixture: &BenchFixture) -> Self {
         let node_count = fixture.graph().node_count().max(1);
         Self {
             shared,
-            score_key: fixture.score_key(),
-            read_ids: (0..READS_PER_CYCLE)
-                .map(|idx| NodeId::new((idx % node_count) as u64 + 1))
-                .collect(),
-            update_ids: (0..WRITES_PER_CYCLE)
-                .map(|idx| NodeId::new((idx % node_count) as u64 + 1))
-                .collect(),
+            update_key: fixture.score_key(),
+            update_base: READS_PER_CYCLE as i64,
+            read_ids: point_node_ids(node_count),
+            update_ids: point_update_node_ids(node_count),
         }
     }
 
@@ -108,8 +129,8 @@ impl ScalarMixedFixture {
             let mut mutator = txn.mutator();
             let diff = PropertyDiff::new(
                 [(
-                    self.score_key.clone(),
-                    Value::Int((idx + READS_PER_CYCLE) as i64),
+                    self.update_key.clone(),
+                    Value::Int(self.update_base + idx as i64),
                 )],
                 [],
             )
@@ -124,6 +145,25 @@ impl ScalarMixedFixture {
         }
         txn.commit().expect("bench scalar commit succeeds");
     }
+}
+
+fn point_node_ids(node_count: usize) -> Vec<NodeId> {
+    (0..READS_PER_CYCLE)
+        .map(|idx| NodeId::new((idx % node_count) as u64 + 1))
+        .collect()
+}
+
+fn point_update_node_ids(node_count: usize) -> Vec<NodeId> {
+    (0..WRITES_PER_CYCLE)
+        .map(|idx| NodeId::new((idx % node_count) as u64 + 1))
+        .collect()
+}
+
+fn person_node_ids(node_count: usize) -> Vec<NodeId> {
+    let person_count = node_count.div_ceil(3).max(1);
+    (0..WRITES_PER_CYCLE)
+        .map(|idx| NodeId::new((3 * (idx % person_count)) as u64 + 1))
+        .collect()
 }
 
 struct WalMixedFixture {
