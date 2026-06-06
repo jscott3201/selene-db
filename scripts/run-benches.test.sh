@@ -18,6 +18,16 @@ if ! grep -q "SELENE_VECTOR_REBUILD_BENCH_SCALES=250000,1000000" <<< "$dry_run";
   exit 1
 fi
 
+compile_only_dry_run="$(scripts/run-benches.sh --profile quick --bench vector_graph_retrieval --filter graph_vector_omlx_embedding_pressure --compile-only --dry-run)"
+if ! grep -q "cargo bench -p selene-algorithms --bench vector_graph_retrieval --no-run" <<< "$compile_only_dry_run"; then
+  echo "FAIL: --compile-only dry-run did not resolve to a cargo bench --no-run invocation" >&2
+  exit 1
+fi
+if grep -q " -- graph_vector_omlx_embedding_pressure" <<< "$compile_only_dry_run"; then
+  echo "FAIL: --compile-only dry-run leaked a Criterion filter into the compile invocation" >&2
+  exit 1
+fi
+
 custom_dry_run="$(scripts/run-benches.sh --profile quick --bench vector_index_rebuild --vector-scales 10000,1000,10000 --dry-run)"
 if ! grep -q "SELENE_VECTOR_BENCH_SCALES=1000,10000" <<< "$custom_dry_run"; then
   echo "FAIL: custom --vector-scales were not sorted and deduplicated" >&2

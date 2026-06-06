@@ -266,6 +266,7 @@ Useful invocations:
 ```bash
 scripts/run-benches.sh --list
 scripts/run-benches.sh --smoke
+scripts/run-benches.sh --bench vector_graph_retrieval --compile-only
 scripts/run-benches.sh --profile quick --bench vector_graph_retrieval
 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter vector
 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_vector_omlx_query_roots
