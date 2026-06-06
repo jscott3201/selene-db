@@ -429,6 +429,14 @@ fn vector_candidate_states_metadata_has_descriptor_columns() {
     assert_eq!(columns[6].ty, GqlType::List(Box::new(GqlType::String)));
     assert_eq!(columns[7].name.as_str(), "exclude_incoming");
     assert_eq!(columns[7].ty, GqlType::List(Box::new(GqlType::String)));
+    assert_eq!(
+        columns
+            .iter()
+            .filter(|column| column.nullable)
+            .map(|column| column.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["required_label"]
+    );
 }
 
 #[test]

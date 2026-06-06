@@ -288,6 +288,8 @@ pub struct ProcedureOutputColumn {
     pub name: DbString,
     /// Static type assigned to the YIELD binding.
     pub ty: GqlType,
+    /// Whether the procedure may return NULL for this column.
+    pub nullable: bool,
     /// Human-readable output-column description for catalog introspection.
     pub description: &'static str,
 }
@@ -299,8 +301,16 @@ impl ProcedureOutputColumn {
         Self {
             name,
             ty,
+            nullable: false,
             description: "",
         }
+    }
+
+    /// Set whether this output column accepts NULL values at runtime.
+    #[must_use]
+    pub const fn with_nullable(mut self, nullable: bool) -> Self {
+        self.nullable = nullable;
+        self
     }
 
     /// Attach a human-readable output-column description.

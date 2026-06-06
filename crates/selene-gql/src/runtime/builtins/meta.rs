@@ -81,6 +81,8 @@ pub(super) struct StaticOutputColumn {
     pub(super) name: &'static str,
     /// Output column type.
     pub(super) ty: GqlType,
+    /// Whether NULL is accepted.
+    pub(super) nullable: bool,
     /// Human-readable output-column description.
     pub(super) description: &'static str,
 }
@@ -91,8 +93,15 @@ impl StaticOutputColumn {
         Self {
             name,
             ty,
+            nullable: false,
             description: "",
         }
+    }
+
+    /// Set whether this output column accepts NULL values.
+    pub(super) const fn with_nullable(mut self, nullable: bool) -> Self {
+        self.nullable = nullable;
+        self
     }
 
     /// Attach a human-readable output-column description.
@@ -104,6 +113,7 @@ impl StaticOutputColumn {
     /// Convert into planner-visible output-column metadata.
     pub(super) fn into_output_column(self) -> ProcedureOutputColumn {
         ProcedureOutputColumn::new(static_db_string(self.name), self.ty)
+            .with_nullable(self.nullable)
             .with_description(self.description)
     }
 }

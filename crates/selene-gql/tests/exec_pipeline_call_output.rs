@@ -64,6 +64,10 @@ fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
     ProcedureOutputColumn::new(db_string(name), ty)
 }
 
+fn nullable_output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
+    output(name, ty).with_nullable(true)
+}
+
 fn planned(source: &str, registry: &dyn ProcedureRegistry) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
     let analyzed = analyze(statement, registry, None).expect("test input analyzes");
@@ -167,9 +171,22 @@ fn procedure_output_closed_record_rejects_extra_fields() {
 }
 
 #[test]
-fn procedure_output_null_remains_allowed_for_declared_columns() {
+fn procedure_output_null_is_rejected_for_non_nullable_columns() {
     let registry = OutputRegistry::new(
         vec![output("out", GqlType::String)],
+        vec![vec![Value::Null]],
+    );
+
+    let err =
+        execute("CALL pkg.out() YIELD out", &graph(), &registry).expect_err("non-null output");
+
+    assert_wrong_output_type(err);
+}
+
+#[test]
+fn procedure_output_null_is_allowed_for_nullable_columns() {
+    let registry = OutputRegistry::new(
+        vec![nullable_output("out", GqlType::String)],
         vec![vec![Value::Null]],
     );
 
