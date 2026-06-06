@@ -461,6 +461,7 @@ fixture** (the headline scale); `empty_commit` shows the scale axis.
 | `bound_type_validation/bound_schema_change` | 10k / 50k / 100k | 2.92 / 18.6 / 39.3 ms | Full graph-state revalidation; scales with N. |
 | `graph_mixed_workload/point_read_update_r60w40` | 10k / 50k / 100k | 9.207 / 11.045 / 16.699 ms | One scalar cycle: 60 snapshot point reads interleaved with 40 non-indexed property-update commits. Fixture clone/setup excluded; no vector index or WAL. |
 | `graph_mixed_workload/point_read_indexed_update_r60w40` | 10k / 50k / 100k | 9.261 / 11.129 / 16.842 ms | Same scalar cycle, but the 40 writes update `Person.age`, a registered typed property index. The close delta to the non-indexed row keeps property-index maintenance below the dominant sequential commit cost at these scales. |
+| `graph_mixed_workload/candidate_state_edge_update_r60w40` | 10k / 50k / 100k | 3.196 / 5.310 / 11.826 ms | One maintained candidate-state cycle: 60 generation-checked `current` set reads plus 20 `SUPERSEDED_BY` edge deletes and 20 creates. Exercises provider reactivation and invalidation without WAL. |
 | `graph_mixed_workload/point_read_update_r60w40_wal` | 10k / 50k / 100k | 139.11 / 130.07 / 134.45 ms | Same scalar 60/40 cycle backed by a real per-iteration WAL tempdir with committer batching off. Setup/teardown excluded; the near scale-flat cost shows per-commit durability barriers dominate this sequential 40-write shape. |
 
 ### §3b `graph_hub_delete` — high-degree hub deletion (GRAPH-05 ✓ shipped)
