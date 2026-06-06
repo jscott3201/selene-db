@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use proptest::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{
