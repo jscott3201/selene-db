@@ -8,16 +8,67 @@ use crate::entry_header::{
 };
 use crate::{PersistError, PersistResult, WalEntryHeader};
 
+/// WAL payload compression policy.
+///
+/// The current writer default is zstd level 1 at [`COMPRESS_THRESHOLD`]. The
+/// level remains fixed for now; this policy controls only whether a serialized
+/// payload is compressed based on its encoded byte length.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WalCompression {
+    threshold: Option<usize>,
+}
+
+impl WalCompression {
+    /// Compress serialized payloads whose encoded length is at least
+    /// `threshold_bytes`.
+    #[must_use]
+    pub const fn zstd(threshold_bytes: usize) -> Self {
+        Self {
+            threshold: Some(threshold_bytes),
+        }
+    }
+
+    /// Disable WAL payload compression.
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self { threshold: None }
+    }
+
+    /// Return the zstd threshold in bytes, or `None` when compression is off.
+    #[must_use]
+    pub const fn threshold_bytes(self) -> Option<usize> {
+        self.threshold
+    }
+
+    fn should_compress(self, raw_len: usize) -> bool {
+        self.threshold.is_some_and(|threshold| raw_len >= threshold)
+    }
+}
+
+impl Default for WalCompression {
+    fn default() -> Self {
+        Self::zstd(COMPRESS_THRESHOLD)
+    }
+}
+
 pub(crate) struct EncodedPayload {
     pub(crate) bytes: Vec<u8>,
     pub(crate) flags: u8,
     pub(crate) checksum_lo: u32,
 }
 
+#[cfg(test)]
 pub(crate) fn encode_changes(changes: &[Change]) -> PersistResult<EncodedPayload> {
+    encode_changes_with_compression(changes, WalCompression::default())
+}
+
+pub(crate) fn encode_changes_with_compression(
+    changes: &[Change],
+    compression: WalCompression,
+) -> PersistResult<EncodedPayload> {
     let raw = postcard::to_stdvec(changes)
         .map_err(|error| PersistError::PayloadCodec(error.to_string()))?;
-    let (bytes, flags) = if raw.len() >= COMPRESS_THRESHOLD {
+    let (bytes, flags) = if compression.should_compress(raw.len()) {
         (compress_zstd(raw.as_slice(), 1)?, FLAG_PAYLOAD_COMPRESSED)
     } else {
         (raw, 0)
@@ -266,6 +317,32 @@ mod tests {
     fn larger_payload_is_compressed() {
         let changes = vec![change(vec![7_u8; COMPRESS_THRESHOLD * 4])];
         let encoded = encode_changes(&changes).unwrap();
+        assert_eq!(encoded.flags, FLAG_PAYLOAD_COMPRESSED);
+        assert_eq!(decode_changes(&encoded.bytes, true).unwrap(), changes);
+    }
+
+    #[test]
+    fn raised_compression_threshold_leaves_large_payload_uncompressed() {
+        let changes = vec![change(vec![7_u8; COMPRESS_THRESHOLD * 4])];
+        let encoded =
+            encode_changes_with_compression(&changes, WalCompression::zstd(usize::MAX)).unwrap();
+        assert_eq!(encoded.flags, 0);
+        assert_eq!(decode_changes(&encoded.bytes, false).unwrap(), changes);
+    }
+
+    #[test]
+    fn disabled_compression_leaves_large_payload_uncompressed() {
+        let changes = vec![change(vec![7_u8; COMPRESS_THRESHOLD * 4])];
+        let encoded =
+            encode_changes_with_compression(&changes, WalCompression::disabled()).unwrap();
+        assert_eq!(encoded.flags, 0);
+        assert_eq!(decode_changes(&encoded.bytes, false).unwrap(), changes);
+    }
+
+    #[test]
+    fn zero_compression_threshold_compresses_small_payload() {
+        let changes = vec![change([1_u8, 2, 3])];
+        let encoded = encode_changes_with_compression(&changes, WalCompression::zstd(0)).unwrap();
         assert_eq!(encoded.flags, FLAG_PAYLOAD_COMPRESSED);
         assert_eq!(decode_changes(&encoded.bytes, true).unwrap(), changes);
     }
