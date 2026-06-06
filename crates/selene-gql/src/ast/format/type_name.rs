@@ -4,7 +4,7 @@ use crate::GqlType;
 use crate::ast::RecordType;
 use crate::ast::format_ident::fmt_ident;
 
-pub(super) fn fmt_type(ty: &GqlType) -> String {
+pub(crate) fn fmt_type(ty: &GqlType) -> String {
     match ty {
         GqlType::String => "STRING".to_owned(),
         GqlType::Boolean => "BOOLEAN".to_owned(),
@@ -58,10 +58,11 @@ pub(super) fn fmt_type(ty: &GqlType) -> String {
             format!("RECORD{{{body}}}")
         }
         // validate_formattable rejects these AST-only reference variants before
-        // the formatter starts. This arm remains a defensive fallback for
-        // callers that bypass the public formatting entry point in this module.
-        GqlType::GraphRef | GqlType::NodeRef | GqlType::EdgeRef | GqlType::TableRef => {
-            "STRING".to_owned()
-        }
+        // read-side source formatting starts. Crate-internal diagnostics still
+        // use this renderer directly, so preserve the logical type names here.
+        GqlType::GraphRef => "GRAPH".to_owned(),
+        GqlType::NodeRef => "NODE".to_owned(),
+        GqlType::EdgeRef => "EDGE".to_owned(),
+        GqlType::TableRef => "TABLE".to_owned(),
     }
 }

@@ -1,6 +1,6 @@
 //! Typed parameter runtime validation regressions.
 
-use selene_core::{GraphId, IStr, Record, Value, VectorValue, intern};
+use selene_core::{GraphId, IStr, NodeId, Record, Value, VectorValue, intern};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlType, PipelineStatement, QueryPipeline, RecordType,
     ReturnClause, ReturnItem, Session, SourceSpan, Statement, ValueExpr, analyze,
@@ -140,15 +140,18 @@ fn typed_parameter_runtime_rejects_mismatched_closed_record_fields() {
     );
     let err = execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
         .expect_err("closed record parameter rejects mismatched field type");
-    assert!(matches!(
-        err,
-        ExecutorError::InvalidParameterType {
-            name: err_name,
-            ref expected,
-            actual: "RECORD",
-            ..
-        } if err_name == name && expected == "RECORD"
-    ));
+    let ExecutorError::InvalidParameterType {
+        name: err_name,
+        expected,
+        actual,
+        ..
+    } = err
+    else {
+        panic!("expected InvalidParameterType");
+    };
+    assert_eq!(err_name, name);
+    assert_eq!(expected, "RECORD{\"count\" :: INTEGER}");
+    assert_eq!(actual, "RECORD");
 }
 
 #[test]
@@ -189,4 +192,67 @@ fn typed_parameter_runtime_accepts_matching_closed_record_fields() {
     );
     execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
         .expect("closed record parameter accepts matching field type");
+}
+
+#[test]
+fn typed_parameter_runtime_renders_nested_closed_record_type() {
+    let graph = SharedGraph::new(GraphId::new(4127));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("records"),
+        Value::List(vec![Value::Record(Box::new(Record::Open(smallvec![(
+            istr("count"),
+            Value::String(istr("three")),
+        )])))]),
+    );
+
+    let err = session
+        .execute_source(
+            "RETURN $records :: LIST<RECORD{count :: INT}> AS records",
+            &EmptyProcedureRegistry,
+        )
+        .expect_err("nested closed record parameter rejects mismatched field");
+    let ExecutorError::InvalidParameterType {
+        name,
+        expected,
+        actual,
+        ..
+    } = err
+    else {
+        panic!("expected InvalidParameterType");
+    };
+    assert_eq!(name.as_str(), "records");
+    assert_eq!(expected, "LIST<RECORD{\"count\" :: INTEGER}>");
+    assert_eq!(actual, "LIST");
+}
+
+#[test]
+fn typed_parameter_runtime_renders_internal_reference_type() {
+    let name = istr("node");
+    let statement = typed_parameter_statement(name.clone(), GqlType::NodeRef);
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("statement analyzes");
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("statement plans");
+    let graph = SharedGraph::new(GraphId::new(4128));
+    let mut session = Session::new(&graph);
+
+    session.bind_parameter(name.clone(), Value::String(istr("not-node")));
+    let err = execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+        .expect_err("reference parameter rejects mismatched value");
+    let ExecutorError::InvalidParameterType {
+        name: err_name,
+        expected,
+        actual,
+        ..
+    } = err
+    else {
+        panic!("expected InvalidParameterType");
+    };
+    assert_eq!(err_name, name);
+    assert_eq!(expected, "NODE");
+    assert_eq!(actual, "STRING");
+
+    let mut matching = Session::new(&graph);
+    matching.bind_parameter(istr("node"), Value::NodeRef(NodeId::new(1)));
+    execute_statement(&plan, &mut matching, &EmptyProcedureRegistry)
+        .expect("reference parameter accepts matching value");
 }
