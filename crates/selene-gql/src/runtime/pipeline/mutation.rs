@@ -435,20 +435,9 @@ fn execute_delete_targets(
     if matches!(mode, DeleteMode::Bare | DeleteMode::NoDetach) {
         ensure_delete_nodes_detached(&nodes, &edges, span, ctx)?;
     }
-    for node in nodes {
-        if ctx.snapshot().is_node_alive(node) {
-            ctx.mutator()?
-                .delete_node(node)
-                .map_err(|source| graph_mutation(source, span))?;
-        }
-    }
-    for edge in edges {
-        if ctx.snapshot().is_edge_alive(edge) {
-            ctx.mutator()?
-                .delete_edge(edge)
-                .map_err(|source| graph_mutation(source, span))?;
-        }
-    }
+    ctx.mutator()?
+        .delete_elements(nodes, edges)
+        .map_err(|source| graph_mutation(source, span))?;
     Ok(table)
 }
 

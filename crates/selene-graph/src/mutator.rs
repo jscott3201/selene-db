@@ -2,6 +2,7 @@
 
 mod catalog;
 mod composite_property_index;
+mod delete_set;
 mod factory_reset;
 mod property_index;
 mod remove;
@@ -852,3 +853,6 @@ mod factory_reset_tests;
 
 #[cfg(test)]
 mod hub_delete_tests;
+
+#[cfg(test)]
+mod delete_set_tests;
