@@ -8,14 +8,12 @@
 //! - `numeric_to_decimal` — `{Int,Uint,Int128,Uint128,Float,Float32}` → DECIMAL
 //!   (`22003` on Decimal-range overflow) and `String` → DECIMAL (`22018` on
 //!   parse failure).
-//! - `decimal_to_int` / `decimal_to_float` / `decimal_to_string` — DECIMAL →
-//!   the canonical integer (`Value::Int(i64)`), float (`Value::Float(f64)`),
-//!   and string targets. selene funnels every integer `GqlType` subtype to
-//!   `Value::Int(i64)` and every float subtype to `Value::Float(f64)` (see the
-//!   `cast_to_integer`/`cast_to_float` dispatch), so there is no per-bit-width
-//!   conversion surface — these three cover the whole `EN → EN/AN/C` row.
-//!   Integer truncates toward zero per §20.8 GR4g(i) / IA005, raising `22003`
-//!   on loss of a leading significant digit / out of `i64` range.
+//! - `decimal_to_int` / `decimal_to_string` — DECIMAL → the canonical integer
+//!   (`Value::Int(i64)`) and string targets. Decimal-to-approximate targets live
+//!   in the `float` submodule because `FLOAT32` and `FLOAT64` have different
+//!   runtime value shapes. Integer truncates toward zero per §20.8 GR4g(i) /
+//!   IA005, raising `22003` on loss of a leading significant digit / out of
+//!   `i64` range.
 //! - `widen_*_to_i64` — the numeric-family source widening intermediates
 //!   (`u64/i128/u128` → `i64`) used by `cast_to_integer`, with an explicit
 //!   range check rather than a silent narrow-through-`i64` that would corrupt
@@ -119,7 +117,7 @@ fn float_to_decimal(f: f64, span: SourceSpan) -> Result<Decimal, ExecutorError> 
 }
 
 // ---------------------------------------------------------------------------
-// DECIMAL → integer / float / string
+// DECIMAL → integer / string
 // ---------------------------------------------------------------------------
 
 /// CAST a `DECIMAL` source to an `i64`-canonical integer target
@@ -130,15 +128,6 @@ pub(super) fn decimal_to_int(dec: Decimal, span: SourceSpan) -> Result<Value, Ex
         .to_i64()
         .map(Value::Int)
         .ok_or_else(|| out_of_range("DECIMAL value exceeds INTEGER range during CAST", span))
-}
-
-/// CAST a `DECIMAL` source to an `f64`-canonical float target
-/// (`EN → AN`, GR4i). Loss of least-significant precision is permitted
-/// (round/truncate, IA005); `to_f64` is infallible across `Decimal`'s range.
-pub(super) fn decimal_to_float(dec: Decimal, span: SourceSpan) -> Result<Value, ExecutorError> {
-    dec.to_f64()
-        .map(Value::Float)
-        .ok_or_else(|| out_of_range("DECIMAL value has no FLOAT image during CAST", span))
 }
 
 /// CAST a `DECIMAL` source to a `STRING` target (`EN → C`, GR4j): the
@@ -291,7 +280,7 @@ mod tests {
         );
     }
 
-    // --- DECIMAL → integer / float / string ---
+    // --- DECIMAL → integer / string ---
 
     #[test]
     fn decimal_to_integer_truncates_toward_zero() {
@@ -305,14 +294,6 @@ mod tests {
         assert_eq!(
             status(decimal_to_int(dec("100000000000000000000"), span())),
             "22003"
-        );
-    }
-
-    #[test]
-    fn decimal_to_float_value() {
-        assert_eq!(
-            decimal_to_float(dec("2.5"), span()).unwrap(),
-            Value::Float(2.5)
         );
     }
 
