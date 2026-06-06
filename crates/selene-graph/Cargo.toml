@@ -110,6 +110,10 @@ name = "graph_read_under_write"
 harness = false
 
 [[bench]]
+name = "graph_mixed_workload"
+harness = false
+
+[[bench]]
 name = "text_search_bm25"
 harness = false
 
