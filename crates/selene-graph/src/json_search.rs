@@ -17,7 +17,7 @@ use crate::shared::SharedGraph;
 use crate::store::RowIndex;
 
 pub(crate) const JSON_SEARCH_CANCEL_STRIDE: usize = 1024;
-/// Maximum selector count accepted by exact JSON path search.
+/// Maximum selector count accepted by GQL JSON path search procedures.
 pub const JSON_PATH_SELECTOR_LIMIT: usize = 64;
 
 /// One JSON-containment node hit.
@@ -175,7 +175,7 @@ impl SeleneGraph {
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<JsonPathHit>, JsonSearchError> {
         checker.check()?;
-        if k == 0 || path.is_empty() || path.len() > JSON_PATH_SELECTOR_LIMIT {
+        if k == 0 || path.is_empty() {
             return Ok(Vec::new());
         }
         let Some(label_rows) = self.nodes_with_label(label) else {

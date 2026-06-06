@@ -223,3 +223,30 @@ fn json_path_exists_nodes_rejects_bad_path_document() {
     };
     assert!(detail.contains("path must be a JSON array"));
 }
+
+#[test]
+fn json_path_exists_nodes_rejects_too_many_selectors() {
+    let graph = graph(514_107);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let selectors = std::iter::repeat_n("\"a\"", 65)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let json_path = format!("[{selectors}]");
+    let source = format!(
+        "CALL selene.json_path_exists_nodes('JsonDoc', 'payload', json('{json_path}'), 10)"
+    );
+
+    let err = session
+        .execute_source(&source, &registry)
+        .expect_err("over-limit path document should fail");
+
+    let ExecutorError::Procedure {
+        source: ProcedureError::InvalidArgument { detail },
+        ..
+    } = err
+    else {
+        panic!("expected procedure invalid argument, got {err:?}");
+    };
+    assert!(detail.contains("supports at most 64 selectors"));
+}
