@@ -13,7 +13,7 @@ use selene_core::{
 };
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
-    WalConfig, WalWriter, snapshot_path,
+    WalCompression, WalConfig, WalWriter, snapshot_path,
 };
 use selene_testing::BenchProfile;
 
@@ -168,6 +168,39 @@ pub(crate) fn write_wal_with_payload(
             sync_policy,
             snapshot_seq,
         },
+    )
+    .expect("wal opens");
+    let payload = changes_with_payload(batch_size, shape);
+    for idx in 0..entries {
+        writer
+            .append(
+                HlcTimestamp::new(idx as u64 + 1, 0),
+                Origin::Local,
+                None,
+                &payload,
+            )
+            .expect("wal append succeeds");
+    }
+    writer.flush().expect("wal flush succeeds");
+}
+
+pub(crate) fn write_wal_with_payload_compression(
+    dir: &Path,
+    entries: usize,
+    batch_size: usize,
+    shape: PayloadShape,
+    snapshot_seq: u64,
+    sync_policy: SyncPolicy,
+    compression: WalCompression,
+) {
+    let path = dir.join(DEFAULT_WAL_FILE_NAME);
+    let mut writer = WalWriter::open_with_compression(
+        &path,
+        WalConfig {
+            sync_policy,
+            snapshot_seq,
+        },
+        compression,
     )
     .expect("wal opens");
     let payload = changes_with_payload(batch_size, shape);
