@@ -3,7 +3,7 @@
 use selene_core::DbString;
 use selene_graph::{GraphTypeDef, PropertyDefaultValue, PropertyElementType, PropertyTypeDef};
 
-use super::property::render_property_value_type;
+use super::property::{render_property_default_value, render_property_value_type};
 use crate::{ExecutorError, SourceSpan};
 
 pub(super) fn compose_node_properties(
@@ -175,7 +175,8 @@ fn render_default(default: Option<&PropertyDefaultValue>) -> String {
         Some(PropertyDefaultValue::Boolean(value)) => value.to_string().to_uppercase(),
         Some(PropertyDefaultValue::Integer(value)) => value.to_string(),
         Some(PropertyDefaultValue::String(value)) => format!("'{}'", value.as_str()),
-        Some(_) => "<unsupported-default>".to_owned(),
+        Some(value) => render_property_default_value(value)
+            .unwrap_or_else(|_| "<unsupported-default>".to_owned()),
     }
 }
 

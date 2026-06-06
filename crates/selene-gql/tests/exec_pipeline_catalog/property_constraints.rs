@@ -127,6 +127,22 @@ fn default_property_constraint_accepts_supported_literal_ir() {
 }
 
 #[test]
+fn bytes_default_property_constraint_accepts_byte_literal() {
+    let graph = empty_closed_graph(3727);
+    let plan = planned("CREATE NODE TYPE :Blob (payload :: BYTES DEFAULT X'CAFE')");
+
+    run_write(&graph, &plan)
+        .expect("bytes default constraint executes")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE]))
+    );
+}
+
+#[test]
 fn unsupported_default_literal_returns_feature_not_supported() {
     let graph = empty_closed_graph(3724);
     let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5)");

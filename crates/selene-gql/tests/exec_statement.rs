@@ -185,6 +185,28 @@ fn catalog_default_property_materializes_on_insert() {
 }
 
 #[test]
+fn catalog_bytes_default_property_materializes_on_insert() {
+    let graph = empty_closed_graph(3817);
+    let mut session = Session::new(&graph);
+
+    execute(
+        "CREATE NODE TYPE :Blob (payload :: BYTES DEFAULT X'CAFE')",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute("INSERT (n:Blob) FINISH", &mut session).expect("insert succeeds");
+    let table = rows(
+        execute("MATCH (n:Blob) RETURN n.payload AS payload", &mut session)
+            .expect("match succeeds"),
+    );
+
+    assert_eq!(
+        table.rows()[0].values(),
+        &[Value::Bytes(Arc::<[u8]>::from([0xCA, 0xFE]))]
+    );
+}
+
+#[test]
 fn catalog_immutable_property_rejects_gql_set() {
     let graph = empty_closed_graph(3815);
     let mut session = Session::new(&graph);

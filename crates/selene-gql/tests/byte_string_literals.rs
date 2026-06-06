@@ -142,11 +142,3 @@ fn non_identity_bytes_casts_remain_unsupported() {
         "42N01"
     );
 }
-
-#[test]
-fn bytes_default_literals_are_deferred_until_schema_defaults_support_bytes() {
-    assert_eq!(
-        first_status("CREATE NODE TYPE :Blob (payload :: BYTES DEFAULT X'00')"),
-        "42N01"
-    );
-}

@@ -20,7 +20,7 @@ use self::{
     endpoints::resolve_endpoints,
     index_ddl::{IndexPath, create_index_plan, resolve_drop_index},
     procedure::{procedure_row, render_procedure_name},
-    property::{property_defs, render_property_value_type},
+    property::{property_defs, render_property_default_value, render_property_value_type},
 };
 use super::catalog_index::{
     DropTarget, inline_index_specs, render_index_kind, render_index_name, render_vector_index_kind,
@@ -659,7 +659,7 @@ fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorE
         .map(|property| {
             let nullability = if property.required { " NOT NULL" } else { "" };
             let default = match property.default.as_ref() {
-                Some(value) => format!(" DEFAULT {}", render_default_value(value)?),
+                Some(value) => format!(" DEFAULT {}", render_property_default_value(value)?),
                 None => String::new(),
             };
             let immutable = if property.immutable { " IMMUTABLE" } else { "" };
@@ -678,24 +678,6 @@ fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorE
         })
         .collect::<Result<Vec<_>, ExecutorError>>()?;
     Ok(rendered.join(", "))
-}
-
-fn render_default_value(
-    default: &selene_graph::PropertyDefaultValue,
-) -> Result<String, ExecutorError> {
-    // `PropertyDefaultValue` is cross-crate `#[non_exhaustive]`, so the wildcard
-    // is unavoidable. Rather than emit a user-visible non-parseable placeholder
-    // into otherwise round-trip-parseable DDL, fail loudly so a future variant
-    // forces a rendering decision here.
-    match default {
-        selene_graph::PropertyDefaultValue::Null => Ok("NULL".to_owned()),
-        selene_graph::PropertyDefaultValue::Boolean(value) => Ok(value.to_string().to_uppercase()),
-        selene_graph::PropertyDefaultValue::Integer(value) => Ok(value.to_string()),
-        selene_graph::PropertyDefaultValue::String(value) => Ok(format!("'{}'", value.as_str())),
-        _ => Err(ExecutorError::ImplementationDefined {
-            detail: "unsupported property default value in catalog DDL rendering",
-        }),
-    }
 }
 
 fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {

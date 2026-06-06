@@ -1,5 +1,7 @@
 //! Property-definition helpers for catalog DDL.
 
+use std::fmt::Write as _;
+
 use selene_core::PropertyValueType;
 use selene_graph::{
     PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
@@ -92,12 +94,9 @@ fn property_default_value(
         Literal::Bool(value, _) => Ok(PropertyDefaultValue::Boolean(*value)),
         Literal::Integer(value, _) => Ok(PropertyDefaultValue::Integer(*value)),
         Literal::String(value, _) => Ok(PropertyDefaultValue::String(value.clone())),
+        Literal::Bytes(value, _) => Ok(PropertyDefaultValue::Bytes(value.to_vec())),
         Literal::Float(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "floating-point DEFAULT literals",
-            span,
-        }),
-        Literal::Bytes(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "BYTES DEFAULT literals",
             span,
         }),
         Literal::Uuid(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
@@ -333,6 +332,31 @@ pub(super) fn render_property_value_type(
         return render_record_field_types(fields);
     }
     scalar_property_value_type_name(value_type).to_owned()
+}
+
+pub(super) fn render_property_default_value(
+    default: &PropertyDefaultValue,
+) -> Result<String, ExecutorError> {
+    match default {
+        PropertyDefaultValue::Null => Ok("NULL".to_owned()),
+        PropertyDefaultValue::Boolean(value) => Ok(value.to_string().to_uppercase()),
+        PropertyDefaultValue::Integer(value) => Ok(value.to_string()),
+        PropertyDefaultValue::String(value) => Ok(format!("'{}'", value.as_str())),
+        PropertyDefaultValue::Bytes(value) => Ok(render_byte_string_literal(value)),
+        _ => Err(ExecutorError::ImplementationDefined {
+            detail: "unsupported property default value in catalog DDL rendering",
+        }),
+    }
+}
+
+fn render_byte_string_literal(bytes: &[u8]) -> String {
+    let mut rendered = String::with_capacity(3 + bytes.len() * 2);
+    rendered.push_str("X'");
+    for byte in bytes {
+        write!(&mut rendered, "{byte:02X}").expect("writing to String cannot fail");
+    }
+    rendered.push('\'');
+    rendered
 }
 
 fn render_record_field_types(fields: &RecordFieldTypes) -> String {
