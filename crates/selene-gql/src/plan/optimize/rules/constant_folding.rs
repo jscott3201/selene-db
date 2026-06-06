@@ -63,6 +63,7 @@ fn fold_unary(op: UnaryOp, operand: &ValueExpr, span: SourceSpan) -> Option<Valu
         (UnaryOp::Not, _)
         | (UnaryOp::Negate, Literal::Bool(_, _))
         | (UnaryOp::Negate, Literal::String(_, _))
+        | (UnaryOp::Negate, Literal::Bytes(_, _))
         | (UnaryOp::Negate, Literal::Uuid(_, _))
         | (UnaryOp::Negate, Literal::ZonedDateTime(_, _))
         | (UnaryOp::Negate, Literal::LocalDateTime(_, _))
@@ -161,6 +162,9 @@ fn fold_comparison(
         }
         (Literal::String(left, _), Literal::String(right, _)) => {
             compare_ordering(op, left.as_str(), right.as_str())
+        }
+        (Literal::Bytes(left, _), Literal::Bytes(right, _)) => {
+            compare_ordering(op, left.as_ref(), right.as_ref())
         }
         (Literal::Date(left, _), Literal::Date(right, _)) => compare_ordering(op, left, right),
         (Literal::LocalDateTime(left, _), Literal::LocalDateTime(right, _)) => {

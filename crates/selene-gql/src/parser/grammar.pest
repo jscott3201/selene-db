@@ -711,6 +711,7 @@ literal = {
   | uuid_lit
   | float_lit
   | int_lit
+  | byte_string_lit
   | string_lit
   | list_lit
 }
@@ -739,6 +740,14 @@ single_inner      = @{ (escaped_quote | dangling_escape | escape_seq | "''" | !(
 escaped_quote     = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
 dangling_escape   = @{ "\\" ~ &"'" }
 escape_seq        = @{ "\\" ~ ANY }
+
+// Byte strings: ISO-style X'...' hex octets. Spaces inside each quoted chunk
+// are ignored; adjacent chunks require a separator containing at least one
+// newline, matching the standard's separator rule.
+byte_string_lit       = ${ ("X" | "x") ~ byte_string_chunk ~ (byte_string_separator ~ byte_string_chunk)* }
+byte_string_chunk     = { "'" ~ byte_string_inner ~ "'" }
+byte_string_inner     = @{ (ASCII_HEX_DIGIT | " ")* }
+byte_string_separator = @{ (" " | "\t")* ~ ("\r\n" | "\n" | "\r") ~ (" " | "\t" | "\r" | "\n")* }
 
 // List literal
 list_lit = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }

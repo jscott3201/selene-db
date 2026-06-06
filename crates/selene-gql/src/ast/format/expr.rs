@@ -15,6 +15,13 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             crate::Literal::Integer(value, _) => write!(out, "{value}")?,
             crate::Literal::Float(value, _) => write!(out, "{value}")?,
             crate::Literal::String(value, _) => write!(out, "'{}'", escape_string(value.as_str()))?,
+            crate::Literal::Bytes(value, _) => {
+                out.push_str("X'");
+                for byte in value.iter() {
+                    write!(out, "{byte:02X}")?;
+                }
+                out.push('\'');
+            }
             crate::Literal::Uuid(value, _) => write!(out, "UUID '{value}'")?,
             crate::Literal::ZonedDateTime(value, _) => {
                 write!(out, "ZONED DATETIME '{}'", format_zoned_datetime(value))?;

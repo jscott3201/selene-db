@@ -14,6 +14,8 @@
 //! - `BitmapUnion[bounds=Keys [STRING 'alice', $b]]`
 //! - `CompositeLookup[bounds=Composite [tenant=STRING 't1', kind=$k]]`
 
+use std::fmt::Write as _;
+
 use selene_core::DbString;
 
 use crate::{IndexKey, Literal, ScanAccess, TypedIndexBounds};
@@ -84,6 +86,7 @@ fn render_literal(literal: &Literal) -> String {
         Literal::Integer(value, _) => format!("INTEGER {value}"),
         Literal::Float(value, _) => format!("FLOAT {value}"),
         Literal::String(value, _) => format!("STRING '{}'", value.as_str()),
+        Literal::Bytes(value, _) => format!("BYTES X'{}'", hex_bytes(value)),
         Literal::Uuid(value, _) => format!("UUID '{value}'"),
         Literal::ZonedDateTime(value, _) => {
             format!("ZONED DATETIME '{}'", format_zoned_datetime(value))
@@ -95,6 +98,14 @@ fn render_literal(literal: &Literal) -> String {
         Literal::Duration(value, _) => format!("DURATION '{value}'"),
         Literal::Null(_) => "NULL".to_owned(),
     }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02X}");
+    }
+    out
 }
 
 fn format_zoned_datetime(value: &jiff::Zoned) -> String {

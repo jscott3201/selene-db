@@ -1,5 +1,7 @@
 //! Literal expression builders.
 
+use std::sync::Arc;
+
 use pest::iterators::Pair;
 use selene_core::DbString;
 
@@ -80,6 +82,7 @@ fn build_literal_child(child: Pair<'_, Rule>) -> Result<Literal, ParserError> {
         )),
         Rule::int_lit => parse_i64(child.as_str(), child_span),
         Rule::float_lit => parse_f64(child.as_str(), child_span),
+        Rule::byte_string_lit => parse_byte_string_lit(child.as_str(), child_span),
         Rule::string_lit => parse_string(child.as_str(), child_span),
         Rule::uuid_lit => parse_uuid_lit(child, child_span),
         Rule::date_lit => parse_date_lit(child, child_span),
@@ -216,6 +219,64 @@ fn parse_f64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
                 None,
             )
         })
+}
+
+fn parse_byte_string_lit(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
+    let Some(body) = text.strip_prefix('X').or_else(|| text.strip_prefix('x')) else {
+        return Err(ParserError::syntax(
+            "byte string literal is missing X prefix",
+            span,
+            None,
+        ));
+    };
+    let mut in_chunk = false;
+    let mut digits = Vec::with_capacity(body.len());
+    for ch in body.chars() {
+        match ch {
+            '\'' => in_chunk = !in_chunk,
+            ' ' if in_chunk => {}
+            value if in_chunk && value.is_ascii_hexdigit() => digits.push(value),
+            value if !in_chunk && value.is_ascii_whitespace() => {}
+            _ => {
+                return Err(ParserError::syntax(
+                    "invalid byte string literal",
+                    span,
+                    Some("byte string literals use hexadecimal digit pairs".into()),
+                ));
+            }
+        }
+    }
+    if in_chunk {
+        return Err(ParserError::syntax(
+            "unterminated byte string literal chunk",
+            span,
+            None,
+        ));
+    }
+    if digits.len() % 2 != 0 {
+        return Err(ParserError::syntax(
+            "byte string literal has an odd number of hexadecimal digits",
+            span,
+            Some("use two hexadecimal digits per byte".into()),
+        ));
+    }
+
+    let mut bytes = Vec::with_capacity(digits.len() / 2);
+    for pair in digits.chunks_exact(2) {
+        let high = hex_value(pair[0], span)?;
+        let low = hex_value(pair[1], span)?;
+        bytes.push((high << 4) | low);
+    }
+    Ok(Literal::Bytes(
+        Arc::<[u8]>::from(bytes.into_boxed_slice()),
+        span,
+    ))
+}
+
+fn hex_value(ch: char, span: SourceSpan) -> Result<u8, ParserError> {
+    ch.to_digit(16)
+        .and_then(|value| u8::try_from(value).ok())
+        .ok_or_else(|| ParserError::syntax("invalid byte string hexadecimal digit", span, None))
 }
 
 fn validate_underscores(text: &str, span: SourceSpan) -> Result<(), ParserError> {

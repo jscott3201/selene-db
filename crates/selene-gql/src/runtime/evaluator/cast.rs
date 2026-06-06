@@ -23,7 +23,7 @@
 //!   ISO does not define a `CAST` for.
 //! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source,
-//!   bytes sources, or any cast whose target is `NULL` / `NOTHING`).
+//!   non-identity bytes casts, or any cast whose target is `NULL` / `NOTHING`).
 
 use selene_core::Value;
 
@@ -146,6 +146,7 @@ pub(super) fn eval_cast(
         GqlType::Decimal => decimal::numeric_to_decimal(value, span),
         GqlType::Boolean => cast_to_boolean(value, span),
         GqlType::String => cast_to_string(value, span),
+        GqlType::Bytes => cast_to_bytes(value, span),
         GqlType::Uuid => cast_to_uuid(value, span),
         GqlType::ZonedDateTime
         | GqlType::LocalDateTime
@@ -234,6 +235,16 @@ fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> 
         Value::String(s) => parse_uuid_string(s.as_str(), span).map(Value::Uuid),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for UUID target",
+            span,
+        }),
+    }
+}
+
+fn cast_to_bytes(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match value {
+        Value::Bytes(value) => Ok(Value::Bytes(value)),
+        _ => Err(ExecutorError::FeatureNotSupportedYet {
+            feature: "CAST source not supported for BYTES target",
             span,
         }),
     }

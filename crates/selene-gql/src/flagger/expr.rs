@@ -164,6 +164,7 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
         Literal::Float(_, span) => record_feature(uses, FeatureId::GA01, *span),
         Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
         Literal::String(_, _)
+        | Literal::Bytes(_, _)
         | Literal::Bool(_, _)
         | Literal::Integer(_, _)
         | Literal::ZonedDateTime(_, _)
