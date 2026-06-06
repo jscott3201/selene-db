@@ -60,6 +60,50 @@ fn string_numeric_casts_accept_digit_separators() {
 }
 
 #[test]
+fn string_exact_numeric_casts_accept_decimal_literal_images() {
+    assert_eq!(
+        first_value("RETURN CAST('3.7' AS INTEGER) AS v"),
+        Value::Int(3)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('-3.7' AS INT16) AS v"),
+        Value::Int(-3)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('255.9' AS UINT8) AS v"),
+        Value::Uint(255)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('3.7' AS INT128) AS v"),
+        Value::Int128(3)
+    );
+}
+
+#[test]
+fn string_exact_numeric_casts_accept_scientific_and_suffix_images() {
+    assert_eq!(
+        first_value("RETURN CAST('2.0e2' AS INTEGER) AS v"),
+        Value::Int(200)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('2.9d' AS INTEGER) AS v"),
+        Value::Int(2)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('2M' AS INTEGER) AS v"),
+        Value::Int(2)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('123M' AS DECIMAL) AS v"),
+        Value::Decimal("123".parse().expect("valid decimal"))
+    );
+    assert_eq!(
+        first_value("RETURN CAST('123M' AS FLOAT) AS v"),
+        Value::Float(123.0)
+    );
+}
+
+#[test]
 fn string_numeric_casts_reject_invalid_digit_separators() {
     for source in [
         "RETURN CAST('1__000' AS INTEGER) AS v",
@@ -68,6 +112,18 @@ fn string_numeric_casts_reject_invalid_digit_separators() {
         "RETURN CAST('+_1000' AS INTEGER) AS v",
         "RETURN CAST('1_.5' AS FLOAT) AS v",
         "RETURN CAST('1._5' AS DECIMAL) AS v",
+    ] {
+        assert_eq!(first_status(source), "22018", "{source}");
+    }
+}
+
+#[test]
+fn string_numeric_casts_reject_malformed_decimal_images() {
+    for source in [
+        "RETURN CAST('1.2.3' AS INTEGER) AS v",
+        "RETURN CAST('1e' AS UINT8) AS v",
+        "RETURN CAST('M' AS DECIMAL) AS v",
+        "RETURN CAST('1M2' AS FLOAT) AS v",
     ] {
         assert_eq!(first_status(source), "22018", "{source}");
     }

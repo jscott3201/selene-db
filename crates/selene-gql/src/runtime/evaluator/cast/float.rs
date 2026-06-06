@@ -8,7 +8,7 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::{invalid_character, non_iso_combination, numeric_text::normalize_signed_numeric_text};
+use super::{invalid_character, non_iso_combination, numeric_text::classify_signed_numeric_text};
 
 #[derive(Clone, Copy)]
 pub(super) enum FloatTarget {
@@ -91,10 +91,8 @@ fn string_to_float(
     target: FloatTarget,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let normalized = normalize_signed_numeric_text(text, target.name(), span)?;
-    let image = normalized
-        .strip_suffix(['f', 'd', 'F', 'D'])
-        .unwrap_or(normalized.as_ref());
+    let numeric = classify_signed_numeric_text(text, target.name(), span)?;
+    let image = numeric.image();
     if is_non_numeric_float_token(image) {
         return Err(invalid_character(text, target.name(), span));
     }
