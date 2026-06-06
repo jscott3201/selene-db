@@ -11,18 +11,18 @@ fn name(segments: &[&str]) -> Vec<DbString> {
 }
 
 #[test]
-fn registers_all_fifty_five_procedures() {
+fn registers_all_fifty_six_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        55,
-        "expected 19 algo procedures + 36 platform built-ins"
+        56,
+        "expected 19 algo procedures + 37 platform built-ins"
     );
 }
 
 #[test]
-fn iter_handles_yields_all_thirty_six_platform_builtins() {
+fn iter_handles_yields_all_thirty_seven_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -59,6 +59,7 @@ fn iter_handles_yields_all_thirty_six_platform_builtins() {
         ["selene", "vector_index_stats"],
         ["selene", "text_index_stats"],
         ["selene", "json_contains_nodes"],
+        ["selene", "json_path_exists_nodes"],
         ["selene", "rebuild_vector_indexes"],
         ["selene", "rebuild_recommended_vector_indexes"],
         ["selene", "create_vector_index"],

@@ -52,7 +52,7 @@ pub use extension_type_ids::{
 pub use gqlstatus::{ALL_GQLSTATUS_NAMES, gqlstatus_name};
 pub use hlc::HlcTimestamp;
 pub use identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
-pub use json_value::JsonValue;
+pub use json_value::{JsonPathSelector, JsonValue};
 pub use label_set::LabelSet;
 pub use origin::Origin;
 pub use property_map::{PropertyMap, PropertyMapIter, PropertyMapKeys, PropertyMapValues};

@@ -11,8 +11,8 @@ mod single_graph_candidate_set;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    DbString, GraphId, JsonValue, LabelSet, PropertyMap, Value, VectorMetric, VectorValue,
-    db_string,
+    DbString, GraphId, JsonPathSelector, JsonValue, LabelSet, PropertyMap, Value, VectorMetric,
+    VectorValue, db_string,
 };
 use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind, VectorIndexMemoryUsage};
 use selene_testing::BenchProfile;
@@ -204,6 +204,33 @@ fn bench_exact_json_contains_scan(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_exact_json_path_exists_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_json_path_exists_scan");
+    for &scale in BenchProfile::from_env().scales() {
+        let fixture = JsonFixture::build(scale);
+        group.throughput(Throughput::Elements(fixture.scale() as u64));
+        group.bench_with_input(
+            BenchmarkId::new("nested_score_path_k10", fixture.scale()),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_path_exists_nodes(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.path(),
+                            10,
+                        )
+                        .expect("JSON path-existence scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 fn bench_ann_recall(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_ann_recall_validation");
     for scale in vector_scan_scales() {
@@ -285,6 +312,7 @@ struct JsonFixture {
     label: DbString,
     payload_key: DbString,
     candidate: JsonValue,
+    path: Vec<JsonPathSelector>,
 }
 
 impl JsonFixture {
@@ -295,6 +323,10 @@ impl JsonFixture {
         let candidate =
             JsonValue::new(serde_json::json!({"memory": {"kind": "episodic"}, "state": "current"}))
                 .expect("bench JSON candidate is valid");
+        let path = vec![
+            JsonPathSelector::Key(db_string("memory").expect("bench path key is valid")),
+            JsonPathSelector::Key(db_string("score").expect("bench path key is valid")),
+        ];
         let shared = SharedGraph::new(GraphId::new(9_500 + scale as u64));
         {
             let mut txn = shared.begin_write();
@@ -330,6 +362,7 @@ impl JsonFixture {
             label,
             payload_key,
             candidate,
+            path,
         }
     }
 
@@ -351,6 +384,10 @@ impl JsonFixture {
 
     const fn candidate(&self) -> &JsonValue {
         &self.candidate
+    }
+
+    fn path(&self) -> &[JsonPathSelector] {
+        &self.path
     }
 }
 
@@ -507,7 +544,7 @@ criterion_group! {
     config = common::criterion_config();
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
         bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
-        bench_exact_json_contains_scan, single_graph_candidate_set::bench_vector_candidate_set,
-        bench_ann_recall
+        bench_exact_json_contains_scan, bench_exact_json_path_exists_scan,
+        single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall
 }
 criterion_main!(graph_reads);
