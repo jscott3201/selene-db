@@ -68,6 +68,29 @@ fn folds_boolean_unary_and_string_concat() {
 }
 
 #[test]
+fn folds_temporal_literal_comparisons() {
+    let plan = optimized_one("RETURN DATE '2026-05-07' < DATE '2026-05-08' AS x");
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bool(true, _))
+    ));
+
+    let plan = optimized_one(
+        "RETURN LOCAL DATETIME '2026-05-07T12:34:56' = LOCAL DATETIME '2026-05-07T12:34:56' AS x",
+    );
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bool(true, _))
+    ));
+
+    let plan = optimized_one("RETURN LOCAL TIME '12:34:56' >= LOCAL TIME '12:34:55' AS x");
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bool(true, _))
+    ));
+}
+
+#[test]
 fn preserves_runtime_error_and_overflow_expressions() {
     let plan = optimized_one("RETURN 1 / 0 AS x");
     assert!(matches!(

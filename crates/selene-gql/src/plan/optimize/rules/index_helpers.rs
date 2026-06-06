@@ -86,8 +86,15 @@ pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
         Literal::Integer(_, _) => Some(IndexKind::Integer),
         Literal::Float(_, _) => Some(IndexKind::Float),
         Literal::String(_, _) => Some(IndexKind::String),
+        Literal::Date(_, _) => Some(IndexKind::Date),
+        Literal::LocalDateTime(_, _) => Some(IndexKind::LocalDateTime),
         Literal::Uuid(_, _) => Some(IndexKind::Uuid),
-        Literal::Bool(_, _) | Literal::Null(_) => None,
+        Literal::Bool(_, _)
+        | Literal::ZonedDateTime(_, _)
+        | Literal::ZonedTime(_, _)
+        | Literal::LocalTime(_, _)
+        | Literal::Duration(_, _)
+        | Literal::Null(_) => None,
     }
 }
 

@@ -85,6 +85,22 @@ fn render_literal(literal: &Literal) -> String {
         Literal::Float(value, _) => format!("FLOAT {value}"),
         Literal::String(value, _) => format!("STRING '{}'", value.as_str()),
         Literal::Uuid(value, _) => format!("UUID '{value}'"),
+        Literal::ZonedDateTime(value, _) => {
+            format!("ZONED DATETIME '{}'", format_zoned_datetime(value))
+        }
+        Literal::LocalDateTime(value, _) => format!("LOCAL DATETIME '{value}'"),
+        Literal::Date(value, _) => format!("DATE '{value}'"),
+        Literal::ZonedTime(value, _) => format!("ZONED TIME '{}'", format_zoned_time(value)),
+        Literal::LocalTime(value, _) => format!("LOCAL TIME '{value}'"),
+        Literal::Duration(value, _) => format!("DURATION '{value}'"),
         Literal::Null(_) => "NULL".to_owned(),
     }
+}
+
+fn format_zoned_datetime(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.datetime(), value.offset())
+}
+
+fn format_zoned_time(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.time(), value.offset())
 }

@@ -446,6 +446,48 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
             value.hash(state);
             span.hash(state);
         }
+        Literal::ZonedDateTime(value, span) => {
+            6u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::LocalDateTime(value, span) => {
+            7u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::Date(value, span) => {
+            8u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::ZonedTime(value, span) => {
+            9u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::LocalTime(value, span) => {
+            10u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::Duration(value, span) => {
+            11u8.hash(state);
+            (
+                value.get_years(),
+                value.get_months(),
+                value.get_weeks(),
+                value.get_days(),
+                value.get_hours(),
+                value.get_minutes(),
+                value.get_seconds(),
+                value.get_milliseconds(),
+                value.get_microseconds(),
+                value.get_nanoseconds(),
+            )
+                .hash(state);
+            span.hash(state);
+        }
     }
 }
 

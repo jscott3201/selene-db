@@ -163,8 +163,16 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
     match value {
         Literal::Float(_, span) => record_feature(uses, FeatureId::GA01, *span),
         Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
-        Literal::String(_, _) | Literal::Bool(_, _) | Literal::Integer(_, _) | Literal::Null(_) => {
-        }
+        Literal::String(_, _)
+        | Literal::Bool(_, _)
+        | Literal::Integer(_, _)
+        | Literal::ZonedDateTime(_, _)
+        | Literal::LocalDateTime(_, _)
+        | Literal::Date(_, _)
+        | Literal::ZonedTime(_, _)
+        | Literal::LocalTime(_, _)
+        | Literal::Duration(_, _)
+        | Literal::Null(_) => {}
     }
 }
 

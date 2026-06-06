@@ -342,6 +342,8 @@ fn compare_literals(a: &Literal, b: &Literal) -> Option<std::cmp::Ordering> {
         (Literal::Integer(lhs, _), Literal::Integer(rhs, _)) => Some(lhs.cmp(rhs)),
         (Literal::Float(lhs, _), Literal::Float(rhs, _)) => lhs.partial_cmp(rhs),
         (Literal::String(lhs, _), Literal::String(rhs, _)) => Some(lhs.as_str().cmp(rhs.as_str())),
+        (Literal::Date(lhs, _), Literal::Date(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::LocalDateTime(lhs, _), Literal::LocalDateTime(rhs, _)) => Some(lhs.cmp(rhs)),
         (Literal::Bool(lhs, _), Literal::Bool(rhs, _)) => Some(lhs.cmp(rhs)),
         _ => None,
     }

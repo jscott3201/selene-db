@@ -100,6 +100,15 @@ fn property_default_value(
             feature: "UUID DEFAULT literals",
             span,
         }),
+        Literal::ZonedDateTime(_, _)
+        | Literal::LocalDateTime(_, _)
+        | Literal::Date(_, _)
+        | Literal::ZonedTime(_, _)
+        | Literal::LocalTime(_, _)
+        | Literal::Duration(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
+            feature: "temporal DEFAULT literals",
+            span,
+        }),
     }
 }
 

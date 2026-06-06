@@ -63,6 +63,8 @@ impl GqlStatus {
     pub const DATA_EXCEPTION: Self = Self(*b"22000");
     /// Maps to GQLSTATUS 22003 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const NUMERIC_VALUE_OUT_OF_RANGE: Self = Self(*b"22003");
+    /// Maps to GQLSTATUS 22007 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DATETIME_FORMAT: Self = Self(*b"22007");
     /// Maps to GQLSTATUS 22011 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const SUBSTRING_ERROR: Self = Self(*b"22011");
     /// Maps to GQLSTATUS 22012 per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -399,6 +401,7 @@ mod tests {
             (GqlStatus::DATATYPE_MISMATCH, "22G03", *b"22"),
             (GqlStatus::DATA_EXCEPTION, "22000", *b"22"),
             (GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE, "22003", *b"22"),
+            (GqlStatus::INVALID_DATETIME_FORMAT, "22007", *b"22"),
             (GqlStatus::SUBSTRING_ERROR, "22011", *b"22"),
             (GqlStatus::DIVISION_BY_ZERO, "22012", *b"22"),
             (GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST, "22018", *b"22"),

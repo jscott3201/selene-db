@@ -25,6 +25,12 @@ fn person_catalog() -> MockIndexCatalog {
         .with_node_typed_index(istr("Person"), istr("name"), IndexKind::String)
 }
 
+fn event_catalog() -> MockIndexCatalog {
+    MockIndexCatalog::new()
+        .with_node_typed_index(istr("Event"), istr("event_date"), IndexKind::Date)
+        .with_node_typed_index(istr("Event"), istr("started_at"), IndexKind::LocalDateTime)
+}
+
 fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
     match tree {
         JoinTree::Scan(scan) => Some(scan),
@@ -74,6 +80,40 @@ fn combines_lower_and_upper_range_bounds() {
             ..
         }
     ));
+}
+
+#[test]
+fn temporal_literals_fire_typed_index_ranges() {
+    let catalog = event_catalog();
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.event_date >= DATE '2026-05-01' AND n.event_date < DATE '2026-06-01' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::Date,
+            bounds: TypedIndexBounds::Range { .. },
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.started_at = LOCAL DATETIME '2026-05-07T12:34:56' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::LocalDateTime,
+            bounds: TypedIndexBounds::Equality(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
 }
 
 #[test]
