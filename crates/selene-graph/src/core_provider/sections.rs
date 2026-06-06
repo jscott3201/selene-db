@@ -204,9 +204,8 @@ impl EdgeArchiveRow {
 /// Identity for an entry in the core schema section.
 ///
 /// In v1.0, schema entries map one-to-one with built-in property index
-/// registrations. In-memory order follows local [`DbString`] handles; the
-/// `CORE/SCMA` wire order is lexicographic by `label.as_str()` and
-/// `property.as_str()` for cross-process stability.
+/// registrations. In-memory and `CORE/SCMA` wire order are lexicographic by
+/// `label.as_str()` and `property.as_str()` for cross-process stability.
 #[derive(
     Clone,
     Debug,

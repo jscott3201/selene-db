@@ -1,10 +1,10 @@
-//! Engine-owned database strings backed by `compact_str::CompactString`.
+//! Engine-owned database strings backed by standard [`String`] storage.
 //!
 //! `DbString` is an owned string newtype used for GQL string values, graph
 //! labels, property keys, aliases, and procedure-name segments. There is no
-//! process-global string pool and no distinct-string cardinality cap:
-//! [`db_string`] simply constructs an owned [`DbString`] after enforcing the
-//! per-string byte cap (`IL013`).
+//! process-global string pool, specialized small-string storage, or
+//! distinct-string cardinality cap: [`db_string`] simply constructs an owned
+//! [`DbString`] after enforcing the per-string byte cap (`IL013`).
 //!
 //! The only construction guard is the `IL013` per-string byte limit
 //! ([`MAX_DB_STRING_BYTES`]); a string at or below it constructs an
@@ -13,7 +13,6 @@
 
 use std::fmt;
 
-use compact_str::CompactString;
 use rkyv::{
     Archive, Deserialize as RkyvDeserialize, Place, Serialize as RkyvSerialize, SerializeUnsized,
     rancor::{Fallible, Source},
@@ -49,20 +48,20 @@ fn ensure_within_string_cap(s: &str) -> CoreResult<()> {
 
 /// Owned database string.
 ///
-/// `DbString` is a `CompactString` newtype. It is owned and `'static` (no borrow),
-/// so the multi-writer committer's `assert_send_static::<SealedCommit>()` proof
-/// holds for free. `Clone` is a memcpy (≤24 bytes inline). Ordering is
-/// **lexicographic** through the inner `CompactString` — so query-visible
-/// comparisons and `BTreeMap`/`BTreeSet` iteration are content-ordered.
+/// `DbString` is a standard [`String`] newtype. It is owned and `'static` (no
+/// borrow), so the multi-writer committer's
+/// `assert_send_static::<SealedCommit>()` proof holds for free. Ordering is
+/// **lexicographic** through the inner string, so query-visible comparisons and
+/// `BTreeMap`/`BTreeSet` iteration are content-ordered.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct DbString(CompactString);
+pub struct DbString(String);
 
 /// Construct an owned [`DbString`] from a string slice.
 ///
-/// Construction is a plain `CompactString::from(s)` guarded only by the
-/// `IL013` per-string byte cap; there is no global pool and no distinct-string
-/// cardinality cap.
+/// Construction is a plain [`String`] allocation guarded only by the `IL013`
+/// per-string byte cap; there is no global pool, specialized small-string
+/// storage, or distinct-string cardinality cap.
 ///
 /// # Errors
 ///
@@ -70,7 +69,7 @@ pub struct DbString(CompactString);
 /// [`MAX_DB_STRING_BYTES`] (IL013).
 pub fn db_string(s: &str) -> CoreResult<DbString> {
     ensure_within_string_cap(s)?;
-    Ok(DbString(CompactString::from(s)))
+    Ok(DbString(s.to_owned()))
 }
 
 impl DbString {
@@ -97,9 +96,9 @@ where
     str: SerializeUnsized<S>,
 {
     fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
-        // Why: archive bytes mirror `String`/`ArchivedString` exactly so the
-        // newtype is wire-byte-identical to the pre-removal handle and
-        // cold-start portable per spec 04 section 2 / D9.
+        // Why: archive bytes mirror `String`/`ArchivedString` exactly so
+        // snapshots stay content-addressable and cold-start portable per spec
+        // 04 section 2 / D9.
         ArchivedString::serialize_from_str(self.as_str(), serializer)
     }
 }
@@ -180,8 +179,8 @@ mod tests {
     }
 
     #[test]
-    fn db_string_is_compactstring_sized() {
-        // DbString wraps a CompactString (24 bytes inline).
+    fn db_string_is_string_sized() {
+        // DbString wraps a standard String.
         assert_eq!(std::mem::size_of::<DbString>(), 24);
     }
 
@@ -244,7 +243,7 @@ mod tests {
     #[test]
     fn rkyv_archives_resolved_string() {
         // Wire-stability guard: the newtype archives its string content as an
-        // ArchivedString, byte-identical to the pre-removal handle.
+        // ArchivedString.
         let key = db_string("db_string.rkyv.portable").unwrap();
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap();
         let archived =
@@ -255,7 +254,7 @@ mod tests {
     #[test]
     fn rkyv_round_trip_preserves_string() {
         // Wire-stability guard: round-trip through rkyv preserves content and
-        // equality (CompactString content-Eq).
+        // equality.
         let key = db_string("db_string.rkyv.round_trip").unwrap();
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap();
         let decoded: DbString = rkyv::from_bytes::<DbString, rkyv::rancor::Error>(&bytes).unwrap();

@@ -20,8 +20,8 @@ pub(crate) fn bind_value_expr(
     // Why: `ValueExpr` recursion fans out to one stack frame per nesting
     // level; the depth-256 contract enforced by `check_expr_depth` is well
     // above what a small (e.g. 2 MB default, or smaller test-harness) thread
-    // stack can carry in debug builds — and the per-level bind frame grew once
-    // `DbString` became an owned 24-byte `CompactString` (db_string-removal Stage A).
+    // stack can carry in debug builds, and the per-level bind frame carries
+    // several owned `DbString` values.
     // `stacker::maybe_grow` allocates a fresh 1 MB segment whenever fewer than
     // 256 KB remain; the red zone is sized to comfortably exceed a single
     // unoptimized `bind_value_expr_inner` frame so growth always fires before
