@@ -299,6 +299,18 @@ pub(super) fn eval_function_call(
             )?,
             span,
         ),
+        "json_has_path" => json_fns::eval_json_has_path(
+            eval_range_args(
+                &display_name,
+                args,
+                2..=json_fns::JSON_PATH_MAX_ARGS,
+                span,
+                binding,
+                schema,
+                ctx,
+            )?,
+            span,
+        ),
         // ISO/IEC 39075:2024 section 20.27 current-datetime functions. Each is
         // niladic and reads the session time zone threaded into the context.
         "current_timestamp" | "now" => {

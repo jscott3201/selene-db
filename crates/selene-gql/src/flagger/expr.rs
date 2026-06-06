@@ -145,7 +145,7 @@ fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
         "size" => Some(FeatureId::GF13),
         "uuid" | "uuid_v4" | "uuid_v7" => Some(FeatureId::IM_UUID),
         "json" | "json_parse" | "json_stringify" | "json_type" | "json_get" | "json_get_text"
-        | "json_get_path" | "json_get_path_text" => Some(FeatureId::IM_JSON),
+        | "json_get_path" | "json_get_path_text" | "json_has_path" => Some(FeatureId::IM_JSON),
         _ => None,
     }
 }

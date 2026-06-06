@@ -35,6 +35,13 @@ fn string_value(source: &str) -> String {
     }
 }
 
+fn bool_value(source: &str) -> bool {
+    match single_value(source, "value") {
+        Value::Bool(value) => value,
+        other => panic!("expected BOOLEAN value, got {other:?}"),
+    }
+}
+
 fn assert_status(source: &str, expected: &str) {
     let err = execute_read_result(source).expect_err("query should fail");
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
@@ -203,6 +210,41 @@ fn json_get_path_reports_data_exceptions_for_bad_selectors() {
 }
 
 #[test]
+fn json_has_path_distinguishes_json_null_from_missing_paths() {
+    for source in [
+        r#"RETURN json_has_path(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
+        r#"RETURN json_has_path(json('{"a":{"b":null}}'), 'a', 'b') AS value"#,
+        r#"RETURN json_has_path(json('{"a":[1,2,3]}'), 'a', -1) AS value"#,
+    ] {
+        assert!(bool_value(source), "{source}");
+    }
+    for source in [
+        r#"RETURN json_has_path(json('{"a":{"b":1}}'), 'a', 'missing') AS value"#,
+        r#"RETURN json_has_path(json('[{"a":1}]'), 99, 'a') AS value"#,
+        r#"RETURN json_has_path(json('{"a":1}'), 'a', 'b') AS value"#,
+    ] {
+        assert!(!bool_value(source), "{source}");
+    }
+    for source in [
+        r#"RETURN json_has_path(NULL, 'a') AS value"#,
+        r#"RETURN json_has_path(json('{"a":1}'), NULL) AS value"#,
+    ] {
+        assert_eq!(single_value(source, "value"), Value::Null, "{source}");
+    }
+}
+
+#[test]
+fn json_has_path_reports_data_exceptions_for_bad_selectors() {
+    for source in [
+        r#"RETURN json_has_path(json('{"a":1}'), 7) AS value"#,
+        r#"RETURN json_has_path(json('[1,2]'), 'bad') AS value"#,
+        r#"RETURN json_has_path(7, 'a') AS value"#,
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
 fn json_get_path_enforces_selector_depth_cap() {
     let selectors = vec!["'a'"; 65].join(", ");
     let source = format!("RETURN json_get_path(json('{{}}'), {selectors}) AS value");
@@ -278,6 +320,7 @@ fn json_feature_flags_cover_functions_and_type_names() {
         r#"RETURN json_get_text(json('{"a":1}'), 'a') AS value"#,
         r#"RETURN json_get_path(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
         r#"RETURN json_get_path_text(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
+        r#"RETURN json_has_path(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
         "RETURN NULL IS TYPED JSON AS value",
         "CREATE NODE TYPE :Thing (payload :: JSON)",
     ] {
