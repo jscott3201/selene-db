@@ -110,6 +110,13 @@ fn read_executes_projection_without_pattern() {
     assert_eq!(column_values(&table, "n"), vec![Value::Int(1)]);
 }
 
+#[test]
+fn read_executes_boolean_ordering() {
+    let table = execute_read("RETURN false < true AS r");
+
+    assert_eq!(column_values(&table, "r"), vec![Value::Bool(true)]);
+}
+
 // PARSE-01: `UNKNOWN` is the ISO §21.2 boolean unknown literal; it parses to
 // `Literal::Null` and executes end-to-end to `Value::Null`.
 #[test]

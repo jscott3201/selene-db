@@ -298,6 +298,53 @@ fn compare_boolean_to_integer_errors() {
 }
 
 #[test]
+fn compare_boolean_literals_analyzes_as_boolean() {
+    let analyzed = analyze_one("RETURN false < true AS x").expect("BOOLEAN comparison analyzes");
+    assert_eq!(
+        projection_type(&analyzed, "x"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+}
+
+#[test]
+fn compare_uuid_literals_analyzes_as_boolean() {
+    let analyzed = analyze_one(
+        "RETURN UUID '00000000-0000-0000-0000-000000000001' \
+         < UUID '00000000-0000-0000-0000-000000000002' AS x",
+    )
+    .expect("UUID comparison analyzes");
+    assert_eq!(
+        projection_type(&analyzed, "x"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+}
+
+#[test]
+fn compare_graph_references_analyzes_by_static_base_type() {
+    let node = analyze_one("MATCH (a), (b) RETURN a < b AS x").expect("NODE comparison analyzes");
+    assert_eq!(
+        projection_type(&node, "x"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+
+    let edge = analyze_one("MATCH ()-[a]->(), ()-[b]->() RETURN a < b AS x")
+        .expect("EDGE comparison analyzes");
+    assert_eq!(
+        projection_type(&edge, "x"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+
+    let err = analyze_one("MATCH (a)-[b]->() RETURN a < b AS x").unwrap_err();
+    assert!(matches!(
+        err,
+        AnalysisError::TypeMismatch {
+            context: TypeMismatchContext::BinaryComparison { .. },
+            ..
+        }
+    ));
+}
+
+#[test]
 fn boolean_operator_rejects_static_non_boolean_operand() {
     let (context, _) = type_mismatch("RETURN true AND 1 AS x");
     assert!(matches!(

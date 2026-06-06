@@ -635,10 +635,14 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ComparableFamily {
+    Boolean,
     Numeric,
     String,
     Bytes,
     Temporal,
+    Uuid,
+    NodeRef,
+    EdgeRef,
 }
 
 fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
@@ -646,8 +650,12 @@ fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
         return Some(ComparableFamily::Numeric);
     }
     Some(match ty {
+        GqlType::Boolean => ComparableFamily::Boolean,
         GqlType::String => ComparableFamily::String,
         GqlType::Bytes => ComparableFamily::Bytes,
+        GqlType::Uuid => ComparableFamily::Uuid,
+        GqlType::NodeRef => ComparableFamily::NodeRef,
+        GqlType::EdgeRef => ComparableFamily::EdgeRef,
         GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date
