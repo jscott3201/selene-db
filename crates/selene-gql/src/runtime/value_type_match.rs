@@ -22,17 +22,17 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::String => matches!(value, Value::String(_)),
         GqlType::Uuid => matches!(value, Value::Uuid(_)),
         GqlType::Boolean => matches!(value, Value::Bool(_)),
-        GqlType::Integer
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::SmallInt
-        | GqlType::BigInt => matches!(value, Value::Int(_)),
-        GqlType::Int128 => matches!(value, Value::Int128(_)),
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            matches!(value, Value::Uint(_))
+        GqlType::Integer | GqlType::Int64 | GqlType::BigInt => matches!(value, Value::Int(_)),
+        GqlType::Int8 => matches!(value, Value::Int(value) if i8::try_from(*value).is_ok()),
+        GqlType::Int16 | GqlType::SmallInt => {
+            matches!(value, Value::Int(value) if i16::try_from(*value).is_ok())
         }
+        GqlType::Int32 => matches!(value, Value::Int(value) if i32::try_from(*value).is_ok()),
+        GqlType::Int128 => matches!(value, Value::Int128(_)),
+        GqlType::Uint8 => matches!(value, Value::Uint(value) if u8::try_from(*value).is_ok()),
+        GqlType::Uint16 => matches!(value, Value::Uint(value) if u16::try_from(*value).is_ok()),
+        GqlType::Uint32 => matches!(value, Value::Uint(value) if u32::try_from(*value).is_ok()),
+        GqlType::Uint64 => matches!(value, Value::Uint(_)),
         GqlType::Uint128 => matches!(value, Value::Uint128(_)),
         GqlType::Float => matches!(value, Value::Float(_) | Value::Float32(_)),
         GqlType::Float32 => matches!(value, Value::Float32(_)),
