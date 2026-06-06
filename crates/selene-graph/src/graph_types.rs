@@ -4,7 +4,7 @@ mod record_types;
 
 use std::{collections::BTreeSet, fmt};
 
-use selene_core::{DbString, LabelSet, PropertyValueType, Value};
+use selene_core::{DbString, JsonValue, LabelSet, PropertyValueType, Value, db_string};
 use serde::{Deserialize, Serialize};
 
 use record_types::validate_record_field_types;
@@ -598,19 +598,32 @@ pub enum PropertyDefaultValue {
     String(DbString),
     /// Byte-string default.
     Bytes(Vec<u8>),
+    /// Canonical JSON text default.
+    Json(DbString),
 }
 
 impl PropertyDefaultValue {
     /// Materialize this descriptor as a runtime value.
-    #[must_use]
-    pub fn to_value(&self) -> Value {
-        match self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::Inconsistent`] if a persisted JSON default no
+    /// longer parses as valid JSON.
+    pub fn to_value(&self) -> GraphResult<Value> {
+        Ok(match self {
             Self::Null => Value::Null,
             Self::Boolean(value) => Value::Bool(*value),
             Self::Integer(value) => Value::Int(*value),
             Self::String(value) => Value::String(value.clone()),
             Self::Bytes(value) => Value::Bytes(value.clone().into()),
-        }
+            Self::Json(value) => {
+                Value::Json(JsonValue::parse_str(value.as_str()).map_err(|err| {
+                    GraphError::Inconsistent {
+                        reason: format!("persisted JSON property default is invalid: {err}"),
+                    }
+                })?)
+            }
+        })
     }
 
     /// Convert a runtime value into a persistable default descriptor.
@@ -622,6 +635,7 @@ impl PropertyDefaultValue {
             Value::Int(value) => Some(Self::Integer(*value)),
             Value::String(value) => Some(Self::String(value.clone())),
             Value::Bytes(value) => Some(Self::Bytes(value.to_vec())),
+            Value::Json(value) => db_string(&value.to_canonical_string()).ok().map(Self::Json),
             _ => None,
         }
     }

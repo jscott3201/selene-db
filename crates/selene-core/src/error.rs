@@ -109,6 +109,14 @@ pub enum CoreError {
         /// The contradicting key.
         key: DbString,
     },
+
+    /// JSON text could not be parsed.
+    #[error("invalid JSON text: {message}")]
+    #[diagnostic(code(SLENE_C_015))]
+    JsonParse {
+        /// Parser diagnostic.
+        message: String,
+    },
 }
 
 impl CoreError {
@@ -129,6 +137,7 @@ impl CoreError {
             Self::ZeroIdentifier => "0G003",
             Self::CompactKeyValueLengthMismatch { .. } => "0G008",
             Self::OverlappingDiff { .. } => "0G009",
+            Self::JsonParse { .. } => "22018",
         }
     }
 }
@@ -183,6 +192,11 @@ mod tests {
         CoreError::OverlappingDiff { kind: "label", key: crate::db_string("err.test.overlap").unwrap() },
         "0G009",
         "SLENE_C_009"
+    )]
+    #[case(
+        CoreError::JsonParse { message: "expected value".to_owned() },
+        "22018",
+        "SLENE_C_015"
     )]
     fn gqlstatus_and_diagnostic_code_match(
         #[case] error: CoreError,

@@ -24,6 +24,19 @@ impl JsonValue {
         })
     }
 
+    /// Parse and validate a JSON value from text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::JsonParse`] when `text` is not valid JSON, or the
+    /// usual value-limit errors when the parsed value exceeds engine caps.
+    pub fn parse_str(text: &str) -> CoreResult<Self> {
+        let value = serde_json::from_str(text).map_err(|err| CoreError::JsonParse {
+            message: err.to_string(),
+        })?;
+        Self::new(value)
+    }
+
     /// Borrow the underlying serde-json value.
     #[must_use]
     pub fn as_serde(&self) -> &SerdeJsonValue {

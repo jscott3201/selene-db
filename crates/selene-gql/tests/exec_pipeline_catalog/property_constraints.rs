@@ -143,6 +143,39 @@ fn bytes_default_property_constraint_accepts_byte_literal() {
 }
 
 #[test]
+fn json_default_property_constraint_accepts_json_string_literal() {
+    let graph = empty_closed_graph(3728);
+    let plan = planned(r#"CREATE NODE TYPE :Doc (payload :: JSON DEFAULT '{"b":2,"a":"don''t"}')"#);
+
+    run_write(&graph, &plan)
+        .expect("JSON default constraint executes")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(PropertyDefaultValue::Json(db_string(
+            r#"{"a":"don't","b":2}"#
+        )))
+    );
+}
+
+#[test]
+fn json_default_property_constraint_rejects_invalid_json_string() {
+    let graph = empty_closed_graph(3729);
+    let plan = planned("CREATE NODE TYPE :Doc (payload :: JSON DEFAULT 'not-json')");
+
+    let err = run_write(&graph, &plan).expect_err("invalid JSON default rejected");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("JSON DEFAULT string is not valid JSON")
+    ));
+}
+
+#[test]
 fn unsupported_default_literal_returns_feature_not_supported() {
     let graph = empty_closed_graph(3724);
     let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5)");

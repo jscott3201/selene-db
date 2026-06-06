@@ -535,3 +535,41 @@ fn json_node_type_round_trips_catalog_and_execution() {
         ))]
     );
 }
+
+#[test]
+fn json_node_type_default_materializes_and_round_trips() {
+    let graph = empty_closed_graph(14_003);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            r#"CREATE NODE TYPE :Thing (payload :: JSON NOT NULL DEFAULT '{"b":2,"a":"don''t"}')"#,
+            &EmptyProcedureRegistry,
+        )
+        .expect("JSON node type with default creates");
+
+    session
+        .execute_source("INSERT (:Thing)", &EmptyProcedureRegistry)
+        .expect("JSON default materializes on insert");
+    let output = session
+        .execute_source(
+            "MATCH (n:Thing) RETURN json_get_text(n.payload, 'a') AS value",
+            &EmptyProcedureRegistry,
+        )
+        .expect("defaulted JSON property reads");
+    let table = rows_from_output(output);
+    assert_eq!(
+        column_values(&table, "value"),
+        vec![Value::String(db_string("don't"))]
+    );
+
+    let output = session
+        .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
+        .expect("SHOW NODE TYPES executes");
+    let table = rows_from_output(output);
+    assert_eq!(
+        column_values(&table, "definition"),
+        vec![Value::String(db_string(
+            r#"CREATE NODE TYPE :Thing (payload :: JSON NOT NULL DEFAULT '{"a":"don''t","b":2}')"#
+        ))]
+    );
+}
