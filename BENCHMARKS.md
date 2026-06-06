@@ -419,6 +419,7 @@ PR-local mixed vector read/write spot-check:
 | Bench | 1k | 10k | Notes |
 |---|---:|---:|---|
 | `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40_ef2` | 2.09 ms | 7.48 ms | One measured cycle interleaves 60 IVF cosine ANN reads and 40 vector-property updates over a 128-dim index. Fixture build is excluded; timed replacement writes reuse IVF entries, so routine updates no longer add stale IVF rows before rebuild compaction. |
+| `graph_vector_mixed_workload/point_read_ivf_update_r60w40_dim128` | 1.625 ms | 6.978 ms | Same IVF vector fixture and 40 indexed vector-property updates, but the 60 reads are point `node_properties` lookups. This isolates routine IVF update maintenance from ANN query cost. |
 | `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40x10_ef2_maint_cap1` | 51.67 ms | 84.64 ms | Ten measured cycles run 60 reads / 40 writes per cycle across four IVF cosine indexes, then rebuild at most one recommended index. Each index reaches 100 pending retrain updates before maintenance. |
 | `graph_vector_mixed_workload/ivf_cos_dim128_k10_r60w40x10_ef2_maint_all` | 57.23 ms | 116.28 ms | Same fixture and 10-cycle workload, but maintenance rebuilds every recommended IVF index. At 10k this isolates the cost of rebuilding four drifted indexes instead of pacing maintenance one index at a time. |
 
