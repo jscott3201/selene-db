@@ -377,7 +377,7 @@ fn json_node_type_round_trips_catalog_and_execution() {
     let mut session = Session::new(&graph);
     session
         .execute_source(
-            "CREATE NODE TYPE :Thing (payload :: JSON)",
+            "CREATE NODE TYPE :Thing (payload :: JSON NOT NULL)",
             &EmptyProcedureRegistry,
         )
         .expect("JSON node type creates");
@@ -385,6 +385,7 @@ fn json_node_type_round_trips_catalog_and_execution() {
     let graph_type = graph.graph_type().expect("graph has type");
     let declaration = &graph_type.node_types[0].properties[0];
     assert_eq!(declaration.value_type, PropertyValueType::Json);
+    assert!(declaration.required);
 
     session
         .execute_source(
@@ -404,6 +405,38 @@ fn json_node_type_round_trips_catalog_and_execution() {
         vec![Value::String(db_string("7"))]
     );
 
+    session
+        .execute_source(
+            r#"MATCH (n:Thing) SET n.payload = CAST('{"name":"beta","meta":{"seen":true}}' AS JSON) FINISH"#,
+            &EmptyProcedureRegistry,
+        )
+        .expect("JSON property updates");
+    let output = session
+        .execute_source(
+            "MATCH (n:Thing) RETURN json_get_path_text(n.payload, 'name') AS name, json_has_path(n.payload, 'meta', 'seen') AS seen",
+            &EmptyProcedureRegistry,
+        )
+        .expect("updated JSON property reads");
+    let table = rows_from_output(output);
+    assert_eq!(
+        column_values(&table, "name"),
+        vec![Value::String(db_string("beta"))]
+    );
+    assert_eq!(column_values(&table, "seen"), vec![Value::Bool(true)]);
+
+    session
+        .execute_source(
+            "MATCH (n:Thing) SET n.payload = 'not-json' FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect_err("JSON property rejects non-JSON assignment");
+    session
+        .execute_source(
+            "MATCH (n:Thing) REMOVE n.payload FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect_err("required JSON property cannot be removed");
+
     let output = session
         .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
         .expect("SHOW NODE TYPES executes");
@@ -411,7 +444,7 @@ fn json_node_type_round_trips_catalog_and_execution() {
     assert_eq!(
         column_values(&table, "definition"),
         vec![Value::String(db_string(
-            "CREATE NODE TYPE :Thing (payload :: JSON)"
+            "CREATE NODE TYPE :Thing (payload :: JSON NOT NULL)"
         ))]
     );
 }

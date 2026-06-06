@@ -275,6 +275,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::String, G::String)
             | (P::Uuid, G::Uuid)
             | (P::Bytes, G::Bytes)
+            | (P::Json, G::Json)
             | (P::List, G::List(_))
             // Every record property declaration — open `RECORD` and closed `RECORD{..}`
             // alike — lowers to `P::RecordTyped` (catalog/property.rs), while a `RECORD{..}`
@@ -306,7 +307,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
 mod tests {
     use std::sync::Arc;
 
-    use selene_core::{BindingTableId, EdgeId, GraphId, NodeId, Value, db_string};
+    use selene_core::{BindingTableId, EdgeId, GraphId, JsonValue, NodeId, Value, db_string};
 
     use super::*;
 
@@ -365,6 +366,14 @@ mod tests {
         ));
         assert!(!property_type_compatible(
             PropertyValueType::Bytes,
+            &GqlType::String
+        ));
+        assert!(property_type_compatible(
+            PropertyValueType::Json,
+            &GqlType::Json
+        ));
+        assert!(!property_type_compatible(
+            PropertyValueType::Json,
             &GqlType::String
         ));
 
@@ -455,6 +464,11 @@ mod tests {
                 PropertyValueType::Bytes,
                 GqlType::Bytes,
                 Value::Bytes(Arc::from([1_u8, 2, 3])),
+            ),
+            (
+                PropertyValueType::Json,
+                GqlType::Json,
+                Value::Json(JsonValue::new(serde_json::json!({"a": 1})).unwrap()),
             ),
             (
                 PropertyValueType::NodeRef,
