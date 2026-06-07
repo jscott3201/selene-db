@@ -22,6 +22,72 @@ fn registers_all_sixty_four_procedures() {
 }
 
 #[test]
+fn pagerank_signature_has_optional_orientation_personalization_and_result_filter() {
+    let registry = BuiltinProcedureRegistry::new();
+    let metadata = registry
+        .lookup(&name(&["algo", "pagerank"]))
+        .expect("pagerank resolves");
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters.len(), 9);
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 5);
+    assert_eq!(arity.maximum, 9);
+    for parameter in &parameters[1..5] {
+        assert!(parameter.nullable, "{} should be nullable", parameter.name);
+        assert_eq!(parameter.default_doc, Some("NULL (use procedure default)"));
+        assert!(parameter.default.is_none());
+    }
+
+    let orientation = &parameters[5];
+    assert_eq!(orientation.name.as_str(), "orientation");
+    assert!(orientation.nullable);
+    assert_eq!(orientation.ty, crate::GqlType::String);
+    assert_eq!(orientation.default_doc, Some("natural"));
+    assert_eq!(
+        orientation.default,
+        Some(crate::ProcedureDefaultValue::String("natural"))
+    );
+
+    let personalization = &parameters[6];
+    assert_eq!(personalization.name.as_str(), "personalization");
+    assert!(personalization.nullable);
+    assert_eq!(personalization.default_doc, Some("NULL (uniform teleport)"));
+    assert_eq!(
+        personalization.default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+    assert_eq!(
+        personalization.ty,
+        crate::GqlType::List(Box::new(crate::GqlType::Record(crate::RecordType::Open)))
+    );
+
+    let result_label = &parameters[7];
+    assert_eq!(result_label.name.as_str(), "result_label");
+    assert!(result_label.nullable);
+    assert_eq!(result_label.ty, crate::GqlType::String);
+    assert_eq!(
+        result_label.default_doc,
+        Some("NULL (all projection nodes)")
+    );
+    assert_eq!(
+        result_label.default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+
+    let limit = &parameters[8];
+    assert_eq!(limit.name.as_str(), "limit");
+    assert!(limit.nullable);
+    assert_eq!(limit.ty, crate::GqlType::Integer);
+    assert_eq!(limit.default_doc, Some("NULL (all matching nodes)"));
+    assert_eq!(limit.default, Some(crate::ProcedureDefaultValue::Null));
+
+    assert_eq!(metadata.output_schema.columns.len(), 2);
+    assert_eq!(metadata.output_schema.columns[0].name.as_str(), "node_id");
+    assert_eq!(metadata.output_schema.columns[1].name.as_str(), "score");
+}
+
+#[test]
 fn iter_handles_yields_all_forty_five_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry

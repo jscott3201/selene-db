@@ -59,6 +59,33 @@ fn seed_sink_personalization_graph(graph: &SharedGraph) -> Vec<NodeId> {
     nodes
 }
 
+fn seed_labeled_pagerank_graph(graph: &SharedGraph) -> Vec<NodeId> {
+    let mut txn = graph.begin_write();
+    let fact = db_string("Fact");
+    let entity = db_string("Entity");
+    let about = db_string("ABOUT");
+    let left = txn
+        .mutator()
+        .create_node(LabelSet::single(fact.clone()), PropertyMap::new())
+        .expect("left fact creates");
+    let center = txn
+        .mutator()
+        .create_node(LabelSet::single(entity), PropertyMap::new())
+        .expect("entity creates");
+    let right = txn
+        .mutator()
+        .create_node(LabelSet::single(fact), PropertyMap::new())
+        .expect("right fact creates");
+    txn.mutator()
+        .create_edge(about.clone(), left, center, PropertyMap::new())
+        .expect("left fact edge creates");
+    txn.mutator()
+        .create_edge(about, right, center, PropertyMap::new())
+        .expect("right fact edge creates");
+    txn.commit().expect("test graph commit");
+    vec![left, center, right]
+}
+
 fn rows(output: StatementOutput) -> BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
@@ -247,6 +274,50 @@ fn pagerank_accepts_personalization_parameter() {
     assert!((scores[0] - 1.0).abs() < 1e-12);
     assert!((scores[1] - 0.0).abs() < 1e-12);
     assert!((scores[2] - 0.0).abs() < 1e-12);
+}
+
+#[test]
+fn pagerank_filters_results_by_label_and_limit() {
+    let graph = graph(220_011);
+    let nodes = seed_labeled_pagerank_graph(&graph);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+
+    let all_facts = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', NULL, 'Fact', NULL) \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(node_column(&all_facts, "node_id"), vec![nodes[0], nodes[2]]);
+    assert!(
+        float_column(&all_facts, "score")
+            .iter()
+            .all(|score| *score > 0.0)
+    );
+
+    let top_fact = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', NULL, 'Fact', 1) \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(node_column(&top_fact, "node_id"), vec![nodes[0]]);
+
+    let zero = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', NULL, 'Fact', 0) \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(zero.row_count(), 0);
 }
 
 #[test]
