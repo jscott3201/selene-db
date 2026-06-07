@@ -13,7 +13,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::{hint::black_box, sync::mpsc};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use selene_core::VectorTopK;
 use wgpu::util::DeviceExt;
+
+const TOP_K: usize = 10;
 
 const CASES: &[Case] = &[
     Case {
@@ -135,6 +138,23 @@ fn bench_vector_wgpu(c: &mut Criterion) {
                     .expect("wgpu scoring succeeds")
             });
         });
+        group.bench_function(case.id("cold_candidate_upload_score_readback"), |b| {
+            b.iter(|| {
+                bench
+                    .score_with_candidate_upload(black_box(&mut scores))
+                    .expect("wgpu scoring succeeds")
+            });
+        });
+        group.bench_function(
+            case.id("resident_query_copy_score_readback_cpu_topk"),
+            |b| {
+                b.iter(|| {
+                    bench
+                        .score_with_query_write_top_k(black_box(&mut scores))
+                        .expect("wgpu scoring succeeds")
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -145,9 +165,12 @@ struct WgpuBench {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
     query_buffer: wgpu::Buffer,
+    candidate_buffer: wgpu::Buffer,
     output_buffer: wgpu::Buffer,
     readback_buffer: wgpu::Buffer,
     query_bytes: Vec<u8>,
+    candidate_bytes: Vec<u8>,
+    candidate_count: usize,
     output_bytes: u64,
     workgroups: u32,
 }
@@ -180,10 +203,11 @@ impl WgpuBench {
             contents: &query_bytes,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
+        let candidate_bytes = f32_bytes(&fixture.candidates);
         let candidate_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("selene vector candidates"),
-            contents: &f32_bytes(&fixture.candidates),
-            usage: wgpu::BufferUsages::STORAGE,
+            contents: &candidate_bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         });
         let norm_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("selene vector norms"),
@@ -258,9 +282,12 @@ impl WgpuBench {
             pipeline,
             bind_group,
             query_buffer,
+            candidate_buffer,
             output_buffer,
             readback_buffer,
             query_bytes,
+            candidate_bytes,
+            candidate_count: case.candidates,
             output_bytes: case.output_bytes(),
             workgroups: case.score_count().div_ceil(64) as u32,
         };
@@ -272,6 +299,17 @@ impl WgpuBench {
         self.queue
             .write_buffer(&self.query_buffer, 0, &self.query_bytes);
         self.score_preloaded(scores)
+    }
+
+    fn score_with_candidate_upload(&mut self, scores: &mut [f32]) -> Result<f32, String> {
+        self.queue
+            .write_buffer(&self.candidate_buffer, 0, &self.candidate_bytes);
+        self.score_with_query_write(scores)
+    }
+
+    fn score_with_query_write_top_k(&mut self, scores: &mut [f32]) -> Result<usize, String> {
+        self.score_with_query_write(scores)?;
+        Ok(cpu_top_k_count(scores, self.candidate_count))
     }
 
     fn score_preloaded(&mut self, scores: &mut [f32]) -> Result<f32, String> {
@@ -427,6 +465,18 @@ fn cpu_scores(
 fn window(slab: &[f32], index: usize, dimension: usize) -> &[f32] {
     let start = index * dimension;
     &slab[start..start + dimension]
+}
+
+fn cpu_top_k_count(scores: &[f32], candidate_count: usize) -> usize {
+    let mut retained = 0;
+    for query_scores in scores.chunks_exact(candidate_count) {
+        let mut top_k = VectorTopK::new(TOP_K);
+        for (candidate_idx, &distance) in query_scores.iter().enumerate() {
+            top_k.push_distance(candidate_idx, f64::from(distance));
+        }
+        retained += top_k.into_hits().len();
+    }
+    retained
 }
 
 fn f32_bytes(values: &[f32]) -> Vec<u8> {

@@ -187,8 +187,12 @@ setup. It is not a production accelerator API.
 | `core_vector_gpu_baseline/cpu_cosine_resident_slab_q16x4096x1024_k10` | 10.808 ms (quick) | Resident-slab CPU comparator; trims the q16/d1024 rerank envelope by about 10% before any GPU work. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_readback/q8x4096x1024` | 1.6822 ms (quick) | First wgpu/Metal end-to-end prototype: candidates resident, query batch copied each iteration, WGSL cosine scores all 32,768 pairs, and all scores are read back. Beats the q8 CPU resident-slab comparator (5.407 ms) by ~3.2x in this local quick run. |
 | `core_vector_wgpu_prototype/resident_preloaded_score_readback/q8x4096x1024` | 1.5456 ms (quick) | Same q8 scoring/readback path with queries preloaded; close to query-copy because scoring/readback dominates over the small query payload. |
+| `core_vector_wgpu_prototype/cold_candidate_upload_score_readback/q8x4096x1024` | 4.1782 ms (quick) | Cold-shard path: uploads the 4,096-candidate slab, rewrites queries, scores on GPU, and reads all scores back. Candidate upload dominates but still beats the q8 CPU resident-slab comparator. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback_cpu_topk/q8x4096x1024` | 1.5496 ms (quick) | Query-copy GPU score+readback followed by CPU `VectorTopK` over returned scores. CPU top-k adds little overhead at this candidate width. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_readback/q16x4096x1024` | 2.6590 ms (quick) | Batched 65,536-pair wgpu scoring/readback with query copy. Beats the q16 CPU resident-slab comparator (10.808 ms) by ~4.1x locally. |
 | `core_vector_wgpu_prototype/resident_preloaded_score_readback/q16x4096x1024` | 2.6808 ms (quick) | Same q16 path with queries preloaded; effectively tied with query-copy because scoring/readback dominates at this batch size. |
+| `core_vector_wgpu_prototype/cold_candidate_upload_score_readback/q16x4096x1024` | 5.9342 ms (quick) | Cold-shard q16 path with candidate upload, query write, GPU scoring, and score readback. Still beats the q16 CPU resident-slab comparator, but the upload tax is visible. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback_cpu_topk/q16x4096x1024` | 2.7005 ms (quick) | Query-copy GPU score+readback followed by CPU `VectorTopK` for all 16 queries. The extra ranking step is small compared with scoring/readback. |
 
 ## §2 selene-graph — read hot paths
 
