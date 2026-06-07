@@ -1001,9 +1001,9 @@ topic precision as `precbp{basis points}`.
 | `algo/betweenness` | 10k | 25.52 ms | 7.73 ms | **3.3× Auto** — endpoint-aware sampling. |
 | `algo/betweenness` | 50k | 135.3 ms | 44.95 ms | **3.0× Auto** — per-source SSSP parallelizes. |
 | `algo/betweenness` | 100k | 266.1 ms | 101.7 ms | **2.6× Auto** — headline rayon win. |
-| `algo/triangle_count` | 10k | 631.9 µs | 620.6 µs | Tiny; already efficient sequentially. |
-| `algo/triangle_count` | 50k | 3.253 ms | 2.474 ms | 1.3× Auto. |
-| `algo/triangle_count` | 100k | 6.520 ms | 4.960 ms | 1.3× Auto. |
+| `algo/triangle_count` | 10k | 604.91 µs | 602.05 µs | Auto now stays sequential below the sparse-row threshold unless max degree trips the dense escape hatch. |
+| `algo/triangle_count` | 50k | 3.066 ms | 2.472 ms | Auto still uses Rayon once the row count clears the threshold. |
+| `algo/triangle_count` | 100k | 6.345 ms | 4.888 ms | Thresholded Auto preserves the large-row parallel win. |
 | `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
