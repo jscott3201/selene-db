@@ -176,6 +176,23 @@ fn assert_outputs_abs_close(
     }
 }
 
+fn assert_outputs_exact(expected: &[(NodeId, f64)], observed: &[(NodeId, f64)]) {
+    assert_eq!(observed.len(), expected.len());
+    for ((expected_node, expected_score), (observed_node, observed_score)) in
+        expected.iter().zip(observed)
+    {
+        assert_eq!(
+            observed_node, expected_node,
+            "Auto must preserve sequential §E21 result ordering"
+        );
+        assert_eq!(
+            observed_score.to_bits(),
+            expected_score.to_bits(),
+            "Auto PageRank is the sequential policy and should not change f64 reductions"
+        );
+    }
+}
+
 /// Build a projection over a label that matches no node → an empty projection.
 fn empty_projection() -> GraphProjection {
     let shared = SharedGraph::new(GraphId::new(85_099));
@@ -195,11 +212,10 @@ fn empty_projection() -> GraphProjection {
 
 #[test]
 fn pagerank_empty_projection_returns_empty_under_all_parallelism() {
-    // ALGO-15: the empty-projection early return lives *inside* every parallel
-    // body, ahead of the `ParallelRunner` pool build. Exercising it under Auto
-    // and Threads(4) (not just Sequential) proves the early return fires before
-    // any pool is spun up — the `Threads(4)` arm would otherwise build a 4-OS-
-    // thread pool over zero work.
+    // ALGO-15: empty projection stays a cheap early return under every policy.
+    // `Auto` now uses the sequential PageRank policy, while `Threads(4)` still
+    // exercises the explicit Rayon path that would otherwise build a 4-thread
+    // pool over zero work.
     let proj = empty_projection();
     assert_eq!(proj.node_count(), 0);
 
@@ -229,7 +245,7 @@ fn pagerank_parallel_matches_sequential_fixed_iter() {
     let auto = pagerank(&proj, config(32, 0.0, Parallelism::Auto));
     let threaded = pagerank(&proj, config(32, 0.0, threads4()));
 
-    assert_outputs_close(&sequential, &auto, PAGERANK_FIXED_ITER_RELATIVE_TOLERANCE);
+    assert_outputs_exact(&sequential, &auto);
     assert_outputs_close(
         &sequential,
         &threaded,
@@ -246,8 +262,16 @@ fn pagerank_parallel_matches_sequential_with_convergence() {
     let auto = pagerank(&proj, config(100, tolerance, Parallelism::Auto));
     let threaded = pagerank(&proj, config(100, tolerance, threads4()));
 
-    assert_outputs_close(&sequential, &auto, expected_bound);
+    assert_outputs_exact(&sequential, &auto);
     assert_outputs_close(&sequential, &threaded, expected_bound);
+}
+
+#[test]
+fn pagerank_auto_uses_sequential_policy() {
+    let proj = fixture_projection();
+    let sequential = pagerank(&proj, config(100, 1e-6, Parallelism::Sequential));
+    let auto = pagerank(&proj, config(100, 1e-6, Parallelism::Auto));
+    assert_outputs_exact(&sequential, &auto);
 }
 
 #[test]

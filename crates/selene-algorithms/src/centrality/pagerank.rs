@@ -69,8 +69,8 @@ pub fn pagerank_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, f64)>, AlgorithmAborted> {
     match config.parallelism {
-        Parallelism::Sequential => pagerank_sequential(proj, config, checker),
-        Parallelism::Auto | Parallelism::Threads(_) => pagerank_parallel(proj, config, checker),
+        Parallelism::Sequential | Parallelism::Auto => pagerank_sequential(proj, config, checker),
+        Parallelism::Threads(_) => pagerank_parallel(proj, config, checker),
     }
 }
 
