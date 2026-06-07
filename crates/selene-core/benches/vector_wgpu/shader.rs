@@ -215,3 +215,119 @@ fn main(
     }
 }
 "#;
+
+pub(crate) const PARALLEL_BLOCK_TOP_K_SHADER: &str = r#"
+struct Params {
+    queries: u32,
+    candidates: u32,
+    dimension: u32,
+    _padding: u32,
+};
+
+@group(0) @binding(0) var<storage, read> queries: array<f32>;
+@group(0) @binding(1) var<storage, read> candidates: array<f32>;
+@group(0) @binding(2) var<storage, read> norms: array<f32>;
+struct PartialHit {
+    distance: f32,
+    index: u32,
+};
+@group(0) @binding(3) var<storage, read_write> partial_hits: array<PartialHit>;
+@group(0) @binding(4) var<uniform> params: Params;
+
+const TOP_K: u32 = 10u;
+const CANDIDATE_BLOCK: u32 = 256u;
+const EMPTY_INDEX: u32 = 4294967295u;
+const DISTANCE_SENTINEL: f32 = 100000000000000000000.0;
+
+var<workgroup> block_distances: array<f32, 256>;
+var<workgroup> block_indices: array<u32, 256>;
+var<workgroup> reduce_distances: array<f32, 256>;
+var<workgroup> reduce_indices: array<u32, 256>;
+
+fn better_distance(
+    lhs_distance: f32,
+    lhs_index: u32,
+    rhs_distance: f32,
+    rhs_index: u32,
+) -> bool {
+    return rhs_distance < lhs_distance ||
+        (rhs_distance == lhs_distance && rhs_index < lhs_index);
+}
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+    @builtin(workgroup_id) group_id: vec3<u32>,
+) {
+    let lane = local_id.x;
+    let block_index = group_id.x;
+    let query_index = group_id.y;
+    let block_count = (params.candidates + CANDIDATE_BLOCK - 1u) / CANDIDATE_BLOCK;
+    if (query_index >= params.queries || block_index >= block_count) {
+        return;
+    }
+
+    let candidate_index = block_index * CANDIDATE_BLOCK + lane;
+    var distance = DISTANCE_SENTINEL;
+    var stored_index = EMPTY_INDEX;
+    if (candidate_index < params.candidates) {
+        let query_offset = query_index * params.dimension;
+        let candidate_offset = candidate_index * params.dimension;
+
+        var dot = 0.0;
+        for (var dim = 0u; dim < params.dimension; dim = dim + 1u) {
+            dot = dot + queries[query_offset + dim] * candidates[candidate_offset + dim];
+        }
+
+        let denom = sqrt(norms[query_index]) * sqrt(norms[params.queries + candidate_index]);
+        let similarity = clamp(dot / denom, -1.0, 1.0);
+        distance = 1.0 - similarity;
+        if (distance == 0.0) {
+            distance = 0.0;
+        }
+        stored_index = candidate_index;
+    }
+
+    block_distances[lane] = distance;
+    block_indices[lane] = stored_index;
+    workgroupBarrier();
+
+    let out_base = (query_index * block_count + block_index) * TOP_K;
+    for (var slot = 0u; slot < TOP_K; slot = slot + 1u) {
+        reduce_distances[lane] = block_distances[lane];
+        reduce_indices[lane] = block_indices[lane];
+        workgroupBarrier();
+
+        var stride = CANDIDATE_BLOCK / 2u;
+        loop {
+            if (stride == 0u) {
+                break;
+            }
+            if (lane < stride) {
+                let rhs_lane = lane + stride;
+                let rhs_distance = reduce_distances[rhs_lane];
+                let rhs_index = reduce_indices[rhs_lane];
+                if (better_distance(reduce_distances[lane], reduce_indices[lane],
+                                    rhs_distance, rhs_index)) {
+                    reduce_distances[lane] = rhs_distance;
+                    reduce_indices[lane] = rhs_index;
+                }
+            }
+            workgroupBarrier();
+            stride = stride / 2u;
+        }
+
+        if (lane == 0u) {
+            partial_hits[out_base + slot] = PartialHit(reduce_distances[0], reduce_indices[0]);
+        }
+        workgroupBarrier();
+
+        let winner = reduce_indices[0];
+        if (block_indices[lane] == winner) {
+            block_distances[lane] = DISTANCE_SENTINEL;
+            block_indices[lane] = EMPTY_INDEX;
+        }
+        workgroupBarrier();
+    }
+}
+"#;
