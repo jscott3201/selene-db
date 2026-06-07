@@ -14,6 +14,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod vector_wgpu_case;
 #[path = "vector_wgpu/fixture.rs"]
 mod vector_wgpu_fixture;
+#[path = "vector_wgpu/pipeline.rs"]
+mod vector_wgpu_pipeline;
 #[path = "vector_wgpu/shader.rs"]
 mod vector_wgpu_shader;
 #[path = "vector_wgpu/support.rs"]
@@ -86,6 +88,9 @@ fn bench_vector_wgpu(c: &mut Criterion) {
                 });
             },
         );
+        group.bench_function(case.id("cpu_rayon_score_topk"), |b| {
+            b.iter(|| black_box(bench.cpu_parallel_score_top_k()));
+        });
         group.bench_function(
             case.id("resident_query_copy_score_gpu_block_topk_cpu_merge"),
             |b| {
@@ -96,6 +101,19 @@ fn bench_vector_wgpu(c: &mut Criterion) {
                             black_box(&mut partial_indices),
                         )
                         .expect("wgpu block top-k succeeds")
+                });
+            },
+        );
+        group.bench_function(
+            case.id("resident_query_copy_score_fused_block_topk_cpu_merge"),
+            |b| {
+                b.iter(|| {
+                    bench
+                        .score_with_query_write_fused_block_top_k(
+                            black_box(&mut partial_distances),
+                            black_box(&mut partial_indices),
+                        )
+                        .expect("wgpu fused block top-k succeeds")
                 });
             },
         );

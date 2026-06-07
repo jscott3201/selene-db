@@ -1957,6 +1957,7 @@ dependencies = [
  "pollster",
  "postcard",
  "proptest",
+ "rayon",
  "rkyv 0.8.16",
  "rstest",
  "rust_decimal",
