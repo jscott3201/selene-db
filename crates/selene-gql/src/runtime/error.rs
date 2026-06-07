@@ -17,6 +17,8 @@ pub enum DataExceptionSubclass {
     DataException,
     /// Numeric value out of range (`22003`).
     NumericValueOutOfRange,
+    /// Null value not allowed (`22004`).
+    NullValueNotAllowed,
     /// Invalid datetime format (`22007`).
     InvalidDatetimeFormat,
     /// Substring error (`22011`).
@@ -60,6 +62,7 @@ impl DataExceptionSubclass {
         match self {
             Self::DataException => GqlStatus::DATA_EXCEPTION,
             Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
+            Self::NullValueNotAllowed => GqlStatus::NULL_VALUE_NOT_ALLOWED,
             Self::InvalidDatetimeFormat => GqlStatus::INVALID_DATETIME_FORMAT,
             Self::SubstringError => GqlStatus::SUBSTRING_ERROR,
             Self::DivisionByZero => GqlStatus::DIVISION_BY_ZERO,

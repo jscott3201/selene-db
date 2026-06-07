@@ -120,8 +120,12 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let items = bind_many_with_spans(ctx, list)?;
                 infer::in_list(ctx.expr_type(operand_id), operand.span(), &items)?
             }
-            ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
-                bind_many(ctx, items)?;
+            ValueExpr::AllDifferent { items, .. } => {
+                bind_singleton_element_variable_references(ctx, items, "ALL_DIFFERENT arguments")?;
+                AnalyzedType::Resolved(crate::GqlType::Boolean)
+            }
+            ValueExpr::Same { items, .. } => {
+                bind_singleton_element_variable_references(ctx, items, "SAME arguments")?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
             ValueExpr::PropertyExists { target, .. } => {
@@ -200,13 +204,32 @@ fn bind_property_exists_target(
     ctx: &mut BindContext,
     target: &ValueExpr,
 ) -> Result<(), AnalysisError> {
+    bind_singleton_element_variable_reference(ctx, target, "PROPERTY_EXISTS target")
+}
+
+fn bind_singleton_element_variable_references(
+    ctx: &mut BindContext,
+    targets: &[ValueExpr],
+    context: &'static str,
+) -> Result<(), AnalysisError> {
+    for target in targets {
+        bind_singleton_element_variable_reference(ctx, target, context)?;
+    }
+    Ok(())
+}
+
+fn bind_singleton_element_variable_reference(
+    ctx: &mut BindContext,
+    target: &ValueExpr,
+    context: &'static str,
+) -> Result<(), AnalysisError> {
     let target_id = bind_value_expr(ctx, target)?;
     let ValueExpr::Variable { name, span } = target else {
-        return Err(invalid_property_exists_target(target.span()));
+        return Err(invalid_singleton_element_reference(context, target.span()));
     };
     let binding = ctx
         .lookup_binding(name)
-        .expect("PROPERTY_EXISTS variable target was just resolved");
+        .expect("element variable target was just resolved");
     let target_type = ctx.expr_type(target_id);
     let is_singleton_element = matches!(
         (ctx.element_kind(binding), target_type),
@@ -216,14 +239,16 @@ fn bind_property_exists_target(
     if is_singleton_element {
         Ok(())
     } else {
-        Err(invalid_property_exists_target(*span))
+        Err(invalid_singleton_element_reference(context, *span))
     }
 }
 
-fn invalid_property_exists_target(span: crate::SourceSpan) -> AnalysisError {
+fn invalid_singleton_element_reference(
+    context: &'static str,
+    span: crate::SourceSpan,
+) -> AnalysisError {
     AnalysisError::InvalidReference {
-        message: "PROPERTY_EXISTS target must be a singleton node or edge variable reference"
-            .into(),
+        message: format!("{context} must be singleton node or edge variable references"),
         span,
     }
 }

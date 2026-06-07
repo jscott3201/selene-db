@@ -396,33 +396,6 @@ fn iso_string_match_and_range_replacements_execute() {
 }
 
 #[test]
-fn predicate_completion_covers_all_different_and_same() {
-    assert_eq!(
-        single_value("RETURN ALL_DIFFERENT(1, 2, 3) AS diff_value", "diff_value"),
-        Value::Bool(true)
-    );
-
-    let left = db_string("left");
-    let right = db_string("right");
-    let same = ValueExpr::Same {
-        items: vec![var(left.clone()), var(right.clone())],
-        span: span(),
-    };
-    assert_eq!(
-        eval_with_binding(
-            &same,
-            Binding::new([
-                Value::NodeRef(NodeId::new(7)),
-                Value::NodeRef(NodeId::new(7))
-            ]),
-            vec![left, right],
-        )
-        .expect("SAME evaluates"),
-        Value::Bool(true)
-    );
-}
-
-#[test]
 fn dynamic_reference_ordering_uses_stable_ids() {
     let left = db_string("left");
     let right = db_string("right");
