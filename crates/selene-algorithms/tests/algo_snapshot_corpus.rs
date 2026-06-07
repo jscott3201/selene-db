@@ -465,6 +465,7 @@ fn dispatch(
                 max_iter,
                 tolerance,
                 parallelism: Parallelism::Sequential,
+                personalization: None,
             };
             (
                 "pagerank",

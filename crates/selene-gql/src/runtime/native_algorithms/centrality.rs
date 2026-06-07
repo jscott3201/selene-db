@@ -9,7 +9,7 @@
 use selene_algorithms::{
     BetweennessConfig, PageRankConfig, betweenness_with_checker, pagerank_with_checker,
 };
-use selene_core::{CancellationChecker, Value};
+use selene_core::{CancellationChecker, NodeId, Record, Value};
 use selene_graph::SeleneGraph;
 
 use super::args::{
@@ -20,7 +20,10 @@ use super::meta::{output, parameter};
 use super::parallel::parse_parallelism;
 use super::state::{AlgorithmCatalogs, with_projection};
 use crate::procedure_registry::ProcedureError;
-use crate::{GqlType, ProcedureOutputColumn, ProcedureParameter, ProcedureResult};
+use crate::{
+    GqlType, ProcedureDefaultValue, ProcedureOutputColumn, ProcedureParameter, ProcedureResult,
+    RecordType,
+};
 
 /// Default damping factor used when the GQL argument is NULL.
 pub(super) const DEFAULT_DAMPING: f64 = 0.85;
@@ -40,6 +43,13 @@ pub(super) fn pagerank_signature() -> Vec<ProcedureParameter> {
         parameter("max_iterations", GqlType::Integer, true),
         parameter("tolerance", GqlType::Float, true),
         parameter("parallelism", GqlType::Integer, true),
+        parameter(
+            "personalization",
+            GqlType::List(Box::new(GqlType::Record(RecordType::Open))),
+            true,
+        )
+        .with_default_doc("NULL (uniform teleport)")
+        .with_default(ProcedureDefaultValue::Null),
     ]
 }
 
@@ -66,6 +76,7 @@ pub(super) fn pagerank(
 ) -> Result<ProcedureResult, ProcedureError> {
     let (projection_name, config) = parse_pagerank_args(args)?;
     with_projection(catalogs, snapshot, &projection_name, |projection| {
+        validate_personalization_nodes(projection, config.personalization.as_deref())?;
         let rows = pagerank_with_checker(projection, config, checker)
             .map_err(algorithm_aborted)?
             .into_iter()
@@ -93,7 +104,12 @@ pub(super) fn betweenness(
 }
 
 fn parse_pagerank_args(args: &[Value]) -> Result<(String, PageRankConfig), ProcedureError> {
-    expect_arity(PAGERANK_PROC, args, 5)?;
+    if !(5..=6).contains(&args.len()) {
+        return Err(invalid_argument(format!(
+            "{PAGERANK_PROC} expected 5 or 6 arguments, got {}",
+            args.len()
+        )));
+    }
     let projection_name = required_string(PAGERANK_PROC, args, 0, "projection_name")?;
     let damping = nullable_f64(PAGERANK_PROC, args, 1, "damping", DEFAULT_DAMPING)?;
     let max_iter = nullable_usize(
@@ -105,6 +121,11 @@ fn parse_pagerank_args(args: &[Value]) -> Result<(String, PageRankConfig), Proce
     )?;
     let tolerance = nullable_f64(PAGERANK_PROC, args, 3, "tolerance", DEFAULT_TOLERANCE)?;
     let parallelism = parse_parallelism(PAGERANK_PROC, &args[4])?;
+    let personalization = if args.len() == 6 {
+        nullable_personalization(&args[5])?
+    } else {
+        None
+    };
     validate_config(damping, tolerance)?;
     Ok((
         projection_name,
@@ -113,6 +134,7 @@ fn parse_pagerank_args(args: &[Value]) -> Result<(String, PageRankConfig), Proce
             max_iter,
             tolerance,
             parallelism,
+            personalization,
         },
     ))
 }
@@ -128,6 +150,143 @@ fn validate_config(damping: f64, tolerance: f64) -> Result<(), ProcedureError> {
         return Err(invalid_argument(
             "algo.pagerank tolerance must be non-negative",
         ));
+    }
+    Ok(())
+}
+
+fn nullable_personalization(value: &Value) -> Result<Option<Vec<(NodeId, f64)>>, ProcedureError> {
+    let Value::List(entries) = value else {
+        return match value {
+            Value::Null => Ok(None),
+            other => Err(invalid_argument(format!(
+                "{PAGERANK_PROC} expected personalization to be LIST<RECORD> or NULL, got {other:?}"
+            ))),
+        };
+    };
+    let mut seeds = Vec::with_capacity(entries.len());
+    let mut total = 0.0;
+    for (index, entry) in entries.iter().enumerate() {
+        let (node, weight) = personalization_entry(entry, index)?;
+        if !weight.is_finite() {
+            return Err(invalid_argument(format!(
+                "{PAGERANK_PROC} personalization[{index}].weight must be finite"
+            )));
+        }
+        if weight < 0.0 {
+            return Err(invalid_argument(format!(
+                "{PAGERANK_PROC} personalization[{index}].weight must be non-negative"
+            )));
+        }
+        total += weight;
+        seeds.push((node, weight));
+    }
+    if seeds.is_empty() || total <= 0.0 {
+        return Err(invalid_argument(format!(
+            "{PAGERANK_PROC} personalization must include at least one positive weight"
+        )));
+    }
+    if !total.is_finite() {
+        return Err(invalid_argument(format!(
+            "{PAGERANK_PROC} personalization total weight must be finite"
+        )));
+    }
+    Ok(Some(seeds))
+}
+
+fn personalization_entry(value: &Value, index: usize) -> Result<(NodeId, f64), ProcedureError> {
+    match value {
+        Value::Record(record) => {
+            let fields = match record.as_ref() {
+                Record::Open(fields) => fields,
+                _ => {
+                    return Err(invalid_argument(format!(
+                        "{PAGERANK_PROC} expected personalization[{index}] to be an open RECORD"
+                    )));
+                }
+            };
+            let mut node = None;
+            let mut weight = None;
+            for (field, value) in fields {
+                match field.as_str() {
+                    "node" | "node_id" => {
+                        if node.replace(node_field(value, index)?).is_some() {
+                            return Err(invalid_argument(format!(
+                                "{PAGERANK_PROC} personalization[{index}] contains duplicate node field"
+                            )));
+                        }
+                    }
+                    "weight" => {
+                        if weight.replace(weight_field(value, index)?).is_some() {
+                            return Err(invalid_argument(format!(
+                                "{PAGERANK_PROC} personalization[{index}] contains duplicate weight field"
+                            )));
+                        }
+                    }
+                    other => {
+                        return Err(invalid_argument(format!(
+                            "{PAGERANK_PROC} personalization[{index}] contains unexpected field '{other}'"
+                        )));
+                    }
+                }
+            }
+            let node = node.ok_or_else(|| {
+                invalid_argument(format!(
+                    "{PAGERANK_PROC} personalization[{index}] missing node_id"
+                ))
+            })?;
+            let weight = weight.ok_or_else(|| {
+                invalid_argument(format!(
+                    "{PAGERANK_PROC} personalization[{index}] missing weight"
+                ))
+            })?;
+            Ok((node, weight))
+        }
+        Value::List(values) if values.len() == 2 => Ok((
+            node_field(&values[0], index)?,
+            weight_field(&values[1], index)?,
+        )),
+        other => Err(invalid_argument(format!(
+            "{PAGERANK_PROC} expected personalization[{index}] to be RECORD{{node_id, weight}} or [NODE, weight], got {other:?}"
+        ))),
+    }
+}
+
+fn node_field(value: &Value, index: usize) -> Result<NodeId, ProcedureError> {
+    match value {
+        Value::NodeRef(node) => Ok(*node),
+        other => Err(invalid_argument(format!(
+            "{PAGERANK_PROC} personalization[{index}].node_id must be a NODE, got {other:?}"
+        ))),
+    }
+}
+
+fn weight_field(value: &Value, index: usize) -> Result<f64, ProcedureError> {
+    match value {
+        Value::Float(value) => Ok(*value),
+        Value::Float32(value) => Ok(f64::from(*value)),
+        Value::Int(value) => Ok(*value as f64),
+        Value::Uint(value) => Ok(*value as f64),
+        other => Err(invalid_argument(format!(
+            "{PAGERANK_PROC} personalization[{index}].weight must be numeric, got {other:?}"
+        ))),
+    }
+}
+
+fn validate_personalization_nodes(
+    projection: &selene_algorithms::GraphProjection,
+    personalization: Option<&[(NodeId, f64)]>,
+) -> Result<(), ProcedureError> {
+    let Some(personalization) = personalization else {
+        return Ok(());
+    };
+    for (node, _) in personalization {
+        if !projection.contains(*node) {
+            return Err(invalid_argument(format!(
+                "{PAGERANK_PROC} personalization seed node {} is not in projection '{}'",
+                node.get(),
+                projection.name()
+            )));
+        }
     }
     Ok(())
 }
@@ -148,7 +307,8 @@ fn parse_betweenness_args(args: &[Value]) -> Result<(String, BetweennessConfig),
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{Value, db_string};
+    use selene_core::{NodeId, Record, Value, db_string};
+    use smallvec::smallvec;
 
     use super::*;
 
@@ -161,6 +321,19 @@ mod tests {
             panic!("expected InvalidArgument, got {err:?}");
         };
         detail
+    }
+
+    fn seed_record(node: NodeId, weight: Value) -> Value {
+        Value::Record(Box::new(Record::Open(smallvec![
+            (
+                db_string("node_id").expect("test field fits DB string cap"),
+                Value::NodeRef(node),
+            ),
+            (
+                db_string("weight").expect("test field fits DB string cap"),
+                weight,
+            ),
+        ])))
     }
 
     // --- PageRank ---------------------------------------------------------
@@ -180,6 +353,61 @@ mod tests {
         assert_eq!(config.max_iter, DEFAULT_MAX_ITERATIONS);
         assert_eq!(config.tolerance, DEFAULT_TOLERANCE);
         assert_eq!(config.parallelism, selene_algorithms::Parallelism::Auto);
+        assert_eq!(config.personalization, None);
+    }
+
+    #[test]
+    fn pagerank_personalization_parses_weighted_records() {
+        let (_, config) = parse_pagerank_args(&[
+            projection_name(),
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::List(vec![
+                seed_record(NodeId::new(7), Value::Int(2)),
+                seed_record(NodeId::new(9), Value::Float(1.5)),
+            ]),
+        ])
+        .expect("weighted personalization records parse");
+
+        assert_eq!(
+            config.personalization,
+            Some(vec![(NodeId::new(7), 2.0), (NodeId::new(9), 1.5)])
+        );
+    }
+
+    #[test]
+    fn pagerank_personalization_rejects_negative_weights() {
+        let err = parse_pagerank_args(&[
+            projection_name(),
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::List(vec![seed_record(NodeId::new(7), Value::Float(-1.0))]),
+        ])
+        .expect_err("negative personalization weight rejected");
+
+        let detail = invalid_argument_detail(err);
+        assert!(detail.contains("personalization[0].weight"));
+        assert!(detail.contains("non-negative"));
+    }
+
+    #[test]
+    fn pagerank_personalization_rejects_zero_total_weight() {
+        let err = parse_pagerank_args(&[
+            projection_name(),
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::List(vec![seed_record(NodeId::new(7), Value::Float(0.0))]),
+        ])
+        .expect_err("zero-total personalization rejected");
+
+        let detail = invalid_argument_detail(err);
+        assert!(detail.contains("at least one positive weight"));
     }
 
     #[test]

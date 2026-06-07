@@ -7,11 +7,12 @@
 //! identically to the pack era, with the registry swapped behind the
 //! `ProcedureRegistry` trait.
 
-use selene_core::{DbString, GraphId, Value};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Record, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
+use smallvec::smallvec;
 
 fn db_string(value: &str) -> DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
@@ -19,6 +20,21 @@ fn db_string(value: &str) -> DbString {
 
 fn graph(id: u64) -> SharedGraph {
     SharedGraph::new(GraphId::new(id))
+}
+
+fn seed_isolated_nodes(graph: &SharedGraph, count: usize) -> Vec<NodeId> {
+    let mut txn = graph.begin_write();
+    let label = db_string("N");
+    let mut nodes = Vec::with_capacity(count);
+    for _ in 0..count {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+                .expect("test node creates"),
+        );
+    }
+    txn.commit().expect("test graph commit");
+    nodes
 }
 
 fn rows(output: StatementOutput) -> BindingTable {
@@ -55,6 +71,20 @@ fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
         .collect()
 }
 
+fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
+    let index = table
+        .column_index(db_string(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::NodeRef(value)) => *value,
+            other => panic!("expected node ref in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
         .column_index(db_string(name))
@@ -77,6 +107,13 @@ fn seed_triangle(session: &mut Session<'_>, registry: &dyn ProcedureRegistry) {
             registry,
         )
         .expect("seed graph inserts");
+}
+
+fn personalization_seed(node: NodeId, weight: f64) -> Value {
+    Value::Record(Box::new(Record::Open(smallvec![
+        (db_string("node_id"), Value::NodeRef(node)),
+        (db_string("weight"), Value::Float(weight)),
+    ])))
 }
 
 #[test]
@@ -155,6 +192,69 @@ fn pagerank_runs_end_to_end_over_a_built_projection() {
     assert!(
         (total - 1.0).abs() < 1e-6,
         "pagerank scores should sum to ~1.0, got {total}"
+    );
+}
+
+#[test]
+fn pagerank_accepts_personalization_parameter() {
+    let graph = graph(220_008);
+    let nodes = seed_isolated_nodes(&graph, 3);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+    session.bind_parameter(
+        db_string("seeds"),
+        Value::List(vec![personalization_seed(nodes[2], 1.0)]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, $seeds) YIELD node_id, score",
+        &registry,
+    );
+
+    let result_nodes = node_column(&table, "node_id");
+    let scores = float_column(&table, "score");
+    assert_eq!(result_nodes[0], nodes[2]);
+    assert!((scores[0] - 1.0).abs() < 1e-12);
+    assert!((scores[1] - 0.0).abs() < 1e-12);
+    assert!((scores[2] - 0.0).abs() < 1e-12);
+}
+
+#[test]
+fn pagerank_personalization_rejects_seed_outside_projection() {
+    let graph = graph(220_009);
+    seed_isolated_nodes(&graph, 2);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+    session.bind_parameter(
+        db_string("seeds"),
+        Value::List(vec![personalization_seed(NodeId::new(999), 1.0)]),
+    );
+
+    let err = session
+        .execute_source(
+            "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, $seeds) YIELD node_id, score",
+            &registry,
+        )
+        .expect_err("out-of-projection seed rejected");
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("not in projection") && rendered.contains("999"),
+        "error should mention out-of-projection seed, got: {rendered}"
     );
 }
 

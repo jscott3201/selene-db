@@ -134,6 +134,7 @@ fn config(max_iter: usize, tolerance: f64, parallelism: Parallelism) -> PageRank
         max_iter,
         tolerance,
         parallelism,
+        personalization: None,
     }
 }
 
@@ -267,6 +268,35 @@ fn pagerank_seq_par_parity_on_directed_dag() {
     let sequential = pagerank(&proj, config(100, 0.0, Parallelism::Sequential));
     let auto = pagerank(&proj, config(100, 0.0, Parallelism::Auto));
     let threaded = pagerank(&proj, config(100, 0.0, threads4()));
+
+    assert_outputs_abs_close(
+        &sequential,
+        &auto,
+        PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE,
+    );
+    assert_outputs_abs_close(
+        &sequential,
+        &threaded,
+        PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE,
+    );
+}
+
+#[test]
+fn pagerank_seq_par_parity_with_personalization() {
+    let shared = build_graph(4, &[(0, 1), (1, 2), (2, 3)]);
+    let proj = build_proj(&shared);
+    let nodes: Vec<NodeId> = proj.iter_nodes().collect();
+    let personalized = |parallelism| PageRankConfig {
+        damping: 0.85,
+        max_iter: 100,
+        tolerance: 0.0,
+        parallelism,
+        personalization: Some(vec![(nodes[0], 2.0), (nodes[2], 1.0)]),
+    };
+
+    let sequential = pagerank(&proj, personalized(Parallelism::Sequential));
+    let auto = pagerank(&proj, personalized(Parallelism::Auto));
+    let threaded = pagerank(&proj, personalized(threads4()));
 
     assert_outputs_abs_close(
         &sequential,
