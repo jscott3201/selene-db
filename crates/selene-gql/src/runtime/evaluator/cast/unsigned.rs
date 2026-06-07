@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    invalid_character, non_iso_combination,
+    invalid_character, non_iso_combination, non_iso_static_source_for_target,
     numeric_text::{NumericText, classify_unsigned_numeric_text},
 };
 
@@ -98,10 +98,14 @@ pub(super) fn cast_to_unsigned_integer(
             "CAST from BOOLEAN to a numeric type is not a valid type combination",
             span,
         )),
-        _ => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "CAST source not supported for unsigned integer target",
-            span,
-        }),
+        other => Err(
+            non_iso_static_source_for_target(&other, target.name(), span).unwrap_or(
+                ExecutorError::FeatureNotSupportedYet {
+                    feature: "CAST source not supported for unsigned integer target",
+                    span,
+                },
+            ),
+        ),
     }
 }
 

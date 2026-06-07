@@ -200,10 +200,14 @@ fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
             "CAST from a numeric type to BOOLEAN is not a valid type combination",
             span,
         )),
-        _ => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "CAST source not supported for BOOLEAN target",
-            span,
-        }),
+        other => Err(
+            non_iso_static_source_for_target(&other, "BOOLEAN", span).unwrap_or(
+                ExecutorError::FeatureNotSupportedYet {
+                    feature: "CAST source not supported for BOOLEAN target",
+                    span,
+                },
+            ),
+        ),
     }
 }
 
@@ -230,7 +234,10 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
         Value::LocalTime(v) => v.to_string(),
         Value::Duration(v) => v.to_string(),
         Value::Json(v) => v.to_canonical_string(),
-        _ => {
+        other => {
+            if let Some(error) = non_iso_static_source_for_target(&other, "STRING", span) {
+                return Err(error);
+            }
             return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST source not supported for STRING target",
                 span,
@@ -305,11 +312,18 @@ fn cast_to_list(
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
-    let Value::List(items) = value else {
-        return Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "CAST to LIST requires a LIST source",
-            span,
-        });
+    let items = match value {
+        Value::List(items) => items,
+        other => {
+            return Err(
+                non_iso_static_source_for_target(&other, "LIST", span).unwrap_or(
+                    ExecutorError::FeatureNotSupportedYet {
+                        feature: "CAST to LIST requires a LIST source",
+                        span,
+                    },
+                ),
+            );
+        }
     };
     let mut out = Vec::with_capacity(items.len());
     for item in items {
@@ -326,8 +340,43 @@ fn cast_to_list(
 /// An invalid ISO §20.8 Table-4 source/target combination (a `N` cell) →
 /// `22G03` datatype mismatch. Used for the boolean↔numeric cells ISO does not
 /// define a `CAST` for.
-fn non_iso_combination(message: &'static str, span: SourceSpan) -> ExecutorError {
+fn non_iso_combination(message: impl Into<String>, span: SourceSpan) -> ExecutorError {
     ExecutorError::data_exception(DataExceptionSubclass::InvalidValueType, message, span)
+}
+
+pub(super) fn non_iso_static_source_for_target(
+    value: &Value,
+    target: &'static str,
+    span: SourceSpan,
+) -> Option<ExecutorError> {
+    let source = iso_static_source_name(value)?;
+    Some(non_iso_combination(
+        format!("CAST from {source} to {target} is not a valid type combination"),
+        span,
+    ))
+}
+
+fn iso_static_source_name(value: &Value) -> Option<&'static str> {
+    Some(match value {
+        Value::Bool(_) => "BOOLEAN",
+        Value::Int(_) | Value::Int128(_) | Value::Decimal(_) => "signed exact numeric",
+        Value::Uint(_) | Value::Uint128(_) => "unsigned exact numeric",
+        Value::Float(_) | Value::Float32(_) => "approximate numeric",
+        Value::String(_) => "STRING",
+        Value::Bytes(_) => "BYTES",
+        Value::List(_) => "LIST",
+        Value::Record(_) | Value::RecordTyped(_) => "RECORD",
+        Value::Path(_) => "PATH",
+        Value::ZonedDateTime(_) | Value::LocalDateTime(_) | Value::Date(_) => "datetime",
+        Value::ZonedTime(_) | Value::LocalTime(_) => "time",
+        Value::Duration(_) => "DURATION",
+        Value::Null => "NULL",
+        Value::NodeRef(_) | Value::EdgeRef(_) | Value::GraphRef(_) | Value::TableRef(_) => {
+            return None;
+        }
+        Value::Extended { .. } | Value::Uuid(_) | Value::Vector(_) | Value::Json(_) => return None,
+        _ => return None,
+    })
 }
 
 fn string_to_boolean(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -382,350 +431,4 @@ fn cast_to_type_feature(target: &GqlType) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    //! Unit coverage for runtime CAST branches that are not addressable
-    //! through GQL grammar. The integration suite at
-    //! `crates/selene-gql/tests/cast.rs` covers every grammar-reachable
-    //! path; these tests close the remaining BF-class gaps (NaN, overflow,
-    //! ±Infinity) where the grammar has no literal for the input value.
-    use std::sync::Arc;
-
-    use super::*;
-    use crate::RecordType;
-    use selene_core::GraphId;
-    use selene_graph::SeleneGraph;
-
-    use crate::{
-        EmptyProcedureRegistry, ImplDefinedCaps, SourceSpan, SubqueryRegistry,
-        analyze::ExprIdLookup,
-        runtime::{ExecutorError, TxContext},
-    };
-
-    fn span() -> SourceSpan {
-        SourceSpan::default()
-    }
-
-    fn eval_cast_for_test(
-        value: Value,
-        target: &GqlType,
-        span: SourceSpan,
-    ) -> Result<Value, ExecutorError> {
-        let caps = ImplDefinedCaps::default();
-        let graph = Arc::new(SeleneGraph::new(GraphId::new(9_411)));
-        let tx = TxContext::read_only(graph, &caps, &EmptyProcedureRegistry, &[]);
-        let expr_ids = ExprIdLookup::default();
-        let subqueries = SubqueryRegistry::default();
-        let ctx = EvalCtx {
-            tx: &tx,
-            expr_ids: &expr_ids,
-            subqueries: &subqueries,
-        };
-        super::eval_cast(value, target, span, &ctx)
-    }
-
-    #[test]
-    fn float_nan_to_integer_returns_22018() {
-        let err = eval_cast_for_test(Value::Float(f64::NAN), &GqlType::Integer, span())
-            .expect_err("NaN cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(
-            subclass,
-            DataExceptionSubclass::InvalidCharacterValueForCast
-        );
-    }
-
-    #[test]
-    fn float_overflow_to_integer_returns_22003() {
-        let err = eval_cast_for_test(Value::Float(1e30_f64), &GqlType::Integer, span())
-            .expect_err("overflow cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
-    }
-
-    #[test]
-    fn float_negative_overflow_to_integer_returns_22003() {
-        let err = eval_cast_for_test(Value::Float(-1e30_f64), &GqlType::Integer, span())
-            .expect_err("negative overflow cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
-    }
-
-    #[test]
-    fn float_positive_infinity_to_integer_returns_22003() {
-        let err = eval_cast_for_test(Value::Float(f64::INFINITY), &GqlType::Integer, span())
-            .expect_err("+inf cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
-    }
-
-    #[test]
-    fn float_negative_infinity_to_integer_returns_22003() {
-        let err = eval_cast_for_test(Value::Float(f64::NEG_INFINITY), &GqlType::Integer, span())
-            .expect_err("-inf cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
-    }
-
-    #[test]
-    fn recordtyped_source_to_closed_record_is_fail_closed() {
-        // A catalog-bound `Value::RecordTyped` source carries no inline field names, and the
-        // named-record-type catalog needed to resolve them is unbuilt — so CAST rejects it
-        // (42N01 feature-not-yet-supported) rather than projecting positionally (name-blind).
-        // RecordTyped is not grammar-reachable, hence this unit test.
-        use selene_core::{RecordTypeId, RecordTyped};
-        let value = Value::RecordTyped(Box::new(RecordTyped {
-            type_id: RecordTypeId::new(1),
-            values: [Some(Value::Int(1))].into_iter().collect(),
-        }));
-        let field = selene_core::db_string("a").expect("db_string field");
-        let target = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
-        let err =
-            eval_cast_for_test(value, &target, span()).expect_err("RecordTyped source rejected");
-        assert!(
-            matches!(err, ExecutorError::FeatureNotSupportedYet { .. }),
-            "expected FeatureNotSupportedYet, got {err:?}"
-        );
-        assert_eq!(err.gqlstatus().as_str(), "42N01");
-    }
-
-    // -----------------------------------------------------------------------
-    // 810 — DECIMAL arms + numeric-family source widening + strict-ISO bool.
-    // The widened numeric source variants (Uint/Int128/Uint128/Float32/Decimal)
-    // have no GQL literal, so each new cell is pinned here at the `eval_cast`
-    // seam; the grammar-reachable behavior changes (bool↔string case,
-    // bool→numeric reject) are additionally covered in tests/cast.rs.
-    // -----------------------------------------------------------------------
-
-    use rust_decimal::Decimal;
-    use rust_decimal::prelude::FromPrimitive;
-
-    fn cast(value: Value, target: &GqlType) -> Value {
-        eval_cast_for_test(value, target, span()).expect("cast succeeds")
-    }
-
-    fn cast_status(value: Value, target: &GqlType) -> String {
-        eval_cast_for_test(value, target, span())
-            .expect_err("cast rejected")
-            .gqlstatus()
-            .as_str()
-            .to_owned()
-    }
-
-    fn as_str(value: Value) -> String {
-        match value {
-            Value::String(db_string) => db_string.as_str().to_owned(),
-            other => panic!("expected string, got {other:?}"),
-        }
-    }
-
-    // The DECIMAL-arm cells (→ DECIMAL and DECIMAL → integer/float/string) are
-    // pinned in the `cast::decimal` submodule's own `#[cfg(test)]`, where the
-    // conversion helpers live. The widened-numeric + strict-bool cells below
-    // route through the full `eval_cast` dispatch.
-
-    // --- numeric-family source widening into i64 integer target ---
-
-    #[test]
-    fn uint_in_range_to_integer() {
-        assert_eq!(cast(Value::Uint(7), &GqlType::Integer), Value::Int(7));
-    }
-
-    #[test]
-    fn uint_above_i64_max_to_integer_returns_22003() {
-        // u64::MAX must NOT silently narrow to -1; it is out of i64 range.
-        assert_eq!(
-            cast_status(Value::Uint(u64::MAX), &GqlType::Integer),
-            "22003"
-        );
-    }
-
-    #[test]
-    fn int128_in_range_to_integer() {
-        assert_eq!(cast(Value::Int128(-9), &GqlType::Integer), Value::Int(-9));
-    }
-
-    #[test]
-    fn int128_above_i64_max_to_integer_returns_22003() {
-        assert_eq!(
-            cast_status(Value::Int128(i128::from(i64::MAX) + 1), &GqlType::Integer),
-            "22003"
-        );
-    }
-
-    #[test]
-    fn uint128_in_range_to_integer() {
-        assert_eq!(cast(Value::Uint128(9), &GqlType::Integer), Value::Int(9));
-    }
-
-    #[test]
-    fn uint128_above_i64_max_to_integer_returns_22003() {
-        assert_eq!(
-            cast_status(Value::Uint128(u128::MAX), &GqlType::Integer),
-            "22003"
-        );
-    }
-
-    #[test]
-    fn float32_to_integer_truncates() {
-        assert_eq!(
-            cast(Value::Float32(3.7_f32), &GqlType::Integer),
-            Value::Int(3)
-        );
-    }
-
-    // --- numeric-family source widening into f64 float target ---
-
-    #[test]
-    fn uint_to_float() {
-        assert_eq!(cast(Value::Uint(42), &GqlType::Float), Value::Float(42.0));
-    }
-
-    #[test]
-    fn int128_to_float() {
-        assert_eq!(
-            cast(Value::Int128(-42), &GqlType::Float),
-            Value::Float(-42.0)
-        );
-    }
-
-    #[test]
-    fn uint128_to_float() {
-        assert_eq!(
-            cast(Value::Uint128(42), &GqlType::Float),
-            Value::Float(42.0)
-        );
-    }
-
-    #[test]
-    fn float32_to_float() {
-        assert_eq!(
-            cast(Value::Float32(0.5_f32), &GqlType::Float),
-            Value::Float(0.5)
-        );
-    }
-
-    // --- numeric-family source widening into string target ---
-
-    #[test]
-    fn uint_to_string() {
-        assert_eq!(as_str(cast(Value::Uint(42), &GqlType::String)), "42");
-    }
-
-    #[test]
-    fn int128_to_string() {
-        assert_eq!(as_str(cast(Value::Int128(-42), &GqlType::String)), "-42");
-    }
-
-    #[test]
-    fn uint128_to_string() {
-        assert_eq!(as_str(cast(Value::Uint128(42), &GqlType::String)), "42");
-    }
-
-    #[test]
-    fn float32_to_string() {
-        assert_eq!(
-            as_str(cast(Value::Float32(0.5_f32), &GqlType::String)),
-            "0.5"
-        );
-    }
-
-    // --- strict-ISO boolean surface (3a) — every numeric source → 22G03 ---
-
-    #[test]
-    fn bool_to_integer_returns_22g03() {
-        assert_eq!(cast_status(Value::Bool(true), &GqlType::Integer), "22G03");
-    }
-
-    #[test]
-    fn bool_to_float_returns_22g03() {
-        assert_eq!(cast_status(Value::Bool(true), &GqlType::Float), "22G03");
-    }
-
-    #[test]
-    fn bool_to_decimal_returns_22g03() {
-        // DECIMAL is signed-exact numeric (Table-4 `EN`); BO→EN is `N`, so a
-        // boolean→DECIMAL cast is a 22G03 datatype mismatch, NOT a 42N01
-        // unimplemented feature (the DECIMAL target's source fallthrough must
-        // match the INTEGER/FLOAT bool arms — Codex P2 on PR #240).
-        assert_eq!(cast_status(Value::Bool(true), &GqlType::Decimal), "22G03");
-        assert_eq!(cast_status(Value::Bool(false), &GqlType::Decimal), "22G03");
-    }
-
-    #[test]
-    fn int_to_boolean_returns_22g03() {
-        assert_eq!(cast_status(Value::Int(1), &GqlType::Boolean), "22G03");
-        assert_eq!(cast_status(Value::Int(0), &GqlType::Boolean), "22G03");
-        assert_eq!(cast_status(Value::Int(2), &GqlType::Boolean), "22G03");
-    }
-
-    #[test]
-    fn numeric_family_to_boolean_returns_22g03() {
-        for value in [
-            Value::Uint(1),
-            Value::Int128(1),
-            Value::Uint128(1),
-            Value::Float(1.0),
-            Value::Float32(1.0_f32),
-            Value::Decimal(Decimal::from_f64(1.0).unwrap()),
-        ] {
-            assert_eq!(
-                cast_status(value.clone(), &GqlType::Boolean),
-                "22G03",
-                "expected 22G03 for {value:?} -> BOOLEAN"
-            );
-        }
-    }
-
-    // --- bool→string uppercase (3b) + string→bool case-insensitive (3c) ---
-
-    #[test]
-    fn bool_to_string_is_uppercase() {
-        assert_eq!(as_str(cast(Value::Bool(true), &GqlType::String)), "TRUE");
-        assert_eq!(as_str(cast(Value::Bool(false), &GqlType::String)), "FALSE");
-    }
-
-    #[test]
-    fn string_to_boolean_is_case_insensitive() {
-        for text in ["true", "True", "TRUE", "tRuE", "  true  "] {
-            assert_eq!(
-                cast(
-                    Value::String(selene_core::db_string(text).unwrap()),
-                    &GqlType::Boolean
-                ),
-                Value::Bool(true),
-                "`{text}` must parse to TRUE"
-            );
-        }
-        for text in ["false", "False", "FALSE", "fAlSe", " FALSE "] {
-            assert_eq!(
-                cast(
-                    Value::String(selene_core::db_string(text).unwrap()),
-                    &GqlType::Boolean
-                ),
-                Value::Bool(false),
-                "`{text}` must parse to FALSE"
-            );
-        }
-    }
-
-    #[test]
-    fn string_to_boolean_garbage_still_returns_22018() {
-        assert_eq!(
-            cast_status(
-                Value::String(selene_core::db_string("yes").unwrap()),
-                &GqlType::Boolean
-            ),
-            "22018"
-        );
-    }
-}
+mod tests;
