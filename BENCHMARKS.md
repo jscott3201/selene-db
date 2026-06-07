@@ -39,6 +39,7 @@ run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
 run-benches.sh --profile quick --bench vector_wgpu --filter core_vector_wgpu_prototype
 SELENE_WGPU_STRESS_CASES=1 run-benches.sh --profile quick --bench vector_wgpu --filter q8x100000x1024
+scripts/criterion-summary.sh core_vector_wgpu_prototype/cpu_rayon_score_topk/q8x100000x1024
 SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 run-benches.sh --bench vector_index_rebuild --allocator system   # allocator A/B without mimalloc
 run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
@@ -117,6 +118,10 @@ quiet machine — background load pollutes the medians.
 All committed benchmark rows use `mimalloc` as the global allocator; the library
 crates are allocator-agnostic. For allocator A/B work, run the same scoped bench
 twice with `--allocator mimalloc` (the default) and `--allocator system`.
+Criterion writes per-run artifacts under `target/criterion`. After a sanctioned
+runner invocation, `scripts/criterion-summary.sh <criterion-id>` prints
+tab-separated sample count, median, mean, standard deviation, and sample p95 in
+milliseconds for quick variance checks.
 
 ## §1 selene-core
 

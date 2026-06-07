@@ -63,4 +63,20 @@ if scripts/run-benches.sh --profile quick --bench single_graph --vector-scales 0
   exit 1
 fi
 
+criterion_tmp="$(mktemp -d)"
+trap 'rm -rf "$criterion_tmp"' EXIT
+mkdir -p "$criterion_tmp/core/example/q1/new"
+cat > "$criterion_tmp/core/example/q1/new/estimates.json" <<'JSON'
+{"mean":{"confidence_interval":{"confidence_level":0.95,"lower_bound":2000000.0,"upper_bound":3000000.0},"point_estimate":2500000.0,"standard_error":1.0},"median":{"confidence_interval":{"confidence_level":0.95,"lower_bound":1000000.0,"upper_bound":3000000.0},"point_estimate":2000000.0,"standard_error":1.0},"median_abs_dev":{"confidence_interval":{"confidence_level":0.95,"lower_bound":1.0,"upper_bound":1.0},"point_estimate":1.0,"standard_error":1.0},"slope":null,"std_dev":{"confidence_interval":{"confidence_level":0.95,"lower_bound":1.0,"upper_bound":1.0},"point_estimate":500000.0,"standard_error":1.0}}
+JSON
+cat > "$criterion_tmp/core/example/q1/new/sample.json" <<'JSON'
+{"sampling_mode":"Flat","iters":[1.0,2.0,3.0,4.0],"times":[1000000.0,4000000.0,9000000.0,16000000.0]}
+JSON
+criterion_summary="$(scripts/criterion-summary.sh --root "$criterion_tmp" core/example/q1)"
+if ! grep -q $'core/example/q1\t4\t2.000\t2.500\t0.500\t4.000' <<< "$criterion_summary"; then
+  echo "FAIL: criterion-summary.sh did not report expected summary values" >&2
+  echo "$criterion_summary" >&2
+  exit 1
+fi
+
 echo "OK: run-benches.sh guardrail and vector scale smoke tests passed."
