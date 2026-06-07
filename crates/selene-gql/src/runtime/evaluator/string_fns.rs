@@ -1,5 +1,7 @@
 //! String and adjacent scalar function evaluation.
 
+use std::sync::Arc;
+
 use selene_core::{Record, Value};
 use unicode_normalization::UnicodeNormalization;
 
@@ -108,10 +110,22 @@ pub(super) fn eval_left_right(
     if matches!(source, Value::Null) || matches!(count, Value::Null) {
         return Ok(Value::Null);
     }
-    let Some(source) = string_slice(source) else {
-        return data_exception("LEFT/RIGHT source is not a string", span);
-    };
     let count = string_length_count(count, span)?;
+    if let Some(source) = string_slice(source) {
+        return eval_left_right_string(source, count, from_right, span);
+    }
+    if let Value::Bytes(source) = source {
+        return Ok(eval_left_right_bytes(source, count, from_right));
+    }
+    data_exception("LEFT/RIGHT source is not a string or byte string", span)
+}
+
+fn eval_left_right_string(
+    source: &str,
+    count: usize,
+    from_right: bool,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     let chars: Vec<char> = source.chars().collect();
     let value: String = if from_right {
         let start = chars.len().saturating_sub(count);
@@ -120,6 +134,16 @@ pub(super) fn eval_left_right(
         chars.iter().take(count).copied().collect()
     };
     string_value(&value, span)
+}
+
+fn eval_left_right_bytes(source: &Arc<[u8]>, count: usize, from_right: bool) -> Value {
+    let slice = if from_right {
+        let start = source.len().saturating_sub(count);
+        &source[start..]
+    } else {
+        &source[..source.len().min(count)]
+    };
+    Value::Bytes(Arc::<[u8]>::from(slice))
 }
 
 pub(super) fn eval_multi_char_trim(
