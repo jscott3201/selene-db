@@ -108,6 +108,32 @@ fn byte_string_literal_identity_cast_returns_bytes() {
 }
 
 #[test]
+fn byte_string_left_and_right_follow_iso_substring_rules() {
+    assert_eq!(
+        first_value("RETURN left(X'CAFE00', 2) AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        first_value("RETURN right(X'CAFE00', 2) AS payload"),
+        bytes(&[0xfe, 0x00])
+    );
+    assert_eq!(
+        first_value("RETURN left(X'CAFE', 99) AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        first_value("RETURN right(X'CAFE', 0) AS payload"),
+        bytes(&[])
+    );
+    assert_eq!(
+        first_value("RETURN left(X'CAFE', null) AS payload"),
+        Value::Null
+    );
+    assert_eq!(first_value("RETURN left(null, 1) AS payload"), Value::Null);
+    assert_eq!(first_status("RETURN left(X'CAFE', -1) AS payload"), "22011");
+}
+
+#[test]
 fn bare_byte_string_type_aliases_normalize_to_bytes() {
     assert_eq!(
         projection_type(
