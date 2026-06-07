@@ -70,6 +70,12 @@ fn normalize_numeric_text<'a>(
         return Err(invalid_character(text, target, span));
     }
 
+    match normalize_radix_integer(trimmed) {
+        RadixNormalization::Decimal(image) => return Ok(Cow::Owned(image)),
+        RadixNormalization::Invalid => return Err(invalid_character(text, target, span)),
+        RadixNormalization::NotRadix => {}
+    }
+
     if !trimmed.contains('_') {
         return Ok(Cow::Borrowed(trimmed));
     }
@@ -84,6 +90,97 @@ fn normalize_numeric_text<'a>(
         }
     }
     Ok(Cow::Owned(normalized))
+}
+
+enum RadixNormalization {
+    Decimal(String),
+    Invalid,
+    NotRadix,
+}
+
+fn normalize_radix_integer(text: &str) -> RadixNormalization {
+    let (sign, unsigned) = match text.as_bytes().first().copied() {
+        Some(b'-') => ("-", &text[1..]),
+        Some(b'+') => ("", &text[1..]),
+        Some(_) => ("", text),
+        None => return RadixNormalization::NotRadix,
+    };
+    let Some((digits, radix)) = split_radix_digits(unsigned) else {
+        return RadixNormalization::NotRadix;
+    };
+    if digits.is_empty() {
+        return RadixNormalization::Invalid;
+    }
+    let Some(decimal) = radix_digits_to_decimal(digits, radix) else {
+        return RadixNormalization::Invalid;
+    };
+    if decimal == "0" || sign.is_empty() {
+        RadixNormalization::Decimal(decimal)
+    } else {
+        RadixNormalization::Decimal(format!("-{decimal}"))
+    }
+}
+
+fn split_radix_digits(text: &str) -> Option<(&str, u32)> {
+    if let Some(rest) = text.strip_prefix("0x") {
+        Some((rest, 16))
+    } else if let Some(rest) = text.strip_prefix("0o") {
+        Some((rest, 8))
+    } else {
+        text.strip_prefix("0b").map(|rest| (rest, 2))
+    }
+}
+
+fn radix_digits_to_decimal(digits: &str, radix: u32) -> Option<String> {
+    let mut decimal = vec![b'0'];
+    let mut pending_underscore = false;
+    for byte in digits.bytes() {
+        if byte == b'_' {
+            if pending_underscore {
+                return None;
+            }
+            pending_underscore = true;
+            continue;
+        }
+        let digit = (byte as char).to_digit(radix)?;
+        multiply_decimal(&mut decimal, radix);
+        add_decimal_digit(&mut decimal, digit);
+        pending_underscore = false;
+    }
+    if pending_underscore {
+        return None;
+    }
+    decimal.reverse();
+    Some(String::from_utf8(decimal).expect("decimal digits are ASCII"))
+}
+
+fn multiply_decimal(decimal: &mut Vec<u8>, factor: u32) {
+    let mut carry = 0_u32;
+    for digit in decimal.iter_mut() {
+        let product = u32::from(*digit - b'0') * factor + carry;
+        *digit = b'0' + u8::try_from(product % 10).expect("single decimal digit");
+        carry = product / 10;
+    }
+    while carry > 0 {
+        decimal.push(b'0' + u8::try_from(carry % 10).expect("single decimal digit"));
+        carry /= 10;
+    }
+}
+
+fn add_decimal_digit(decimal: &mut Vec<u8>, addend: u32) {
+    let mut carry = addend;
+    for digit in decimal.iter_mut() {
+        let sum = u32::from(*digit - b'0') + carry;
+        *digit = b'0' + u8::try_from(sum % 10).expect("single decimal digit");
+        carry = sum / 10;
+        if carry == 0 {
+            break;
+        }
+    }
+    while carry > 0 {
+        decimal.push(b'0' + u8::try_from(carry % 10).expect("single decimal digit"));
+        carry /= 10;
+    }
 }
 
 fn underscores_separate_digits(text: &str) -> bool {

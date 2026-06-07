@@ -90,6 +90,11 @@ parsing or analysis, never at runtime.
 | `LIST<T>` | `[1, 2, 3]`, `CAST(x AS LIST<INTEGER>)` | `Value::List` | `GV50` |
 | `PATH` | constructed by `MATCH` path variables | `Value::Path` | `GV55` |
 
+String-source numeric casts follow the ISO signed/unsigned numeric literal image
+rules. Digit separators and radix integer images are accepted where the target
+feature is claimed, for example `CAST('0x10' AS INTEGER)`,
+`CAST('0o777' AS UINT64)`, and `CAST('0b1010' AS DECIMAL)`.
+
 `NULL` and `UNKNOWN` are first-class. `NULL` represents missing data;
 `UNKNOWN` is the three-valued-logic Boolean. Three-valued logic flows
 through every Boolean operator (`AND`, `OR`, `XOR`, `NOT`) and through
