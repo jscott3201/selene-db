@@ -532,7 +532,7 @@ is_suffix = {
   | is_kw ~ not_kw? ~ normal_form? ~ normalized_kw
   | is_kw ~ not_kw? ~ truth_value
   | is_kw ~ not_kw? ~ typed_kw ~ type_name
-  | not_kw? ~ in_kw ~ list_lit
+  | not_kw? ~ in_kw ~ (list_lit | comparison)
   | string_match_op ~ comparison
 }
 labeled_kw        = @{ ^"LABELED" ~ !(LETTER | NUMBER | "_") }

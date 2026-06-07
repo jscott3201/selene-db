@@ -126,6 +126,16 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let items = bind_many_with_spans(ctx, list)?;
                 infer::in_list(ctx.expr_type(operand_id), operand.span(), &items)?
             }
+            ValueExpr::InListExpression { operand, list, .. } => {
+                let operand_id = bind_value_expr(ctx, operand)?;
+                let list_id = bind_value_expr(ctx, list)?;
+                infer::in_list_expression(
+                    ctx.expr_type(operand_id),
+                    operand.span(),
+                    ctx.expr_type(list_id),
+                    list.span(),
+                )?
+            }
             ValueExpr::AllDifferent { items, .. } => {
                 bind_singleton_element_variable_references(ctx, items, "ALL_DIFFERENT arguments")?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
@@ -261,6 +271,10 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             }
             ValueExpr::InList { operand, list, .. } => {
                 stack.extend(list.iter().rev().map(|item| (item, next)));
+                stack.push((operand, next));
+            }
+            ValueExpr::InListExpression { operand, list, .. } => {
+                stack.push((list, next));
                 stack.push((operand, next));
             }
             ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
@@ -441,6 +455,10 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
                 if let ValueExpr::InList { operand, .. } = expr {
                     stack.push((operand, depth));
                 }
+            }
+            ValueExpr::InListExpression { operand, list, .. } => {
+                stack.push((list, depth));
+                stack.push((operand, depth));
             }
             ValueExpr::IsCheck { operand, kind, .. } => {
                 stack.push((operand, depth));

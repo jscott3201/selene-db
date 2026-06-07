@@ -87,6 +87,10 @@ impl ValueExpr {
                     f(item);
                 }
             }
+            Self::InListExpression { operand, list, .. } => {
+                f(operand);
+                f(list);
+            }
             Self::Case {
                 branches,
                 else_branch,
@@ -163,6 +167,10 @@ impl ValueExpr {
                     f(item);
                 }
             }
+            Self::InListExpression { operand, list, .. } => {
+                f(operand);
+                f(list);
+            }
             Self::Case {
                 branches,
                 else_branch,
@@ -205,6 +213,7 @@ impl ValueExpr {
             | Self::FunctionCall { span, .. }
             | Self::IsCheck { span, .. }
             | Self::InList { span, .. }
+            | Self::InListExpression { span, .. }
             | Self::AllDifferent { span, .. }
             | Self::Same { span, .. }
             | Self::PropertyExists { span, .. }

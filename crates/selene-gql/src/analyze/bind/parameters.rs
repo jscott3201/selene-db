@@ -350,6 +350,10 @@ fn collect_value_parameter_declarations(
                 stack.extend(list.iter());
                 stack.push(operand);
             }
+            ValueExpr::InListExpression { operand, list, .. } => {
+                stack.push(list);
+                stack.push(operand);
+            }
             ValueExpr::Case {
                 branches,
                 else_branch,

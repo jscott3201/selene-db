@@ -336,6 +336,18 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             negated.hash(state);
             span.hash(state);
         }
+        ValueExpr::InListExpression {
+            operand,
+            list,
+            negated,
+            span,
+        } => {
+            12u8.hash(state);
+            hash_child(operand, state, memo);
+            hash_child(list, state, memo);
+            negated.hash(state);
+            span.hash(state);
+        }
         ValueExpr::AllDifferent { items, span } => {
             14u8.hash(state);
             hash_exprs(items, state, memo);

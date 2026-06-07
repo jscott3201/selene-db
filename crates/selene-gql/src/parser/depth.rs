@@ -170,6 +170,10 @@ fn push_expr<'a>(
                 work.push(Node::Expr(item, next));
             }
         }
+        ValueExpr::InListExpression { operand, list, .. } => {
+            work.push(Node::Expr(operand, next));
+            work.push(Node::Expr(list, next));
+        }
         ValueExpr::Case {
             branches,
             else_branch,

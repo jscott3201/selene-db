@@ -118,6 +118,7 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
         | ValueExpr::UnaryOp { .. }
         | ValueExpr::Normalize { .. }
         | ValueExpr::InList { .. }
+        | ValueExpr::InListExpression { .. }
         | ValueExpr::Case { .. } => {}
     }
     self::value_children(value, uses);

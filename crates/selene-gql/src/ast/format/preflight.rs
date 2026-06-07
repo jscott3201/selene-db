@@ -201,6 +201,10 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             validate_expr(operand)?;
             validate_exprs(list)
         }
+        ValueExpr::InListExpression { operand, list, .. } => {
+            validate_expr(operand)?;
+            validate_expr(list)
+        }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             validate_exprs(items)
         }

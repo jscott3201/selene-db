@@ -124,6 +124,17 @@ pub enum ValueExpr {
         /// Source span of the full predicate.
         span: SourceSpan,
     },
+    /// `[NOT] IN` predicate with a list-valued expression on the right.
+    InListExpression {
+        /// Checked operand.
+        operand: Box<ValueExpr>,
+        /// List-valued expression.
+        list: Box<ValueExpr>,
+        /// Whether the predicate was negated.
+        negated: bool,
+        /// Source span of the full predicate.
+        span: SourceSpan,
+    },
     /// `ALL_DIFFERENT(...)` predicate.
     ///
     /// ISO/IEC 39075:2024 section 19.11 takes element variable references.
@@ -293,6 +304,7 @@ impl ValueExpr {
             | Self::FunctionCall { span, .. }
             | Self::IsCheck { span, .. }
             | Self::InList { span, .. }
+            | Self::InListExpression { span, .. }
             | Self::AllDifferent { span, .. }
             | Self::Same { span, .. }
             | Self::PropertyExists { span, .. }

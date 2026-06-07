@@ -44,10 +44,26 @@ fn dispatch_is_suffix(
     }
 
     if children.iter().any(|child| child.as_rule() == Rule::in_kw) {
-        let list_pair = find_child(children, Rule::list_lit, "IN predicate is missing list")?;
-        return Ok(ValueExpr::InList {
+        if let Some(list_pair) = children
+            .iter()
+            .find(|child| child.as_rule() == Rule::list_lit)
+            .cloned()
+        {
+            return Ok(ValueExpr::InList {
+                operand: Box::new(operand),
+                list: literal::build_list_items(list_pair)?,
+                negated,
+                span: source_span,
+            });
+        }
+        let list_expr = find_child(
+            children,
+            Rule::comparison,
+            "IN predicate is missing list expression",
+        )?;
+        return Ok(ValueExpr::InListExpression {
             operand: Box::new(operand),
-            list: literal::build_list_items(list_pair)?,
+            list: Box::new(build_value_expr(list_expr)?),
             negated,
             span: source_span,
         });
