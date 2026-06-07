@@ -90,7 +90,8 @@ pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
 fn bench_retrieval_strategies(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_vector_retrieval");
     for scale in vector_scales() {
-        let fixture = MemoryRetrievalFixture::build(scale);
+        let mut fixture = MemoryRetrievalFixture::build(scale);
+        fixture.populate_personalized_pagerank();
         group.throughput(Throughput::Elements(
             (fixture.query_count() * RESULT_K) as u64,
         ));
@@ -478,7 +479,8 @@ impl MemoryRetrievalFixture {
             RankPrior::PersonalizedPagerank => self
                 .personalized_pagerank
                 .get(query.topic)
-                .and_then(|scores| scores.get(&hit.node_id))
+                .expect("personalized PageRank scores are populated for this strategy")
+                .get(&hit.node_id)
                 .copied()
                 .unwrap_or(0.0),
         };

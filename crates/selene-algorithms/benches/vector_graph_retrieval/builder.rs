@@ -317,12 +317,6 @@ impl MemoryRetrievalFixture {
             })
             .collect();
         let pagerank = pagerank_scores(&graph, &label, &support_edge);
-        let personalized_pagerank = support::personalized_pagerank_scores(
-            &graph,
-            &label,
-            &support_edge,
-            queries.iter().map(|query| query.anchor),
-        );
         Self {
             graph,
             scale: topic_count * FACTS_PER_TOPIC * duplicates,
@@ -342,7 +336,7 @@ impl MemoryRetrievalFixture {
             graph_unresolved_current_nodes,
             graph_unresolved_current_candidate_set,
             pagerank,
-            personalized_pagerank,
+            personalized_pagerank: Vec::new(),
             component_candidates,
             component_order,
             component_offsets,
@@ -376,6 +370,15 @@ impl MemoryRetrievalFixture {
         fixture.label_by_node = label_by_node;
         fixture.label_candidates = label_candidates;
         fixture
+    }
+
+    pub(super) fn populate_personalized_pagerank(&mut self) {
+        self.personalized_pagerank = support::personalized_pagerank_scores(
+            &self.graph,
+            &self.label,
+            &self.support_edge,
+            self.queries.iter().map(|query| query.anchor),
+        );
     }
 }
 
