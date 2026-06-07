@@ -16,7 +16,15 @@ use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
 
+#[path = "json_search/parallel.rs"]
+mod parallel;
+
 pub(crate) const JSON_SEARCH_CANCEL_STRIDE: usize = 1024;
+pub(crate) const JSON_SEARCH_PARALLEL_CHUNK_ROWS: usize = 2048;
+#[cfg(not(test))]
+pub(crate) const JSON_SEARCH_PARALLEL_MIN_ROWS: u64 = 16_384;
+#[cfg(test)]
+pub(crate) const JSON_SEARCH_PARALLEL_MIN_ROWS: u64 = 8;
 /// Maximum selector count accepted by GQL JSON path search procedures.
 pub const JSON_PATH_SELECTOR_LIMIT: usize = 64;
 
@@ -122,6 +130,9 @@ impl SeleneGraph {
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
+        if parallel::should_parallelize_json_scan(label_rows, k, checker) {
+            return parallel::contains_nodes(self, label, property, candidate, k, label_rows);
+        }
 
         let mut top_k = JsonContainmentTopK::new(k);
         let mut rows_since_check = 0usize;
@@ -197,6 +208,9 @@ impl SeleneGraph {
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
+        if parallel::should_parallelize_json_scan(label_rows, k, checker) {
+            return parallel::path_exists_nodes(self, label, property, path, k, label_rows);
+        }
 
         let mut top_k = JsonContainmentTopK::new(k);
         let mut rows_since_check = 0usize;
@@ -276,6 +290,11 @@ impl SeleneGraph {
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
+        if parallel::should_parallelize_json_scan(label_rows, k, checker) {
+            return parallel::path_contains_nodes(
+                self, label, property, path, candidate, k, label_rows,
+            );
+        }
 
         let mut top_k = JsonContainmentTopK::new(k);
         let mut rows_since_check = 0usize;
@@ -351,6 +370,9 @@ impl SeleneGraph {
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
+        if parallel::should_parallelize_json_scan(label_rows, k, checker) {
+            return parallel::path_value_nodes(self, label, property, path, k, label_rows);
+        }
 
         let mut top_k = JsonPathValueTopK::new(k);
         let mut rows_since_check = 0usize;

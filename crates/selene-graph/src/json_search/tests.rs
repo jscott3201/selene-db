@@ -289,6 +289,100 @@ fn exact_json_path_exists_nodes_observes_zero_k_and_cancellation() {
 }
 
 #[test]
+fn exact_json_global_parallel_matches_sequential_scan_ordering() {
+    let doc = label("DocParallel");
+    let payload = label("payload");
+    let graph = SharedGraph::new(GraphId::new(11));
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for idx in 0..24 {
+            let value = match idx % 6 {
+                0 | 1 => json(serde_json::json!({
+                    "memory": {"kind": "episodic", "score": idx},
+                    "state": "current"
+                })),
+                2 => json(serde_json::json!({
+                    "memory": {"kind": "semantic", "score": idx},
+                    "state": "current"
+                })),
+                3 => json(serde_json::json!({
+                    "memory": {"kind": "episodic", "score": idx},
+                    "state": "stale"
+                })),
+                4 => Value::String(label("not-json")),
+                _ => json(serde_json::json!([
+                    "agent",
+                    {"memory": {"kind": "episodic", "score": idx}, "state": "current"}
+                ])),
+            };
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    PropertyMap::from_pairs([(payload.clone(), value)])
+                        .expect("properties are valid"),
+                )
+                .expect("node inserts");
+        }
+        txn.commit().expect("seed commits");
+    }
+
+    let candidate = JsonValue::new(serde_json::json!({
+        "memory": {"kind": "episodic"},
+        "state": "current"
+    }))
+    .expect("candidate JSON parses");
+    let path = [
+        JsonPathSelector::Key(label("memory")),
+        JsonPathSelector::Key(label("score")),
+    ];
+    let contains_path = [JsonPathSelector::Key(label("memory"))];
+    let path_candidate =
+        JsonValue::new(serde_json::json!({"kind": "episodic"})).expect("candidate JSON parses");
+    let token = CancellationToken::new();
+    let sequential_checker = CancellationChecker::new(Some(&token), None);
+
+    let contains_parallel = graph
+        .exact_json_contains_nodes(&doc, &payload, &candidate, 11)
+        .expect("parallel containment scan succeeds");
+    let contains_sequential = graph
+        .exact_json_contains_nodes_checked(&doc, &payload, &candidate, 11, sequential_checker)
+        .expect("sequential containment scan succeeds");
+    assert_eq!(contains_parallel, contains_sequential);
+
+    let exists_parallel = graph
+        .exact_json_path_exists_nodes(&doc, &payload, &path, 11)
+        .expect("parallel path-exists scan succeeds");
+    let exists_sequential = graph
+        .exact_json_path_exists_nodes_checked(&doc, &payload, &path, 11, sequential_checker)
+        .expect("sequential path-exists scan succeeds");
+    assert_eq!(exists_parallel, exists_sequential);
+
+    let path_contains_parallel = graph
+        .exact_json_path_contains_nodes(&doc, &payload, &contains_path, &path_candidate, 11)
+        .expect("parallel path-containment scan succeeds");
+    let path_contains_sequential = graph
+        .exact_json_path_contains_nodes_checked(
+            &doc,
+            &payload,
+            &contains_path,
+            &path_candidate,
+            11,
+            sequential_checker,
+        )
+        .expect("sequential path-containment scan succeeds");
+    assert_eq!(path_contains_parallel, path_contains_sequential);
+
+    let values_parallel = graph
+        .exact_json_path_value_nodes(&doc, &payload, &path, 11)
+        .expect("parallel path-value scan succeeds");
+    let values_sequential = graph
+        .exact_json_path_value_nodes_checked(&doc, &payload, &path, 11, sequential_checker)
+        .expect("sequential path-value scan succeeds");
+    assert_eq!(values_parallel, values_sequential);
+}
+
+#[test]
 fn exact_json_contains_candidate_nodes_filters_sorted_unique_candidates() {
     let doc = label("Doc");
     let other = label("Other");

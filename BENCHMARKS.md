@@ -270,7 +270,10 @@ index construction so build cost stays visible. Fixture setup is excluded from
 the reported Criterion duration. `graph_json_contains_scan/*`,
 `graph_json_path_exists_scan/*`, `graph_json_path_contains_scan/*`, and
 `graph_json_path_value_scan/*` are exact JSON metadata oracles over JSON-valued
-node properties before maintained JSON/path indexes exist.
+node properties before maintained JSON/path indexes exist. Global JSON scans use
+threshold-gated Rayon only when cancellation/deadline checking is disabled and
+the label row set has at least 16,384 rows; candidate-scoped JSON scans remain
+sequential because they sort/dedup and can stop once `k` matches are found.
 `graph_snapshot_read_loops/*` amortizes thread setup over many
 `SharedGraph::read()` calls so the ArcSwap snapshot hot path is visible; the
 older `graph_concurrent_reads` row remains a legacy spawn/join smoke row.
@@ -343,6 +346,17 @@ PR-local quick JSON baseline:
 | `graph_json_path_exists_scan/nested_score_path_k10/1000` | 17.559 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory","score"]`, skipping non-JSON properties. This is the oracle for path-existence candidate production before maintained JSON/path indexes. |
 | `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.263 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory"]`, applying recursive containment to the selected subvalue. This is the oracle for path-scoped JSON containment before maintained JSON/path indexes. |
 | `graph_json_path_value_scan/nested_score_path_k10/1000` | 22.855 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory","score"]`, returning node ids plus selected JSON values. This measures the candidate-plus-value path before maintained JSON/path indexes. |
+
+PR-local full JSON Rayon A/B:
+
+Command: `scripts/run-benches.sh --profile full --bench single_graph --filter graph_json`
+
+| Bench | 10k sequential -> post | 50k sequential -> Rayon | 100k sequential -> Rayon | Notes |
+|---|---:|---:|---:|---|
+| `graph_json_contains_scan/nested_metadata_k10` | 210.13 µs -> 235.38 µs | 1.7982 ms -> 994.45 µs | 4.6986 ms -> 2.3977 ms | 10k stays below the 16,384-row Rayon threshold; 50k/100k improve about 1.8x/2.0x. |
+| `graph_json_path_exists_scan/nested_score_path_k10` | 189.31 µs -> 203.56 µs | 2.9875 ms -> 949.97 µs | 9.4831 ms -> 2.0903 ms | Large path-existence scans are the strongest win, about 3.1x at 50k and 4.5x at 100k. |
+| `graph_json_path_contains_scan/nested_memory_path_k10` | 185.37 µs -> 181.71 µs | 2.6000 ms -> 952.68 µs | 6.7178 ms -> 2.1109 ms | Path-scoped containment improves about 2.7x at 50k and 3.2x at 100k. |
+| `graph_json_path_value_scan/nested_score_path_k10` | 234.60 µs -> 264.70 µs | 2.3864 ms -> 1.1162 ms | 5.9315 ms -> 2.4776 ms | Path-value scans still clone selected JSON values; Rayon improves large rows about 2.1x/2.4x. |
 
 PR-local quick vector baseline:
 
