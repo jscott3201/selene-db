@@ -12,7 +12,8 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
     ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism,
-    TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, triangle_count,
+    TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, topological_sort,
+    triangle_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -109,6 +110,19 @@ fn bench_apsp(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_topological_sort(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/topological_sort");
+    for &scale in profile_scales() {
+        let state = BenchState::from_dag(scale, 82_240 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| {
+                black_box(topological_sort(&state.projection).expect("bench graph is a DAG"))
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_label_propagation(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/label_propagation");
     for &scale in profile_scales() {
@@ -157,6 +171,48 @@ impl BenchState {
             projection: build_projection(&snapshot),
         }
     }
+
+    fn from_dag(scale: usize, graph_id: u64) -> Self {
+        let graph = dag_graph(scale, graph_id);
+        let snapshot = graph.read();
+        Self {
+            projection: build_projection(&snapshot),
+        }
+    }
+}
+
+fn dag_graph(scale: usize, graph_id: u64) -> SharedGraph {
+    let scale = scale.max(2);
+    let graph = SharedGraph::new(GraphId::new(graph_id));
+    let node_label = db_string("AlgoBench");
+    let rel = db_string("LINK");
+    let mut txn = graph.begin_write();
+    let mut nodes = Vec::with_capacity(scale);
+    for _ in 0..scale {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(node_label.clone()), PropertyMap::new())
+                .expect("bench node inserts"),
+        );
+    }
+
+    for source in 0..scale {
+        for offset in [1_usize, 2, 4] {
+            let target = source + offset;
+            if target < scale {
+                txn.mutator()
+                    .create_edge(
+                        rel.clone(),
+                        nodes[source],
+                        nodes[target],
+                        PropertyMap::new(),
+                    )
+                    .expect("bench dag edge inserts");
+            }
+        }
+    }
+    txn.commit().expect("bench graph commits");
+    graph
 }
 
 fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
@@ -231,6 +287,7 @@ criterion_group! {
         bench_betweenness,
         bench_triangle_count,
         bench_apsp,
+        bench_topological_sort,
         bench_label_propagation,
         bench_louvain
 }
