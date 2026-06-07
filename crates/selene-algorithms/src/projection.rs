@@ -216,6 +216,12 @@ impl GraphProjection {
         self.out_csr.neighbors_of_dense(dense)
     }
 
+    /// Out-neighbors of a dense projection row.
+    #[must_use]
+    pub(crate) fn out_neighbors_dense(&self, dense: u32) -> &[ProjNeighbor] {
+        self.out_csr.neighbors_of_dense(dense)
+    }
+
     /// In-neighbors of `node`, sorted ASC by `node_id` per spec 16 §E03.
     ///
     /// Returns an empty slice when `node` is not in this projection or has no
