@@ -2,37 +2,20 @@ use rayon::prelude::*;
 use selene_core::VectorTopK;
 
 use crate::vector_wgpu_case::{HOT_SHARD_REUSE_BATCHES, TOP_K};
+use crate::vector_wgpu_fixture::Fixture;
 
 use super::WgpuBench;
 
 impl WgpuBench {
     pub(crate) fn cpu_parallel_score_top_k(&self) -> usize {
-        let dimension = self.dimension;
-        let candidate_count = self.candidate_count;
-        let query_count = self.query_count() as usize;
-        let candidates = &self.candidates;
-        let queries = &self.queries;
-        let norms = &self.norms;
-        (0..query_count)
-            .into_par_iter()
-            .map(|query_idx| {
-                let query = window(queries, query_idx, dimension);
-                let query_norm = norms[query_idx];
-                let mut top_k = VectorTopK::new(TOP_K);
-                for candidate_idx in 0..candidate_count {
-                    let candidate = window(candidates, candidate_idx, dimension);
-                    let dot: f32 = query
-                        .iter()
-                        .zip(candidate)
-                        .map(|(lhs, rhs)| lhs * rhs)
-                        .sum();
-                    let denom = query_norm.sqrt() * norms[query_count + candidate_idx].sqrt();
-                    let similarity = (dot / denom).clamp(-1.0, 1.0);
-                    top_k.push_distance(candidate_idx, f64::from(1.0 - similarity));
-                }
-                top_k.into_hits().len()
-            })
-            .sum()
+        parallel_score_top_k(
+            self.dimension,
+            self.candidate_count,
+            self.query_count() as usize,
+            &self.queries,
+            &self.candidates,
+            &self.norms,
+        )
     }
 
     pub(crate) fn cpu_parallel_score_top_k_hot_shard_reuse(&self) -> usize {
@@ -40,6 +23,23 @@ impl WgpuBench {
             .map(|_| self.cpu_parallel_score_top_k())
             .sum()
     }
+}
+
+pub(crate) fn fixture_parallel_score_top_k(fixture: &Fixture) -> usize {
+    parallel_score_top_k(
+        fixture.case.dimension,
+        fixture.case.candidates,
+        fixture.case.queries,
+        &fixture.queries,
+        &fixture.candidates,
+        &fixture.norms,
+    )
+}
+
+pub(crate) fn fixture_parallel_score_top_k_hot_shard_reuse(fixture: &Fixture) -> usize {
+    (0..HOT_SHARD_REUSE_BATCHES)
+        .map(|_| fixture_parallel_score_top_k(fixture))
+        .sum()
 }
 
 pub(super) fn cpu_top_k_count(scores: &[f32], candidate_count: usize) -> usize {
@@ -84,6 +84,36 @@ pub(super) fn top_k_indices_from_partials(
             top_k.into_hits().into_iter().map(|hit| hit.key).collect()
         })
         .collect()
+}
+
+fn parallel_score_top_k(
+    dimension: usize,
+    candidate_count: usize,
+    query_count: usize,
+    queries: &[f32],
+    candidates: &[f32],
+    norms: &[f32],
+) -> usize {
+    (0..query_count)
+        .into_par_iter()
+        .map(|query_idx| {
+            let query = window(queries, query_idx, dimension);
+            let query_norm = norms[query_idx];
+            let mut top_k = VectorTopK::new(TOP_K);
+            for candidate_idx in 0..candidate_count {
+                let candidate = window(candidates, candidate_idx, dimension);
+                let dot: f32 = query
+                    .iter()
+                    .zip(candidate)
+                    .map(|(lhs, rhs)| lhs * rhs)
+                    .sum();
+                let denom = query_norm.sqrt() * norms[query_count + candidate_idx].sqrt();
+                let similarity = (dot / denom).clamp(-1.0, 1.0);
+                top_k.push_distance(candidate_idx, f64::from(1.0 - similarity));
+            }
+            top_k.into_hits().len()
+        })
+        .sum()
 }
 
 fn window(slab: &[f32], index: usize, dimension: usize) -> &[f32] {

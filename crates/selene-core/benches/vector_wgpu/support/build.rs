@@ -8,17 +8,10 @@ use super::WgpuBench;
 
 impl WgpuBench {
     pub(crate) async fn build(case: Case) -> Result<Self, String> {
-        let fixture = Fixture::build(case);
         let instance = wgpu::Instance::default();
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            })
-            .await
-            .map_err(|error| format!("request adapter failed: {error}"))?;
-        let required_limits = required_limits(case, adapter.limits())?;
+        let adapter = request_adapter(&instance).await?;
+        let adapter_summary = adapter_summary(&adapter);
+        let required_limits = required_limits(case, adapter.limits(), &adapter_summary)?;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("selene vector wgpu prototype"),
@@ -29,6 +22,7 @@ impl WgpuBench {
             .await
             .map_err(|error| format!("request device failed: {error}"))?;
 
+        let fixture = Fixture::build(case);
         let query_bytes = f32_bytes(&fixture.queries);
         let query_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("selene vector queries"),
@@ -153,19 +147,75 @@ impl WgpuBench {
     }
 }
 
-fn required_limits(case: Case, adapter_limits: wgpu::Limits) -> Result<wgpu::Limits, String> {
+async fn request_adapter(instance: &wgpu::Instance) -> Result<wgpu::Adapter, String> {
+    let mut attempts = Vec::new();
+    for (label, power_preference) in [
+        ("high-performance", wgpu::PowerPreference::HighPerformance),
+        ("no-preference", wgpu::PowerPreference::None),
+        ("low-power", wgpu::PowerPreference::LowPower),
+    ] {
+        let options = wgpu::RequestAdapterOptions {
+            power_preference,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        };
+        match instance.request_adapter(&options).await {
+            Ok(adapter) => return Ok(adapter),
+            Err(error) => attempts.push(format!("{label}: {error}")),
+        }
+    }
+
+    let compiled_backends = wgpu::Instance::enabled_backend_features();
+    let adapters = instance.enumerate_adapters(compiled_backends).await;
+    let available_adapters = if adapters.is_empty() {
+        "none".to_owned()
+    } else {
+        adapters
+            .iter()
+            .map(adapter_summary)
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    Err(format!(
+        "request adapter failed after {} attempts; compiled_backends={compiled_backends:?}; available_adapters={available_adapters}; attempts={}",
+        attempts.len(),
+        attempts.join(" | ")
+    ))
+}
+
+fn adapter_summary(adapter: &wgpu::Adapter) -> String {
+    let info = adapter.get_info();
+    let limits = adapter.limits();
+    format!(
+        "{} backend={} type={:?} max_storage_binding={} max_buffer={}",
+        info.name,
+        info.backend,
+        info.device_type,
+        limits.max_storage_buffer_binding_size,
+        limits.max_buffer_size
+    )
+}
+
+fn required_limits(
+    case: Case,
+    adapter_limits: wgpu::Limits,
+    adapter_summary: &str,
+) -> Result<wgpu::Limits, String> {
     let mut limits = wgpu::Limits::downlevel_defaults();
     let storage_bytes = case.largest_storage_bytes();
     if storage_bytes > adapter_limits.max_storage_buffer_binding_size {
         return Err(format!(
-            "case requires {storage_bytes} byte storage binding but adapter supports {}",
+            "case q{}x{}x{} requires {storage_bytes} byte storage binding but adapter {adapter_summary} supports {}",
+            case.queries,
+            case.candidates,
+            case.dimension,
             adapter_limits.max_storage_buffer_binding_size
         ));
     }
     if storage_bytes > adapter_limits.max_buffer_size {
         return Err(format!(
-            "case requires {storage_bytes} byte buffer but adapter supports {}",
-            adapter_limits.max_buffer_size
+            "case q{}x{}x{} requires {storage_bytes} byte buffer but adapter {adapter_summary} supports {}",
+            case.queries, case.candidates, case.dimension, adapter_limits.max_buffer_size
         ));
     }
     limits.max_storage_buffer_binding_size =

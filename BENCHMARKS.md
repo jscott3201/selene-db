@@ -154,7 +154,9 @@ setup. The default case list includes q8/q16 over 4,096 candidates, a
 The newest rows compare a Rayon CPU score+top-k path against fused WGPU
 score+block-top-k kernels that avoid full score-buffer readback, including a
 parallel in-workgroup top-k reducer probe and q16 hot-shard x8 reuse rows. It
-is not a production accelerator API.
+also registers the Rayon rows when WGPU adapter discovery fails, so local Metal
+availability issues do not hide the CPU-parallel baseline. It is not a
+production accelerator API.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -236,6 +238,7 @@ is not a production accelerator API.
 | `core_vector_wgpu_prototype/resident_query_copy_score_parallel_block_topk_cpu_merge/q16x10000x1024` | 3.9287 ms (quick) | Parallel in-workgroup top-k probe at q16/10k. It remains far ahead of full readback plus CPU top-k and Rayon CPU, but is slightly behind the simpler fused row (`3.8622 ms` in the same quick run). |
 | `core_vector_wgpu_prototype/cpu_rayon_score_topk_hot_shard_x8/q16x10000x1024` | 101.09 ms (quick) | Eight repeated Rayon CPU score+top-k batches for the wider resident candidate window. This is effectively linear from the same-run single-batch Rayon row (`12.684 ms`). |
 | `core_vector_wgpu_prototype/resident_hot_shard_x8_fused_block_topk_cpu_merge/q16x10000x1024` | 30.884 ms (quick) | Eight repeated query-copy fused WGPU score+top-k cycles against the resident 10k candidate window. Throughput holds at ~41.4 Melem/s, matching the same-run single fused row (`3.8604 ms`) while staying ~3.3x faster than the x8 Rayon comparator. |
+| `core_vector_wgpu_prototype/cpu_rayon_score_topk/q8x100000x1024` | 61.066 ms (quick, `SELENE_WGPU_STRESS_CASES=1`) | Opt-in 100k stress CPU-parallel baseline: ~13.1 Melem/s for 800,000 query/candidate cosine top-k scores. Same run skipped WGPU rows because wgpu compiled only `METAL` for this target and enumerated `available_adapters=none`; the harness now reports compiled backends, enumerated adapters, and attempted power preferences before falling back to the Rayon row. |
 
 ## §2 selene-graph — read hot paths
 

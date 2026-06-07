@@ -10,7 +10,7 @@ impl WgpuBench {
         self.score_preloaded(&mut scores)?;
         for idx in sample_indices(fixture.case) {
             let gpu = scores[idx];
-            let cpu = fixture.cpu_scores[idx];
+            let cpu = fixture.cpu_score(idx);
             let delta = (gpu - cpu).abs();
             if delta > 0.000_01 {
                 return Err(format!(

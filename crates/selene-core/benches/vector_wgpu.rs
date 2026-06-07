@@ -25,8 +25,11 @@ use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use vector_wgpu_case::cases;
-use vector_wgpu_support::WgpuBench;
+use vector_wgpu_case::{Case, cases};
+use vector_wgpu_fixture::Fixture;
+use vector_wgpu_support::{
+    WgpuBench, fixture_parallel_score_top_k, fixture_parallel_score_top_k_hot_shard_reuse,
+};
 
 fn bench_config() -> Criterion {
     let (samples, ms) = match std::env::var("SELENE_BENCH_PROFILE").ok().as_deref() {
@@ -50,6 +53,7 @@ fn bench_vector_wgpu(c: &mut Criterion) {
                     "[core_vector_wgpu_prototype] skipping q{}x{}x{}: {error}",
                     case.queries, case.candidates, case.dimension
                 );
+                bench_cpu_fallback_rows(&mut group, case);
                 continue;
             }
         };
@@ -152,6 +156,24 @@ fn bench_vector_wgpu(c: &mut Criterion) {
         }
     }
     group.finish();
+}
+
+fn bench_cpu_fallback_rows(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    case: Case,
+) {
+    let fixture = Fixture::build(case);
+    group.throughput(Throughput::Elements(case.score_count() as u64));
+    group.bench_function(case.id("cpu_rayon_score_topk"), |b| {
+        b.iter(|| black_box(fixture_parallel_score_top_k(black_box(&fixture))));
+    });
+    if case.has_hot_shard_reuse_row() {
+        group.throughput(Throughput::Elements(case.hot_shard_score_count() as u64));
+        group.bench_function(case.id("cpu_rayon_score_topk_hot_shard_x8"), |b| {
+            b.iter(|| black_box(fixture_parallel_score_top_k_hot_shard_reuse(&fixture)));
+        });
+        group.throughput(Throughput::Elements(case.score_count() as u64));
+    }
 }
 
 criterion_group! {

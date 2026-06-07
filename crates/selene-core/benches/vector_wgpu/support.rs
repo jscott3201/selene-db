@@ -12,6 +12,8 @@ mod readback;
 #[path = "support/validate.rs"]
 mod validate;
 
+pub(crate) use cpu::{fixture_parallel_score_top_k, fixture_parallel_score_top_k_hot_shard_reuse};
+
 pub(crate) struct WgpuBench {
     device: wgpu::Device,
     queue: wgpu::Queue,
