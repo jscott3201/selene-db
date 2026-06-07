@@ -70,6 +70,16 @@ ns_to_ms() {
   awk -v ns="$1" 'BEGIN { printf "%.3f", ns / 1000000.0 }'
 }
 
+require_number() {
+  local label="$1" value="$2"
+  if ! awk -v value="$value" 'BEGIN {
+    exit(value ~ /^[-+]?[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$/ ? 0 : 1)
+  }'; then
+    echo "ERROR: expected numeric $label, got: $value" >&2
+    exit 1
+  fi
+}
+
 sample_count() {
   awk -v values="$1" 'BEGIN { print split(values, parts, ",") }'
 }
@@ -130,6 +140,10 @@ for criterion_id in "$@"; do
   times_csv="$(extract_array times "$sample")"
   samples="$(sample_count "$times_csv")"
   p95_ns="$(p95_sample_ns "$iters_csv" "$times_csv")"
+  require_number "median point_estimate" "$median_ns"
+  require_number "mean point_estimate" "$mean_ns"
+  require_number "std_dev point_estimate" "$stddev_ns"
+  require_number "p95 sample" "$p95_ns"
 
   printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
     "$criterion_id" \
