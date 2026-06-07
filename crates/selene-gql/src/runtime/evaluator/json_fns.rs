@@ -73,6 +73,12 @@ pub(super) fn eval_json_object(args: Vec<Value>, span: SourceSpan) -> Result<Val
         let Value::String(key) = key else {
             return data_exception("json_object key is not a string", span);
         };
+        if object.contains_key(key.as_str()) {
+            return data_exception(
+                format!("json_object duplicate key '{}'", key.as_str()),
+                span,
+            );
+        }
         object.insert(
             key.as_str().to_owned(),
             gql_value_to_json(value, "json_object", span)?,

@@ -189,6 +189,11 @@ fn json_object_constructs_canonical_json_values() {
 }
 
 #[test]
+fn json_object_rejects_duplicate_keys() {
+    assert_status("RETURN json_object('a', 1, 'a', 2) AS value", "22G03");
+}
+
+#[test]
 fn json_array_length_counts_array_elements() {
     assert_eq!(
         int_value(r#"RETURN json_array_length(json('[1,{"a":2},null]')) AS value"#),
