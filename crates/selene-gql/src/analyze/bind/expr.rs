@@ -105,11 +105,15 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
             ValueExpr::Trim {
                 character, source, ..
             } => {
-                if let Some(character) = character {
-                    bind_value_expr(ctx, character)?;
-                }
+                let character_id = character
+                    .as_deref()
+                    .map(|character| bind_value_expr(ctx, character))
+                    .transpose()?;
                 let source_id = bind_value_expr(ctx, source)?;
-                infer::trim_source(ctx.expr_type(source_id), source.span())?
+                let character_type = character_id
+                    .zip(character.as_deref())
+                    .map(|(id, character)| (ctx.expr_type(id), character.span()));
+                infer::trim(character_type, ctx.expr_type(source_id), source.span())?
             }
             ValueExpr::IsCheck {
                 operand,

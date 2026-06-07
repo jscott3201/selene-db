@@ -54,6 +54,8 @@ pub enum TypeMismatchContext {
     NormalizeFunction,
     /// Explicit TRIM source operand.
     TrimSource,
+    /// Explicit TRIM character operand.
+    TrimCharacter,
     /// CASE branch result unification failed.
     CaseBranchUnification,
     /// List literal element unification failed.
@@ -101,6 +103,7 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::IsNormalized => f.write_str("IS NORMALIZED operand"),
             Self::NormalizeFunction => f.write_str("NORMALIZE operand"),
             Self::TrimSource => f.write_str("TRIM source operand"),
+            Self::TrimCharacter => f.write_str("TRIM character operand"),
             Self::CaseBranchUnification => f.write_str("CASE branch result"),
             Self::ListLiteralUnification => f.write_str("list literal element"),
             Self::InListUnification => f.write_str("IN-list value"),
@@ -127,6 +130,8 @@ pub enum ExpectedType {
     Boolean,
     /// String.
     String,
+    /// String or bytes type.
+    StringOrBytes,
     /// Comparable type.
     Comparable,
     /// List, string, or bytes type.
@@ -145,6 +150,7 @@ impl std::fmt::Display for ExpectedType {
             Self::Numeric => f.write_str("numeric"),
             Self::Boolean => f.write_str("boolean"),
             Self::String => f.write_str("string"),
+            Self::StringOrBytes => f.write_str("string or bytes"),
             Self::Comparable => f.write_str("comparable"),
             Self::ListStringOrBytes => f.write_str("list, string, or bytes"),
             Self::List => f.write_str("list"),

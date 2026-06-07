@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use selene_core::{GraphId, Value};
+use selene_core::{GraphId, Value, feature_register::FeatureId};
 use selene_gql::{
     AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry, GqlType,
     ParserError, PipelineStatement, Session, StatementOutput,
     ast::{format_read_statement, structurally_eq},
-    parse,
+    feature_walk, parse,
 };
 use selene_graph::SharedGraph;
 
@@ -41,6 +41,18 @@ fn bytes(values: &[u8]) -> Value {
 fn analyze_one(source: &str) -> AnalyzedStatement {
     let statement = parse(source).expect("test source parses");
     selene_gql::analyze(statement, &EmptyProcedureRegistry, None).expect("test source analyzes")
+}
+
+fn assert_feature_recorded(source: &str, expected: FeatureId) {
+    let statement = parse(source).expect(source);
+    let observed = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+    assert!(
+        observed.contains(&expected),
+        "{source} should record {expected:?}, observed {observed:?}"
+    );
 }
 
 fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
@@ -131,6 +143,65 @@ fn byte_string_left_and_right_follow_iso_substring_rules() {
     );
     assert_eq!(first_value("RETURN left(null, 1) AS payload"), Value::Null);
     assert_eq!(first_status("RETURN left(X'CAFE', -1) AS payload"), "22011");
+}
+
+#[test]
+fn byte_string_trim_follows_iso_trim_rules() {
+    assert_eq!(
+        first_value("RETURN TRIM(BOTH X'00' FROM X'0000CAFE00') AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        first_value("RETURN TRIM(LEADING X'00' FROM X'0000CAFE00') AS payload"),
+        bytes(&[0xca, 0xfe, 0x00])
+    );
+    assert_eq!(
+        first_value("RETURN TRIM(TRAILING X'00' FROM X'0000CAFE00') AS payload"),
+        bytes(&[0x00, 0x00, 0xca, 0xfe])
+    );
+    assert_eq!(
+        first_value("RETURN TRIM(FROM X'20CA20') AS payload"),
+        bytes(&[0xca])
+    );
+    assert_eq!(
+        first_value("RETURN TRIM(BOTH X'00' FROM null) AS payload"),
+        Value::Null
+    );
+    assert_eq!(
+        first_value("RETURN TRIM(BOTH null FROM X'0000') AS payload"),
+        Value::Null
+    );
+    assert_eq!(
+        first_status("RETURN TRIM(BOTH X'' FROM X'CA') AS payload"),
+        "22027"
+    );
+    assert_eq!(
+        first_status("RETURN TRIM(BOTH X'CAFE' FROM X'CA') AS payload"),
+        "22027"
+    );
+    assert_eq!(
+        first_status("RETURN TRIM(BOTH 'x' FROM X'78') AS payload"),
+        "22G03"
+    );
+    assert_eq!(
+        first_status("RETURN TRIM(BOTH X'78' FROM 'xx') AS payload"),
+        "22G03"
+    );
+}
+
+#[test]
+fn byte_string_trim_infers_bytes_and_records_gf07() {
+    assert_eq!(
+        projection_type(
+            &analyze_one("RETURN TRIM(BOTH X'00' FROM X'00CA00') AS payload"),
+            "payload"
+        ),
+        AnalyzedType::Resolved(GqlType::Bytes)
+    );
+    assert_feature_recorded(
+        "RETURN TRIM(BOTH X'00' FROM X'00CA00') AS payload",
+        FeatureId::GF07,
+    );
 }
 
 #[test]
