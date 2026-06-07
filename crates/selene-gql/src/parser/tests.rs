@@ -342,6 +342,27 @@ fn parse_function_aggregate_star_and_distinct() {
 }
 
 #[test]
+fn parse_rejects_non_count_aggregate_star_shapes() {
+    for source in [
+        "RETURN sum(*)",
+        "RETURN count(DISTINCT *)",
+        "RETURN avg(*)",
+        "RETURN collect(*)",
+    ] {
+        let err = parse(source).expect_err("invalid aggregate star shape should reject");
+        assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+    }
+}
+
+#[test]
+fn parse_rejects_zero_argument_aggregates() {
+    for source in ["RETURN count()", "RETURN sum()", "RETURN collect(DISTINCT)"] {
+        let err = parse(source).expect_err("aggregate without value expression should reject");
+        assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+    }
+}
+
+#[test]
 fn parse_list_record_and_case_expressions() {
     assert!(matches!(
         only_item("RETURN [1, 2][0]").expr,
