@@ -37,6 +37,28 @@ fn seed_isolated_nodes(graph: &SharedGraph, count: usize) -> Vec<NodeId> {
     nodes
 }
 
+fn seed_sink_personalization_graph(graph: &SharedGraph) -> Vec<NodeId> {
+    let mut txn = graph.begin_write();
+    let label = db_string("N");
+    let rel = db_string("R");
+    let mut nodes = Vec::with_capacity(3);
+    for _ in 0..3 {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+                .expect("test node creates"),
+        );
+    }
+    txn.mutator()
+        .create_edge(rel.clone(), nodes[0], nodes[1], PropertyMap::new())
+        .expect("fact edge creates");
+    txn.mutator()
+        .create_edge(rel, nodes[2], nodes[1], PropertyMap::new())
+        .expect("episode edge creates");
+    txn.commit().expect("test graph commit");
+    nodes
+}
+
 fn rows(output: StatementOutput) -> BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
@@ -215,7 +237,7 @@ fn pagerank_accepts_personalization_parameter() {
 
     let table = execute_rows(
         &mut session,
-        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, $seeds) YIELD node_id, score",
+        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', $seeds) YIELD node_id, score",
         &registry,
     );
 
@@ -225,6 +247,51 @@ fn pagerank_accepts_personalization_parameter() {
     assert!((scores[0] - 1.0).abs() < 1e-12);
     assert!((scores[1] - 0.0).abs() < 1e-12);
     assert!((scores[2] - 0.0).abs() < 1e-12);
+}
+
+#[test]
+fn pagerank_undirected_orientation_spreads_personalized_sink_seed() {
+    let graph = graph(220_010);
+    let nodes = seed_sink_personalization_graph(&graph);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+    session.bind_parameter(
+        db_string("seeds"),
+        Value::List(vec![personalization_seed(nodes[1], 1.0)]),
+    );
+
+    let natural = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85, 1, 0.0, NULL, 'NATURAL', $seeds) YIELD node_id, score",
+        &registry,
+    );
+    let undirected = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85, 1, 0.0, NULL, 'UNDIRECTED', $seeds) YIELD node_id, score",
+        &registry,
+    );
+    let score_for = |table: &BindingTable, node| {
+        node_column(table, "node_id")
+            .into_iter()
+            .zip(float_column(table, "score"))
+            .find(|(candidate, _)| *candidate == node)
+            .expect("node has score")
+            .1
+    };
+
+    assert!((score_for(&natural, nodes[1]) - 1.0).abs() < 1e-12);
+    assert!((score_for(&natural, nodes[0]) - 0.0).abs() < 1e-12);
+    assert!((score_for(&natural, nodes[2]) - 0.0).abs() < 1e-12);
+    assert!((score_for(&undirected, nodes[1]) - 0.15).abs() < 1e-12);
+    assert!((score_for(&undirected, nodes[0]) - 0.425).abs() < 1e-12);
+    assert!((score_for(&undirected, nodes[2]) - 0.425).abs() < 1e-12);
 }
 
 #[test]
@@ -247,7 +314,7 @@ fn pagerank_personalization_rejects_seed_outside_projection() {
 
     let err = session
         .execute_source(
-            "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, $seeds) YIELD node_id, score",
+            "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', $seeds) YIELD node_id, score",
             &registry,
         )
         .expect_err("out-of-projection seed rejected");

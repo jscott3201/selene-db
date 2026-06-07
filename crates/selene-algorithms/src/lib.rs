@@ -37,8 +37,8 @@ pub mod structural;
 pub use api::{ApiError, GraphAlgorithms, ProjectionInfo};
 pub use catalog::{ProjectionCatalog, ProjectionRef};
 pub use centrality::{
-    BetweennessConfig, PageRankConfig, betweenness, betweenness_with_checker, pagerank,
-    pagerank_with_checker,
+    BetweennessConfig, PageRankConfig, PageRankOrientation, betweenness, betweenness_with_checker,
+    pagerank, pagerank_with_checker,
 };
 pub use community::{
     TriangleCountConfig, label_propagation, label_propagation_with_checker, louvain,

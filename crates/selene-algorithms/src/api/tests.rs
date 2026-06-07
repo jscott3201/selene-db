@@ -9,7 +9,7 @@ use selene_graph::{SeleneGraph, SharedGraph};
 
 use crate::api::{self, ApiError, GraphAlgorithms, ProjectionInfo};
 use crate::catalog::ProjectionCatalog;
-use crate::centrality::{BetweennessConfig, PageRankConfig};
+use crate::centrality::{BetweennessConfig, PageRankConfig, PageRankOrientation};
 use crate::community::TriangleCountConfig;
 use crate::error::AlgorithmsError;
 use crate::pathfinding::{ApspConfig, PathfindingError};
@@ -67,6 +67,7 @@ fn pagerank_config() -> PageRankConfig {
         max_iter: 100,
         tolerance: 1e-6,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
         personalization: None,
     }
 }

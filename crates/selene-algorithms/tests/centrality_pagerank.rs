@@ -1,7 +1,9 @@
 //! Integration tests for `pagerank` per spec 16 §E19–§E23.
 
 use roaring::RoaringBitmap;
-use selene_algorithms::{GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank};
+use selene_algorithms::{
+    GraphProjection, PageRankConfig, PageRankOrientation, Parallelism, ProjectionConfig, pagerank,
+};
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
@@ -52,6 +54,7 @@ fn default_config() -> PageRankConfig {
         max_iter: 100,
         tolerance: 1e-6,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
         personalization: None,
     }
 }
@@ -86,6 +89,7 @@ fn pagerank_max_iter_zero_returns_initial_uniform_scores() {
         max_iter: 0,
         tolerance: 1e-9,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
         personalization: None,
     };
     let result = pagerank(&proj, cfg);
@@ -228,6 +232,7 @@ fn pagerank_convergence_threshold_terminates_early() {
         max_iter: 1000,
         tolerance: 1e-3,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
         personalization: None,
     };
     let result = pagerank(&proj, cfg);
@@ -336,6 +341,7 @@ fn pagerank_zero_damping_pure_teleport() {
         max_iter: 50,
         tolerance: 1e-9,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
         personalization: None,
     };
     let result = pagerank(&proj, cfg);
@@ -357,6 +363,7 @@ fn pagerank_zero_damping_uses_personalized_teleport() {
         max_iter: 50,
         tolerance: 1e-12,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
         personalization: Some(vec![(nodes[0], 3.0), (nodes[2], 1.0)]),
     };
 
@@ -383,6 +390,7 @@ fn pagerank_personalized_dangling_mass_returns_to_seed_distribution() {
         max_iter: 10,
         tolerance: 0.0,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
         personalization: Some(vec![(nodes[2], 1.0)]),
     };
 
@@ -396,4 +404,39 @@ fn pagerank_personalized_dangling_mass_returns_to_seed_distribution() {
     assert!((score_n2 - 1.0).abs() < 1e-12);
     let total: f64 = result.iter().map(|&(_, score)| score).sum();
     assert!((total - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn pagerank_personalized_sink_spreads_under_undirected_orientation() {
+    let (shared, nodes) = build_graph(3, &[(0, 1), (2, 1)]);
+    let proj = build_proj(&shared);
+    let seed = Some(vec![(nodes[1], 1.0)]);
+    let natural = pagerank(
+        &proj,
+        PageRankConfig {
+            max_iter: 1,
+            tolerance: 0.0,
+            personalization: seed.clone(),
+            ..default_config()
+        },
+    );
+    let undirected = pagerank(
+        &proj,
+        PageRankConfig {
+            max_iter: 1,
+            tolerance: 0.0,
+            orientation: PageRankOrientation::Undirected,
+            personalization: seed,
+            ..default_config()
+        },
+    );
+
+    let score = |rows: &[(NodeId, f64)], node| rows.iter().find(|&&(n, _)| n == node).unwrap().1;
+    assert!((score(&natural, nodes[1]) - 1.0).abs() < 1e-12);
+    assert!((score(&natural, nodes[0]) - 0.0).abs() < 1e-12);
+    assert!((score(&natural, nodes[2]) - 0.0).abs() < 1e-12);
+
+    assert!((score(&undirected, nodes[1]) - 0.15).abs() < 1e-12);
+    assert!((score(&undirected, nodes[0]) - 0.425).abs() < 1e-12);
+    assert!((score(&undirected, nodes[2]) - 0.425).abs() < 1e-12);
 }

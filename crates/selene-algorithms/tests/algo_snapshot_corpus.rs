@@ -22,9 +22,9 @@ use std::collections::BTreeSet;
 use roaring::RoaringBitmap;
 use selene_algorithms::{
     AlgoResult, AlgoSnapshotInput, ApspConfig, BetweennessConfig, GraphProjection, GraphSummary,
-    PageRankConfig, Parallelism, ProjectionConfig, TriangleCountConfig, algo_summary, apsp,
-    articulation_points, betweenness, bridges, dijkstra, label_propagation, louvain, pagerank, scc,
-    scc_count, sssp, topological_sort, triangle_count, wcc, wcc_count,
+    PageRankConfig, PageRankOrientation, Parallelism, ProjectionConfig, TriangleCountConfig,
+    algo_summary, apsp, articulation_points, betweenness, bridges, dijkstra, label_propagation,
+    louvain, pagerank, scc, scc_count, sssp, topological_sort, triangle_count, wcc, wcc_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -465,6 +465,7 @@ fn dispatch(
                 max_iter,
                 tolerance,
                 parallelism: Parallelism::Sequential,
+                orientation: PageRankOrientation::Natural,
                 personalization: None,
             };
             (
