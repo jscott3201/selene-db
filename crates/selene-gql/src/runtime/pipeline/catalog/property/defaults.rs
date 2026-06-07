@@ -6,7 +6,7 @@ mod records;
 use std::fmt::Write as _;
 
 use rust_decimal::Decimal;
-use selene_core::{JsonValue, PropertyValueType, Value, db_string};
+use selene_core::{DbString, JsonValue, PropertyValueType, Value, db_string};
 use selene_graph::{PropertyDefaultValue, PropertyElementType, RecordFieldTypes};
 
 use crate::{DataExceptionSubclass, ExecutorError, Literal, ProjectExpr, ValueExpr};
@@ -418,7 +418,7 @@ fn coerce_string_to_json(
             )
         }
     })?;
-    let canonical = db_string(&json.to_canonical_string()).map_err(|err| {
+    let canonical = DbString::from_string(json.to_canonical_string()).map_err(|err| {
         ExecutorError::data_exception(
             DataExceptionSubclass::DataException,
             format!("JSON DEFAULT value is invalid: {err}"),
@@ -466,7 +466,7 @@ fn temporal_default_value(
     text: String,
     span: crate::SourceSpan,
 ) -> Result<selene_core::DbString, ExecutorError> {
-    db_string(&text).map_err(|err| {
+    DbString::from_string(text).map_err(|err| {
         ExecutorError::data_exception(
             DataExceptionSubclass::DataException,
             format!("{kind} DEFAULT value is invalid: {err}"),

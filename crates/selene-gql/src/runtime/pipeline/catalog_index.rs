@@ -4,7 +4,7 @@ use selene_core::{DbString, HnswIndexConfig, IvfIndexConfig};
 use selene_graph::{TypedIndexKind, VectorIndexKind};
 use smallvec::SmallVec;
 
-use super::catalog::runtime_db_string;
+use super::catalog::runtime_db_string_owned;
 use crate::{
     ExecutorError, GqlType, PlannedTypePropertyConstraint, PlannedTypePropertyDef, SourceSpan,
 };
@@ -78,7 +78,10 @@ pub(super) fn validate_index_name_collisions(
     for index in indexes {
         let rendered = render_index_name(label.clone(), index.property.clone(), index.name.clone());
         if used.iter().any(|name| name == &rendered) {
-            let name = index.name.clone().unwrap_or(runtime_db_string(&rendered)?);
+            let name = index
+                .name
+                .clone()
+                .unwrap_or(runtime_db_string_owned(rendered)?);
             return Err(ExecutorError::DuplicateObject {
                 kind: "index",
                 name,

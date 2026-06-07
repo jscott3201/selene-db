@@ -516,10 +516,29 @@ pub(super) fn db_string_from_str(
     })
 }
 
+/// Construct a database string from owned text, preserving the parser-local
+/// syntax-error mapping for the `IL013` byte cap.
+pub(super) fn db_string_from_owned(
+    value: String,
+    span: SourceSpan,
+    kind: &'static str,
+) -> Result<DbString, ParserError> {
+    DbString::from_string(value).map_err(|err| {
+        ParserError::syntax(
+            format!("could not construct database string for {kind}: {err}"),
+            span,
+            Some("string exceeds the maximum byte length".into()),
+        )
+    })
+}
+
 pub(super) fn db_string_pair(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let source_span = span(&pair);
     let decoded = decode_ident_like(pair.as_str());
-    db_string_from_str(&decoded, source_span, "identifier")
+    match decoded {
+        Cow::Borrowed(value) => db_string_from_str(value, source_span, "identifier"),
+        Cow::Owned(value) => db_string_from_owned(value, source_span, "identifier"),
+    }
 }
 
 /// Build a qualified name as a list of database-string segments.
@@ -535,8 +554,14 @@ pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<DbString>
         match child.as_rule() {
             Rule::ident | Rule::prop_ident => {
                 let canonical = decode_ident_like(child.as_str());
-                let segment =
-                    db_string_from_str(&canonical, source_span, "qualified-name segment")?;
+                let segment = match canonical {
+                    Cow::Borrowed(value) => {
+                        db_string_from_str(value, source_span, "qualified-name segment")?
+                    }
+                    Cow::Owned(value) => {
+                        db_string_from_owned(value, source_span, "qualified-name segment")?
+                    }
+                };
                 segments.push(segment);
             }
             _ => return Err(unexpected_pair(child, "unexpected qualified-name child")),
@@ -595,8 +620,8 @@ pub(super) fn build_typed_param_ref(
 ///
 /// Bare (unquoted) identifiers — the common case — are returned borrowed
 /// (`Cow::Borrowed`) with zero allocation; only delimited identifiers that
-/// must strip delimiters or unescape `""` allocate. Callers pass the result
-/// straight into `db_string`, which only needs `&str`.
+/// must strip delimiters or unescape `""` allocate. Callers preserve that
+/// borrowed/owned shape when constructing the validated database string.
 pub(super) fn decode_ident_like(text: &str) -> Cow<'_, str> {
     if let Some(inner) = text.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         Cow::Owned(inner.replace("\"\"", "\""))

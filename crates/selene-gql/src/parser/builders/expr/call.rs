@@ -10,7 +10,8 @@ use crate::{
 
 use super::{Rule, build_value_expr, first_child, literal};
 use crate::parser::builders::{
-    build_qualified_name, build_query_pipeline, db_string_from_str, pattern, span, unexpected_pair,
+    build_qualified_name, build_query_pipeline, db_string_from_owned, pattern, span,
+    unexpected_pair,
 };
 
 pub(super) enum PredicateKind {
@@ -323,7 +324,7 @@ fn expr_from_child(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
 fn lowercase_db_string(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let source_span = span(&pair);
     let canonical = pair.as_str().to_ascii_lowercase();
-    db_string_from_str(&canonical, source_span, "aggregate name")
+    db_string_from_owned(canonical, source_span, "aggregate name")
 }
 
 fn parse_normal_form(value: &str) -> NormalForm {

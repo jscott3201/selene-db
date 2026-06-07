@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{Rule, build_value_expr};
-use crate::parser::builders::{db_string_from_str, first_child, not_implemented, span};
+use crate::parser::builders::{db_string_from_owned, first_child, not_implemented, span};
 
 pub(super) fn build_literal_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::literal);
@@ -352,7 +352,7 @@ fn validate_underscores(text: &str, span: SourceSpan) -> Result<(), ParserError>
 
 fn parse_string(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
     let value = parse_string_text(text, span)?;
-    let db_string_value = db_string_from_str(&value, span, "string literal")?;
+    let db_string_value = db_string_from_owned(value, span, "string literal")?;
     Ok(Literal::String(db_string_value, span))
 }
 

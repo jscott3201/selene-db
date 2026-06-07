@@ -25,7 +25,7 @@
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source or
 //!   any cast whose target is `NULL` / `NOTHING`).
 
-use selene_core::{JsonValue, Value};
+use selene_core::{DbString, JsonValue, Value};
 
 use crate::{
     GqlType, SourceSpan,
@@ -246,7 +246,7 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
     };
     // CAST output strings construct a plain `Value::String`; the only guard is
     // the IL013 per-string byte cap (there is no global string pool).
-    match selene_core::db_string(&rendered) {
+    match DbString::from_string(rendered) {
         Ok(db_string) => Ok(Value::String(db_string)),
         Err(_err) => Err(ExecutorError::data_exception(
             DataExceptionSubclass::DataException,
