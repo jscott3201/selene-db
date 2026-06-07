@@ -29,6 +29,7 @@ use support::{
 const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::VectorOnly,
     RetrievalStrategy::PagerankPrior,
+    RetrievalStrategy::PersonalizedPagerankPrior,
     RetrievalStrategy::GraphExpand,
     RetrievalStrategy::GraphExpandValid,
     RetrievalStrategy::GraphExpandSuperseded,
@@ -36,6 +37,7 @@ const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::GraphExpandSupersededWide,
     RetrievalStrategy::GraphComponentFilter,
     RetrievalStrategy::GraphExpandPagerank,
+    RetrievalStrategy::GraphExpandPersonalizedPagerank,
     RetrievalStrategy::ExactGraphOracle,
 ];
 
@@ -43,6 +45,7 @@ const STRATEGIES: &[RetrievalStrategy] = &[
 enum RetrievalStrategy {
     VectorOnly,
     PagerankPrior,
+    PersonalizedPagerankPrior,
     GraphExpand,
     GraphExpandValid,
     GraphExpandSuperseded,
@@ -50,6 +53,7 @@ enum RetrievalStrategy {
     GraphExpandSupersededWide,
     GraphComponentFilter,
     GraphExpandPagerank,
+    GraphExpandPersonalizedPagerank,
     ExactGraphOracle,
 }
 
@@ -58,6 +62,7 @@ impl RetrievalStrategy {
         match self {
             Self::VectorOnly => "vector_only",
             Self::PagerankPrior => "pagerank_prior",
+            Self::PersonalizedPagerankPrior => "personalized_pagerank_prior",
             Self::GraphExpand => "graph_expand",
             Self::GraphExpandValid => "graph_expand_valid",
             Self::GraphExpandSuperseded => "graph_expand_superseded",
@@ -65,6 +70,7 @@ impl RetrievalStrategy {
             Self::GraphExpandSupersededWide => "graph_expand_superseded_wide",
             Self::GraphComponentFilter => "graph_component_filter",
             Self::GraphExpandPagerank => "graph_expand_pagerank",
+            Self::GraphExpandPersonalizedPagerank => "graph_expand_personalized_pagerank",
             Self::ExactGraphOracle => "exact_graph_oracle",
         }
     }
@@ -135,6 +141,7 @@ struct MemoryRetrievalFixture {
     graph_unresolved_current_nodes: HashSet<NodeId>,
     graph_unresolved_current_candidate_set: VectorCandidateSet,
     pagerank: HashMap<NodeId, f64>,
+    personalized_pagerank: Vec<HashMap<NodeId, f64>>,
     component_candidates: HashMap<u64, Vec<NodeId>>,
     component_order: Vec<u64>,
     component_offsets: HashMap<u64, usize>,
@@ -206,7 +213,17 @@ impl MemoryRetrievalFixture {
                 .collect(),
             RetrievalStrategy::PagerankPrior => {
                 let hits = self.ann_hits(query, WIDE_SEED_K);
-                self.select_from_candidates(query, hits, false, true, false)
+                self.select_from_candidates(query, hits, false, RankPrior::UniformPagerank, false)
+            }
+            RetrievalStrategy::PersonalizedPagerankPrior => {
+                let hits = self.ann_hits(query, WIDE_SEED_K);
+                self.select_from_candidates(
+                    query,
+                    hits,
+                    false,
+                    RankPrior::PersonalizedPagerank,
+                    false,
+                )
             }
             RetrievalStrategy::GraphExpand => {
                 let hits = self.ann_hits(query, SEED_K);
@@ -214,7 +231,7 @@ impl MemoryRetrievalFixture {
                     query,
                     self.expand(query, hits, false),
                     true,
-                    false,
+                    RankPrior::None,
                     false,
                 )
             }
@@ -224,7 +241,7 @@ impl MemoryRetrievalFixture {
                     query,
                     self.expand(query, hits, true),
                     true,
-                    false,
+                    RankPrior::None,
                     true,
                 )
             }
@@ -234,7 +251,7 @@ impl MemoryRetrievalFixture {
                     query,
                     self.expand_with_supersession(query, hits),
                     true,
-                    false,
+                    RankPrior::None,
                     true,
                 )
             }
@@ -244,7 +261,7 @@ impl MemoryRetrievalFixture {
                     query,
                     self.expand(query, hits, true),
                     true,
-                    false,
+                    RankPrior::None,
                     true,
                 )
             }
@@ -254,7 +271,7 @@ impl MemoryRetrievalFixture {
                     query,
                     self.expand_with_supersession(query, hits),
                     true,
-                    false,
+                    RankPrior::None,
                     true,
                 )
             }
@@ -263,7 +280,7 @@ impl MemoryRetrievalFixture {
                 .get(&query.component)
                 .map(|candidates| {
                     let hits = self.score_candidate_ids(query, candidates.iter().copied());
-                    self.select_from_candidates(query, hits, true, false, true)
+                    self.select_from_candidates(query, hits, true, RankPrior::None, true)
                 })
                 .unwrap_or_default(),
             RetrievalStrategy::GraphExpandPagerank => {
@@ -272,7 +289,17 @@ impl MemoryRetrievalFixture {
                     query,
                     self.expand(query, hits, false),
                     true,
+                    RankPrior::UniformPagerank,
+                    false,
+                )
+            }
+            RetrievalStrategy::GraphExpandPersonalizedPagerank => {
+                let hits = self.ann_hits(query, SEED_K);
+                self.select_from_candidates(
+                    query,
+                    self.expand(query, hits, false),
                     true,
+                    RankPrior::PersonalizedPagerank,
                     false,
                 )
             }
@@ -282,7 +309,7 @@ impl MemoryRetrievalFixture {
                     query,
                     self.expand(query, hits, true),
                     true,
-                    false,
+                    RankPrior::None,
                     true,
                 )
             }
@@ -395,12 +422,12 @@ impl MemoryRetrievalFixture {
         query: &Query,
         mut candidates: Vec<VectorNodeSearchHit>,
         diversify: bool,
-        use_prior: bool,
+        prior: RankPrior,
         require_current: bool,
     ) -> Vec<NodeId> {
         candidates.sort_by(|left, right| {
-            self.rank_score(left, use_prior)
-                .total_cmp(&self.rank_score(right, use_prior))
+            self.rank_score(query, left, prior)
+                .total_cmp(&self.rank_score(query, right, prior))
                 .then_with(|| left.node_id.cmp(&right.node_id))
         });
         if !diversify {
@@ -444,13 +471,26 @@ impl MemoryRetrievalFixture {
             .is_some_and(|metadata| metadata.current)
     }
 
-    fn rank_score(&self, hit: &VectorNodeSearchHit, use_prior: bool) -> f64 {
-        if use_prior {
-            hit.distance - self.pagerank.get(&hit.node_id).copied().unwrap_or(0.0) * PAGERANK_WEIGHT
-        } else {
-            hit.distance
-        }
+    fn rank_score(&self, query: &Query, hit: &VectorNodeSearchHit, prior: RankPrior) -> f64 {
+        let prior_score = match prior {
+            RankPrior::None => 0.0,
+            RankPrior::UniformPagerank => self.pagerank.get(&hit.node_id).copied().unwrap_or(0.0),
+            RankPrior::PersonalizedPagerank => self
+                .personalized_pagerank
+                .get(query.topic)
+                .and_then(|scores| scores.get(&hit.node_id))
+                .copied()
+                .unwrap_or(0.0),
+        };
+        hit.distance - prior_score * PAGERANK_WEIGHT
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RankPrior {
+    None,
+    UniformPagerank,
+    PersonalizedPagerank,
 }
 
 struct Query {

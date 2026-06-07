@@ -3,7 +3,7 @@
 use selene_core::{CancellationChecker, NodeId, VectorMetric};
 
 use super::super::support::{FACTS_PER_TOPIC, RESULT_K};
-use super::super::{MemoryRetrievalFixture, Query, RetrievalQuality};
+use super::super::{MemoryRetrievalFixture, Query, RankPrior, RetrievalQuality};
 use super::{ADAPTIVE_PROVENANCE_PLANS, SessionStrategy};
 
 impl MemoryRetrievalFixture {
@@ -53,7 +53,8 @@ impl MemoryRetrievalFixture {
             .iter()
             .zip(batch_hits)
             .map(|(query, hits)| {
-                let selected = self.select_from_candidates(query, hits, true, false, true);
+                let selected =
+                    self.select_from_candidates(query, hits, true, RankPrior::None, true);
                 self.selected_quality(query, selected)
             })
             .fold(RetrievalQuality::default(), |mut total, next| {
@@ -104,7 +105,7 @@ impl MemoryRetrievalFixture {
             return self.select_provenance_expansion(query, candidates, seed_roots, depth);
         }
         let hits = self.score_candidate_ids(query, candidates);
-        self.select_from_candidates(query, hits, true, false, true)
+        self.select_from_candidates(query, hits, true, RankPrior::None, true)
     }
 
     pub(super) fn session_candidates(

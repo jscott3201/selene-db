@@ -288,7 +288,6 @@ impl MemoryRetrievalFixture {
         let graph_unresolved_current_candidate_set = selene_graph::VectorCandidateSet::from_nodes(
             graph_unresolved_current_nodes.iter().copied(),
         );
-        let pagerank = pagerank_scores(&graph, &label, &support_edge);
         let (component_by_node, component_candidates) =
             component_candidates(&graph, &label, &support_edge, &superseded_by_edge);
         let mut component_order: Vec<_> = component_candidates.keys().copied().collect();
@@ -306,7 +305,7 @@ impl MemoryRetrievalFixture {
         for candidates in &mut topic_candidates {
             candidates.sort_unstable();
         }
-        let queries = (0..topic_count)
+        let queries: Vec<Query> = (0..topic_count)
             .map(|topic| {
                 let anchor = topic_nodes[topic][0][duplicates / 2];
                 Query {
@@ -317,6 +316,13 @@ impl MemoryRetrievalFixture {
                 }
             })
             .collect();
+        let pagerank = pagerank_scores(&graph, &label, &support_edge);
+        let personalized_pagerank = support::personalized_pagerank_scores(
+            &graph,
+            &label,
+            &support_edge,
+            queries.iter().map(|query| query.anchor),
+        );
         Self {
             graph,
             scale: topic_count * FACTS_PER_TOPIC * duplicates,
@@ -336,6 +342,7 @@ impl MemoryRetrievalFixture {
             graph_unresolved_current_nodes,
             graph_unresolved_current_candidate_set,
             pagerank,
+            personalized_pagerank,
             component_candidates,
             component_order,
             component_offsets,

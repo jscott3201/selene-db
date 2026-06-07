@@ -8,7 +8,7 @@ use selene_core::NodeId;
 use crate::common::scale_label;
 
 use super::support::{FACTS_PER_TOPIC, RESULT_K, basis_points, vector_scales};
-use super::{MemoryRetrievalFixture, Query, RetrievalQuality, TopologyNoise};
+use super::{MemoryRetrievalFixture, Query, RankPrior, RetrievalQuality, TopologyNoise};
 
 const TOPOLOGY_STRATEGIES: &[TopologyStrategy] =
     &[TopologyStrategy::NoisyWcc, TopologyStrategy::TopicFilter];
@@ -97,7 +97,7 @@ impl MemoryRetrievalFixture {
     fn select_topology_candidates(&self, query: &Query, strategy: TopologyStrategy) -> Vec<NodeId> {
         let candidates = self.topology_candidates(query, strategy);
         let hits = self.score_candidate_ids(query, candidates);
-        self.select_from_candidates(query, hits, true, false, true)
+        self.select_from_candidates(query, hits, true, RankPrior::None, true)
     }
 
     fn topology_candidates(&self, query: &Query, strategy: TopologyStrategy) -> Vec<NodeId> {
