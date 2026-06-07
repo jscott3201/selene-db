@@ -98,48 +98,6 @@ pub(super) fn eval_length(args: Vec<Value>, span: SourceSpan) -> Result<Value, E
     Ok(Value::Int(value.chars().count() as i64))
 }
 
-pub(super) fn eval_substring(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let source = &args[0];
-    if matches!(source, Value::Null) {
-        return Ok(Value::Null);
-    }
-    if matches!(&args[1], Value::Null) {
-        return Ok(Value::Null);
-    }
-    if args
-        .get(2)
-        .is_some_and(|length| matches!(length, Value::Null))
-    {
-        return Ok(Value::Null);
-    }
-    let Some(source) = string_slice(source) else {
-        return data_exception("substring source is not a string", span);
-    };
-    let start = non_negative_usize(
-        &args[1],
-        "substring start is not a non-negative integer",
-        span,
-    )?;
-    let length = if let Some(length) = args.get(2) {
-        Some(non_negative_usize(
-            length,
-            "substring length is not a non-negative integer",
-            span,
-        )?)
-    } else {
-        None
-    };
-    let chars: Vec<char> = source.chars().collect();
-    if start >= chars.len() {
-        return string_value("", span);
-    }
-    let end = length.map_or(chars.len(), |length| {
-        start.saturating_add(length).min(chars.len())
-    });
-    let value: String = chars[start..end].iter().collect();
-    string_value(&value, span)
-}
-
 pub(super) fn eval_left_right(
     args: Vec<Value>,
     span: SourceSpan,
@@ -153,7 +111,7 @@ pub(super) fn eval_left_right(
     let Some(source) = string_slice(source) else {
         return data_exception("LEFT/RIGHT source is not a string", span);
     };
-    let count = substring_count(count, span)?;
+    let count = string_length_count(count, span)?;
     let chars: Vec<char> = source.chars().collect();
     let value: String = if from_right {
         let start = chars.len().saturating_sub(count);
@@ -357,12 +315,12 @@ fn normalize_string(value: &str, form: NormalForm) -> String {
     }
 }
 
-fn substring_count(value: &Value, span: SourceSpan) -> Result<usize, ExecutorError> {
+fn string_length_count(value: &Value, span: SourceSpan) -> Result<usize, ExecutorError> {
     match value {
         Value::Int(value) if *value >= 0 => Ok(*value as usize),
         Value::Int(_) => Err(data_exception_value_with(
             DataExceptionSubclass::SubstringError,
-            "substring length is negative",
+            "string length is negative",
             span,
         )),
         Value::Uint(value) => usize::try_from(*value).map_err(|_| {
@@ -372,7 +330,7 @@ fn substring_count(value: &Value, span: SourceSpan) -> Result<usize, ExecutorErr
                 span,
             )
         }),
-        _ => data_exception("substring length is not an integer", span),
+        _ => data_exception("string length is not an integer", span),
     }
 }
 
@@ -396,23 +354,4 @@ fn trim_by_char_set(source: &str, trim_chars: &str, side: TrimSide) -> String {
         chars.len()
     };
     chars[start..end].iter().copied().collect()
-}
-
-fn non_negative_usize(
-    value: &Value,
-    message: &'static str,
-    span: SourceSpan,
-) -> Result<usize, ExecutorError> {
-    match value {
-        Value::Int(value) if *value >= 0 => Ok(*value as usize),
-        Value::Uint(value) => usize::try_from(*value).map_err(|_| {
-            data_exception_value_with(
-                DataExceptionSubclass::NumericValueOutOfRange,
-                "integer argument is too large",
-                span,
-            )
-        }),
-        Value::Null => Err(data_exception_value(message, span)),
-        _ => data_exception(message, span),
-    }
 }

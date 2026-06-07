@@ -179,7 +179,7 @@ fn ceiling_alias_returns_same_as_ceil() {
 #[test]
 fn scalar_string_and_collection_functions_dispatch() {
     let table = execute_read(
-        "RETURN length('abc') AS len, substring('abcdef', 2, 3) AS sub, upper('ab') AS up, \
+        "RETURN length('abc') AS len, left('abcdef', 3) AS prefix, right('abcdef', 3) AS suffix, upper('ab') AS up, \
          lower('AB') AS low, trim(' x ') AS trimmed, coalesce(null, 'x') AS co, \
          size([1, 2, 3]) AS sz, \
          char_length('café') AS char_len, character_length('日本') AS character_len",
@@ -187,8 +187,12 @@ fn scalar_string_and_collection_functions_dispatch() {
 
     assert_eq!(column_values(&table, "len"), vec![Value::Int(3)]);
     assert_eq!(
-        column_values(&table, "sub"),
-        vec![Value::String(db_string("cde"))]
+        column_values(&table, "prefix"),
+        vec![Value::String(db_string("abc"))]
+    );
+    assert_eq!(
+        column_values(&table, "suffix"),
+        vec![Value::String(db_string("def"))]
     );
     assert_eq!(
         column_values(&table, "up"),
@@ -217,26 +221,6 @@ fn scalar_string_and_collection_functions_dispatch() {
         .unwrap(),
         Value::Null
     );
-}
-
-#[test]
-fn substring_null_propagates_index_arguments() {
-    assert_eq!(
-        single_value("RETURN substring('abc', null, 1) AS value", "value"),
-        Value::Null
-    );
-    assert_eq!(
-        single_value("RETURN substring('abc', 0, null) AS value", "value"),
-        Value::Null
-    );
-    assert_eq!(
-        single_value("RETURN substring(null, 0, 1) AS value", "value"),
-        Value::Null
-    );
-
-    let err = execute_read_result("RETURN substring('abc', -1, 1) AS value")
-        .expect_err("negative substring start still errors");
-    assert_data_exception_contains(err, "substring start is not a non-negative integer");
 }
 
 #[test]

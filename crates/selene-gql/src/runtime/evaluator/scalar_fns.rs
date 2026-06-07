@@ -181,10 +181,6 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
-        "substring" => string_fns::eval_substring(
-            eval_range_args(&display_name, args, 2..=3, span, binding, schema, ctx)?,
-            span,
-        ),
         "left" => string_fns::eval_left_right(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
             span,
