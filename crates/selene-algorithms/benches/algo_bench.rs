@@ -37,24 +37,20 @@ const PARALLELISM_BENCH_MODES: &[(&str, Parallelism)] = &[
     ("auto", Parallelism::Auto),
 ];
 
-const BENCH_PAGERANK_CONFIG: PageRankConfig = PageRankConfig {
-    damping: 0.85,
-    max_iter: 100,
-    tolerance: 1e-6,
-    parallelism: Parallelism::Sequential,
-};
-
 fn bench_pagerank(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/pagerank");
     for &scale in profile_scales() {
         let state = BenchState::from_bench_fixture(scale);
         for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
             let config = PageRankConfig {
+                damping: 0.85,
+                max_iter: 100,
+                tolerance: 1e-6,
                 parallelism,
-                ..BENCH_PAGERANK_CONFIG
+                personalization: None,
             };
             group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {
-                b.iter(|| black_box(pagerank(&state.projection, config)));
+                b.iter(|| black_box(pagerank(&state.projection, config.clone())));
             });
         }
     }

@@ -790,26 +790,37 @@ mod tests {
     }
 
     #[test]
-    fn pagerank_signature_matches_pack_shape() {
+    fn pagerank_signature_has_optional_personalization() {
         let registry = BuiltinProcedureRegistry::new();
         let metadata = registry
             .lookup(&name(&["algo", "pagerank"]))
             .expect("pagerank resolves");
-        // projection_name, damping, max_iterations, tolerance, parallelism
-        assert_eq!(metadata.signature.parameters.len(), 5);
-        // The pack attached `default_doc` (not an executable `default`) to the
-        // nullable params, so arity is exact (5..5): the CALL site must still
-        // pass all five positional args; nullability is enforced per-arg, not by
-        // omission. Preserving this keeps the procedure signature unchanged.
+        // projection_name, damping, max_iterations, tolerance, parallelism,
+        // personalization.
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 6);
+        // The first five params use NULL sentinels for their procedure defaults.
+        // Personalization is the only executable-defaulted trailing argument.
         let arity = metadata.signature.arity();
         assert_eq!(arity.minimum, 5);
-        assert_eq!(arity.maximum, 5);
-        // The four optional params are nullable and carry the pack default-doc.
-        for parameter in &metadata.signature.parameters[1..] {
+        assert_eq!(arity.maximum, 6);
+        for parameter in &parameters[1..5] {
             assert!(parameter.nullable, "{} should be nullable", parameter.name);
             assert_eq!(parameter.default_doc, Some("NULL (use procedure default)"));
             assert!(parameter.default.is_none());
         }
+        let personalization = &parameters[5];
+        assert_eq!(personalization.name.as_str(), "personalization");
+        assert!(personalization.nullable);
+        assert_eq!(personalization.default_doc, Some("NULL (uniform teleport)"));
+        assert_eq!(
+            personalization.default,
+            Some(crate::ProcedureDefaultValue::Null)
+        );
+        assert_eq!(
+            personalization.ty,
+            crate::GqlType::List(Box::new(crate::GqlType::Record(crate::RecordType::Open)))
+        );
         // Output columns: node_id, score.
         assert_eq!(metadata.output_schema.columns.len(), 2);
         assert_eq!(metadata.output_schema.columns[0].name.as_str(), "node_id");

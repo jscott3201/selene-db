@@ -110,6 +110,7 @@ fn cancellable_algorithm_variants_report_cancelled() {
                 max_iter: 10,
                 tolerance: 1e-6,
                 parallelism: Parallelism::Sequential,
+                personalization: None,
             },
             checker,
         )

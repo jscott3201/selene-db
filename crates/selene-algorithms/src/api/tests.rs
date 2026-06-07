@@ -67,6 +67,7 @@ fn pagerank_config() -> PageRankConfig {
         max_iter: 100,
         tolerance: 1e-6,
         parallelism: Parallelism::Sequential,
+        personalization: None,
     }
 }
 

@@ -52,6 +52,7 @@ fn default_config() -> PageRankConfig {
         max_iter: 100,
         tolerance: 1e-6,
         parallelism: Parallelism::Sequential,
+        personalization: None,
     }
 }
 
@@ -85,6 +86,7 @@ fn pagerank_max_iter_zero_returns_initial_uniform_scores() {
         max_iter: 0,
         tolerance: 1e-9,
         parallelism: Parallelism::Sequential,
+        personalization: None,
     };
     let result = pagerank(&proj, cfg);
     assert_eq!(result.len(), 3);
@@ -226,6 +228,7 @@ fn pagerank_convergence_threshold_terminates_early() {
         max_iter: 1000,
         tolerance: 1e-3,
         parallelism: Parallelism::Sequential,
+        personalization: None,
     };
     let result = pagerank(&proj, cfg);
     let total: f64 = result.iter().map(|&(_, s)| s).sum();
@@ -333,6 +336,7 @@ fn pagerank_zero_damping_pure_teleport() {
         max_iter: 50,
         tolerance: 1e-9,
         parallelism: Parallelism::Sequential,
+        personalization: None,
     };
     let result = pagerank(&proj, cfg);
     let expected = 1.0 / 4.0;
@@ -342,4 +346,54 @@ fn pagerank_zero_damping_pure_teleport() {
             "damping=0 → pure teleport 1/N"
         );
     }
+}
+
+#[test]
+fn pagerank_zero_damping_uses_personalized_teleport() {
+    let (shared, nodes) = build_graph(3, &[(0, 1), (1, 2), (2, 0)]);
+    let proj = build_proj(&shared);
+    let cfg = PageRankConfig {
+        damping: 0.0,
+        max_iter: 50,
+        tolerance: 1e-12,
+        parallelism: Parallelism::Sequential,
+        personalization: Some(vec![(nodes[0], 3.0), (nodes[2], 1.0)]),
+    };
+
+    let result = pagerank(&proj, cfg);
+    let score_n0 = result.iter().find(|&&(n, _)| n == nodes[0]).unwrap().1;
+    let score_n1 = result.iter().find(|&&(n, _)| n == nodes[1]).unwrap().1;
+    let score_n2 = result.iter().find(|&&(n, _)| n == nodes[2]).unwrap().1;
+
+    assert!((score_n0 - 0.75).abs() < 1e-12);
+    assert!((score_n1 - 0.0).abs() < 1e-12);
+    assert!((score_n2 - 0.25).abs() < 1e-12);
+    assert_eq!(
+        result.iter().map(|&(node, _)| node).collect::<Vec<_>>(),
+        vec![nodes[0], nodes[2], nodes[1]]
+    );
+}
+
+#[test]
+fn pagerank_personalized_dangling_mass_returns_to_seed_distribution() {
+    let (shared, nodes) = build_graph(3, &[]);
+    let proj = build_proj(&shared);
+    let cfg = PageRankConfig {
+        damping: 0.85,
+        max_iter: 10,
+        tolerance: 0.0,
+        parallelism: Parallelism::Sequential,
+        personalization: Some(vec![(nodes[2], 1.0)]),
+    };
+
+    let result = pagerank(&proj, cfg);
+    let score_n0 = result.iter().find(|&&(n, _)| n == nodes[0]).unwrap().1;
+    let score_n1 = result.iter().find(|&&(n, _)| n == nodes[1]).unwrap().1;
+    let score_n2 = result.iter().find(|&&(n, _)| n == nodes[2]).unwrap().1;
+
+    assert!((score_n0 - 0.0).abs() < 1e-12);
+    assert!((score_n1 - 0.0).abs() < 1e-12);
+    assert!((score_n2 - 1.0).abs() < 1e-12);
+    let total: f64 = result.iter().map(|&(_, score)| score).sum();
+    assert!((total - 1.0).abs() < 1e-12);
 }

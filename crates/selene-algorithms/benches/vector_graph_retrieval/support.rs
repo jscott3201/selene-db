@@ -47,6 +47,7 @@ pub(super) fn pagerank_scores(
             max_iter: 32,
             tolerance: 1e-6,
             parallelism: Parallelism::Sequential,
+            personalization: None,
         },
     );
     let max = scores.iter().map(|(_, score)| *score).fold(0.0, f64::max);
