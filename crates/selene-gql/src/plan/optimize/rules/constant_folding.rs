@@ -1,6 +1,6 @@
 //! Literal constant-folding rule.
 
-use selene_core::db_string;
+use selene_core::DbString;
 
 use crate::{
     BinaryOp, Literal, SourceSpan, UnaryOp, ValueExpr,
@@ -208,7 +208,7 @@ fn fold_concat(lhs: &Literal, rhs: &Literal, span: SourceSpan) -> Option<ValueEx
             let mut value = String::with_capacity(left.as_str().len() + right.as_str().len());
             value.push_str(left.as_str());
             value.push_str(right.as_str());
-            let db_string_value = db_string(&value).ok()?;
+            let db_string_value = DbString::from_string(value).ok()?;
             Some(ValueExpr::Literal(Literal::String(db_string_value, span)))
         }
         (Literal::Bytes(left, _), Literal::Bytes(right, _)) => {

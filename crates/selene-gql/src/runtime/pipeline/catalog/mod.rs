@@ -444,10 +444,10 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
         .into_iter()
         .map(|(name, label, property, kind)| {
             Ok(Binding::new([
-                Value::String(runtime_db_string(&name)?),
+                Value::String(runtime_db_string_owned(name)?),
                 Value::String(label),
                 Value::String(property),
-                Value::String(runtime_db_string(&kind)?),
+                Value::String(runtime_db_string_owned(kind)?),
             ]))
         })
         .collect::<Result<Vec<_>, ExecutorError>>()?;
@@ -519,6 +519,12 @@ fn string_schema(names: &[&str]) -> Result<BindingTableSchema, ExecutorError> {
 
 pub(super) fn runtime_db_string(value: &str) -> Result<DbString, ExecutorError> {
     db_string(value).map_err(|_err| ExecutorError::ImplementationDefined {
+        detail: "string construction failed during catalog rendering",
+    })
+}
+
+pub(super) fn runtime_db_string_owned(value: String) -> Result<DbString, ExecutorError> {
+    DbString::from_string(value).map_err(|_err| ExecutorError::ImplementationDefined {
         detail: "string construction failed during catalog rendering",
     })
 }

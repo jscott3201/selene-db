@@ -11,7 +11,7 @@
 //! [`DbString`], a longer one raises [`CoreError::StringTooLong`] (GQLSTATUS
 //! `22G03`).
 
-use std::fmt;
+use std::{borrow::Borrow, fmt};
 
 use rkyv::{
     Archive, Deserialize as RkyvDeserialize, Place, Serialize as RkyvSerialize, SerializeUnsized,
@@ -73,10 +73,64 @@ pub fn db_string(s: &str) -> CoreResult<DbString> {
 }
 
 impl DbString {
+    /// Construct a [`DbString`] from an owned [`String`].
+    ///
+    /// This preserves the same `IL013` guard as [`db_string`] without copying
+    /// when the caller already owns decoded or rendered text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::StringTooLong`] if `value` exceeds
+    /// [`MAX_DB_STRING_BYTES`] (IL013).
+    pub fn from_string(value: String) -> CoreResult<Self> {
+        ensure_within_string_cap(&value)?;
+        Ok(Self(value))
+    }
+
     /// Return this database string as a string slice.
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+
+    /// Consume this database string and return its owned [`String`].
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl AsRef<str> for DbString {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for DbString {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl TryFrom<String> for DbString {
+    type Error = CoreError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::from_string(value)
+    }
+}
+
+impl TryFrom<&str> for DbString {
+    type Error = CoreError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        db_string(value)
+    }
+}
+
+impl From<DbString> for String {
+    fn from(value: DbString) -> Self {
+        value.into_string()
     }
 }
 
@@ -142,9 +196,9 @@ impl<'de> Deserialize<'de> for DbString {
     where
         D: Deserializer<'de>,
     {
-        // IL013 byte guard is retained on the decode path via `db_string`.
+        // IL013 byte guard is retained on the decode path via `DbString::from_string`.
         let value = String::deserialize(deserializer)?;
-        db_string(&value).map_err(serde::de::Error::custom)
+        DbString::from_string(value).map_err(serde::de::Error::custom)
     }
 }
 
@@ -162,6 +216,22 @@ mod tests {
     #[test]
     fn same_string_constructs_equal_value() {
         assert_eq!(db_string("same").unwrap(), db_string("same").unwrap());
+    }
+
+    #[test]
+    fn owned_string_constructs_without_changing_content() {
+        let source = String::from("owned-alpha");
+        let value = DbString::from_string(source).expect("owned DB string construction succeeds");
+        assert_eq!(value.as_str(), "owned-alpha");
+    }
+
+    #[test]
+    fn db_string_exposes_standard_string_traits() {
+        let value = DbString::from_string(String::from("borrowed-view")).unwrap();
+        assert_eq!(AsRef::<str>::as_ref(&value), "borrowed-view");
+        assert_eq!(Borrow::<str>::borrow(&value), "borrowed-view");
+        let round_tripped: String = value.into();
+        assert_eq!(round_tripped, "borrowed-view");
     }
 
     #[test]

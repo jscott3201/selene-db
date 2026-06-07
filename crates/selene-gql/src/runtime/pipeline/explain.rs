@@ -1,6 +1,6 @@
 //! EXPLAIN pipeline operator.
 
-use selene_core::{Value, db_string};
+use selene_core::{DbString, Value, db_string};
 
 use crate::{
     AnalyzedType, BindingTableColumn, BindingTableSchema, ExecutionPlan, GqlType,
@@ -17,12 +17,20 @@ pub(super) fn execute(inner: &ExecutionPlan) -> Result<BindingTable, ExecutorErr
                 ty: AnalyzedType::Resolved(GqlType::String),
             }],
         },
-        vec![Binding::new([Value::String(runtime_db_string(&dump)?)])],
+        vec![Binding::new([Value::String(runtime_db_string_owned(
+            dump,
+        )?)])],
     ))
 }
 
-fn runtime_db_string(value: &str) -> Result<selene_core::DbString, ExecutorError> {
+fn runtime_db_string(value: &str) -> Result<DbString, ExecutorError> {
     db_string(value).map_err(|_err| ExecutorError::ImplementationDefined {
+        detail: "string construction failed during EXPLAIN rendering",
+    })
+}
+
+fn runtime_db_string_owned(value: String) -> Result<DbString, ExecutorError> {
+    DbString::from_string(value).map_err(|_err| ExecutorError::ImplementationDefined {
         detail: "string construction failed during EXPLAIN rendering",
     })
 }

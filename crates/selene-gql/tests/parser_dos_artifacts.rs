@@ -319,10 +319,9 @@ mod recursion_crash {
 
     #[test]
     fn flat_wide_return_is_linear_and_admitted() {
-        // AC#9 (parity): the `InternerBudget` removal (#222) exposed Lens-C
-        // linearity — a flat, wide RETURN of N distinct identifiers no longer
-        // hits a per-parse admission cap, so it must parse cleanly and stay
-        // linear in N (no super-linear blow-up, no false complexity rejection).
+        // AC#9 (parity): flat, wide RETURN lists pin Lens-C linearity. The
+        // parser must admit N distinct identifiers cleanly and stay linear in
+        // N (no super-linear blow-up, no false complexity rejection).
         // This pins both the cardinality (every item makes it into the AST) and
         // a loose timing tripwire.
         use std::time::{Duration, Instant};

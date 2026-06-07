@@ -7,18 +7,19 @@ use crate::{
     ProcedureTier,
 };
 
-use super::{render_gql_type, runtime_db_string};
+use super::{render_gql_type, runtime_db_string, runtime_db_string_owned};
 
 pub(super) fn procedure_row(
     name: &[DbString],
     metadata: &ProcedureMetadata,
 ) -> Result<Binding, ExecutorError> {
     let name = render_procedure_name(name);
+    let signature = render_signature(&name, metadata);
     Ok(Binding::new([
-        Value::String(runtime_db_string(&name)?),
+        Value::String(runtime_db_string_owned(name)?),
         Value::String(runtime_db_string(render_tier(metadata.tier))?),
         Value::String(runtime_db_string(render_mutability(metadata.mutability))?),
-        Value::String(runtime_db_string(&render_signature(&name, metadata))?),
+        Value::String(runtime_db_string_owned(signature)?),
         Value::String(runtime_db_string(metadata.description)?),
         Value::String(runtime_db_string(metadata.signature.since_version)?),
     ]))
