@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 use rust_decimal::prelude::ToPrimitive;
 use selene_core::Value;
@@ -368,12 +368,21 @@ fn eval_concat(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Execut
     }
     match (lhs, rhs) {
         (Value::String(lhs), Value::String(rhs)) => string_value(&format!("{lhs}{rhs}"), span),
+        (Value::Bytes(lhs), Value::Bytes(rhs)) => {
+            let total_len = lhs.len().checked_add(rhs.len()).ok_or_else(|| {
+                data_exception_value("byte-string concatenation length overflows", span)
+            })?;
+            let mut value = Vec::with_capacity(total_len);
+            value.extend_from_slice(&lhs);
+            value.extend_from_slice(&rhs);
+            Ok(Value::Bytes(Arc::<[u8]>::from(value.into_boxed_slice())))
+        }
         (Value::List(mut lhs), Value::List(rhs)) => {
             lhs.extend(rhs);
             Ok(Value::List(lhs))
         }
         _ => data_exception(
-            "concatenation operands must both be strings or both be lists",
+            "concatenation operands must both be strings, byte strings, or lists",
             span,
         ),
     }

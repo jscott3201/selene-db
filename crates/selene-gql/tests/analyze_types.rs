@@ -173,6 +173,15 @@ fn list_concat_returns_list_type() {
 }
 
 #[test]
+fn byte_string_concat_returns_bytes_type() {
+    let analyzed = analyze_one("RETURN X'CA' || X'FE' AS payload").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "payload"),
+        AnalyzedType::Resolved(GqlType::Bytes)
+    );
+}
+
+#[test]
 fn expr_type_table_is_deterministic_for_same_source() {
     let left = analyze_one("RETURN 1 + 2 AS sum").unwrap();
     let right = analyze_one("RETURN 1 + 2 AS sum").unwrap();
@@ -355,7 +364,7 @@ fn boolean_operator_rejects_static_non_boolean_operand() {
 }
 
 #[test]
-fn concat_rejects_static_non_list_or_string_operand() {
+fn concat_rejects_static_non_list_string_or_bytes_operand() {
     let (context, _) = type_mismatch("RETURN 'a' || 1 AS x");
     assert!(matches!(
         context,

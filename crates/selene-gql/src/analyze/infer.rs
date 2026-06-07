@@ -412,12 +412,12 @@ fn concat(
     rhs: &AnalyzedType,
     rhs_span: SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
-    expect_list_or_string(
+    expect_concat_operand(
         lhs,
         lhs_span,
         TypeMismatchContext::BinaryConcat { side: Side::Lhs },
     )?;
-    expect_list_or_string(
+    expect_concat_operand(
         rhs,
         rhs_span,
         TypeMismatchContext::BinaryConcat { side: Side::Rhs },
@@ -426,6 +426,9 @@ fn concat(
         (AnalyzedType::Dynamic, _) | (_, AnalyzedType::Dynamic) => Ok(AnalyzedType::Dynamic),
         (AnalyzedType::Resolved(GqlType::String), AnalyzedType::Resolved(GqlType::String)) => {
             Ok(AnalyzedType::Resolved(GqlType::String))
+        }
+        (AnalyzedType::Resolved(GqlType::Bytes), AnalyzedType::Resolved(GqlType::Bytes)) => {
+            Ok(AnalyzedType::Resolved(GqlType::Bytes))
         }
         (
             AnalyzedType::Resolved(GqlType::List(lhs_inner)),
@@ -551,7 +554,7 @@ fn expect_comparable(
     }
 }
 
-fn expect_list_or_string(
+fn expect_concat_operand(
     ty: &AnalyzedType,
     span: SourceSpan,
     context: TypeMismatchContext,
@@ -559,10 +562,11 @@ fn expect_list_or_string(
     match ty {
         AnalyzedType::Dynamic
         | AnalyzedType::Resolved(GqlType::String)
+        | AnalyzedType::Resolved(GqlType::Bytes)
         | AnalyzedType::Resolved(GqlType::List(_)) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
-            ExpectedType::ListOrString,
+            ExpectedType::ListStringOrBytes,
             found.clone(),
             span,
         )),

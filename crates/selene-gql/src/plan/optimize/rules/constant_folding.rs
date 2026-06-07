@@ -203,14 +203,26 @@ fn fold_boolean(op: BinaryOp, lhs: &Literal, rhs: &Literal, span: SourceSpan) ->
 }
 
 fn fold_concat(lhs: &Literal, rhs: &Literal, span: SourceSpan) -> Option<ValueExpr> {
-    let (Literal::String(left, _), Literal::String(right, _)) = (lhs, rhs) else {
-        return None;
-    };
-    let mut value = String::with_capacity(left.as_str().len() + right.as_str().len());
-    value.push_str(left.as_str());
-    value.push_str(right.as_str());
-    let db_string_value = db_string(&value).ok()?;
-    Some(ValueExpr::Literal(Literal::String(db_string_value, span)))
+    match (lhs, rhs) {
+        (Literal::String(left, _), Literal::String(right, _)) => {
+            let mut value = String::with_capacity(left.as_str().len() + right.as_str().len());
+            value.push_str(left.as_str());
+            value.push_str(right.as_str());
+            let db_string_value = db_string(&value).ok()?;
+            Some(ValueExpr::Literal(Literal::String(db_string_value, span)))
+        }
+        (Literal::Bytes(left, _), Literal::Bytes(right, _)) => {
+            let total_len = left.len().checked_add(right.len())?;
+            let mut value = Vec::with_capacity(total_len);
+            value.extend_from_slice(left);
+            value.extend_from_slice(right);
+            Some(ValueExpr::Literal(Literal::Bytes(
+                value.into_boxed_slice().into(),
+                span,
+            )))
+        }
+        _ => None,
+    }
 }
 
 fn finite_float(value: f64, span: SourceSpan) -> Option<ValueExpr> {
