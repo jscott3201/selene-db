@@ -368,6 +368,7 @@ scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter pr
 scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set --vector-scales 1000
 scripts/run-benches.sh --profile quick --bench vector_index_rebuild --vector-scales 10000
 scripts/run-benches.sh --profile quick --bench text_search_bm25
+scripts/run-benches.sh --profile quick --bench vector_wgpu --filter core_vector_wgpu_prototype
 scripts/run-benches.sh --bench vector_index_rebuild --allocator system
 ```
 

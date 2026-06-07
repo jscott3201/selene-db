@@ -97,6 +97,8 @@ rstest = "0.26"
 insta = "1.47"
 postcard = { version = "1.1", features = ["alloc"] }
 tempfile = "3.27"
+pollster = "0.4"
+wgpu = { version = "29.0.3", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
 
 [profile.release]
 opt-level = 3

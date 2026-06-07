@@ -30,12 +30,18 @@ proptest.workspace = true
 rstest.workspace = true
 insta.workspace = true
 postcard.workspace = true
+pollster.workspace = true
+wgpu.workspace = true
 
 [features]
 metrics = ["dep:metrics"]
 
 [[bench]]
 name = "value_clone"
+harness = false
+
+[[bench]]
+name = "vector_wgpu"
 harness = false
 
 [lints]
