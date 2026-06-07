@@ -1,6 +1,9 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, fmt, sync::Arc};
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{DeserializeSeed, Error as DeError, MapAccess, SeqAccess, Visitor},
+};
 use serde_json::{Map as SerdeJsonMap, Value as SerdeJsonValue};
 
 use crate::{
@@ -46,7 +49,7 @@ impl JsonValue {
     /// Returns [`CoreError::JsonParse`] when `text` is not valid JSON, or the
     /// usual value-limit errors when the parsed value exceeds engine caps.
     pub fn parse_str(text: &str) -> CoreResult<Self> {
-        let value = serde_json::from_str(text).map_err(|err| CoreError::JsonParse {
+        let value = parse_json_text(text).map_err(|err| CoreError::JsonParse {
             message: err.to_string(),
         })?;
         Self::new(value)
@@ -230,12 +233,115 @@ impl<'de> Deserialize<'de> for JsonValue {
         D: Deserializer<'de>,
     {
         let value = if deserializer.is_human_readable() {
-            SerdeJsonValue::deserialize(deserializer)?
+            StrictJsonValueSeed.deserialize(deserializer)?
         } else {
             let value = String::deserialize(deserializer)?;
-            serde_json::from_str(&value).map_err(serde::de::Error::custom)?
+            parse_json_text(&value).map_err(serde::de::Error::custom)?
         };
         Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+fn parse_json_text(text: &str) -> Result<SerdeJsonValue, serde_json::Error> {
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    let value = StrictJsonValueSeed.deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(value)
+}
+
+struct StrictJsonValueSeed;
+
+impl<'de> DeserializeSeed<'de> for StrictJsonValueSeed {
+    type Value = SerdeJsonValue;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictJsonValueVisitor)
+    }
+}
+
+struct StrictJsonValueVisitor;
+
+impl<'de> Visitor<'de> for StrictJsonValueVisitor {
+    type Value = SerdeJsonValue;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a JSON value with unique object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(SerdeJsonValue::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(SerdeJsonValue::Number(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(SerdeJsonValue::Number(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: DeError,
+    {
+        let number = serde_json::Number::from_f64(value)
+            .ok_or_else(|| E::custom("JSON number is not finite"))?;
+        Ok(SerdeJsonValue::Number(number))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+        Ok(SerdeJsonValue::String(value.to_owned()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(SerdeJsonValue::String(value))
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(SerdeJsonValue::Null)
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(SerdeJsonValue::Null)
+    }
+
+    fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        StrictJsonValueSeed.deserialize(deserializer)
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::with_capacity(seq.size_hint().unwrap_or(0));
+        while let Some(value) = seq.next_element_seed(StrictJsonValueSeed)? {
+            values.push(value);
+        }
+        Ok(SerdeJsonValue::Array(values))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut seen = BTreeSet::new();
+        let mut values = SerdeJsonMap::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !seen.insert(key.clone()) {
+                return Err(A::Error::custom(format!(
+                    "duplicate JSON object key '{key}'"
+                )));
+            }
+            let value = map.next_value_seed(StrictJsonValueSeed)?;
+            values.insert(key, value);
+        }
+        Ok(SerdeJsonValue::Object(values))
     }
 }
 
@@ -373,6 +479,23 @@ mod tests {
         assert_eq!(encoded, serde_json::json!({"a": null, "b": [2, true]}));
         let decoded: JsonValue = serde_json::from_value(encoded).expect("JSON value deserializes");
         assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn parse_str_rejects_duplicate_object_keys() {
+        let err = JsonValue::parse_str(r#"{"a":1,"nested":{"b":1,"b":2}}"#)
+            .expect_err("duplicate JSON object key rejected");
+
+        assert_eq!(err.gqlstatus(), "22018");
+        assert!(err.to_string().contains("duplicate JSON object key 'b'"));
+    }
+
+    #[test]
+    fn human_readable_serde_rejects_duplicate_object_keys() {
+        let err = serde_json::from_str::<JsonValue>(r#"{"a":1,"a":2}"#)
+            .expect_err("duplicate JSON object key rejected");
+
+        assert!(err.to_string().contains("duplicate JSON object key 'a'"));
     }
 
     #[test]
