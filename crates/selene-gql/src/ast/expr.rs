@@ -146,8 +146,9 @@ pub enum ValueExpr {
     },
     /// `PROPERTY_EXISTS(target, 'key')` predicate.
     ///
-    /// selene-db extension: ISO/IEC 39075:2024 section 19.13 takes an element
-    /// variable reference and property name; this AST accepts any target expression.
+    /// ISO/IEC 39075:2024 section 19.13 takes an element variable reference
+    /// and property name. The AST keeps a broad target shape so parser
+    /// construction stays regular; analysis enforces the ISO target rule.
     PropertyExists {
         /// Target expression.
         target: Box<ValueExpr>,

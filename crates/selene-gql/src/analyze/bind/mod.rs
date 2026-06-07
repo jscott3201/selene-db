@@ -301,6 +301,10 @@ impl<'ctx> BindContext<'ctx> {
         ElementKind::from_decl_kind(declaration.kind())
     }
 
+    pub(crate) fn lookup_binding(&self, name: &DbString) -> Option<BindingId> {
+        self.scopes.resolve(self.current, name.clone())
+    }
+
     pub(crate) fn record_write(
         &mut self,
         statement_index: usize,
