@@ -8,7 +8,10 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::{invalid_character, non_iso_combination, numeric_text::classify_signed_numeric_text};
+use super::{
+    invalid_character, non_iso_combination, non_iso_static_source_for_target,
+    numeric_text::classify_signed_numeric_text,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum FloatTarget {
@@ -68,10 +71,14 @@ pub(super) fn cast_to_float(
             "CAST from BOOLEAN to a numeric type is not a valid type combination",
             span,
         )),
-        _ => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "CAST source not supported for FLOAT target",
-            span,
-        }),
+        other => Err(
+            non_iso_static_source_for_target(&other, target.name(), span).unwrap_or(
+                ExecutorError::FeatureNotSupportedYet {
+                    feature: "CAST source not supported for FLOAT target",
+                    span,
+                },
+            ),
+        ),
     }
 }
 

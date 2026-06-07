@@ -33,7 +33,10 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
-use super::numeric_text::{NumericText, classify_signed_numeric_text};
+use super::{
+    non_iso_static_source_for_target,
+    numeric_text::{NumericText, classify_signed_numeric_text},
+};
 
 /// Out-of-target-range overflow (`22003` numeric value out of range).
 fn out_of_range(message: &'static str, span: SourceSpan) -> ExecutorError {
@@ -90,11 +93,15 @@ pub(super) fn numeric_to_decimal(value: Value, span: SourceSpan) -> Result<Value
                 span,
             ));
         }
-        _ => {
-            return Err(ExecutorError::FeatureNotSupportedYet {
-                feature: "CAST source not supported for DECIMAL target",
-                span,
-            });
+        other => {
+            return Err(
+                non_iso_static_source_for_target(&other, "DECIMAL", span).unwrap_or(
+                    ExecutorError::FeatureNotSupportedYet {
+                        feature: "CAST source not supported for DECIMAL target",
+                        span,
+                    },
+                ),
+            );
         }
     };
     Ok(Value::Decimal(dec))

@@ -7,6 +7,8 @@ use crate::{
     temporal_parse,
 };
 
+use super::non_iso_static_source_for_target;
+
 pub(super) fn cast_to_temporal(
     value: Value,
     target_type: &GqlType,
@@ -97,10 +99,15 @@ pub(super) fn cast_to_temporal(
                 .map(|value| Value::Duration(Box::new(value)))
                 .map_err(|error| invalid_duration_format(error, span))
         }
-        (_, target) => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: temporal_cast_to_type_feature(target),
-            span,
-        }),
+        (source, target) => {
+            Err(
+                non_iso_static_source_for_target(&source, temporal_cast_target_name(target), span)
+                    .unwrap_or(ExecutorError::FeatureNotSupportedYet {
+                        feature: temporal_cast_to_type_feature(target),
+                        span,
+                    }),
+            )
+        }
     }
 }
 
@@ -179,5 +186,17 @@ fn temporal_cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::LocalTime => "CAST to LOCAL TIME",
         GqlType::Duration => "CAST to DURATION",
         _ => "CAST to temporal target",
+    }
+}
+
+fn temporal_cast_target_name(target: &GqlType) -> &'static str {
+    match target {
+        GqlType::ZonedDateTime => "ZONED DATETIME",
+        GqlType::LocalDateTime => "LOCAL DATETIME",
+        GqlType::Date => "DATE",
+        GqlType::ZonedTime => "ZONED TIME",
+        GqlType::LocalTime => "LOCAL TIME",
+        GqlType::Duration => "DURATION",
+        _ => "temporal target",
     }
 }
