@@ -220,6 +220,7 @@ JSON is native engine data for agentic workloads:
   surface. They convert SQL null/bool/string/i64/u64/finite-float/list/JSON
   values to JSON; wider exact numerics, temporal values, bytes, graph
   references, vectors, and records need explicit user-side conversion first.
+  `json_object` rejects duplicate keys before construction.
 - JSON equality is value equality. JSON is not an order-comparable family; range
   comparisons must reject rather than inventing nested document order.
 - `json_get` is a shallow object-key / array-index selector; it is not JSONPath.
