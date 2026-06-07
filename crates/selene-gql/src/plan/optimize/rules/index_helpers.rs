@@ -83,7 +83,7 @@ pub(super) fn binding_index_target(
 /// Return the index kind represented by a literal.
 pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
     match literal {
-        Literal::Integer(_, _) => Some(IndexKind::Integer),
+        Literal::Integer(_, _) | Literal::RadixInteger(_, _, _) => Some(IndexKind::Integer),
         Literal::Float(_, _) => Some(IndexKind::Float),
         Literal::String(_, _) => Some(IndexKind::String),
         Literal::Date(_, _) => Some(IndexKind::Date),

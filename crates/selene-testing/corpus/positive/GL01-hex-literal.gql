@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GL01
+// expects: parse-ok
+RETURN 0xCAFE AS value

@@ -5,7 +5,7 @@ use selene_core::{DbString, feature_register::FeatureId};
 use crate::{
     NonEmpty, ValueExpr,
     ast::{
-        expr::{BinaryOp, IsCheckKind, Literal},
+        expr::{BinaryOp, IntegerLiteralKind, IsCheckKind, Literal},
         types::{GqlType, RecordType},
     },
 };
@@ -179,6 +179,14 @@ fn aggregate_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
 
 fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
     match value {
+        Literal::RadixInteger(_, span, kind) => {
+            let feature_id = match kind {
+                IntegerLiteralKind::Hexadecimal => FeatureId::GL01,
+                IntegerLiteralKind::Octal => FeatureId::GL02,
+                IntegerLiteralKind::Binary => FeatureId::GL03,
+            };
+            record_feature(uses, feature_id, *span);
+        }
         Literal::Float(_, span) => record_feature(uses, FeatureId::GA01, *span),
         Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
         Literal::String(_, _)

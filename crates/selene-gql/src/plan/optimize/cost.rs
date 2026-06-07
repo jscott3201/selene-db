@@ -270,7 +270,7 @@ fn literal_value(key: &IndexKey) -> Option<Value> {
 fn literal_to_value(literal: &Literal) -> Option<Value> {
     Some(match literal {
         Literal::Bool(value, _) => Value::Bool(*value),
-        Literal::Integer(value, _) => Value::Int(*value),
+        Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => Value::Int(*value),
         Literal::Float(value, _) => Value::Float(*value),
         Literal::String(value, _) => Value::String(value.clone()),
         Literal::Bytes(value, _) => Value::Bytes(value.clone()),

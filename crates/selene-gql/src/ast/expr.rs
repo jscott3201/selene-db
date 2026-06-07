@@ -424,6 +424,8 @@ pub enum Literal {
     Bool(bool, SourceSpan),
     /// Signed 64-bit integer literal.
     Integer(i64, SourceSpan),
+    /// Signed 64-bit integer literal written with a non-decimal radix prefix.
+    RadixInteger(i64, SourceSpan, IntegerLiteralKind),
     /// 64-bit floating-point literal.
     Float(f64, SourceSpan),
     /// Database-string literal.
@@ -448,6 +450,17 @@ pub enum Literal {
     Null(SourceSpan),
 }
 
+/// Source spelling class for an integer literal.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum IntegerLiteralKind {
+    /// Hexadecimal literal with a `0x` prefix.
+    Hexadecimal,
+    /// Octal literal with a `0o` prefix.
+    Octal,
+    /// Binary literal with a `0b` prefix.
+    Binary,
+}
+
 impl PartialEq for Literal {
     fn eq(&self, rhs: &Self) -> bool {
         match (self, rhs) {
@@ -457,6 +470,10 @@ impl PartialEq for Literal {
             (Self::Integer(lhs, lhs_span), Self::Integer(rhs, rhs_span)) => {
                 lhs == rhs && lhs_span == rhs_span
             }
+            (
+                Self::RadixInteger(lhs, lhs_span, lhs_kind),
+                Self::RadixInteger(rhs, rhs_span, rhs_kind),
+            ) => lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind,
             (Self::Float(lhs, lhs_span), Self::Float(rhs, rhs_span)) => {
                 lhs == rhs && lhs_span == rhs_span
             }
@@ -500,6 +517,7 @@ impl Literal {
         match self {
             Self::Bool(_, span)
             | Self::Integer(_, span)
+            | Self::RadixInteger(_, span, _)
             | Self::Float(_, span)
             | Self::String(_, span)
             | Self::Bytes(_, span)
@@ -523,6 +541,7 @@ impl Literal {
         match self {
             Self::Bool(_, span)
             | Self::Integer(_, span)
+            | Self::RadixInteger(_, span, _)
             | Self::Float(_, span)
             | Self::String(_, span)
             | Self::Bytes(_, span)

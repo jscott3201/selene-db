@@ -254,6 +254,7 @@ fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
 
     match (is_negative, operand) {
         (false, value @ ValueExpr::Literal(Literal::Integer(_, _)))
+        | (false, value @ ValueExpr::Literal(Literal::RadixInteger(_, _, _)))
         | (false, value @ ValueExpr::Literal(Literal::Float(_, _))) => {
             Ok(literal::with_numeric_span(value, source_span))
         }
@@ -266,6 +267,20 @@ fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
                 )
             })?;
             Ok(ValueExpr::Literal(Literal::Integer(signed, source_span)))
+        }
+        (true, ValueExpr::Literal(Literal::RadixInteger(value, _, kind))) => {
+            let signed = value.checked_neg().ok_or_else(|| {
+                ParserError::syntax(
+                    "integer literal overflows i64 after negation",
+                    source_span,
+                    Some("integer literals must fit in i64".into()),
+                )
+            })?;
+            Ok(ValueExpr::Literal(Literal::RadixInteger(
+                signed,
+                source_span,
+                kind,
+            )))
         }
         (true, ValueExpr::Literal(Literal::Float(value, _))) => {
             Ok(ValueExpr::Literal(Literal::Float(-value, source_span)))

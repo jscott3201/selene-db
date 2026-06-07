@@ -57,7 +57,9 @@ pub(super) fn literal_property_default_value(
     match literal {
         Literal::Null(_) => Ok(PropertyDefaultValue::Null),
         Literal::Bool(value, _) => Ok(PropertyDefaultValue::Boolean(*value)),
-        Literal::Integer(value, _) => Ok(PropertyDefaultValue::Integer(*value)),
+        Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => {
+            Ok(PropertyDefaultValue::Integer(*value))
+        }
         Literal::String(value, _) => Ok(PropertyDefaultValue::String(value.clone())),
         Literal::Bytes(value, _) => Ok(PropertyDefaultValue::Bytes(value.to_vec())),
         Literal::Uuid(value, _) => db_string(&value.to_string())

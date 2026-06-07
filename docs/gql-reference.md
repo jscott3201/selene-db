@@ -76,8 +76,8 @@ parsing or analysis, never at runtime.
 | GQL type | Literal syntax | `Value` variant | Feature |
 |:---|:---|:---|:---|
 | `INT8`, `INT16`, `INT32` | `CAST(x AS INT32)` | `Value::Int` | `GV02`, `GV04`, `GV07` |
-| `UINT8`, `UINT16`, `UINT32`, `UINT64` | `42u`, `CAST(x AS UINT32)` | `Value::Uint` | `GV01`, `GV03`, `GV06`, `GV11` |
-| `INT128`, `UINT128` | hex/oct/bin literals or `CAST` | `Value::Int128`, `Value::Uint128` | `GV13`, `GV14` |
+| `UINT8`, `UINT16`, `UINT32`, `UINT64` | `CAST(x AS UINT32)` | `Value::Uint` | `GV01`, `GV03`, `GV06`, `GV11` |
+| `INT128`, `UINT128` | `CAST(x AS INT128)`, `CAST(x AS UINT128)` | `Value::Int128`, `Value::Uint128` | `GV13`, `GV14` |
 | `DECIMAL` | `CAST('1.23' AS DECIMAL)` | `Value::Decimal` (`rust_decimal::Decimal`) | `GV17`, 28 significant digits |
 | `FLOAT32` | `1.5f` | `Value::Float32` | `GV21` |
 | `BYTES` | `CAST(x AS BYTES)` | `Value::Bytes` | `GV35` |
@@ -108,10 +108,9 @@ these types is rejected at parse or analyze time.
 | Form | Example | Notes |
 |---|---|---|
 | Decimal integer | `1234`, `-1234`, `1_000_000` | i64 unless explicit cast. |
-| Unsigned suffix | `42u` | Parses to `Value::Uint`. |
-| Hex | `0xCAFE`, `-0x1A` | Feature `GL01` (selene extension). |
-| Oct | `0o777` | Feature `GL02`. |
-| Bin | `0b1010` | Feature `GL03`. |
+| Hex | `0xCAFE`, `-0x1A` | Feature `GL01`; normalizes to i64 unless explicitly cast. |
+| Oct | `0o777` | Feature `GL02`; normalizes to i64 unless explicitly cast. |
+| Bin | `0b1010` | Feature `GL03`; normalizes to i64 unless explicitly cast. |
 | Float | `1.5`, `1.5e10`, `1.5f` (f32), `1.5d` (f64 explicit) | Default f64. |
 
 ### Identifiers and delimited identifiers

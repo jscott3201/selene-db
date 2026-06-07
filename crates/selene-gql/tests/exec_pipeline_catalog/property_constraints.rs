@@ -419,6 +419,7 @@ fn exact_numeric_default_property_constraint_accepts_coerced_literals() {
     let graph = empty_closed_graph(3733);
     let plan = planned(
         "CREATE NODE TYPE :Metric (u :: UINT64 DEFAULT 42, \
+         hex_i :: INTEGER DEFAULT -0x1A, bin_u :: UINT64 DEFAULT 0b1010, \
          i128 :: INT128 DEFAULT '-170141183460469231731687303715884105728', \
          u128 :: UINT128 DEFAULT '340282366920938463463374607431768211455', \
          dec_i :: DECIMAL DEFAULT 7, dec_s :: DECIMAL DEFAULT '123.450', \
@@ -436,22 +437,30 @@ fn exact_numeric_default_property_constraint_accepts_coerced_literals() {
     );
     assert_eq!(
         graph_type.node_types[0].properties[1].default,
-        Some(PropertyDefaultValue::Int128(i128::MIN))
+        Some(PropertyDefaultValue::Integer(-26))
     );
     assert_eq!(
         graph_type.node_types[0].properties[2].default,
-        Some(PropertyDefaultValue::Uint128(u128::MAX))
+        Some(PropertyDefaultValue::Uint(10))
     );
     assert_eq!(
         graph_type.node_types[0].properties[3].default,
-        Some(PropertyDefaultValue::Decimal(db_string("7")))
+        Some(PropertyDefaultValue::Int128(i128::MIN))
     );
     assert_eq!(
         graph_type.node_types[0].properties[4].default,
-        Some(PropertyDefaultValue::Decimal(db_string("123.450")))
+        Some(PropertyDefaultValue::Uint128(u128::MAX))
     );
     assert_eq!(
         graph_type.node_types[0].properties[5].default,
+        Some(PropertyDefaultValue::Decimal(db_string("7")))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[6].default,
+        Some(PropertyDefaultValue::Decimal(db_string("123.450")))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[7].default,
         Some(PropertyDefaultValue::Decimal(db_string("1.25")))
     );
 }

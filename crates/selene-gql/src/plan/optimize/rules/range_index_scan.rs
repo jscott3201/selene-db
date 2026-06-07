@@ -340,6 +340,11 @@ fn tighten_upper(
 fn compare_literals(a: &Literal, b: &Literal) -> Option<std::cmp::Ordering> {
     match (a, b) {
         (Literal::Integer(lhs, _), Literal::Integer(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::Integer(lhs, _), Literal::RadixInteger(rhs, _, _))
+        | (Literal::RadixInteger(lhs, _, _), Literal::Integer(rhs, _))
+        | (Literal::RadixInteger(lhs, _, _), Literal::RadixInteger(rhs, _, _)) => {
+            Some(lhs.cmp(rhs))
+        }
         (Literal::Float(lhs, _), Literal::Float(rhs, _)) => lhs.partial_cmp(rhs),
         (Literal::String(lhs, _), Literal::String(rhs, _)) => Some(lhs.as_str().cmp(rhs.as_str())),
         (Literal::Bytes(lhs, _), Literal::Bytes(rhs, _)) => Some(lhs.as_ref().cmp(rhs.as_ref())),

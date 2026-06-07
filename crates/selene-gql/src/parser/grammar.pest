@@ -724,8 +724,13 @@ unknown_lit = { ^"UNKNOWN" }
 bool_lit    = { ^"TRUE" | ^"FALSE" }
 uuid_lit    = { ^"UUID" ~ string_lit }
 
-// Integer: optional sign + digits (no suffix)
-int_lit = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+// Integer: optional sign + decimal, hexadecimal, octal, or binary digits.
+// ISO/IEC 39075:2024 §21.2 GL01/GL02/GL03 radix prefixes are lowercase.
+int_lit     = @{ ("+" | "-")? ~ (hex_int_lit | oct_int_lit | bin_int_lit | dec_int_lit) }
+dec_int_lit = { ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+hex_int_lit = { "0x" ~ ("_"? ~ ASCII_HEX_DIGIT)+ }
+oct_int_lit = { "0o" ~ ("_"? ~ ('0'..'7'))+ }
+bin_int_lit = { "0b" ~ ("_"? ~ ("0" | "1"))+ }
 
 // Float: digits.digits with optional exponent and suffix
 float_lit = @{
