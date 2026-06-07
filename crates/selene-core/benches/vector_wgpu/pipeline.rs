@@ -1,4 +1,6 @@
-use crate::vector_wgpu_shader::{BLOCK_TOP_K_SHADER, FUSED_BLOCK_TOP_K_SHADER, SCORE_SHADER};
+use crate::vector_wgpu_shader::{
+    BLOCK_TOP_K_SHADER, FUSED_BLOCK_TOP_K_SHADER, PARALLEL_BLOCK_TOP_K_SHADER, SCORE_SHADER,
+};
 
 pub(crate) struct Pipelines {
     pub(crate) score: wgpu::ComputePipeline,
@@ -6,6 +8,7 @@ pub(crate) struct Pipelines {
     pub(crate) block_top_k: wgpu::ComputePipeline,
     pub(crate) block_top_k_bind_group: wgpu::BindGroup,
     pub(crate) fused_block_top_k: wgpu::ComputePipeline,
+    pub(crate) parallel_block_top_k: wgpu::ComputePipeline,
     pub(crate) fused_block_top_k_bind_group: wgpu::BindGroup,
 }
 
@@ -95,6 +98,13 @@ pub(crate) fn build(device: &wgpu::Device, buffers: PipelineBuffers<'_>) -> Pipe
         &fused_block_top_k_layout,
         FUSED_BLOCK_TOP_K_SHADER,
     );
+    let parallel_block_top_k = pipeline(
+        device,
+        "selene vector parallel block top-k pipeline",
+        "selene vector parallel block top-k shader",
+        &fused_block_top_k_layout,
+        PARALLEL_BLOCK_TOP_K_SHADER,
+    );
     let fused_block_top_k_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("selene vector fused block top-k bind group"),
         layout: &fused_block_top_k_layout,
@@ -113,6 +123,7 @@ pub(crate) fn build(device: &wgpu::Device, buffers: PipelineBuffers<'_>) -> Pipe
         block_top_k,
         block_top_k_bind_group,
         fused_block_top_k,
+        parallel_block_top_k,
         fused_block_top_k_bind_group,
     }
 }

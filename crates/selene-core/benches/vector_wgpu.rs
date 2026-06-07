@@ -117,6 +117,19 @@ fn bench_vector_wgpu(c: &mut Criterion) {
                 });
             },
         );
+        group.bench_function(
+            case.id("resident_query_copy_score_parallel_block_topk_cpu_merge"),
+            |b| {
+                b.iter(|| {
+                    bench
+                        .score_with_query_write_parallel_block_top_k(
+                            black_box(&mut partial_distances),
+                            black_box(&mut partial_indices),
+                        )
+                        .expect("wgpu parallel block top-k succeeds")
+                });
+            },
+        );
     }
     group.finish();
 }

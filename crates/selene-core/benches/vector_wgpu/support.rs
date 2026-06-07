@@ -256,6 +256,16 @@ impl WgpuBench {
         self.score_preloaded_fused_block_top_k(distances, indices)
     }
 
+    pub(crate) fn score_with_query_write_parallel_block_top_k(
+        &mut self,
+        distances: &mut [f32],
+        indices: &mut [u32],
+    ) -> Result<usize, String> {
+        self.queue
+            .write_buffer(&self.query_buffer, 0, &self.query_bytes);
+        self.score_preloaded_parallel_block_top_k(distances, indices)
+    }
+
     pub(crate) fn score_preloaded(&mut self, scores: &mut [f32]) -> Result<f32, String> {
         let mut encoder = self.device.create_command_encoder(&encoder_desc("score"));
         self.encode_score_pass(&mut encoder);
@@ -316,13 +326,7 @@ impl WgpuBench {
             pass.set_bind_group(0, &self.pipelines.fused_block_top_k_bind_group, &[]);
             pass.dispatch_workgroups(self.block_count as u32, self.query_count(), 1);
         }
-        encoder.copy_buffer_to_buffer(
-            &self.partial_hit_buffer,
-            0,
-            &self.partial_hit_readback_buffer,
-            0,
-            self.partial_hit_bytes,
-        );
+        self.copy_packed_partials(&mut encoder);
         let submission = self.queue.submit(Some(encoder.finish()));
         self.read_packed_partials(submission, distances, indices)?;
         Ok(cpu_merge_partial_top_k_count(
@@ -330,6 +334,43 @@ impl WgpuBench {
             indices,
             self.block_count,
         ))
+    }
+
+    fn score_preloaded_parallel_block_top_k(
+        &mut self,
+        distances: &mut [f32],
+        indices: &mut [u32],
+    ) -> Result<usize, String> {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&encoder_desc("parallel block top-k"));
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("selene vector parallel block top-k pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pipelines.parallel_block_top_k);
+            pass.set_bind_group(0, &self.pipelines.fused_block_top_k_bind_group, &[]);
+            pass.dispatch_workgroups(self.block_count as u32, self.query_count(), 1);
+        }
+        self.copy_packed_partials(&mut encoder);
+        let submission = self.queue.submit(Some(encoder.finish()));
+        self.read_packed_partials(submission, distances, indices)?;
+        Ok(cpu_merge_partial_top_k_count(
+            distances,
+            indices,
+            self.block_count,
+        ))
+    }
+
+    fn copy_packed_partials(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.copy_buffer_to_buffer(
+            &self.partial_hit_buffer,
+            0,
+            &self.partial_hit_readback_buffer,
+            0,
+            self.partial_hit_bytes,
+        );
     }
 
     fn copy_partials(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -464,6 +505,14 @@ impl WgpuBench {
         if actual != expected {
             return Err(format!(
                 "fused block top-k drifted: actual={actual:?} expected={expected:?}"
+            ));
+        }
+        self.score_preloaded_parallel_block_top_k(&mut partial_distances, &mut partial_indices)?;
+        let actual =
+            top_k_indices_from_partials(&partial_distances, &partial_indices, self.block_count);
+        if actual != expected {
+            return Err(format!(
+                "parallel block top-k drifted: actual={actual:?} expected={expected:?}"
             ));
         }
         Ok(())
