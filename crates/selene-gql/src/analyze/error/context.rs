@@ -129,8 +129,8 @@ pub enum ExpectedType {
     String,
     /// Comparable type.
     Comparable,
-    /// List or string type.
-    ListOrString,
+    /// List, string, or bytes type.
+    ListStringOrBytes,
     /// List type.
     List,
     /// Non-negative integer amount.
@@ -146,7 +146,7 @@ impl std::fmt::Display for ExpectedType {
             Self::Boolean => f.write_str("boolean"),
             Self::String => f.write_str("string"),
             Self::Comparable => f.write_str("comparable"),
-            Self::ListOrString => f.write_str("list or string"),
+            Self::ListStringOrBytes => f.write_str("list, string, or bytes"),
             Self::List => f.write_str("list"),
             Self::LimitAmount => f.write_str("non-negative integer"),
             Self::Specific(ty) => write!(f, "{ty:?}"),

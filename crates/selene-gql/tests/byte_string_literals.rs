@@ -134,6 +134,19 @@ fn byte_string_left_and_right_follow_iso_substring_rules() {
 }
 
 #[test]
+fn byte_string_concatenation_uses_byte_string_result_type() {
+    assert_eq!(
+        first_value("RETURN X'CA' || X'FE00' AS payload"),
+        bytes(&[0xca, 0xfe, 0x00])
+    );
+    assert_eq!(
+        first_value("RETURN X'' || X'CA' AS payload"),
+        bytes(&[0xca])
+    );
+    assert_eq!(first_status("RETURN X'CA' || 'FE' AS payload"), "22G03");
+}
+
+#[test]
 fn bare_byte_string_type_aliases_normalize_to_bytes() {
     assert_eq!(
         projection_type(

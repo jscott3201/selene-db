@@ -53,7 +53,7 @@ fn folds_project_arithmetic_bottom_up() {
 }
 
 #[test]
-fn folds_boolean_unary_and_string_concat() {
+fn folds_boolean_unary_and_string_byte_concat() {
     let plan = optimized_one("RETURN NOT TRUE AS x");
     assert!(matches!(
         project_expr(&plan),
@@ -64,6 +64,12 @@ fn folds_boolean_unary_and_string_concat() {
     assert!(matches!(
         project_expr(&plan),
         ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "foobar"
+    ));
+
+    let plan = optimized_one("RETURN X'CA' || X'FE00' AS x");
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bytes(value, _)) if value.as_ref() == [0xca, 0xfe, 0x00]
     ));
 }
 
