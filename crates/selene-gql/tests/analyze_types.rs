@@ -21,6 +21,16 @@ fn type_mismatch(source: &str) -> (TypeMismatchContext, SourceSpan) {
     }
 }
 
+fn assert_property_exists_target_error(err: AnalysisError) {
+    match &err {
+        AnalysisError::InvalidReference { message, .. } => {
+            assert!(message.contains("singleton node or edge variable reference"));
+        }
+        other => panic!("expected PROPERTY_EXISTS target error, got {other:?}"),
+    }
+    assert_eq!(err.gqlstatus().as_str(), "42002");
+}
+
 fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
     let AnalyzedStatementKind::Query(query) = &analyzed.statement else {
         panic!("expected query statement");
@@ -103,11 +113,58 @@ fn group_variable_property_access_is_dynamic() {
 }
 
 #[test]
+fn property_exists_on_node_variable_is_boolean() {
+    let analyzed = analyze_one("MATCH (n) RETURN PROPERTY_EXISTS(n, 'name') AS has_name")
+        .expect("node variable target analyzes");
+    assert_eq!(
+        projection_type(&analyzed, "has_name"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+}
+
+#[test]
+fn property_exists_on_edge_variable_is_boolean() {
+    let analyzed = analyze_one("MATCH ()-[r:K]->() RETURN PROPERTY_EXISTS(r, 'weight') AS ok")
+        .expect("edge variable target analyzes");
+    assert_eq!(
+        projection_type(&analyzed, "ok"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+}
+
+#[test]
 fn group_variable_property_exists_is_rejected() {
     let err = analyze_one("MATCH (a)-[r:K*1..2]->(b) RETURN PROPERTY_EXISTS(r, 'weight')")
-        .expect_err("PROPERTY_EXISTS over graph-element lists remains unsupported");
-    assert!(matches!(err, AnalysisError::NotImplemented { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "42N01");
+        .expect_err("PROPERTY_EXISTS requires singleton element variables");
+    assert_property_exists_target_error(err);
+}
+
+#[test]
+fn property_exists_rejects_record_literal_target() {
+    let err = analyze_one("RETURN PROPERTY_EXISTS({foo: 1}, 'foo') AS ok")
+        .expect_err("record target is not an element variable reference");
+    assert_property_exists_target_error(err);
+}
+
+#[test]
+fn property_exists_rejects_scalar_target() {
+    let err = analyze_one("RETURN PROPERTY_EXISTS(1, 'foo') AS ok")
+        .expect_err("scalar target is not an element variable reference");
+    assert_property_exists_target_error(err);
+}
+
+#[test]
+fn property_exists_rejects_property_access_target() {
+    let err = analyze_one("MATCH (n) RETURN PROPERTY_EXISTS(n.payload, 'foo') AS ok")
+        .expect_err("property access target is not an element variable reference");
+    assert_property_exists_target_error(err);
+}
+
+#[test]
+fn property_exists_rejects_projected_alias_target() {
+    let err = analyze_one("MATCH (n) WITH n AS x RETURN PROPERTY_EXISTS(x, 'name') AS ok")
+        .expect_err("WITH alias is not an element variable reference");
+    assert_property_exists_target_error(err);
 }
 
 #[test]

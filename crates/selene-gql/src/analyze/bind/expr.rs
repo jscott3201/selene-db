@@ -1,12 +1,13 @@
 //! Value-expression bind and type-inference handling.
 
 use crate::{
-    IsCheckKind, LimitValue, MatchClause, PipelineStatement, QueryPipeline, ReturnClause,
+    GqlType, IsCheckKind, LimitValue, MatchClause, PipelineStatement, QueryPipeline, ReturnClause,
     ValueExpr,
     analyze::{
         error::{AnalysisError, ConditionClause},
         infer,
         types::{AnalyzedType, ExprId},
+        write_set::ElementKind,
     },
 };
 
@@ -123,9 +124,8 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 bind_many(ctx, items)?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
-            ValueExpr::PropertyExists { target, span, .. } => {
-                let target_id = bind_value_expr(ctx, target)?;
-                reject_group_variable_property_exists(ctx.expr_type(target_id), *span)?;
+            ValueExpr::PropertyExists { target, .. } => {
+                bind_property_exists_target(ctx, target)?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
             ValueExpr::Case {
@@ -194,6 +194,38 @@ fn bind_value_subquery(
         query::bind_query_pipeline(ctx, &mut body)
     })?;
     Ok(AnalyzedType::DYNAMIC)
+}
+
+fn bind_property_exists_target(
+    ctx: &mut BindContext,
+    target: &ValueExpr,
+) -> Result<(), AnalysisError> {
+    let target_id = bind_value_expr(ctx, target)?;
+    let ValueExpr::Variable { name, span } = target else {
+        return Err(invalid_property_exists_target(target.span()));
+    };
+    let binding = ctx
+        .lookup_binding(name)
+        .expect("PROPERTY_EXISTS variable target was just resolved");
+    let target_type = ctx.expr_type(target_id);
+    let is_singleton_element = matches!(
+        (ctx.element_kind(binding), target_type),
+        (ElementKind::Node, AnalyzedType::Resolved(GqlType::NodeRef))
+            | (ElementKind::Edge, AnalyzedType::Resolved(GqlType::EdgeRef))
+    );
+    if is_singleton_element {
+        Ok(())
+    } else {
+        Err(invalid_property_exists_target(*span))
+    }
+}
+
+fn invalid_property_exists_target(span: crate::SourceSpan) -> AnalysisError {
+    AnalysisError::InvalidReference {
+        message: "PROPERTY_EXISTS target must be a singleton node or edge variable reference"
+            .into(),
+        span,
+    }
 }
 
 fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
@@ -550,29 +582,6 @@ fn value_shape_error(message: &'static str, span: crate::SourceSpan) -> Analysis
         message: message.to_owned(),
         span,
     }
-}
-
-fn reject_group_variable_property_exists(
-    ty: &AnalyzedType,
-    span: crate::SourceSpan,
-) -> Result<(), AnalysisError> {
-    let AnalyzedType::Resolved(crate::GqlType::List(item)) = ty else {
-        return Ok(());
-    };
-    if matches!(
-        item.as_ref(),
-        crate::GqlType::NodeRef | crate::GqlType::EdgeRef
-    ) {
-        return Err(AnalysisError::NotImplemented {
-            message: "PROPERTY_EXISTS over graph-element lists is not supported".into(),
-            span,
-            hint: Some(
-                "project the group-variable property list first, or unnest it before checking property existence"
-                    .into(),
-            ),
-        });
-    }
-    Ok(())
 }
 
 pub(crate) fn bind_condition(
