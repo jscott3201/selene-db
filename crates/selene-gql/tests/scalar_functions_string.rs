@@ -6,7 +6,7 @@ mod exec_common;
 
 use exec_common::{column_values, execute_read, execute_read_result};
 use selene_core::{Value, feature_register::FeatureId};
-use selene_gql::{EmptyProcedureRegistry, analyze, feature_walk, parse};
+use selene_gql::{EmptyProcedureRegistry, ExecutorError, analyze, feature_walk, parse};
 
 fn single_value(source: &str, column: &str) -> Value {
     let table = execute_read(source);
@@ -145,6 +145,17 @@ fn left_and_right_propagate_nulls_and_reject_bad_lengths() {
     assert_status("RETURN right('abc', -1) AS value", "22011");
     assert_status("RETURN left('abc', 'x') AS value", "22G03");
     assert_status("RETURN right(7, 1) AS value", "22G03");
+}
+
+#[test]
+fn substring_function_is_not_in_the_iso_scalar_set() {
+    let err = execute_read_result("RETURN substring('abcdef', 2, 3) AS value")
+        .expect_err("substring is not in the closed scalar-function set");
+    assert!(matches!(
+        &err,
+        ExecutorError::UnknownFunction { name, .. } if name == "substring"
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
 }
 
 #[test]

@@ -59,8 +59,8 @@ const CASES: &[ExpressionCase] = &[
     },
     ExpressionCase {
         group: "scalar_fn",
-        name: "substring",
-        source: "RETURN substring('alphabet', 2, 4) AS v",
+        name: "left",
+        source: "RETURN left('alphabet', 4) AS v",
         parameters: ParameterSet::None,
     },
     ExpressionCase {
