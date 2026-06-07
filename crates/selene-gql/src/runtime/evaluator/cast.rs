@@ -261,19 +261,20 @@ fn cast_to_json(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> 
 }
 
 pub(super) fn parse_json_value(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let value = serde_json::from_str(text).map_err(|_| {
-        ExecutorError::data_exception(
-            DataExceptionSubclass::InvalidCharacterValueForCast,
-            "STRING value is not valid JSON",
-            span,
-        )
-    })?;
-    JsonValue::new(value).map(Value::Json).map_err(|err| {
-        ExecutorError::data_exception(
-            DataExceptionSubclass::DataException,
-            format!("JSON value exceeds implementation-defined limits: {err}"),
-            span,
-        )
+    JsonValue::parse_str(text).map(Value::Json).map_err(|err| {
+        if err.gqlstatus() == "22018" {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::InvalidCharacterValueForCast,
+                format!("STRING value is not valid JSON: {err}"),
+                span,
+            )
+        } else {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::DataException,
+                format!("JSON value exceeds implementation-defined limits: {err}"),
+                span,
+            )
+        }
     })
 }
 

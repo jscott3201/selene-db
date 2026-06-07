@@ -403,19 +403,20 @@ fn coerce_string_to_json(
     value: &str,
     span: crate::SourceSpan,
 ) -> Result<PropertyDefaultValue, ExecutorError> {
-    let parsed = serde_json::from_str(value).map_err(|_| {
-        ExecutorError::data_exception(
-            DataExceptionSubclass::InvalidCharacterValueForCast,
-            "JSON DEFAULT string is not valid JSON",
-            span,
-        )
-    })?;
-    let json = JsonValue::new(parsed).map_err(|err| {
-        ExecutorError::data_exception(
-            DataExceptionSubclass::DataException,
-            format!("JSON DEFAULT value is invalid: {err}"),
-            span,
-        )
+    let json = JsonValue::parse_str(value).map_err(|err| {
+        if err.gqlstatus() == "22018" {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::InvalidCharacterValueForCast,
+                format!("JSON DEFAULT string is not valid JSON: {err}"),
+                span,
+            )
+        } else {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::DataException,
+                format!("JSON DEFAULT value is invalid: {err}"),
+                span,
+            )
+        }
     })?;
     let canonical = db_string(&json.to_canonical_string()).map_err(|err| {
         ExecutorError::data_exception(

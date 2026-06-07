@@ -228,6 +228,21 @@ fn json_default_property_constraint_rejects_invalid_json_string() {
 }
 
 #[test]
+fn json_default_property_constraint_rejects_duplicate_keys() {
+    let graph = empty_closed_graph(3731);
+    let plan = planned(r#"CREATE NODE TYPE :Doc (payload :: JSON DEFAULT '{"a":1,"a":2}')"#);
+
+    let err = run_write(&graph, &plan).expect_err("duplicate JSON default key rejected");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("duplicate JSON object key 'a'")
+    ));
+}
+
+#[test]
 fn vector_default_property_constraint_accepts_numeric_list_literal() {
     let graph = empty_closed_graph(3738);
     let plan = planned("CREATE NODE TYPE :Doc (embedding :: VECTOR DEFAULT [1.0, -0.0, 2])");

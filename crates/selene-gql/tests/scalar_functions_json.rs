@@ -194,6 +194,17 @@ fn json_object_rejects_duplicate_keys() {
 }
 
 #[test]
+fn json_parse_rejects_duplicate_object_keys() {
+    for source in [
+        r#"RETURN json('{"a":1,"a":2}') AS value"#,
+        r#"RETURN json_parse('{"nested":{"a":1,"a":2}}') AS value"#,
+        r#"RETURN CAST('{"a":1,"a":2}' AS JSON) AS value"#,
+    ] {
+        assert_status(source, "22018");
+    }
+}
+
+#[test]
 fn json_array_length_counts_array_elements() {
     assert_eq!(
         int_value(r#"RETURN json_array_length(json('[1,{"a":2},null]')) AS value"#),
