@@ -12,7 +12,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
     ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism,
-    TriangleCountConfig, apsp, betweenness, louvain, pagerank, triangle_count,
+    TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, triangle_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -31,6 +31,7 @@ fn profile_scales() -> &'static [usize] {
 // Bump only with measured wall-clock evidence per BRIEF-87 section B.2.
 const APSP_SCALES: &[usize] = &[200, 500, 1_000];
 const BENCH_BETWEENNESS_SAMPLE_SIZE: usize = 256;
+const BENCH_LABEL_PROPAGATION_MAX_ITER: usize = 50;
 const BENCH_LOUVAIN_MAX_ITER: usize = 50;
 const PARALLELISM_BENCH_MODES: &[(&str, Parallelism)] = &[
     ("sequential", Parallelism::Sequential),
@@ -104,6 +105,23 @@ fn bench_apsp(c: &mut Criterion) {
                 b.iter(|| black_box(apsp(&state.projection, config).expect("apsp bench succeeds")));
             });
         }
+    }
+    group.finish();
+}
+
+fn bench_label_propagation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/label_propagation");
+    for &scale in profile_scales() {
+        // Local planted communities give label propagation a stable community structure.
+        let state = BenchState::from_planted_community(scale, 82_250 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| {
+                black_box(label_propagation(
+                    &state.projection,
+                    BENCH_LABEL_PROPAGATION_MAX_ITER,
+                ))
+            });
+        });
     }
     group.finish();
 }
@@ -213,6 +231,7 @@ criterion_group! {
         bench_betweenness,
         bench_triangle_count,
         bench_apsp,
+        bench_label_propagation,
         bench_louvain
 }
 criterion_main!(benches);
