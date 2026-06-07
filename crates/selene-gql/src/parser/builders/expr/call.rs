@@ -70,6 +70,7 @@ pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
     let segment = name.ok_or_else(|| {
         ParserError::syntax("aggregate expression is missing name", source_span, None)
     })?;
+    validate_aggregate_shape(&segment, distinct, star, args.len(), source_span)?;
     Ok(ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![segment]).expect("grammar guarantees >= 1: aggregate_op"),
         args,
@@ -77,6 +78,33 @@ pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
         distinct,
         span: source_span,
     })
+}
+
+fn validate_aggregate_shape(
+    name: &DbString,
+    distinct: bool,
+    star: bool,
+    arg_count: usize,
+    span: SourceSpan,
+) -> Result<(), ParserError> {
+    if star {
+        if name.as_str() == "count" && !distinct {
+            return Ok(());
+        }
+        return Err(ParserError::syntax(
+            "only COUNT(*) may use aggregate asterisk syntax",
+            span,
+            None,
+        ));
+    }
+    if arg_count == 0 {
+        return Err(ParserError::syntax(
+            "aggregate function is missing value expression",
+            span,
+            None,
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn build_normalize_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
