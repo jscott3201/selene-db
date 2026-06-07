@@ -4,8 +4,6 @@
 //! `NodeId` for deterministic output: the ready queue is sorted before each
 //! batch flush, matching donor `aether-db-algorithms/src/structural.rs:266-329`.
 
-// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
-use rustc_hash::FxHashMap as HashMap;
 use selene_core::{CancellationChecker, NodeId};
 use thiserror::Error;
 
@@ -59,29 +57,28 @@ pub fn topological_sort_with_checker(
     if total == 0 {
         return Ok(Vec::new());
     }
+    let idx = proj.row_index();
 
     // Compute in-degree against the projection (NOT the underlying graph), so
-    // edges to nodes outside the projection don't inflate the count.
-    let mut in_degree: HashMap<NodeId, u32> = HashMap::default();
-    in_degree.reserve(total);
+    // edges to nodes outside the projection don't inflate the count. The CSR
+    // already stores only projected neighbors and caches each neighbor's dense
+    // row, so this hot path can stay in contiguous arrays.
+    let mut in_degree = vec![0u32; total];
     let mut rows_since_check = 0usize;
-    for nid in proj.iter_nodes() {
+    for dense in 0..total as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
-        in_degree.entry(nid).or_insert(0);
-        for nb in proj.out_neighbors(nid) {
-            if proj.contains(nb.node_id) {
-                *in_degree.entry(nb.node_id).or_insert(0) += 1;
-            }
+        for nb in proj.out_neighbors_dense(dense) {
+            in_degree[nb.dense as usize] += 1;
         }
     }
 
     // Seed the ready set with zero-in-degree nodes, sorted ASC by NodeId for
-    // deterministic tie-breaks (E12).
-    let mut ready: Vec<NodeId> = in_degree
+    // deterministic tie-breaks (E12). RowIndex dense order is ASC by NodeId.
+    let mut ready: Vec<u32> = in_degree
         .iter()
-        .filter_map(|(&nid, &deg)| (deg == 0).then_some(nid))
+        .enumerate()
+        .filter_map(|(dense, &deg)| (deg == 0).then_some(dense as u32))
         .collect();
-    ready.sort_by_key(|nid| nid.get());
 
     let mut result: Vec<(NodeId, usize)> = Vec::with_capacity(total);
     let mut position: usize = 0;
@@ -90,25 +87,21 @@ pub fn topological_sort_with_checker(
         check_algorithm(checker)?;
         // Process the current batch in deterministic order; collect newly-zero
         // nodes for the next batch, then re-sort them.
-        let mut next_batch: Vec<NodeId> = Vec::new();
+        let mut next_batch: Vec<u32> = Vec::new();
         rows_since_check = 0;
-        for nid in ready.drain(..) {
+        for dense in ready.drain(..) {
             check_algorithm_stride(checker, &mut rows_since_check)?;
-            result.push((nid, position));
+            result.push((idx.node_id_of(dense), position));
             position += 1;
-            for nb in proj.out_neighbors(nid) {
-                if !proj.contains(nb.node_id) {
-                    continue;
-                }
-                if let Some(deg) = in_degree.get_mut(&nb.node_id) {
-                    *deg -= 1;
-                    if *deg == 0 {
-                        next_batch.push(nb.node_id);
-                    }
+            for nb in proj.out_neighbors_dense(dense) {
+                let deg = &mut in_degree[nb.dense as usize];
+                *deg -= 1;
+                if *deg == 0 {
+                    next_batch.push(nb.dense);
                 }
             }
         }
-        next_batch.sort_by_key(|nid| nid.get());
+        next_batch.sort_unstable();
         ready = next_batch;
     }
 
@@ -116,7 +109,8 @@ pub fn topological_sort_with_checker(
         // Cycle: find any node with remaining positive in-degree.
         let hint = in_degree
             .iter()
-            .find_map(|(&nid, &deg)| (deg > 0).then_some(nid));
+            .enumerate()
+            .find_map(|(dense, &deg)| (deg > 0).then_some(idx.node_id_of(dense as u32)));
         return Err(TopoSortError::NotADag { cycle_hint: hint });
     }
 
