@@ -1,6 +1,7 @@
 //! Expression type-inference helpers.
 
 mod numeric;
+mod trim;
 
 use crate::{
     BinaryOp, GqlType, IsCheckKind, Literal, RecordType, SourceSpan, UnaryOp,
@@ -13,6 +14,7 @@ use crate::{
 use self::numeric::{is_numeric, numeric_promotion};
 
 pub(crate) use self::numeric::argument_assignable;
+pub(crate) use self::trim::trim;
 
 /// Infer a literal expression type.
 #[must_use]
@@ -140,15 +142,6 @@ pub(crate) fn normalize(
     source_span: SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
     expect_string(source, source_span, TypeMismatchContext::NormalizeFunction)?;
-    Ok(AnalyzedType::Resolved(GqlType::String))
-}
-
-/// Infer an explicit TRIM source expression.
-pub(crate) fn trim_source(
-    source: &AnalyzedType,
-    source_span: SourceSpan,
-) -> Result<AnalyzedType, AnalysisError> {
-    expect_string(source, source_span, TypeMismatchContext::TrimSource)?;
     Ok(AnalyzedType::Resolved(GqlType::String))
 }
 

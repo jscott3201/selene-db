@@ -93,7 +93,18 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
                 record_feature(uses, feature_id, *span);
             }
         }
-        ValueExpr::Trim { span, .. } => record_feature(uses, FeatureId::GF06, *span),
+        ValueExpr::Trim {
+            character,
+            source,
+            span,
+            ..
+        } => {
+            record_feature(uses, FeatureId::GF06, *span);
+            if is_byte_string_expr(source) || character.as_deref().is_some_and(is_byte_string_expr)
+            {
+                record_feature(uses, FeatureId::GF07, *span);
+            }
+        }
         ValueExpr::AllDifferent { span, .. } => record_feature(uses, FeatureId::G113, *span),
         ValueExpr::Same { span, .. } => record_feature(uses, FeatureId::G114, *span),
         ValueExpr::PropertyExists { span, .. } => record_feature(uses, FeatureId::G115, *span),
@@ -129,6 +140,18 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
 /// [`ValueExpr::for_each_child`].
 fn value_children(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
     value.for_each_child(&mut |child| self::value(child, uses));
+}
+
+fn is_byte_string_expr(value: &ValueExpr) -> bool {
+    match value {
+        ValueExpr::Literal(Literal::Bytes(_, _)) => true,
+        ValueExpr::Cast { target_type, .. } => target_type.as_ref() == &GqlType::Bytes,
+        ValueExpr::Parameter {
+            declared_type: Some(GqlType::Bytes),
+            ..
+        } => true,
+        _ => false,
+    }
 }
 
 fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {

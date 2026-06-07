@@ -234,7 +234,7 @@ fn explicit_trim_propagates_null_and_reports_iso_errors() {
         );
     }
     assert_status("RETURN TRIM(BOTH 'xy' FROM 'xyhelloxy') AS value", "22027");
-    assert_status("RETURN TRIM(BOTH 7 FROM 'abc') AS value", "22G04");
+    assert_analysis_status("RETURN TRIM(BOTH 7 FROM 'abc') AS value", "22G03");
     assert_analysis_status("RETURN TRIM(BOTH 'x' FROM 7) AS value", "22G03");
 }
 

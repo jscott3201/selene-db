@@ -186,9 +186,19 @@ pub(super) fn eval_explicit_trim(
     {
         return Ok(Value::Null);
     }
-    let Some(source) = string_slice(&source) else {
-        return data_exception("trim source is not a string", span);
-    };
+    match source {
+        Value::String(source) => eval_explicit_trim_string(source.as_str(), character, side, span),
+        Value::Bytes(source) => eval_explicit_trim_bytes(&source, character, side, span),
+        _ => data_exception("trim source is not a string or byte string", span),
+    }
+}
+
+fn eval_explicit_trim_string(
+    source: &str,
+    character: Option<Value>,
+    side: TrimSide,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     let character = if let Some(character) = character {
         let Some(character) = string_slice(&character) else {
             return Err(data_exception_value_with(
@@ -217,6 +227,49 @@ pub(super) fn eval_explicit_trim(
         " ".to_owned()
     };
     string_value(&trim_by_char_set(source, &character, side), span)
+}
+
+fn eval_explicit_trim_bytes(
+    source: &Arc<[u8]>,
+    character: Option<Value>,
+    side: TrimSide,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let trim_byte = if let Some(character) = character {
+        let Value::Bytes(character) = character else {
+            return Err(data_exception_value_with(
+                DataExceptionSubclass::ValuesNotComparable,
+                "trim character is not comparable with source byte string",
+                span,
+            ));
+        };
+        let [trim_byte] = character.as_ref() else {
+            return Err(data_exception_value_with(
+                DataExceptionSubclass::TrimError,
+                "trim byte string must contain exactly one byte",
+                span,
+            ));
+        };
+        *trim_byte
+    } else {
+        b' '
+    };
+
+    let mut start = 0;
+    let mut end = source.len();
+    if matches!(side, TrimSide::Leading | TrimSide::Both) {
+        start = source
+            .iter()
+            .position(|byte| *byte != trim_byte)
+            .unwrap_or(source.len());
+    }
+    if start < end && matches!(side, TrimSide::Trailing | TrimSide::Both) {
+        end = source
+            .iter()
+            .rposition(|byte| *byte != trim_byte)
+            .map_or(start, |index| index + 1);
+    }
+    Ok(Value::Bytes(Arc::<[u8]>::from(&source[start..end])))
 }
 
 pub(super) fn eval_string_transform(
