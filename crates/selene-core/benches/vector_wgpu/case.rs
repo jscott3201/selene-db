@@ -1,6 +1,7 @@
 use criterion::BenchmarkId;
 
 pub(crate) const TOP_K: usize = 10;
+pub(crate) const HOT_SHARD_REUSE_BATCHES: usize = 8;
 const CANDIDATE_BLOCK: usize = 256;
 
 const DEFAULT_CASES: &[Case] = &[
@@ -62,6 +63,16 @@ impl Case {
 
     pub(crate) const fn score_count(self) -> usize {
         self.queries * self.candidates
+    }
+
+    pub(crate) const fn hot_shard_score_count(self) -> usize {
+        self.score_count() * HOT_SHARD_REUSE_BATCHES
+    }
+
+    pub(crate) const fn has_hot_shard_reuse_row(self) -> bool {
+        self.queries == 16
+            && self.dimension == 1024
+            && (self.candidates == 4096 || self.candidates == 10_000)
     }
 
     pub(crate) const fn partial_count(self) -> usize {
