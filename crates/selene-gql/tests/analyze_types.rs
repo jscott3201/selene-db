@@ -382,6 +382,32 @@ fn is_normalized_uses_dedicated_mismatch_context() {
 }
 
 #[test]
+fn truth_value_predicate_accepts_boolean_null_and_dynamic_operands() {
+    let analyzed = analyze_one(
+        "RETURN true IS TRUE AS bool_value, NULL IS UNKNOWN AS null_value, $p IS FALSE AS param_value",
+    )
+    .expect("truth-value predicates analyze");
+    for alias in ["bool_value", "null_value", "param_value"] {
+        assert_eq!(
+            projection_type(&analyzed, alias),
+            AnalyzedType::Resolved(GqlType::Boolean)
+        );
+    }
+}
+
+#[test]
+fn truth_value_predicate_rejects_static_non_boolean_operand() {
+    for source in [
+        "RETURN 1 IS TRUE AS ok",
+        "RETURN 'x' IS FALSE AS ok",
+        "RETURN [true] IS UNKNOWN AS ok",
+    ] {
+        let (context, _) = type_mismatch(source);
+        assert!(matches!(context, TypeMismatchContext::IsTruthValue));
+    }
+}
+
+#[test]
 fn unary_negate_rejects_static_non_numeric_operand() {
     let (context, _) = type_mismatch("RETURN -true AS x");
     assert!(matches!(context, TypeMismatchContext::UnaryNegate));

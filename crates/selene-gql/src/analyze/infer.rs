@@ -121,10 +121,13 @@ pub(crate) fn is_check(
             expect_string(operand, operand_span, TypeMismatchContext::IsNormalized)?;
             Ok(AnalyzedType::Resolved(GqlType::Boolean))
         }
+        IsCheckKind::TruthValue(_) => {
+            expect_boolean(operand, operand_span, TypeMismatchContext::IsTruthValue)?;
+            Ok(AnalyzedType::Resolved(GqlType::Boolean))
+        }
         IsCheckKind::Null
         | IsCheckKind::Directed
         | IsCheckKind::Labeled(_)
-        | IsCheckKind::TruthValue(_)
         | IsCheckKind::Typed(_)
         | IsCheckKind::SourceOf(_)
         | IsCheckKind::DestinationOf(_) => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
