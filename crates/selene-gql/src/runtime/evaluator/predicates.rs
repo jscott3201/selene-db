@@ -254,11 +254,11 @@ fn eval_is_endpoint(
     if matches!(operand, Value::Null) || matches!(value, Value::Null) {
         return Ok(Value::Null);
     }
-    let Value::EdgeRef(edge_id) = operand else {
-        return data_exception("endpoint predicate operand is not an edge", span);
+    let Value::NodeRef(node_id) = operand else {
+        return data_exception("endpoint predicate operand is not a node", span);
     };
-    let Value::NodeRef(node_id) = value else {
-        return data_exception("endpoint predicate value is not a node", span);
+    let Value::EdgeRef(edge_id) = value else {
+        return data_exception("endpoint predicate value is not an edge", span);
     };
     Ok(Value::Bool(
         ctx.tx

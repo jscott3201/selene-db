@@ -41,6 +41,18 @@ fn assert_graph_predicate_reference_error(err: AnalysisError) {
     assert_eq!(err.gqlstatus().as_str(), "42002");
 }
 
+fn assert_source_destination_reference_error(err: AnalysisError, predicate: &str) {
+    match &err {
+        AnalysisError::InvalidReference { message, .. } => {
+            assert!(message.contains(predicate));
+            assert!(message.contains("singleton"));
+            assert!(message.contains("variable reference"));
+        }
+        other => panic!("expected source/destination reference error, got {other:?}"),
+    }
+    assert_eq!(err.gqlstatus().as_str(), "42002");
+}
+
 fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
     let AnalyzedStatementKind::Query(query) = &analyzed.statement else {
         panic!("expected query statement");
@@ -210,6 +222,54 @@ fn graph_identity_predicates_reject_non_element_references() {
     ] {
         let err = analyze_one(source).expect_err("invalid graph predicate argument is rejected");
         assert_graph_predicate_reference_error(err);
+    }
+}
+
+#[test]
+fn source_destination_predicates_accept_node_edge_variables() {
+    let analyzed = analyze_one(
+        "MATCH (a)-[e]->(b) RETURN a IS SOURCE OF e AS source, \
+         b IS DESTINATION OF e AS destination",
+    )
+    .expect("node/edge endpoint predicates analyze");
+    assert_eq!(
+        projection_type(&analyzed, "source"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+    assert_eq!(
+        projection_type(&analyzed, "destination"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+}
+
+#[test]
+fn source_destination_predicates_reject_non_node_edge_references() {
+    for (source, predicate) in [
+        ("RETURN 1 IS SOURCE OF 2 AS ok", "IS SOURCE OF"),
+        (
+            "MATCH ()-[e]->() RETURN e IS SOURCE OF e AS ok",
+            "IS SOURCE OF",
+        ),
+        ("MATCH (n) RETURN n IS SOURCE OF n AS ok", "IS SOURCE OF"),
+        (
+            "MATCH (n)-[e]->() RETURN n.payload IS SOURCE OF e AS ok",
+            "IS SOURCE OF",
+        ),
+        (
+            "MATCH (n)-[e]->() WITH n AS x, e RETURN x IS SOURCE OF e AS ok",
+            "IS SOURCE OF",
+        ),
+        (
+            "MATCH (a)-[r:K*1..2]->(b) RETURN a IS SOURCE OF r AS ok",
+            "IS SOURCE OF",
+        ),
+        (
+            "MATCH (n)-[e]->() RETURN n IS DESTINATION OF n AS ok",
+            "IS DESTINATION OF",
+        ),
+    ] {
+        let err = analyze_one(source).expect_err("invalid endpoint predicate reference rejects");
+        assert_source_destination_reference_error(err, predicate);
     }
 }
 

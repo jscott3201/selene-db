@@ -489,8 +489,8 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
     );
 
     let source = ValueExpr::IsCheck {
-        operand: Box::new(var(edge.clone())),
-        kind: IsCheckKind::SourceOf(Box::new(var(node.clone()))),
+        operand: Box::new(var(node.clone())),
+        kind: IsCheckKind::SourceOf(Box::new(var(edge.clone()))),
         negated: false,
         span: span(),
     };
@@ -499,10 +499,10 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
             &source,
             &fixture,
             Binding::new([
-                Value::EdgeRef(EdgeId::new(1)),
-                Value::NodeRef(NodeId::new(1))
+                Value::NodeRef(NodeId::new(1)),
+                Value::EdgeRef(EdgeId::new(1))
             ]),
-            vec![edge, node],
+            vec![node, edge],
         )
         .expect("source predicate evaluates"),
         Value::Bool(true)
