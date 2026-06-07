@@ -18,10 +18,10 @@
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | session_command | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
 
 explain_stmt = { ^"EXPLAIN" ~ explainable_statement }
-explainable_statement = { ddl_statement | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
+explainable_statement = { ddl_statement | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
 
 // -- DDL statements -----------------------------------------------
 
@@ -158,7 +158,9 @@ select_from = { ^"FROM" ~ (match_stmt | ident) }
 // -- Query pipeline -------------------------------------------------
 
 query_pipeline     = { pipeline_statement+ }
+call_query_pipeline = { call_stmt ~ post_call_pipeline_statement ~ pipeline_statement* }
 pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
+post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 
 for_stmt    = { ^"FOR" ~ ident ~ ^"IN" ~ expr }
 unwind_stmt = { ^"UNWIND" ~ expr ~ ^"AS" ~ ident }

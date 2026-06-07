@@ -5,7 +5,6 @@ use crate::{
     analyze::{
         error::AnalysisError,
         types::{AnalyzedType, ExprId},
-        write_set::ElementKind,
     },
 };
 
@@ -44,18 +43,15 @@ pub(crate) fn validate_singleton_element_variable_reference(
     requirement: ElementReferenceRequirement,
     context: &'static str,
 ) -> Result<(), AnalysisError> {
-    let ValueExpr::Variable { name, span } = target else {
+    let ValueExpr::Variable { span, .. } = target else {
         return Err(invalid_element_reference(
             context,
             requirement,
             target.span(),
         ));
     };
-    let binding = ctx
-        .lookup_binding(name)
-        .expect("element variable target was just resolved");
     let target_type = ctx.expr_type(target_id);
-    if requirement.matches(ctx.element_kind(binding), target_type) {
+    if requirement.matches(target_type) {
         Ok(())
     } else {
         Err(invalid_element_reference(context, requirement, *span))
@@ -71,15 +67,9 @@ pub(crate) enum ElementReferenceRequirement {
 }
 
 impl ElementReferenceRequirement {
-    fn matches(self, kind: ElementKind, ty: &AnalyzedType) -> bool {
-        let node = matches!(
-            (kind, ty),
-            (ElementKind::Node, AnalyzedType::Resolved(GqlType::NodeRef))
-        );
-        let edge = matches!(
-            (kind, ty),
-            (ElementKind::Edge, AnalyzedType::Resolved(GqlType::EdgeRef))
-        );
+    fn matches(self, ty: &AnalyzedType) -> bool {
+        let node = matches!(ty, AnalyzedType::Resolved(GqlType::NodeRef));
+        let edge = matches!(ty, AnalyzedType::Resolved(GqlType::EdgeRef));
         match self {
             Self::Node => node,
             Self::Edge => edge,
