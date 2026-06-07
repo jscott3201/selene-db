@@ -609,6 +609,40 @@ fn real_type_spelling_rejects_as_gv23_synonym() {
 }
 
 #[test]
+fn byte_string_length_type_forms_reject_as_specific_gv_features() {
+    for (source, expected, name) in [
+        (
+            "RETURN n IS TYPED BYTES(1, 16)",
+            FeatureId::GV36,
+            "Specified byte string minimum length",
+        ),
+        (
+            "RETURN n IS TYPED BYTES(16)",
+            FeatureId::GV37,
+            "Specified byte string maximum length",
+        ),
+        (
+            "RETURN n IS TYPED BINARY(16)",
+            FeatureId::GV38,
+            "Specified byte string fixed length",
+        ),
+    ] {
+        let error = parse(source).expect_err(source);
+        let ParserError::UnsupportedFeature {
+            feature_id,
+            display_name,
+            ..
+        } = error
+        else {
+            panic!("expected UnsupportedFeature for {source:?}, got {error:?}");
+        };
+        assert_eq!(feature_id, expected, "{source}");
+        assert_eq!(display_name, name, "{source}");
+        assert_eq!(error.gqlstatus().as_str(), "42N01", "{source}");
+    }
+}
+
+#[test]
 fn normalized_predicate_has_no_feature_id_and_stays_unflagged() {
     parse("RETURN n IS NORMALIZED").expect("NORMALIZED has no feature ID");
 }

@@ -69,7 +69,7 @@ parsing or analysis, never at runtime.
 | `BOOLEAN` | `TRUE`, `FALSE`, `UNKNOWN` | `Value::Bool` | Three-valued logic applies to `=`, `<>`, comparisons, and Boolean composition. |
 | `INTEGER` / `INT` | `42`, `-17`, `0`, `1_000` (underscores allowed) | `Value::Int` (i64) | Default integer is i64. Implementation-defined IA037 / ID028 set i64 default with i128 promotion when context demands. |
 | `FLOAT` | `3.14`, `-0.5`, `1.0e6`, `2.5e-3` | `Value::Float` (f64) | IEEE 754 binary64 (feature `GA01`). |
-| `STRING` | `'single quotes only'`, `'it''s ok'`, `'\n'` escapes | `Value::String(IStr)` | Single quotes only — double quotes are delimited identifiers. `''` and backslash escapes are honored. |
+| `STRING` | `'single quotes only'`, `'it''s ok'`, `'\n'` escapes | `Value::String(DbString)` | Single quotes only — double quotes are delimited identifiers. `''` and backslash escapes are honored. |
 
 ### Optional types claimed in v1.0
 
@@ -80,7 +80,7 @@ parsing or analysis, never at runtime.
 | `INT128`, `UINT128` | `CAST(x AS INT128)`, `CAST(x AS UINT128)` | `Value::Int128`, `Value::Uint128` | `GV13`, `GV14` |
 | `DECIMAL` | `CAST('1.23' AS DECIMAL)` | `Value::Decimal` (`rust_decimal::Decimal`) | `GV17`, 28 significant digits |
 | `FLOAT32` | `1.5f` | `Value::Float32` | `GV21` |
-| `BYTES` | `CAST(x AS BYTES)` | `Value::Bytes` | `GV35` |
+| `BYTES` / bare `BINARY` / bare `VARBINARY` | `CAST(x AS BYTES)` | `Value::Bytes` | `GV35`; Selene normalizes all three unqualified spellings to the unbounded `BYTES` form. |
 | `DATE` | `DATE '2026-05-16'` | `Value::Date` | `GV39` |
 | `LOCAL DATETIME` | `LOCAL DATETIME '2026-05-16T08:30:00'` | `Value::LocalDateTime` | `GV39` |
 | `LOCAL TIME` | `LOCAL TIME '08:30:00'` | `Value::LocalTime` | `GV39` |
@@ -103,8 +103,9 @@ the comparison family.
 ### Optional type surfaces deliberately not claimed
 
 Graph and binding-table reference types (`GV60`-`GV61`), explicit value-type
-nullability syntax (`GV90`), `FLOAT16` / `FLOAT128` / `FLOAT256`, 256-bit
-integers, and the `REAL`/`DOUBLE` synonyms all carry rationale entries in
+nullability syntax (`GV90`), length-qualified byte-string types (`GV36`-`GV38`),
+`FLOAT16` / `FLOAT128` / `FLOAT256`, 256-bit integers, and the
+`REAL`/`DOUBLE` synonyms all carry rationale entries in
 `feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of
 these types is rejected at parse or analyze time.
 
@@ -769,6 +770,7 @@ Examples of rejected constructs:
 | `MATCH ... RETURN ... EXCEPT MATCH ...` | Feature `GQ04` not claimed. | Flagger error. |
 | `RECORD<a INTEGER, b STRING>` in a type position | Features `GV45`-`GV48` not claimed. | Flagger error. |
 | `CAST(x AS FLOAT16)` | Feature `GV20` not claimed. | Flagger error. |
+| `CAST(x AS BYTES(16))`, `BINARY(16)`, `VARBINARY(16)` | Byte-string length features `GV36`-`GV38` not claimed. | Flagger error. |
 | Cypher-only `CREATE (n:Foo)-[:R]->(m:Bar)` (without the `INSERT` keyword) | Not ISO GQL surface. | Parser error. |
 | Cypher-only `WHERE n.x =~ '.*foo.*'` (regex match) | Not ISO GQL surface. | Parser error. |
 
@@ -818,6 +820,7 @@ explicitly absent. The canonical rationale is
 | Multi-graph transactions | Not claimed (feature `GT03`). |
 | Graph / table reference type spellings (`GRAPH`, `TABLE` as types) | Not claimed (features `GV60`-`GV61`). |
 | Explicit value-type nullability syntax (`STRING NOT NULL` in type expressions) | Not claimed (feature `GV90`). The DDL `NOT NULL` property constraint is supported separately. |
+| Length-qualified byte-string types (`BYTES(max)`, `BYTES(min,max)`, `BINARY(n)`, `VARBINARY(n)`) | Not claimed (features `GV36`-`GV38`). Bare `BYTES`, `BINARY`, and `VARBINARY` all normalize to unbounded `BYTES`. |
 | `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL`/`DOUBLE` synonyms | Not claimed. |
 | 256-bit integers (`INT256`, `UINT256`) | Not claimed. |
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |

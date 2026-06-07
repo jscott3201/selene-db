@@ -265,6 +265,12 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "FLOAT256 is outside the selene-db v1.0 claim list",
         });
     }
+    if keyword_starts_with(text, "BYTES")
+        || keyword_starts_with(text, "BINARY")
+        || keyword_starts_with(text, "VARBINARY")
+    {
+        return build_byte_string_type_name(text, source_span);
+    }
     if keyword_starts_with(text, "LIST") {
         let inner = pair
             .into_inner()
@@ -348,7 +354,6 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         (&["UUID"], GqlType::Uuid),
         (&["JSON"], GqlType::Json),
         (&["VECTOR"], GqlType::Vector),
-        (&["BYTES"], GqlType::Bytes),
         (&["BYTEA"], GqlType::Bytes),
         (&["ZONED", "DATETIME"], GqlType::ZonedDateTime),
         (&["LOCAL", "DATETIME"], GqlType::LocalDateTime),
@@ -369,4 +374,40 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         &pair,
         "this GQL type constructor is not yet supported",
     ))
+}
+
+fn build_byte_string_type_name(text: &str, span: SourceSpan) -> Result<GqlType, ParserError> {
+    if !text.contains('(') {
+        return Ok(GqlType::Bytes);
+    }
+    if keyword_starts_with(text, "BINARY") {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV38,
+            display_name: "Specified byte string fixed length",
+            span,
+            hint: "fixed-length BINARY(n) is outside the selene-db v1.0 claim list; use BYTES",
+        });
+    }
+    if keyword_starts_with(text, "VARBINARY") {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV37,
+            display_name: "Specified byte string maximum length",
+            span,
+            hint: "length-qualified VARBINARY(n) is outside the selene-db v1.0 claim list; use BYTES",
+        });
+    }
+    if text.contains(',') {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV36,
+            display_name: "Specified byte string minimum length",
+            span,
+            hint: "BYTES(min,max) is outside the selene-db v1.0 claim list; use BYTES",
+        });
+    }
+    Err(ParserError::UnsupportedFeature {
+        feature_id: FeatureId::GV37,
+        display_name: "Specified byte string maximum length",
+        span,
+        hint: "BYTES(max) is outside the selene-db v1.0 claim list; use BYTES",
+    })
 }

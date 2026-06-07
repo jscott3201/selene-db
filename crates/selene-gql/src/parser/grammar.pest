@@ -681,7 +681,7 @@ type_name = {
   | ^"UUID"
   | ^"JSON"
   | ^"VECTOR"
-  | ^"BYTES" | ^"BYTEA"
+  | byte_string_type | ^"BYTEA"
   | ^"ZONED" ~ ^"DATETIME" | ^"LOCAL" ~ ^"DATETIME"
   | ^"ZONED" ~ ^"TIME" | ^"LOCAL" ~ ^"TIME"
   | ^"DATE"
@@ -694,6 +694,13 @@ type_name = {
   | ^"RECORD"
   | ^"NOTHING" | ^"NULL"
 }
+
+byte_string_type = {
+    ^"BYTES" ~ ("(" ~ byte_string_length ~ ("," ~ byte_string_length)? ~ ")")?
+  | ^"BINARY" ~ ("(" ~ byte_string_length ~ ")")?
+  | ^"VARBINARY" ~ ("(" ~ byte_string_length ~ ")")?
+}
+byte_string_length = @{ ASCII_DIGIT+ }
 
 // -------------------------------------------------------------------
 // Literals

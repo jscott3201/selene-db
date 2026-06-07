@@ -108,6 +108,29 @@ fn byte_string_literal_identity_cast_returns_bytes() {
 }
 
 #[test]
+fn bare_byte_string_type_aliases_normalize_to_bytes() {
+    assert_eq!(
+        projection_type(
+            &analyze_one("RETURN CAST(X'CAFE' AS BINARY) AS payload"),
+            "payload"
+        ),
+        AnalyzedType::Resolved(GqlType::Bytes)
+    );
+    assert_eq!(
+        first_value("RETURN X'CAFE' IS TYPED BINARY AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN CAST(X'CAFE' AS VARBINARY) AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        first_value("RETURN X'CAFE' IS TYPED VARBINARY AS ok"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn byte_string_literal_formatter_canonicalizes_uppercase_hex() {
     let parsed = parse("RETURN x'00 ff a5' AS payload").expect("source parses");
     let formatted = format_read_statement(&parsed).expect("formats");
