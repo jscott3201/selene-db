@@ -1,19 +1,17 @@
 use std::sync::mpsc;
 
+use rayon::prelude::*;
 use selene_core::VectorTopK;
 use wgpu::util::DeviceExt;
 
 use crate::vector_wgpu_case::{Case, TOP_K};
 use crate::vector_wgpu_fixture::{Fixture, top_k_indices_from_scores};
-use crate::vector_wgpu_shader::{BLOCK_TOP_K_SHADER, SCORE_SHADER};
+use crate::vector_wgpu_pipeline::{PipelineBuffers, Pipelines};
 
 pub(crate) struct WgpuBench {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    pipeline: wgpu::ComputePipeline,
-    bind_group: wgpu::BindGroup,
-    block_top_k_pipeline: wgpu::ComputePipeline,
-    block_top_k_bind_group: wgpu::BindGroup,
+    pipelines: Pipelines,
     query_buffer: wgpu::Buffer,
     candidate_buffer: wgpu::Buffer,
     output_buffer: wgpu::Buffer,
@@ -22,13 +20,20 @@ pub(crate) struct WgpuBench {
     partial_index_buffer: wgpu::Buffer,
     partial_distance_readback_buffer: wgpu::Buffer,
     partial_index_readback_buffer: wgpu::Buffer,
+    partial_hit_buffer: wgpu::Buffer,
+    partial_hit_readback_buffer: wgpu::Buffer,
+    queries: Vec<f32>,
+    candidates: Vec<f32>,
+    norms: Vec<f32>,
     query_bytes: Vec<u8>,
     candidate_bytes: Vec<u8>,
+    dimension: usize,
     candidate_count: usize,
     block_count: usize,
     partial_count: usize,
     partial_f32_bytes: u64,
     partial_u32_bytes: u64,
+    partial_hit_bytes: u64,
     output_bytes: u64,
     workgroups: u32,
 }
@@ -119,56 +124,37 @@ impl WgpuBench {
             case.partial_u32_bytes(),
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
-
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("selene vector bind group layout"),
-            entries: &[
-                storage_entry(0, true),
-                storage_entry(1, true),
-                storage_entry(2, true),
-                storage_entry(3, false),
-                uniform_entry(4),
-            ],
-        });
-        let (pipeline, bind_group) = score_pipeline(
+        let partial_hit_buffer = create_buffer(
             &device,
-            &bind_group_layout,
-            [
-                &query_buffer,
-                &candidate_buffer,
-                &norm_buffer,
-                &output_buffer,
-            ],
-            &params_buffer,
+            "selene vector fused partial hits",
+            case.partial_hit_bytes(),
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
-        let block_top_k_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("selene vector block top-k bind group layout"),
-                entries: &[
-                    storage_entry(0, true),
-                    storage_entry(1, false),
-                    storage_entry(2, false),
-                    uniform_entry(3),
-                ],
-            });
-        let (block_top_k_pipeline, block_top_k_bind_group) = block_top_k_pipeline(
+        let partial_hit_readback_buffer = create_buffer(
             &device,
-            &block_top_k_bind_group_layout,
-            [
-                &output_buffer,
-                &partial_distance_buffer,
-                &partial_index_buffer,
-            ],
-            &params_buffer,
+            "selene vector fused partial hit readback",
+            case.partial_hit_bytes(),
+            wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        );
+
+        let pipelines = crate::vector_wgpu_pipeline::build(
+            &device,
+            PipelineBuffers {
+                query: &query_buffer,
+                candidate: &candidate_buffer,
+                norm: &norm_buffer,
+                output: &output_buffer,
+                partial_distance: &partial_distance_buffer,
+                partial_index: &partial_index_buffer,
+                partial_hit: &partial_hit_buffer,
+                params: &params_buffer,
+            },
         );
 
         let mut bench = Self {
             device,
             queue,
-            pipeline,
-            bind_group,
-            block_top_k_pipeline,
-            block_top_k_bind_group,
+            pipelines,
             query_buffer,
             candidate_buffer,
             output_buffer,
@@ -177,13 +163,20 @@ impl WgpuBench {
             partial_index_buffer,
             partial_distance_readback_buffer,
             partial_index_readback_buffer,
+            partial_hit_buffer,
+            partial_hit_readback_buffer,
+            queries: fixture.queries.clone(),
+            candidates: fixture.candidates.clone(),
+            norms: fixture.norms.clone(),
             query_bytes,
             candidate_bytes,
+            dimension: case.dimension,
             candidate_count: case.candidates,
             block_count: case.block_count(),
             partial_count: case.partial_count(),
             partial_f32_bytes: case.partial_f32_bytes(),
             partial_u32_bytes: case.partial_u32_bytes(),
+            partial_hit_bytes: case.partial_hit_bytes(),
             output_bytes: case.output_bytes(),
             workgroups: case.score_count().div_ceil(64) as u32,
         };
@@ -214,6 +207,35 @@ impl WgpuBench {
         Ok(cpu_top_k_count(scores, self.candidate_count))
     }
 
+    pub(crate) fn cpu_parallel_score_top_k(&self) -> usize {
+        let dimension = self.dimension;
+        let candidate_count = self.candidate_count;
+        let query_count = self.query_count() as usize;
+        let candidates = &self.candidates;
+        let queries = &self.queries;
+        let norms = &self.norms;
+        (0..query_count)
+            .into_par_iter()
+            .map(|query_idx| {
+                let query = window(queries, query_idx, dimension);
+                let query_norm = norms[query_idx];
+                let mut top_k = VectorTopK::new(TOP_K);
+                for candidate_idx in 0..candidate_count {
+                    let candidate = window(candidates, candidate_idx, dimension);
+                    let dot: f32 = query
+                        .iter()
+                        .zip(candidate)
+                        .map(|(lhs, rhs)| lhs * rhs)
+                        .sum();
+                    let denom = query_norm.sqrt() * norms[query_count + candidate_idx].sqrt();
+                    let similarity = (dot / denom).clamp(-1.0, 1.0);
+                    top_k.push_distance(candidate_idx, f64::from(1.0 - similarity));
+                }
+                top_k.into_hits().len()
+            })
+            .sum()
+    }
+
     pub(crate) fn score_with_query_write_block_top_k(
         &mut self,
         distances: &mut [f32],
@@ -222,6 +244,16 @@ impl WgpuBench {
         self.queue
             .write_buffer(&self.query_buffer, 0, &self.query_bytes);
         self.score_preloaded_block_top_k(distances, indices)
+    }
+
+    pub(crate) fn score_with_query_write_fused_block_top_k(
+        &mut self,
+        distances: &mut [f32],
+        indices: &mut [u32],
+    ) -> Result<usize, String> {
+        self.queue
+            .write_buffer(&self.query_buffer, 0, &self.query_bytes);
+        self.score_preloaded_fused_block_top_k(distances, indices)
     }
 
     pub(crate) fn score_preloaded(&mut self, scores: &mut [f32]) -> Result<f32, String> {
@@ -253,10 +285,54 @@ impl WgpuBench {
                 label: Some("selene vector block top-k pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.block_top_k_pipeline);
-            pass.set_bind_group(0, &self.block_top_k_bind_group, &[]);
+            pass.set_pipeline(&self.pipelines.block_top_k);
+            pass.set_bind_group(0, &self.pipelines.block_top_k_bind_group, &[]);
             pass.dispatch_workgroups(self.block_count as u32, self.query_count(), 1);
         }
+        self.copy_partials(&mut encoder);
+        let submission = self.queue.submit(Some(encoder.finish()));
+        self.read_partials(submission, distances, indices)?;
+        Ok(cpu_merge_partial_top_k_count(
+            distances,
+            indices,
+            self.block_count,
+        ))
+    }
+
+    fn score_preloaded_fused_block_top_k(
+        &mut self,
+        distances: &mut [f32],
+        indices: &mut [u32],
+    ) -> Result<usize, String> {
+        let mut encoder = self
+            .device
+            .create_command_encoder(&encoder_desc("fused block top-k"));
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("selene vector fused block top-k pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pipelines.fused_block_top_k);
+            pass.set_bind_group(0, &self.pipelines.fused_block_top_k_bind_group, &[]);
+            pass.dispatch_workgroups(self.block_count as u32, self.query_count(), 1);
+        }
+        encoder.copy_buffer_to_buffer(
+            &self.partial_hit_buffer,
+            0,
+            &self.partial_hit_readback_buffer,
+            0,
+            self.partial_hit_bytes,
+        );
+        let submission = self.queue.submit(Some(encoder.finish()));
+        self.read_packed_partials(submission, distances, indices)?;
+        Ok(cpu_merge_partial_top_k_count(
+            distances,
+            indices,
+            self.block_count,
+        ))
+    }
+
+    fn copy_partials(&self, encoder: &mut wgpu::CommandEncoder) {
         encoder.copy_buffer_to_buffer(
             &self.partial_distance_buffer,
             0,
@@ -271,13 +347,6 @@ impl WgpuBench {
             0,
             self.partial_u32_bytes,
         );
-        let submission = self.queue.submit(Some(encoder.finish()));
-        self.read_partials(submission, distances, indices)?;
-        Ok(cpu_merge_partial_top_k_count(
-            distances,
-            indices,
-            self.block_count,
-        ))
     }
 
     fn encode_score_pass(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -285,8 +354,8 @@ impl WgpuBench {
             label: Some("selene vector score pass"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_pipeline(&self.pipelines.score);
+        pass.set_bind_group(0, &self.pipelines.score_bind_group, &[]);
         pass.dispatch_workgroups(self.workgroups, 1, 1);
     }
 
@@ -342,6 +411,29 @@ impl WgpuBench {
         Ok(())
     }
 
+    fn read_packed_partials(
+        &self,
+        submission: wgpu::SubmissionIndex,
+        distances: &mut [f32],
+        indices: &mut [u32],
+    ) -> Result<(), String> {
+        if distances.len() != self.partial_count || indices.len() != self.partial_count {
+            return Err("partial output buffers have wrong length".to_string());
+        }
+        let (tx, rx) = mpsc::channel();
+        let slice = self.partial_hit_readback_buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        self.poll(submission)?;
+        recv_map_result(rx)?;
+        let mapped = slice.get_mapped_range();
+        fill_partial_hits(distances, indices, &mapped);
+        drop(mapped);
+        self.partial_hit_readback_buffer.unmap();
+        Ok(())
+    }
+
     fn assert_matches_cpu(&mut self, fixture: &Fixture) -> Result<(), String> {
         let mut scores = vec![0.0f32; fixture.case.score_count()];
         self.score_preloaded(&mut scores)?;
@@ -366,6 +458,14 @@ impl WgpuBench {
                 "block top-k drifted: actual={actual:?} expected={expected:?}"
             ));
         }
+        self.score_preloaded_fused_block_top_k(&mut partial_distances, &mut partial_indices)?;
+        let actual =
+            top_k_indices_from_partials(&partial_distances, &partial_indices, self.block_count);
+        if actual != expected {
+            return Err(format!(
+                "fused block top-k drifted: actual={actual:?} expected={expected:?}"
+            ));
+        }
         Ok(())
     }
 
@@ -382,79 +482,6 @@ impl WgpuBench {
     fn query_count(&self) -> u32 {
         (self.partial_count / (self.block_count * TOP_K)) as u32
     }
-}
-
-fn score_pipeline(
-    device: &wgpu::Device,
-    bind_group_layout: &wgpu::BindGroupLayout,
-    buffers: [&wgpu::Buffer; 4],
-    params_buffer: &wgpu::Buffer,
-) -> (wgpu::ComputePipeline, wgpu::BindGroup) {
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("selene vector pipeline layout"),
-        bind_group_layouts: &[Some(bind_group_layout)],
-        immediate_size: 0,
-    });
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("selene vector cosine shader"),
-        source: wgpu::ShaderSource::Wgsl(SCORE_SHADER.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("selene vector cosine pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("selene vector bind group"),
-        layout: bind_group_layout,
-        entries: &[
-            bind_entry(0, buffers[0]),
-            bind_entry(1, buffers[1]),
-            bind_entry(2, buffers[2]),
-            bind_entry(3, buffers[3]),
-            bind_entry(4, params_buffer),
-        ],
-    });
-    (pipeline, bind_group)
-}
-
-fn block_top_k_pipeline(
-    device: &wgpu::Device,
-    bind_group_layout: &wgpu::BindGroupLayout,
-    buffers: [&wgpu::Buffer; 3],
-    params_buffer: &wgpu::Buffer,
-) -> (wgpu::ComputePipeline, wgpu::BindGroup) {
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("selene vector block top-k pipeline layout"),
-        bind_group_layouts: &[Some(bind_group_layout)],
-        immediate_size: 0,
-    });
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("selene vector block top-k shader"),
-        source: wgpu::ShaderSource::Wgsl(BLOCK_TOP_K_SHADER.into()),
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("selene vector block top-k pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("selene vector block top-k bind group"),
-        layout: bind_group_layout,
-        entries: &[
-            bind_entry(0, buffers[0]),
-            bind_entry(1, buffers[1]),
-            bind_entry(2, buffers[2]),
-            bind_entry(3, params_buffer),
-        ],
-    });
-    (pipeline, bind_group)
 }
 
 fn cpu_top_k_count(scores: &[f32], candidate_count: usize) -> usize {
@@ -564,6 +591,17 @@ fn fill_u32(output: &mut [u32], bytes: &[u8]) {
     }
 }
 
+fn fill_partial_hits(distances: &mut [f32], indices: &mut [u32], bytes: &[u8]) {
+    for ((distance, index), chunk) in distances
+        .iter_mut()
+        .zip(indices.iter_mut())
+        .zip(bytes.chunks_exact(8))
+    {
+        *distance = f32::from_ne_bytes(chunk[0..4].try_into().expect("chunk is four bytes"));
+        *index = u32::from_ne_bytes(chunk[4..8].try_into().expect("chunk is four bytes"));
+    }
+}
+
 fn f32_bytes(values: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(values));
     for value in values {
@@ -580,35 +618,7 @@ fn u32_bytes(values: &[u32]) -> Vec<u8> {
     bytes
 }
 
-fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only },
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
-}
-
-fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: wgpu::ShaderStages::COMPUTE,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        },
-        count: None,
-    }
-}
-
-fn bind_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buffer.as_entire_binding(),
-    }
+fn window(slab: &[f32], index: usize, dimension: usize) -> &[f32] {
+    let start = index * dimension;
+    &slab[start..start + dimension]
 }

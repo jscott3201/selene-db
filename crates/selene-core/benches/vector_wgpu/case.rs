@@ -84,6 +84,10 @@ impl Case {
         (self.partial_count() * size_of::<u32>()) as u64
     }
 
+    pub(crate) const fn partial_hit_bytes(self) -> u64 {
+        (self.partial_count() * (size_of::<f32>() + size_of::<u32>())) as u64
+    }
+
     pub(crate) fn largest_storage_bytes(self) -> u64 {
         [
             (self.queries * self.dimension * size_of::<f32>()) as u64,
@@ -92,6 +96,7 @@ impl Case {
             self.output_bytes(),
             self.partial_f32_bytes(),
             self.partial_u32_bytes(),
+            self.partial_hit_bytes(),
         ]
         .into_iter()
         .max()
