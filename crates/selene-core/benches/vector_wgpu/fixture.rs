@@ -7,7 +7,6 @@ pub(crate) struct Fixture {
     pub(crate) queries: Vec<f32>,
     pub(crate) candidates: Vec<f32>,
     pub(crate) norms: Vec<f32>,
-    pub(crate) cpu_scores: Vec<f32>,
 }
 
 impl Fixture {
@@ -16,15 +15,29 @@ impl Fixture {
         let candidates = flatten_seeded(case.candidates, case.dimension, 1_000);
         let query_norms = norms(&queries, case.dimension);
         let candidate_norms = norms(&candidates, case.dimension);
-        let cpu_scores = cpu_scores(case, &queries, &candidates, &query_norms, &candidate_norms);
         let norms = query_norms.into_iter().chain(candidate_norms).collect();
         Self {
             case,
             queries,
             candidates,
             norms,
-            cpu_scores,
         }
+    }
+
+    pub(crate) fn cpu_score(&self, score_idx: usize) -> f32 {
+        let query_idx = score_idx / self.case.candidates;
+        let candidate_idx = score_idx % self.case.candidates;
+        let query = window(&self.queries, query_idx, self.case.dimension);
+        let candidate = window(&self.candidates, candidate_idx, self.case.dimension);
+        let query_norm = self.norms[query_idx];
+        let candidate_norm = self.norms[self.case.queries + candidate_idx];
+        let dot: f32 = query
+            .iter()
+            .zip(candidate)
+            .map(|(lhs, rhs)| lhs * rhs)
+            .sum();
+        let denom = query_norm.sqrt() * candidate_norm.sqrt();
+        1.0 - (dot / denom).clamp(-1.0, 1.0)
     }
 }
 
@@ -58,32 +71,6 @@ fn norms(vectors: &[f32], dimension: usize) -> Vec<f32> {
         .chunks_exact(dimension)
         .map(|vector| vector.iter().map(|component| component * component).sum())
         .collect()
-}
-
-fn cpu_scores(
-    case: Case,
-    queries: &[f32],
-    candidates: &[f32],
-    query_norms: &[f32],
-    candidate_norms: &[f32],
-) -> Vec<f32> {
-    let mut scores = Vec::with_capacity(case.score_count());
-    for (query_idx, &query_norm) in query_norms.iter().enumerate().take(case.queries) {
-        let query = window(queries, query_idx, case.dimension);
-        for (candidate_idx, &candidate_norm) in
-            candidate_norms.iter().enumerate().take(case.candidates)
-        {
-            let candidate = window(candidates, candidate_idx, case.dimension);
-            let dot: f32 = query
-                .iter()
-                .zip(candidate)
-                .map(|(lhs, rhs)| lhs * rhs)
-                .sum();
-            let denom = query_norm.sqrt() * candidate_norm.sqrt();
-            scores.push(1.0 - (dot / denom).clamp(-1.0, 1.0));
-        }
-    }
-    scores
 }
 
 fn window(slab: &[f32], index: usize, dimension: usize) -> &[f32] {
