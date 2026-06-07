@@ -260,7 +260,7 @@ fn bound(value: Value, inclusive: bool, _end: BoundEnd) -> std::ops::Bound<Value
 fn literal_value(key: &IndexKey) -> Option<Value> {
     match key {
         IndexKey::Literal(literal) => literal_to_value(literal),
-        IndexKey::Parameter { .. } => None,
+        IndexKey::Parameter { .. } | IndexKey::ParameterList { .. } => None,
     }
 }
 

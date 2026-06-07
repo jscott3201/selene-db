@@ -10,7 +10,8 @@ use std::cmp::Ordering;
 use selene_core::{DbString, Value};
 
 use crate::{
-    IndexKey, IndexKind, Literal, SourceSpan, TypedIndexBounds,
+    GqlType, IndexKey, IndexKind, Literal, SourceSpan, TypedIndexBounds,
+    ast::format::format_gql_type,
     runtime::{EvalCtx, ExecutorError, parameter_type, value_compare},
 };
 
@@ -22,6 +23,25 @@ pub(super) enum IndexKeyOutcome {
     /// match any indexed row. Used for NULL bindings (3VL parity with inline
     /// `WHERE n.x = NULL`, per BRIEF-154 §B.3 F5).
     EmptyResult,
+}
+
+/// Resolve one bitmap-union key source into zero or more concrete probe values.
+pub(super) fn resolve_bitmap_union_key_values(
+    key: &IndexKey,
+    expected_kind: IndexKind,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<Value>, ExecutorError> {
+    match key {
+        IndexKey::ParameterList {
+            name,
+            declared_type,
+            span,
+        } => resolve_parameter_list_key(name, declared_type, *span, expected_kind, ctx),
+        _ => match resolve_index_key(key, expected_kind, ctx)? {
+            IndexKeyOutcome::Value(value) => Ok(vec![value]),
+            IndexKeyOutcome::EmptyResult => Ok(Vec::new()),
+        },
+    }
 }
 
 /// A typed-index probe bound, with every key resolved to a concrete
@@ -120,7 +140,52 @@ pub(super) fn resolve_index_key(
             check_value_index_kind(&raw, expected_kind, name.clone(), *span)?;
             Ok(IndexKeyOutcome::Value(raw))
         }
+        IndexKey::ParameterList { name, span, .. } => Err(ExecutorError::InvalidParameterType {
+            name: name.clone(),
+            expected: "scalar index key".into(),
+            actual: "LIST",
+            span: *span,
+        }),
     }
+}
+
+fn resolve_parameter_list_key(
+    name: &DbString,
+    declared_type: &GqlType,
+    span: SourceSpan,
+    expected_kind: IndexKind,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<Value>, ExecutorError> {
+    let raw = ctx
+        .tx
+        .parameters()
+        .get(name)
+        .cloned()
+        .ok_or(ExecutorError::UnboundParameter {
+            name: name.clone(),
+            span,
+        })?;
+    if matches!(raw, Value::Null) {
+        return Ok(Vec::new());
+    }
+    parameter_type::validate_declared_type(name.clone(), &raw, declared_type, span)?;
+    let Value::List(items) = raw else {
+        return Err(ExecutorError::InvalidParameterType {
+            name: name.clone(),
+            expected: format_gql_type(declared_type).into(),
+            actual: value_kind_label(&raw),
+            span,
+        });
+    };
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        if matches!(item, Value::Null) {
+            continue;
+        }
+        check_value_index_kind(&item, expected_kind, name.clone(), span)?;
+        values.push(item);
+    }
+    Ok(values)
 }
 
 /// Pre-resolve every [`IndexKey`] in `bounds` against the bound parameters.

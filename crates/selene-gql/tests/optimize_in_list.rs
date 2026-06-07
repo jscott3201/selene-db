@@ -3,7 +3,7 @@
 use selene_core::DbString;
 use selene_gql::plan::optimize::rules::InListOptimization;
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutionPlan, FilterPredicate, IndexKey, IndexKind, JoinTree,
+    EmptyProcedureRegistry, ExecutionPlan, FilterPredicate, GqlType, IndexKey, IndexKind, JoinTree,
     NodeOrEdgeScan, PipelineOp, Rule, ScanAccess, analyze, optimize, parse, plan,
 };
 use selene_testing::MockIndexCatalog;
@@ -152,6 +152,51 @@ fn all_parameter_in_list_fires_bitmap_union() {
         );
     }
     assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn typed_list_parameter_in_list_fires_bitmap_union() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("email"),
+        IndexKind::String,
+    );
+    let plan = optimized_one(
+        "MATCH (p:Person) WHERE p.email IN $emails :: LIST<STRING> RETURN p",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    let ScanAccess::BitmapUnion { keys, .. } = &scan.access else {
+        panic!("expected bitmap union, got {:?}", scan.access);
+    };
+    assert_eq!(keys.len(), 1);
+    let IndexKey::ParameterList {
+        name,
+        declared_type,
+        ..
+    } = &keys[0]
+    else {
+        panic!("expected parameter-list key, got {:?}", keys[0]);
+    };
+    assert_eq!(name.as_str(), "emails");
+    assert_eq!(declared_type, &GqlType::List(Box::new(GqlType::String)));
+    assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn untyped_list_parameter_in_list_stays_linear() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("email"),
+        IndexKind::String,
+    );
+    let plan = optimized_one(
+        "MATCH (p:Person) WHERE p.email IN $emails RETURN p",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(scan.access, ScanAccess::Linear));
+    assert_eq!(scan.property_predicates.len(), 1);
 }
 
 #[test]

@@ -129,6 +129,28 @@ pub(super) fn compatible_value(value: &ValueExpr, kind: IndexKind) -> Option<Ind
     })
 }
 
+/// Resolve `value` to a declared list-parameter [`IndexKey`] admissible for
+/// bitmap-union fanout over the given index kind.
+///
+/// Unlike scalar parameters, list parameters must declare `LIST<T>` so this
+/// rule does not change untyped dynamic-list semantics. The element type must
+/// map to the indexed storage key kind.
+pub(super) fn compatible_list_parameter(value: &ValueExpr, kind: IndexKind) -> Option<IndexKey> {
+    let param = binding_refs::parameter(value)?;
+    let declared = param.declared_type?;
+    let GqlType::List(inner) = declared else {
+        return None;
+    };
+    if !gql_type_compatible_with_index_kind(inner, kind) {
+        return None;
+    }
+    Some(IndexKey::ParameterList {
+        name: param.name,
+        declared_type: declared.clone(),
+        span: param.span,
+    })
+}
+
 /// One equality-shaped property predicate against a node binding.
 ///
 /// Carries the candidate's `property_predicates` index, the property key, and

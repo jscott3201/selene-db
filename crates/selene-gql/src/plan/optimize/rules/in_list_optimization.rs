@@ -5,7 +5,7 @@ use crate::plan::{
     optimize::{OptimizeContext, Rule, Transformed, binding_refs, cost, walk},
 };
 
-use super::index_helpers::{compatible_value, single_label};
+use super::index_helpers::{compatible_list_parameter, compatible_value, single_label};
 
 const SMALL_IN_LIST_LIMIT: usize = 16;
 
@@ -85,18 +85,31 @@ fn rewrite_scan(
         if !binding_is_node(bindings, matched.binding) {
             continue;
         }
-        let binding_refs::PropertyPredicateShape::InList(items) = matched.shape else {
-            continue;
-        };
-        if items.is_empty() || items.len() > SMALL_IN_LIST_LIMIT {
-            continue;
-        }
         let Some(lookup) =
             catalog.typed_index(crate::IndexTarget::Node, label.clone(), matched.key.clone())
         else {
             continue;
         };
         let property = matched.key;
+        if let binding_refs::PropertyPredicateShape::InListExpression(list_expr) = matched.shape {
+            let Some(key) = compatible_list_parameter(list_expr, lookup.kind) else {
+                continue;
+            };
+            scan.property_predicates.remove(index);
+            scan.access = ScanAccess::BitmapUnion {
+                handle: lookup.handle,
+                property,
+                kind: lookup.kind,
+                keys: vec![key],
+            };
+            return true;
+        }
+        let binding_refs::PropertyPredicateShape::InList(items) = matched.shape else {
+            continue;
+        };
+        if items.is_empty() || items.len() > SMALL_IN_LIST_LIMIT {
+            continue;
+        }
         let mut keys = Vec::with_capacity(items.len());
         let mut has_literal = false;
         let mut has_parameter = false;
@@ -109,6 +122,7 @@ fn rewrite_scan(
             match &index_key {
                 IndexKey::Literal(_) => has_literal = true,
                 IndexKey::Parameter { .. } => has_parameter = true,
+                IndexKey::ParameterList { .. } => {}
             }
             keys.push(index_key);
         }
