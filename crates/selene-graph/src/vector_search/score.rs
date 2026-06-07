@@ -1,14 +1,28 @@
 use selene_core::{
-    CancellationChecker, CoreError, DbString, NodeId, Value, VectorMetric, VectorTopK, VectorValue,
+    CancellationChecker, CoreError, DbString, NodeId, Value, VectorMetric, VectorMetricQuery,
+    VectorTopK, VectorValue,
 };
+
+use rayon::prelude::*;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 
 use super::{
     VECTOR_SEARCH_CANCEL_STRIDE, VectorCandidateSet, VectorNeighborDirection,
-    VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError, vector_node_hits,
+    VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError, merge_top_k,
+    vector_node_hits,
 };
+
+#[cfg(not(test))]
+const VECTOR_CANDIDATE_SCORE_PARALLEL_MIN_NODES: usize = 4096;
+#[cfg(test)]
+const VECTOR_CANDIDATE_SCORE_PARALLEL_MIN_NODES: usize = 8;
+
+#[cfg(not(test))]
+const VECTOR_CANDIDATE_SCORE_PARALLEL_CHUNK_NODES: usize = 1024;
+#[cfg(test)]
+const VECTOR_CANDIDATE_SCORE_PARALLEL_CHUNK_NODES: usize = 4;
 
 impl SeleneGraph {
     /// Score an explicit node candidate set against one query vector.
@@ -122,6 +136,10 @@ impl SeleneGraph {
         checker.check()?;
 
         let scorer = metric.bind_query(query).map_err(GraphError::from)?;
+        if should_parallelize_candidate_scoring(candidates.len(), k, checker) {
+            return self.score_vector_candidate_set_parallel(property, scorer, candidates, k);
+        }
+
         let mut top_k = VectorTopK::new(k);
         for (offset, node_id) in candidates.as_nodes().iter().copied().enumerate() {
             if offset % VECTOR_SEARCH_CANCEL_STRIDE == 0 {
@@ -138,6 +156,43 @@ impl SeleneGraph {
         }
 
         Ok(vector_node_hits(top_k))
+    }
+
+    fn score_vector_candidate_set_parallel(
+        &self,
+        property: &DbString,
+        scorer: VectorMetricQuery<'_>,
+        candidates: &VectorCandidateSet,
+        k: usize,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        let top_k = candidates
+            .as_nodes()
+            .par_chunks(VECTOR_CANDIDATE_SCORE_PARALLEL_CHUNK_NODES)
+            .map(|chunk| self.score_vector_candidate_set_chunk(property, scorer, chunk, k))
+            .try_reduce(|| VectorTopK::new(k), merge_top_k)?;
+
+        Ok(vector_node_hits(top_k))
+    }
+
+    fn score_vector_candidate_set_chunk(
+        &self,
+        property: &DbString,
+        scorer: VectorMetricQuery<'_>,
+        candidates: &[NodeId],
+        k: usize,
+    ) -> Result<VectorTopK<NodeId>, VectorSearchError> {
+        let mut top_k = VectorTopK::new(k);
+        for node_id in candidates.iter().copied() {
+            let Some(properties) = self.node_properties(node_id) else {
+                continue;
+            };
+            let Some(Value::Vector(vector)) = properties.get(property) else {
+                continue;
+            };
+            let distance = scorer.distance(vector).map_err(GraphError::from)?;
+            top_k.push_distance(node_id, distance);
+        }
+        Ok(top_k)
     }
 
     /// Score one explicit candidate set for each query vector.
@@ -517,6 +572,14 @@ impl SeleneGraph {
         }
         Ok(VectorCandidateSet::from_nodes(candidates))
     }
+}
+
+fn should_parallelize_candidate_scoring(
+    candidate_count: usize,
+    k: usize,
+    checker: CancellationChecker<'_>,
+) -> bool {
+    checker.is_disabled() && k != 0 && candidate_count >= VECTOR_CANDIDATE_SCORE_PARALLEL_MIN_NODES
 }
 
 fn validate_batch_inputs(

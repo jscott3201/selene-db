@@ -259,7 +259,8 @@ kernels, returning stable node ids. Large exact scans use threshold-gated Rayon
 for both unindexed label rows and flat-index row sets when cancellation/deadline
 checking is disabled. `graph_vector_candidate_set/*` measures the Rust
 graph/vector boundary for deriving canonical candidate sets from graph
-adjacency before scoring. `graph_vector_index_rebuild/*` times the
+adjacency and reranking canonical candidate sets by vector score.
+`graph_vector_index_rebuild/*` times the
 maintenance rebuild that reclaims stale ANN entries after vector update/delete
 churn; `graph_vector_index_recommended_rebuild/*` compares recommended-only
 maintenance against full rebuild on a multi-index IVF fixture where only one
@@ -325,6 +326,17 @@ Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter g
 | `graph_exact_vector_scan/flat_index_squared_euclidean_dim128_k10_m64-64_n50k_flat/50000` | 581.30 µs | 568.49 µs | Existing flat-index parallel path remains stable. |
 | `graph_exact_vector_scan/flat_index_cosine_dim128_k10_m64-64_n50k_flat/50000` | 616.20 µs | 591.44 µs | Existing flat-index parallel path remains stable. |
 
+PR-local quick vector candidate-set scoring Rayon A/B:
+
+Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set`
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_vector_candidate_set/score_candidate_set_cosine_c64_d1024/64` | 13.717 µs | 13.700 µs | Below the 4,096-candidate threshold; stays sequential and statistically unchanged. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c256_d1024/256` | 54.786 µs | 54.653 µs | Below the threshold; stays sequential and statistically unchanged. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c1024_d1024/1024` | 223.55 µs | 222.59 µs | Below the threshold; stays sequential and change remains noise-scale. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c4096_d1024/4096` | 891.37 µs | 308.32 µs | Candidate-set rerank now uses chunked Rayon scoring when cancellation/deadline checks are disabled and the set has at least 4,096 nodes. |
+
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
 | `graph_node_fetch` | 8.22 ns | 8.79 ns | 9.02 ns | Near-flat O(1) columnar fetch. |
@@ -380,6 +392,7 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/neighbor_candidates_depends_on_k64` | 233.8 ns (quick) | Derives a sorted/deduplicated 64-node candidate set from one anchor's outgoing `DEPENDS_ON` adjacency. This measures the reusable Rust candidate-set boundary, not vector scoring. |
 | `graph_vector_candidate_set/adjacency_label_range_l8_k64` | 44.6 ns (quick) | Iterates the sorted label range for 64 matching edges mixed with 8x64 unrelated-label edges. |
 | `graph_vector_candidate_set/adjacency_label_scan_l8_k64` | 374.8 ns (quick) | Benchmark-local old path: scans the same mixed-label adjacency entry and filters by label, showing the range lookup is ~8.4x faster for high-degree mixed-label candidates. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c64/c256/c1024/c4096_d1024` | 13.7 µs / 54.7 µs / 222.6 µs / 308.3 µs (quick) | Scores canonical candidate sets against one 1024-dim cosine query. Widths below 4,096 stay sequential; the 4,096-row uses chunked Rayon and is the production broad-candidate rerank threshold. |
 | `graph_vector_candidate_state/maintained_active_c512_total1024` | 343.9 ns (quick) | Materializes a provider-maintained 512-node current set from a 1,024-node fixture with stale nodes disqualified by `SUPERSEDED_BY`. |
 | `graph_vector_candidate_state/dynamic_active_scan_c512_total1024` | 12.79 µs (quick) | Benchmark-local query-time baseline: scans all 1,024 document nodes and checks outgoing `SUPERSEDED_BY`, showing maintained state is ~37x faster for this currentness slice. |
 | `graph_vector_candidate_set/set_intersection_l256_r256_o128` | 153.2 ns (quick) | Intersects two canonical 256-node sets with 128 overlapping ids using the merge path; this is the balanced graph/ANN/active-set composition primitive. |

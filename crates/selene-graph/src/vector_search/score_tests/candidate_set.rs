@@ -4,7 +4,8 @@ use crate::{
     VectorNodeSearchHit,
 };
 use selene_core::{
-    CancellationChecker, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric, db_string,
+    CancellationChecker, CancellationToken, GraphId, LabelSet, NodeId, PropertyMap, Value,
+    VectorMetric, db_string,
 };
 
 #[test]
@@ -224,6 +225,59 @@ fn score_vector_candidate_set_matches_explicit_node_scoring() {
         canonical.iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
         vec![ids[2], ids[1], ids[4]]
     );
+}
+
+#[test]
+fn score_vector_candidate_set_parallel_matches_sequential() {
+    let shared = SharedGraph::new(GraphId::new(989));
+    let label = db_string("vector.score.parallel_candidate_set.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let ids = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let mut ids = Vec::new();
+        for value in 0..16 {
+            ids.push(
+                mutator
+                    .create_node(
+                        LabelSet::single(label.clone()),
+                        props(
+                            &embedding,
+                            Value::Vector(vector(&[value as f32, (value % 3) as f32])),
+                        ),
+                    )
+                    .unwrap(),
+            );
+        }
+        txn.commit().unwrap();
+        ids
+    };
+    let query = vector(&[7.1, 1.0]);
+    let candidates = VectorCandidateSet::from_nodes(ids.iter().rev().copied());
+    let token = CancellationToken::new();
+
+    let sequential = shared
+        .score_vector_candidate_set_checked(
+            &embedding,
+            &query,
+            &candidates,
+            VectorMetric::SquaredEuclidean,
+            5,
+            CancellationChecker::new(Some(&token), None),
+        )
+        .unwrap();
+    let parallel = shared
+        .score_vector_candidate_set_checked(
+            &embedding,
+            &query,
+            &candidates,
+            VectorMetric::SquaredEuclidean,
+            5,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+
+    assert_eq!(parallel, sequential);
 }
 
 #[test]

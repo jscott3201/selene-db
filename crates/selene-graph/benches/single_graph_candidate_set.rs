@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, db_string};
+use selene_core::{
+    DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric, VectorValue,
+    db_string,
+};
 use selene_graph::{
     AdjacencyEdge, AdjacencyEntry, CandidateStateSpec, IndexProvider,
     MaintainedCandidateStateProvider, SeleneGraph, SharedGraph, VectorCandidateSet,
@@ -9,6 +12,8 @@ use selene_graph::{
 };
 
 const VECTOR_CANDIDATE_NEIGHBORS: usize = 64;
+const VECTOR_CANDIDATE_SCORE_DIMENSION: usize = 1024;
+const VECTOR_CANDIDATE_SCORE_WIDTHS: &[usize] = &[64, 256, 1024, 4096];
 const VECTOR_CANDIDATE_ALGEBRA_SET: usize = 256;
 const VECTOR_CANDIDATE_ALGEBRA_OVERLAP: usize = 128;
 const VECTOR_CANDIDATE_ASYM_SMALL_SET: usize = 8;
@@ -61,9 +66,40 @@ pub(super) fn bench_vector_candidate_set(c: &mut Criterion) {
         ),
         |b| b.iter(|| std::hint::black_box(adjacency.scan_count())),
     );
+    bench_candidate_set_scoring(&mut group);
     bench_candidate_set_algebra(&mut group);
     group.finish();
     bench_candidate_state(c);
+}
+
+fn bench_candidate_set_scoring(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+) {
+    for &width in VECTOR_CANDIDATE_SCORE_WIDTHS {
+        let fixture = VectorCandidateFixture::build(width, VECTOR_CANDIDATE_SCORE_DIMENSION, width);
+        group.throughput(Throughput::Elements(fixture.candidate_count() as u64));
+        group.bench_function(
+            BenchmarkId::new(
+                fixture.bench_id("score_candidate_set_cosine"),
+                fixture.candidate_count(),
+            ),
+            |b| {
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .score_vector_candidate_set(
+                            fixture.embedding_key(),
+                            fixture.query(),
+                            fixture.candidate_set(),
+                            VectorMetric::Cosine,
+                            10,
+                        )
+                        .expect("bench candidate scoring succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+    }
 }
 
 fn bench_candidate_state(c: &mut Criterion) {
@@ -422,6 +458,9 @@ struct VectorCandidateFixture {
     graph: SeleneGraph,
     anchor: NodeId,
     edge_label: DbString,
+    embedding_key: DbString,
+    query: VectorValue,
+    candidate_set: VectorCandidateSet,
 }
 
 impl VectorCandidateFixture {
@@ -432,7 +471,7 @@ impl VectorCandidateFixture {
         let embedding_key = db_string("embedding").expect("bench key is valid");
         let edge_label = db_string("DEPENDS_ON").expect("bench edge label is valid");
         let shared = SharedGraph::new(GraphId::new(19_000 + scale as u64));
-        let (anchor, candidate_count) = {
+        let (anchor, candidate_count, candidate_set) = {
             let mut txn = shared.begin_write();
             let mut mutator = txn.mutator();
             let anchor = mutator
@@ -457,7 +496,12 @@ impl VectorCandidateFixture {
             }
             txn.commit()
                 .expect("bench candidate fixture commit succeeds");
-            (anchor, first_nodes.len())
+            let candidate_count = first_nodes.len();
+            (
+                anchor,
+                candidate_count,
+                VectorCandidateSet::from_nodes(first_nodes),
+            )
         };
         Self {
             scale,
@@ -465,7 +509,17 @@ impl VectorCandidateFixture {
             graph: shared.read().as_ref().clone(),
             anchor,
             edge_label,
+            embedding_key,
+            query: super::vector_value(0, dimension),
+            candidate_set,
         }
+    }
+
+    fn bench_id(&self, prefix: &str) -> String {
+        format!(
+            "{prefix}_c{}_d{}",
+            self.candidate_count, VECTOR_CANDIDATE_SCORE_DIMENSION
+        )
     }
 
     const fn graph(&self) -> &SeleneGraph {
@@ -486,5 +540,17 @@ impl VectorCandidateFixture {
 
     const fn edge_label(&self) -> &DbString {
         &self.edge_label
+    }
+
+    const fn embedding_key(&self) -> &DbString {
+        &self.embedding_key
+    }
+
+    const fn query(&self) -> &VectorValue {
+        &self.query
+    }
+
+    const fn candidate_set(&self) -> &VectorCandidateSet {
+        &self.candidate_set
     }
 }
