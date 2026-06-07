@@ -600,22 +600,71 @@ pub(super) fn eval_in_list(
     let mut saw_unknown = false;
     for item in list {
         let item = evaluator::evaluate(item, binding, schema, ctx)?;
-        if matches!(item, Value::Null) {
-            saw_unknown = true;
-            continue;
-        }
-        let comparison = eval_equality(BinaryOp::Eq, &value, &item)?;
-        match comparison {
-            Value::Bool(true) => return Ok(Value::Bool(!negated)),
-            Value::Bool(false) => {}
-            Value::Null => saw_unknown = true,
-            _ => return data_exception("IN comparison did not produce boolean", span),
+        if eval_in_list_item(&value, &item, span, &mut saw_unknown)? {
+            return Ok(Value::Bool(!negated));
         }
     }
     if saw_unknown {
         Ok(Value::Null)
     } else {
         Ok(Value::Bool(negated))
+    }
+}
+
+pub(super) fn eval_in_list_expression(
+    value: Value,
+    list: Value,
+    negated: bool,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match list {
+        Value::Null => Ok(Value::Null),
+        Value::List(items) => eval_in_list_values(value, &items, negated, span),
+        _ => data_exception("IN right-hand side is not a list", span),
+    }
+}
+
+fn eval_in_list_values(
+    value: Value,
+    list: &[Value],
+    negated: bool,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    if matches!(value, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let mut saw_unknown = false;
+    for item in list {
+        if eval_in_list_item(&value, item, span, &mut saw_unknown)? {
+            return Ok(Value::Bool(!negated));
+        }
+    }
+    if saw_unknown {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::Bool(negated))
+    }
+}
+
+fn eval_in_list_item(
+    value: &Value,
+    item: &Value,
+    span: SourceSpan,
+    saw_unknown: &mut bool,
+) -> Result<bool, ExecutorError> {
+    if matches!(item, Value::Null) {
+        *saw_unknown = true;
+        return Ok(false);
+    }
+    let comparison = eval_equality(BinaryOp::Eq, value, item)?;
+    match comparison {
+        Value::Bool(true) => Ok(true),
+        Value::Bool(false) => Ok(false),
+        Value::Null => {
+            *saw_unknown = true;
+            Ok(false)
+        }
+        _ => data_exception("IN comparison did not produce boolean", span),
     }
 }
 

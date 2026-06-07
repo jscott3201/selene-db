@@ -354,6 +354,10 @@ fn validate_percentile_independent_refs_in_expr(
                 stack.extend(list.iter());
                 stack.push(operand);
             }
+            ValueExpr::InListExpression { operand, list, .. } => {
+                stack.push(list);
+                stack.push(operand);
+            }
             ValueExpr::Case {
                 branches,
                 else_branch,

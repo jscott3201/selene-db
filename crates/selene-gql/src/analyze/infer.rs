@@ -190,6 +190,41 @@ pub(crate) fn in_list(
     Ok(AnalyzedType::Resolved(GqlType::Boolean))
 }
 
+/// Infer an `IN` predicate whose right side is a list-valued expression.
+pub(crate) fn in_list_expression(
+    operand: &AnalyzedType,
+    operand_span: SourceSpan,
+    list: &AnalyzedType,
+    list_span: SourceSpan,
+) -> Result<AnalyzedType, AnalysisError> {
+    if let AnalyzedType::Resolved(list_ty) = list {
+        match list_ty {
+            GqlType::List(item_ty) => {
+                if let AnalyzedType::Resolved(operand_ty) = operand
+                    && meet_gql_types(operand_ty, item_ty).is_none()
+                {
+                    return Err(type_mismatch(
+                        TypeMismatchContext::InListUnification,
+                        ExpectedType::Specific(operand_ty.clone()),
+                        (**item_ty).clone(),
+                        list_span.max(operand_span),
+                    ));
+                }
+            }
+            GqlType::Null => {}
+            found => {
+                return Err(type_mismatch(
+                    TypeMismatchContext::InListUnification,
+                    ExpectedType::List,
+                    found.clone(),
+                    list_span,
+                ));
+            }
+        }
+    }
+    Ok(AnalyzedType::Resolved(GqlType::Boolean))
+}
+
 /// Infer a list literal type.
 pub(crate) fn list_literal(
     items: &[(AnalyzedType, SourceSpan)],

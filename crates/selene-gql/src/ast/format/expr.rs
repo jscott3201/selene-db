@@ -175,6 +175,19 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             }
             out.push(']');
         }
+        ValueExpr::InListExpression {
+            operand,
+            list,
+            negated,
+            ..
+        } => {
+            fmt_expr(out, operand)?;
+            if *negated {
+                out.push_str(" NOT");
+            }
+            out.push_str(" IN ");
+            fmt_expr(out, list)?;
+        }
         ValueExpr::AllDifferent { items, .. } => fmt_variadic(out, "ALL_DIFFERENT", items)?,
         ValueExpr::Same { items, .. } => fmt_variadic(out, "SAME", items)?,
         ValueExpr::PropertyExists { target, key, .. } => {

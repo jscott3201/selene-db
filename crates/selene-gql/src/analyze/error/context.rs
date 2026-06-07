@@ -131,6 +131,8 @@ pub enum ExpectedType {
     Comparable,
     /// List or string type.
     ListOrString,
+    /// List type.
+    List,
     /// Non-negative integer amount.
     LimitAmount,
     /// One specific GQL type.
@@ -145,6 +147,7 @@ impl std::fmt::Display for ExpectedType {
             Self::String => f.write_str("string"),
             Self::Comparable => f.write_str("comparable"),
             Self::ListOrString => f.write_str("list or string"),
+            Self::List => f.write_str("list"),
             Self::LimitAmount => f.write_str("non-negative integer"),
             Self::Specific(ty) => write!(f, "{ty:?}"),
         }

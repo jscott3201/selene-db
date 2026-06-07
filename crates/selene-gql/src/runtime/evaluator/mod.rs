@@ -32,7 +32,7 @@ use crate::{
 use crate::{SubqueryRegistry, analyze::ExprIdLookup, runtime::TxContext};
 
 use self::{
-    binary_ops::{eval_binary, eval_in_list, eval_unary},
+    binary_ops::{eval_binary, eval_in_list, eval_in_list_expression, eval_unary},
     case::eval_case,
     collections::{eval_list_access, eval_record_literal, record_field},
     predicates::{eval_all_different, eval_is_check, eval_property_exists, eval_same},
@@ -77,6 +77,16 @@ pub fn evaluate(
         } => {
             let value = evaluate(operand, binding, schema, ctx)?;
             eval_in_list(value, list, *negated, *span, binding, schema, ctx)
+        }
+        ValueExpr::InListExpression {
+            operand,
+            list,
+            negated,
+            span,
+        } => {
+            let value = evaluate(operand, binding, schema, ctx)?;
+            let list = evaluate(list, binding, schema, ctx)?;
+            eval_in_list_expression(value, list, *negated, *span)
         }
         ValueExpr::ListLiteral { items, .. } => items
             .iter()

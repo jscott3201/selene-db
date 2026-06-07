@@ -179,6 +179,10 @@ fn collect_aggregates(
                 collect_aggregates(item, analyzed, rewrite)?;
             }
         }
+        ValueExpr::InListExpression { operand, list, .. } => {
+            collect_aggregates(operand, analyzed, rewrite)?;
+            collect_aggregates(list, analyzed, rewrite)?;
+        }
         ValueExpr::Case {
             branches,
             else_branch,
@@ -351,6 +355,17 @@ fn rewrite_aggregate_refs(
         } => ValueExpr::InList {
             operand: Box::new(rewrite_aggregate_refs(operand, aggregate_names, analyzed)),
             list: rewrite_exprs(list, aggregate_names, analyzed),
+            negated: *negated,
+            span: *span,
+        },
+        ValueExpr::InListExpression {
+            operand,
+            list,
+            negated,
+            span,
+        } => ValueExpr::InListExpression {
+            operand: Box::new(rewrite_aggregate_refs(operand, aggregate_names, analyzed)),
+            list: Box::new(rewrite_aggregate_refs(list, aggregate_names, analyzed)),
             negated: *negated,
             span: *span,
         },
