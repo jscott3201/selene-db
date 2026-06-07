@@ -38,13 +38,13 @@ A projection answers all four needs. It pins a `meta.generation` value, applies 
 
 ```rust
 use selene_algorithms::{GraphProjection, ProjectionConfig};
-use selene_core::intern;
+use selene_core::db_string;
 
 let config = ProjectionConfig {
     name: "person_graph".to_string(),
-    node_labels: vec![intern("Person")?],
-    edge_labels: vec![intern("KNOWS")?, intern("WORKS_WITH")?],
-    weight_property: Some(intern("strength")?),
+    node_labels: vec![db_string("Person")?],
+    edge_labels: vec![db_string("KNOWS")?, db_string("WORKS_WITH")?],
+    weight_property: Some(db_string("strength")?),
 };
 
 let snapshot = graph.read();
