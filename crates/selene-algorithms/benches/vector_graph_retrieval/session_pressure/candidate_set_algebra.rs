@@ -3,7 +3,7 @@
 use selene_core::{CancellationChecker, VectorMetric};
 use selene_graph::VectorCandidateSet;
 
-use super::super::{MemoryRetrievalFixture, Query, RetrievalQuality};
+use super::super::{MemoryRetrievalFixture, Query, RankPrior, RetrievalQuality};
 use super::SessionStrategy;
 
 impl MemoryRetrievalFixture {
@@ -37,7 +37,8 @@ impl MemoryRetrievalFixture {
             .iter()
             .zip(batch_hits)
             .map(|(query, hits)| {
-                let selected = self.select_from_candidates(query, hits, true, false, true);
+                let selected =
+                    self.select_from_candidates(query, hits, true, RankPrior::None, true);
                 self.selected_quality(query, selected)
             })
             .fold(RetrievalQuality::default(), |mut total, next| {

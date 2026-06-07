@@ -8,7 +8,7 @@ use selene_core::NodeId;
 use crate::common::scale_label;
 
 use super::support::{FACTS_PER_TOPIC, RESULT_K, basis_points, vector_scales};
-use super::{MemoryRetrievalFixture, Query, RetrievalQuality, TopologyNoise};
+use super::{MemoryRetrievalFixture, Query, RankPrior, RetrievalQuality, TopologyNoise};
 
 const COMMUNITY_STRATEGIES: &[CommunityStrategy] = &[
     CommunityStrategy::NoisyWcc,
@@ -109,7 +109,7 @@ impl MemoryRetrievalFixture {
     ) -> Vec<NodeId> {
         let candidates = self.community_candidates(query, strategy);
         let hits = self.score_candidate_ids(query, candidates);
-        self.select_from_candidates(query, hits, true, false, true)
+        self.select_from_candidates(query, hits, true, RankPrior::None, true)
     }
 
     fn community_candidates(&self, query: &Query, strategy: CommunityStrategy) -> Vec<NodeId> {

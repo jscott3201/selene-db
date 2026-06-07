@@ -40,7 +40,7 @@ pub(super) fn pagerank_scores(
         None,
     )
     .expect("bench projection builds");
-    let scores = pagerank(
+    normalized_pagerank_scores(pagerank(
         &projection,
         PageRankConfig {
             damping: 0.85,
@@ -49,7 +49,44 @@ pub(super) fn pagerank_scores(
             parallelism: Parallelism::Sequential,
             personalization: None,
         },
-    );
+    ))
+}
+
+pub(super) fn personalized_pagerank_scores(
+    graph: &SeleneGraph,
+    label: &DbString,
+    support_edge: &DbString,
+    anchors: impl IntoIterator<Item = NodeId>,
+) -> Vec<HashMap<NodeId, f64>> {
+    let projection = GraphProjection::build(
+        graph,
+        &ProjectionConfig {
+            name: "memory_personalized_retrieval".to_owned(),
+            node_labels: vec![label.clone()],
+            edge_labels: vec![support_edge.clone()],
+            weight_property: None,
+        },
+        None,
+    )
+    .expect("bench personalized projection builds");
+    anchors
+        .into_iter()
+        .map(|anchor| {
+            normalized_pagerank_scores(pagerank(
+                &projection,
+                PageRankConfig {
+                    damping: 0.85,
+                    max_iter: 32,
+                    tolerance: 1e-6,
+                    parallelism: Parallelism::Sequential,
+                    personalization: Some(vec![(anchor, 1.0)]),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn normalized_pagerank_scores(scores: Vec<(NodeId, f64)>) -> HashMap<NodeId, f64> {
     let max = scores.iter().map(|(_, score)| *score).fold(0.0, f64::max);
     scores
         .into_iter()

@@ -1040,28 +1040,30 @@ expansion can recover evidence facts from the graph. Half of evidence nodes are
 stale by construction; `VALID_AT` edges identify current evidence, while
 `SUPERSEDED_BY` edges link stale evidence to a current replacement. This lets
 the fixture separate raw coverage from current-valid coverage, then compare
-filtering against graph repair. PageRank scores and WCC component candidates are
-computed in fixture setup through real `GraphProjection` paths; timed rows
-measure retrieval only. Expanded graph candidates are exact-scored through the
-native candidate scoring primitive before fact-diverse selection. The exact
-graph oracle uses exact vector search plus validity-aware graph expansion to
-bound achievable fixture quality. The companion `graph_vector_component_pressure`
-group widens graph-derived component pools before the same exact candidate
-scorer, exposing when graph-bounded scoring stops being cheap enough to beat
-ANN or compressed pre-scoring.
+filtering against graph repair. Uniform and personalized PageRank scores plus
+WCC component candidates are computed in fixture setup through real
+`GraphProjection` paths; timed rows measure retrieval only. Expanded graph
+candidates are exact-scored through the native candidate scoring primitive
+before fact-diverse selection. The exact graph oracle uses exact vector search
+plus validity-aware graph expansion to bound achievable fixture quality. The
+companion `graph_vector_component_pressure` group widens graph-derived component
+pools before the same exact candidate scorer, exposing when graph-bounded
+scoring stops being cheap enough to beat ANN or compressed pre-scoring.
 
 | Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
 |---|---:|---:|---|
-| `graph_vector_retrieval/vector_only/...covbp2459_curbp2459_precbp9677` | 206.8 µs | 502.5 µs (`covbp1328_curbp1308_precbp9687`) | Baseline ANN top-k: high topic precision, poor evidence coverage because summaries dominate nearest neighbors. |
-| `graph_vector_retrieval/pagerank_prior/...covbp2459_curbp2459_precbp9677` | 224.9 µs | 523.7 µs (`covbp1289_curbp1289_precbp9687`) | Negative result: PageRank reranking alone does not add missing evidence candidates and can slightly hurt coverage at 10k. |
-| `graph_vector_retrieval/graph_expand/...covbp9435_curbp4838_precbp9516` | 311.5 µs | 711.4 µs (`covbp8203_curbp4335_precbp8828`) | Raw one-hop expansion improves total coverage but often selects stale evidence; native candidate scoring trims rerank overhead. |
-| `graph_vector_retrieval/graph_expand_valid/...covbp9395_curbp9395_precbp9395` | 291.7 µs | 665.5 µs (`covbp7929_curbp7929_precbp8183`) | Validity-aware expansion prunes stale candidates, making current-valid coverage match total coverage while running faster than raw expansion. |
-| `graph_vector_retrieval/graph_expand_superseded/...covbp9395_curbp9395_precbp9395` | 282.7 µs | 728.2 µs (`covbp8203_curbp8203_precbp8339`) | Supersession-aware expansion repairs stale candidates through `SUPERSEDED_BY`; native candidate scoring makes this cheaper than validity filtering at 1k and narrows the 10k cost. |
-| `graph_vector_retrieval/graph_expand_valid_wide/...covbp9556_curbp9556_precbp9677` | 319.5 µs | 1.160 ms (`covbp8281_curbp8281_precbp9687`) | Wider 16-hit ANN seeding improves current-valid coverage and precision, but the larger candidate fanout costs ~75% more than narrow validity-aware expansion at 10k. |
-| `graph_vector_retrieval/graph_expand_superseded_wide/...covbp9556_curbp9556_precbp9677` | 310.8 µs | 1.162 ms (`covbp8281_curbp8281_precbp9687`) | Wide supersession matches wide validity quality on this fixture; supersession repair has no extra coverage upside once the wider seed already reaches current evidence. |
-| `graph_vector_retrieval/graph_component_filter/...covbp10000_curbp10000_precbp10000` | 50.5 µs | 109.8 µs (`covbp10000_curbp10000_precbp10000`) | WCC-derived component filtering exact-scores only the query anchor's graph component, reaching oracle quality while avoiding global exact scan and ANN fanout. This is the first strong positive graph-acceleration row. |
-| `graph_vector_retrieval/graph_expand_pagerank/...covbp9435_curbp4838_precbp9516` | 358.0 µs | 794.8 µs (`covbp8203_curbp4335_precbp8828`) | PageRank on top of raw expansion adds cost without current-valid uplift on this fixture; keep as a guardrail before promoting algorithm-prior policies. |
-| `graph_vector_retrieval/exact_graph_oracle/...covbp10000_curbp10000_precbp10000` | 1.414 ms | 22.2 ms | Exact vector search plus validity-aware expansion reaches the fixture oracle, but it is far slower at 10k and only suitable as a research bound. |
+| `graph_vector_retrieval/vector_only/...covbp2500_curbp2500_precbp10000` | 209.93 µs | 501.11 µs (`covbp1367_curbp1347_precbp9843`) | Baseline ANN top-k: high topic precision, poor evidence coverage because summaries dominate nearest neighbors. |
+| `graph_vector_retrieval/pagerank_prior/...covbp2500_curbp2500_precbp10000` | 233.87 µs | 528.91 µs (`covbp1445_curbp1425_precbp9843`) | Uniform PageRank reranking is still a weak prior: small 10k coverage gain over vector-only, no graph repair, and extra cost. |
+| `graph_vector_retrieval/personalized_pagerank_prior/...covbp3790_curbp3790_precbp10000` | 231.87 µs | 530.71 µs (`covbp1425_curbp1347_precbp9843`) | Query-anchor personalized PageRank improves ANN-only coverage at 1k, but does not beat uniform PageRank or graph repair at 10k. Keep it as a benchmark-only prior until stronger rows justify an API. |
+| `graph_vector_retrieval/graph_expand/...covbp10000_curbp5080_precbp10000` | 323.79 µs | 733.75 µs (`covbp8632_curbp4062_precbp9140`) | Raw one-hop expansion improves total coverage but often selects stale evidence; native candidate scoring trims rerank overhead. |
+| `graph_vector_retrieval/graph_expand_valid/...covbp10000_curbp10000_precbp10000` | 300.94 µs | 672.65 µs (`covbp8222_curbp8222_precbp8652`) | Validity-aware expansion prunes stale candidates, making current-valid coverage match total coverage while running faster than raw expansion. |
+| `graph_vector_retrieval/graph_expand_superseded/...covbp10000_curbp10000_precbp10000` | 293.97 µs | 755.50 µs (`covbp8632_curbp8632_precbp8886`) | Supersession-aware expansion repairs stale candidates through `SUPERSEDED_BY`; native candidate scoring makes this cheaper than validity filtering at 1k and improves current coverage at 10k. |
+| `graph_vector_retrieval/graph_expand_valid_wide/...covbp10000_curbp10000_precbp10000` | 332.23 µs | 1.2304 ms (`covbp8769_curbp8769_precbp9765`) | Wider 16-hit ANN seeding improves current-valid coverage and precision, but the larger candidate fanout costs substantially more than narrow validity-aware expansion at 10k. |
+| `graph_vector_retrieval/graph_expand_superseded_wide/...covbp10000_curbp10000_precbp10000` | 324.86 µs | 1.2516 ms (`covbp8769_curbp8769_precbp9765`) | Wide supersession matches wide validity quality on this fixture; supersession repair has no extra coverage upside once the wider seed already reaches current evidence. |
+| `graph_vector_retrieval/graph_component_filter/...covbp10000_curbp10000_precbp10000` | 54.014 µs | 115.96 µs (`covbp10000_curbp10000_precbp10000`) | WCC-derived component filtering exact-scores only the query anchor's graph component, reaching oracle quality while avoiding global exact scan and ANN fanout. This remains the strongest positive graph-acceleration row. |
+| `graph_vector_retrieval/graph_expand_pagerank/...covbp10000_curbp5080_precbp10000` | 385.72 µs | 847.47 µs (`covbp8632_curbp4062_precbp9140`) | Uniform PageRank on top of raw expansion adds cost without current-valid uplift; keep as a guardrail before promoting algorithm-prior policies. |
+| `graph_vector_retrieval/graph_expand_personalized_pagerank/...covbp10000_curbp10000_precbp10000` | 391.32 µs | 850.10 µs (`covbp8632_curbp1406_precbp9140`) | Personalized PageRank can repair current coverage on the 1k fixture, but it badly underperforms explicit validity/supersession repair at 10k. This is negative evidence for PageRank-only currentness policy. |
+| `graph_vector_retrieval/exact_graph_oracle/...covbp10000_curbp10000_precbp10000` | 1.4716 ms | 22.548 ms | Exact vector search plus validity-aware expansion reaches the fixture oracle, but it is far slower at 10k and only suitable as a research bound. |
 
 Local-only embedding rows are disabled unless `SELENE_EMBEDDING_BENCH=1` (or
 the legacy `SELENE_OMLX_EMBEDDING_BENCH=1`) is set. They call the developer's

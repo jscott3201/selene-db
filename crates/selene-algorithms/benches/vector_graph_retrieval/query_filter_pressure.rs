@@ -9,7 +9,7 @@ use selene_graph::VectorCandidateSet;
 use crate::common::scale_label;
 
 use super::support::{FACTS_PER_TOPIC, RESULT_K, basis_points, vector_scales};
-use super::{MemoryRetrievalFixture, Query, RetrievalQuality, TopologyNoise};
+use super::{MemoryRetrievalFixture, Query, RankPrior, RetrievalQuality, TopologyNoise};
 
 const QUERY_FILTER_STRATEGIES: &[QueryFilterStrategy] = &[
     QueryFilterStrategy::NoisyWcc,
@@ -175,7 +175,8 @@ impl MemoryRetrievalFixture {
             .iter()
             .zip(batch_hits)
             .map(|(query, hits)| {
-                let selected = self.select_from_candidates(query, hits, true, false, true);
+                let selected =
+                    self.select_from_candidates(query, hits, true, RankPrior::None, true);
                 self.selected_quality(query, selected)
             })
             .fold(RetrievalQuality::default(), |mut total, next| {
@@ -209,7 +210,7 @@ impl MemoryRetrievalFixture {
     ) -> Vec<NodeId> {
         let candidates = self.query_filter_candidates(query, strategy);
         let hits = self.score_candidate_ids(query, candidates);
-        self.select_from_candidates(query, hits, true, false, true)
+        self.select_from_candidates(query, hits, true, RankPrior::None, true)
     }
 
     fn query_filter_candidate_set_candidates(

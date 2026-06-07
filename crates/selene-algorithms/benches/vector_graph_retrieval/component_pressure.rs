@@ -7,7 +7,7 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use crate::common::scale_label;
 
 use super::support::{FACTS_PER_TOPIC, RESULT_K, basis_points, vector_scales};
-use super::{MemoryRetrievalFixture, Query, RetrievalQuality};
+use super::{MemoryRetrievalFixture, Query, RankPrior, RetrievalQuality};
 
 const COMPONENT_PRESSURE_WIDTHS: &[usize] = &[1, 4, 16, 64];
 
@@ -74,7 +74,7 @@ impl MemoryRetrievalFixture {
     fn select_component_pool(&self, query: &Query, width: usize) -> Vec<selene_core::NodeId> {
         let candidates = self.component_pool_candidates(query, width);
         let hits = self.score_candidate_ids(query, candidates);
-        self.select_from_candidates(query, hits, true, false, true)
+        self.select_from_candidates(query, hits, true, RankPrior::None, true)
     }
 
     fn component_pool_candidates(&self, query: &Query, width: usize) -> Vec<selene_core::NodeId> {
