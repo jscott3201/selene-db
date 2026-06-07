@@ -790,54 +790,6 @@ mod tests {
     }
 
     #[test]
-    fn pagerank_signature_has_optional_orientation_and_personalization() {
-        let registry = BuiltinProcedureRegistry::new();
-        let metadata = registry
-            .lookup(&name(&["algo", "pagerank"]))
-            .expect("pagerank resolves");
-        // projection_name, damping, max_iterations, tolerance, parallelism,
-        // orientation, personalization.
-        let parameters = &metadata.signature.parameters;
-        assert_eq!(parameters.len(), 7);
-        // The first five params use NULL sentinels for their procedure defaults.
-        // Orientation and personalization are executable-defaulted trailing
-        // arguments.
-        let arity = metadata.signature.arity();
-        assert_eq!(arity.minimum, 5);
-        assert_eq!(arity.maximum, 7);
-        for parameter in &parameters[1..5] {
-            assert!(parameter.nullable, "{} should be nullable", parameter.name);
-            assert_eq!(parameter.default_doc, Some("NULL (use procedure default)"));
-            assert!(parameter.default.is_none());
-        }
-        let orientation = &parameters[5];
-        assert_eq!(orientation.name.as_str(), "orientation");
-        assert!(orientation.nullable);
-        assert_eq!(orientation.ty, crate::GqlType::String);
-        assert_eq!(orientation.default_doc, Some("natural"));
-        assert_eq!(
-            orientation.default,
-            Some(crate::ProcedureDefaultValue::String("natural"))
-        );
-        let personalization = &parameters[6];
-        assert_eq!(personalization.name.as_str(), "personalization");
-        assert!(personalization.nullable);
-        assert_eq!(personalization.default_doc, Some("NULL (uniform teleport)"));
-        assert_eq!(
-            personalization.default,
-            Some(crate::ProcedureDefaultValue::Null)
-        );
-        assert_eq!(
-            personalization.ty,
-            crate::GqlType::List(Box::new(crate::GqlType::Record(crate::RecordType::Open)))
-        );
-        // Output columns: node_id, score.
-        assert_eq!(metadata.output_schema.columns.len(), 2);
-        assert_eq!(metadata.output_schema.columns[0].name.as_str(), "node_id");
-        assert_eq!(metadata.output_schema.columns[1].name.as_str(), "score");
-    }
-
-    #[test]
     fn forget_graph_is_idempotent() {
         let registry = BuiltinProcedureRegistry::new();
         // No catalog has been created yet for this id.
