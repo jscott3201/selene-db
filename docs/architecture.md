@@ -38,7 +38,7 @@ and is consumed via `[dev-dependencies]`.
 
 | Crate | Depends on | Owns |
 |---|---|---|
-| `selene-core` | none | Foundation types: `Value` (the 4 mandatory ISO types + `Value::Extended` + `Value::ExternalString(Arc<str>)`), `IStr` interner, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, GQLSTATUS table, ISO feature register. |
+| `selene-core` | none | Foundation types: `Value` (mandatory ISO scalar values plus numeric, temporal, reference, byte-string, vector, JSON, list, record, path, and extension variants), `DbString`, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, GQLSTATUS table, ISO feature register. |
 | `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + imbl storage primitives, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
 | `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`, D17). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
 | `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the D20 snapshot harness. Independent of `selene-gql`. |
