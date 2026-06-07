@@ -135,6 +135,10 @@ future ANN layer; current kernels use safe `wide::f64x4` accumulation over the
 existing `f64` score semantics, so these rows are the SIMD/Rayon improvement
 tripwire. The `cosine_omlx_*` exact-top-k rows pin product-shaped local embedding
 dimensions and candidate widths without depending on the localhost oMLX service.
+The `core_vector_gpu_baseline/*` rows are CPU/SIMD and host-pack envelopes for
+future optional GPU acceleration: a Metal/CUDA backend must beat these rerank
+times after any setup and host/device transfer costs, not just win a kernel
+microbenchmark.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -152,6 +156,14 @@ dimensions and candidate widths without depending on the localhost oMLX service.
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x1024_k10` | 12.2 µs / 47.6 µs / 188.3 µs / 750.7 µs (quick) | Product-shaped cosine rerank envelope for the 1024-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x2560_k10` | 29.6 µs / 116.6 µs / 465.1 µs / 1.856 ms (quick) | Product-shaped cosine rerank envelope for the 2560-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x4096_k10` | 47.0 µs / 185.5 µs / 739.3 µs / 2.959 ms (quick) | Product-shaped cosine rerank envelope for the 4096-dim local embedding model. |
+| `core_vector_gpu_baseline/cpu_cosine_rerank_q1x4096x1024_k10` | 754.46 µs (quick) | CPU/SIMD exact rerank over one 1024-dim query and 4,096 candidates; first GPU break-even row. |
+| `core_vector_gpu_baseline/host_pack_f32_q1x4096x1024_k10` | 336.07 µs (quick) | Lower-bound host packing copy for the same q1/c4096/d1024 input window, before real GPU transfer/setup. |
+| `core_vector_gpu_baseline/cpu_cosine_rerank_q8x4096x1024_k10` | 6.022 ms (quick) | Batched CPU/SIMD exact rerank over eight 1024-dim queries and a shared 4,096-candidate window. |
+| `core_vector_gpu_baseline/host_pack_f32_q8x4096x1024_k10` | 345.64 µs (quick) | Host-pack lower bound for q8/c4096/d1024; candidate payload dominates query payload. |
+| `core_vector_gpu_baseline/cpu_cosine_rerank_q8x4096x2560_k10` | 14.901 ms (quick) | Batched CPU/SIMD exact rerank over eight 2560-dim queries and 4,096 candidates; representative local larger embedding row. |
+| `core_vector_gpu_baseline/host_pack_f32_q8x4096x2560_k10` | 869.65 µs (quick) | Host-pack lower bound for q8/c4096/d2560. |
+| `core_vector_gpu_baseline/cpu_cosine_rerank_q16x4096x1024_k10` | 12.063 ms (quick) | Larger query-batch CPU/SIMD rerank envelope for GPU-batch break-even tests. |
+| `core_vector_gpu_baseline/host_pack_f32_q16x4096x1024_k10` | 337.98 µs (quick) | Host-pack lower bound for q16/c4096/d1024. |
 
 ## §2 selene-graph — read hot paths
 
