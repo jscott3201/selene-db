@@ -1020,9 +1020,19 @@ topic precision as `precbp{basis points}`.
 | `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
-| `algo/louvain` | 10k | 1.723 ms | n/a | Sequential-only (V170). |
-| `algo/louvain` | 50k | 9.294 ms | n/a | |
-| `algo/louvain` | 100k | 19.31 ms | n/a | |
+| `algo/louvain` | 10k | 1.652 ms | n/a | Sequential-only; community degree sums now use dense vector storage. |
+| `algo/louvain` | 50k | 9.015 ms | n/a | |
+| `algo/louvain` | 100k | 18.57 ms | n/a | |
+
+PR-local full Louvain dense-accumulator A/B:
+
+Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'algo/louvain'`
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/louvain/10k` | 1.723 ms | 1.6519 ms | Replaces dense-key community-degree hash lookups with vector indexing. |
+| `algo/louvain/50k` | 9.294 ms | 9.0146 ms | Same deterministic single-level Louvain semantics. |
+| `algo/louvain/100k` | 19.31 ms | 18.569 ms | Modest improvement; Louvain remains sequential-only. |
 
 ### §6b `projection` — CSR foundation (ALGO-01/02/05)
 
