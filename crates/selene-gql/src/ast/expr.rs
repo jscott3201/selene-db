@@ -126,8 +126,9 @@ pub enum ValueExpr {
     },
     /// `ALL_DIFFERENT(...)` predicate.
     ///
-    /// selene-db extension: ISO/IEC 39075:2024 section 19.11 takes element
-    /// variable references; this AST keeps the broader expression shape.
+    /// ISO/IEC 39075:2024 section 19.11 takes element variable references.
+    /// The AST keeps a broad item shape so parser construction stays regular;
+    /// analysis enforces the ISO argument rule.
     AllDifferent {
         /// Items to compare.
         items: Vec<ValueExpr>,
@@ -136,8 +137,9 @@ pub enum ValueExpr {
     },
     /// `SAME(...)` predicate.
     ///
-    /// selene-db extension: ISO/IEC 39075:2024 section 19.12 takes element
-    /// variable references; this AST keeps the broader expression shape.
+    /// ISO/IEC 39075:2024 section 19.12 takes element variable references.
+    /// The AST keeps a broad item shape so parser construction stays regular;
+    /// analysis enforces the ISO argument rule.
     Same {
         /// Items to compare.
         items: Vec<ValueExpr>,

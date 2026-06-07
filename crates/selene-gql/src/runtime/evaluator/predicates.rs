@@ -4,15 +4,15 @@
 //! `IS` sub-kinds, graph predicate functions, `ALL_DIFFERENT`, `SAME`, and
 //! `PROPERTY_EXISTS`. Predicate negation preserves `NULL` as unknown.
 
-use selene_core::{DbString, Value};
+use selene_core::{DbString, EdgeId, NodeId, Value};
 
 use crate::{
-    BinaryOp, IsCheckKind, LabelExpr, SourceSpan, TruthValue, ValueExpr,
-    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
+    IsCheckKind, LabelExpr, SourceSpan, TruthValue, ValueExpr,
+    runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
 use super::{
-    binary_ops::{data_exception, eval_equality, string_slice},
+    binary_ops::{data_exception, data_exception_with, string_slice},
     evaluate, property_access, string_fns,
 };
 use crate::runtime::scan;
@@ -67,36 +67,23 @@ pub(super) fn eval_all_different(
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
-    let values = evaluate_items(items, binding, schema, ctx)?;
-    let mut saw_unknown = false;
-    for (left_index, lhs) in values.iter().enumerate() {
-        if matches!(lhs, Value::Null) {
-            saw_unknown = true;
-            continue;
-        }
-        for rhs in &values[left_index + 1..] {
-            if matches!(rhs, Value::Null) {
-                saw_unknown = true;
-                continue;
-            }
-            match eval_equality(BinaryOp::Eq, lhs, rhs)? {
-                Value::Bool(true) => return Ok(Value::Bool(false)),
-                Value::Bool(false) => {}
-                Value::Null => saw_unknown = true,
-                _ => {
-                    return data_exception(
-                        "ALL_DIFFERENT comparison did not produce boolean",
-                        span,
-                    );
+    let references = evaluate_graph_references("ALL_DIFFERENT", items, span, binding, schema, ctx)?;
+    for (left_index, lhs) in references.iter().enumerate() {
+        for rhs in &references[left_index + 1..] {
+            match (*lhs, *rhs) {
+                (GraphReference::Node(left), GraphReference::Node(right)) if left == right => {
+                    return Ok(Value::Bool(false));
                 }
+                (GraphReference::Edge(left), GraphReference::Edge(right)) if left == right => {
+                    return Ok(Value::Bool(false));
+                }
+                (GraphReference::Node(_), GraphReference::Node(_))
+                | (GraphReference::Edge(_), GraphReference::Edge(_)) => {}
+                _ => return values_not_comparable("ALL_DIFFERENT", span),
             }
         }
     }
-    if saw_unknown {
-        Ok(Value::Null)
-    } else {
-        Ok(Value::Bool(true))
-    }
+    Ok(Value::Bool(true))
 }
 
 pub(super) fn eval_same(
@@ -106,37 +93,68 @@ pub(super) fn eval_same(
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
-    let values = evaluate_items(items, binding, schema, ctx)?;
-    let Some(first) = values.first() else {
+    let references = evaluate_graph_references("SAME", items, span, binding, schema, ctx)?;
+    let Some(first) = references.first().copied() else {
         return Ok(Value::Bool(true));
     };
-    if matches!(first, Value::Null) {
-        return Ok(Value::Null);
-    }
-    match first {
-        Value::NodeRef(first_id) => {
-            for value in &values[1..] {
-                match value {
-                    Value::NodeRef(id) if id == first_id => {}
-                    Value::NodeRef(_) => return Ok(Value::Bool(false)),
-                    Value::Null => return Ok(Value::Null),
-                    _ => return data_exception("SAME operands must all be node references", span),
-                }
-            }
+    for value in &references[1..] {
+        match (first, *value) {
+            (GraphReference::Node(left), GraphReference::Node(right)) if left == right => {}
+            (GraphReference::Edge(left), GraphReference::Edge(right)) if left == right => {}
+            (GraphReference::Node(_), GraphReference::Node(_))
+            | (GraphReference::Edge(_), GraphReference::Edge(_)) => return Ok(Value::Bool(false)),
+            _ => return values_not_comparable("SAME", span),
         }
-        Value::EdgeRef(first_id) => {
-            for value in &values[1..] {
-                match value {
-                    Value::EdgeRef(id) if id == first_id => {}
-                    Value::EdgeRef(_) => return Ok(Value::Bool(false)),
-                    Value::Null => return Ok(Value::Null),
-                    _ => return data_exception("SAME operands must all be edge references", span),
-                }
-            }
-        }
-        _ => return data_exception("SAME operands must be graph element references", span),
     }
     Ok(Value::Bool(true))
+}
+
+#[derive(Clone, Copy)]
+enum GraphReference {
+    Node(NodeId),
+    Edge(EdgeId),
+}
+
+fn evaluate_graph_references(
+    predicate: &'static str,
+    items: &[ValueExpr],
+    span: SourceSpan,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<GraphReference>, ExecutorError> {
+    evaluate_items(items, binding, schema, ctx)?
+        .iter()
+        .map(|value| graph_reference(predicate, value, span))
+        .collect()
+}
+
+fn graph_reference(
+    predicate: &'static str,
+    value: &Value,
+    span: SourceSpan,
+) -> Result<GraphReference, ExecutorError> {
+    match value {
+        Value::NodeRef(id) => Ok(GraphReference::Node(*id)),
+        Value::EdgeRef(id) => Ok(GraphReference::Edge(*id)),
+        Value::Null => data_exception_with(
+            DataExceptionSubclass::NullValueNotAllowed,
+            format!("{predicate} operands cannot be NULL"),
+            span,
+        ),
+        _ => data_exception(
+            format!("{predicate} operands must be graph element references"),
+            span,
+        ),
+    }
+}
+
+fn values_not_comparable<T>(predicate: &'static str, span: SourceSpan) -> Result<T, ExecutorError> {
+    data_exception_with(
+        DataExceptionSubclass::ValuesNotComparable,
+        format!("{predicate} operands are not comparable graph element references"),
+        span,
+    )
 }
 
 pub(super) fn eval_property_exists(

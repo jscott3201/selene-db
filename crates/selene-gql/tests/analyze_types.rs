@@ -31,6 +31,16 @@ fn assert_property_exists_target_error(err: AnalysisError) {
     assert_eq!(err.gqlstatus().as_str(), "42002");
 }
 
+fn assert_graph_predicate_reference_error(err: AnalysisError) {
+    match &err {
+        AnalysisError::InvalidReference { message, .. } => {
+            assert!(message.contains("singleton node or edge variable references"));
+        }
+        other => panic!("expected graph predicate argument error, got {other:?}"),
+    }
+    assert_eq!(err.gqlstatus().as_str(), "42002");
+}
+
 fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
     let AnalyzedStatementKind::Query(query) = &analyzed.statement else {
         panic!("expected query statement");
@@ -165,6 +175,42 @@ fn property_exists_rejects_projected_alias_target() {
     let err = analyze_one("MATCH (n) WITH n AS x RETURN PROPERTY_EXISTS(x, 'name') AS ok")
         .expect_err("WITH alias is not an element variable reference");
     assert_property_exists_target_error(err);
+}
+
+#[test]
+fn graph_identity_predicates_accept_singleton_element_variables() {
+    let analyzed =
+        analyze_one("MATCH (a), (b) RETURN ALL_DIFFERENT(a, b) AS diff, SAME(a, b) AS same")
+            .expect("node variable arguments analyze");
+    assert_eq!(
+        projection_type(&analyzed, "diff"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+    assert_eq!(
+        projection_type(&analyzed, "same"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+
+    let edge = analyze_one("MATCH ()-[r]->(), ()-[s]->() RETURN ALL_DIFFERENT(r, s) AS diff")
+        .expect("edge variable arguments analyze");
+    assert_eq!(
+        projection_type(&edge, "diff"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+}
+
+#[test]
+fn graph_identity_predicates_reject_non_element_references() {
+    for source in [
+        "RETURN ALL_DIFFERENT(1, 2) AS ok",
+        "RETURN SAME({foo: 1}, {foo: 1}) AS ok",
+        "MATCH (n) RETURN ALL_DIFFERENT(n.payload, n) AS ok",
+        "MATCH (n) WITH n AS x RETURN SAME(x, x) AS ok",
+        "MATCH (a)-[r:K*1..2]->(b) RETURN SAME(r, b) AS ok",
+    ] {
+        let err = analyze_one(source).expect_err("invalid graph predicate argument is rejected");
+        assert_graph_predicate_reference_error(err);
+    }
 }
 
 #[test]
