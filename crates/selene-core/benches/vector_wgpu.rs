@@ -10,6 +10,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[path = "vector_wgpu/case.rs"]
+mod vector_wgpu_case;
 #[path = "vector_wgpu/fixture.rs"]
 mod vector_wgpu_fixture;
 #[path = "vector_wgpu/shader.rs"]
@@ -21,7 +23,8 @@ use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use vector_wgpu_support::{CASES, WgpuBench};
+use vector_wgpu_case::cases;
+use vector_wgpu_support::WgpuBench;
 
 fn bench_config() -> Criterion {
     let (samples, ms) = match std::env::var("SELENE_BENCH_PROFILE").ok().as_deref() {
@@ -37,7 +40,7 @@ fn bench_config() -> Criterion {
 #[allow(clippy::print_stderr)]
 fn bench_vector_wgpu(c: &mut Criterion) {
     let mut group = c.benchmark_group("core_vector_wgpu_prototype");
-    for &case in CASES {
+    for case in cases() {
         let mut bench = match pollster::block_on(WgpuBench::build(case)) {
             Ok(bench) => bench,
             Err(error) => {

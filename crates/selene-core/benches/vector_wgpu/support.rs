@@ -1,67 +1,11 @@
 use std::sync::mpsc;
 
-use criterion::BenchmarkId;
 use selene_core::VectorTopK;
 use wgpu::util::DeviceExt;
 
+use crate::vector_wgpu_case::{Case, TOP_K};
 use crate::vector_wgpu_fixture::{Fixture, top_k_indices_from_scores};
 use crate::vector_wgpu_shader::{BLOCK_TOP_K_SHADER, SCORE_SHADER};
-
-pub(crate) const TOP_K: usize = 10;
-const CANDIDATE_BLOCK: usize = 256;
-
-pub(crate) const CASES: &[Case] = &[
-    Case {
-        queries: 8,
-        candidates: 4096,
-        dimension: 1024,
-    },
-    Case {
-        queries: 16,
-        candidates: 4096,
-        dimension: 1024,
-    },
-];
-
-#[derive(Clone, Copy)]
-pub(crate) struct Case {
-    pub(crate) queries: usize,
-    pub(crate) candidates: usize,
-    pub(crate) dimension: usize,
-}
-
-impl Case {
-    pub(crate) fn id(self, name: &str) -> BenchmarkId {
-        BenchmarkId::new(
-            name,
-            format!("q{}x{}x{}", self.queries, self.candidates, self.dimension),
-        )
-    }
-
-    pub(crate) const fn score_count(self) -> usize {
-        self.queries * self.candidates
-    }
-
-    pub(crate) const fn partial_count(self) -> usize {
-        self.queries * self.block_count() * TOP_K
-    }
-
-    const fn output_bytes(self) -> u64 {
-        (self.score_count() * size_of::<f32>()) as u64
-    }
-
-    const fn block_count(self) -> usize {
-        self.candidates.div_ceil(CANDIDATE_BLOCK)
-    }
-
-    const fn partial_f32_bytes(self) -> u64 {
-        (self.partial_count() * size_of::<f32>()) as u64
-    }
-
-    const fn partial_u32_bytes(self) -> u64 {
-        (self.partial_count() * size_of::<u32>()) as u64
-    }
-}
 
 pub(crate) struct WgpuBench {
     device: wgpu::Device,
@@ -101,11 +45,12 @@ impl WgpuBench {
             })
             .await
             .map_err(|error| format!("request adapter failed: {error}"))?;
+        let required_limits = required_limits(case, adapter.limits())?;
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("selene vector wgpu prototype"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                required_limits,
                 ..Default::default()
             })
             .await
@@ -560,6 +505,27 @@ fn sample_indices(case: Case) -> [usize; 5] {
         case.score_count() / 2,
         case.score_count() - 1,
     ]
+}
+
+fn required_limits(case: Case, adapter_limits: wgpu::Limits) -> Result<wgpu::Limits, String> {
+    let mut limits = wgpu::Limits::downlevel_defaults();
+    let storage_bytes = case.largest_storage_bytes();
+    if storage_bytes > adapter_limits.max_storage_buffer_binding_size {
+        return Err(format!(
+            "case requires {storage_bytes} byte storage binding but adapter supports {}",
+            adapter_limits.max_storage_buffer_binding_size
+        ));
+    }
+    if storage_bytes > adapter_limits.max_buffer_size {
+        return Err(format!(
+            "case requires {storage_bytes} byte buffer but adapter supports {}",
+            adapter_limits.max_buffer_size
+        ));
+    }
+    limits.max_storage_buffer_binding_size =
+        limits.max_storage_buffer_binding_size.max(storage_bytes);
+    limits.max_buffer_size = limits.max_buffer_size.max(storage_bytes);
+    Ok(limits)
 }
 
 fn create_buffer(

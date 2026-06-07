@@ -38,6 +38,7 @@ run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-sc
 run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
 run-benches.sh --profile quick --bench vector_wgpu --filter core_vector_wgpu_prototype
+SELENE_WGPU_STRESS_CASES=1 run-benches.sh --profile quick --bench vector_wgpu --filter q8x100000x1024
 SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 run-benches.sh --bench vector_index_rebuild --allocator system   # allocator A/B without mimalloc
 run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
@@ -147,7 +148,10 @@ layout-only speedup from prepacked contiguous candidates plus cached norms.
 candidate vectors resident in GPU buffers, optionally rewrites the query batch,
 scores every query/candidate pair with a WGSL cosine kernel, reads all scores
 back to the host, and validates a score prefix against the CPU oracle during
-setup. It is not a production accelerator API.
+setup. The default case list includes q8/q16 over 4,096 candidates, a
+2560-dimension larger-embedding row, and q8/q16 over 10,000 candidates. A
+100,000-candidate q8/d1024 row is opt-in with `SELENE_WGPU_STRESS_CASES=1`.
+It is not a production accelerator API.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -195,6 +199,21 @@ setup. It is not a production accelerator API.
 | `core_vector_wgpu_prototype/cold_candidate_upload_score_readback/q16x4096x1024` | 5.9342 ms (quick) | Cold-shard q16 path with candidate upload, query write, GPU scoring, and score readback. Still beats the q16 CPU resident-slab comparator, but the upload tax is visible. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_readback_cpu_topk/q16x4096x1024` | 2.7005 ms (quick) | Query-copy GPU score+readback followed by CPU `VectorTopK` for all 16 queries. The extra ranking step is small compared with scoring/readback. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_gpu_block_topk_cpu_merge/q16x4096x1024` | 3.0623 ms (quick) | Same block-local top-k path at q16. In the same quick run it was effectively tied with full score readback (`3.0798 ms`) and ahead of full readback plus CPU top-k (`3.2836 ms`), but this reducer is still a benchmark probe rather than production shape. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback/q8x4096x2560` | 3.8233 ms (quick) | Larger local embedding dimension with warm resident candidates and full score readback. Still well below the q8/d2560 CPU resident-slab comparator (`13.867 ms`). |
+| `core_vector_wgpu_prototype/resident_preloaded_score_readback/q8x4096x2560` | 3.8640 ms (quick) | Same q8/d2560 scoring/readback path with queries already resident; query-copy remains negligible relative to scoring/readback. |
+| `core_vector_wgpu_prototype/cold_candidate_upload_score_readback/q8x4096x2560` | 8.7333 ms (quick) | Cold upload for the 2560-dim candidate slab. Upload tax is visible but still below the CPU resident-slab comparator. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback_cpu_topk/q8x4096x2560` | 3.9350 ms (quick) | Query-copy score/readback plus CPU `VectorTopK`; ranking overhead remains small at 4,096 candidates. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_gpu_block_topk_cpu_merge/q8x4096x2560` | 4.6799 ms (quick) | Block-local top-k still trails full score readback at this candidate width, even with larger vector dimensions. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback/q8x10000x1024` | 4.4663 ms (quick) | Warm resident 10,000-candidate q8 row. Larger candidate windows improve throughput but full score readback still beats the simple block reducer. |
+| `core_vector_wgpu_prototype/resident_preloaded_score_readback/q8x10000x1024` | 4.1366 ms (quick) | Preloaded query q8/10k row; still close to query-copy because query payload is tiny. |
+| `core_vector_wgpu_prototype/cold_candidate_upload_score_readback/q8x10000x1024` | 8.7483 ms (quick) | Cold upload for 10,000 1024-dim candidates. Candidate upload roughly doubles the warm resident path. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback_cpu_topk/q8x10000x1024` | 4.1849 ms (quick) | CPU top-k over 80,000 returned scores remains a small part of the total row. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_gpu_block_topk_cpu_merge/q8x10000x1024` | 5.0904 ms (quick) | Simple block-local top-k remains slower than full score readback at q8/10k. A fused or parallel reducer is the next meaningful shader experiment. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback/q16x10000x1024` | 7.6021 ms (quick) | Warm resident 160,000-pair q16/10k row. This is the first default row where block top-k nears full readback plus CPU ranking. |
+| `core_vector_wgpu_prototype/resident_preloaded_score_readback/q16x10000x1024` | 7.6760 ms (quick) | Same q16/10k path with preloaded queries; effectively tied with query-copy at this scale. |
+| `core_vector_wgpu_prototype/cold_candidate_upload_score_readback/q16x10000x1024` | 11.219 ms (quick) | Cold upload for the q16/10k row; upload still matters but scales better as query batch size rises. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback_cpu_topk/q16x10000x1024` | 7.9875 ms (quick) | Full score readback plus CPU ranking over 160,000 scores. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_gpu_block_topk_cpu_merge/q16x10000x1024` | 8.0790 ms (quick) | Block-local top-k is now close to full readback plus CPU ranking, but still not better enough to justify productionizing the current serial reducer. |
 
 ## §2 selene-graph — read hot paths
 

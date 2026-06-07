@@ -1,6 +1,6 @@
 use selene_core::VectorTopK;
 
-use crate::vector_wgpu_support::{Case, TOP_K};
+use crate::vector_wgpu_case::{Case, TOP_K};
 
 pub(crate) struct Fixture {
     pub(crate) case: Case,
