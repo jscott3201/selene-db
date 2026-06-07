@@ -10,7 +10,7 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 41 platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 45 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
 //! `selene.compaction_stats`,
 //! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
@@ -32,6 +32,10 @@
 //! `selene.vector_index_stats`, `selene.text_index_stats`,
 //! `selene.json_contains_nodes`, `selene.json_path_exists_nodes`,
 //! `selene.json_path_contains_nodes`, `selene.json_path_value_nodes`,
+//! `selene.json_contains_candidate_nodes`,
+//! `selene.json_path_exists_candidate_nodes`,
+//! `selene.json_path_contains_candidate_nodes`,
+//! `selene.json_path_value_candidate_nodes`,
 //! `selene.rebuild_vector_indexes`,
 //! `selene.rebuild_recommended_vector_indexes`, `selene.compact`,
 //! `selene.create_vector_index`,
@@ -39,7 +43,7 @@
 //! `selene.drop_text_index`, `selene.text_search_nodes`,
 //! `selene.text_score_nodes`, `selene.text_score_nodes_batch`,
 //! `selene.text_score_candidate_state_expanded_batch`) are registered here,
-//! bringing the total to 60;
+//! bringing the total to 64;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -99,8 +103,8 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 41 `selene.*`
-        // platform built-ins (handles 20..=60), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 45 `selene.*`
+        // platform built-ins (handles 20..=64), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
@@ -776,7 +780,7 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=60).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=64).collect::<Vec<_>>());
     }
 
     #[test]

@@ -29,6 +29,7 @@ pub mod graph_types;
 pub mod id_allocator;
 pub mod index_provider;
 pub mod json_search;
+mod json_search_candidates;
 pub mod mutator;
 pub(crate) mod panic_payload;
 pub(crate) mod property_index;
@@ -79,6 +80,7 @@ pub use json_search::{
     JSON_PATH_SELECTOR_LIMIT, JsonContainmentHit, JsonPathContainmentHit, JsonPathHit,
     JsonPathValueHit, JsonSearchError,
 };
+pub use json_search_candidates::JsonPathContainmentCandidateOptions;
 pub use mutator::Mutator;
 pub use selene_core::JsonPathSelector;
 pub use selene_core::{HnswIndexConfig, IvfIndexConfig};

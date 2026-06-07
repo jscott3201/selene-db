@@ -9,14 +9,15 @@ use crate::{
 
 use super::{
     compaction, create_index, create_text_index, create_vector_index, drop_index, drop_text_index,
-    drop_vector_index, feature_status, health, json_contains_nodes, json_path_contains_nodes,
-    json_path_exists_nodes, json_path_value_nodes, rebuild_vector_indexes, text_index_stats,
-    text_search, vector_candidate_states, vector_index_stats, vector_score_candidate_state,
-    vector_score_candidate_state_expanded, vector_score_candidate_state_expanded_batch,
-    vector_score_candidate_state_nodes, vector_score_expanded_candidates,
-    vector_score_expanded_candidates_batch, vector_score_neighbors, vector_score_neighbors_batch,
-    vector_score_nodes, vector_score_nodes_batch, vector_search, vector_search_ann,
-    vector_search_ann_batch, vector_search_batch, vector_search_candidate_state_expanded_ann,
+    drop_vector_index, feature_status, health, json_candidate_nodes, json_contains_nodes,
+    json_path_contains_nodes, json_path_exists_nodes, json_path_value_nodes,
+    rebuild_vector_indexes, text_index_stats, text_search, vector_candidate_states,
+    vector_index_stats, vector_score_candidate_state, vector_score_candidate_state_expanded,
+    vector_score_candidate_state_expanded_batch, vector_score_candidate_state_nodes,
+    vector_score_expanded_candidates, vector_score_expanded_candidates_batch,
+    vector_score_neighbors, vector_score_neighbors_batch, vector_score_nodes,
+    vector_score_nodes_batch, vector_search, vector_search_ann, vector_search_ann_batch,
+    vector_search_batch, vector_search_candidate_state_expanded_ann,
     vector_search_expanded_candidates_ann, vector_search_expanded_candidates_ann_batch, verify,
 };
 
@@ -83,6 +84,14 @@ pub(in crate::runtime) enum BuiltinKind {
     JsonPathContainsNodes,
     /// `selene.json_path_value_nodes` — exact JSON path-value search over node properties.
     JsonPathValueNodes,
+    /// `selene.json_contains_candidate_nodes` — exact JSON containment over explicit node candidates.
+    JsonContainsCandidateNodes,
+    /// `selene.json_path_exists_candidate_nodes` — exact JSON path-existence over explicit node candidates.
+    JsonPathExistsCandidateNodes,
+    /// `selene.json_path_contains_candidate_nodes` — exact JSON path-containment over explicit node candidates.
+    JsonPathContainsCandidateNodes,
+    /// `selene.json_path_value_candidate_nodes` — exact JSON path-value search over explicit node candidates.
+    JsonPathValueCandidateNodes,
     /// `selene.rebuild_vector_indexes` — vector index derived-state rebuild.
     RebuildVectorIndexes,
     /// `selene.rebuild_recommended_vector_indexes` — recommended vector-index rebuild.
@@ -168,6 +177,10 @@ impl BuiltinKind {
             | Self::JsonPathExistsNodes
             | Self::JsonPathContainsNodes
             | Self::JsonPathValueNodes
+            | Self::JsonContainsCandidateNodes
+            | Self::JsonPathExistsCandidateNodes
+            | Self::JsonPathContainsCandidateNodes
+            | Self::JsonPathValueCandidateNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
@@ -215,6 +228,10 @@ impl BuiltinKind {
             | Self::JsonPathExistsNodes
             | Self::JsonPathContainsNodes
             | Self::JsonPathValueNodes
+            | Self::JsonContainsCandidateNodes
+            | Self::JsonPathExistsCandidateNodes
+            | Self::JsonPathContainsCandidateNodes
+            | Self::JsonPathValueCandidateNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
@@ -273,6 +290,10 @@ impl BuiltinKind {
             Self::JsonPathExistsNodes => json_path_exists_nodes::signature(),
             Self::JsonPathContainsNodes => json_path_contains_nodes::signature(),
             Self::JsonPathValueNodes => json_path_value_nodes::signature(),
+            Self::JsonContainsCandidateNodes => json_candidate_nodes::contains_signature(),
+            Self::JsonPathExistsCandidateNodes => json_candidate_nodes::path_exists_signature(),
+            Self::JsonPathContainsCandidateNodes => json_candidate_nodes::path_contains_signature(),
+            Self::JsonPathValueCandidateNodes => json_candidate_nodes::path_value_signature(),
             Self::RebuildVectorIndexes => rebuild_vector_indexes::signature(),
             Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::recommended_signature()
@@ -338,6 +359,10 @@ impl BuiltinKind {
             Self::JsonPathExistsNodes => json_path_exists_nodes::output_columns(),
             Self::JsonPathContainsNodes => json_path_contains_nodes::output_columns(),
             Self::JsonPathValueNodes => json_path_value_nodes::output_columns(),
+            Self::JsonContainsCandidateNodes
+            | Self::JsonPathExistsCandidateNodes
+            | Self::JsonPathContainsCandidateNodes => json_candidate_nodes::output_columns(),
+            Self::JsonPathValueCandidateNodes => json_candidate_nodes::value_output_columns(),
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
                 rebuild_vector_indexes::output_columns()
             }
@@ -413,6 +438,16 @@ impl BuiltinKind {
             Self::JsonPathExistsNodes => json_path_exists_nodes::execute(ctx, args),
             Self::JsonPathContainsNodes => json_path_contains_nodes::execute(ctx, args),
             Self::JsonPathValueNodes => json_path_value_nodes::execute(ctx, args),
+            Self::JsonContainsCandidateNodes => json_candidate_nodes::execute_contains(ctx, args),
+            Self::JsonPathExistsCandidateNodes => {
+                json_candidate_nodes::execute_path_exists(ctx, args)
+            }
+            Self::JsonPathContainsCandidateNodes => {
+                json_candidate_nodes::execute_path_contains(ctx, args)
+            }
+            Self::JsonPathValueCandidateNodes => {
+                json_candidate_nodes::execute_path_value(ctx, args)
+            }
             Self::TextSearchNodes => text_search::execute(ctx, args),
             Self::TextScoreNodes => text_search::execute_score(ctx, args),
             Self::TextScoreNodesBatch => text_search::execute_score_batch(ctx, args),
@@ -479,6 +514,10 @@ impl BuiltinKind {
             | Self::JsonPathExistsNodes
             | Self::JsonPathContainsNodes
             | Self::JsonPathValueNodes
+            | Self::JsonContainsCandidateNodes
+            | Self::JsonPathExistsCandidateNodes
+            | Self::JsonPathContainsCandidateNodes
+            | Self::JsonPathValueCandidateNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
@@ -535,6 +574,10 @@ impl BuiltinKind {
             | Self::JsonPathExistsNodes
             | Self::JsonPathContainsNodes
             | Self::JsonPathValueNodes
+            | Self::JsonContainsCandidateNodes
+            | Self::JsonPathExistsCandidateNodes
+            | Self::JsonPathContainsCandidateNodes
+            | Self::JsonPathValueCandidateNodes
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
