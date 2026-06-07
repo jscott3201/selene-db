@@ -27,6 +27,35 @@ const EXACT_TOP_K_CANDIDATES: usize = 2_048;
 const EXACT_TOP_K: usize = 10;
 const OMLX_EXACT_TOP_K_DIMS: &[usize] = &[1024, 2560, 4096];
 const OMLX_EXACT_TOP_K_CANDIDATES: &[usize] = &[64, 256, 1024, 4096];
+const GPU_BASELINE_CASES: &[GpuBaselineCase] = &[
+    GpuBaselineCase {
+        queries: 1,
+        candidates: 4096,
+        dimension: 1024,
+    },
+    GpuBaselineCase {
+        queries: 8,
+        candidates: 4096,
+        dimension: 1024,
+    },
+    GpuBaselineCase {
+        queries: 8,
+        candidates: 4096,
+        dimension: 2560,
+    },
+    GpuBaselineCase {
+        queries: 16,
+        candidates: 4096,
+        dimension: 1024,
+    },
+];
+
+#[derive(Clone, Copy)]
+struct GpuBaselineCase {
+    queries: usize,
+    candidates: usize,
+    dimension: usize,
+}
 
 // Profile-aware criterion config WITHOUT a selene-testing dep (that crate
 // depends on selene-core, so importing BenchProfile here would cycle).
@@ -287,9 +316,104 @@ fn bench_vector_exact_top_k(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_vector_gpu_baseline(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core_vector_gpu_baseline");
+    for case in GPU_BASELINE_CASES {
+        let fixture = GpuBaselineFixture::build(*case);
+        let score_id = fixture.id("cpu_cosine_rerank");
+        group.throughput(Throughput::Elements(fixture.score_count() as u64));
+        group.bench_function(score_id, |b| {
+            b.iter(|| black_box(fixture.score_all()));
+        });
+
+        let copy_id = fixture.id("host_pack_f32");
+        let mut buffer = vec![0.0f32; fixture.transfer_floats()];
+        group.throughput(Throughput::Bytes(fixture.transfer_bytes() as u64));
+        group.bench_function(copy_id, |b| {
+            b.iter(|| fixture.copy_inputs(black_box(&mut buffer)));
+        });
+    }
+    group.finish();
+}
+
+struct GpuBaselineFixture {
+    case: GpuBaselineCase,
+    queries: Vec<VectorValue>,
+    candidates: Vec<VectorValue>,
+}
+
+impl GpuBaselineFixture {
+    fn build(case: GpuBaselineCase) -> Self {
+        let queries = (0..case.queries)
+            .map(|idx| {
+                VectorValue::new(vector_components_seeded(case.dimension, idx))
+                    .expect("query vector is valid")
+            })
+            .collect();
+        let candidates = (0..case.candidates)
+            .map(|idx| {
+                VectorValue::new(vector_components_seeded(case.dimension, idx + 1_000))
+                    .expect("candidate vector is valid")
+            })
+            .collect();
+        Self {
+            case,
+            queries,
+            candidates,
+        }
+    }
+
+    fn id(&self, name: &str) -> String {
+        format!(
+            "{name}_q{}x{}x{}_k{EXACT_TOP_K}",
+            self.case.queries, self.case.candidates, self.case.dimension
+        )
+    }
+
+    const fn score_count(&self) -> usize {
+        self.case.queries * self.case.candidates
+    }
+
+    const fn transfer_floats(&self) -> usize {
+        (self.case.queries + self.case.candidates) * self.case.dimension
+    }
+
+    const fn transfer_bytes(&self) -> usize {
+        self.transfer_floats() * std::mem::size_of::<f32>()
+    }
+
+    fn score_all(&self) -> usize {
+        let mut hits = 0;
+        for query in &self.queries {
+            hits += exact_vector_top_k(
+                VectorMetric::Cosine,
+                black_box(query),
+                self.candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(key, vector)| (black_box(key), black_box(vector))),
+                black_box(EXACT_TOP_K),
+            )
+            .expect("all dimensions match")
+            .len();
+        }
+        hits
+    }
+
+    fn copy_inputs(&self, destination: &mut [f32]) -> usize {
+        let mut offset = 0;
+        for vector in self.queries.iter().chain(self.candidates.iter()) {
+            let end = offset + vector.dimension();
+            destination[offset..end].copy_from_slice(vector.as_slice());
+            offset = end;
+        }
+        offset
+    }
+}
+
 criterion_group! {
     name = value_clone;
     config = bench_config();
-    targets = bench_value_clone, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k
+    targets = bench_value_clone, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k, bench_vector_gpu_baseline
 }
 criterion_main!(value_clone);
