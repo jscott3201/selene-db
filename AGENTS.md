@@ -224,14 +224,16 @@ JSON is native engine data for agentic workloads:
 - JSON equality is value equality. JSON is not an order-comparable family; range
   comparisons must reject rather than inventing nested document order.
 - `json_get` is a shallow object-key / array-index selector; it is not JSONPath.
-- `json_get_path` / `json_get_path_text` are bounded variadic path selectors over
-  object keys and array indexes with a 64-selector cap; they are also not
-  JSONPath.
+- `json_get_path` / `json_get_path_text` are bounded path selectors over object
+  keys and array indexes with a 64-selector cap. They accept either variadic
+  selector arguments or the same selector-array JSON document used by
+  `selene.json_path_*` procedures. They are not JSONPath.
 - `json_get_scalar` / `json_get_path_scalar` extract selected JSON null,
   boolean, number, and string leaves as native GQL scalar values. They reject
   selected arrays/objects instead of canonical-stringifying containers.
-- `json_has_path` is the companion bounded existence predicate. It returns true
-  for selected JSON null values and false for absent paths.
+- `json_has_path` is the companion bounded existence predicate with the same
+  variadic-or-selector-array path forms. It returns true for selected JSON null
+  values and false for absent paths.
 - `json_contains` is recursive subset containment over JSON values: object
   candidates require matching contained keys, array candidates require each
   candidate element to be contained by some target element, and scalar candidates

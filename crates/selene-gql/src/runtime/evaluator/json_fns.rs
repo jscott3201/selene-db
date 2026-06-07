@@ -190,7 +190,7 @@ pub(super) fn eval_json_patch(args: Vec<Value>, span: SourceSpan) -> Result<Valu
 }
 
 pub(super) fn eval_json_get(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let Some(value) = select_json_path(&args, "json_get", span)? else {
+    let Some(value) = select_json_path(&args, "json_get", PathArgs::VariadicOnly, span)? else {
         return Ok(Value::Null);
     };
     selected_json_value(value, span)
@@ -200,7 +200,8 @@ pub(super) fn eval_json_get_text(
     args: Vec<Value>,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let Some(value) = select_json_path(&args, "json_get_text", span)? else {
+    let Some(value) = select_json_path(&args, "json_get_text", PathArgs::VariadicOnly, span)?
+    else {
         return Ok(Value::Null);
     };
     selected_json_text(value, span)
@@ -210,7 +211,8 @@ pub(super) fn eval_json_get_scalar(
     args: Vec<Value>,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let Some(value) = select_json_path(&args, "json_get_scalar", span)? else {
+    let Some(value) = select_json_path(&args, "json_get_scalar", PathArgs::VariadicOnly, span)?
+    else {
         return Ok(Value::Null);
     };
     selected_json_scalar(value, "json_get_scalar", span)
@@ -220,7 +222,8 @@ pub(super) fn eval_json_get_path(
     args: Vec<Value>,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let Some(value) = select_json_path(&args, "json_get_path", span)? else {
+    let Some(value) = select_json_path(&args, "json_get_path", PathArgs::DocumentOrVariadic, span)?
+    else {
         return Ok(Value::Null);
     };
     selected_json_value(value, span)
@@ -230,7 +233,13 @@ pub(super) fn eval_json_get_path_text(
     args: Vec<Value>,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let Some(value) = select_json_path(&args, "json_get_path_text", span)? else {
+    let Some(value) = select_json_path(
+        &args,
+        "json_get_path_text",
+        PathArgs::DocumentOrVariadic,
+        span,
+    )?
+    else {
         return Ok(Value::Null);
     };
     selected_json_text(value, span)
@@ -240,7 +249,13 @@ pub(super) fn eval_json_get_path_scalar(
     args: Vec<Value>,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    let Some(value) = select_json_path(&args, "json_get_path_scalar", span)? else {
+    let Some(value) = select_json_path(
+        &args,
+        "json_get_path_scalar",
+        PathArgs::DocumentOrVariadic,
+        span,
+    )?
+    else {
         return Ok(Value::Null);
     };
     selected_json_scalar(value, "json_get_path_scalar", span)
@@ -250,7 +265,7 @@ pub(super) fn eval_json_has_path(
     args: Vec<Value>,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
-    match json_path_exists(&args, "json_has_path", span)? {
+    match json_path_exists(&args, "json_has_path", PathArgs::DocumentOrVariadic, span)? {
         Some(exists) => Ok(Value::Bool(exists)),
         None => Ok(Value::Null),
     }
@@ -315,9 +330,16 @@ fn json_scalar_number(
     )
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PathArgs {
+    VariadicOnly,
+    DocumentOrVariadic,
+}
+
 fn select_json_path<'a>(
     args: &'a [Value],
     function: &'static str,
+    path_args: PathArgs,
     span: SourceSpan,
 ) -> Result<Option<&'a serde_json::Value>, ExecutorError> {
     debug_assert!(args.len() >= 2);
@@ -332,6 +354,12 @@ fn select_json_path<'a>(
         ));
     };
     let mut current = value.as_serde();
+    if path_args == PathArgs::DocumentOrVariadic
+        && args.len() == 2
+        && let Some(document) = optional_path_document(&args[1])?
+    {
+        return select_json_document_path(current, document, function, span);
+    }
     for selector in &args[1..] {
         if matches!(selector, Value::Null) {
             return Ok(None);
@@ -410,6 +438,7 @@ fn json_value_from_serde(
 fn json_path_exists(
     args: &[Value],
     function: &'static str,
+    path_args: PathArgs,
     span: SourceSpan,
 ) -> Result<Option<bool>, ExecutorError> {
     debug_assert!(args.len() >= 2);
@@ -424,6 +453,12 @@ fn json_path_exists(
         ));
     };
     let mut current = value.as_serde();
+    if path_args == PathArgs::DocumentOrVariadic
+        && args.len() == 2
+        && let Some(document) = optional_path_document(&args[1])?
+    {
+        return json_document_path_exists(current, document, function, span);
+    }
     for selector in &args[1..] {
         if matches!(selector, Value::Null) {
             return Ok(None);
@@ -434,6 +469,115 @@ fn json_path_exists(
         current = next;
     }
     Ok(Some(true))
+}
+
+fn optional_path_document(selector: &Value) -> Result<Option<&JsonValue>, ExecutorError> {
+    match selector {
+        Value::Null => Ok(None),
+        Value::Json(value) => Ok(Some(value)),
+        _ => Ok(None),
+    }
+}
+
+fn select_json_document_path<'a>(
+    mut current: &'a serde_json::Value,
+    document: &JsonValue,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Option<&'a serde_json::Value>, ExecutorError> {
+    for selector in path_document_selectors(document, function, span)? {
+        let Some(next) = select_json_document_child(current, selector, function, span)? else {
+            return Ok(None);
+        };
+        current = next;
+    }
+    Ok(Some(current))
+}
+
+fn json_document_path_exists(
+    mut current: &serde_json::Value,
+    document: &JsonValue,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Option<bool>, ExecutorError> {
+    for selector in path_document_selectors(document, function, span)? {
+        let Some(next) = select_json_document_child(current, selector, function, span)? else {
+            return Ok(Some(false));
+        };
+        current = next;
+    }
+    Ok(Some(true))
+}
+
+fn path_document_selectors<'a>(
+    document: &'a JsonValue,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<&'a [serde_json::Value], ExecutorError> {
+    let serde_json::Value::Array(selectors) = document.as_serde() else {
+        return Err(data_exception_value(
+            format!("{function} path document is not a JSON array"),
+            span,
+        ));
+    };
+    if selectors.is_empty() {
+        return Err(data_exception_value(
+            format!("{function} path document must contain at least one selector"),
+            span,
+        ));
+    }
+    if selectors.len() > MAX_JSON_PATH_SELECTORS {
+        return Err(data_exception_value(
+            format!("{function} supports at most {MAX_JSON_PATH_SELECTORS} path selectors"),
+            span,
+        ));
+    }
+    Ok(selectors.as_slice())
+}
+
+fn select_json_document_child<'a>(
+    current: &'a serde_json::Value,
+    selector: &serde_json::Value,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Option<&'a serde_json::Value>, ExecutorError> {
+    match (current, selector) {
+        (serde_json::Value::Object(values), serde_json::Value::String(key)) => Ok(values.get(key)),
+        (serde_json::Value::Array(values), serde_json::Value::Number(index)) => {
+            let Some(index) = json_document_array_index(index, values.len(), function, span)?
+            else {
+                return Ok(None);
+            };
+            Ok(values.get(index))
+        }
+        (serde_json::Value::Object(_), _) => Err(data_exception_value(
+            format!("{function} path document object key is not a string"),
+            span,
+        )),
+        (serde_json::Value::Array(_), _) => Err(data_exception_value(
+            format!("{function} path document array index is not an integer"),
+            span,
+        )),
+        _ => Ok(None),
+    }
+}
+
+fn json_document_array_index(
+    value: &serde_json::Number,
+    len: usize,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Option<usize>, ExecutorError> {
+    if let Some(value) = value.as_i64() {
+        return Ok(json_signed_array_index(value, len));
+    }
+    if let Some(value) = value.as_u64() {
+        return Ok(usize::try_from(value).ok().filter(|idx| *idx < len));
+    }
+    Err(data_exception_value(
+        format!("{function} path document array index is not an integer"),
+        span,
+    ))
 }
 
 fn select_json_child<'a>(
@@ -465,20 +609,19 @@ fn json_array_index(
     span: SourceSpan,
 ) -> Result<Option<usize>, ExecutorError> {
     match value {
-        Value::Int(value) if *value >= 0 => {
-            Ok(usize::try_from(*value).ok().filter(|idx| *idx < len))
-        }
-        Value::Int(value) => {
-            let offset = value.unsigned_abs();
-            let Some(offset) = usize::try_from(offset).ok() else {
-                return Ok(None);
-            };
-            Ok((offset <= len).then_some(len - offset))
-        }
+        Value::Int(value) => Ok(json_signed_array_index(*value, len)),
         Value::Uint(value) => Ok(usize::try_from(*value).ok().filter(|idx| *idx < len)),
         _ => Err(data_exception_value(
             format!("{function} array index is not an integer"),
             span,
         )),
     }
+}
+
+fn json_signed_array_index(value: i64, len: usize) -> Option<usize> {
+    if value >= 0 {
+        return usize::try_from(value).ok().filter(|idx| *idx < len);
+    }
+    let offset = usize::try_from(value.unsigned_abs()).ok()?;
+    (offset <= len).then_some(len - offset)
 }

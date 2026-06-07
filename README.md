@@ -244,10 +244,10 @@ JSON is a first-class value for structured agent payloads and metadata:
 - closed graph schemas can declare canonical JSON defaults with a string literal
   such as `payload :: JSON DEFAULT '{"kind":"episodic"}'`;
 - scalar functions provide parse/stringify/type, array/object construction,
-  array/object shape introspection, bounded path selectors, native scalar leaf
-  extraction, existence checks, recursive containment, RFC 7396 merge-patch
-  updates, and RFC 6902 JSON Patch updates; `json_object` constructor keys must
-  be unique;
+  array/object shape introspection, bounded variadic and selector-array path
+  selectors, native scalar leaf extraction, existence checks, recursive
+  containment, RFC 7396 merge-patch updates, and RFC 6902 JSON Patch updates;
+  `json_object` constructor keys must be unique;
 - `selene.json_contains_nodes`, `selene.json_path_exists_nodes`,
   `selene.json_path_contains_nodes`, and `selene.json_path_value_nodes` turn
   JSON metadata predicates into graph node candidates and can return selected
