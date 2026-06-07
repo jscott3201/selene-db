@@ -101,6 +101,9 @@ feature_ids! {
     GF11 = "GF11" => "Advanced aggregate functions: binary set functions";
     GF12 = "GF12" => "CARDINALITY function";
     GF13 = "GF13" => "SIZE function";
+    GL01 = "GL01" => "Hexadecimal literals";
+    GL02 = "GL02" => "Octal literals";
+    GL03 = "GL03" => "Binary literals";
     IM_UUID = "IM_UUID" => "selene-db UUID extension";
     IM_JSON = "IM_JSON" => "selene-db JSON extension";
     IM_VECTOR = "IM_VECTOR" => "selene-db VECTOR extension";
@@ -254,6 +257,9 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GF11,
     FeatureId::GF12,
     FeatureId::GF13,
+    FeatureId::GL01,
+    FeatureId::GL02,
+    FeatureId::GL03,
     FeatureId::IM_UUID,
     FeatureId::IM_JSON,
     FeatureId::IM_VECTOR,

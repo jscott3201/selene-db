@@ -48,6 +48,13 @@ fn fold_expr(expr: &ValueExpr) -> Option<ValueExpr> {
     }
 }
 
+fn integer_value(literal: &Literal) -> Option<i64> {
+    match literal {
+        Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => Some(*value),
+        _ => None,
+    }
+}
+
 fn fold_unary(op: UnaryOp, operand: &ValueExpr, span: SourceSpan) -> Option<ValueExpr> {
     let ValueExpr::Literal(literal) = operand else {
         return None;
@@ -56,9 +63,11 @@ fn fold_unary(op: UnaryOp, operand: &ValueExpr, span: SourceSpan) -> Option<Valu
         (UnaryOp::Not, Literal::Bool(value, _)) => {
             Some(ValueExpr::Literal(Literal::Bool(!value, span)))
         }
-        (UnaryOp::Negate, Literal::Integer(value, _)) => value
-            .checked_neg()
-            .map(|folded| ValueExpr::Literal(Literal::Integer(folded, span))),
+        (UnaryOp::Negate, literal @ (Literal::Integer(_, _) | Literal::RadixInteger(_, _, _))) => {
+            integer_value(literal)
+                .and_then(i64::checked_neg)
+                .map(|folded| ValueExpr::Literal(Literal::Integer(folded, span)))
+        }
         (UnaryOp::Negate, Literal::Float(value, _)) => finite_float(-value, span),
         (UnaryOp::Not, _)
         | (UnaryOp::Negate, Literal::Bool(_, _))
@@ -108,13 +117,15 @@ fn fold_arithmetic(
     span: SourceSpan,
 ) -> Option<ValueExpr> {
     match (lhs, rhs) {
-        (Literal::Integer(left, _), Literal::Integer(right, _)) => {
+        (left, right) if integer_value(left).is_some() && integer_value(right).is_some() => {
+            let left = integer_value(left)?;
+            let right = integer_value(right)?;
             let folded = match op {
-                BinaryOp::Add => left.checked_add(*right),
-                BinaryOp::Sub => left.checked_sub(*right),
-                BinaryOp::Mul => left.checked_mul(*right),
-                BinaryOp::Div => (*right != 0).then(|| left.checked_div(*right)).flatten(),
-                BinaryOp::Mod => (*right != 0).then(|| left.checked_rem(*right)).flatten(),
+                BinaryOp::Add => left.checked_add(right),
+                BinaryOp::Sub => left.checked_sub(right),
+                BinaryOp::Mul => left.checked_mul(right),
+                BinaryOp::Div => (right != 0).then(|| left.checked_div(right)).flatten(),
+                BinaryOp::Mod => (right != 0).then(|| left.checked_rem(right)).flatten(),
                 _ => None,
             }?;
             Some(ValueExpr::Literal(Literal::Integer(folded, span)))
@@ -146,19 +157,19 @@ fn fold_comparison(
             BinaryOp::Ne => left != right,
             _ => return None,
         },
-        (Literal::Integer(left, _), Literal::Integer(right, _)) => {
-            compare_ordering(op, left, right)
+        (left, right) if integer_value(left).is_some() && integer_value(right).is_some() => {
+            compare_ordering(op, &integer_value(left)?, &integer_value(right)?)
         }
         (Literal::Float(left, _), Literal::Float(right, _))
             if left.is_finite() && right.is_finite() =>
         {
             compare_partial(op, *left, *right)?
         }
-        (Literal::Integer(left, _), Literal::Float(right, _)) if right.is_finite() => {
-            compare_partial(op, *left as f64, *right)?
+        (left, Literal::Float(right, _)) if right.is_finite() && integer_value(left).is_some() => {
+            compare_partial(op, integer_value(left)? as f64, *right)?
         }
-        (Literal::Float(left, _), Literal::Integer(right, _)) if left.is_finite() => {
-            compare_partial(op, *left, *right as f64)?
+        (Literal::Float(left, _), right) if left.is_finite() && integer_value(right).is_some() => {
+            compare_partial(op, *left, integer_value(right)? as f64)?
         }
         (Literal::String(left, _), Literal::String(right, _)) => {
             compare_ordering(op, left.as_str(), right.as_str())

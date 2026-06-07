@@ -83,7 +83,9 @@ fn render_index_key(key: &IndexKey) -> String {
 fn render_literal(literal: &Literal) -> String {
     match literal {
         Literal::Bool(value, _) => format!("BOOLEAN {value}"),
-        Literal::Integer(value, _) => format!("INTEGER {value}"),
+        Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => {
+            format!("INTEGER {value}")
+        }
         Literal::Float(value, _) => format!("FLOAT {value}"),
         Literal::String(value, _) => format!("STRING '{}'", value.as_str()),
         Literal::Bytes(value, _) => format!("BYTES X'{}'", hex_bytes(value)),

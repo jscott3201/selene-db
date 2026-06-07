@@ -19,7 +19,9 @@ pub(crate) use self::numeric::argument_assignable;
 pub(crate) fn literal(literal: &Literal) -> AnalyzedType {
     match literal {
         Literal::Bool(..) => AnalyzedType::Resolved(GqlType::Boolean),
-        Literal::Integer(..) => AnalyzedType::Resolved(GqlType::Integer),
+        Literal::Integer(..) | Literal::RadixInteger(..) => {
+            AnalyzedType::Resolved(GqlType::Integer)
+        }
         Literal::Float(..) => AnalyzedType::Resolved(GqlType::Float),
         Literal::String(..) => AnalyzedType::Resolved(GqlType::String),
         Literal::Bytes(..) => AnalyzedType::Resolved(GqlType::Bytes),

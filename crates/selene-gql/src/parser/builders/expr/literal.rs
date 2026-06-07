@@ -7,7 +7,7 @@ use selene_core::DbString;
 
 use crate::{
     GqlStatus,
-    ast::{Literal, SourceSpan, ValueExpr},
+    ast::{IntegerLiteralKind, Literal, SourceSpan, ValueExpr},
     error::ParserError,
     temporal_parse::{self, ParsedDateTime, ParsedTime},
 };
@@ -59,6 +59,9 @@ pub(super) fn with_numeric_span(value: ValueExpr, source_span: SourceSpan) -> Va
     match value {
         ValueExpr::Literal(Literal::Integer(value, _)) => {
             ValueExpr::Literal(Literal::Integer(value, source_span))
+        }
+        ValueExpr::Literal(Literal::RadixInteger(value, _, kind)) => {
+            ValueExpr::Literal(Literal::RadixInteger(value, source_span, kind))
         }
         ValueExpr::Literal(Literal::Float(value, _)) => {
             ValueExpr::Literal(Literal::Float(value, source_span))
@@ -191,18 +194,60 @@ fn parse_duration_lit(
 }
 
 fn parse_i64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
-    validate_underscores(text, span)?;
-    let normalized = text.replace('_', "");
-    normalized
-        .parse::<i64>()
-        .map(|value| Literal::Integer(value, span))
-        .map_err(|error| {
+    let (sign, unsigned) = split_sign(text);
+    let (digits, radix, kind) = split_radix(unsigned);
+    validate_underscores(digits, span)?;
+    let normalized = digits.replace('_', "");
+    let magnitude = i64::from_str_radix(&normalized, radix).map_err(|error| {
+        ParserError::syntax(
+            format!("invalid integer literal: {error}"),
+            span,
+            Some("integer literals must fit in i64".into()),
+        )
+    })?;
+    let value = if sign == Sign::Negative {
+        magnitude.checked_neg().ok_or_else(|| {
             ParserError::syntax(
-                format!("invalid integer literal: {error}"),
+                "integer literal overflows i64 after negation",
                 span,
                 Some("integer literals must fit in i64".into()),
             )
-        })
+        })?
+    } else {
+        magnitude
+    };
+    Ok(match kind {
+        Some(kind) => Literal::RadixInteger(value, span, kind),
+        None => Literal::Integer(value, span),
+    })
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Sign {
+    Positive,
+    Negative,
+}
+
+fn split_sign(text: &str) -> (Sign, &str) {
+    if let Some(rest) = text.strip_prefix('-') {
+        (Sign::Negative, rest)
+    } else if let Some(rest) = text.strip_prefix('+') {
+        (Sign::Positive, rest)
+    } else {
+        (Sign::Positive, text)
+    }
+}
+
+fn split_radix(text: &str) -> (&str, u32, Option<IntegerLiteralKind>) {
+    if let Some(rest) = text.strip_prefix("0x") {
+        (rest, 16, Some(IntegerLiteralKind::Hexadecimal))
+    } else if let Some(rest) = text.strip_prefix("0o") {
+        (rest, 8, Some(IntegerLiteralKind::Octal))
+    } else if let Some(rest) = text.strip_prefix("0b") {
+        (rest, 2, Some(IntegerLiteralKind::Binary))
+    } else {
+        (text, 10, None)
+    }
 }
 
 fn parse_f64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {

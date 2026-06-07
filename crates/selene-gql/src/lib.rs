@@ -29,7 +29,10 @@ pub use crate::ast::{
         DdlStatement, DropBehavior, EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint,
         TypePropertyDef, ValidationMode,
     },
-    expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TrimSpec, TruthValue, UnaryOp, ValueExpr},
+    expr::{
+        BinaryOp, IntegerLiteralKind, IsCheckKind, Literal, NormalForm, TrimSpec, TruthValue,
+        UnaryOp, ValueExpr,
+    },
     format::format_procedure_call,
     mutation::{
         DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,

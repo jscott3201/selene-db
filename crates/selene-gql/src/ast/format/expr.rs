@@ -3,7 +3,7 @@
 use std::fmt::{self, Write as _};
 
 use super::super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
-use super::super::{UnaryOp, ValueExpr};
+use super::super::{IntegerLiteralKind, UnaryOp, ValueExpr};
 use super::is_check::{fmt_is_check, fmt_normal_form};
 use super::keywords::fmt_binary;
 use super::{cast, fmt_match, fmt_parameter, fmt_pipeline, trim};
@@ -13,6 +13,7 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
         ValueExpr::Literal(literal) => match literal {
             crate::Literal::Bool(value, _) => out.push_str(if *value { "true" } else { "false" }),
             crate::Literal::Integer(value, _) => write!(out, "{value}")?,
+            crate::Literal::RadixInteger(value, _, kind) => fmt_radix_integer(out, *value, *kind)?,
             crate::Literal::Float(value, _) => write!(out, "{value}")?,
             crate::Literal::String(value, _) => write!(out, "'{}'", escape_string(value.as_str()))?,
             crate::Literal::Bytes(value, _) => {
@@ -224,6 +225,20 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
         } => cast::fmt_cast(out, value, target_type)?,
     }
     Ok(())
+}
+
+fn fmt_radix_integer(out: &mut String, value: i64, kind: IntegerLiteralKind) -> fmt::Result {
+    let sign = if value < 0 { "-" } else { "" };
+    let magnitude = if value < 0 {
+        -(value as i128)
+    } else {
+        value as i128
+    };
+    match kind {
+        IntegerLiteralKind::Hexadecimal => write!(out, "{sign}0x{magnitude:X}"),
+        IntegerLiteralKind::Octal => write!(out, "{sign}0o{magnitude:o}"),
+        IntegerLiteralKind::Binary => write!(out, "{sign}0b{magnitude:b}"),
+    }
 }
 
 fn format_zoned_datetime(value: &jiff::Zoned) -> String {

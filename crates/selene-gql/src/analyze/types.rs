@@ -427,6 +427,12 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
             value.hash(state);
             span.hash(state);
         }
+        Literal::RadixInteger(value, span, kind) => {
+            15u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+            kind.hash(state);
+        }
         Literal::Float(value, span) => {
             2u8.hash(state);
             value.to_bits().hash(state);
