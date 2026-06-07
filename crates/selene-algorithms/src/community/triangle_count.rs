@@ -22,6 +22,10 @@ use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
 
+/// Minimum projection size before [`Parallelism::Auto`] pays Rayon overhead for
+/// per-node triangle counting.
+const AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS: usize = 16_384;
+
 /// Configuration for per-node triangle count.
 ///
 /// Literal construction via struct expression is part of the ergonomic
@@ -66,11 +70,21 @@ pub fn triangle_count_with_checker(
 
     let result = match config.parallelism {
         Parallelism::Sequential => count_triangles_sequential(&adjacency, checker)?,
-        Parallelism::Auto | Parallelism::Threads(_) => {
+        parallelism if should_count_triangles_parallel(adjacency.row_count(), parallelism) => {
             count_triangles_parallel(&adjacency, config.parallelism, checker)?
         }
+        Parallelism::Auto => count_triangles_sequential(&adjacency, checker)?,
+        Parallelism::Threads(_) => unreachable!("explicit threads are handled above"),
     };
     Ok(sort_triangle_count_results(result))
+}
+
+fn should_count_triangles_parallel(row_count: usize, parallelism: Parallelism) -> bool {
+    match parallelism {
+        Parallelism::Sequential => false,
+        Parallelism::Auto => row_count >= AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS,
+        Parallelism::Threads(_) => true,
+    }
 }
 
 fn count_triangles_sequential(
@@ -188,4 +202,35 @@ fn sort_triangle_count_results(mut result: Vec<(NodeId, usize)>) -> Vec<(NodeId,
     // `feedback_dijkstra_tie_break_needs_both_rules`.
     result.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use super::*;
+
+    #[test]
+    fn auto_parallel_triangle_count_threshold_is_explicit() {
+        assert!(!should_count_triangles_parallel(
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS - 1,
+            Parallelism::Auto
+        ));
+        assert!(should_count_triangles_parallel(
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS,
+            Parallelism::Auto
+        ));
+    }
+
+    #[test]
+    fn explicit_parallelism_policies_override_auto_threshold() {
+        assert!(!should_count_triangles_parallel(
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS,
+            Parallelism::Sequential
+        ));
+        assert!(should_count_triangles_parallel(
+            1,
+            Parallelism::Threads(NonZeroUsize::new(2).expect("non-zero"))
+        ));
+    }
 }
