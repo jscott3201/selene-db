@@ -255,8 +255,10 @@ layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
 the next full re-baseline. `graph_node_fetch` returns a column ref (no `Value`
 clone) and is unaffected. `graph_exact_vector_scan/*` is the native graph-level
 exact-vector oracle: label-filtered row scan plus the core vector metric
-kernels, returning stable node ids. `graph_vector_candidate_set/*` measures the
-Rust graph/vector boundary for deriving canonical candidate sets from graph
+kernels, returning stable node ids. Large exact scans use threshold-gated Rayon
+for both unindexed label rows and flat-index row sets when cancellation/deadline
+checking is disabled. `graph_vector_candidate_set/*` measures the Rust
+graph/vector boundary for deriving canonical candidate sets from graph
 adjacency before scoring. `graph_vector_index_rebuild/*` times the
 maintenance rebuild that reclaims stale ANN entries after vector update/delete
 churn; `graph_vector_index_recommended_rebuild/*` compares recommended-only
@@ -311,6 +313,17 @@ Stale-query IDs use
 where `h` is HNSW and `v` is IVF.
 IVF pressure IDs use
 `lists{centroids}ne{non_empty}max{max_list_len}avg{avg_list_len}avgq{avg_candidates_per_query}maxq{worst_case_candidates_per_query}_m{index KiB}-{reachable KiB}`.
+
+PR-local quick vector exact-scan Rayon A/B:
+
+Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_exact_vector_scan --vector-scales 50000`
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_exact_vector_scan/unindexed_squared_euclidean_dim128_k10_noidx/50000` | 1.2285 ms | 558.91 µs | Unindexed label-row exact scan now uses the existing row-chunked Rayon path above the 16,384-row threshold. |
+| `graph_exact_vector_scan/unindexed_cosine_dim128_k10_noidx/50000` | 1.7016 ms | 592.95 µs | Same threshold-gated path for cosine; cancellable checked calls remain sequential. |
+| `graph_exact_vector_scan/flat_index_squared_euclidean_dim128_k10_m64-64_n50k_flat/50000` | 581.30 µs | 568.49 µs | Existing flat-index parallel path remains stable. |
+| `graph_exact_vector_scan/flat_index_cosine_dim128_k10_m64-64_n50k_flat/50000` | 616.20 µs | 591.44 µs | Existing flat-index parallel path remains stable. |
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
