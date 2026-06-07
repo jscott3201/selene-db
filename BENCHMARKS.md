@@ -995,9 +995,9 @@ topic precision as `precbp{basis points}`.
 
 | Bench | Scale | Sequential | Auto | Notes |
 |---|---:|---:|---:|---|
-| `algo/pagerank` | 10k | 87.9 µs | 247.0 µs | Sparse graph: Auto pays coordination overhead… |
-| `algo/pagerank` | 50k | 494.5 µs | 687.3 µs | …at every scale on this fixture. |
-| `algo/pagerank` | 100k | 1.035 ms | 1.284 ms | Auto closes the gap on denser graphs; API exposes both. |
+| `algo/pagerank` | 10k | 89.01 µs | 88.99 µs | Auto now uses the sequential PageRank kernel after Rayon overhead lost at every measured scale. |
+| `algo/pagerank` | 50k | 499.88 µs | 499.36 µs | Explicit `Threads(n)` still opts into the parallel kernel for caller-forced experiments. |
+| `algo/pagerank` | 100k | 1.058 ms | 1.050 ms | Auto tracks the fastest measured policy on this sparse fixture. |
 | `algo/betweenness` | 10k | 25.52 ms | 7.73 ms | **3.3× Auto** — endpoint-aware sampling. |
 | `algo/betweenness` | 50k | 135.3 ms | 44.95 ms | **3.0× Auto** — per-source SSSP parallelizes. |
 | `algo/betweenness` | 100k | 266.1 ms | 101.7 ms | **2.6× Auto** — headline rayon win. |
