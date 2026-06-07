@@ -995,7 +995,8 @@ PR-local quick JSON mixed row:
 Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
 `BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp and
 projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
-triangle_count, label_propagation, and louvain. `vector_graph_retrieval` is the
+triangle_count, label_propagation, and louvain; `dag_graph(N)` (≈3N edges) for
+topological_sort. `vector_graph_retrieval` is the
 first native graph+vector agent-memory research fixture: it stores topic-summary
 vectors plus support, temporal-validity, and supersession edges to evidence
 nodes, then compares vector-only ANN against PageRank rerank, graph expansion,
@@ -1020,12 +1021,25 @@ topic precision as `precbp{basis points}`.
 | `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
+| `algo/topological_sort` | 10k | 89.09 µs | n/a | Sequential-only; in-degree accounting uses dense projection rows. |
+| `algo/topological_sort` | 50k | 455.4 µs | n/a | |
+| `algo/topological_sort` | 100k | 913.1 µs | n/a | |
 | `algo/label_propagation` | 10k | 426.44 µs | n/a | Sequential-only; labels/counts use dense row IDs and dense scratch storage. |
 | `algo/label_propagation` | 50k | 2.400 ms | n/a | |
 | `algo/label_propagation` | 100k | 5.027 ms | n/a | |
 | `algo/louvain` | 10k | 1.652 ms | n/a | Sequential-only; community degree sums now use dense vector storage. |
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
+
+PR-local full topological-sort dense in-degree A/B:
+
+Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'topological_sort'`
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/topological_sort/10k` | 285.59 µs | 89.09 µs | Replaces `HashMap<NodeId, u32>` in-degree accounting and per-edge projection membership checks with dense `Vec<u32>` rows. |
+| `algo/topological_sort/50k` | 1.5615 ms | 455.41 µs | The projection CSR already stores only projected neighbors and caches each neighbor's dense index. |
+| `algo/topological_sort/100k` | 3.5344 ms | 913.05 µs | Preserves ASC-by-NodeId tie-breaking via `RowIndex` dense order. |
 
 PR-local full label-propagation dense-count A/B:
 
