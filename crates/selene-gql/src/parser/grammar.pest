@@ -439,7 +439,7 @@ qualified_name = { ident ~ ("." ~ prop_ident)* }
 arg_list       = { expr ~ ("," ~ expr)* }
 yield_clause   = { ^"YIELD" ~ yield_item ~ ("," ~ yield_item)* }
 yield_item     = { ("*" | prop_ident) ~ alias? }
-yield_filter   = { (^"WHERE" | ^"FILTER" ~ ^"WHERE"?) ~ expr }
+yield_filter   = { ^"WHERE" ~ expr }
 
 // -- Mutations ------------------------------------------------------
 
