@@ -11,8 +11,6 @@
 //! memory to the largest historical NodeId and risk OOM on small live
 //! subgraphs (spec 16 §E11 amendment from PR #58 Codex review).
 
-// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
-use rustc_hash::FxHashMap as HashMap;
 use selene_core::{CancellationChecker, NodeId};
 
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
@@ -50,32 +48,25 @@ pub fn wcc_with_checker(
     let mut uf = UnionFind::new(idx.len());
     union_all_edges_with_checker(proj, idx, &mut uf, checker)?;
 
-    // First pass: collect (NodeId, current_root_dense) for every projection
-    // node.
-    let mut pairs: Vec<(NodeId, u32)> = (0..idx.len() as u32)
-        .map(|d| (idx.node_id_of(d), uf.find(d)))
-        .collect();
-
     // Compute the minimum NodeId per current root to canonicalize component IDs
     // (donor `aether-db-algorithms/src/structural.rs:107-115`).
-    let mut min_per_root: HashMap<u32, u64> = HashMap::default();
-    for &(nid, root) in &pairs {
-        min_per_root
-            .entry(root)
-            .and_modify(|existing| {
-                if nid.get() < *existing {
-                    *existing = nid.get();
-                }
-            })
-            .or_insert(nid.get());
+    let mut min_per_root = vec![u64::MAX; idx.len()];
+    for d in 0..idx.len() as u32 {
+        let root = uf.find(d) as usize;
+        let node_id = idx.node_id_of(d).get();
+        if node_id < min_per_root[root] {
+            min_per_root[root] = node_id;
+        }
     }
 
     // Second pass: rewrite root → min NodeId.
-    let mut result: Vec<(NodeId, u64)> = pairs
-        .drain(..)
-        .map(|(nid, root)| (nid, min_per_root[&root]))
+    let result: Vec<(NodeId, u64)> = (0..idx.len() as u32)
+        .map(|d| {
+            let root = uf.find(d) as usize;
+            debug_assert_ne!(min_per_root[root], u64::MAX);
+            (idx.node_id_of(d), min_per_root[root])
+        })
         .collect();
-    result.sort_by_key(|&(nid, _)| nid.get());
     Ok(result)
 }
 
@@ -125,8 +116,7 @@ fn union_all_edges_with_checker(
     let mut rows_since_check = 0usize;
     for d in 0..idx.len() as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
-        let nid = idx.node_id_of(d);
-        for nb in proj.out_neighbors(nid) {
+        for nb in proj.out_neighbors_dense(d) {
             uf.union(d, nb.dense);
         }
         // The in-neighbor pass is redundant in release: every edge appears once
@@ -138,6 +128,8 @@ fn union_all_edges_with_checker(
         // projection ever stored asymmetric out/in adjacency, the debug build
         // still produces the correct undirected closure), while release skips
         // the duplicate union-find work.
+        #[cfg(debug_assertions)]
+        let nid = idx.node_id_of(d);
         #[cfg(debug_assertions)]
         for nb in proj.in_neighbors(nid) {
             uf.union(d, nb.dense);
@@ -284,7 +276,7 @@ fn run_tarjan(
     for d in 0..idx.len() as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
         if state.indices[d as usize] == SENTINEL {
-            tarjan_strongconnect(&mut state, d, proj, idx, checker)?;
+            tarjan_strongconnect(&mut state, d, proj, checker)?;
         }
     }
     Ok(state)
@@ -296,16 +288,10 @@ fn tarjan_strongconnect(
     state: &mut TarjanState,
     start: u32,
     proj: &GraphProjection,
-    idx: &RowIndex,
     checker: CancellationChecker<'_>,
 ) -> Result<(), AlgorithmAborted> {
     // Frame: (current_dense, next_neighbor_index_into_cached_list).
     let mut call_stack: Vec<(u32, usize)> = Vec::new();
-    // Per-DFS neighbor cache: dense → list of out-neighbor dense indices.
-    // Filled lazily on first visit so we don't re-walk `proj.out_neighbors` on
-    // every resume-from-child iteration. Neighbors outside the projection
-    // scope are dropped at build time.
-    let mut neighbors_cache: HashMap<u32, Vec<u32>> = HashMap::default();
 
     state.indices[start as usize] = state.index;
     state.lowlinks[start as usize] = state.index;
@@ -317,15 +303,10 @@ fn tarjan_strongconnect(
     let mut rows_since_check = 0usize;
     while let Some(&mut (v, ref mut ni)) = call_stack.last_mut() {
         check_algorithm_stride(checker, &mut rows_since_check)?;
-        let neighbors = neighbors_cache.entry(v).or_insert_with(|| {
-            proj.out_neighbors(idx.node_id_of(v))
-                .iter()
-                .map(|nb| nb.dense)
-                .collect()
-        });
+        let neighbors = proj.out_neighbors_dense(v);
 
         if *ni < neighbors.len() {
-            let w = neighbors[*ni];
+            let w = neighbors[*ni].dense;
             *ni += 1;
             let wi = w as usize;
 

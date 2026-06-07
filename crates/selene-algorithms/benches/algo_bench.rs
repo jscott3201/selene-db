@@ -12,8 +12,8 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
     ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism,
-    TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, topological_sort,
-    triangle_count,
+    TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, scc, scc_count,
+    topological_sort, triangle_count, wcc, wcc_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -118,6 +118,50 @@ fn bench_topological_sort(c: &mut Criterion) {
             b.iter(|| {
                 black_box(topological_sort(&state.projection).expect("bench graph is a DAG"))
             });
+        });
+    }
+    group.finish();
+}
+
+fn bench_wcc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/wcc");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_245 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(wcc(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_wcc_count(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/wcc_count");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_246 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(wcc_count(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_scc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/scc");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_247 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(scc(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_scc_count(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/scc_count");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_248 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(scc_count(&state.projection)));
         });
     }
     group.finish();
@@ -288,6 +332,10 @@ criterion_group! {
         bench_triangle_count,
         bench_apsp,
         bench_topological_sort,
+        bench_wcc,
+        bench_wcc_count,
+        bench_scc,
+        bench_scc_count,
         bench_label_propagation,
         bench_louvain
 }

@@ -995,8 +995,8 @@ PR-local quick JSON mixed row:
 Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
 `BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp and
 projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
-triangle_count, label_propagation, and louvain; `dag_graph(N)` (≈3N edges) for
-topological_sort. `vector_graph_retrieval` is the
+triangle_count, WCC/SCC, label_propagation, and louvain; `dag_graph(N)` (≈3N
+edges) for topological_sort. `vector_graph_retrieval` is the
 first native graph+vector agent-memory research fixture: it stores topic-summary
 vectors plus support, temporal-validity, and supersession edges to evidence
 nodes, then compares vector-only ANN against PageRank rerank, graph expansion,
@@ -1018,6 +1018,18 @@ topic precision as `precbp{basis points}`.
 | `algo/triangle_count` | 10k | 604.91 µs | 602.05 µs | Auto now stays sequential below the sparse-row threshold unless max degree trips the dense escape hatch. |
 | `algo/triangle_count` | 50k | 3.066 ms | 2.472 ms | Auto still uses Rayon once the row count clears the threshold. |
 | `algo/triangle_count` | 100k | 6.345 ms | 4.888 ms | Thresholded Auto preserves the large-row parallel win. |
+| `algo/wcc` | 10k | 113.35 µs | n/a | Sequential-only; union-find and component-min tracking use dense projection rows. |
+| `algo/wcc` | 50k | 575.8 µs | n/a | |
+| `algo/wcc` | 100k | 1.167 ms | n/a | |
+| `algo/wcc_count` | 10k | 101.06 µs | n/a | Sequential-only; count-only path shares the dense union-find state. |
+| `algo/wcc_count` | 50k | 522.2 µs | n/a | |
+| `algo/wcc_count` | 100k | 976.7 µs | n/a | |
+| `algo/scc` | 10k | 161.71 µs | n/a | Sequential-only; Tarjan reads cached dense CSR neighbors directly. |
+| `algo/scc` | 50k | 838.2 µs | n/a | |
+| `algo/scc` | 100k | 1.681 ms | n/a | |
+| `algo/scc_count` | 10k | 138.18 µs | n/a | Sequential-only; count-only path shares the dense Tarjan traversal state. |
+| `algo/scc_count` | 50k | 730.4 µs | n/a | |
+| `algo/scc_count` | 100k | 1.468 ms | n/a | |
 | `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
@@ -1060,6 +1072,17 @@ Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'alg
 | `algo/louvain/10k` | 1.723 ms | 1.6519 ms | Replaces dense-key community-degree hash lookups with vector indexing. |
 | `algo/louvain/50k` | 9.294 ms | 9.0146 ms | Same deterministic single-level Louvain semantics. |
 | `algo/louvain/100k` | 19.31 ms | 18.569 ms | Modest improvement; Louvain remains sequential-only. |
+
+PR-local full component dense-state A/B:
+
+Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'wcc|scc'`
+
+| Bench | Before 10k | After 10k | Before 50k | After 50k | Before 100k | After 100k | Notes |
+|---|---:|---:|---:|---:|---:|---:|---|
+| `algo/wcc` | 168.19 µs | 113.35 µs | 1.0093 ms | 575.77 µs | 2.0974 ms | 1.1666 ms | Replaces component-min `HashMap` state and per-edge projection lookups with dense rows and cached dense neighbors. |
+| `algo/wcc_count` | 146.63 µs | 101.06 µs | 912.03 µs | 522.18 µs | 1.9045 ms | 976.67 µs | Count-only path benefits from the same dense union pass. |
+| `algo/scc` | 438.31 µs | 161.71 µs | 2.2798 ms | 838.20 µs | 4.8065 ms | 1.6811 ms | Removes the Tarjan neighbor cache and reads projection CSR neighbor slices directly. |
+| `algo/scc_count` | 413.41 µs | 138.18 µs | 2.1570 ms | 730.39 µs | 4.5427 ms | 1.4676 ms | Count-only path shares the dense Tarjan traversal. |
 
 ### §6b `projection` — CSR foundation (ALGO-01/02/05)
 
