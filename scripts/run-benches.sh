@@ -25,6 +25,7 @@
 #   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_ivf_target_centroid_rebuild --vector-scales 10000
 #   run-benches.sh --bench vector_ivf_pressure --filter graph_ivf_target_centroids --vector-scales 10000
 #   run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
+#   run-benches.sh --profile quick --bench vector_wgpu --filter core_vector_wgpu_prototype
 #   SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 #   run-benches.sh --bench vector_index_rebuild --allocator system    # allocator A/B
 #   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
@@ -59,6 +60,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 REGISTRY="
 selene-core|value_clone|0
+selene-core|vector_wgpu|0
 selene-graph|single_graph|0
 selene-graph|vector_index_rebuild|0
 selene-graph|vector_pq|0

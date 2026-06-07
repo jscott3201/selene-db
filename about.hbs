@@ -5,7 +5,7 @@ attribution policy in CLAUDE.md (hard rule 13). Do not hand-edit; instead
 regenerate after any dependency change:
 
 ```bash
-cargo about generate about.hbs > THIRDPARTY.md
+cargo about generate about.hbs | sed 's/[[:space:]]*$//' > THIRDPARTY.md
 ```
 
 CI enforces that this file is in sync with `Cargo.lock` (see

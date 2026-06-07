@@ -37,6 +37,7 @@ run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   
 run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
+run-benches.sh --profile quick --bench vector_wgpu --filter core_vector_wgpu_prototype
 SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 run-benches.sh --bench vector_index_rebuild --allocator system   # allocator A/B without mimalloc
 run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
@@ -118,7 +119,8 @@ twice with `--allocator mimalloc` (the default) and `--allocator system`.
 
 ## §1 selene-core
 
-Bench bin: `value_clone`. Measures `Value` / `PropertyMap` clone cost, which is
+Bench bins: `value_clone`, `vector_wgpu`. `value_clone` measures `Value` /
+`PropertyMap` clone cost, which is
 dominated by `size_of::<Value>()` — every clone memcpys the whole enum regardless
 of the active variant. A compile-time `size_of::<Value>() <= 32` ceiling in
 `value.rs` is the zero-cost re-bloat tripwire; the bench prints the live size to
@@ -141,6 +143,11 @@ times after any setup and host/device transfer costs, not just win a kernel
 microbenchmark. The split host-pack rows model warm GPU-resident candidates
 versus cold candidate upload/resync, and the resident-slab CPU rows show the
 layout-only speedup from prepacked contiguous candidates plus cached norms.
+`vector_wgpu` is the first benchmark-only wgpu compute prototype. It keeps
+candidate vectors resident in GPU buffers, optionally rewrites the query batch,
+scores every query/candidate pair with a WGSL cosine kernel, reads all scores
+back to the host, and validates a score prefix against the CPU oracle during
+setup. It is not a production accelerator API.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -178,6 +185,10 @@ layout-only speedup from prepacked contiguous candidates plus cached norms.
 | `core_vector_gpu_baseline/host_pack_queries_f32_q16x4096x1024_k10` | 794.50 ns (quick) | Query-only host packing lower bound for q16 warm-resident accelerator paths. |
 | `core_vector_gpu_baseline/host_pack_candidates_f32_q16x4096x1024_k10` | 289.42 µs (quick) | Candidate-only host packing lower bound for cold upload or shard resync. |
 | `core_vector_gpu_baseline/cpu_cosine_resident_slab_q16x4096x1024_k10` | 10.808 ms (quick) | Resident-slab CPU comparator; trims the q16/d1024 rerank envelope by about 10% before any GPU work. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback/q8x4096x1024` | 1.6822 ms (quick) | First wgpu/Metal end-to-end prototype: candidates resident, query batch copied each iteration, WGSL cosine scores all 32,768 pairs, and all scores are read back. Beats the q8 CPU resident-slab comparator (5.407 ms) by ~3.2x in this local quick run. |
+| `core_vector_wgpu_prototype/resident_preloaded_score_readback/q8x4096x1024` | 1.5456 ms (quick) | Same q8 scoring/readback path with queries preloaded; close to query-copy because scoring/readback dominates over the small query payload. |
+| `core_vector_wgpu_prototype/resident_query_copy_score_readback/q16x4096x1024` | 2.6590 ms (quick) | Batched 65,536-pair wgpu scoring/readback with query copy. Beats the q16 CPU resident-slab comparator (10.808 ms) by ~4.1x locally. |
+| `core_vector_wgpu_prototype/resident_preloaded_score_readback/q16x4096x1024` | 2.6808 ms (quick) | Same q16 path with queries preloaded; effectively tied with query-copy because scoring/readback dominates at this batch size. |
 
 ## §2 selene-graph — read hot paths
 
