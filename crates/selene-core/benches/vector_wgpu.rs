@@ -130,6 +130,26 @@ fn bench_vector_wgpu(c: &mut Criterion) {
                 });
             },
         );
+        if case.has_hot_shard_reuse_row() {
+            group.throughput(Throughput::Elements(case.hot_shard_score_count() as u64));
+            group.bench_function(case.id("cpu_rayon_score_topk_hot_shard_x8"), |b| {
+                b.iter(|| black_box(bench.cpu_parallel_score_top_k_hot_shard_reuse()));
+            });
+            group.bench_function(
+                case.id("resident_hot_shard_x8_fused_block_topk_cpu_merge"),
+                |b| {
+                    b.iter(|| {
+                        bench
+                            .score_hot_shard_reuse_fused_block_top_k(
+                                black_box(&mut partial_distances),
+                                black_box(&mut partial_indices),
+                            )
+                            .expect("wgpu hot-shard fused block top-k succeeds")
+                    });
+                },
+            );
+            group.throughput(Throughput::Elements(case.score_count() as u64));
+        }
     }
     group.finish();
 }

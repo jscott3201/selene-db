@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use selene_core::VectorTopK;
 
-use crate::vector_wgpu_case::TOP_K;
+use crate::vector_wgpu_case::{HOT_SHARD_REUSE_BATCHES, TOP_K};
 
 use super::WgpuBench;
 
@@ -32,6 +32,12 @@ impl WgpuBench {
                 }
                 top_k.into_hits().len()
             })
+            .sum()
+    }
+
+    pub(crate) fn cpu_parallel_score_top_k_hot_shard_reuse(&self) -> usize {
+        (0..HOT_SHARD_REUSE_BATCHES)
+            .map(|_| self.cpu_parallel_score_top_k())
             .sum()
     }
 }

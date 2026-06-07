@@ -153,8 +153,8 @@ setup. The default case list includes q8/q16 over 4,096 candidates, a
 100,000-candidate q8/d1024 row is opt-in with `SELENE_WGPU_STRESS_CASES=1`.
 The newest rows compare a Rayon CPU score+top-k path against fused WGPU
 score+block-top-k kernels that avoid full score-buffer readback, including a
-parallel in-workgroup top-k reducer probe. It is not a production accelerator
-API.
+parallel in-workgroup top-k reducer probe and q16 hot-shard x8 reuse rows. It
+is not a production accelerator API.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -208,6 +208,8 @@ API.
 | `core_vector_wgpu_prototype/resident_query_copy_score_gpu_block_topk_cpu_merge/q16x4096x1024` | 3.0623 ms (quick) | Same block-local top-k path at q16. In the same quick run it was effectively tied with full score readback (`3.0798 ms`) and ahead of full readback plus CPU top-k (`3.2836 ms`), but this reducer is still a benchmark probe rather than production shape. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_fused_block_topk_cpu_merge/q16x4096x1024` | 2.6872 ms (quick) | Fused WGPU score plus block-local top-k. Effectively tied with full score readback at this size, while cutting output volume and beating the Rayon comparator. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_parallel_block_topk_cpu_merge/q16x4096x1024` | 1.2981 ms (quick) | Parallel in-workgroup top-k reducer. This is the one default row where the parallel reducer clearly beats the lane-0 fused reducer (`2.6773 ms` in the same quick run). |
+| `core_vector_wgpu_prototype/cpu_rayon_score_topk_hot_shard_x8/q16x4096x1024` | 41.906 ms (quick) | Eight repeated Rayon CPU score+top-k batches against the same resident-style candidate window. This is effectively linear from the same-run single-batch Rayon row (`5.2226 ms`). |
+| `core_vector_wgpu_prototype/resident_hot_shard_x8_fused_block_topk_cpu_merge/q16x4096x1024` | 20.671 ms (quick) | Eight repeated query-copy fused WGPU score+top-k cycles against resident candidates. Throughput holds near the same-run single fused row (`2.6204 ms`), and the row is ~2.0x faster than the x8 Rayon comparator. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_readback/q8x4096x2560` | 3.8233 ms (quick) | Larger local embedding dimension with warm resident candidates and full score readback. Still well below the q8/d2560 CPU resident-slab comparator (`13.867 ms`). |
 | `core_vector_wgpu_prototype/resident_preloaded_score_readback/q8x4096x2560` | 3.8640 ms (quick) | Same q8/d2560 scoring/readback path with queries already resident; query-copy remains negligible relative to scoring/readback. |
 | `core_vector_wgpu_prototype/cold_candidate_upload_score_readback/q8x4096x2560` | 8.7333 ms (quick) | Cold upload for the 2560-dim candidate slab. Upload tax is visible but still below the CPU resident-slab comparator. |
@@ -232,6 +234,8 @@ API.
 | `core_vector_wgpu_prototype/resident_query_copy_score_gpu_block_topk_cpu_merge/q16x10000x1024` | 8.0790 ms (quick) | Block-local top-k is now close to full readback plus CPU ranking, but still not better enough to justify productionizing the current serial reducer. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_fused_block_topk_cpu_merge/q16x10000x1024` | 3.8601 ms (quick) | Fused WGPU score plus block-local top-k at q16/10k. This is the strongest WGPU row so far: about 2.1x faster than full readback plus CPU top-k and 3.4x faster than Rayon CPU score+top-k in the same quick run. |
 | `core_vector_wgpu_prototype/resident_query_copy_score_parallel_block_topk_cpu_merge/q16x10000x1024` | 3.9287 ms (quick) | Parallel in-workgroup top-k probe at q16/10k. It remains far ahead of full readback plus CPU top-k and Rayon CPU, but is slightly behind the simpler fused row (`3.8622 ms` in the same quick run). |
+| `core_vector_wgpu_prototype/cpu_rayon_score_topk_hot_shard_x8/q16x10000x1024` | 101.09 ms (quick) | Eight repeated Rayon CPU score+top-k batches for the wider resident candidate window. This is effectively linear from the same-run single-batch Rayon row (`12.684 ms`). |
+| `core_vector_wgpu_prototype/resident_hot_shard_x8_fused_block_topk_cpu_merge/q16x10000x1024` | 30.884 ms (quick) | Eight repeated query-copy fused WGPU score+top-k cycles against the resident 10k candidate window. Throughput holds at ~41.4 Melem/s, matching the same-run single fused row (`3.8604 ms`) while staying ~3.3x faster than the x8 Rayon comparator. |
 
 ## §2 selene-graph — read hot paths
 

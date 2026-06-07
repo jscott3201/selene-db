@@ -1,5 +1,6 @@
 use super::WgpuBench;
 use super::cpu::{cpu_merge_partial_top_k_count, cpu_top_k_count};
+use crate::vector_wgpu_case::HOT_SHARD_REUSE_BATCHES;
 
 impl WgpuBench {
     pub(crate) fn score_with_query_write(&mut self, scores: &mut [f32]) -> Result<f32, String> {
@@ -53,6 +54,20 @@ impl WgpuBench {
         self.queue
             .write_buffer(&self.query_buffer, 0, &self.query_bytes);
         self.score_preloaded_parallel_block_top_k(distances, indices)
+    }
+
+    pub(crate) fn score_hot_shard_reuse_fused_block_top_k(
+        &mut self,
+        distances: &mut [f32],
+        indices: &mut [u32],
+    ) -> Result<usize, String> {
+        let mut retained = 0;
+        for _ in 0..HOT_SHARD_REUSE_BATCHES {
+            self.queue
+                .write_buffer(&self.query_buffer, 0, &self.query_bytes);
+            retained += self.score_preloaded_fused_block_top_k(distances, indices)?;
+        }
+        Ok(retained)
     }
 
     pub(crate) fn score_preloaded(&mut self, scores: &mut [f32]) -> Result<f32, String> {
