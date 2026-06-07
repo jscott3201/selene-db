@@ -228,7 +228,8 @@ fn bounds_for_property(
                     TightenOutcome::Reject => return None,
                 }
             }
-            binding_refs::PropertyPredicateShape::InList(_) => {}
+            binding_refs::PropertyPredicateShape::InList(_)
+            | binding_refs::PropertyPredicateShape::InListExpression(_) => {}
         }
     }
 

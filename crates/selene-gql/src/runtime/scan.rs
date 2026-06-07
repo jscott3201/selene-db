@@ -13,7 +13,8 @@ use crate::{
 };
 
 use super::scan_resolve::{
-    IndexKeyOutcome, ResolvedBounds, range_satisfiable_runtime, resolve_bounds, resolve_index_key,
+    IndexKeyOutcome, ResolvedBounds, range_satisfiable_runtime, resolve_bitmap_union_key_values,
+    resolve_bounds, resolve_index_key,
 };
 use super::{EvalCtx, evaluator, pattern, value_compare};
 
@@ -232,17 +233,13 @@ fn union_property_eq(
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BTreeSet<u32>, ExecutorError> {
-    // Pre-resolve all keys once: parameter slots resolve to concrete Values
-    // for the variant-strict equality probes the BitmapUnion fans out.
-    // `IndexKeyOutcome::EmptyResult` slots (NULL binding) drop out of the
-    // union per BRIEF-154 §B.3. A loud `InvalidParameterType` propagates
-    // immediately.
+    // Pre-resolve all keys once: scalar parameter slots resolve to concrete
+    // Values, while declared list-parameter slots expand into many concrete
+    // Values. Empty slots (NULL bindings or empty lists) drop out of the union
+    // per the same 3VL WHERE semantics as the residual IN predicate.
     let mut resolved_keys: Vec<Value> = Vec::with_capacity(keys.len());
     for key in keys {
-        match resolve_index_key(key, kind, ctx)? {
-            IndexKeyOutcome::Value(value) => resolved_keys.push(value),
-            IndexKeyOutcome::EmptyResult => {}
-        }
+        resolved_keys.extend(resolve_bitmap_union_key_values(key, kind, ctx)?);
     }
     // P3 short-circuit: if every key resolved to EmptyResult, the union is
     // empty by construction — no need to scan rows looking for matches.

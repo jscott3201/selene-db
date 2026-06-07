@@ -12,6 +12,7 @@
 //! - `TypedIndexRange[bounds=Equality(STRING 'foo')]`
 //! - `TypedIndexRange[bounds=Range([INTEGER 10 .. $upper))]`
 //! - `BitmapUnion[bounds=Keys [STRING 'alice', $b]]`
+//! - `BitmapUnion[bounds=Keys [$names...]]`
 //! - `CompositeLookup[bounds=Composite [tenant=STRING 't1', kind=$k]]`
 
 use std::fmt::Write as _;
@@ -77,6 +78,7 @@ fn render_index_key(key: &IndexKey) -> String {
     match key {
         IndexKey::Literal(literal) => render_literal(literal),
         IndexKey::Parameter { name, .. } => format!("${}", name.as_str()),
+        IndexKey::ParameterList { name, .. } => format!("${}...", name.as_str()),
     }
 }
 

@@ -38,6 +38,8 @@ pub(crate) enum PropertyPredicateShape<'a> {
     },
     /// `binding.key IN [items]`.
     InList(Vec<&'a ValueExpr>),
+    /// `binding.key IN <list-valued expression>`.
+    InListExpression(&'a ValueExpr),
 }
 
 /// Matched property predicate.
@@ -185,6 +187,19 @@ fn match_property_expr<'a>(
                 binding,
                 key,
                 shape: PropertyPredicateShape::InList(list.iter().collect()),
+            })
+        }
+        ValueExpr::InListExpression {
+            operand,
+            list,
+            negated: false,
+            ..
+        } => {
+            let (binding, key) = match_property_access(operand, bindings)?;
+            Some(MatchedPropertyPredicate {
+                binding,
+                key,
+                shape: PropertyPredicateShape::InListExpression(list),
             })
         }
         _ => None,

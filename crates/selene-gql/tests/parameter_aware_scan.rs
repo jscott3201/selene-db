@@ -267,6 +267,55 @@ fn parameterized_in_list_null_binding_drops_that_branch() {
 }
 
 #[test]
+fn parameterized_list_in_executes_against_bitmap_union() {
+    let (graph, catalog) = person_graph_with_name_index();
+    let plan = optimized_plan(
+        "MATCH (n:Person) WHERE n.name IN $names :: LIST<STRING> RETURN n.id AS id",
+        &catalog,
+    );
+    let display = optimize_summary(plan.clone(), &OptimizeContext::default()).to_string();
+    assert!(
+        display.contains("BitmapUnion [bounds=Keys [$names...]]"),
+        "expected list-parameter BitmapUnion access path, got:\n{display}",
+    );
+    let plan = Arc::new(plan);
+
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("names"),
+        Value::List(vec![
+            Value::String(db_string("alice")),
+            Value::String(db_string("dave")),
+        ]),
+    );
+
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("list-parameter in-list executes"),
+    );
+    let mut ids = collect_id_column(&table);
+    ids.sort();
+    assert_eq!(ids, vec![1, 4]);
+}
+
+#[test]
+fn parameterized_list_in_empty_binding_returns_empty_bitmap_union() {
+    let (graph, catalog) = person_graph_with_name_index();
+    let plan = Arc::new(optimized_plan(
+        "MATCH (n:Person) WHERE n.name IN $names :: LIST<STRING> RETURN n.id AS id",
+        &catalog,
+    ));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(db_string("names"), Value::List(Vec::new()));
+
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("empty list-parameter in-list executes"),
+    );
+    assert!(collect_id_column(&table).is_empty());
+}
+
+#[test]
 fn explain_renders_parameter_slot_as_dollar_name() {
     // BRIEF-154 bar 9: EXPLAIN summary surfaces parameter slots readably as
     // `$name`, not raw `Debug`. Pins the new `bounds=…` detail surface.
