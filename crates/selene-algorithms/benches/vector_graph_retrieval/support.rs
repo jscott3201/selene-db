@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use selene_algorithms::{
-    GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, label_propagation, louvain,
-    pagerank, wcc,
+    GraphProjection, PageRankConfig, PageRankOrientation, Parallelism, ProjectionConfig,
+    label_propagation, louvain, pagerank, wcc,
 };
 use selene_core::{DbString, GraphId, NodeId, VectorValue};
 use selene_graph::SeleneGraph;
@@ -47,6 +47,7 @@ pub(super) fn pagerank_scores(
             max_iter: 32,
             tolerance: 1e-6,
             parallelism: Parallelism::Sequential,
+            orientation: PageRankOrientation::Natural,
             personalization: None,
         },
     ))
@@ -79,6 +80,7 @@ pub(super) fn personalized_pagerank_scores(
                     max_iter: 32,
                     tolerance: 1e-6,
                     parallelism: Parallelism::Sequential,
+                    orientation: PageRankOrientation::Natural,
                     personalization: Some(vec![(anchor, 1.0)]),
                 },
             ))

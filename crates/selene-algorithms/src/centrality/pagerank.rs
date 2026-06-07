@@ -1,10 +1,10 @@
 //! PageRank via power iteration with damping factor.
 //!
 //! Standard Brin-Page formulation, with optional personalized restart
-//! distribution `p`:
+//! distribution `p` and configurable edge orientation:
 //!   `new[v] = (1 - damping) * p[v] + damping * Σ score[u] / out_degree(u)`
-//! for each `u` ∈ in_neighbors(v). Dangling nodes (out_degree = 0)
-//! redistribute their score to `p`.
+//! for each `u` ∈ oriented_in_neighbors(v). Dangling nodes
+//! (oriented_out_degree = 0) redistribute their score to `p`.
 //!
 //! State arrays sized by live count via `RowIndex` (§E20). Result sorted
 //! DESC by score with NodeId ASC tie-break (§E21).
@@ -15,6 +15,22 @@ use selene_core::{CancellationChecker, NodeId};
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
+
+/// Edge traversal orientation used by PageRank.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PageRankOrientation {
+    /// Follow projected edges in their stored source-to-target direction.
+    #[default]
+    Natural,
+    /// Traverse each projected edge in reverse target-to-source direction.
+    Reverse,
+    /// Treat each projected edge as bidirectional.
+    ///
+    /// Per-node neighbors are the deduplicated `out_neighbors ∪ in_neighbors`
+    /// set, so reciprocal edges and self-loops do not double the undirected
+    /// degree for this PageRank mode.
+    Undirected,
+}
 
 /// Caller-supplied PageRank configuration.
 ///
@@ -37,6 +53,10 @@ pub struct PageRankConfig {
     pub tolerance: f64,
     /// Requested parallel execution policy.
     pub parallelism: Parallelism,
+    /// Edge traversal orientation. [`PageRankOrientation::Natural`] preserves
+    /// standard directed PageRank; [`PageRankOrientation::Undirected`] spreads
+    /// personalized mass across incident edges regardless of stored direction.
+    pub orientation: PageRankOrientation,
     /// Optional personalized restart distribution as seed-node weights.
     ///
     /// `None` keeps the uniform PageRank behavior. `Some` weights are normalized
@@ -95,16 +115,7 @@ fn pagerank_sequential(
     let mut scores: Vec<f64> = personalization.clone();
     let mut new_scores: Vec<f64> = vec![0.0; n_usize];
 
-    // Pre-cache out-neighbor dense lists once. PageRank touches every edge
-    // every iteration; caching avoids re-walking the projection.
-    let mut out_neighbors_dense: Vec<Vec<u32>> = Vec::with_capacity(n_usize);
-    let mut rows_since_check = 0usize;
-    for d in 0..n_usize as u32 {
-        check_algorithm_stride(checker, &mut rows_since_check)?;
-        let node = idx.node_id_of(d);
-        let neighbors: Vec<u32> = proj.out_neighbors(node).iter().map(|nb| nb.dense).collect();
-        out_neighbors_dense.push(neighbors);
-    }
+    let out_neighbors_dense = build_oriented_out_neighbors(proj, config.orientation, checker)?;
 
     for _ in 0..config.max_iter {
         check_algorithm(checker)?;
@@ -188,37 +199,24 @@ fn pagerank_parallel(
 
     let mut scores: Vec<f64> = personalization.clone();
     let mut new_scores: Vec<f64> = vec![0.0; n_usize];
-
-    let mut in_neighbors_dense: Vec<Vec<u32>> = Vec::with_capacity(n_usize);
-    let mut out_degree_dense: Vec<usize> = vec![0; n_usize];
-    let mut dangling_rows: Vec<u32> = Vec::new();
-
-    let mut rows_since_check = 0usize;
-    for d in 0..n_usize as u32 {
-        check_algorithm_stride(checker, &mut rows_since_check)?;
-        let node = idx.node_id_of(d);
-        let out_degree = proj.out_degree(node);
-        out_degree_dense[d as usize] = out_degree;
-        if out_degree == 0 {
-            dangling_rows.push(d);
-        }
-
-        let in_neighbors: Vec<u32> = proj.in_neighbors(node).iter().map(|nb| nb.dense).collect();
-        in_neighbors_dense.push(in_neighbors);
-    }
+    let adjacency = build_pagerank_adjacency(proj, config.orientation, checker)?;
 
     let runner = ParallelRunner::new(config.parallelism)
         .expect("ParallelRunner builds for valid parallelism");
     runner.install(|| -> Result<(), AlgorithmAborted> {
         for _ in 0..config.max_iter {
             check_algorithm(checker)?;
-            let dangling_mass: f64 = dangling_rows.par_iter().map(|&u| scores[u as usize]).sum();
+            let dangling_mass: f64 = adjacency
+                .dangling_rows
+                .par_iter()
+                .map(|&u| scores[u as usize])
+                .sum();
             let restart_mass = (1.0 - config.damping) + (config.damping * dangling_mass);
 
             new_scores.par_iter_mut().enumerate().for_each(|(v, slot)| {
                 let mut inbound = 0.0;
-                for &u in &in_neighbors_dense[v] {
-                    let out_degree = out_degree_dense[u as usize];
+                for &u in &adjacency.in_neighbors_dense[v] {
+                    let out_degree = adjacency.out_degree_dense[u as usize];
                     debug_assert!(out_degree > 0);
                     inbound += scores[u as usize] / out_degree as f64;
                 }
@@ -247,6 +245,103 @@ fn pagerank_parallel(
         .collect();
     result.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
     Ok(result)
+}
+
+fn build_oriented_out_neighbors(
+    proj: &GraphProjection,
+    orientation: PageRankOrientation,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<Vec<u32>>, AlgorithmAborted> {
+    let idx = proj.row_index();
+    let mut out_neighbors_dense = Vec::with_capacity(idx.len());
+    let mut rows_since_check = 0usize;
+    for d in 0..idx.len() as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
+        let node = idx.node_id_of(d);
+        out_neighbors_dense.push(oriented_out_neighbors(proj, node, orientation));
+    }
+    Ok(out_neighbors_dense)
+}
+
+struct PageRankAdjacency {
+    in_neighbors_dense: Vec<Vec<u32>>,
+    out_degree_dense: Vec<usize>,
+    dangling_rows: Vec<u32>,
+}
+
+fn build_pagerank_adjacency(
+    proj: &GraphProjection,
+    orientation: PageRankOrientation,
+    checker: CancellationChecker<'_>,
+) -> Result<PageRankAdjacency, AlgorithmAborted> {
+    let idx = proj.row_index();
+    let n_usize = idx.len();
+    let mut in_neighbors_dense = Vec::with_capacity(n_usize);
+    let mut out_degree_dense = vec![0; n_usize];
+    let mut dangling_rows = Vec::new();
+
+    let mut rows_since_check = 0usize;
+    for d in 0..n_usize as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
+        let node = idx.node_id_of(d);
+        let outgoing = oriented_out_neighbors(proj, node, orientation);
+        let incoming = oriented_in_neighbors(proj, node, orientation);
+        out_degree_dense[d as usize] = outgoing.len();
+        if outgoing.is_empty() {
+            dangling_rows.push(d);
+        }
+        in_neighbors_dense.push(incoming);
+    }
+
+    Ok(PageRankAdjacency {
+        in_neighbors_dense,
+        out_degree_dense,
+        dangling_rows,
+    })
+}
+
+fn oriented_out_neighbors(
+    proj: &GraphProjection,
+    node: NodeId,
+    orientation: PageRankOrientation,
+) -> Vec<u32> {
+    match orientation {
+        PageRankOrientation::Natural => collect_neighbors_dense(proj.out_neighbors(node)),
+        PageRankOrientation::Reverse => collect_neighbors_dense(proj.in_neighbors(node)),
+        PageRankOrientation::Undirected => {
+            collect_unique_neighbors_dense(proj.out_neighbors(node), proj.in_neighbors(node))
+        }
+    }
+}
+
+fn oriented_in_neighbors(
+    proj: &GraphProjection,
+    node: NodeId,
+    orientation: PageRankOrientation,
+) -> Vec<u32> {
+    match orientation {
+        PageRankOrientation::Natural => collect_neighbors_dense(proj.in_neighbors(node)),
+        PageRankOrientation::Reverse => collect_neighbors_dense(proj.out_neighbors(node)),
+        PageRankOrientation::Undirected => {
+            collect_unique_neighbors_dense(proj.out_neighbors(node), proj.in_neighbors(node))
+        }
+    }
+}
+
+fn collect_neighbors_dense(neighbors: &[crate::projection::ProjNeighbor]) -> Vec<u32> {
+    neighbors.iter().map(|nb| nb.dense).collect()
+}
+
+fn collect_unique_neighbors_dense(
+    out_neighbors: &[crate::projection::ProjNeighbor],
+    in_neighbors: &[crate::projection::ProjNeighbor],
+) -> Vec<u32> {
+    let mut neighbors = Vec::with_capacity(out_neighbors.len() + in_neighbors.len());
+    neighbors.extend(out_neighbors.iter().map(|nb| nb.dense));
+    neighbors.extend(in_neighbors.iter().map(|nb| nb.dense));
+    neighbors.sort_unstable();
+    neighbors.dedup();
+    neighbors
 }
 
 fn personalization_distribution(

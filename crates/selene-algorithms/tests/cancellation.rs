@@ -1,13 +1,13 @@
 //! Cooperative cancellation coverage for cancellable algorithm variants.
 
 use selene_algorithms::{
-    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism, PathfindingError,
-    ProjectionConfig, TopoSortError, TriangleCountConfig, apsp_with_checker,
-    articulation_points_with_checker, betweenness_with_checker, bridges_with_checker,
-    dijkstra_with_checker, label_propagation_with_checker, louvain_with_checker,
-    pagerank_with_checker, scc_count_with_checker, scc_with_checker, sssp_with_checker,
-    topological_sort_with_checker, triangle_count_with_checker, wcc_count_with_checker,
-    wcc_with_checker,
+    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, PageRankOrientation,
+    Parallelism, PathfindingError, ProjectionConfig, TopoSortError, TriangleCountConfig,
+    apsp_with_checker, articulation_points_with_checker, betweenness_with_checker,
+    bridges_with_checker, dijkstra_with_checker, label_propagation_with_checker,
+    louvain_with_checker, pagerank_with_checker, scc_count_with_checker, scc_with_checker,
+    sssp_with_checker, topological_sort_with_checker, triangle_count_with_checker,
+    wcc_count_with_checker, wcc_with_checker,
 };
 use selene_core::{
     CancellationCause, CancellationChecker, CancellationToken, DbString, GraphId, LabelSet,
@@ -110,6 +110,7 @@ fn cancellable_algorithm_variants_report_cancelled() {
                 max_iter: 10,
                 tolerance: 1e-6,
                 parallelism: Parallelism::Sequential,
+                orientation: PageRankOrientation::Natural,
                 personalization: None,
             },
             checker,

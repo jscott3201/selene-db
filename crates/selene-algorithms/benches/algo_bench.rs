@@ -11,9 +11,9 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
-    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism,
-    TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, scc, scc_count,
-    topological_sort, triangle_count, wcc, wcc_count,
+    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, PageRankOrientation,
+    Parallelism, TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, scc,
+    scc_count, topological_sort, triangle_count, wcc, wcc_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -49,6 +49,7 @@ fn bench_pagerank(c: &mut Criterion) {
                 max_iter: 100,
                 tolerance: 1e-6,
                 parallelism,
+                orientation: PageRankOrientation::Natural,
                 personalization: None,
             };
             group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {

@@ -1,9 +1,10 @@
 //! Centrality algorithms: PageRank, Brandes' betweenness.
 //!
-//! Both surfaces operate on the directed view of a [`crate::GraphProjection`]
-//! (only `out_neighbors`) per spec 16 §E19. State arrays are sized by
-//! live-node count via the structural row-index helper per §E20 — never by
-//! `max_row + 1` (donor pattern that breaks on filtered projections).
+//! Betweenness operates on the directed view of a [`crate::GraphProjection`].
+//! PageRank defaults to the same natural directed view and can opt into
+//! reverse or undirected traversal for graph-retrieval workloads. State arrays
+//! are sized by live-node count via the structural row-index helper per §E20 —
+//! never by `max_row + 1` (donor pattern that breaks on filtered projections).
 //!
 //! ## Result shape (spec 16 §E21)
 //!
@@ -18,4 +19,4 @@ mod betweenness;
 mod pagerank;
 
 pub use betweenness::{BetweennessConfig, betweenness, betweenness_with_checker};
-pub use pagerank::{PageRankConfig, pagerank, pagerank_with_checker};
+pub use pagerank::{PageRankConfig, PageRankOrientation, pagerank, pagerank_with_checker};

@@ -3,7 +3,9 @@
 
 use std::num::NonZeroUsize;
 
-use selene_algorithms::{GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank};
+use selene_algorithms::{
+    GraphProjection, PageRankConfig, PageRankOrientation, Parallelism, ProjectionConfig, pagerank,
+};
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
@@ -134,6 +136,7 @@ fn config(max_iter: usize, tolerance: f64, parallelism: Parallelism) -> PageRank
         max_iter,
         tolerance,
         parallelism,
+        orientation: PageRankOrientation::Natural,
         personalization: None,
     }
 }
@@ -315,7 +318,38 @@ fn pagerank_seq_par_parity_with_personalization() {
         max_iter: 100,
         tolerance: 0.0,
         parallelism,
+        orientation: PageRankOrientation::Natural,
         personalization: Some(vec![(nodes[0], 2.0), (nodes[2], 1.0)]),
+    };
+
+    let sequential = pagerank(&proj, personalized(Parallelism::Sequential));
+    let auto = pagerank(&proj, personalized(Parallelism::Auto));
+    let threaded = pagerank(&proj, personalized(threads4()));
+
+    assert_outputs_abs_close(
+        &sequential,
+        &auto,
+        PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE,
+    );
+    assert_outputs_abs_close(
+        &sequential,
+        &threaded,
+        PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE,
+    );
+}
+
+#[test]
+fn pagerank_seq_par_parity_with_undirected_personalization() {
+    let shared = build_graph(4, &[(0, 1), (2, 1), (3, 2)]);
+    let proj = build_proj(&shared);
+    let nodes: Vec<NodeId> = proj.iter_nodes().collect();
+    let personalized = |parallelism| PageRankConfig {
+        damping: 0.85,
+        max_iter: 64,
+        tolerance: 0.0,
+        parallelism,
+        orientation: PageRankOrientation::Undirected,
+        personalization: Some(vec![(nodes[1], 1.0)]),
     };
 
     let sequential = pagerank(&proj, personalized(Parallelism::Sequential));

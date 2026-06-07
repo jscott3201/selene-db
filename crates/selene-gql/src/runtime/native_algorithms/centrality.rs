@@ -7,7 +7,8 @@
 //! [`super::state::with_projection`]) so error rendering matches the pack era.
 
 use selene_algorithms::{
-    BetweennessConfig, PageRankConfig, betweenness_with_checker, pagerank_with_checker,
+    BetweennessConfig, PageRankConfig, PageRankOrientation, betweenness_with_checker,
+    pagerank_with_checker,
 };
 use selene_core::{CancellationChecker, NodeId, Record, Value};
 use selene_graph::SeleneGraph;
@@ -43,6 +44,9 @@ pub(super) fn pagerank_signature() -> Vec<ProcedureParameter> {
         parameter("max_iterations", GqlType::Integer, true),
         parameter("tolerance", GqlType::Float, true),
         parameter("parallelism", GqlType::Integer, true),
+        parameter("orientation", GqlType::String, true)
+            .with_default_doc("natural")
+            .with_default(ProcedureDefaultValue::String("natural")),
         parameter(
             "personalization",
             GqlType::List(Box::new(GqlType::Record(RecordType::Open))),
@@ -104,9 +108,9 @@ pub(super) fn betweenness(
 }
 
 fn parse_pagerank_args(args: &[Value]) -> Result<(String, PageRankConfig), ProcedureError> {
-    if !(5..=6).contains(&args.len()) {
+    if !(5..=7).contains(&args.len()) {
         return Err(invalid_argument(format!(
-            "{PAGERANK_PROC} expected 5 or 6 arguments, got {}",
+            "{PAGERANK_PROC} expected 5 to 7 arguments, got {}",
             args.len()
         )));
     }
@@ -121,8 +125,13 @@ fn parse_pagerank_args(args: &[Value]) -> Result<(String, PageRankConfig), Proce
     )?;
     let tolerance = nullable_f64(PAGERANK_PROC, args, 3, "tolerance", DEFAULT_TOLERANCE)?;
     let parallelism = parse_parallelism(PAGERANK_PROC, &args[4])?;
-    let personalization = if args.len() == 6 {
-        nullable_personalization(&args[5])?
+    let orientation = if args.len() >= 6 {
+        nullable_orientation(&args[5])?
+    } else {
+        PageRankOrientation::Natural
+    };
+    let personalization = if args.len() == 7 {
+        nullable_personalization(&args[6])?
     } else {
         None
     };
@@ -134,6 +143,7 @@ fn parse_pagerank_args(args: &[Value]) -> Result<(String, PageRankConfig), Proce
             max_iter,
             tolerance,
             parallelism,
+            orientation,
             personalization,
         },
     ))
@@ -152,6 +162,25 @@ fn validate_config(damping: f64, tolerance: f64) -> Result<(), ProcedureError> {
         ));
     }
     Ok(())
+}
+
+fn nullable_orientation(value: &Value) -> Result<PageRankOrientation, ProcedureError> {
+    let Value::String(value) = value else {
+        return match value {
+            Value::Null => Ok(PageRankOrientation::Natural),
+            other => Err(invalid_argument(format!(
+                "{PAGERANK_PROC} expected orientation to be STRING or NULL, got {other:?}"
+            ))),
+        };
+    };
+    match value.as_str().to_ascii_lowercase().as_str() {
+        "natural" => Ok(PageRankOrientation::Natural),
+        "reverse" => Ok(PageRankOrientation::Reverse),
+        "undirected" => Ok(PageRankOrientation::Undirected),
+        other => Err(invalid_argument(format!(
+            "{PAGERANK_PROC} orientation must be NATURAL, REVERSE, or UNDIRECTED; got {other:?}"
+        ))),
+    }
 }
 
 fn nullable_personalization(value: &Value) -> Result<Option<Vec<(NodeId, f64)>>, ProcedureError> {
@@ -353,13 +382,55 @@ mod tests {
         assert_eq!(config.max_iter, DEFAULT_MAX_ITERATIONS);
         assert_eq!(config.tolerance, DEFAULT_TOLERANCE);
         assert_eq!(config.parallelism, selene_algorithms::Parallelism::Auto);
+        assert_eq!(config.orientation, PageRankOrientation::Natural);
         assert_eq!(config.personalization, None);
+    }
+
+    #[test]
+    fn pagerank_orientation_parses_modes() {
+        for (source, expected) in [
+            ("NATURAL", PageRankOrientation::Natural),
+            ("reverse", PageRankOrientation::Reverse),
+            ("Undirected", PageRankOrientation::Undirected),
+        ] {
+            let (_, config) = parse_pagerank_args(&[
+                projection_name(),
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                Value::Null,
+                Value::String(db_string(source).expect("test string fits DB string cap")),
+            ])
+            .expect("orientation parses");
+
+            assert_eq!(config.orientation, expected);
+            assert_eq!(config.personalization, None);
+        }
+    }
+
+    #[test]
+    fn pagerank_orientation_rejects_unknown_mode() {
+        let err = parse_pagerank_args(&[
+            projection_name(),
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::String(db_string("sideways").expect("test string fits DB string cap")),
+        ])
+        .expect_err("unknown orientation rejected");
+
+        let detail = invalid_argument_detail(err);
+        assert!(detail.contains("NATURAL"));
+        assert!(detail.contains("REVERSE"));
+        assert!(detail.contains("UNDIRECTED"));
     }
 
     #[test]
     fn pagerank_personalization_parses_weighted_records() {
         let (_, config) = parse_pagerank_args(&[
             projection_name(),
+            Value::Null,
             Value::Null,
             Value::Null,
             Value::Null,
@@ -385,6 +456,7 @@ mod tests {
             Value::Null,
             Value::Null,
             Value::Null,
+            Value::Null,
             Value::List(vec![seed_record(NodeId::new(7), Value::Float(-1.0))]),
         ])
         .expect_err("negative personalization weight rejected");
@@ -398,6 +470,7 @@ mod tests {
     fn pagerank_personalization_rejects_zero_total_weight() {
         let err = parse_pagerank_args(&[
             projection_name(),
+            Value::Null,
             Value::Null,
             Value::Null,
             Value::Null,
