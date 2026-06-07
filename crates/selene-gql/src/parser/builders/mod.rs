@@ -32,6 +32,7 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
             build_statement(child)
         }
         Rule::query_pipeline => build_query_pipeline(program_pair).map(Statement::Query),
+        Rule::call_query_pipeline => build_call_query_pipeline(program_pair).map(Statement::Query),
         Rule::composite_query => build_composite(program_pair),
         Rule::chained_query => build_chained(program_pair),
         Rule::pipeline_statement => {
@@ -129,6 +130,15 @@ fn contains_word(text: &str, word: &str) -> bool {
 
 pub(super) fn build_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::query_pipeline);
+    build_pipeline_from_children(pair)
+}
+
+fn build_call_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::call_query_pipeline);
+    build_pipeline_from_children(pair)
+}
+
+fn build_pipeline_from_children(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
     let source_span = span(&pair);
     let statements = pair
         .into_inner()
@@ -141,7 +151,10 @@ pub(super) fn build_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline
 }
 
 fn build_pipeline_statement(pair: Pair<'_, Rule>) -> Result<PipelineStatement, ParserError> {
-    if pair.as_rule() == Rule::pipeline_statement {
+    if matches!(
+        pair.as_rule(),
+        Rule::pipeline_statement | Rule::post_call_pipeline_statement
+    ) {
         return build_pipeline_statement(first_child(pair)?);
     }
 

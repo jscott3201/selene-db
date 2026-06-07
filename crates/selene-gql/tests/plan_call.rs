@@ -102,6 +102,36 @@ fn top_level_call_yield_where_lowers_to_filter_after_call() {
 }
 
 #[test]
+fn leading_call_can_continue_as_query_pipeline() {
+    let registry = registry();
+    let plan = plan_one(
+        "CALL pkg.all() YIELD outB RETURN outB ORDER BY outB DESC LIMIT 1",
+        &registry,
+    );
+    let [
+        PipelineOp::Call(call),
+        PipelineOp::Project(project),
+        PipelineOp::OrderBy(_),
+        PipelineOp::Limit { .. },
+    ] = plan.pipeline.as_slice()
+    else {
+        panic!("expected leading call, project, order, limit pipeline");
+    };
+
+    assert_eq!(call.yield_schema.len(), 1);
+    assert_eq!(project.len(), 1);
+    assert_eq!(plan.output_schema.columns.len(), 1);
+    assert_eq!(
+        plan.output_schema.columns[0]
+            .name
+            .as_ref()
+            .expect("output is named")
+            .as_str(),
+        "outB"
+    );
+}
+
+#[test]
 fn in_pipeline_call_extends_visible_columns() {
     let registry = registry();
     let plan = plan_one("MATCH (n) CALL pkg.all() YIELD outA RETURN *", &registry);
