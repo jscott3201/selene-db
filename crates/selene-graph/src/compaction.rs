@@ -8,8 +8,8 @@
 //! snapshot I/O — the snapshot writer wiring is BRIEF-Item-4c, the
 //! create-time row-allocation change (arith → append) and dropping the
 //! `rebuild_id_maps` identity bootstrap land when a compacted graph first goes
-//! live (also 4c), and the global DbString pool is untouched (its reclamation is a
-//! fresh-process reload property, not in-process — see the audit doc, Item 12).
+//! live (also 4c). Database strings are plain owned values, so compaction has no
+//! string-pool reclamation work to perform.
 //!
 //! Because 4a left edges + adjacency keyed by stable external `NodeId`, a row
 //! renumber does not touch edge endpoints or adjacency — only the row-keyed
