@@ -104,6 +104,21 @@ fn stored_edges_are_directed_for_is_directed() {
 }
 
 #[test]
+fn stored_elements_match_is_labeled() {
+    let nodes = execute_read("MATCH (n:Person) RETURN n IS LABELED :Person AS labeled");
+    assert_eq!(
+        column_values(&nodes, "labeled"),
+        vec![Value::Bool(true), Value::Bool(true), Value::Bool(true)]
+    );
+
+    let edges = execute_read("MATCH ()-[e:KNOWS]->() RETURN e IS LABELED :KNOWS AS labeled");
+    assert_eq!(
+        column_values(&edges, "labeled"),
+        vec![Value::Bool(true), Value::Bool(true)]
+    );
+}
+
+#[test]
 fn read_executes_projection_without_pattern() {
     let table = execute_read("RETURN 1 AS n");
 

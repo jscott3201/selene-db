@@ -2,6 +2,7 @@
 
 pub(crate) mod call;
 pub(crate) mod ddl;
+pub(crate) mod element_ref;
 pub(crate) mod expr;
 pub(crate) mod mutation;
 pub(crate) mod parameter_inheritance;
