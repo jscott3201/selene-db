@@ -112,7 +112,7 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 ..
             } => {
                 let operand_id = bind_value_expr(ctx, operand)?;
-                bind_is_check(ctx, kind)?;
+                bind_is_check(ctx, operand, operand_id, kind)?;
                 infer::is_check(kind, ctx.expr_type(operand_id), operand.span(), *span)?
             }
             ValueExpr::InList { operand, list, .. } => {
@@ -204,7 +204,12 @@ fn bind_property_exists_target(
     ctx: &mut BindContext,
     target: &ValueExpr,
 ) -> Result<(), AnalysisError> {
-    bind_singleton_element_variable_reference(ctx, target, "PROPERTY_EXISTS target")
+    bind_singleton_element_variable_reference(
+        ctx,
+        target,
+        ElementReferenceRequirement::NodeOrEdge,
+        "PROPERTY_EXISTS target",
+    )
 }
 
 fn bind_singleton_element_variable_references(
@@ -213,7 +218,12 @@ fn bind_singleton_element_variable_references(
     context: &'static str,
 ) -> Result<(), AnalysisError> {
     for target in targets {
-        bind_singleton_element_variable_reference(ctx, target, context)?;
+        bind_singleton_element_variable_reference(
+            ctx,
+            target,
+            ElementReferenceRequirement::NodeOrEdgePlural,
+            context,
+        )?;
     }
     Ok(())
 }
@@ -221,34 +231,80 @@ fn bind_singleton_element_variable_references(
 fn bind_singleton_element_variable_reference(
     ctx: &mut BindContext,
     target: &ValueExpr,
+    requirement: ElementReferenceRequirement,
     context: &'static str,
 ) -> Result<(), AnalysisError> {
     let target_id = bind_value_expr(ctx, target)?;
+    validate_singleton_element_variable_reference(ctx, target, target_id, requirement, context)
+}
+
+fn validate_singleton_element_variable_reference(
+    ctx: &BindContext,
+    target: &ValueExpr,
+    target_id: ExprId,
+    requirement: ElementReferenceRequirement,
+    context: &'static str,
+) -> Result<(), AnalysisError> {
     let ValueExpr::Variable { name, span } = target else {
-        return Err(invalid_singleton_element_reference(context, target.span()));
+        return Err(invalid_element_reference(
+            context,
+            requirement,
+            target.span(),
+        ));
     };
     let binding = ctx
         .lookup_binding(name)
         .expect("element variable target was just resolved");
     let target_type = ctx.expr_type(target_id);
-    let is_singleton_element = matches!(
-        (ctx.element_kind(binding), target_type),
-        (ElementKind::Node, AnalyzedType::Resolved(GqlType::NodeRef))
-            | (ElementKind::Edge, AnalyzedType::Resolved(GqlType::EdgeRef))
-    );
-    if is_singleton_element {
+    if requirement.matches(ctx.element_kind(binding), target_type) {
         Ok(())
     } else {
-        Err(invalid_singleton_element_reference(context, *span))
+        Err(invalid_element_reference(context, requirement, *span))
     }
 }
 
-fn invalid_singleton_element_reference(
+#[derive(Clone, Copy)]
+enum ElementReferenceRequirement {
+    Node,
+    Edge,
+    NodeOrEdge,
+    NodeOrEdgePlural,
+}
+
+impl ElementReferenceRequirement {
+    fn matches(self, kind: ElementKind, ty: &AnalyzedType) -> bool {
+        let node = matches!(
+            (kind, ty),
+            (ElementKind::Node, AnalyzedType::Resolved(GqlType::NodeRef))
+        );
+        let edge = matches!(
+            (kind, ty),
+            (ElementKind::Edge, AnalyzedType::Resolved(GqlType::EdgeRef))
+        );
+        match self {
+            Self::Node => node,
+            Self::Edge => edge,
+            Self::NodeOrEdge | Self::NodeOrEdgePlural => node || edge,
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::Node => "a singleton node variable reference",
+            Self::Edge => "a singleton edge variable reference",
+            Self::NodeOrEdge => "a singleton node or edge variable reference",
+            Self::NodeOrEdgePlural => "singleton node or edge variable references",
+        }
+    }
+}
+
+fn invalid_element_reference(
     context: &'static str,
+    requirement: ElementReferenceRequirement,
     span: crate::SourceSpan,
 ) -> AnalysisError {
     AnalysisError::InvalidReference {
-        message: format!("{context} must be singleton node or edge variable references"),
+        message: format!("{context} must be {}", requirement.description()),
         span,
     }
 }
@@ -645,11 +701,18 @@ fn bind_many_with_spans(
         .collect()
 }
 
-fn bind_is_check(ctx: &mut BindContext, kind: &IsCheckKind) -> Result<(), AnalysisError> {
+fn bind_is_check(
+    ctx: &mut BindContext,
+    operand: &ValueExpr,
+    operand_id: ExprId,
+    kind: &IsCheckKind,
+) -> Result<(), AnalysisError> {
     match kind {
-        IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-            bind_value_expr(ctx, value)?;
-            Ok(())
+        IsCheckKind::SourceOf(value) => {
+            bind_source_destination(ctx, operand, operand_id, value, "IS SOURCE OF")
+        }
+        IsCheckKind::DestinationOf(value) => {
+            bind_source_destination(ctx, operand, operand_id, value, "IS DESTINATION OF")
         }
         IsCheckKind::Null
         | IsCheckKind::Directed
@@ -658,4 +721,28 @@ fn bind_is_check(ctx: &mut BindContext, kind: &IsCheckKind) -> Result<(), Analys
         | IsCheckKind::Typed(_)
         | IsCheckKind::Normalized(_) => Ok(()),
     }
+}
+
+fn bind_source_destination(
+    ctx: &mut BindContext,
+    node: &ValueExpr,
+    node_id: ExprId,
+    edge: &ValueExpr,
+    context: &'static str,
+) -> Result<(), AnalysisError> {
+    validate_singleton_element_variable_reference(
+        ctx,
+        node,
+        node_id,
+        ElementReferenceRequirement::Node,
+        context,
+    )?;
+    let edge_id = bind_value_expr(ctx, edge)?;
+    validate_singleton_element_variable_reference(
+        ctx,
+        edge,
+        edge_id,
+        ElementReferenceRequirement::Edge,
+        context,
+    )
 }
