@@ -2,8 +2,8 @@
 
 use selene_gql::{
     DdlStatement, DeleteMode, DropBehavior, GqlStatus, GqlType, MutationStatement,
-    MutationTerminator, PipelineStatement, Statement, TypePropertyConstraint, ValidationMode,
-    YieldColumn, parse,
+    MutationTerminator, ParserError, PipelineStatement, Statement, TypePropertyConstraint,
+    ValidationMode, YieldColumn, parse,
 };
 
 fn parse_mutation(source: &str) -> selene_gql::MutationPipeline {
@@ -338,6 +338,20 @@ fn parse_call_yield_where_filter() {
 
     assert_eq!(call.yield_items.len(), 1);
     assert!(call.yield_filter.is_some());
+}
+
+#[test]
+fn call_yield_filter_synonym_is_not_iso_syntax() {
+    for source in [
+        "CALL pkg.rank() YIELD score FILTER score >= 0",
+        "CALL pkg.rank() YIELD score FILTER WHERE score >= 0",
+    ] {
+        let error = parse(source).expect_err(source);
+        assert!(
+            matches!(error, ParserError::SyntaxError { .. }),
+            "{source} should be a syntax error, got {error:?}"
+        );
+    }
 }
 
 #[test]
