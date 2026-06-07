@@ -19,7 +19,9 @@ use std::hint::black_box;
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
     PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string, exact_vector_top_k,
+    vector_squared_norm,
 };
+use wide::f64x4;
 
 const N: usize = 1_024;
 const VECTOR_DIMS: &[usize] = &[128, 768, 1536];
@@ -332,6 +334,26 @@ fn bench_vector_gpu_baseline(c: &mut Criterion) {
         group.bench_function(copy_id, |b| {
             b.iter(|| fixture.copy_inputs(black_box(&mut buffer)));
         });
+
+        let query_copy_id = fixture.id("host_pack_queries_f32");
+        let mut query_buffer = vec![0.0f32; fixture.query_transfer_floats()];
+        group.throughput(Throughput::Bytes(fixture.query_transfer_bytes() as u64));
+        group.bench_function(query_copy_id, |b| {
+            b.iter(|| fixture.copy_queries(black_box(&mut query_buffer)));
+        });
+
+        let candidate_copy_id = fixture.id("host_pack_candidates_f32");
+        let mut candidate_buffer = vec![0.0f32; fixture.candidate_transfer_floats()];
+        group.throughput(Throughput::Bytes(fixture.candidate_transfer_bytes() as u64));
+        group.bench_function(candidate_copy_id, |b| {
+            b.iter(|| fixture.copy_candidates(black_box(&mut candidate_buffer)));
+        });
+
+        let slab_score_id = fixture.id("cpu_cosine_resident_slab");
+        group.throughput(Throughput::Elements(fixture.score_count() as u64));
+        group.bench_function(slab_score_id, |b| {
+            b.iter(|| black_box(fixture.score_all_resident_slab()));
+        });
     }
     group.finish();
 }
@@ -340,27 +362,41 @@ struct GpuBaselineFixture {
     case: GpuBaselineCase,
     queries: Vec<VectorValue>,
     candidates: Vec<VectorValue>,
+    query_slab: Vec<f32>,
+    candidate_slab: Vec<f32>,
+    query_norms: Vec<f64>,
+    candidate_norms: Vec<f64>,
 }
 
 impl GpuBaselineFixture {
     fn build(case: GpuBaselineCase) -> Self {
-        let queries = (0..case.queries)
+        let queries: Vec<VectorValue> = (0..case.queries)
             .map(|idx| {
                 VectorValue::new(vector_components_seeded(case.dimension, idx))
                     .expect("query vector is valid")
             })
             .collect();
-        let candidates = (0..case.candidates)
+        let candidates: Vec<VectorValue> = (0..case.candidates)
             .map(|idx| {
                 VectorValue::new(vector_components_seeded(case.dimension, idx + 1_000))
                     .expect("candidate vector is valid")
             })
             .collect();
-        Self {
+        let query_slab = flatten_vectors(&queries);
+        let candidate_slab = flatten_vectors(&candidates);
+        let query_norms = queries.iter().map(vector_squared_norm).collect();
+        let candidate_norms = candidates.iter().map(vector_squared_norm).collect();
+        let fixture = Self {
             case,
             queries,
             candidates,
-        }
+            query_slab,
+            candidate_slab,
+            query_norms,
+            candidate_norms,
+        };
+        fixture.assert_resident_slab_matches_canonical();
+        fixture
     }
 
     fn id(&self, name: &str) -> String {
@@ -380,6 +416,22 @@ impl GpuBaselineFixture {
 
     const fn transfer_bytes(&self) -> usize {
         self.transfer_floats() * std::mem::size_of::<f32>()
+    }
+
+    const fn query_transfer_floats(&self) -> usize {
+        self.case.queries * self.case.dimension
+    }
+
+    const fn query_transfer_bytes(&self) -> usize {
+        self.query_transfer_floats() * std::mem::size_of::<f32>()
+    }
+
+    const fn candidate_transfer_floats(&self) -> usize {
+        self.case.candidates * self.case.dimension
+    }
+
+    const fn candidate_transfer_bytes(&self) -> usize {
+        self.candidate_transfer_floats() * std::mem::size_of::<f32>()
     }
 
     fn score_all(&self) -> usize {
@@ -409,6 +461,134 @@ impl GpuBaselineFixture {
         }
         offset
     }
+
+    fn copy_queries(&self, destination: &mut [f32]) -> usize {
+        destination[..self.query_slab.len()].copy_from_slice(&self.query_slab);
+        self.query_slab.len()
+    }
+
+    fn copy_candidates(&self, destination: &mut [f32]) -> usize {
+        destination[..self.candidate_slab.len()].copy_from_slice(&self.candidate_slab);
+        self.candidate_slab.len()
+    }
+
+    fn score_all_resident_slab(&self) -> usize {
+        let mut hits = 0;
+        for query_idx in 0..self.case.queries {
+            let query = self.query_slice(query_idx);
+            let query_norm = self.query_norms[query_idx];
+            let mut top_k = VectorTopK::new(EXACT_TOP_K);
+            for candidate_idx in 0..self.case.candidates {
+                let candidate = self.candidate_slice(candidate_idx);
+                let distance = cosine_distance_with_norms(
+                    black_box(query),
+                    black_box(candidate),
+                    black_box(query_norm),
+                    black_box(self.candidate_norms[candidate_idx]),
+                );
+                top_k.push_distance(black_box(candidate_idx), distance);
+            }
+            hits += top_k.into_hits().len();
+        }
+        hits
+    }
+
+    fn assert_resident_slab_matches_canonical(&self) {
+        for query_idx in 0..self.case.queries {
+            let exact = exact_vector_top_k(
+                VectorMetric::Cosine,
+                &self.queries[query_idx],
+                self.candidates.iter().enumerate(),
+                EXACT_TOP_K,
+            )
+            .expect("fixture vectors are comparable");
+            let slab = self.resident_slab_top_k(query_idx);
+            assert_eq!(exact.len(), slab.len(), "resident slab hit count drifted");
+            for (exact, slab) in exact.iter().zip(slab.iter()) {
+                assert_eq!(exact.key, slab.key, "resident slab key drifted");
+                assert!(
+                    (exact.distance - slab.distance).abs() <= f64::EPSILON,
+                    "resident slab distance drifted: exact={} slab={}",
+                    exact.distance,
+                    slab.distance
+                );
+            }
+        }
+    }
+
+    fn resident_slab_top_k(&self, query_idx: usize) -> Vec<selene_core::VectorSearchHit<usize>> {
+        let query = self.query_slice(query_idx);
+        let query_norm = self.query_norms[query_idx];
+        let mut top_k = VectorTopK::new(EXACT_TOP_K);
+        for candidate_idx in 0..self.case.candidates {
+            let distance = cosine_distance_with_norms(
+                query,
+                self.candidate_slice(candidate_idx),
+                query_norm,
+                self.candidate_norms[candidate_idx],
+            );
+            top_k.push_distance(candidate_idx, distance);
+        }
+        top_k.into_hits()
+    }
+
+    fn query_slice(&self, index: usize) -> &[f32] {
+        vector_window(&self.query_slab, index, self.case.dimension)
+    }
+
+    fn candidate_slice(&self, index: usize) -> &[f32] {
+        vector_window(&self.candidate_slab, index, self.case.dimension)
+    }
+}
+
+fn flatten_vectors(vectors: &[VectorValue]) -> Vec<f32> {
+    let total_components = vectors.iter().map(VectorValue::dimension).sum();
+    let mut slab = Vec::with_capacity(total_components);
+    for vector in vectors {
+        slab.extend_from_slice(vector.as_slice());
+    }
+    slab
+}
+
+fn vector_window(slab: &[f32], index: usize, dimension: usize) -> &[f32] {
+    let start = index * dimension;
+    &slab[start..start + dimension]
+}
+
+fn cosine_distance_with_norms(
+    query: &[f32],
+    candidate: &[f32],
+    query_norm: f64,
+    candidate_norm: f64,
+) -> f64 {
+    let similarity = dot_slices(query, candidate) / (query_norm.sqrt() * candidate_norm.sqrt());
+    let distance = 1.0 - similarity.clamp(-1.0, 1.0);
+    if distance == 0.0 { 0.0 } else { distance }
+}
+
+fn dot_slices(lhs: &[f32], rhs: &[f32]) -> f64 {
+    let mut chunks_lhs = lhs.chunks_exact(4);
+    let mut chunks_rhs = rhs.chunks_exact(4);
+    let mut product = f64x4::ZERO;
+    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
+        let lhs = f64x4_from_f32(lhs);
+        let rhs = f64x4_from_f32(rhs);
+        product += lhs * rhs;
+    }
+    let mut product = product.reduce_add();
+    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
+        product += f64::from(lhs) * f64::from(rhs);
+    }
+    product
+}
+
+fn f64x4_from_f32(chunk: &[f32]) -> f64x4 {
+    f64x4::from([
+        f64::from(chunk[0]),
+        f64::from(chunk[1]),
+        f64::from(chunk[2]),
+        f64::from(chunk[3]),
+    ])
 }
 
 criterion_group! {

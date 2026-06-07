@@ -138,7 +138,9 @@ dimensions and candidate widths without depending on the localhost oMLX service.
 The `core_vector_gpu_baseline/*` rows are CPU/SIMD and host-pack envelopes for
 future optional GPU acceleration: a Metal/CUDA backend must beat these rerank
 times after any setup and host/device transfer costs, not just win a kernel
-microbenchmark.
+microbenchmark. The split host-pack rows model warm GPU-resident candidates
+versus cold candidate upload/resync, and the resident-slab CPU rows show the
+layout-only speedup from prepacked contiguous candidates plus cached norms.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -156,14 +158,26 @@ microbenchmark.
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x1024_k10` | 12.2 µs / 47.6 µs / 188.3 µs / 750.7 µs (quick) | Product-shaped cosine rerank envelope for the 1024-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x2560_k10` | 29.6 µs / 116.6 µs / 465.1 µs / 1.856 ms (quick) | Product-shaped cosine rerank envelope for the 2560-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x4096_k10` | 47.0 µs / 185.5 µs / 739.3 µs / 2.959 ms (quick) | Product-shaped cosine rerank envelope for the 4096-dim local embedding model. |
-| `core_vector_gpu_baseline/cpu_cosine_rerank_q1x4096x1024_k10` | 754.46 µs (quick) | CPU/SIMD exact rerank over one 1024-dim query and 4,096 candidates; first GPU break-even row. |
-| `core_vector_gpu_baseline/host_pack_f32_q1x4096x1024_k10` | 336.07 µs (quick) | Lower-bound host packing copy for the same q1/c4096/d1024 input window, before real GPU transfer/setup. |
-| `core_vector_gpu_baseline/cpu_cosine_rerank_q8x4096x1024_k10` | 6.022 ms (quick) | Batched CPU/SIMD exact rerank over eight 1024-dim queries and a shared 4,096-candidate window. |
-| `core_vector_gpu_baseline/host_pack_f32_q8x4096x1024_k10` | 345.64 µs (quick) | Host-pack lower bound for q8/c4096/d1024; candidate payload dominates query payload. |
+| `core_vector_gpu_baseline/cpu_cosine_rerank_q1x4096x1024_k10` | 750.67 µs (quick) | CPU/SIMD exact rerank over one 1024-dim query and 4,096 candidates; first GPU break-even row. |
+| `core_vector_gpu_baseline/host_pack_f32_q1x4096x1024_k10` | 336.43 µs (quick) | Lower-bound host packing copy for the same q1/c4096/d1024 input window, before real GPU transfer/setup. |
+| `core_vector_gpu_baseline/host_pack_queries_f32_q1x4096x1024_k10` | 39.70 ns (quick) | Query-only host packing lower bound when candidates are already resident in the accelerator. |
+| `core_vector_gpu_baseline/host_pack_candidates_f32_q1x4096x1024_k10` | 295.74 µs (quick) | Candidate-only host packing lower bound for cold upload or hot-shard resync. |
+| `core_vector_gpu_baseline/cpu_cosine_resident_slab_q1x4096x1024_k10` | 672.48 µs (quick) | CPU rerank over prepacked contiguous candidates with cached norms; layout-only resident-state comparator. |
+| `core_vector_gpu_baseline/cpu_cosine_rerank_q8x4096x1024_k10` | 6.010 ms (quick) | Batched CPU/SIMD exact rerank over eight 1024-dim queries and a shared 4,096-candidate window. |
+| `core_vector_gpu_baseline/host_pack_f32_q8x4096x1024_k10` | 335.52 µs (quick) | Host-pack lower bound for q8/c4096/d1024; candidate payload dominates query payload. |
+| `core_vector_gpu_baseline/host_pack_queries_f32_q8x4096x1024_k10` | 396.54 ns (quick) | Query-only host packing lower bound for the q8 warm-resident path. |
+| `core_vector_gpu_baseline/host_pack_candidates_f32_q8x4096x1024_k10` | 291.09 µs (quick) | Candidate-only host packing lower bound for cold upload or shard resync. |
+| `core_vector_gpu_baseline/cpu_cosine_resident_slab_q8x4096x1024_k10` | 5.407 ms (quick) | Resident-slab CPU comparator; trims the q8/d1024 rerank envelope by about 10% before any GPU work. |
 | `core_vector_gpu_baseline/cpu_cosine_rerank_q8x4096x2560_k10` | 14.901 ms (quick) | Batched CPU/SIMD exact rerank over eight 2560-dim queries and 4,096 candidates; representative local larger embedding row. |
-| `core_vector_gpu_baseline/host_pack_f32_q8x4096x2560_k10` | 869.65 µs (quick) | Host-pack lower bound for q8/c4096/d2560. |
-| `core_vector_gpu_baseline/cpu_cosine_rerank_q16x4096x1024_k10` | 12.063 ms (quick) | Larger query-batch CPU/SIMD rerank envelope for GPU-batch break-even tests. |
-| `core_vector_gpu_baseline/host_pack_f32_q16x4096x1024_k10` | 337.98 µs (quick) | Host-pack lower bound for q16/c4096/d1024. |
+| `core_vector_gpu_baseline/host_pack_f32_q8x4096x2560_k10` | 857.04 µs (quick) | Host-pack lower bound for q8/c4096/d2560. |
+| `core_vector_gpu_baseline/host_pack_queries_f32_q8x4096x2560_k10` | 994.53 ns (quick) | Query-only host packing lower bound for the q8/d2560 warm-resident path. |
+| `core_vector_gpu_baseline/host_pack_candidates_f32_q8x4096x2560_k10` | 727.24 µs (quick) | Candidate-only host packing lower bound for cold upload or shard resync at larger local embedding dimensions. |
+| `core_vector_gpu_baseline/cpu_cosine_resident_slab_q8x4096x2560_k10` | 13.867 ms (quick) | Resident-slab CPU comparator for the larger local embedding row. |
+| `core_vector_gpu_baseline/cpu_cosine_rerank_q16x4096x1024_k10` | 12.007 ms (quick) | Larger query-batch CPU/SIMD rerank envelope for GPU-batch break-even tests. |
+| `core_vector_gpu_baseline/host_pack_f32_q16x4096x1024_k10` | 337.17 µs (quick) | Host-pack lower bound for q16/c4096/d1024. |
+| `core_vector_gpu_baseline/host_pack_queries_f32_q16x4096x1024_k10` | 794.50 ns (quick) | Query-only host packing lower bound for q16 warm-resident accelerator paths. |
+| `core_vector_gpu_baseline/host_pack_candidates_f32_q16x4096x1024_k10` | 289.42 µs (quick) | Candidate-only host packing lower bound for cold upload or shard resync. |
+| `core_vector_gpu_baseline/cpu_cosine_resident_slab_q16x4096x1024_k10` | 10.808 ms (quick) | Resident-slab CPU comparator; trims the q16/d1024 rerank envelope by about 10% before any GPU work. |
 
 ## §2 selene-graph — read hot paths
 
