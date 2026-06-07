@@ -104,6 +104,80 @@ fn string_exact_numeric_casts_accept_scientific_and_suffix_images() {
 }
 
 #[test]
+fn string_radix_numeric_casts_accept_literal_images() {
+    assert_eq!(
+        first_value("RETURN CAST('0xCAFE' AS INTEGER) AS v"),
+        Value::Int(51_966)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('-0x1A' AS INT16) AS v"),
+        Value::Int(-26)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('+0x10' AS INTEGER) AS v"),
+        Value::Int(16)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('0o777' AS UINT64) AS v"),
+        Value::Uint(511)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('0b1010' AS UINT128) AS v"),
+        Value::Uint128(10)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('0x10' AS DECIMAL) AS v"),
+        Value::Decimal("16".parse().expect("valid decimal"))
+    );
+    assert_eq!(
+        first_value("RETURN CAST('0b1010' AS FLOAT) AS v"),
+        Value::Float(10.0)
+    );
+}
+
+#[test]
+fn string_radix_numeric_casts_accept_digit_separators() {
+    assert_eq!(
+        first_value("RETURN CAST('0x_1F' AS INTEGER) AS v"),
+        Value::Int(31)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('0xCA_FE' AS INTEGER) AS v"),
+        Value::Int(51_966)
+    );
+    assert_eq!(
+        first_value("RETURN CAST('0b1010_0001' AS UINT16) AS v"),
+        Value::Uint(161)
+    );
+}
+
+#[test]
+fn string_radix_numeric_casts_reject_malformed_images() {
+    for source in [
+        "RETURN CAST('0x' AS INTEGER) AS v",
+        "RETURN CAST('0x_' AS INTEGER) AS v",
+        "RETURN CAST('0x1__2' AS INTEGER) AS v",
+        "RETURN CAST('0o8' AS INTEGER) AS v",
+        "RETURN CAST('0b102' AS INTEGER) AS v",
+        "RETURN CAST('+0x10' AS UINT64) AS v",
+    ] {
+        assert_eq!(first_status(source), "22018", "{source}");
+    }
+}
+
+#[test]
+fn string_radix_numeric_casts_report_overflow() {
+    assert_eq!(
+        first_status("RETURN CAST('0x8000000000000000' AS INTEGER) AS v"),
+        "22003"
+    );
+    assert_eq!(
+        first_status("RETURN CAST('0x1_0000_0000_0000_0000' AS UINT64) AS v"),
+        "22003"
+    );
+}
+
+#[test]
 fn string_numeric_casts_reject_invalid_digit_separators() {
     for source in [
         "RETURN CAST('1__000' AS INTEGER) AS v",
