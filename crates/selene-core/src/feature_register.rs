@@ -191,6 +191,9 @@ feature_ids! {
     GV25 = "GV25" => "128 bit floating point numbers";
     GV26 = "GV26" => "256 bit floating point numbers";
     GV35 = "GV35" => "Byte string types";
+    GV36 = "GV36" => "Specified byte string minimum length";
+    GV37 = "GV37" => "Specified byte string maximum length";
+    GV38 = "GV38" => "Specified byte string fixed length";
     GV39 = "GV39" => "Temporal types: date, local datetime and local time support";
     GV40 = "GV40" => "Temporal types: zoned datetime and zoned time support";
     GV41 = "GV41" => "Temporal types: duration support";
@@ -474,6 +477,18 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),
+    (
+        FeatureId::GV36,
+        "byte string min/max length constraints require length-carrying GqlType metadata",
+    ),
+    (
+        FeatureId::GV37,
+        "byte string maximum length constraints require length-carrying GqlType metadata",
+    ),
+    (
+        FeatureId::GV38,
+        "fixed-length byte string constraints require length-carrying GqlType metadata",
+    ),
     (
         FeatureId::GV60,
         "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
