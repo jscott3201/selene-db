@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_60_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_64_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 60);
+    assert_eq!(procedures.len(), 64);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 60);
+    assert_eq!(table.row_count(), 64);
 
     let names = column_strings(&table, "name");
     let signatures = column_strings(&table, "signature");
@@ -165,6 +165,26 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
         names
             .iter()
             .any(|name| name == "selene.json_path_contains_nodes")
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.json_contains_candidate_nodes")
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.json_path_exists_candidate_nodes")
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.json_path_contains_candidate_nodes")
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.json_path_value_candidate_nodes")
     );
     assert!(names.iter().any(|name| name == "selene.create_text_index"));
     assert!(names.iter().any(|name| name == "selene.drop_text_index"));

@@ -660,13 +660,24 @@ output before it joins the surrounding pipeline.
 
 | Procedure | Tier | Purpose |
 |---|---|---|
-| `selene.health` | Graph | Liveness/readiness probe. Returns engine version, snapshot count, WAL state. |
+| `selene.health` | Graph | Basic graph health counters. |
 | `selene.feature_status` | Graph | Surfaces the claimed ISO feature register at runtime. |
-| `selene.verify('deep')` | Graph | Integrity check over the live graph. The optional `deep` flag defaults to `false`. |
-| `selene.create_index('name', ':Label', 'prop')` | Mutation | Create a secondary index. Audits through the mutation funnel. |
-| `selene.drop_index('name')` | Mutation | Drop a secondary index. Audits through the mutation funnel. |
+| `selene.verify` | Graph | Integrity check over graph invariants. |
+| `selene.compaction_stats` | Graph | Graph row compaction pressure counters. |
+| `selene.create_index`, `selene.drop_index` | Mutation | Create or drop scalar property indexes through the mutation funnel. |
+| `selene.create_vector_index`, `selene.drop_vector_index` | Mutation | Register or drop vector indexes over `(label, property)`. |
+| `selene.vector_search_*`, `selene.vector_score_*` | Graph | Exact, ANN, candidate-scoped, neighbor, expanded-candidate, and batched vector retrieval. |
+| `selene.vector_candidate_states` | Graph | Discover maintained graph-derived candidate states. |
+| `selene.vector_index_stats` | Graph | Vector index memory and cardinality statistics. |
+| `selene.rebuild_vector_indexes`, `selene.rebuild_recommended_vector_indexes` | Maintenance | Rebuild derived in-memory vector index state from primary graph values. |
+| `selene.create_text_index`, `selene.drop_text_index` | Mutation | Register or drop maintained BM25 text indexes. |
+| `selene.text_index_stats` | Graph | Text index memory and cardinality statistics. |
+| `selene.text_search_nodes`, `selene.text_score_nodes`, `selene.text_score_nodes_batch`, `selene.text_score_candidate_state_expanded_batch` | Graph | Exact BM25 search and candidate-scoped text scoring. |
+| `selene.json_contains_nodes`, `selene.json_path_*_nodes` | Graph | Exact JSON containment, path-existence, path-containment, and path-value search over node properties. |
+| `selene.json_contains_candidate_nodes`, `selene.json_path_*_candidate_nodes` | Graph | Candidate-scoped JSON filters over explicit `LIST<NODE>` inputs. |
+| `selene.compact` | Maintenance | Compact dead graph rows out of the live store. |
 
-The 5 platform built-ins are registered by the native
+The 45 platform built-ins are registered by the native
 `selene-gql` `BuiltinProcedureRegistry` (the sole frozen production
 `ProcedureRegistry` impl) and documented in its rustdoc.
 

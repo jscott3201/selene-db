@@ -68,7 +68,7 @@ pub enum JsonSearchError {
 }
 
 impl JsonSearchError {
-    fn into_graph_error(self) -> GraphError {
+    pub(crate) fn into_graph_error(self) -> GraphError {
         match self {
             Self::Graph(error) => error,
             Self::Cancelled | Self::Timeout { .. } => GraphError::Inconsistent {

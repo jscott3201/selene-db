@@ -19,7 +19,7 @@ pub(in crate::runtime) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 41] = [
+pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 45] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -103,6 +103,30 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 41] = [
         description: "Exact JSON path-value search over node properties.",
         since_version: "1.1.0",
         kind: BuiltinKind::JsonPathValueNodes,
+    },
+    BuiltinSpec {
+        name: &["selene", "json_contains_candidate_nodes"],
+        description: "Exact JSON containment search over explicit node candidates.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::JsonContainsCandidateNodes,
+    },
+    BuiltinSpec {
+        name: &["selene", "json_path_exists_candidate_nodes"],
+        description: "Exact JSON path-existence search over explicit node candidates.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::JsonPathExistsCandidateNodes,
+    },
+    BuiltinSpec {
+        name: &["selene", "json_path_contains_candidate_nodes"],
+        description: "Exact JSON path-containment search over explicit node candidates.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::JsonPathContainsCandidateNodes,
+    },
+    BuiltinSpec {
+        name: &["selene", "json_path_value_candidate_nodes"],
+        description: "Exact JSON path-value search over explicit node candidates.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::JsonPathValueCandidateNodes,
     },
     BuiltinSpec {
         name: &["selene", "rebuild_vector_indexes"],

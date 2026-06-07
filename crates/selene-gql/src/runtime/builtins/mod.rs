@@ -17,8 +17,9 @@
 //! vector-search, vector-index stats, vector-index procedures, maintained
 //! text-index stats/procedures, BM25 text-search, candidate BM25 scoring,
 //! batched candidate BM25 scoring, maintained-state graph-expanded BM25 batch
-//! scoring, JSON containment node search, and JSON path search are new native
-//! engine functionality on the same concrete built-in dispatch path.
+//! scoring, JSON containment node search, JSON path search, and candidate-scoped
+//! JSON search are new native engine functionality on the same concrete
+//! built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify`, and
@@ -40,6 +41,10 @@
 //!   `selene.vector_index_stats`, `selene.text_index_stats`,
 //!   `selene.json_contains_nodes`, `selene.json_path_exists_nodes`,
 //!   `selene.json_path_contains_nodes`, `selene.json_path_value_nodes`,
+//!   `selene.json_contains_candidate_nodes`,
+//!   `selene.json_path_exists_candidate_nodes`,
+//!   `selene.json_path_contains_candidate_nodes`,
+//!   `selene.json_path_value_candidate_nodes`,
 //!   `selene.compaction_stats`,
 //!   `selene.text_search_nodes`, `selene.text_score_nodes`,
 //!   `selene.text_score_nodes_batch`, and
@@ -74,6 +79,7 @@ mod drop_text_index;
 mod drop_vector_index;
 mod feature_status;
 mod health;
+mod json_candidate_nodes;
 mod json_contains_nodes;
 mod json_path_common;
 mod json_path_contains_nodes;
