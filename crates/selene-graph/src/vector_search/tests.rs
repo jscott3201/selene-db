@@ -223,7 +223,7 @@ fn exact_vector_search_uses_node_id_tie_breaks() {
 }
 
 #[test]
-fn exact_vector_search_flat_index_parallel_matches_unindexed_ordering() {
+fn exact_vector_search_parallel_paths_match_sequential_ordering() {
     let shared = SharedGraph::new(GraphId::new(9301));
     let doc = db_string("vector.parallel.doc").unwrap();
     let embedding = db_string("embedding").unwrap();
@@ -243,9 +243,22 @@ fn exact_vector_search_flat_index_parallel_matches_unindexed_ordering() {
     }
 
     let query = vector(&[0.0]);
-    let unindexed = shared
+    let token = CancellationToken::new();
+    let sequential = shared
+        .exact_vector_search_nodes_checked(
+            &doc,
+            &embedding,
+            &query,
+            VectorMetric::SquaredEuclidean,
+            7,
+            CancellationChecker::new(Some(&token), None),
+        )
+        .unwrap();
+    let unindexed_parallel = shared
         .exact_vector_search_nodes(&doc, &embedding, &query, VectorMetric::SquaredEuclidean, 7)
         .unwrap();
+    assert_eq!(unindexed_parallel, sequential);
+
     shared
         .create_vector_index(doc.clone(), embedding.clone(), VectorIndexKind::Flat, 1)
         .unwrap();
@@ -254,7 +267,7 @@ fn exact_vector_search_flat_index_parallel_matches_unindexed_ordering() {
         .exact_vector_search_nodes(&doc, &embedding, &query, VectorMetric::SquaredEuclidean, 7)
         .unwrap();
 
-    assert_eq!(indexed, unindexed);
+    assert_eq!(indexed, sequential);
 }
 
 #[test]

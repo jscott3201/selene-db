@@ -13,7 +13,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
-use crate::vector_index::{HnswSearchScratch, VectorIndex, VectorIndexSearchHit};
+use crate::vector_index::{HnswSearchScratch, VectorIndexSearchHit};
 #[path = "vector_search/types.rs"]
 mod types;
 pub use types::{
@@ -89,8 +89,8 @@ impl SeleneGraph {
             .as_ref()
             .map_or(label_rows, |index| index.rows());
         let scorer = metric.bind_query(query).map_err(GraphError::from)?;
-        if should_parallelize_exact_scan(vector_index.as_deref(), rows, k, checker) {
-            return self.exact_vector_search_indexed_parallel(label, property, scorer, k, rows);
+        if should_parallelize_exact_scan(rows, k, checker) {
+            return self.exact_vector_search_parallel(label, property, scorer, k, rows);
         }
 
         let mut top_k = VectorTopK::new(k);
@@ -232,7 +232,7 @@ impl SeleneGraph {
         Ok(top_ks.into_iter().map(vector_node_hits).collect())
     }
 
-    fn exact_vector_search_indexed_parallel(
+    fn exact_vector_search_parallel(
         &self,
         label: &DbString,
         property: &DbString,
@@ -243,13 +243,13 @@ impl SeleneGraph {
         let raw_rows: Vec<u32> = rows.iter().collect();
         let top_k = raw_rows
             .par_chunks(VECTOR_SEARCH_PARALLEL_CHUNK_ROWS)
-            .map(|chunk| self.exact_vector_search_indexed_chunk(label, property, scorer, k, chunk))
+            .map(|chunk| self.exact_vector_search_chunk(label, property, scorer, k, chunk))
             .try_reduce(|| VectorTopK::new(k), merge_top_k)?;
 
         Ok(vector_node_hits(top_k))
     }
 
-    fn exact_vector_search_indexed_chunk(
+    fn exact_vector_search_chunk(
         &self,
         label: &DbString,
         property: &DbString,
@@ -267,7 +267,7 @@ impl SeleneGraph {
                 .node_id_for_row(row)
                 .ok_or_else(|| GraphError::Inconsistent {
                     reason: format!(
-                        "vector index row {raw_row} for {} has no node id",
+                        "vector search row {raw_row} for {} has no node id",
                         label.as_str()
                     ),
                 })?;
@@ -277,7 +277,7 @@ impl SeleneGraph {
                 .get(raw_row as usize)
                 .ok_or_else(|| GraphError::Inconsistent {
                     reason: format!(
-                        "vector index row {raw_row} for {} has no property row",
+                        "vector search row {raw_row} for {} has no property row",
                         label.as_str()
                     ),
                 })?;
@@ -482,15 +482,11 @@ impl SeleneGraph {
 }
 
 fn should_parallelize_exact_scan(
-    vector_index: Option<&VectorIndex>,
     rows: &RoaringBitmap,
     k: usize,
     checker: CancellationChecker<'_>,
 ) -> bool {
-    vector_index.is_some()
-        && checker.is_disabled()
-        && k != 0
-        && rows.len() >= VECTOR_SEARCH_PARALLEL_MIN_ROWS
+    checker.is_disabled() && k != 0 && rows.len() >= VECTOR_SEARCH_PARALLEL_MIN_ROWS
 }
 
 fn merge_top_k(
