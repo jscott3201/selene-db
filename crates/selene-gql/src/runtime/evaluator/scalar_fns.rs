@@ -181,6 +181,10 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
+        "elements" => identity_length_fns::eval_elements(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
         "duration" => duration_fns::eval_duration_function(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             ctx,

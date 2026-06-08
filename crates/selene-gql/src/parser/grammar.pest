@@ -583,6 +583,7 @@ primary = {
   | record_constructor
   | normalize_expr
   | trim_expr
+  | elements_function
   | aggregate_expr
   | literal
   | current_datetime_function
@@ -685,6 +686,7 @@ local_timestamp_kw         = @{ ^"LOCAL_TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
 local_time_kw              = @{ ^"LOCAL_TIME" ~ !(LETTER | NUMBER | "_") }
 
 function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }
+elements_function = { elements_synonym ~ "(" ~ arg_list? ~ ")" }
 paren_expr      = { "(" ~ expr ~ ")" }
 var_ref         = { ident }
 

@@ -91,7 +91,7 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             if let Some(feature_id) = scalar_function_feature(name) {
                 record_feature(uses, feature_id, *span);
             }
-            if is_trim_list_function(name, args.len()) {
+            if is_list_value_function(name, args.len()) {
                 record_feature(uses, FeatureId::GV50, *span);
             }
             if let Some(feature_id) = aggregate_function_feature(name) {
@@ -169,7 +169,7 @@ fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
         "acos" | "asin" | "atan" | "cos" | "cosh" | "cot" | "degrees" | "radians" | "sin"
         | "sinh" | "tan" | "tanh" => Some(FeatureId::GF02),
         "exp" | "ln" | "log" | "log10" | "power" => Some(FeatureId::GF03),
-        "path_length" => Some(FeatureId::GF04),
+        "path_length" | "elements" => Some(FeatureId::GF04),
         "btrim" | "ltrim" | "rtrim" => Some(FeatureId::GF05),
         "cardinality" => Some(FeatureId::GF12),
         "size" => Some(FeatureId::GF13),
@@ -196,8 +196,13 @@ fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
     }
 }
 
-fn is_trim_list_function(name: &NonEmpty<DbString>, arity: usize) -> bool {
-    name.len() == 1 && arity == 2 && name.first().as_str().eq_ignore_ascii_case("trim")
+fn is_list_value_function(name: &NonEmpty<DbString>, arity: usize) -> bool {
+    if name.len() != 1 {
+        return false;
+    }
+    let function_name = name.first().as_str();
+    (arity == 2 && function_name.eq_ignore_ascii_case("trim"))
+        || (arity == 1 && function_name.eq_ignore_ascii_case("elements"))
 }
 
 fn aggregate_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
