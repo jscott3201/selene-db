@@ -8,6 +8,8 @@ use crate::{
     },
 };
 
+use super::numeric::is_numeric;
+
 pub(super) fn duration_add_sub(
     op: BinaryOp,
     lhs: &AnalyzedType,
@@ -34,6 +36,54 @@ pub(super) fn duration_add_sub(
     }
 }
 
+pub(super) fn duration_mul_div(
+    op: BinaryOp,
+    lhs: &AnalyzedType,
+    lhs_span: SourceSpan,
+    rhs: &AnalyzedType,
+    rhs_span: SourceSpan,
+) -> Option<Result<AnalyzedType, AnalysisError>> {
+    if !matches!(op, BinaryOp::Mul | BinaryOp::Div) {
+        return None;
+    }
+
+    let lhs_is_duration = matches!(lhs, AnalyzedType::Resolved(GqlType::Duration));
+    let rhs_is_duration = matches!(rhs, AnalyzedType::Resolved(GqlType::Duration));
+    let lhs_is_dynamic = matches!(lhs, AnalyzedType::Dynamic);
+    let rhs_is_dynamic = matches!(rhs, AnalyzedType::Dynamic);
+    let lhs_is_coefficient = is_coefficient(lhs);
+    let rhs_is_coefficient = is_coefficient(rhs);
+
+    match op {
+        BinaryOp::Mul => match (lhs_is_duration, rhs_is_duration) {
+            (true, false) if rhs_is_coefficient => {
+                Some(Ok(AnalyzedType::Resolved(GqlType::Duration)))
+            }
+            (false, true) if lhs_is_coefficient => {
+                Some(Ok(AnalyzedType::Resolved(GqlType::Duration)))
+            }
+            (true, false) if rhs_is_dynamic => Some(Ok(AnalyzedType::Dynamic)),
+            (false, true) if lhs_is_dynamic => Some(Ok(AnalyzedType::Dynamic)),
+            (true, false) => Some(numeric_type_mismatch(op, Side::Rhs, rhs, rhs_span)),
+            (false, true) => Some(numeric_type_mismatch(op, Side::Lhs, lhs, lhs_span)),
+            (false, false) => None,
+            (true, true) => Some(numeric_type_mismatch(op, Side::Rhs, rhs, rhs_span)),
+        },
+        BinaryOp::Div => {
+            if lhs_is_duration && rhs_is_coefficient {
+                Some(Ok(AnalyzedType::Resolved(GqlType::Duration)))
+            } else if lhs_is_duration && rhs_is_dynamic {
+                Some(Ok(AnalyzedType::Dynamic))
+            } else if lhs_is_duration {
+                Some(numeric_type_mismatch(op, Side::Rhs, rhs, rhs_span))
+            } else {
+                None
+            }
+        }
+        _ => unreachable!("guarded by duration_mul_div"),
+    }
+}
+
 fn duration_type_mismatch(
     op: BinaryOp,
     side: Side,
@@ -49,4 +99,26 @@ fn duration_type_mismatch(
         found: found.clone(),
         span,
     })
+}
+
+fn numeric_type_mismatch(
+    op: BinaryOp,
+    side: Side,
+    found: &AnalyzedType,
+    span: SourceSpan,
+) -> Result<AnalyzedType, AnalysisError> {
+    let AnalyzedType::Resolved(found) = found else {
+        unreachable!("dynamic duration operands are accepted before mismatch construction");
+    };
+    Err(AnalysisError::TypeMismatch {
+        context: TypeMismatchContext::BinaryArithmetic { op, side },
+        expected: ExpectedType::Numeric,
+        found: found.clone(),
+        span,
+    })
+}
+
+fn is_coefficient(ty: &AnalyzedType) -> bool {
+    matches!(ty, AnalyzedType::Resolved(GqlType::Null))
+        || matches!(ty, AnalyzedType::Resolved(value) if is_numeric(value))
 }

@@ -94,6 +94,23 @@ fn duration_addition_and_subtraction_analyze_as_duration() {
 }
 
 #[test]
+fn duration_scaling_analyzes_as_duration() {
+    for source in [
+        "RETURN DURATION 'PT1H' * 2 AS span",
+        "RETURN 2 * DURATION 'PT1H' AS span",
+        "RETURN DURATION 'PT1H' / 2 AS span",
+        "RETURN DURATION 'P1Y' * 0.5 AS span",
+    ] {
+        let analyzed = analyze_one(source).unwrap();
+        assert_eq!(
+            projection_type(&analyzed, "span"),
+            AnalyzedType::Resolved(GqlType::Duration),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn duration_unary_negation_analyzes_as_duration() {
     let analyzed = analyze_one("RETURN -DURATION 'PT1H' AS span").unwrap();
     assert_eq!(
@@ -316,6 +333,24 @@ fn duration_add_integer_errors_on_integer_operand() {
             },
             expected: ExpectedType::Specific(GqlType::Duration),
             found: GqlType::Integer,
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
+}
+
+#[test]
+fn duration_scaling_rejects_duration_coefficient() {
+    let err = analyze_one("RETURN DURATION 'PT1H' * DURATION 'PT2H' AS x").unwrap_err();
+    assert!(matches!(
+        err,
+        AnalysisError::TypeMismatch {
+            context: TypeMismatchContext::BinaryArithmetic {
+                op: BinaryOp::Mul,
+                side: Side::Rhs,
+            },
+            expected: ExpectedType::Numeric,
+            found: GqlType::Duration,
             ..
         }
     ));

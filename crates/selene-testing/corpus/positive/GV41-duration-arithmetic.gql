@@ -2,3 +2,5 @@
 // feature: GV41
 // expects: parse-ok
 RETURN DURATION 'PT1H' + DURATION 'PT2H' AS span
+RETURN DURATION 'PT3H' / 2 AS span
+RETURN 2 * DURATION 'PT45M' AS span
