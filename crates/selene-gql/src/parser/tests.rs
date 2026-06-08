@@ -77,6 +77,17 @@ fn parse_return_float() {
 }
 
 #[test]
+fn parse_return_float_suffixes_are_case_insensitive() {
+    for source in ["RETURN 1.5f", "RETURN 1.5F", "RETURN 1.5d", "RETURN 1.5D"] {
+        assert_eq!(
+            only_item(source).expr,
+            ValueExpr::Literal(Literal::Float(1.5, SourceSpan::new(7, 4))),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn parse_return_string() {
     let item = only_item("RETURN 'hello'");
     let ValueExpr::Literal(Literal::String(value, span)) = &item.expr else {

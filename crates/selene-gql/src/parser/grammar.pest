@@ -781,9 +781,9 @@ hex_int_lit = { "0x" ~ ("_"? ~ ASCII_HEX_DIGIT)+ }
 oct_int_lit = { "0o" ~ ("_"? ~ ('0'..'7'))+ }
 bin_int_lit = { "0b" ~ ("_"? ~ ("0" | "1"))+ }
 
-// Float: digits.digits with optional exponent and suffix
+// Float: digits.digits with optional exponent and ISO approximate suffix
 float_lit = @{
-    ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? ~ ("f" | "d")?
+    ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? ~ ("f" | "F" | "d" | "D")?
 }
 
 // Strings: SINGLE-QUOTE ONLY (spec-aligned)
