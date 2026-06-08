@@ -73,6 +73,8 @@ impl GqlStatus {
     pub const DIVISION_BY_ZERO: Self = Self(*b"22012");
     /// Maps to GQLSTATUS 22018 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_CHARACTER_VALUE_FOR_CAST: Self = Self(*b"22018");
+    /// Maps to GQLSTATUS 22001 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const STRING_DATA_RIGHT_TRUNCATION: Self = Self(*b"22001");
     /// Maps to GQLSTATUS 22009 per ISO/IEC 39075:2024 section 23.1 Table 8
     /// (data exception — invalid time zone displacement value).
     pub const INVALID_TIME_ZONE: Self = Self(*b"22009");
@@ -424,6 +426,7 @@ mod tests {
             (GqlStatus::SUBSTRING_ERROR, "22011", *b"22"),
             (GqlStatus::DIVISION_BY_ZERO, "22012", *b"22"),
             (GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST, "22018", *b"22"),
+            (GqlStatus::STRING_DATA_RIGHT_TRUNCATION, "22001", *b"22"),
             (GqlStatus::INVALID_TIME_ZONE, "22009", *b"22"),
             (
                 GqlStatus::INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM,

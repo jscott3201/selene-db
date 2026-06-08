@@ -15,6 +15,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("01G11", "null-value-eliminated-in-set-function"),
     ("01N01", "validation-mode-relaxed-write"),
     ("22000", "data-exception"),
+    ("22001", "string-data-right-truncation"),
     ("22003", "numeric-value-out-of-range"),
     ("22011", "substring-error"),
     ("22012", "division-by-zero"),

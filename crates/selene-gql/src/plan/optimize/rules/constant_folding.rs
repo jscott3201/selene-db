@@ -1,9 +1,10 @@
 //! Literal constant-folding rule.
 
 use selene_core::DbString;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::{
-    BinaryOp, Literal, SourceSpan, UnaryOp, ValueExpr,
+    BinaryOp, ImplDefinedCaps, Literal, SourceSpan, UnaryOp, ValueExpr,
     plan::{
         ExecutionPlan,
         optimize::{OptimizeContext, Rule, Transformed, walk},
@@ -24,7 +25,7 @@ impl Rule for ConstantFolding {
         ctx: &OptimizeContext<'_>,
     ) -> Transformed<ExecutionPlan> {
         let mut changed = walk::walk_value_exprs(&mut plan, &mut |expr| {
-            if let Some(folded) = fold_expr(expr) {
+            if let Some(folded) = fold_expr(expr, ctx.impl_defined_caps) {
                 *expr = folded;
                 true
             } else {
@@ -40,10 +41,10 @@ impl Rule for ConstantFolding {
     }
 }
 
-fn fold_expr(expr: &ValueExpr) -> Option<ValueExpr> {
+fn fold_expr(expr: &ValueExpr, caps: &ImplDefinedCaps) -> Option<ValueExpr> {
     match expr {
         ValueExpr::UnaryOp { op, operand, span } => fold_unary(*op, operand, *span),
-        ValueExpr::BinaryOp { op, lhs, rhs, span } => fold_binary(*op, lhs, rhs, *span),
+        ValueExpr::BinaryOp { op, lhs, rhs, span } => fold_binary(*op, lhs, rhs, *span, caps),
         _ => None,
     }
 }
@@ -89,6 +90,7 @@ fn fold_binary(
     lhs: &ValueExpr,
     rhs: &ValueExpr,
     span: SourceSpan,
+    caps: &ImplDefinedCaps,
 ) -> Option<ValueExpr> {
     let (ValueExpr::Literal(lhs), ValueExpr::Literal(rhs)) = (lhs, rhs) else {
         return None;
@@ -105,7 +107,7 @@ fn fold_binary(
             fold_comparison(op, lhs, rhs, span)
         }
         BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => fold_boolean(op, lhs, rhs, span),
-        BinaryOp::Concat => fold_concat(lhs, rhs, span),
+        BinaryOp::Concat => fold_concat(lhs, rhs, span, caps),
         BinaryOp::Contains | BinaryOp::StartsWith | BinaryOp::EndsWith => None,
     }
 }
@@ -202,20 +204,20 @@ fn fold_boolean(op: BinaryOp, lhs: &Literal, rhs: &Literal, span: SourceSpan) ->
     Some(ValueExpr::Literal(Literal::Bool(folded, span)))
 }
 
-fn fold_concat(lhs: &Literal, rhs: &Literal, span: SourceSpan) -> Option<ValueExpr> {
+fn fold_concat(
+    lhs: &Literal,
+    rhs: &Literal,
+    span: SourceSpan,
+    caps: &ImplDefinedCaps,
+) -> Option<ValueExpr> {
     match (lhs, rhs) {
         (Literal::String(left, _), Literal::String(right, _)) => {
-            let mut value = String::with_capacity(left.as_str().len() + right.as_str().len());
-            value.push_str(left.as_str());
-            value.push_str(right.as_str());
+            let value = folded_string_concat(left.as_str(), right.as_str(), caps)?;
             let db_string_value = DbString::from_string(value).ok()?;
             Some(ValueExpr::Literal(Literal::String(db_string_value, span)))
         }
         (Literal::Bytes(left, _), Literal::Bytes(right, _)) => {
-            let total_len = left.len().checked_add(right.len())?;
-            let mut value = Vec::with_capacity(total_len);
-            value.extend_from_slice(left);
-            value.extend_from_slice(right);
+            let value = folded_byte_concat(left, right, caps)?;
             Some(ValueExpr::Literal(Literal::Bytes(
                 value.into_boxed_slice().into(),
                 span,
@@ -223,6 +225,57 @@ fn fold_concat(lhs: &Literal, rhs: &Literal, span: SourceSpan) -> Option<ValueEx
         }
         _ => None,
     }
+}
+
+fn folded_string_concat(lhs: &str, rhs: &str, caps: &ImplDefinedCaps) -> Option<String> {
+    let byte_len = lhs.len().checked_add(rhs.len())?;
+    let mut value = String::with_capacity(byte_len);
+    value.push_str(lhs);
+    value.push_str(rhs);
+    if unicode_normalization::is_nfc(lhs) && unicode_normalization::is_nfc(rhs) {
+        value = value.nfc().collect();
+    }
+    let char_count = value.chars().count();
+    let max_chars = usize::try_from(caps.max_string_length).unwrap_or(usize::MAX);
+    if char_count <= max_chars {
+        return Some(value);
+    }
+    let overflow_chars = char_count - max_chars;
+    value
+        .chars()
+        .rev()
+        .take(overflow_chars)
+        .all(char::is_whitespace)
+        .then(|| value.chars().take(max_chars).collect())
+}
+
+fn folded_byte_concat(lhs: &[u8], rhs: &[u8], caps: &ImplDefinedCaps) -> Option<Vec<u8>> {
+    let total_len = lhs.len().checked_add(rhs.len())?;
+    let max_len = usize::try_from(caps.max_byte_string_length).unwrap_or(usize::MAX);
+    let output_len = if total_len <= max_len {
+        total_len
+    } else {
+        let overflow = total_len - max_len;
+        byte_suffix_is_zero(lhs, rhs, overflow).then_some(max_len)?
+    };
+    let mut value = Vec::with_capacity(output_len);
+    if output_len <= lhs.len() {
+        value.extend_from_slice(&lhs[..output_len]);
+    } else {
+        value.extend_from_slice(lhs);
+        value.extend_from_slice(&rhs[..output_len - lhs.len()]);
+    }
+    Some(value)
+}
+
+fn byte_suffix_is_zero(lhs: &[u8], rhs: &[u8], suffix_len: usize) -> bool {
+    if suffix_len <= rhs.len() {
+        return rhs[rhs.len() - suffix_len..].iter().all(|byte| *byte == 0);
+    }
+    rhs.iter().all(|byte| *byte == 0)
+        && lhs[lhs.len() - (suffix_len - rhs.len())..]
+            .iter()
+            .all(|byte| *byte == 0)
 }
 
 fn finite_float(value: f64, span: SourceSpan) -> Option<ValueExpr> {
