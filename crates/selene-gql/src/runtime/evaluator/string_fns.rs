@@ -287,6 +287,7 @@ pub(super) fn eval_string_transform(
     args: Vec<Value>,
     span: SourceSpan,
     transform: fn(&str) -> String,
+    max_string_length: u32,
 ) -> Result<Value, ExecutorError> {
     let value = args.into_iter().next().expect("arity checked");
     if matches!(value, Value::Null) {
@@ -296,17 +297,19 @@ pub(super) fn eval_string_transform(
         return data_exception("string function argument is not a string", span);
     };
     let transformed = transform(value);
-    if is_normalized(value, NormalForm::Nfc) {
-        string_value(&normalize_string(&transformed, NormalForm::Nfc), span)
+    let output = if is_normalized(value, NormalForm::Nfc) {
+        normalize_string(&transformed, NormalForm::Nfc)
     } else {
-        string_value(&transformed, span)
-    }
+        transformed
+    };
+    capped_string_function_value(&output, max_string_length, span, "string fold result")
 }
 
 pub(super) fn eval_normalize(
     value: Value,
     form: Option<NormalForm>,
     span: SourceSpan,
+    max_string_length: u32,
 ) -> Result<Value, ExecutorError> {
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
@@ -314,10 +317,37 @@ pub(super) fn eval_normalize(
     let Some(value) = string_slice(&value) else {
         return data_exception("normalize argument is not a string", span);
     };
-    string_value(
+    capped_string_function_value(
         &normalize_string(value, form.unwrap_or(NormalForm::Nfc)),
+        max_string_length,
         span,
+        "NORMALIZE result",
     )
+}
+
+fn capped_string_function_value(
+    text: &str,
+    max_string_length: u32,
+    span: SourceSpan,
+    subject: &'static str,
+) -> Result<Value, ExecutorError> {
+    let max_chars = usize::try_from(max_string_length).unwrap_or(usize::MAX);
+    if text.chars().count() > max_chars {
+        return data_exception_with(
+            DataExceptionSubclass::StringDataRightTruncation,
+            format!("{subject} exceeds the configured maximum character length"),
+            span,
+        );
+    }
+    selene_core::db_string(text)
+        .map(Value::String)
+        .map_err(|_err| {
+            data_exception_value_with(
+                DataExceptionSubclass::StringDataRightTruncation,
+                format!("{subject} exceeds the maximum byte length"),
+                span,
+            )
+        })
 }
 
 pub(super) fn is_normalized(value: &str, form: NormalForm) -> bool {

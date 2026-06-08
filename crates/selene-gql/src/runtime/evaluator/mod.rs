@@ -136,7 +136,12 @@ pub fn evaluate(
         ),
         ValueExpr::Normalize { source, form, span } => {
             let value = evaluate(source, binding, schema, ctx)?;
-            string_fns::eval_normalize(value, *form, *span)
+            string_fns::eval_normalize(
+                value,
+                *form,
+                *span,
+                ctx.impl_defined_caps().max_string_length,
+            )
         }
         ValueExpr::Trim {
             spec,
