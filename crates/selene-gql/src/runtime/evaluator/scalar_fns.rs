@@ -151,11 +151,6 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
-        "round" => eval_unary_numeric(
-            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
-            span,
-            f64::round,
-        ),
         "mod" => {
             let args = eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?;
             eval_binary(BinaryOp::Mod, args[0].clone(), args[1].clone(), span)
