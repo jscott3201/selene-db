@@ -214,6 +214,9 @@ fn index_kind_for_property(
         PropertyValueType::String => Ok(TypedIndexKind::String),
         PropertyValueType::Date => Ok(TypedIndexKind::Date),
         PropertyValueType::LocalDateTime => Ok(TypedIndexKind::LocalDateTime),
+        PropertyValueType::ZonedDateTime => Ok(TypedIndexKind::ZonedDateTime),
+        PropertyValueType::LocalTime => Ok(TypedIndexKind::LocalTime),
+        PropertyValueType::ZonedTime => Ok(TypedIndexKind::ZonedTime),
         PropertyValueType::Uuid => Ok(TypedIndexKind::Uuid),
         value_type => Err(ExecutorError::GraphTypeViolation {
             message: format!(

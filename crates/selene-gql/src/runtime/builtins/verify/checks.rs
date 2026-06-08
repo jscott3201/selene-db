@@ -435,6 +435,29 @@ fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
                 );
             }
         }
+        TypedIndex::ZonedDateTime(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(
+                    &mut entries,
+                    IndexedValue::ZonedDateTime(key.clone()),
+                    bitmap.iter(),
+                );
+            }
+        }
+        TypedIndex::LocalTime(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::LocalTime(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::ZonedTime(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(
+                    &mut entries,
+                    IndexedValue::ZonedTime(key.clone()),
+                    bitmap.iter(),
+                );
+            }
+        }
         TypedIndex::Uuid(index) => {
             for (key, bitmap) in index {
                 push_index_entries(
@@ -538,6 +561,9 @@ enum IndexedValue {
     String(DbString),
     Date(jiff::civil::Date),
     LocalDateTime(jiff::civil::DateTime),
+    ZonedDateTime(jiff::Zoned),
+    LocalTime(jiff::civil::Time),
+    ZonedTime(jiff::Zoned),
     Uuid(String),
 }
 
@@ -560,6 +586,11 @@ fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
         (IndexedValue::LocalDateTime(expected), Value::LocalDateTime(actual)) => {
             expected == *actual
         }
+        (IndexedValue::ZonedDateTime(expected), Value::ZonedDateTime(actual)) => {
+            expected == **actual
+        }
+        (IndexedValue::LocalTime(expected), Value::LocalTime(actual)) => expected == *actual,
+        (IndexedValue::ZonedTime(expected), Value::ZonedTime(actual)) => expected == **actual,
         (IndexedValue::Uuid(expected), Value::Uuid(actual)) => expected == actual.to_string(),
         _ => false,
     }
@@ -583,6 +614,15 @@ fn component_matches_value(component: &CompositeKeyComponent, value: &Value) -> 
         (CompositeKeyComponent::Date(expected), Value::Date(actual)) => expected == actual,
         (CompositeKeyComponent::LocalDateTime(expected), Value::LocalDateTime(actual)) => {
             expected == actual
+        }
+        (CompositeKeyComponent::ZonedDateTime(expected), Value::ZonedDateTime(actual)) => {
+            expected == actual.as_ref()
+        }
+        (CompositeKeyComponent::LocalTime(expected), Value::LocalTime(actual)) => {
+            expected == actual
+        }
+        (CompositeKeyComponent::ZonedTime(expected), Value::ZonedTime(actual)) => {
+            expected == actual.as_ref()
         }
         (CompositeKeyComponent::Uuid(expected), Value::Uuid(actual)) => expected == actual,
         _ => false,

@@ -127,7 +127,8 @@ fn create_sensor_type(graph: &SharedGraph) {
         "CREATE NODE TYPE :Sensor \
          (ts :: INT64, reading_count :: UINT64, location :: STRING, value :: STRING, \
           active :: BOOLEAN, signed :: INT128, unsigned :: UINT128, amount :: DECIMAL, \
-          score :: FLOAT32, tags :: LIST<STRING>)",
+          score :: FLOAT32, observed_at :: ZONED DATETIME, observed_local :: LOCAL TIME, \
+          observed_zone_time :: ZONED TIME, tags :: LIST<STRING>)",
     )
     .unwrap();
 }
@@ -277,11 +278,16 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
         "CREATE INDEX exact_numeric ON :Sensor(signed, unsigned, amount, score)",
     )
     .unwrap();
+    run_ddl(
+        &graph,
+        "CREATE INDEX temporal_times ON :Sensor(observed_at, observed_local, observed_zone_time)",
+    )
+    .unwrap();
     let snapshot = graph.read();
     let rows = snapshot
         .iter_composite_property_index_entries()
         .collect::<Vec<_>>();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 4);
     assert!(
         rows.iter()
             .any(|row| row.2.as_slice() == [TypedIndexKind::Bool, TypedIndexKind::I64])
@@ -296,6 +302,12 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
             TypedIndexKind::U128,
             TypedIndexKind::Decimal,
             TypedIndexKind::F32
+        ]));
+    assert!(rows.iter().any(|row| row.2.as_slice()
+        == [
+            TypedIndexKind::ZonedDateTime,
+            TypedIndexKind::LocalTime,
+            TypedIndexKind::ZonedTime
         ]));
     drop(snapshot);
 

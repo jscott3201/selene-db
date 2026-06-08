@@ -90,13 +90,11 @@ pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
         Literal::String(_, _) => Some(IndexKind::String),
         Literal::Date(_, _) => Some(IndexKind::Date),
         Literal::LocalDateTime(_, _) => Some(IndexKind::LocalDateTime),
+        Literal::ZonedDateTime(_, _) => Some(IndexKind::ZonedDateTime),
+        Literal::LocalTime(_, _) => Some(IndexKind::LocalTime),
+        Literal::ZonedTime(_, _) => Some(IndexKind::ZonedTime),
         Literal::Uuid(_, _) => Some(IndexKind::Uuid),
-        Literal::Bytes(_, _)
-        | Literal::ZonedDateTime(_, _)
-        | Literal::ZonedTime(_, _)
-        | Literal::LocalTime(_, _)
-        | Literal::Duration(_, _)
-        | Literal::Null(_) => None,
+        Literal::Bytes(_, _) | Literal::Duration(_, _) | Literal::Null(_) => None,
     }
 }
 
@@ -244,7 +242,7 @@ pub(super) fn equality_candidates<'a>(
 /// - `IndexKind::Float32` keys are `Value::Float32`; `IndexKind::Float` keys
 ///   are `Value::Float` (f64). `FLOAT` is width-generic, so both float index
 ///   kinds reject it and only admit precise width declarations.
-/// - `IndexKind::String`, `Date`, `LocalDateTime`, `Uuid` are 1:1 with the
+/// - `IndexKind::String`, `Date`, temporal time/datetime, `Uuid` are 1:1 with the
 ///   matching GqlType variant. `STRING` binds to `Value::String`.
 ///
 /// Untyped parameters (no `$id :: TYPE` declaration) bypass this check and
@@ -287,6 +285,9 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         IndexKind::String => matches!(ty, GqlType::String),
         IndexKind::Date => matches!(ty, GqlType::Date),
         IndexKind::LocalDateTime => matches!(ty, GqlType::LocalDateTime),
+        IndexKind::ZonedDateTime => matches!(ty, GqlType::ZonedDateTime),
+        IndexKind::LocalTime => matches!(ty, GqlType::LocalTime),
+        IndexKind::ZonedTime => matches!(ty, GqlType::ZonedTime),
         IndexKind::Uuid => matches!(ty, GqlType::Uuid),
     }
 }

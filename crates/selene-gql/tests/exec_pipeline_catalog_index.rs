@@ -214,7 +214,7 @@ fn create_index_rejects_deferred_or_invalid_shapes_with_precise_errors() {
     run_ddl(
         &graph,
         "CREATE NODE TYPE :Sensor (ts :: LOCAL DATETIME, value :: STRING, \
-         tags :: LIST<STRING>, zdt :: ZONED DATETIME, active :: BOOLEAN)",
+         tags :: LIST<STRING>, active :: BOOLEAN)",
     )
     .unwrap();
     run_ddl(&graph, "CREATE EDGE TYPE :Likes (score :: INT)").unwrap();
@@ -228,19 +228,11 @@ fn create_index_rejects_deferred_or_invalid_shapes_with_precise_errors() {
         graph_type_violation(&graph, "CREATE INDEX missing_prop ON :Sensor(nope)");
     assert!(missing_property.contains("property 'nope' is not declared on type ':Sensor'"));
 
-    for (source, expected) in [
-        (
-            "CREATE INDEX list_idx ON :Sensor(tags)",
-            "property kind List is not supported",
-        ),
-        (
-            "CREATE INDEX zdt_idx ON :Sensor(zdt)",
-            "property kind ZonedDateTime is not supported",
-        ),
-    ] {
-        let message = graph_type_violation(&graph, source);
-        assert!(message.contains(expected), "{source}: {message}");
-    }
+    let message = graph_type_violation(&graph, "CREATE INDEX list_idx ON :Sensor(tags)");
+    assert!(
+        message.contains("property kind List is not supported"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -251,7 +243,8 @@ fn create_index_infers_all_supported_storage_kinds() {
         "CREATE NODE TYPE :T \
          (b :: BOOLEAN, i :: INT64, n :: UINT64, i128 :: INT128, u128 :: UINT128, \
           dec :: DECIMAL, f32 :: FLOAT32, f :: FLOAT64, s :: STRING, d :: DATE, \
-          ldt :: LOCAL DATETIME, u :: UUID)",
+          ldt :: LOCAL DATETIME, zdt :: ZONED DATETIME, lt :: LOCAL TIME, \
+          zt :: ZONED TIME, u :: UUID)",
     )
     .unwrap();
 
@@ -267,6 +260,9 @@ fn create_index_infers_all_supported_storage_kinds() {
         ("t_s", "s", TypedIndexKind::String),
         ("t_d", "d", TypedIndexKind::Date),
         ("t_ldt", "ldt", TypedIndexKind::LocalDateTime),
+        ("t_zdt", "zdt", TypedIndexKind::ZonedDateTime),
+        ("t_lt", "lt", TypedIndexKind::LocalTime),
+        ("t_zt", "zt", TypedIndexKind::ZonedTime),
         ("t_u", "u", TypedIndexKind::Uuid),
     ] {
         run_ddl(&graph, &format!("CREATE INDEX {name} ON :T({property})")).unwrap();

@@ -242,6 +242,12 @@ pub enum IndexKind {
     Date,
     /// Local datetime typed index.
     LocalDateTime,
+    /// Zoned datetime typed index.
+    ZonedDateTime,
+    /// Local time typed index.
+    LocalTime,
+    /// Zoned time typed index.
+    ZonedTime,
     /// UUID typed index.
     Uuid,
 }

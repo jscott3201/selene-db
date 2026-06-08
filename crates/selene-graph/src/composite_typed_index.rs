@@ -37,6 +37,12 @@ pub enum CompositeKeyComponent {
     Date(jiff::civil::Date),
     /// Civil local date-time component.
     LocalDateTime(jiff::civil::DateTime),
+    /// Zoned date-time component.
+    ZonedDateTime(jiff::Zoned),
+    /// Civil local time component.
+    LocalTime(jiff::civil::Time),
+    /// Zoned time component.
+    ZonedTime(jiff::Zoned),
     /// UUID component.
     Uuid(uuid::Uuid),
 }
@@ -56,6 +62,9 @@ impl Ord for CompositeKeyComponent {
             (K::String(lhs), K::String(rhs)) => lhs.cmp(rhs),
             (K::Date(lhs), K::Date(rhs)) => lhs.cmp(rhs),
             (K::LocalDateTime(lhs), K::LocalDateTime(rhs)) => lhs.cmp(rhs),
+            (K::ZonedDateTime(lhs), K::ZonedDateTime(rhs)) => lhs.cmp(rhs),
+            (K::LocalTime(lhs), K::LocalTime(rhs)) => lhs.cmp(rhs),
+            (K::ZonedTime(lhs), K::ZonedTime(rhs)) => lhs.cmp(rhs),
             (K::Uuid(lhs), K::Uuid(rhs)) => lhs.cmp(rhs),
             _ => self.discriminant().cmp(&rhs.discriminant()),
         }
@@ -83,6 +92,9 @@ impl Hash for CompositeKeyComponent {
             Self::String(value) => value.hash(state),
             Self::Date(value) => value.hash(state),
             Self::LocalDateTime(value) => value.hash(state),
+            Self::ZonedDateTime(value) => value.hash(state),
+            Self::LocalTime(value) => value.hash(state),
+            Self::ZonedTime(value) => value.hash(state),
             Self::Uuid(value) => value.hash(state),
         }
     }
@@ -102,7 +114,10 @@ impl CompositeKeyComponent {
             Self::String(_) => 8,
             Self::Date(_) => 9,
             Self::LocalDateTime(_) => 10,
-            Self::Uuid(_) => 11,
+            Self::ZonedDateTime(_) => 11,
+            Self::LocalTime(_) => 12,
+            Self::ZonedTime(_) => 13,
+            Self::Uuid(_) => 14,
         }
     }
 }
@@ -312,6 +327,15 @@ fn component_from_value(
         (TypedIndexKind::Date, Value::Date(value)) => Ok(CompositeKeyComponent::Date(*value)),
         (TypedIndexKind::LocalDateTime, Value::LocalDateTime(value)) => {
             Ok(CompositeKeyComponent::LocalDateTime(*value))
+        }
+        (TypedIndexKind::ZonedDateTime, Value::ZonedDateTime(value)) => {
+            Ok(CompositeKeyComponent::ZonedDateTime((**value).clone()))
+        }
+        (TypedIndexKind::LocalTime, Value::LocalTime(value)) => {
+            Ok(CompositeKeyComponent::LocalTime(*value))
+        }
+        (TypedIndexKind::ZonedTime, Value::ZonedTime(value)) => {
+            Ok(CompositeKeyComponent::ZonedTime((**value).clone()))
         }
         (TypedIndexKind::Uuid, Value::Uuid(value)) => Ok(CompositeKeyComponent::Uuid(*value)),
         (expected_kind, value) => Err(TypedIndexValueError::KindMismatch {

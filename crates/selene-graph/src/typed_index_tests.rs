@@ -1,7 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use jiff::civil::{date, datetime};
+use jiff::civil::{date, datetime, time};
 use proptest::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{Value, db_string};
@@ -30,6 +30,9 @@ fn kind_round_trips_for_each_variant() {
         TypedIndexKind::String,
         TypedIndexKind::Date,
         TypedIndexKind::LocalDateTime,
+        TypedIndexKind::ZonedDateTime,
+        TypedIndexKind::LocalTime,
+        TypedIndexKind::ZonedTime,
         TypedIndexKind::Uuid,
     ] {
         assert_eq!(TypedIndex::new(kind).kind(), kind);
@@ -50,6 +53,9 @@ fn kind_rkyv_round_trips_for_each_variant() {
         TypedIndexKind::String,
         TypedIndexKind::Date,
         TypedIndexKind::LocalDateTime,
+        TypedIndexKind::ZonedDateTime,
+        TypedIndexKind::LocalTime,
+        TypedIndexKind::ZonedTime,
         TypedIndexKind::Uuid,
     ] {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&kind).unwrap();
@@ -121,6 +127,22 @@ fn insert_remove_round_trips_for_each_kind() {
         (
             TypedIndexKind::LocalDateTime,
             Value::LocalDateTime(datetime(2026, 5, 7, 12, 30, 0, 0)),
+        ),
+        (
+            TypedIndexKind::ZonedDateTime,
+            Value::ZonedDateTime(Box::new(
+                "2026-05-07T12:30:00-04[America/New_York]".parse().unwrap(),
+            )),
+        ),
+        (
+            TypedIndexKind::LocalTime,
+            Value::LocalTime(time(12, 30, 0, 0)),
+        ),
+        (
+            TypedIndexKind::ZonedTime,
+            Value::ZonedTime(Box::new(
+                "2026-05-07T12:30:00-04[America/New_York]".parse().unwrap(),
+            )),
         ),
         (TypedIndexKind::Uuid, Value::Uuid(uuid)),
     ];
@@ -206,6 +228,39 @@ fn f32_range_scan_uses_total_float_order() {
 }
 
 #[test]
+fn temporal_range_scans_use_value_order() {
+    let mut local_time = TypedIndex::new(TypedIndexKind::LocalTime);
+    for (row, value) in [
+        (0, time(9, 0, 0, 0)),
+        (1, time(12, 0, 0, 0)),
+        (2, time(15, 0, 0, 0)),
+    ] {
+        local_time.insert(&Value::LocalTime(value), row).unwrap();
+    }
+    let result = local_time
+        .lookup_range(Value::LocalTime(time(10, 0, 0, 0))..=Value::LocalTime(time(15, 0, 0, 0)))
+        .expect("local-time range kind matches");
+    assert!(!result.contains(0));
+    assert!(result.contains(1));
+    assert!(result.contains(2));
+
+    let mut zoned_time = TypedIndex::new(TypedIndexKind::ZonedTime);
+    let early = Value::ZonedTime(Box::new(
+        "2026-05-07T09:00:00-04[America/New_York]".parse().unwrap(),
+    ));
+    let late = Value::ZonedTime(Box::new(
+        "2026-05-07T15:00:00-04[America/New_York]".parse().unwrap(),
+    ));
+    zoned_time.insert(&early, 0).unwrap();
+    zoned_time.insert(&late, 1).unwrap();
+    let result = zoned_time
+        .lookup_range(early.clone()..=late)
+        .expect("zoned-time range kind matches");
+    assert!(result.contains(0));
+    assert!(result.contains(1));
+}
+
+#[test]
 fn cardinality_sums_across_keys_and_prunes_empty_keys() {
     let mut index = TypedIndex::new(TypedIndexKind::I64);
     index.insert(&Value::Int(1), 0).unwrap();
@@ -256,7 +311,7 @@ fn distinct_keys_counts_buckets_not_rows() {
 
 #[test]
 fn distinct_keys_each_kind() {
-    // String, Date, Uuid kinds: distinct_keys == number of distinct inserts.
+    // String, Date, temporal, Uuid kinds: distinct_keys == number of distinct inserts.
     let mut s = TypedIndex::new(TypedIndexKind::String);
     s.insert(&Value::String(db_string("a").unwrap()), 0)
         .unwrap();
@@ -271,6 +326,11 @@ fn distinct_keys_each_kind() {
     d.insert(&Value::Date(date(2020, 1, 1)), 0).unwrap();
     d.insert(&Value::Date(date(2020, 1, 2)), 1).unwrap();
     assert_eq!(d.distinct_keys(), 2);
+
+    let mut lt = TypedIndex::new(TypedIndexKind::LocalTime);
+    lt.insert(&Value::LocalTime(time(1, 0, 0, 0)), 0).unwrap();
+    lt.insert(&Value::LocalTime(time(2, 0, 0, 0)), 1).unwrap();
+    assert_eq!(lt.distinct_keys(), 2);
 }
 
 #[test]
@@ -431,6 +491,9 @@ fn typed_key_unindexable_value_rejects_kind_mismatch() {
         TypedIndexKind::String,
         TypedIndexKind::Date,
         TypedIndexKind::LocalDateTime,
+        TypedIndexKind::ZonedDateTime,
+        TypedIndexKind::LocalTime,
+        TypedIndexKind::ZonedTime,
         TypedIndexKind::Uuid,
     ] {
         let err = typed_key(&value, kind).expect_err("unindexable value rejects");

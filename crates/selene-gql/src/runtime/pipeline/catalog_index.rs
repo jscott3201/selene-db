@@ -187,6 +187,9 @@ fn gql_type_to_index_kind(
         GqlType::Float64 => Ok(TypedIndexKind::F64),
         GqlType::Date => Ok(TypedIndexKind::Date),
         GqlType::LocalDateTime => Ok(TypedIndexKind::LocalDateTime),
+        GqlType::ZonedDateTime => Ok(TypedIndexKind::ZonedDateTime),
+        GqlType::LocalTime => Ok(TypedIndexKind::LocalTime),
+        GqlType::ZonedTime => Ok(TypedIndexKind::ZonedTime),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "inline INDEXED for this GQL type",
             span,
@@ -299,6 +302,9 @@ pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
         TypedIndexKind::String => "string",
         TypedIndexKind::Date => "date",
         TypedIndexKind::LocalDateTime => "local_datetime",
+        TypedIndexKind::ZonedDateTime => "zoned_datetime",
+        TypedIndexKind::LocalTime => "local_time",
+        TypedIndexKind::ZonedTime => "zoned_time",
         TypedIndexKind::Uuid => "uuid",
     }
 }
