@@ -70,6 +70,36 @@ fn scalar_functions_numeric_gf01_enhanced_numeric_functions_return_expected_valu
 }
 
 #[test]
+fn scalar_functions_numeric_mod_result_uses_divisor_type() {
+    let decimal = execute_with_decimal_params(
+        "RETURN mod($dividend, 4) AS int_divisor, \
+                mod(7, $divisor) AS decimal_divisor",
+        &[
+            ("dividend", Decimal::from(7)),
+            ("divisor", Decimal::from(4)),
+        ],
+    );
+    assert_eq!(column_values(&decimal, "int_divisor"), vec![Value::Int(3)]);
+    assert_eq!(
+        column_values(&decimal, "decimal_divisor"),
+        vec![Value::Decimal(Decimal::from(3))]
+    );
+
+    assert_eq!(
+        single_value("RETURN mod(CAST('7' AS INT128), 4) AS value", "value"),
+        Value::Int(3)
+    );
+    assert_eq!(
+        single_value("RETURN mod(7, CAST('4' AS INT128)) AS value", "value"),
+        Value::Int128(3)
+    );
+    assert_eq!(
+        single_value("RETURN mod(7, CAST('4' AS UINT64)) AS value", "value"),
+        Value::Uint(3)
+    );
+}
+
+#[test]
 fn scalar_functions_numeric_floor_and_ceiling_preserve_exact_numeric_inputs() {
     let integer = execute_read(
         "RETURN floor(3) AS floor_value, ceil(3) AS ceil_value, ceiling(3) AS ceiling_value",
@@ -177,6 +207,7 @@ fn scalar_functions_numeric_gf01_enhanced_numeric_functions_reject_non_numeric_a
 fn scalar_functions_numeric_gf01_enhanced_numeric_domain_errors_use_iso_statuses() {
     assert_status("RETURN sqrt(-1) AS value", "2201F");
     assert_status("RETURN mod(7, 0) AS value", "22012");
+    assert_status("RETURN mod(-7, CAST('4' AS UINT64)) AS value", "22003");
 }
 
 #[test]

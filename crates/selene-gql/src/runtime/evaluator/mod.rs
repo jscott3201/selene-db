@@ -18,6 +18,7 @@ mod duration_fns;
 mod duration_ops;
 mod identity_length_fns;
 mod json_fns;
+mod modulus_fns;
 mod path_constructor;
 mod predicates;
 mod scalar_fns;
