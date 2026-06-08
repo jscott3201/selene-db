@@ -559,7 +559,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [CHARACTERISTICS|PARAMETERS]` / `RESET PARAMETER $p` / `RESET TIME ZONE`
   (GS04/GS07/GS08/GS16), and `SESSION CLOSE` (§7.3). `SET TIME ZONE` threads
   the zone into a new §20.27 current-datetime family
-  (`current_timestamp`/`now`/`localtimestamp`/`current_date`/`current_time`/
+  (`current_timestamp`/`localtimestamp`/`current_date`/`current_time`/
   `localtime`); the default is UTC (ID048) and `RESET` restores it. `SESSION
   CLOSE` sets a termination flag (rolling back any active transaction) that is
   enforced at the single statement funnel — both `Session::execute_source`

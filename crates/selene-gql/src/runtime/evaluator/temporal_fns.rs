@@ -11,8 +11,8 @@ use selene_core::Value;
 
 use crate::runtime::{EvalCtx, ExecutorError};
 
-/// `current_timestamp()` / `now()`: the current zoned datetime in the session
-/// time zone (ISO section 20.27).
+/// `current_timestamp()`: the current zoned datetime in the session time zone
+/// (ISO section 20.27).
 pub(super) fn eval_current_timestamp(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
