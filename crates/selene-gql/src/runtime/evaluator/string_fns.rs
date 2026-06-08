@@ -295,7 +295,12 @@ pub(super) fn eval_string_transform(
     let Some(value) = string_slice(&value) else {
         return data_exception("string function argument is not a string", span);
     };
-    string_value(&transform(value), span)
+    let transformed = transform(value);
+    if is_normalized(value, NormalForm::Nfc) {
+        string_value(&normalize_string(&transformed, NormalForm::Nfc), span)
+    } else {
+        string_value(&transformed, span)
+    }
 }
 
 pub(super) fn eval_normalize(

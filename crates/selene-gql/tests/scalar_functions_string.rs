@@ -159,6 +159,22 @@ fn substring_function_is_not_in_the_iso_scalar_set() {
 }
 
 #[test]
+fn fold_normalizes_result_when_source_is_nfc() {
+    assert_eq!(
+        string_value(single_value("RETURN UPPER('\u{0390}') AS value", "value")),
+        "\u{03aa}\u{0301}"
+    );
+}
+
+#[test]
+fn fold_keeps_non_normalized_source_result_unforced() {
+    assert_eq!(
+        string_value(single_value("RETURN UPPER('e\u{0301}') AS value", "value")),
+        "E\u{0301}"
+    );
+}
+
+#[test]
 fn multi_character_trim_family_trims_default_and_custom_character_sets() {
     let cases = [
         ("RETURN btrim('  hello  ') AS value", "hello"),
