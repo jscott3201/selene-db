@@ -26,6 +26,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reports `22G0H`. `ABS(<duration>)` now implements the ISO duration absolute
   value function, returning a non-negative duration while preserving `NULL`
   propagation.
+- **List TRIM value function (ISO §20.16).** `TRIM(<list>, <count>)` now
+  returns the list with `<count>` tail elements removed, evaluates the count
+  before the list per the ISO null short-circuit rule, and reports list-element
+  errors as `22G0C`.
 - **GP03 — explicit variable-scope `CALL` subqueries (ISO §15.2).** `CALL (x, y) { ... }`
   now binds and executes: the subquery body sees **only** the named imported
   variables, and an empty `CALL () { ... }` is fully isolated. An outer variable

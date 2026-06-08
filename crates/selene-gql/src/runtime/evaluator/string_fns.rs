@@ -12,8 +12,8 @@ use crate::{
 
 use super::{
     binary_ops::{
-        data_exception, data_exception_value, data_exception_value_with, eval_equality,
-        string_slice, string_value,
+        data_exception, data_exception_value, data_exception_value_with, data_exception_with,
+        eval_equality, string_slice, string_value,
     },
     evaluate,
 };
@@ -331,8 +331,30 @@ pub(super) fn is_normalized(value: &str, form: NormalForm) -> bool {
     }
 }
 
-pub(super) fn eval_trim(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let value = args.into_iter().next().expect("arity checked");
+pub(super) fn eval_trim_function(
+    name: &str,
+    args: &[ValueExpr],
+    span: SourceSpan,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Value, ExecutorError> {
+    match args.len() {
+        1 => {
+            let value = evaluate(&args[0], binding, schema, ctx)?;
+            eval_string_trim(value, span)
+        }
+        2 => eval_list_trim(args, span, binding, schema, ctx),
+        actual => Err(ExecutorError::FunctionArityMismatch {
+            name: name.to_owned(),
+            expected: "1 or 2",
+            actual,
+            span,
+        }),
+    }
+}
+
+fn eval_string_trim(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
     }
@@ -340,6 +362,57 @@ pub(super) fn eval_trim(args: Vec<Value>, span: SourceSpan) -> Result<Value, Exe
         return data_exception("trim argument is not a string", span);
     };
     string_value(value.trim(), span)
+}
+
+fn eval_list_trim(
+    args: &[ValueExpr],
+    span: SourceSpan,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Value, ExecutorError> {
+    let count = evaluate(&args[1], binding, schema, ctx)?;
+    let Some(count) = list_trim_count(count, span)? else {
+        return Ok(Value::Null);
+    };
+    let source = evaluate(&args[0], binding, schema, ctx)?;
+    let Value::List(values) = source else {
+        return if matches!(source, Value::Null) {
+            Ok(Value::Null)
+        } else {
+            data_exception("list trim source is not a list", span)
+        };
+    };
+    let len = u128::try_from(values.len()).expect("usize fits in u128");
+    if count > len {
+        return data_exception_with(
+            DataExceptionSubclass::ListElementError,
+            "list trim count exceeds list cardinality",
+            span,
+        );
+    }
+    let retained = usize::try_from(len - count).expect("retained length is bounded by list length");
+    Ok(Value::List(values.into_iter().take(retained).collect()))
+}
+
+fn list_trim_count(value: Value, span: SourceSpan) -> Result<Option<u128>, ExecutorError> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Int(value) if value >= 0 => Ok(Some(
+            u128::try_from(value).expect("non-negative i64 fits in u128"),
+        )),
+        Value::Int128(value) if value >= 0 => Ok(Some(
+            u128::try_from(value).expect("non-negative i128 fits in u128"),
+        )),
+        Value::Int(_) | Value::Int128(_) => data_exception_with(
+            DataExceptionSubclass::ListElementError,
+            "list trim count is negative",
+            span,
+        ),
+        Value::Uint(value) => Ok(Some(u128::from(value))),
+        Value::Uint128(value) => Ok(Some(value)),
+        _ => data_exception("list trim count is not an exact integer", span),
+    }
 }
 
 pub(super) fn eval_coalesce(

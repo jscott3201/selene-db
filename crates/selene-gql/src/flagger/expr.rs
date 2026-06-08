@@ -85,9 +85,14 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
                 record_feature(uses, FeatureId::GE07, *span);
             }
         }
-        ValueExpr::FunctionCall { name, span, .. } => {
+        ValueExpr::FunctionCall {
+            name, args, span, ..
+        } => {
             if let Some(feature_id) = scalar_function_feature(name) {
                 record_feature(uses, feature_id, *span);
+            }
+            if is_trim_list_function(name, args.len()) {
+                record_feature(uses, FeatureId::GV50, *span);
             }
             if let Some(feature_id) = aggregate_function_feature(name) {
                 record_feature(uses, feature_id, *span);
@@ -189,6 +194,10 @@ fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
         | "json_has_path" => Some(FeatureId::IM_JSON),
         _ => None,
     }
+}
+
+fn is_trim_list_function(name: &NonEmpty<DbString>, arity: usize) -> bool {
+    name.len() == 1 && arity == 2 && name.first().as_str().eq_ignore_ascii_case("trim")
 }
 
 fn aggregate_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
