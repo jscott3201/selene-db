@@ -10,6 +10,52 @@ use crate::{
 
 use super::numeric::is_numeric;
 
+pub(super) fn temporal_duration_add_sub(
+    op: BinaryOp,
+    lhs: &AnalyzedType,
+    lhs_span: SourceSpan,
+    rhs: &AnalyzedType,
+    rhs_span: SourceSpan,
+) -> Option<Result<AnalyzedType, AnalysisError>> {
+    if !matches!(op, BinaryOp::Add | BinaryOp::Sub) {
+        return None;
+    }
+
+    let lhs_temporal = temporal_instant_type(lhs);
+    let rhs_temporal = temporal_instant_type(rhs);
+    let lhs_is_duration = matches!(lhs, AnalyzedType::Resolved(GqlType::Duration));
+    let rhs_is_duration = matches!(rhs, AnalyzedType::Resolved(GqlType::Duration));
+    let lhs_is_null = matches!(lhs, AnalyzedType::Resolved(GqlType::Null));
+    let rhs_is_null = matches!(rhs, AnalyzedType::Resolved(GqlType::Null));
+    let lhs_is_dynamic = matches!(lhs, AnalyzedType::Dynamic);
+    let rhs_is_dynamic = matches!(rhs, AnalyzedType::Dynamic);
+
+    match op {
+        BinaryOp::Add => match (lhs_temporal, rhs_temporal) {
+            (Some(ty), _) if rhs_is_duration || rhs_is_null => {
+                Some(Ok(AnalyzedType::Resolved(ty.clone())))
+            }
+            (Some(_), _) if rhs_is_dynamic => Some(Ok(AnalyzedType::Dynamic)),
+            (_, Some(ty)) if lhs_is_duration || lhs_is_null => {
+                Some(Ok(AnalyzedType::Resolved(ty.clone())))
+            }
+            (_, Some(_)) if lhs_is_dynamic => Some(Ok(AnalyzedType::Dynamic)),
+            (Some(_), _) => Some(duration_type_mismatch(op, Side::Rhs, rhs, rhs_span)),
+            (_, Some(_)) => Some(duration_type_mismatch(op, Side::Lhs, lhs, lhs_span)),
+            (None, None) => None,
+        },
+        BinaryOp::Sub => match lhs_temporal {
+            Some(ty) if rhs_is_duration || rhs_is_null => {
+                Some(Ok(AnalyzedType::Resolved(ty.clone())))
+            }
+            Some(_) if rhs_is_dynamic => Some(Ok(AnalyzedType::Dynamic)),
+            Some(_) => Some(duration_type_mismatch(op, Side::Rhs, rhs, rhs_span)),
+            None => None,
+        },
+        _ => unreachable!("guarded by temporal_duration_add_sub"),
+    }
+}
+
 pub(super) fn duration_add_sub(
     op: BinaryOp,
     lhs: &AnalyzedType,
@@ -121,4 +167,17 @@ fn numeric_type_mismatch(
 fn is_coefficient(ty: &AnalyzedType) -> bool {
     matches!(ty, AnalyzedType::Resolved(GqlType::Null))
         || matches!(ty, AnalyzedType::Resolved(value) if is_numeric(value))
+}
+
+fn temporal_instant_type(ty: &AnalyzedType) -> Option<&GqlType> {
+    match ty {
+        AnalyzedType::Resolved(
+            ty @ (GqlType::ZonedDateTime
+            | GqlType::LocalDateTime
+            | GqlType::Date
+            | GqlType::ZonedTime
+            | GqlType::LocalTime),
+        ) => Some(ty),
+        AnalyzedType::Resolved(_) | AnalyzedType::Dynamic => None,
+    }
 }

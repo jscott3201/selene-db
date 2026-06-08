@@ -11,6 +11,11 @@ use crate::{
     },
 };
 
+pub(super) use super::diagnostics::{
+    data_exception, data_exception_value, data_exception_value_with, data_exception_with,
+    string_value,
+};
+
 pub(super) fn eval_binary(
     op: BinaryOp,
     lhs: Value,
@@ -176,6 +181,12 @@ fn eval_arithmetic(
     match (lhs, rhs) {
         (Value::Duration(lhs), Value::Duration(rhs)) => {
             super::duration_ops::eval_arithmetic(op, *lhs, *rhs, span)
+        }
+        (Value::Duration(duration), instant) if op == BinaryOp::Add => {
+            super::temporal_ops::eval_duration_plus_temporal(*duration, instant, span)
+        }
+        (instant, Value::Duration(duration)) if matches!(op, BinaryOp::Add | BinaryOp::Sub) => {
+            super::temporal_ops::eval_temporal_duration(op, instant, *duration, span)
         }
         (Value::Duration(lhs), rhs) if matches!(op, BinaryOp::Mul | BinaryOp::Div) => {
             let Some(coefficient) = numeric_to_f64(&rhs) else {
@@ -717,40 +728,4 @@ pub(super) fn string_slice(value: &Value) -> Option<&str> {
         Value::String(value) => Some(value.as_str()),
         _ => None,
     }
-}
-
-/// Construct a `Value::String` from engine-produced text, mapping the IL013
-/// byte-cap failure to a runtime data exception at `span`.
-pub(super) fn string_value(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match selene_core::db_string(text) {
-        Ok(db_string) => Ok(Value::String(db_string)),
-        Err(_err) => data_exception("string exceeds the maximum byte length", span),
-    }
-}
-
-pub(super) fn data_exception<T>(
-    message: impl Into<String>,
-    span: SourceSpan,
-) -> Result<T, ExecutorError> {
-    data_exception_with(DataExceptionSubclass::InvalidValueType, message, span)
-}
-
-pub(super) fn data_exception_with<T>(
-    subclass: DataExceptionSubclass,
-    message: impl Into<String>,
-    span: SourceSpan,
-) -> Result<T, ExecutorError> {
-    Err(data_exception_value_with(subclass, message, span))
-}
-
-pub(super) fn data_exception_value(message: impl Into<String>, span: SourceSpan) -> ExecutorError {
-    data_exception_value_with(DataExceptionSubclass::InvalidValueType, message, span)
-}
-
-pub(super) fn data_exception_value_with(
-    subclass: DataExceptionSubclass,
-    message: impl Into<String>,
-    span: SourceSpan,
-) -> ExecutorError {
-    ExecutorError::data_exception(subclass, message, span)
 }

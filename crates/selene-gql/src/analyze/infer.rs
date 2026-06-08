@@ -13,7 +13,7 @@ use crate::{
 };
 
 use self::{
-    duration::{duration_add_sub, duration_mul_div},
+    duration::{duration_add_sub, duration_mul_div, temporal_duration_add_sub},
     numeric::{is_numeric, numeric_promotion},
 };
 
@@ -52,7 +52,9 @@ pub(crate) fn binary(
 ) -> Result<AnalyzedType, AnalysisError> {
     match op {
         BinaryOp::Add | BinaryOp::Sub => {
-            if let Some(result) = duration_add_sub(op, lhs, lhs_span, rhs, rhs_span) {
+            if let Some(result) = temporal_duration_add_sub(op, lhs, lhs_span, rhs, rhs_span) {
+                result
+            } else if let Some(result) = duration_add_sub(op, lhs, lhs_span, rhs, rhs_span) {
                 result
             } else {
                 arithmetic(op, lhs, lhs_span, rhs, rhs_span)
