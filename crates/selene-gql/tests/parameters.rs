@@ -450,12 +450,12 @@ fn limit_parameter_non_integer_rejected() {
 
     assert!(matches!(
         err,
-        ExecutorError::InvalidParameterType {
-            ref expected,
-            actual: "string",
+        ExecutorError::DataException {
+            subclass: DataExceptionSubclass::InvalidValueType,
             ..
-        } if expected == "non-negative integer"
+        }
     ));
+    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
 }
 
 #[test]

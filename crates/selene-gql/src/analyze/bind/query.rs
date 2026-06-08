@@ -565,10 +565,13 @@ fn is_limit_amount_type(ty: &GqlType) -> bool {
             | GqlType::Int64
             | GqlType::SmallInt
             | GqlType::BigInt
+            | GqlType::Int128
+            | GqlType::Decimal
             | GqlType::Uint8
             | GqlType::Uint16
             | GqlType::Uint32
             | GqlType::Uint64
+            | GqlType::Uint128
     )
 }
 

@@ -2,7 +2,8 @@ use crate::{
     LimitAmount, SourceSpan,
     runtime::{BindingTable, DataExceptionSubclass, ExecutorError, TxContext, parameter_type},
 };
-use selene_core::{DbString, Value};
+use rust_decimal::{Decimal, prelude::ToPrimitive};
+use selene_core::Value;
 
 pub(super) fn execute(
     offset: &LimitAmount,
@@ -40,7 +41,7 @@ pub(super) fn resolve_amount(
                         *span,
                     )?;
                 }
-                parameter_amount(name.clone(), *span, value)
+                parameter_amount(*span, value)
             }
             None => Err(ExecutorError::UnboundParameter {
                 name: name.clone(),
@@ -50,16 +51,18 @@ pub(super) fn resolve_amount(
     }
 }
 
-fn parameter_amount(name: DbString, span: SourceSpan, value: &Value) -> Result<u64, ExecutorError> {
+fn parameter_amount(span: SourceSpan, value: &Value) -> Result<u64, ExecutorError> {
     match value {
         Value::Int(value) if *value >= 0 => Ok(*value as u64),
-        Value::Int(_) => Err(ExecutorError::data_exception(
-            DataExceptionSubclass::NegativeLimitValue,
-            "LIMIT/OFFSET parameter must be non-negative",
-            span,
-        )),
+        Value::Int(_) => Err(negative_limit_value(span)),
+        Value::Int128(value) if *value >= 0 => {
+            u64::try_from(*value).map_err(|_| numeric_out_of_range(span))
+        }
+        Value::Int128(_) => Err(negative_limit_value(span)),
         Value::Uint(value) => Ok(*value),
-        _ => Err(invalid_parameter_type(name, span, value_type_name(value))),
+        Value::Uint128(value) => u64::try_from(*value).map_err(|_| numeric_out_of_range(span)),
+        Value::Decimal(value) => decimal_amount(value, span),
+        _ => Err(invalid_limit_value_type(span)),
     }
 }
 
@@ -74,47 +77,38 @@ fn reject_null_limit_value(value: &Value, span: SourceSpan) -> Result<(), Execut
     Ok(())
 }
 
-fn invalid_parameter_type(name: DbString, span: SourceSpan, actual: &'static str) -> ExecutorError {
-    ExecutorError::InvalidParameterType {
-        name,
-        expected: "non-negative integer".into(),
-        actual,
-        span,
+fn decimal_amount(value: &Decimal, span: SourceSpan) -> Result<u64, ExecutorError> {
+    if value.trunc() != *value {
+        return Err(invalid_limit_value_type(span));
     }
+    if *value < Decimal::ZERO {
+        return Err(negative_limit_value(span));
+    }
+    value.to_u64().ok_or_else(|| numeric_out_of_range(span))
 }
 
-fn value_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Bool(_) => "boolean",
-        Value::Int(_) => "integer",
-        Value::Uint(_) => "unsigned integer",
-        Value::Int128(_) => "128-bit integer",
-        Value::Uint128(_) => "unsigned 128-bit integer",
-        Value::Float(_) => "float",
-        Value::Float32(_) => "float32",
-        Value::Decimal(_) => "decimal",
-        Value::String(_) => "string",
-        Value::Bytes(_) => "bytes",
-        Value::List(_) => "list",
-        Value::Record(_) | Value::RecordTyped(_) => "record",
-        Value::Path(_) => "path",
-        Value::NodeRef(_) => "node reference",
-        Value::EdgeRef(_) => "edge reference",
-        Value::GraphRef(_) => "graph reference",
-        Value::TableRef(_) => "table reference",
-        Value::ZonedDateTime(_) => "zoned datetime",
-        Value::LocalDateTime(_) => "local datetime",
-        Value::Date(_) => "date",
-        Value::ZonedTime(_) => "zoned time",
-        Value::LocalTime(_) => "local time",
-        Value::Duration(_) => "duration",
-        Value::Extended { .. } => "extended",
-        Value::Null => "null",
-        Value::Uuid(_) => "uuid",
-        Value::Vector(_) => "vector",
-        Value::Json(_) => "json",
-        _ => "unknown",
-    }
+fn negative_limit_value(span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(
+        DataExceptionSubclass::NegativeLimitValue,
+        "LIMIT/OFFSET parameter must be non-negative",
+        span,
+    )
+}
+
+fn invalid_limit_value_type(span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(
+        DataExceptionSubclass::InvalidValueType,
+        "LIMIT/OFFSET parameter is not an exact number with scale 0",
+        span,
+    )
+}
+
+fn numeric_out_of_range(span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(
+        DataExceptionSubclass::NumericValueOutOfRange,
+        "LIMIT/OFFSET parameter exceeds the supported range",
+        span,
+    )
 }
 
 pub(super) fn u64_to_bounded_usize(value: u64, upper_bound: usize) -> usize {
