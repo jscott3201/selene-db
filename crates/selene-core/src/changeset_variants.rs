@@ -151,7 +151,7 @@ impl SchemaChange {
         || Self::PropertyIndexCreatedNamed {
             label: changeset_variant_string("schema.all.node"),
             property: changeset_variant_string("schema.all.property"),
-            kind: SchemaPropertyIndexKind::U64,
+            kind: SchemaPropertyIndexKind::Decimal,
             name: Some(changeset_variant_string("schema.all.index")),
         },
         || Self::NodeTypeAddedV2 {
@@ -175,10 +175,14 @@ impl SchemaChange {
             properties: SmallVec::from_vec(vec![
                 changeset_variant_string("schema.all.property.a"),
                 changeset_variant_string("schema.all.property.b"),
+                changeset_variant_string("schema.all.property.c"),
+                changeset_variant_string("schema.all.property.d"),
             ]),
             kinds: SmallVec::from_vec(vec![
-                SchemaPropertyIndexKind::Bool,
                 SchemaPropertyIndexKind::U64,
+                SchemaPropertyIndexKind::I128,
+                SchemaPropertyIndexKind::U128,
+                SchemaPropertyIndexKind::Decimal,
             ]),
             name: Some(changeset_variant_string("schema.all.composite.index")),
         },
@@ -187,6 +191,8 @@ impl SchemaChange {
             properties: SmallVec::from_vec(vec![
                 changeset_variant_string("schema.all.property.a"),
                 changeset_variant_string("schema.all.property.b"),
+                changeset_variant_string("schema.all.property.c"),
+                changeset_variant_string("schema.all.property.d"),
             ]),
         },
         || Self::VectorIndexCreated {

@@ -574,6 +574,12 @@ pub enum SchemaPropertyIndexKind {
     I64,
     /// Unsigned 64-bit integer.
     U64,
+    /// Signed 128-bit integer.
+    I128,
+    /// Unsigned 128-bit integer.
+    U128,
+    /// Fixed-precision decimal value.
+    Decimal,
     /// Finite 64-bit floating-point value.
     F64,
     /// Database string.

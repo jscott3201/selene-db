@@ -299,6 +299,36 @@ fn create_index_accepts_uint64_kind_alias() {
 }
 
 #[test]
+fn create_index_accepts_exact_numeric_kind_aliases() {
+    let graph = graph(330_028);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    for (property, kind) in [
+        ("signed", "int128"),
+        ("unsigned", "uint128"),
+        ("amount", "decimal"),
+    ] {
+        session
+            .execute_source(
+                &format!("CALL selene.create_index('Metric', '{property}', '{kind}')"),
+                &registry,
+            )
+            .expect("exact numeric index creation executes");
+    }
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    let properties = string_column(&table, "property");
+    let kinds = string_column(&table, "kind");
+    assert!(properties.contains(&"signed".to_owned()));
+    assert!(properties.contains(&"unsigned".to_owned()));
+    assert!(properties.contains(&"amount".to_owned()));
+    assert!(kinds.contains(&"i128".to_owned()));
+    assert!(kinds.contains(&"u128".to_owned()));
+    assert!(kinds.contains(&"decimal".to_owned()));
+}
+
+#[test]
 fn drop_index_removes_the_index_through_the_funnel() {
     let graph = graph(330_007);
     let registry = BuiltinProcedureRegistry::new();

@@ -8,6 +8,10 @@ use selene_core::{Value, db_string};
 
 use super::*;
 
+fn decimal(value: &str) -> rust_decimal::Decimal {
+    value.parse().expect("test decimal parses")
+}
+
 fn row_index(index: &TypedIndex, value: &Value) -> RoaringBitmap {
     index.lookup_eq(value).expect("kind matches").into_owned()
 }
@@ -18,6 +22,9 @@ fn kind_round_trips_for_each_variant() {
         TypedIndexKind::Bool,
         TypedIndexKind::I64,
         TypedIndexKind::U64,
+        TypedIndexKind::I128,
+        TypedIndexKind::U128,
+        TypedIndexKind::Decimal,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,
@@ -34,6 +41,9 @@ fn kind_rkyv_round_trips_for_each_variant() {
         TypedIndexKind::Bool,
         TypedIndexKind::I64,
         TypedIndexKind::U64,
+        TypedIndexKind::I128,
+        TypedIndexKind::U128,
+        TypedIndexKind::Decimal,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,
@@ -84,6 +94,9 @@ fn insert_remove_round_trips_for_each_kind() {
         (TypedIndexKind::Bool, Value::Bool(true)),
         (TypedIndexKind::I64, Value::Int(7)),
         (TypedIndexKind::U64, Value::Uint(7)),
+        (TypedIndexKind::I128, Value::Int128(i128::MIN + 7)),
+        (TypedIndexKind::U128, Value::Uint128(u128::MAX - 7)),
+        (TypedIndexKind::Decimal, Value::Decimal(decimal("7.50"))),
         (TypedIndexKind::F64, Value::Float(7.0)),
         (TypedIndexKind::String, Value::String(string)),
         (TypedIndexKind::Date, Value::Date(date(2026, 5, 7))),
@@ -262,6 +275,72 @@ fn u64_range_scan_uses_unsigned_order() {
 }
 
 #[test]
+fn i128_range_scan_uses_wide_signed_order() {
+    let mut index = TypedIndex::new(TypedIndexKind::I128);
+    for (row, value) in [
+        (0, i128::MIN),
+        (1, i64::MIN as i128 - 1),
+        (2, -1),
+        (3, i128::MAX),
+    ] {
+        index.insert(&Value::Int128(value), row).unwrap();
+    }
+
+    let result = index
+        .lookup_range(Value::Int128(i128::MIN)..=Value::Int128(-1))
+        .expect("i128 range kind matches");
+
+    assert!(result.contains(0));
+    assert!(result.contains(1));
+    assert!(result.contains(2));
+    assert!(!result.contains(3));
+}
+
+#[test]
+fn u128_range_scan_uses_wide_unsigned_order() {
+    let mut index = TypedIndex::new(TypedIndexKind::U128);
+    for (row, value) in [
+        (0, 0),
+        (1, u64::MAX as u128 + 1),
+        (2, u128::MAX - 1),
+        (3, u128::MAX),
+    ] {
+        index.insert(&Value::Uint128(value), row).unwrap();
+    }
+
+    let result = index
+        .lookup_range(Value::Uint128(u64::MAX as u128 + 1)..Value::Uint128(u128::MAX))
+        .expect("u128 range kind matches");
+
+    assert!(!result.contains(0));
+    assert!(result.contains(1));
+    assert!(result.contains(2));
+    assert!(!result.contains(3), "exclusive high endpoint excluded");
+}
+
+#[test]
+fn decimal_range_scan_uses_numeric_order() {
+    let mut index = TypedIndex::new(TypedIndexKind::Decimal);
+    for (row, value) in [
+        (0, decimal("-1.25")),
+        (1, decimal("0.10")),
+        (2, decimal("1.5")),
+        (3, decimal("10.00")),
+    ] {
+        index.insert(&Value::Decimal(value), row).unwrap();
+    }
+
+    let result = index
+        .lookup_range(Value::Decimal(decimal("0.1"))..Value::Decimal(decimal("2")))
+        .expect("decimal range kind matches");
+
+    assert!(!result.contains(0));
+    assert!(result.contains(1), "0.10 equals inclusive low endpoint 0.1");
+    assert!(result.contains(2));
+    assert!(!result.contains(3));
+}
+
+#[test]
 fn prefix_scan_matches_string_keys_only() {
     let alpha = db_string("typed-index.prefix.alpha").unwrap();
     let beta = db_string("typed-index.beta").unwrap();
@@ -300,6 +379,9 @@ fn typed_key_unindexable_value_rejects_kind_mismatch() {
         TypedIndexKind::Bool,
         TypedIndexKind::I64,
         TypedIndexKind::U64,
+        TypedIndexKind::I128,
+        TypedIndexKind::U128,
+        TypedIndexKind::Decimal,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,

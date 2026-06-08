@@ -321,18 +321,33 @@ fn schema_change_postcard_round_trip() {
         SchemaChange::PropertyIndexCreatedNamed {
             label: node_label.clone(),
             property: dbs("serde.schema.indexed"),
-            kind: SchemaPropertyIndexKind::U64,
+            kind: SchemaPropertyIndexKind::Decimal,
             name: Some(dbs("serde.schema.index.name")),
         },
         SchemaChange::CompositePropertyIndexCreated {
             label: node_label.clone(),
-            properties: smallvec![dbs("serde.schema.indexed.a"), dbs("serde.schema.indexed.b")],
-            kinds: smallvec![SchemaPropertyIndexKind::Bool, SchemaPropertyIndexKind::U64],
+            properties: smallvec![
+                dbs("serde.schema.indexed.a"),
+                dbs("serde.schema.indexed.b"),
+                dbs("serde.schema.indexed.c"),
+                dbs("serde.schema.indexed.d"),
+            ],
+            kinds: smallvec![
+                SchemaPropertyIndexKind::U64,
+                SchemaPropertyIndexKind::I128,
+                SchemaPropertyIndexKind::U128,
+                SchemaPropertyIndexKind::Decimal,
+            ],
             name: Some(dbs("serde.schema.composite.index.name")),
         },
         SchemaChange::CompositePropertyIndexDropped {
             label: node_label.clone(),
-            properties: smallvec![dbs("serde.schema.indexed.a"), dbs("serde.schema.indexed.b")],
+            properties: smallvec![
+                dbs("serde.schema.indexed.a"),
+                dbs("serde.schema.indexed.b"),
+                dbs("serde.schema.indexed.c"),
+                dbs("serde.schema.indexed.d"),
+            ],
         },
         SchemaChange::VectorIndexCreated {
             label: node_label.clone(),

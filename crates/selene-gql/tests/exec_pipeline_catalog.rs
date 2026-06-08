@@ -221,6 +221,35 @@ fn create_node_type_uint_indexed_property_creates_property_index() {
 }
 
 #[test]
+fn create_node_type_exact_numeric_indexed_properties_create_property_indexes() {
+    let graph = empty_closed_graph(3725);
+    let plan = planned(
+        "CREATE NODE TYPE :Metric \
+         (signed :: INT128 INDEXED, unsigned :: UINT128 INDEXED, amount :: DECIMAL INDEXED)",
+    );
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    outcome.expect("commit succeeds");
+
+    let metric = db_string("Metric");
+    for (property, expected) in [
+        ("amount", TypedIndexKind::Decimal),
+        ("signed", TypedIndexKind::I128),
+        ("unsigned", TypedIndexKind::U128),
+    ] {
+        assert_eq!(
+            graph
+                .read()
+                .property_index_for(&metric, &db_string(property))
+                .unwrap_or_else(|| panic!("{property} index exists"))
+                .kind(),
+            expected,
+            "{property} index kind"
+        );
+    }
+}
+
+#[test]
 fn create_node_type_float_indexed_reports_feature_not_supported() {
     let graph = empty_closed_graph(3722);
     let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT INDEXED)");

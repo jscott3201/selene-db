@@ -249,8 +249,9 @@ fn create_index_infers_all_supported_storage_kinds() {
     run_ddl(
         &graph,
         "CREATE NODE TYPE :T \
-         (b :: BOOLEAN, i :: INT64, n :: UINT64, f :: FLOAT64, s :: STRING, d :: DATE, \
-          ldt :: LOCAL DATETIME, u :: UUID)",
+         (b :: BOOLEAN, i :: INT64, n :: UINT64, i128 :: INT128, u128 :: UINT128, \
+          dec :: DECIMAL, f :: FLOAT64, s :: STRING, d :: DATE, ldt :: LOCAL DATETIME, \
+          u :: UUID)",
     )
     .unwrap();
 
@@ -258,6 +259,9 @@ fn create_index_infers_all_supported_storage_kinds() {
         ("t_b", "b", TypedIndexKind::Bool),
         ("t_i", "i", TypedIndexKind::I64),
         ("t_n", "n", TypedIndexKind::U64),
+        ("t_i128", "i128", TypedIndexKind::I128),
+        ("t_u128", "u128", TypedIndexKind::U128),
+        ("t_dec", "dec", TypedIndexKind::Decimal),
         ("t_f", "f", TypedIndexKind::F64),
         ("t_s", "s", TypedIndexKind::String),
         ("t_d", "d", TypedIndexKind::Date),
@@ -284,14 +288,17 @@ fn named_index_survives_wal_recovery() {
         .unwrap();
     let mut changes = Vec::new();
     changes.extend(
-        run_ddl(&graph, "CREATE NODE TYPE :Sensor (reading_count :: UINT64)")
-            .unwrap()
-            .changes,
+        run_ddl(
+            &graph,
+            "CREATE NODE TYPE :Sensor (reading_total :: DECIMAL)",
+        )
+        .unwrap()
+        .changes,
     );
     changes.extend(
         run_ddl(
             &graph,
-            "CREATE INDEX sensor_count_idx ON :Sensor(reading_count)",
+            "CREATE INDEX sensor_total_idx ON :Sensor(reading_total)",
         )
         .unwrap()
         .changes,
@@ -301,8 +308,8 @@ fn named_index_survives_wal_recovery() {
     let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
     assert_eq!(index_entry(&recovered, "Sensor", "active"), None);
     assert_eq!(
-        index_entry(&recovered, "Sensor", "reading_count"),
-        Some((TypedIndexKind::U64, Some(db_string("sensor_count_idx"))))
+        index_entry(&recovered, "Sensor", "reading_total"),
+        Some((TypedIndexKind::Decimal, Some(db_string("sensor_total_idx"))))
     );
     let _ = fs::remove_dir_all(dir);
 }

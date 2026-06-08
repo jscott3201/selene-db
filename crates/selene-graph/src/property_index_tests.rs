@@ -10,6 +10,10 @@ fn property_map(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyM
     PropertyMap::from_pairs(pairs).unwrap()
 }
 
+fn decimal(value: &str) -> rust_decimal::Decimal {
+    value.parse().expect("test decimal parses")
+}
+
 fn entry(kind: TypedIndexKind) -> PropertyIndexEntry {
     PropertyIndexEntry::new(TypedIndex::new(kind), None)
 }
@@ -366,6 +370,85 @@ fn apply_node_update_moves_u64_index_key() {
 
     assert!(rows(&indexes, label.clone(), count.clone(), &Value::Uint(7)).is_empty());
     assert!(rows(&indexes, label, count, &Value::Uint(u64::MAX)).contains(10));
+}
+
+#[test]
+fn apply_node_update_moves_exact_numeric_index_keys() {
+    let label = db_string("pi.exact.update.label").unwrap();
+    let signed = db_string("pi.exact.update.signed").unwrap();
+    let unsigned = db_string("pi.exact.update.unsigned").unwrap();
+    let amount = db_string("pi.exact.update.amount").unwrap();
+    let old_props = property_map([
+        (signed.clone(), Value::Int128(i128::MIN + 1)),
+        (unsigned.clone(), Value::Uint128(u64::MAX as u128 + 1)),
+        (amount.clone(), Value::Decimal(decimal("1.25"))),
+    ]);
+    let new_props = property_map([
+        (signed.clone(), Value::Int128(i128::MAX - 1)),
+        (unsigned.clone(), Value::Uint128(u128::MAX - 1)),
+        (amount.clone(), Value::Decimal(decimal("2.50"))),
+    ]);
+    let labels = LabelSet::single(label.clone());
+    let mut indexes = PropertyIndexMap::default();
+    indexes.insert((label.clone(), signed.clone()), entry(TypedIndexKind::I128));
+    indexes.insert(
+        (label.clone(), unsigned.clone()),
+        entry(TypedIndexKind::U128),
+    );
+    indexes.insert(
+        (label.clone(), amount.clone()),
+        entry(TypedIndexKind::Decimal),
+    );
+    apply_node_create(&mut indexes, &labels, &old_props, 11).unwrap();
+
+    apply_node_update(&mut indexes, &labels, &old_props, &labels, &new_props, 11).unwrap();
+
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            signed.clone(),
+            &Value::Int128(i128::MIN + 1)
+        )
+        .is_empty()
+    );
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            signed,
+            &Value::Int128(i128::MAX - 1)
+        )
+        .contains(11)
+    );
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            unsigned.clone(),
+            &Value::Uint128(u64::MAX as u128 + 1)
+        )
+        .is_empty()
+    );
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            unsigned,
+            &Value::Uint128(u128::MAX - 1)
+        )
+        .contains(11)
+    );
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            amount.clone(),
+            &Value::Decimal(decimal("1.25"))
+        )
+        .is_empty()
+    );
+    assert!(rows(&indexes, label, amount, &Value::Decimal(decimal("2.50"))).contains(11));
 }
 
 #[test]

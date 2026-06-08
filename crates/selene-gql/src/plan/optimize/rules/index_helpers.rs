@@ -85,13 +85,13 @@ pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
     match literal {
         Literal::Bool(_, _) => Some(IndexKind::Boolean),
         Literal::Integer(_, _) | Literal::RadixInteger(_, _, _) => Some(IndexKind::Integer),
+        Literal::Decimal(_, _, _) => Some(IndexKind::Decimal),
         Literal::Float(_, _, _) => Some(IndexKind::Float),
         Literal::String(_, _) => Some(IndexKind::String),
         Literal::Date(_, _) => Some(IndexKind::Date),
         Literal::LocalDateTime(_, _) => Some(IndexKind::LocalDateTime),
         Literal::Uuid(_, _) => Some(IndexKind::Uuid),
-        Literal::Decimal(_, _, _)
-        | Literal::Bytes(_, _)
+        Literal::Bytes(_, _)
         | Literal::ZonedDateTime(_, _)
         | Literal::ZonedTime(_, _)
         | Literal::LocalTime(_, _)
@@ -238,6 +238,9 @@ pub(super) fn equality_candidates<'a>(
 ///   `DECIMAL` are NOT `Value::Int` — reject.
 /// - `IndexKind::UnsignedInteger` keys are `Value::Uint` (u64), which maps to
 ///   the fixed-width unsigned family up to `UINT64`.
+/// - `IndexKind::Integer128`, `UnsignedInteger128`, and `Decimal` keys are
+///   `Value::Int128`, `Value::Uint128`, and `Value::Decimal` respectively.
+///   They intentionally admit only their exact typed parameter declarations.
 /// - `IndexKind::Float` keys are `Value::Float` (f64). `FLOAT` and `FLOAT64`
 ///   bind to `Value::Float`; `FLOAT32` binds to `Value::Float32` and would
 ///   need an explicit cast, so it is rejected.
@@ -265,6 +268,9 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
                 GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64
             )
         }
+        IndexKind::Integer128 => matches!(ty, GqlType::Int128),
+        IndexKind::UnsignedInteger128 => matches!(ty, GqlType::Uint128),
+        IndexKind::Decimal => matches!(ty, GqlType::Decimal),
         // BRIEF-154 PR #175 F2 (Codex P2): admit only `FLOAT64` for
         // `IndexKind::Float`. `GqlType::Float` is width-generic per
         // `parameter_type::validate_declared_type`, which accepts both

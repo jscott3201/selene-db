@@ -10,6 +10,10 @@ fn property_map(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyM
     PropertyMap::from_pairs(pairs).unwrap()
 }
 
+fn decimal(value: &str) -> rust_decimal::Decimal {
+    value.parse().expect("test decimal parses")
+}
+
 fn entry(
     properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
@@ -249,6 +253,80 @@ fn apply_update_moves_u64_composite_component() {
             &[Value::Uint(8), Value::String(db_string("north").unwrap())]
         )
         .contains(5)
+    );
+}
+
+#[test]
+fn apply_update_moves_exact_numeric_composite_components() {
+    let label = db_string("cpi.exact.label").unwrap();
+    let signed = db_string("cpi.exact.signed").unwrap();
+    let unsigned = db_string("cpi.exact.unsigned").unwrap();
+    let amount = db_string("cpi.exact.amount").unwrap();
+    let mut indexes = CompositeIndexMap::default();
+    let properties = smallvec![signed.clone(), unsigned.clone(), amount.clone()];
+    insert_entry(
+        &mut indexes,
+        label.clone(),
+        properties.clone(),
+        smallvec![
+            TypedIndexKind::I128,
+            TypedIndexKind::U128,
+            TypedIndexKind::Decimal
+        ],
+    );
+    let old_props = property_map([
+        (signed.clone(), Value::Int128(i128::MIN + 8)),
+        (unsigned.clone(), Value::Uint128(u64::MAX as u128 + 8)),
+        (amount.clone(), Value::Decimal(decimal("8.25"))),
+    ]);
+    let new_props = property_map([
+        (signed.clone(), Value::Int128(i128::MAX - 8)),
+        (unsigned.clone(), Value::Uint128(u128::MAX - 8)),
+        (amount.clone(), Value::Decimal(decimal("9.50"))),
+    ]);
+
+    apply_node_create(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        6,
+    )
+    .unwrap();
+    apply_node_update(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        &LabelSet::single(label.clone()),
+        &new_props,
+        6,
+    )
+    .unwrap();
+
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            &properties,
+            &[
+                Value::Int128(i128::MIN + 8),
+                Value::Uint128(u64::MAX as u128 + 8),
+                Value::Decimal(decimal("8.25")),
+            ]
+        )
+        .is_empty()
+    );
+    assert!(
+        rows(
+            &indexes,
+            label,
+            &properties,
+            &[
+                Value::Int128(i128::MAX - 8),
+                Value::Uint128(u128::MAX - 8),
+                Value::Decimal(decimal("9.50")),
+            ]
+        )
+        .contains(6)
     );
 }
 

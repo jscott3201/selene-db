@@ -25,6 +25,7 @@ triomphe.workspace = true
 serde.workspace = true
 postcard.workspace = true
 rkyv.workspace = true
+rust_decimal.workspace = true
 thiserror.workspace = true
 miette.workspace = true
 tracing.workspace = true
@@ -38,7 +39,6 @@ criterion.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
-rust_decimal.workspace = true
 selene-testing = { path = "../selene-testing", version = "1.1.0" }
 serde_json.workspace = true
 
