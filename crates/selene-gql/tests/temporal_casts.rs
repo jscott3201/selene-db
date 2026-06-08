@@ -127,6 +127,18 @@ fn cast_string_status(text: &str, target: &str) -> GqlStatus {
         .gqlstatus()
 }
 
+fn read_values(source: &str) -> Vec<Value> {
+    let graph = SharedGraph::new(GraphId::new(13_813));
+    let mut session = Session::new(&graph);
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect("query succeeds");
+    let StatementOutput::Rows(table) = output else {
+        panic!("query produced non-row output");
+    };
+    table.rows()[0].values().to_vec()
+}
+
 #[test]
 fn cast_temporal_instants_to_strings() {
     assert_eq!(
@@ -140,6 +152,39 @@ fn cast_temporal_instants_to_strings() {
     assert_eq!(
         cast_bound_to_string(Value::LocalTime("12:34:56".parse().unwrap())),
         "12:34:56"
+    );
+}
+
+#[test]
+fn cast_to_qualified_duration_enforces_unit_group() {
+    assert_eq!(
+        cast_string("P2M", "DURATION (YEAR TO MONTH)"),
+        Value::Duration(Box::new("P2M".parse().unwrap()))
+    );
+    assert_eq!(
+        cast_string("PT1H2S", "DURATION (DAY TO SECOND)"),
+        Value::Duration(Box::new("PT1H2S".parse().unwrap()))
+    );
+    assert_eq!(
+        cast_string_status("PT1H", "DURATION (YEAR TO MONTH)"),
+        GqlStatus::DATATYPE_MISMATCH
+    );
+    assert_eq!(
+        cast_string_status("P2M", "DURATION (DAY TO SECOND)"),
+        GqlStatus::DATATYPE_MISMATCH
+    );
+}
+
+#[test]
+fn is_typed_qualified_duration_checks_unit_group() {
+    let values = read_values(
+        "RETURN DURATION 'P2M' IS TYPED DURATION (YEAR TO MONTH) AS ym_ok, \
+         DURATION 'PT1H' IS TYPED DURATION (YEAR TO MONTH) AS ym_bad, \
+         DURATION 'PT1H' IS TYPED DURATION (DAY TO SECOND) AS dt_ok",
+    );
+    assert_eq!(
+        values,
+        vec![Value::Bool(true), Value::Bool(false), Value::Bool(true)]
     );
 }
 

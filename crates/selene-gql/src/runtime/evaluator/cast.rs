@@ -172,7 +172,9 @@ pub(super) fn eval_cast(
         | GqlType::Date
         | GqlType::ZonedTime
         | GqlType::LocalTime
-        | GqlType::Duration => cast_to_temporal(value, target_type, span, ctx),
+        | GqlType::Duration
+        | GqlType::DurationYearToMonth
+        | GqlType::DurationDayToSecond => cast_to_temporal(value, target_type, span, ctx),
         GqlType::List(element_type) => cast_to_list(value, element_type, span, ctx),
         other => Err(ExecutorError::FeatureNotSupportedYet {
             feature: cast_to_type_feature(other),
@@ -417,7 +419,9 @@ fn cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::Date => "CAST to DATE",
         GqlType::ZonedTime => "CAST to ZONED TIME",
         GqlType::LocalTime => "CAST to LOCAL TIME",
-        GqlType::Duration => "CAST to DURATION",
+        GqlType::Duration | GqlType::DurationYearToMonth | GqlType::DurationDayToSecond => {
+            "CAST to DURATION"
+        }
         GqlType::Vector => "CAST to VECTOR",
         GqlType::Json => "CAST to JSON",
         GqlType::Record(_) => "CAST to RECORD",

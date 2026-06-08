@@ -1,5 +1,5 @@
 use jiff::SignedDuration;
-use selene_core::Value;
+use selene_core::{DurationTypeQualifier, Value};
 
 use crate::{
     GqlType, SourceSpan,
@@ -70,7 +70,9 @@ pub(super) fn cast_to_temporal(
         (Value::LocalTime(value), GqlType::ZonedTime) => {
             zoned_from_local_time(value, ctx, span).map(|value| Value::ZonedTime(Box::new(value)))
         }
-        (Value::Duration(value), GqlType::Duration) => Ok(Value::Duration(value)),
+        (Value::Duration(value), target) if target.is_duration() => {
+            validate_duration_target(&value, target, span).map(|()| Value::Duration(value))
+        }
         (Value::String(value), GqlType::ZonedDateTime) => {
             temporal_parse::parse_zoned_datetime(value.as_str().trim())
                 .map(|value| Value::ZonedDateTime(Box::new(value)))
@@ -94,10 +96,13 @@ pub(super) fn cast_to_temporal(
                 .map(Value::LocalTime)
                 .map_err(|error| invalid_datetime_format(error, span))
         }
-        (Value::String(value), GqlType::Duration) => {
+        (Value::String(value), target) if target.is_duration() => {
             temporal_parse::parse_duration(value.as_str().trim())
-                .map(|value| Value::Duration(Box::new(value)))
                 .map_err(|error| invalid_duration_format(error, span))
+                .and_then(|value| {
+                    validate_duration_target(&value, target, span)
+                        .map(|()| Value::Duration(Box::new(value)))
+                })
         }
         (source, target) => {
             Err(
@@ -182,7 +187,9 @@ fn temporal_cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::Date => "CAST to DATE",
         GqlType::ZonedTime => "CAST to ZONED TIME",
         GqlType::LocalTime => "CAST to LOCAL TIME",
-        GqlType::Duration => "CAST to DURATION",
+        GqlType::Duration | GqlType::DurationYearToMonth | GqlType::DurationDayToSecond => {
+            "CAST to DURATION"
+        }
         _ => "CAST to temporal target",
     }
 }
@@ -195,6 +202,33 @@ fn temporal_cast_target_name(target: &GqlType) -> &'static str {
         GqlType::ZonedTime => "ZONED TIME",
         GqlType::LocalTime => "LOCAL TIME",
         GqlType::Duration => "DURATION",
+        GqlType::DurationYearToMonth => "DURATION (YEAR TO MONTH)",
+        GqlType::DurationDayToSecond => "DURATION (DAY TO SECOND)",
         _ => "temporal target",
+    }
+}
+
+fn validate_duration_target(
+    value: &jiff::Span,
+    target: &GqlType,
+    span: SourceSpan,
+) -> Result<(), ExecutorError> {
+    let matches = match target {
+        GqlType::Duration => true,
+        GqlType::DurationYearToMonth => DurationTypeQualifier::YearToMonth.matches_span(value),
+        GqlType::DurationDayToSecond => DurationTypeQualifier::DayToSecond.matches_span(value),
+        _ => unreachable!("validate_duration_target only receives duration targets"),
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(ExecutorError::data_exception(
+            DataExceptionSubclass::InvalidValueType,
+            format!(
+                "duration value {value} does not conform to {}",
+                temporal_cast_target_name(target)
+            ),
+            span,
+        ))
     }
 }

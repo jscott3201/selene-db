@@ -92,7 +92,7 @@ pub(crate) fn unary(
         UnaryOp::Negate => match operand {
             AnalyzedType::Dynamic => Ok(AnalyzedType::Dynamic),
             AnalyzedType::Resolved(ty) if is_numeric(ty) => Ok(operand.clone()),
-            AnalyzedType::Resolved(GqlType::Duration) => {
+            AnalyzedType::Resolved(ty) if ty.is_duration() => {
                 Ok(AnalyzedType::Resolved(GqlType::Duration))
             }
             // Per ISO/IEC 39075:2024 three-valued logic, `- NULL` yields NULL.
@@ -673,6 +673,8 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::ZonedTime
         | GqlType::LocalTime
         | GqlType::Duration
+        | GqlType::DurationYearToMonth
+        | GqlType::DurationDayToSecond
         | GqlType::Vector
         | GqlType::Path
         | GqlType::Null
@@ -717,7 +719,9 @@ fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
         | GqlType::Date
         | GqlType::ZonedTime
         | GqlType::LocalTime
-        | GqlType::Duration => ComparableFamily::Temporal,
+        | GqlType::Duration
+        | GqlType::DurationYearToMonth
+        | GqlType::DurationDayToSecond => ComparableFamily::Temporal,
         _ => return None,
     })
 }

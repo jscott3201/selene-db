@@ -71,6 +71,16 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
             selene_core::PropertyValueType::Duration,
             PropertyDefaultValue::Duration(db_string("PT1H2S").unwrap()),
         ),
+        (
+            db_string("event_year_month_duration").unwrap(),
+            selene_core::PropertyValueType::DurationYearToMonth,
+            PropertyDefaultValue::Duration(db_string("P2M").unwrap()),
+        ),
+        (
+            db_string("event_day_time_duration").unwrap(),
+            selene_core::PropertyValueType::DurationDayToSecond,
+            PropertyDefaultValue::Duration(db_string("PT1H2S").unwrap()),
+        ),
     ];
     let vector_defaults = [(
         db_string("embedding").unwrap(),
@@ -208,6 +218,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     for (offset, (name, _value_type, default)) in temporal_defaults.iter().enumerate() {
         let property = &graph_type.node_types[0].properties[temporal_start + offset];
         assert_eq!(&property.name, name);
+        assert_eq!(property.value_type, *_value_type);
         assert_eq!(property.default.as_ref(), Some(default));
     }
     let vector_start = temporal_start + temporal_defaults.len();

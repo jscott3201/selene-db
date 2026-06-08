@@ -1,7 +1,7 @@
 //! Catalog property constraint/default tests split out of the root pipeline catalog
 //! binary to keep both files under the repository file-size cap.
 
-use selene_core::Value;
+use selene_core::{PropertyValueType, Value};
 use selene_gql::{
     CatalogOp, ExecutorError, GqlStatus, GqlType, PipelineOp, PlannedTypePropertyConstraint,
     PlannedTypePropertyDef, RecordType, SourceSpan,
@@ -561,6 +561,66 @@ fn temporal_default_property_constraint_accepts_temporal_literals() {
 }
 
 #[test]
+fn qualified_duration_property_types_render_and_validate() {
+    let graph = empty_closed_graph(3746);
+    let plan = planned(
+        "CREATE NODE TYPE :Event (\
+         ym :: DURATION (YEAR TO MONTH), \
+         dt :: DURATION (DAY TO SECOND), \
+         months :: LIST<DURATION (YEAR TO MONTH)>, \
+         detail :: RECORD { span :: DURATION (DAY TO SECOND) })",
+    );
+
+    run_write(&graph, &plan)
+        .expect("qualified duration catalog executes")
+        .1
+        .expect("qualified duration catalog commits");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].value_type,
+        PropertyValueType::DurationYearToMonth
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[1].value_type,
+        PropertyValueType::DurationDayToSecond
+    );
+
+    let (table, outcome) = run_write(&graph, &planned("SHOW NODE TYPES")).expect("show executes");
+    outcome.expect("show commit succeeds");
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Event (ym :: DURATION (YEAR TO MONTH), dt :: DURATION (DAY TO SECOND), months :: LIST<DURATION (YEAR TO MONTH)>, detail :: RECORD { span :: DURATION (DAY TO SECOND) })"
+        ))
+    );
+
+    run_write(
+        &graph,
+        &planned(
+            "INSERT (:Event {ym: DURATION 'P2M', dt: DURATION 'PT1H', \
+             months: [DURATION 'P1M'], detail: {span: DURATION 'PT2H'}}) FINISH",
+        ),
+    )
+    .expect("matching qualified duration insert executes")
+    .1
+    .expect("matching qualified duration insert commits");
+
+    let (_table, outcome) = run_write(
+        &graph,
+        &planned("INSERT (:Event {ym: DURATION 'PT1H'}) FINISH"),
+    )
+    .expect("wrong family insert executes");
+    let err = outcome.expect_err("wrong duration family rejects commit");
+    assert!(matches!(
+        err,
+        GraphError::TypeViolation(TypeViolation::PropertyTypeMismatch {
+            expected: PropertyValueType::DurationYearToMonth,
+            ..
+        })
+    ));
+}
+
+#[test]
 fn default_literal_must_match_declared_property_type() {
     let graph = empty_closed_graph(3725);
     let plan = planned("CREATE NODE TYPE :Person (active :: BOOLEAN DEFAULT 1)");
@@ -573,6 +633,23 @@ fn default_literal_must_match_declared_property_type() {
         ExecutorError::DataException { message, .. }
             if message.contains("DEFAULT literal is not assignable")
                 && message.contains("active")
+    ));
+}
+
+#[test]
+fn qualified_duration_default_must_match_declared_family() {
+    let graph = empty_closed_graph(3747);
+    let plan =
+        planned("CREATE NODE TYPE :Event (ym :: DURATION (YEAR TO MONTH) DEFAULT DURATION 'PT1H')");
+
+    let err = run_write(&graph, &plan).expect_err("wrong duration default family");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("DEFAULT literal is not assignable")
+                && message.contains("ym")
     ));
 }
 

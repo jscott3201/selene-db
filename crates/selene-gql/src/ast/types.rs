@@ -66,6 +66,10 @@ pub enum GqlType {
     LocalTime,
     /// `DURATION`.
     Duration,
+    /// `DURATION (YEAR TO MONTH)`.
+    DurationYearToMonth,
+    /// `DURATION (DAY TO SECOND)`.
+    DurationDayToSecond,
     /// Native dense-vector value.
     ///
     /// This internal type is used by procedure metadata and typed parameter
@@ -100,4 +104,15 @@ pub enum RecordType {
     Open,
     /// Closed record with named fields.
     Closed(Vec<(DbString, GqlType)>),
+}
+
+impl GqlType {
+    /// Return true when this type is any duration family.
+    #[must_use]
+    pub const fn is_duration(&self) -> bool {
+        matches!(
+            self,
+            Self::Duration | Self::DurationYearToMonth | Self::DurationDayToSecond
+        )
+    }
 }

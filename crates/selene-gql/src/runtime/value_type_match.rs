@@ -9,7 +9,7 @@
 //! deliberately stricter than the `CAST` subset/projection rule in
 //! [`crate::runtime::evaluator::cast`].)
 
-use selene_core::{Record, Value};
+use selene_core::{DurationTypeQualifier, Record, Value};
 
 use crate::{GqlType, RecordType};
 
@@ -46,6 +46,12 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::ZonedTime => matches!(value, Value::ZonedTime(_)),
         GqlType::LocalTime => matches!(value, Value::LocalTime(_)),
         GqlType::Duration => matches!(value, Value::Duration(_)),
+        GqlType::DurationYearToMonth => {
+            matches!(value, Value::Duration(span) if DurationTypeQualifier::YearToMonth.matches_span(span))
+        }
+        GqlType::DurationDayToSecond => {
+            matches!(value, Value::Duration(span) if DurationTypeQualifier::DayToSecond.matches_span(span))
+        }
         GqlType::Vector => matches!(value, Value::Vector(_)),
         GqlType::Record(record) => value_matches_record_type(value, record),
         GqlType::List(inner) => match value {

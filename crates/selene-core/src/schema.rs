@@ -529,6 +529,10 @@ pub enum PredefinedValueType {
     ZonedDateTime,
     /// Duration.
     Duration,
+    /// `DURATION (YEAR TO MONTH)`.
+    DurationYearToMonth,
+    /// `DURATION (DAY TO SECOND)`.
+    DurationDayToSecond,
     /// Node reference.
     NodeRef,
     /// Edge reference.

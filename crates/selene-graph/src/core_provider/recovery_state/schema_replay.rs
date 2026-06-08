@@ -377,6 +377,8 @@ fn runtime_predefined_value_type(
         PredefinedValueType::LocalDateTime => PropertyValueType::LocalDateTime,
         PredefinedValueType::ZonedDateTime => PropertyValueType::ZonedDateTime,
         PredefinedValueType::Duration => PropertyValueType::Duration,
+        PredefinedValueType::DurationYearToMonth => PropertyValueType::DurationYearToMonth,
+        PredefinedValueType::DurationDayToSecond => PropertyValueType::DurationDayToSecond,
         PredefinedValueType::NodeRef => PropertyValueType::NodeRef,
         PredefinedValueType::EdgeRef => PropertyValueType::EdgeRef,
         PredefinedValueType::GraphRef => PropertyValueType::GraphRef,

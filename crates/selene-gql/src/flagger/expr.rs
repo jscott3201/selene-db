@@ -337,7 +337,9 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
         GqlType::ZonedDateTime | GqlType::ZonedTime => {
             record_feature(uses, FeatureId::GV40, span);
         }
-        GqlType::Duration => record_feature(uses, FeatureId::GV41, span),
+        GqlType::Duration | GqlType::DurationYearToMonth | GqlType::DurationDayToSecond => {
+            record_feature(uses, FeatureId::GV41, span)
+        }
         GqlType::Record(record) => {
             record_feature(uses, FeatureId::GV45, span);
             match record {

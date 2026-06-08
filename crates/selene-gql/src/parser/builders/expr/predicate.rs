@@ -287,6 +287,9 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     {
         return build_byte_string_type_name(text, source_span);
     }
+    if keyword_starts_with(text, "DURATION") {
+        return build_duration_type_name(pair);
+    }
     if keyword_starts_with(text, "LIST") {
         let inner = pair
             .into_inner()
@@ -376,7 +379,6 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         (&["ZONED", "TIME"], GqlType::ZonedTime),
         (&["LOCAL", "TIME"], GqlType::LocalTime),
         (&["DATE"], GqlType::Date),
-        (&["DURATION"], GqlType::Duration),
         (&["PATH"], GqlType::Path),
         (&["NULL"], GqlType::Null),
         (&["NOTHING"], GqlType::Nothing),
@@ -390,6 +392,25 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         &pair,
         "this GQL type constructor is not yet supported",
     ))
+}
+
+fn build_duration_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
+    let qualifier = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::duration_type)
+        .and_then(|duration| {
+            duration
+                .into_inner()
+                .find(|child| child.as_rule() == Rule::temporal_duration_qualifier)
+        });
+    let Some(qualifier) = qualifier else {
+        return Ok(GqlType::Duration);
+    };
+    Ok(match qualifier.as_str().to_ascii_uppercase().as_str() {
+        "YEAR TO MONTH" => GqlType::DurationYearToMonth,
+        "DAY TO SECOND" => GqlType::DurationDayToSecond,
+        _ => unreachable!("grammar restricts temporal_duration_qualifier"),
+    })
 }
 
 fn build_byte_string_type_name(text: &str, span: SourceSpan) -> Result<GqlType, ParserError> {

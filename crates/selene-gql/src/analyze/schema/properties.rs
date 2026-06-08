@@ -295,7 +295,9 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Date, G::Date)
             | (P::ZonedTime, G::ZonedTime)
             | (P::LocalTime, G::LocalTime)
-            | (P::Duration, G::Duration)
+            | (P::Duration, G::Duration | G::DurationYearToMonth | G::DurationDayToSecond)
+            | (P::DurationYearToMonth, G::Duration | G::DurationYearToMonth)
+            | (P::DurationDayToSecond, G::Duration | G::DurationDayToSecond)
             | (P::Vector, G::Vector)
             | (P::Null, G::Null)
             | (P::Path, G::Path)
@@ -521,6 +523,16 @@ mod tests {
             (
                 PropertyValueType::Duration,
                 GqlType::Duration,
+                Value::Duration(Box::new("PT1H2S".parse().unwrap())),
+            ),
+            (
+                PropertyValueType::DurationYearToMonth,
+                GqlType::Duration,
+                Value::Duration(Box::new("P1Y2M".parse().unwrap())),
+            ),
+            (
+                PropertyValueType::DurationDayToSecond,
+                GqlType::DurationDayToSecond,
                 Value::Duration(Box::new("PT1H2S".parse().unwrap())),
             ),
             (PropertyValueType::Null, GqlType::Null, Value::Null),
