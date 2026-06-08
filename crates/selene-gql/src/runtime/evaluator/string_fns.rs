@@ -388,10 +388,13 @@ fn eval_string_trim(value: Value, span: SourceSpan) -> Result<Value, ExecutorErr
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
     }
-    let Some(value) = string_slice(&value) else {
-        return data_exception("trim argument is not a string", span);
-    };
-    string_value(&trim_by_char_set(value, " ", TrimSide::Both), span)
+    if let Some(value) = string_slice(&value) {
+        return string_value(&trim_by_char_set(value, " ", TrimSide::Both), span);
+    }
+    if let Value::Bytes(value) = value {
+        return eval_explicit_trim_bytes(&value, None, TrimSide::Both, span);
+    }
+    data_exception("trim argument is not a string or byte string", span)
 }
 
 fn eval_list_trim(
