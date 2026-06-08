@@ -84,6 +84,10 @@ impl GqlStatus {
     pub const TRIM_ERROR: Self = Self(*b"22027");
     /// Maps to GQLSTATUS 22G04 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const VALUES_NOT_COMPARABLE: Self = Self(*b"22G04");
+    /// Maps to GQLSTATUS 22G05 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DATETIME_FUNCTION_FIELD_NAME: Self = Self(*b"22G05");
+    /// Maps to GQLSTATUS 22G06 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DATETIME_FUNCTION_VALUE: Self = Self(*b"22G06");
     /// Maps to GQLSTATUS 22G0C per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const LIST_ELEMENT_ERROR: Self = Self(*b"22G0C");
     /// Maps to GQLSTATUS 22G0F per ISO/IEC 39075:2024 section 23.1 Table 8
@@ -423,6 +427,12 @@ mod tests {
             ),
             (GqlStatus::TRIM_ERROR, "22027", *b"22"),
             (GqlStatus::VALUES_NOT_COMPARABLE, "22G04", *b"22"),
+            (
+                GqlStatus::INVALID_DATETIME_FUNCTION_FIELD_NAME,
+                "22G05",
+                *b"22",
+            ),
+            (GqlStatus::INVALID_DATETIME_FUNCTION_VALUE, "22G06", *b"22"),
             (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
             (GqlStatus::INVALID_DURATION_FORMAT, "22G0H", *b"22"),
             (

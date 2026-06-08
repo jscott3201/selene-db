@@ -39,6 +39,10 @@ pub enum DataExceptionSubclass {
     InvalidValueType,
     /// Values not comparable (`22G04`).
     ValuesNotComparable,
+    /// Invalid date, time, or datetime function field name (`22G05`).
+    InvalidDatetimeFunctionFieldName,
+    /// Invalid date, time, or datetime function value (`22G06`).
+    InvalidDatetimeFunctionValue,
     /// List element error (`22G0C`).
     ListElementError,
     /// Invalid duration format (`22G0H`).
@@ -75,6 +79,10 @@ impl DataExceptionSubclass {
             Self::InvalidTimeZone => GqlStatus::INVALID_TIME_ZONE,
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
             Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
+            Self::InvalidDatetimeFunctionFieldName => {
+                GqlStatus::INVALID_DATETIME_FUNCTION_FIELD_NAME
+            }
+            Self::InvalidDatetimeFunctionValue => GqlStatus::INVALID_DATETIME_FUNCTION_VALUE,
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
             Self::InvalidDurationFormat => GqlStatus::INVALID_DURATION_FORMAT,
             Self::MultipleAssignmentsToGraphElementProperty => {

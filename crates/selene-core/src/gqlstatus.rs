@@ -24,6 +24,8 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("22027", "trim-error"),
     ("22G03", "invalid-value-type"),
     ("22G04", "values-not-comparable"),
+    ("22G05", "invalid-date-time-or-datetime-function-field-name"),
+    ("22G06", "invalid-date-time-or-datetime-function-value"),
     ("22G0C", "list-element-error"),
     ("22G0M", "multiple-assignments-to-graph-element-property"),
     (
