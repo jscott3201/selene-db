@@ -445,6 +445,17 @@ fn list_trim_count(value: Value, span: SourceSpan) -> Result<Option<u128>, Execu
         ),
         Value::Uint(value) => Ok(Some(u128::from(value))),
         Value::Uint128(value) => Ok(Some(value)),
+        Value::Decimal(value) if value.trunc() != value => {
+            data_exception("list trim count is not an exact integer", span)
+        }
+        Value::Decimal(value) if value >= Decimal::ZERO => Ok(Some(
+            value.to_u128().expect("Decimal magnitude fits in u128"),
+        )),
+        Value::Decimal(_) => Err(data_exception_value_with(
+            DataExceptionSubclass::ListElementError,
+            "list trim count is negative",
+            span,
+        )),
         _ => data_exception("list trim count is not an exact integer", span),
     }
 }
