@@ -11,13 +11,11 @@ pub(super) fn fmt_trim_expr(
     source: &ValueExpr,
 ) -> fmt::Result {
     out.push_str("TRIM(");
-    if !matches!(spec, TrimSpec::Both) || character.is_some() {
-        out.push_str(match spec {
-            TrimSpec::Leading => "LEADING ",
-            TrimSpec::Trailing => "TRAILING ",
-            TrimSpec::Both => "BOTH ",
-        });
-    }
+    out.push_str(match spec {
+        TrimSpec::Leading => "LEADING ",
+        TrimSpec::Trailing => "TRAILING ",
+        TrimSpec::Both => "BOTH ",
+    });
     if let Some(character) = character {
         super::fmt_expr(out, character)?;
         out.push(' ');

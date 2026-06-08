@@ -4,4 +4,4 @@
 RETURN TRIM(BOTH X'00' FROM X'0000CAFE00') AS both_trimmed,
        TRIM(LEADING X'00' FROM X'0000CAFE00') AS leading_trimmed,
        TRIM(TRAILING X'00' FROM X'0000CAFE00') AS trailing_trimmed,
-       TRIM(FROM X'20CA20') AS default_trimmed
+       TRIM(BOTH FROM X'20CA20') AS default_trimmed

@@ -4,4 +4,4 @@
 RETURN TRIM(BOTH 'x' FROM 'xxhellox') AS both_trimmed,
        TRIM(LEADING 'x' FROM 'xxhellox') AS leading_trimmed,
        TRIM(TRAILING 'x' FROM 'xxhellox') AS trailing_trimmed,
-       TRIM(FROM ' hello ') AS default_trimmed
+       TRIM(BOTH FROM ' hello ') AS default_trimmed

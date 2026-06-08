@@ -279,14 +279,29 @@ pub(super) fn build_normalize_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
 pub(super) fn build_trim_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut spec = TrimSpec::Both;
+    let mut has_spec = false;
+    let mut has_character = false;
     let mut values = Vec::new();
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::trim_spec => spec = parse_trim_spec(child.as_str()),
+            Rule::trim_spec => {
+                has_spec = true;
+                spec = parse_trim_spec(child.as_str());
+            }
             Rule::expr => values.push(build_value_expr(child)?),
-            Rule::trim_char => values.push(build_value_expr(first_child(child)?)?),
+            Rule::trim_char => {
+                has_character = true;
+                values.push(build_value_expr(first_child(child)?)?);
+            }
             _ => return Err(unexpected_pair(child, "unexpected TRIM child")),
         }
+    }
+    if !has_spec && !has_character {
+        return Err(ParserError::syntax(
+            "TRIM with FROM requires a trim specification or trim character",
+            source_span,
+            None,
+        ));
     }
     let source = values.pop().ok_or_else(|| {
         ParserError::syntax("TRIM is missing source expression", source_span, None)
