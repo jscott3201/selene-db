@@ -1,4 +1,5 @@
-//! Duration value function coverage for ISO/IEC 39075:2024 section 20.29.
+//! Duration value function coverage for ISO/IEC 39075:2024 sections 20.28 and
+//! 20.29.
 
 #![cfg(feature = "test-harness")]
 
