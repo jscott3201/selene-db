@@ -61,12 +61,12 @@ pub(super) fn eval_function_call(
         "ceil" | "ceiling" => eval_unary_numeric(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
-            f64::ceil,
+            NumericUnaryOp::Ceil,
         ),
         "floor" => eval_unary_numeric(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
-            f64::floor,
+            NumericUnaryOp::Floor,
         ),
         "sin" => eval_unary_float(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
@@ -489,21 +489,44 @@ fn eval_abs(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> 
     }
 }
 
+#[derive(Clone, Copy)]
+enum NumericUnaryOp {
+    Ceil,
+    Floor,
+}
+
+impl NumericUnaryOp {
+    fn apply_float(self, value: f64) -> f64 {
+        match self {
+            Self::Ceil => value.ceil(),
+            Self::Floor => value.floor(),
+        }
+    }
+
+    fn apply_decimal(self, value: rust_decimal::Decimal) -> rust_decimal::Decimal {
+        match self {
+            Self::Ceil => value.ceil(),
+            Self::Floor => value.floor(),
+        }
+    }
+}
+
 fn eval_unary_numeric(
     args: Vec<Value>,
     span: SourceSpan,
-    op: fn(f64) -> f64,
+    op: NumericUnaryOp,
 ) -> Result<Value, ExecutorError> {
     match args.into_iter().next().expect("arity checked") {
         Value::Null => Ok(Value::Null),
         value @ (Value::Int(_) | Value::Uint(_) | Value::Int128(_) | Value::Uint128(_)) => {
             Ok(value)
         }
+        Value::Decimal(value) => Ok(Value::Decimal(op.apply_decimal(value))),
         value => {
             let Some(value) = numeric_to_f64(&value) else {
                 return data_exception("numeric function argument is not numeric", span);
             };
-            let value = op(value);
+            let value = op.apply_float(value);
             if value.is_finite() {
                 Ok(Value::Float(value))
             } else {
