@@ -298,6 +298,9 @@ fn check_value_index_kind(
         IndexKind::String => matches!(value, Value::String(_)),
         IndexKind::Date => matches!(value, Value::Date(_)),
         IndexKind::LocalDateTime => matches!(value, Value::LocalDateTime(_)),
+        IndexKind::ZonedDateTime => matches!(value, Value::ZonedDateTime(_)),
+        IndexKind::LocalTime => matches!(value, Value::LocalTime(_)),
+        IndexKind::ZonedTime => matches!(value, Value::ZonedTime(_)),
         IndexKind::Uuid => matches!(value, Value::Uuid(_)),
     };
     if matches {
@@ -324,6 +327,9 @@ fn index_kind_label(kind: IndexKind) -> &'static str {
         IndexKind::String => "STRING",
         IndexKind::Date => "DATE",
         IndexKind::LocalDateTime => "LOCAL DATETIME",
+        IndexKind::ZonedDateTime => "ZONED DATETIME",
+        IndexKind::LocalTime => "LOCAL TIME",
+        IndexKind::ZonedTime => "ZONED TIME",
         IndexKind::Uuid => "UUID",
     }
 }

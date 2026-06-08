@@ -33,6 +33,21 @@ fn event_catalog() -> MockIndexCatalog {
             db_string("started_at"),
             IndexKind::LocalDateTime,
         )
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("occurred_at"),
+            IndexKind::ZonedDateTime,
+        )
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("wall_time"),
+            IndexKind::LocalTime,
+        )
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("clock_time"),
+            IndexKind::ZonedTime,
+        )
 }
 
 fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
@@ -113,6 +128,51 @@ fn temporal_literals_fire_typed_index_ranges() {
         scan.access,
         ScanAccess::TypedIndexRange {
             kind: IndexKind::LocalDateTime,
+            bounds: TypedIndexBounds::Equality(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.occurred_at >= ZONED DATETIME '2026-05-07T12:00:00-04:00' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::ZonedDateTime,
+            bounds: TypedIndexBounds::GreaterEqual(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.wall_time = LOCAL TIME '12:34:56' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::LocalTime,
+            bounds: TypedIndexBounds::Equality(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.clock_time = TIME '12:34:56-04:00' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::ZonedTime,
             bounds: TypedIndexBounds::Equality(_),
             ..
         }

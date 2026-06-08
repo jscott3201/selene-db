@@ -14,6 +14,10 @@ fn decimal(value: &str) -> rust_decimal::Decimal {
     value.parse().expect("test decimal parses")
 }
 
+fn zoned(value: &str) -> jiff::Zoned {
+    value.parse().expect("test zoned datetime parses")
+}
+
 fn entry(kind: TypedIndexKind) -> PropertyIndexEntry {
     PropertyIndexEntry::new(TypedIndex::new(kind), None)
 }
@@ -449,6 +453,114 @@ fn apply_node_update_moves_exact_numeric_index_keys() {
         .is_empty()
     );
     assert!(rows(&indexes, label, amount, &Value::Decimal(decimal("2.50"))).contains(11));
+}
+
+#[test]
+fn apply_node_update_moves_temporal_time_index_keys() {
+    let label = db_string("pi.temporal.update.label").unwrap();
+    let zoned_dt = db_string("pi.temporal.update.zoned-dt").unwrap();
+    let local_time = db_string("pi.temporal.update.local-time").unwrap();
+    let zoned_time = db_string("pi.temporal.update.zoned-time").unwrap();
+    let old_zdt = zoned("2026-05-07T09:00:00-04[America/New_York]");
+    let new_zdt = zoned("2026-05-07T12:00:00-04[America/New_York]");
+    let old_zt = zoned("2026-05-07T09:30:00-04[America/New_York]");
+    let new_zt = zoned("2026-05-07T12:30:00-04[America/New_York]");
+    let old_lt = "09:30:00".parse().unwrap();
+    let new_lt = "12:30:00".parse().unwrap();
+    let old_props = property_map([
+        (
+            zoned_dt.clone(),
+            Value::ZonedDateTime(Box::new(old_zdt.clone())),
+        ),
+        (local_time.clone(), Value::LocalTime(old_lt)),
+        (
+            zoned_time.clone(),
+            Value::ZonedTime(Box::new(old_zt.clone())),
+        ),
+    ]);
+    let new_props = property_map([
+        (
+            zoned_dt.clone(),
+            Value::ZonedDateTime(Box::new(new_zdt.clone())),
+        ),
+        (local_time.clone(), Value::LocalTime(new_lt)),
+        (
+            zoned_time.clone(),
+            Value::ZonedTime(Box::new(new_zt.clone())),
+        ),
+    ]);
+    let labels = LabelSet::single(label.clone());
+    let mut indexes = PropertyIndexMap::default();
+    indexes.insert(
+        (label.clone(), zoned_dt.clone()),
+        entry(TypedIndexKind::ZonedDateTime),
+    );
+    indexes.insert(
+        (label.clone(), local_time.clone()),
+        entry(TypedIndexKind::LocalTime),
+    );
+    indexes.insert(
+        (label.clone(), zoned_time.clone()),
+        entry(TypedIndexKind::ZonedTime),
+    );
+    apply_node_create(&mut indexes, &labels, &old_props, 12).unwrap();
+
+    apply_node_update(&mut indexes, &labels, &old_props, &labels, &new_props, 12).unwrap();
+
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            zoned_dt.clone(),
+            &Value::ZonedDateTime(Box::new(old_zdt))
+        )
+        .is_empty()
+    );
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            zoned_dt,
+            &Value::ZonedDateTime(Box::new(new_zdt))
+        )
+        .contains(12)
+    );
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            local_time.clone(),
+            &Value::LocalTime(old_lt)
+        )
+        .is_empty()
+    );
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            local_time,
+            &Value::LocalTime(new_lt)
+        )
+        .contains(12)
+    );
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            zoned_time.clone(),
+            &Value::ZonedTime(Box::new(old_zt))
+        )
+        .is_empty()
+    );
+    assert!(
+        rows(
+            &indexes,
+            label,
+            zoned_time,
+            &Value::ZonedTime(Box::new(new_zt))
+        )
+        .contains(12)
+    );
 }
 
 #[test]

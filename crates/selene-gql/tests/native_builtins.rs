@@ -332,6 +332,36 @@ fn create_index_accepts_numeric_kind_aliases() {
 }
 
 #[test]
+fn create_index_accepts_temporal_time_kind_aliases() {
+    let graph = graph(330_029);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    for (property, kind) in [
+        ("occurred_at", "zoned_datetime"),
+        ("wall_time", "local_time"),
+        ("clock_time", "zoned_time"),
+    ] {
+        session
+            .execute_source(
+                &format!("CALL selene.create_index('Event', '{property}', '{kind}')"),
+                &registry,
+            )
+            .expect("temporal index creation executes");
+    }
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    let properties = string_column(&table, "property");
+    let kinds = string_column(&table, "kind");
+    assert!(properties.contains(&"occurred_at".to_owned()));
+    assert!(properties.contains(&"wall_time".to_owned()));
+    assert!(properties.contains(&"clock_time".to_owned()));
+    assert!(kinds.contains(&"zoned_datetime".to_owned()));
+    assert!(kinds.contains(&"local_time".to_owned()));
+    assert!(kinds.contains(&"zoned_time".to_owned()));
+}
+
+#[test]
 fn drop_index_removes_the_index_through_the_funnel() {
     let graph = graph(330_007);
     let registry = BuiltinProcedureRegistry::new();

@@ -567,18 +567,27 @@ fn recover_from_wal_only_replays_property_index_created() {
     let graph_id = GraphId::new(706);
     let shared = SharedGraph::new(graph_id);
     let label = db_string("recover.index.created.label").unwrap();
-    let property = db_string("recover.index.created.age").unwrap();
+    let property = db_string("recover.index.created.occurred_at").unwrap();
+    let timestamp = Value::ZonedDateTime(Box::new(
+        "2026-05-07T12:34:56-04:00[America/New_York]"
+            .parse()
+            .unwrap(),
+    ));
     let outcome = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
                 LabelSet::single(label.clone()),
-                PropertyMap::from_pairs([(property.clone(), Value::Int(42))]).unwrap(),
+                PropertyMap::from_pairs([(property.clone(), timestamp.clone())]).unwrap(),
             )
             .unwrap();
         mutator
-            .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
+            .create_property_index(
+                label.clone(),
+                property.clone(),
+                TypedIndexKind::ZonedDateTime,
+            )
             .unwrap();
         txn.commit().unwrap()
     };
@@ -589,7 +598,7 @@ fn recover_from_wal_only_replays_property_index_created() {
     assert_eq!(snapshot.property_index_count(), 1);
     assert!(snapshot.property_index_for(&label, &property).is_some());
     let rows = snapshot
-        .nodes_with_property_eq(&label, &property, &Value::Int(42))
+        .nodes_with_property_eq(&label, &property, &timestamp)
         .unwrap();
     assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
     assert!(matches!(

@@ -21,6 +21,11 @@ use roaring::RoaringBitmap;
 use selene_core::{DbString, Value};
 use serde::{Deserialize, Serialize};
 
+mod keying;
+
+pub(crate) use keying::{TypedIndexValueError, observed_value_kind};
+use keying::{TypedKey, raw_value_same, typed_key, typed_range_union};
+
 pub use crate::typed_float_key::{NotNanError, NotNanF32, NotNanF64};
 
 /// Indexable value kind for v1.0 built-in node property indexes.
@@ -60,6 +65,12 @@ pub enum TypedIndexKind {
     Date,
     /// Civil local date-time. Backs [`Value::LocalDateTime`].
     LocalDateTime,
+    /// Zoned date-time. Backs [`Value::ZonedDateTime`].
+    ZonedDateTime,
+    /// Civil local time. Backs [`Value::LocalTime`].
+    LocalTime,
+    /// Zoned time. Backs [`Value::ZonedTime`].
+    ZonedTime,
     /// UUID. Backs [`Value::Uuid`].
     Uuid,
 }
@@ -89,6 +100,12 @@ pub enum TypedIndex {
     Date(BTreeMap<jiff::civil::Date, RoaringBitmap>),
     /// Civil local date-time index.
     LocalDateTime(BTreeMap<jiff::civil::DateTime, RoaringBitmap>),
+    /// Zoned date-time index.
+    ZonedDateTime(BTreeMap<jiff::Zoned, RoaringBitmap>),
+    /// Civil local time index.
+    LocalTime(BTreeMap<jiff::civil::Time, RoaringBitmap>),
+    /// Zoned time index.
+    ZonedTime(BTreeMap<jiff::Zoned, RoaringBitmap>),
     /// UUID index.
     Uuid(BTreeMap<uuid::Uuid, RoaringBitmap>),
 }
@@ -109,6 +126,9 @@ impl TypedIndex {
             TypedIndexKind::String => Self::String(BTreeMap::new()),
             TypedIndexKind::Date => Self::Date(BTreeMap::new()),
             TypedIndexKind::LocalDateTime => Self::LocalDateTime(BTreeMap::new()),
+            TypedIndexKind::ZonedDateTime => Self::ZonedDateTime(BTreeMap::new()),
+            TypedIndexKind::LocalTime => Self::LocalTime(BTreeMap::new()),
+            TypedIndexKind::ZonedTime => Self::ZonedTime(BTreeMap::new()),
             TypedIndexKind::Uuid => Self::Uuid(BTreeMap::new()),
         }
     }
@@ -128,6 +148,9 @@ impl TypedIndex {
             Self::String(_) => TypedIndexKind::String,
             Self::Date(_) => TypedIndexKind::Date,
             Self::LocalDateTime(_) => TypedIndexKind::LocalDateTime,
+            Self::ZonedDateTime(_) => TypedIndexKind::ZonedDateTime,
+            Self::LocalTime(_) => TypedIndexKind::LocalTime,
+            Self::ZonedTime(_) => TypedIndexKind::ZonedTime,
             Self::Uuid(_) => TypedIndexKind::Uuid,
         }
     }
@@ -152,6 +175,9 @@ impl TypedIndex {
             Self::String(index) => cardinality(index),
             Self::Date(index) => cardinality(index),
             Self::LocalDateTime(index) => cardinality(index),
+            Self::ZonedDateTime(index) => cardinality(index),
+            Self::LocalTime(index) => cardinality(index),
+            Self::ZonedTime(index) => cardinality(index),
             Self::Uuid(index) => cardinality(index),
         }
     }
@@ -177,6 +203,9 @@ impl TypedIndex {
             Self::String(index) => index.len() as u64,
             Self::Date(index) => index.len() as u64,
             Self::LocalDateTime(index) => index.len() as u64,
+            Self::ZonedDateTime(index) => index.len() as u64,
+            Self::LocalTime(index) => index.len() as u64,
+            Self::ZonedTime(index) => index.len() as u64,
             Self::Uuid(index) => index.len() as u64,
         }
     }
@@ -205,6 +234,9 @@ impl TypedIndex {
             (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
             (Self::Date(lhs), Self::Date(rhs)) => lhs == rhs,
             (Self::LocalDateTime(lhs), Self::LocalDateTime(rhs)) => lhs == rhs,
+            (Self::ZonedDateTime(lhs), Self::ZonedDateTime(rhs)) => lhs == rhs,
+            (Self::LocalTime(lhs), Self::LocalTime(rhs)) => lhs == rhs,
+            (Self::ZonedTime(lhs), Self::ZonedTime(rhs)) => lhs == rhs,
             (Self::Uuid(lhs), Self::Uuid(rhs)) => lhs == rhs,
             _ => false,
         }
@@ -229,6 +261,9 @@ impl TypedIndex {
             Self::String(index) => index.values().any(RoaringBitmap::is_empty),
             Self::Date(index) => index.values().any(RoaringBitmap::is_empty),
             Self::LocalDateTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::ZonedDateTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::LocalTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::ZonedTime(index) => index.values().any(RoaringBitmap::is_empty),
             Self::Uuid(index) => index.values().any(RoaringBitmap::is_empty),
         }
     }
@@ -278,6 +313,18 @@ impl TypedIndex {
                 Ok(())
             }
             (Self::LocalDateTime(index), TypedKey::LocalDateTime(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::ZonedDateTime(index), TypedKey::ZonedDateTime(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::LocalTime(index), TypedKey::LocalTime(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::ZonedTime(index), TypedKey::ZonedTime(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
             }
@@ -343,6 +390,18 @@ impl TypedIndex {
                 remove_row(index, &key, row);
                 Ok(())
             }
+            (Self::ZonedDateTime(index), TypedKey::ZonedDateTime(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::LocalTime(index), TypedKey::LocalTime(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::ZonedTime(index), TypedKey::ZonedTime(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
             (Self::Uuid(index), TypedKey::Uuid(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
@@ -379,6 +438,15 @@ impl TypedIndex {
             (Self::LocalDateTime(index), TypedKey::LocalDateTime(key)) => {
                 Some(cow_or_empty(index.get(&key)))
             }
+            (Self::ZonedDateTime(index), TypedKey::ZonedDateTime(key)) => {
+                Some(cow_or_empty(index.get(&key)))
+            }
+            (Self::LocalTime(index), TypedKey::LocalTime(key)) => {
+                Some(cow_or_empty(index.get(&key)))
+            }
+            (Self::ZonedTime(index), TypedKey::ZonedTime(key)) => {
+                Some(cow_or_empty(index.get(&key)))
+            }
             (Self::Uuid(index), TypedKey::Uuid(key)) => Some(cow_or_empty(index.get(&key))),
             _ => None,
         }
@@ -392,124 +460,52 @@ impl TypedIndex {
     {
         match self {
             Self::Bool(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::Bool) {
-                        Ok(TypedKey::Bool(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::Bool) {
-                        Ok(TypedKey::Bool(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::Bool, |key| match key {
+                    TypedKey::Bool(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::I64(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::I64) {
-                        Ok(TypedKey::I64(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::I64) {
-                        Ok(TypedKey::I64(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::I64, |key| match key {
+                    TypedKey::I64(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::U64(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::U64) {
-                        Ok(TypedKey::U64(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::U64) {
-                        Ok(TypedKey::U64(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::U64, |key| match key {
+                    TypedKey::U64(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::I128(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::I128) {
-                        Ok(TypedKey::I128(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::I128) {
-                        Ok(TypedKey::I128(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::I128, |key| match key {
+                    TypedKey::I128(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::U128(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::U128) {
-                        Ok(TypedKey::U128(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::U128) {
-                        Ok(TypedKey::U128(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::U128, |key| match key {
+                    TypedKey::U128(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::Decimal(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::Decimal) {
-                        Ok(TypedKey::Decimal(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::Decimal) {
-                        Ok(TypedKey::Decimal(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::Decimal, |key| match key {
+                    TypedKey::Decimal(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::F32(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::F32) {
-                        Ok(TypedKey::F32(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::F32) {
-                        Ok(TypedKey::F32(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::F32, |key| match key {
+                    TypedKey::F32(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::F64(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::F64) {
-                        Ok(TypedKey::F64(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::F64) {
-                        Ok(TypedKey::F64(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::F64, |key| match key {
+                    TypedKey::F64(key) => Some(key),
+                    _ => None,
+                })
             }
             // String ranges walk the now-lexicographic `BTreeMap<DbString, _>`
             // range directly — result-identical to the old `None` linear-scan
@@ -517,64 +513,52 @@ impl TypedIndex {
             // lexicographically, and `DbString` Ord is lexicographic), just
             // O(log n + matched) instead of O(total cardinality).
             Self::String(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::String) {
-                        Ok(TypedKey::String(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::String) {
-                        Ok(TypedKey::String(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::String, |key| match key {
+                    TypedKey::String(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::Date(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::Date) {
-                        Ok(TypedKey::Date(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::Date) {
-                        Ok(TypedKey::Date(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::Date, |key| match key {
+                    TypedKey::Date(key) => Some(key),
+                    _ => None,
+                })
             }
-            Self::LocalDateTime(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::LocalDateTime) {
-                        Ok(TypedKey::LocalDateTime(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::LocalDateTime) {
-                        Ok(TypedKey::LocalDateTime(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+            Self::LocalDateTime(index) => typed_range_union(
+                index,
+                &range,
+                TypedIndexKind::LocalDateTime,
+                |key| match key {
+                    TypedKey::LocalDateTime(key) => Some(key),
+                    _ => None,
+                },
+            ),
+            Self::ZonedDateTime(index) => typed_range_union(
+                index,
+                &range,
+                TypedIndexKind::ZonedDateTime,
+                |key| match key {
+                    TypedKey::ZonedDateTime(key) => Some(key),
+                    _ => None,
+                },
+            ),
+            Self::LocalTime(index) => {
+                typed_range_union(index, &range, TypedIndexKind::LocalTime, |key| match key {
+                    TypedKey::LocalTime(key) => Some(key),
+                    _ => None,
+                })
+            }
+            Self::ZonedTime(index) => {
+                typed_range_union(index, &range, TypedIndexKind::ZonedTime, |key| match key {
+                    TypedKey::ZonedTime(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::Uuid(index) => {
-                let start = bound_to_key(range.start_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::Uuid) {
-                        Ok(TypedKey::Uuid(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| {
-                    match typed_key(value, TypedIndexKind::Uuid) {
-                        Ok(TypedKey::Uuid(key)) => Some(key),
-                        _ => None,
-                    }
-                })?;
-                Some(range_union(index, &start, &end))
+                typed_range_union(index, &range, TypedIndexKind::Uuid, |key| match key {
+                    TypedKey::Uuid(key) => Some(key),
+                    _ => None,
+                })
             }
         }
     }
@@ -649,134 +633,20 @@ impl TypedIndex {
                 Ok(TypedKey::LocalDateTime(lhs)),
                 Ok(TypedKey::LocalDateTime(rhs)),
             ) => lhs == rhs,
+            (
+                Self::ZonedDateTime(_),
+                Ok(TypedKey::ZonedDateTime(lhs)),
+                Ok(TypedKey::ZonedDateTime(rhs)),
+            ) => lhs == rhs,
+            (Self::LocalTime(_), Ok(TypedKey::LocalTime(lhs)), Ok(TypedKey::LocalTime(rhs))) => {
+                lhs == rhs
+            }
+            (Self::ZonedTime(_), Ok(TypedKey::ZonedTime(lhs)), Ok(TypedKey::ZonedTime(rhs))) => {
+                lhs == rhs
+            }
             (Self::Uuid(_), Ok(TypedKey::Uuid(lhs)), Ok(TypedKey::Uuid(rhs))) => lhs == rhs,
             _ => raw_value_same(lhs, rhs),
         }
-    }
-}
-
-/// Internal value-admission error for index mutation.
-#[derive(Debug)]
-pub(crate) enum TypedIndexValueError {
-    /// Value kind did not match the index kind.
-    KindMismatch {
-        /// The index kind being updated.
-        expected_kind: TypedIndexKind,
-        /// The observed value kind.
-        observed: &'static str,
-    },
-    /// A `Value::Float` was NaN.
-    NaN {
-        /// The index kind being updated.
-        expected_kind: TypedIndexKind,
-    },
-}
-
-impl TypedIndexValueError {
-    /// Return the expected index kind.
-    pub(crate) fn expected_kind(&self) -> TypedIndexKind {
-        match self {
-            Self::KindMismatch { expected_kind, .. } | Self::NaN { expected_kind } => {
-                *expected_kind
-            }
-        }
-    }
-
-    /// Return the observed value description.
-    pub(crate) fn observed(&self) -> &'static str {
-        match self {
-            Self::KindMismatch { observed, .. } => observed,
-            Self::NaN { .. } => "NaN",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum TypedKey {
-    Bool(bool),
-    I64(i64),
-    U64(u64),
-    I128(i128),
-    U128(u128),
-    Decimal(rust_decimal::Decimal),
-    F32(NotNanF32),
-    F64(NotNanF64),
-    String(DbString),
-    Date(jiff::civil::Date),
-    LocalDateTime(jiff::civil::DateTime),
-    Uuid(uuid::Uuid),
-}
-
-impl TypedKey {
-    const fn observed(&self) -> &'static str {
-        match self {
-            Self::Bool(_) => "Bool",
-            Self::I64(_) => "Int",
-            Self::U64(_) => "Uint",
-            Self::I128(_) => "Int128",
-            Self::U128(_) => "Uint128",
-            Self::Decimal(_) => "Decimal",
-            Self::F32(_) => "Float32",
-            Self::F64(_) => "Float",
-            Self::String(_) => "String",
-            Self::Date(_) => "Date",
-            Self::LocalDateTime(_) => "LocalDateTime",
-            Self::Uuid(_) => "Uuid",
-        }
-    }
-}
-
-/// Coerce `value` into a [`TypedKey`].
-///
-/// This is the single coercion shared by write-side (`insert`/`remove`) and
-/// read/diff-side (`lookup_eq`/`lookup_range`/`values_share_key`) callers.
-/// A `STRING` value always resolves directly to its database-string key. `Err`
-/// carries the kind-mismatch
-/// (`expected_kind` set by the caller's index kind) / NaN semantics; the outer
-/// `(self, key)` match in `insert`/`remove` enforces the final kind check so a
-/// `Value::String` inserted into an `I64` index still rejects with
-/// `KindMismatch`.
-fn typed_key(
-    value: &Value,
-    expected_kind: TypedIndexKind,
-) -> Result<TypedKey, TypedIndexValueError> {
-    match value {
-        Value::Bool(value) => Ok(TypedKey::Bool(*value)),
-        Value::Int(value) => Ok(TypedKey::I64(*value)),
-        Value::Uint(value) => Ok(TypedKey::U64(*value)),
-        Value::Int128(value) => Ok(TypedKey::I128(*value)),
-        Value::Uint128(value) => Ok(TypedKey::U128(*value)),
-        Value::Decimal(value) => Ok(TypedKey::Decimal(*value)),
-        Value::Float32(value) => NotNanF32::new(*value)
-            .map(TypedKey::F32)
-            .map_err(|NotNanError| TypedIndexValueError::NaN {
-                expected_kind: TypedIndexKind::F32,
-            }),
-        Value::Float(value) => NotNanF64::new(*value)
-            .map(TypedKey::F64)
-            .map_err(|NotNanError| TypedIndexValueError::NaN {
-                expected_kind: TypedIndexKind::F64,
-            }),
-        Value::String(value) => Ok(TypedKey::String(value.clone())),
-        Value::Date(value) => Ok(TypedKey::Date(*value)),
-        Value::LocalDateTime(value) => Ok(TypedKey::LocalDateTime(*value)),
-        Value::Uuid(value) => Ok(TypedKey::Uuid(*value)),
-        _ => Err(TypedIndexValueError::KindMismatch {
-            expected_kind,
-            observed: observed_value_kind(value),
-        }),
-    }
-}
-
-pub(crate) fn observed_value_kind(value: &Value) -> &'static str {
-    value.variant_name()
-}
-
-fn raw_value_same(lhs: &Value, rhs: &Value) -> bool {
-    match (lhs, rhs) {
-        (Value::Float(lhs), Value::Float(rhs)) => lhs.to_bits() == rhs.to_bits(),
-        (Value::Float32(lhs), Value::Float32(rhs)) => lhs.to_bits() == rhs.to_bits(),
-        _ => lhs == rhs,
     }
 }
 
@@ -797,50 +667,6 @@ fn remove_row<K: Ord>(index: &mut BTreeMap<K, RoaringBitmap>, key: &K, row: u32)
             index.remove(key);
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum KeyBound<K> {
-    Unbounded,
-    Included(K),
-    Excluded(K),
-}
-
-fn bound_to_key<K>(
-    bound: Bound<&Value>,
-    convert: impl FnOnce(&Value) -> Option<K>,
-) -> Option<KeyBound<K>> {
-    match bound {
-        Bound::Included(value) => convert(value).map(KeyBound::Included),
-        Bound::Excluded(value) => convert(value).map(KeyBound::Excluded),
-        Bound::Unbounded => Some(KeyBound::Unbounded),
-    }
-}
-
-fn range_union<K: Ord>(
-    index: &BTreeMap<K, RoaringBitmap>,
-    start: &KeyBound<K>,
-    end: &KeyBound<K>,
-) -> RoaringBitmap {
-    // Use BTreeMap's ordered range iteration so a narrow window touches
-    // O(log n + matched) keys rather than scanning the entire map.
-    let start_bound = match start {
-        KeyBound::Unbounded => Bound::Unbounded,
-        KeyBound::Included(key) => Bound::Included(key),
-        KeyBound::Excluded(key) => Bound::Excluded(key),
-    };
-    let end_bound = match end {
-        KeyBound::Unbounded => Bound::Unbounded,
-        KeyBound::Included(key) => Bound::Included(key),
-        KeyBound::Excluded(key) => Bound::Excluded(key),
-    };
-    let mut result = RoaringBitmap::new();
-    for (_key, bitmap) in index.range::<K, _>((start_bound, end_bound)) {
-        // RoaringBitmap bulk OR (`BitOrAssign<&RoaringBitmap>`) is the union
-        // primitive — far cheaper than a per-element scan-and-insert.
-        result |= bitmap;
-    }
-    result
 }
 
 #[cfg(test)]

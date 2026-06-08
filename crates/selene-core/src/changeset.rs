@@ -590,6 +590,12 @@ pub enum SchemaPropertyIndexKind {
     Date,
     /// Civil local date-time.
     LocalDateTime,
+    /// Zoned date-time.
+    ZonedDateTime,
+    /// Civil local time.
+    LocalTime,
+    /// Zoned time.
+    ZonedTime,
     /// UUID.
     Uuid,
 }

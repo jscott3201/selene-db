@@ -377,6 +377,9 @@ pub(super) const fn typed_kind_from(kind: SchemaPropertyIndexKind) -> TypedIndex
         SchemaPropertyIndexKind::String => TypedIndexKind::String,
         SchemaPropertyIndexKind::Date => TypedIndexKind::Date,
         SchemaPropertyIndexKind::LocalDateTime => TypedIndexKind::LocalDateTime,
+        SchemaPropertyIndexKind::ZonedDateTime => TypedIndexKind::ZonedDateTime,
+        SchemaPropertyIndexKind::LocalTime => TypedIndexKind::LocalTime,
+        SchemaPropertyIndexKind::ZonedTime => TypedIndexKind::ZonedTime,
         SchemaPropertyIndexKind::Uuid => TypedIndexKind::Uuid,
     }
 }
