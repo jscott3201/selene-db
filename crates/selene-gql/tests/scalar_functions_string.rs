@@ -341,6 +341,18 @@ fn multi_character_trim_family_records_gf05() {
 }
 
 #[test]
+fn ordinary_trim_defaults_to_space_character_only() {
+    let cases = [
+        ("RETURN trim('  hello  ') AS value", "hello"),
+        (r"RETURN trim(' \thello\t ') AS value", "\thello\t"),
+        (r"RETURN trim(' \nhello\n ') AS value", "\nhello\n"),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(string_value(single_value(source, "value")), expected);
+    }
+}
+
+#[test]
 fn explicit_trim_supports_both_leading_trailing_and_defaults() {
     let cases = [
         ("RETURN TRIM(BOTH 'x' FROM 'xxhellox') AS value", "hello"),
