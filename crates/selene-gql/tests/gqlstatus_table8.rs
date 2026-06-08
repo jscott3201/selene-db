@@ -67,6 +67,22 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
             "22G0M",
         ),
         (
+            DataExceptionSubclass::NodeLabelsBelowSupportedMinimum,
+            "22G0N",
+        ),
+        (
+            DataExceptionSubclass::NodeLabelsExceedSupportedMaximum,
+            "22G0P",
+        ),
+        (
+            DataExceptionSubclass::EdgeLabelsBelowSupportedMinimum,
+            "22G0Q",
+        ),
+        (
+            DataExceptionSubclass::EdgeLabelsExceedSupportedMaximum,
+            "22G0R",
+        ),
+        (
             DataExceptionSubclass::NodePropertiesExceedSupportedMaximum,
             "22G0S",
         ),

@@ -31,6 +31,10 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("22G0B", "list-data-right-truncation"),
     ("22G0C", "list-element-error"),
     ("22G0M", "multiple-assignments-to-graph-element-property"),
+    ("22G0N", "number-of-node-labels-below-supported-minimum"),
+    ("22G0P", "number-of-node-labels-exceeds-supported-maximum"),
+    ("22G0Q", "number-of-edge-labels-below-supported-minimum"),
+    ("22G0R", "number-of-edge-labels-exceeds-supported-maximum"),
     (
         "22G0S",
         "number-of-node-properties-exceeds-supported-maximum",

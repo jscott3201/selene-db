@@ -59,6 +59,14 @@ pub enum DataExceptionSubclass {
     IncompatibleTemporalInstantUnitGroups,
     /// Multiple assignments to a graph element property (`22G0M`).
     MultipleAssignmentsToGraphElementProperty,
+    /// Number of node labels below supported minimum (`22G0N`).
+    NodeLabelsBelowSupportedMinimum,
+    /// Number of node labels exceeds supported maximum (`22G0P`).
+    NodeLabelsExceedSupportedMaximum,
+    /// Number of edge labels below supported minimum (`22G0Q`).
+    EdgeLabelsBelowSupportedMinimum,
+    /// Number of edge labels exceeds supported maximum (`22G0R`).
+    EdgeLabelsExceedSupportedMaximum,
     /// Number of node properties exceeds supported maximum (`22G0S`).
     NodePropertiesExceedSupportedMaximum,
     /// Number of edge properties exceeds supported maximum (`22G0T`).
@@ -108,6 +116,14 @@ impl DataExceptionSubclass {
             }
             Self::MultipleAssignmentsToGraphElementProperty => {
                 GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY
+            }
+            Self::NodeLabelsBelowSupportedMinimum => GqlStatus::NODE_LABELS_BELOW_SUPPORTED_MINIMUM,
+            Self::NodeLabelsExceedSupportedMaximum => {
+                GqlStatus::NODE_LABELS_EXCEED_SUPPORTED_MAXIMUM
+            }
+            Self::EdgeLabelsBelowSupportedMinimum => GqlStatus::EDGE_LABELS_BELOW_SUPPORTED_MINIMUM,
+            Self::EdgeLabelsExceedSupportedMaximum => {
+                GqlStatus::EDGE_LABELS_EXCEED_SUPPORTED_MAXIMUM
             }
             Self::NodePropertiesExceedSupportedMaximum => {
                 GqlStatus::NODE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM
