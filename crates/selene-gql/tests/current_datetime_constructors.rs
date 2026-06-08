@@ -4,7 +4,7 @@
 
 mod exec_common;
 
-use exec_common::db_string;
+use exec_common::{column_values, db_string, execute_read, execute_read_result};
 use selene_core::Value;
 use selene_gql::{
     Binding, BindingTableSchema, GqlStatus, Literal, NonEmpty, SourceSpan, ValueExpr,
@@ -49,6 +49,19 @@ fn eval(expr: &ValueExpr) -> Result<Value, selene_gql::ExecutorError> {
         &BindingTableSchema { columns: vec![] },
         &ctx,
     )
+}
+
+fn single_value(source: &str, column: &str) -> Value {
+    let table = execute_read(source);
+    let mut values = column_values(&table, column);
+    assert_eq!(values.len(), 1, "{source}");
+    values.pop().expect("one row")
+}
+
+fn status_for(source: &str) -> GqlStatus {
+    execute_read_result(source)
+        .expect_err("statement errors")
+        .gqlstatus()
 }
 
 #[test]
@@ -146,4 +159,92 @@ fn current_datetime_constructors_parse_string_parameters() {
     let err = eval(&function_call("date", vec![string_lit("not-date")]))
         .expect_err("constructor rejects invalid temporal text");
     assert_eq!(err.gqlstatus(), GqlStatus::INVALID_DATETIME_FORMAT);
+}
+
+#[test]
+fn current_datetime_record_constructors_build_values() {
+    assert_eq!(
+        single_value("RETURN DATE({year: 2026}) AS value", "value"),
+        Value::Date("2026-01-01".parse().unwrap())
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DATE(RECORD {year: 2026, month: 5, day: 7}) AS value",
+            "value"
+        ),
+        Value::Date("2026-05-07".parse().unwrap())
+    );
+    assert_eq!(
+        single_value(
+            "RETURN LOCAL_TIME({hour: 1, minute: 2, second: 3, millisecond: 4}) AS value",
+            "value"
+        ),
+        Value::LocalTime("01:02:03.004".parse().unwrap())
+    );
+    assert_eq!(
+        single_value(
+            "RETURN LOCAL_DATETIME({year: 2026, month: 5, day: 7, hour: 12, minute: 34}) AS value",
+            "value"
+        ),
+        Value::LocalDateTime("2026-05-07T12:34:00".parse().unwrap())
+    );
+
+    let value = single_value(
+        "RETURN ZONED_TIME({hour: 12, minute: 34, second: 56, timezone: '+03:00'}) AS value",
+        "value",
+    );
+    let Value::ZonedTime(zoned_time) = value else {
+        panic!("expected zoned time, got {value:?}");
+    };
+    assert_eq!(zoned_time.time().to_string(), "12:34:56");
+    assert_eq!(zoned_time.offset().seconds(), 3 * 3600);
+
+    let value = single_value(
+        "RETURN ZONED_DATETIME({year: 2026, month: 5, day: 7, hour: 12, minute: 34, \
+         second: 56, nanosecond: 7, timezone: '-04:00'}) AS value",
+        "value",
+    );
+    let Value::ZonedDateTime(zoned_datetime) = value else {
+        panic!("expected zoned datetime, got {value:?}");
+    };
+    assert_eq!(
+        zoned_datetime.datetime().to_string(),
+        "2026-05-07T12:34:56.000000007"
+    );
+    assert_eq!(zoned_datetime.offset().seconds(), -4 * 3600);
+}
+
+#[test]
+fn current_datetime_record_constructors_reject_invalid_fields_and_values() {
+    assert_eq!(
+        status_for("RETURN DATE({month: 5}) AS value"),
+        GqlStatus::INVALID_DATETIME_FUNCTION_FIELD_NAME
+    );
+    assert_eq!(
+        status_for("RETURN LOCAL_TIME({hour: 1, timezone: '+00:00'}) AS value"),
+        GqlStatus::INVALID_DATETIME_FUNCTION_FIELD_NAME
+    );
+    assert_eq!(
+        status_for("RETURN LOCAL_DATETIME({year: 2026, month: 5, day: 7}) AS value"),
+        GqlStatus::INVALID_DATETIME_FUNCTION_FIELD_NAME
+    );
+
+    assert_eq!(
+        status_for("RETURN DATE({year: 2026, month: 13}) AS value"),
+        GqlStatus::INVALID_DATETIME_FUNCTION_VALUE
+    );
+    assert_eq!(
+        status_for(
+            "RETURN LOCAL_TIME({hour: 1, minute: 2, second: 3, millisecond: 1000}) AS value"
+        ),
+        GqlStatus::INVALID_DATETIME_FUNCTION_VALUE
+    );
+    assert_eq!(
+        status_for("RETURN ZONED_TIME({hour: 12}) AS value"),
+        GqlStatus::INVALID_DATETIME_FUNCTION_VALUE
+    );
+    assert_eq!(
+        status_for("RETURN ZONED_TIME({timezone: '+03:00'}) AS value"),
+        GqlStatus::INVALID_DATETIME_FUNCTION_VALUE
+    );
 }

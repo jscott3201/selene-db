@@ -16,8 +16,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   semantics. The constructor call forms `DATE([string])`,
   `ZONED_TIME([string])`, `ZONED_DATETIME([string])`, `LOCAL_TIME([string])`,
   and `LOCAL_DATETIME([string])` also execute for niladic/current values and
-  string-parameter temporal parsing; record-constructor parameters remain a
-  separate follow-up.
+  string-parameter temporal parsing. They now also accept record-constructor
+  parameters, validate ISO field-name sets with `22G05`, and report invalid
+  datetime field values with `22G06`.
 - **GP03 — explicit variable-scope `CALL` subqueries (ISO §15.2).** `CALL (x, y) { ... }`
   now binds and executes: the subquery body sees **only** the named imported
   variables, and an empty `CALL () { ... }` is fully isolated. An outer variable
