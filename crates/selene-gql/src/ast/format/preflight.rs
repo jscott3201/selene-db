@@ -184,6 +184,10 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
         }
         ValueExpr::UnaryOp { operand, .. } => validate_expr(operand),
         ValueExpr::FunctionCall { args, .. } => validate_exprs(args),
+        ValueExpr::DurationBetween { start, end, .. } => {
+            validate_expr(start)?;
+            validate_expr(end)
+        }
         ValueExpr::Normalize { source, .. } => validate_expr(source),
         ValueExpr::Trim {
             character, source, ..

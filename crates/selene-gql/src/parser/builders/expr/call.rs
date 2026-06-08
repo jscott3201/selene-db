@@ -4,7 +4,10 @@ use pest::iterators::Pair;
 use selene_core::DbString;
 
 use crate::{
-    ast::{BinaryOp, NormalForm, SourceSpan, TrimSpec, ValueExpr, util::NonEmpty},
+    ast::{
+        BinaryOp, NormalForm, SourceSpan, TemporalDurationQualifier, TrimSpec, ValueExpr,
+        util::NonEmpty,
+    },
     error::ParserError,
 };
 
@@ -82,6 +85,56 @@ pub(super) fn build_current_datetime_function(
         distinct: false,
         span: source_span,
     })
+}
+
+pub(super) fn build_duration_between_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut start = None;
+    let mut end = None;
+    let mut qualifier = TemporalDurationQualifier::DayToSecond;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::duration_between_kw => {}
+            Rule::expr if start.is_none() => start = Some(build_value_expr(child)?),
+            Rule::expr => end = Some(build_value_expr(child)?),
+            Rule::temporal_duration_qualifier => qualifier = build_duration_qualifier(child)?,
+            _ => return Err(unexpected_pair(child, "unexpected DURATION_BETWEEN child")),
+        }
+    }
+    let start = start.ok_or_else(|| {
+        ParserError::syntax(
+            "DURATION_BETWEEN is missing start expression",
+            source_span,
+            None,
+        )
+    })?;
+    let end = end.ok_or_else(|| {
+        ParserError::syntax(
+            "DURATION_BETWEEN is missing end expression",
+            source_span,
+            None,
+        )
+    })?;
+    Ok(ValueExpr::DurationBetween {
+        start: Box::new(start),
+        end: Box::new(end),
+        qualifier,
+        span: source_span,
+    })
+}
+
+fn build_duration_qualifier(
+    pair: Pair<'_, Rule>,
+) -> Result<TemporalDurationQualifier, ParserError> {
+    let child = first_child(pair)?;
+    match child.as_rule() {
+        Rule::year_to_month_qualifier => Ok(TemporalDurationQualifier::YearToMonth),
+        Rule::day_to_second_qualifier => Ok(TemporalDurationQualifier::DayToSecond),
+        _ => Err(unexpected_pair(
+            child,
+            "unexpected temporal duration qualifier",
+        )),
+    }
 }
 
 fn build_keyword_function(pair: Pair<'_, Rule>, name: &str) -> Result<ValueExpr, ParserError> {

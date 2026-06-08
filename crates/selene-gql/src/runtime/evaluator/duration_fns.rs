@@ -10,10 +10,12 @@ use jiff::{
 use selene_core::{DbString, Record, Value};
 
 use crate::{
-    GqlType, SourceSpan,
+    GqlType, SourceSpan, TemporalDurationQualifier,
     runtime::{DataExceptionSubclass, EvalCtx, ExecutorError},
     temporal_parse,
 };
+
+type SpanResult = Result<jiff::Span, jiff::Error>;
 
 /// `DURATION(<string | record>)`: parse a duration string or build one from a
 /// duration record constructor.
@@ -43,17 +45,63 @@ pub(super) fn eval_duration_function(
     }
 }
 
-/// `DURATION_BETWEEN(<temporal>, <temporal>)`: return the day-time duration
-/// from the first instant to the second. This implements the ISO two-argument
-/// form, whose omitted temporal duration qualifier defaults to `DAY TO SECOND`.
+/// `DURATION_BETWEEN(<temporal>, <temporal>) [<temporal duration qualifier>]`:
+/// return the requested duration unit group from the first instant to the
+/// second. The omitted qualifier defaults to `DAY TO SECOND`.
 pub(super) fn eval_duration_between_function(
     args: Vec<Value>,
+    qualifier: TemporalDurationQualifier,
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
     let [start, end]: [Value; 2] = args.try_into().expect("arity checked by caller");
     if matches!(start, Value::Null) || matches!(end, Value::Null) {
         return Ok(Value::Null);
     }
+    let duration = match qualifier {
+        TemporalDurationQualifier::YearToMonth => year_month_duration_between(start, end, span)?,
+        TemporalDurationQualifier::DayToSecond => day_time_duration_between(start, end, span)?,
+    };
+    duration
+        .map(|duration| Value::Duration(Box::new(duration)))
+        .map_err(|error| {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                format!("DURATION_BETWEEN result is out of range: {error}"),
+                span,
+            )
+        })
+}
+
+fn year_month_duration_between(
+    start: Value,
+    end: Value,
+    span: SourceSpan,
+) -> Result<SpanResult, ExecutorError> {
+    match (start, end) {
+        (Value::Date(start), Value::Date(end)) => Ok(start.until(
+            DateDifference::new(end)
+                .smallest(Unit::Month)
+                .largest(Unit::Year),
+        )),
+        (Value::LocalDateTime(start), Value::LocalDateTime(end)) => Ok(start.until(
+            DateTimeDifference::new(end)
+                .smallest(Unit::Month)
+                .largest(Unit::Year),
+        )),
+        (Value::ZonedDateTime(start), Value::ZonedDateTime(end)) => Ok(start.until(
+            ZonedDifference::new(&end)
+                .smallest(Unit::Month)
+                .largest(Unit::Year),
+        )),
+        _ => Err(invalid_duration_between_operands(span)),
+    }
+}
+
+fn day_time_duration_between(
+    start: Value,
+    end: Value,
+    span: SourceSpan,
+) -> Result<SpanResult, ExecutorError> {
     let duration = match (start, end) {
         (Value::Date(start), Value::Date(end)) => {
             start.until(DateDifference::new(end).largest(Unit::Day))
@@ -78,23 +126,17 @@ pub(super) fn eval_duration_between_function(
                 .smallest(Unit::Nanosecond)
                 .largest(Unit::Hour),
         ),
-        _ => {
-            return Err(ExecutorError::data_exception(
-                DataExceptionSubclass::InvalidValueType,
-                "DURATION_BETWEEN arguments are not comparable temporal instants",
-                span,
-            ));
-        }
+        _ => return Err(invalid_duration_between_operands(span)),
     };
-    duration
-        .map(|duration| Value::Duration(Box::new(duration)))
-        .map_err(|error| {
-            ExecutorError::data_exception(
-                DataExceptionSubclass::NumericValueOutOfRange,
-                format!("DURATION_BETWEEN result is out of range: {error}"),
-                span,
-            )
-        })
+    Ok(duration)
+}
+
+fn invalid_duration_between_operands(span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(
+        DataExceptionSubclass::InvalidValueType,
+        "DURATION_BETWEEN arguments are not comparable temporal instants",
+        span,
+    )
 }
 
 fn duration_from_record(

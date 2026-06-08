@@ -150,6 +150,10 @@ fn push_expr<'a>(
                 work.push(Node::Expr(arg, next));
             }
         }
+        ValueExpr::DurationBetween { start, end, .. } => {
+            work.push(Node::Expr(start, next));
+            work.push(Node::Expr(end, next));
+        }
         ValueExpr::IsCheck { operand, kind, .. } => {
             work.push(Node::Expr(operand, next));
             match kind {
