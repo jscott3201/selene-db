@@ -100,6 +100,49 @@ fn typed_parameter_runtime_rejects_non_vector() {
 }
 
 #[test]
+fn typed_parameter_runtime_accepts_qualified_duration_family() {
+    let graph = SharedGraph::new(GraphId::new(4128));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("span"),
+        Value::Duration(Box::new("P1Y2M".parse().unwrap())),
+    );
+
+    session
+        .execute_source(
+            "RETURN $span :: DURATION (YEAR TO MONTH) AS span",
+            &EmptyProcedureRegistry,
+        )
+        .expect("qualified duration parameter accepts matching family");
+}
+
+#[test]
+fn typed_parameter_runtime_rejects_wrong_qualified_duration_family() {
+    let graph = SharedGraph::new(GraphId::new(4129));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("span"),
+        Value::Duration(Box::new("PT1H".parse().unwrap())),
+    );
+
+    let err = session
+        .execute_source(
+            "RETURN $span :: DURATION (YEAR TO MONTH) AS span",
+            &EmptyProcedureRegistry,
+        )
+        .expect_err("qualified duration parameter rejects wrong family");
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidParameterType {
+            name,
+            ref expected,
+            actual: "DURATION",
+            ..
+        } if name.as_str() == "span" && expected == "DURATION (YEAR TO MONTH)"
+    ));
+}
+
+#[test]
 fn typed_parameter_runtime_rejects_mismatched_closed_record_fields() {
     let span = SourceSpan::new(0, 4);
     let field = db_string("count");

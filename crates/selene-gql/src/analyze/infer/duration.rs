@@ -23,8 +23,8 @@ pub(super) fn temporal_duration_add_sub(
 
     let lhs_temporal = temporal_instant_type(lhs);
     let rhs_temporal = temporal_instant_type(rhs);
-    let lhs_is_duration = matches!(lhs, AnalyzedType::Resolved(GqlType::Duration));
-    let rhs_is_duration = matches!(rhs, AnalyzedType::Resolved(GqlType::Duration));
+    let lhs_is_duration = matches!(lhs, AnalyzedType::Resolved(ty) if ty.is_duration());
+    let rhs_is_duration = matches!(rhs, AnalyzedType::Resolved(ty) if ty.is_duration());
     let lhs_is_null = matches!(lhs, AnalyzedType::Resolved(GqlType::Null));
     let rhs_is_null = matches!(rhs, AnalyzedType::Resolved(GqlType::Null));
     let lhs_is_dynamic = matches!(lhs, AnalyzedType::Dynamic);
@@ -63,8 +63,8 @@ pub(super) fn duration_add_sub(
     rhs: &AnalyzedType,
     rhs_span: SourceSpan,
 ) -> Option<Result<AnalyzedType, AnalysisError>> {
-    let lhs_is_duration = matches!(lhs, AnalyzedType::Resolved(GqlType::Duration));
-    let rhs_is_duration = matches!(rhs, AnalyzedType::Resolved(GqlType::Duration));
+    let lhs_is_duration = matches!(lhs, AnalyzedType::Resolved(ty) if ty.is_duration());
+    let rhs_is_duration = matches!(rhs, AnalyzedType::Resolved(ty) if ty.is_duration());
     let lhs_is_null = matches!(lhs, AnalyzedType::Resolved(GqlType::Null));
     let rhs_is_null = matches!(rhs, AnalyzedType::Resolved(GqlType::Null));
     let lhs_is_dynamic = matches!(lhs, AnalyzedType::Dynamic);
@@ -93,8 +93,8 @@ pub(super) fn duration_mul_div(
         return None;
     }
 
-    let lhs_is_duration = matches!(lhs, AnalyzedType::Resolved(GqlType::Duration));
-    let rhs_is_duration = matches!(rhs, AnalyzedType::Resolved(GqlType::Duration));
+    let lhs_is_duration = matches!(lhs, AnalyzedType::Resolved(ty) if ty.is_duration());
+    let rhs_is_duration = matches!(rhs, AnalyzedType::Resolved(ty) if ty.is_duration());
     let lhs_is_dynamic = matches!(lhs, AnalyzedType::Dynamic);
     let rhs_is_dynamic = matches!(rhs, AnalyzedType::Dynamic);
     let lhs_is_coefficient = is_coefficient(lhs);

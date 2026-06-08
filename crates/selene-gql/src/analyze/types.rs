@@ -675,6 +675,8 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::ZonedTime => 25u8.hash(state),
         GqlType::LocalTime => 26u8.hash(state),
         GqlType::Duration => 27u8.hash(state),
+        GqlType::DurationYearToMonth => 35u8.hash(state),
+        GqlType::DurationDayToSecond => 36u8.hash(state),
         GqlType::Record(record) => {
             28u8.hash(state);
             hash_record_type(record, state);

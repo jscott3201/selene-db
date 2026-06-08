@@ -34,6 +34,8 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         GqlType::ZonedTime => "ZONED TIME".to_owned(),
         GqlType::LocalTime => "LOCAL TIME".to_owned(),
         GqlType::Duration => "DURATION".to_owned(),
+        GqlType::DurationYearToMonth => "DURATION (YEAR TO MONTH)".to_owned(),
+        GqlType::DurationDayToSecond => "DURATION (DAY TO SECOND)".to_owned(),
         GqlType::Vector => "VECTOR".to_owned(),
         // Recurse into the element type so `LIST<INT8>` round-trips through
         // parse-format-parse without rewriting the element type.

@@ -4,7 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Value;
+use crate::{DurationTypeQualifier, Value};
 
 /// Closed-graph property value type tags.
 ///
@@ -81,6 +81,10 @@ pub enum PropertyValueType {
     LocalTime,
     /// Duration value.
     Duration,
+    /// Year-month duration value.
+    DurationYearToMonth,
+    /// Day-time duration value.
+    DurationDayToSecond,
     /// Null value.
     Null,
     /// UUID value.
@@ -134,7 +138,15 @@ impl PropertyValueType {
     /// Return true when `value` belongs to this type.
     #[must_use]
     pub fn matches(self, value: &Value) -> bool {
-        Self::of(value) == Some(self)
+        match (self, value) {
+            (Self::DurationYearToMonth, Value::Duration(value)) => {
+                DurationTypeQualifier::YearToMonth.matches_span(value)
+            }
+            (Self::DurationDayToSecond, Value::Duration(value)) => {
+                DurationTypeQualifier::DayToSecond.matches_span(value)
+            }
+            _ => Self::of(value) == Some(self),
+        }
     }
 
     /// Stable diagnostic name for an observed value.
@@ -174,6 +186,8 @@ impl PropertyValueType {
             Self::ZonedTime => "ZonedTime",
             Self::LocalTime => "LocalTime",
             Self::Duration => "Duration",
+            Self::DurationYearToMonth => "DurationYearToMonth",
+            Self::DurationDayToSecond => "DurationDayToSecond",
             Self::Null => "Null",
             Self::Uuid => "Uuid",
             Self::Vector => "Vector",
@@ -312,6 +326,20 @@ mod tests {
             assert_eq!(PropertyValueType::of(&value), Some(expected));
             assert!(expected.matches(&value));
         }
+    }
+
+    #[test]
+    fn qualified_duration_types_match_field_families() {
+        let year_month = Value::Duration(Box::new("P1Y2M".parse().unwrap()));
+        let day_time = Value::Duration(Box::new("P3DT4H".parse().unwrap()));
+        let zero = Value::Duration(Box::new("PT0S".parse().unwrap()));
+
+        assert!(PropertyValueType::DurationYearToMonth.matches(&year_month));
+        assert!(!PropertyValueType::DurationYearToMonth.matches(&day_time));
+        assert!(PropertyValueType::DurationYearToMonth.matches(&zero));
+        assert!(PropertyValueType::DurationDayToSecond.matches(&day_time));
+        assert!(!PropertyValueType::DurationDayToSecond.matches(&year_month));
+        assert!(PropertyValueType::DurationDayToSecond.matches(&zero));
     }
 
     #[test]

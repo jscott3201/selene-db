@@ -20,6 +20,7 @@ pub mod change_kind;
 pub mod changeset;
 mod changeset_variants;
 pub mod db_string;
+mod duration_type;
 pub mod error;
 pub mod extension_type_ids;
 pub mod feature_register;
@@ -45,6 +46,7 @@ pub use changeset::{
     Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
 };
 pub use db_string::{DbString, db_string};
+pub use duration_type::{DurationTypeQualifier, DurationValueFamily, duration_value_family};
 pub use error::{CoreError, CoreResult};
 pub use extension_type_ids::{
     ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_RDF, SELENE_TIMESERIES,

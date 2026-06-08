@@ -502,6 +502,8 @@ fn core_scalar_value_type(value_type: PropertyValueType) -> ValueType {
         PropertyValueType::ZonedTime => Some(PredefinedValueType::ZonedTime),
         PropertyValueType::LocalTime => Some(PredefinedValueType::LocalTime),
         PropertyValueType::Duration => Some(PredefinedValueType::Duration),
+        PropertyValueType::DurationYearToMonth => Some(PredefinedValueType::DurationYearToMonth),
+        PropertyValueType::DurationDayToSecond => Some(PredefinedValueType::DurationDayToSecond),
         PropertyValueType::Uuid => Some(PredefinedValueType::Uuid),
         PropertyValueType::Vector => Some(PredefinedValueType::Vector),
         PropertyValueType::Json => Some(PredefinedValueType::Json),
