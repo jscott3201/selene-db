@@ -181,6 +181,10 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
+        "byte_length" | "octet_length" => string_fns::eval_byte_length(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
         "left" => string_fns::eval_left_right(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
             span,

@@ -100,6 +100,17 @@ pub(super) fn eval_length(args: Vec<Value>, span: SourceSpan) -> Result<Value, E
     Ok(Value::Int(value.chars().count() as i64))
 }
 
+pub(super) fn eval_byte_length(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    let value = args.into_iter().next().expect("arity checked");
+    if matches!(value, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let Value::Bytes(value) = value else {
+        return data_exception("byte length argument is not a byte string", span);
+    };
+    Ok(Value::Int(value.len() as i64))
+}
+
 pub(super) fn eval_left_right(
     args: Vec<Value>,
     span: SourceSpan,
