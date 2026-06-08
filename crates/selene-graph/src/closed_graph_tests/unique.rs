@@ -119,6 +119,96 @@ fn duplicate_unique_node_property_update_rolls_back() {
 }
 
 #[test]
+fn duplicate_unique_node_property_update_reports_changed_entity() {
+    let shared = unique_person_graph(34);
+    let (first, second) = {
+        let mut txn = shared.begin_write();
+        let (first, second) = {
+            let mut mutator = txn.mutator();
+            let first = mutator
+                .create_node(LabelSet::single(db_string("Person")), serial("A"))
+                .unwrap();
+            let second = mutator
+                .create_node(LabelSet::single(db_string("Person")), serial("B"))
+                .unwrap();
+            (first, second)
+        };
+        txn.commit().unwrap();
+        (first, second)
+    };
+
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .update_node(
+            first,
+            LabelDiff::new([], []).unwrap(),
+            PropertyDiff::new([(db_string("serial"), Value::String(db_string("B")))], []).unwrap(),
+        )
+        .unwrap();
+    let err = txn
+        .commit()
+        .expect_err("duplicate unique update rejects commit");
+
+    assert!(matches!(
+        err,
+        GraphError::TypeViolation(TypeViolation::UniquePropertyDuplicate {
+            entity_id,
+            conflicting_entity_id,
+            property,
+            ..
+        }) if entity_id == EntityId::Node(first)
+            && conflicting_entity_id == EntityId::Node(second)
+            && property == db_string("serial")
+    ));
+    assert_eq!(
+        shared
+            .read()
+            .node_properties(first)
+            .and_then(|properties| properties.get(&db_string("serial"))),
+        Some(&Value::String(db_string("A")))
+    );
+}
+
+#[test]
+fn repeated_unique_node_property_update_to_same_value_commits() {
+    let shared = unique_person_graph(35);
+    let id = {
+        let mut txn = shared.begin_write();
+        let id = txn
+            .mutator()
+            .create_node(LabelSet::single(db_string("Person")), serial("A"))
+            .unwrap();
+        txn.commit().unwrap();
+        id
+    };
+
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .update_node(
+            id,
+            LabelDiff::new([], []).unwrap(),
+            PropertyDiff::new([(db_string("serial"), Value::String(db_string("B")))], []).unwrap(),
+        )
+        .unwrap();
+    txn.mutator()
+        .update_node(
+            id,
+            LabelDiff::new([], []).unwrap(),
+            PropertyDiff::new([(db_string("serial"), Value::String(db_string("B")))], []).unwrap(),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+
+    assert_eq!(
+        shared
+            .read()
+            .node_properties(id)
+            .and_then(|properties| properties.get(&db_string("serial"))),
+        Some(&Value::String(db_string("B")))
+    );
+}
+
+#[test]
 fn unique_node_property_reuses_value_after_delete() {
     let shared = unique_person_graph(33);
     let first = {
