@@ -291,9 +291,9 @@ pub enum AnalysisError {
         ///
         /// Boxed (together with `observed_target`) so this variant does not
         /// inflate `AnalysisError` past clippy's `result_large_err` threshold:
-        /// `LabelSet` wraps `SmallVec<[DbString; 3]>` (~88 B inline now that `DbString`
-        /// is an owned 24-byte type), so two inline copies dominated the
-        /// variant. The `Box` moves both onto the cold error-construction path.
+        /// `LabelSet` wraps `SmallVec<[DbString; 3]>`, so two inline copies
+        /// dominated the variant. The `Box` moves both onto the cold
+        /// error-construction path.
         observed_source: Box<LabelSet>,
         /// Observed target label set. Boxed for the same reason as
         /// `observed_source`.

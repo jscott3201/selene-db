@@ -125,10 +125,11 @@ pub enum Value {
 /// `Path` (120 B, which a `size_of` profile proved was the real former ceiling,
 /// **not** the time variants the design doc assumed), `Duration(jiff::Span)`
 /// (64 B), and the two `jiff::Zoned` variants (40 B) — bringing `Value` from
-/// 128 B down to 32 B (the `String(DbString)` / `List(Vec)` 24-byte payload plus
-/// the discriminant, 16-aligned by the `i128`/`Decimal` variants). This assert
-/// fails the build if a future variant regrows the enum; box the offending
-/// payload or lift the ceiling deliberately.
+/// 128 B down to 32 B. The current ceiling is set by 24-byte payload families
+/// such as `List(Vec)`, plus the discriminant and 16-byte alignment from the
+/// `i128`/`Decimal` variants. This assert fails the build if a future variant
+/// regrows the enum; box the offending payload or lift the ceiling
+/// deliberately.
 const _: () = assert!(core::mem::size_of::<Value>() <= 32);
 
 impl Value {
