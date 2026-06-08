@@ -23,7 +23,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   string parameters and open record-constructor parameters. Year/month records
   build year-month durations, day/time records build day-time durations, invalid
   duration field sets report `22G07`, and invalid generated duration text
-  reports `22G0H`.
+  reports `22G0H`. `ABS(<duration>)` now implements the ISO duration absolute
+  value function, returning a non-negative duration while preserving `NULL`
+  propagation.
 - **GP03 — explicit variable-scope `CALL` subqueries (ISO §15.2).** `CALL (x, y) { ... }`
   now binds and executes: the subquery body sees **only** the named imported
   variables, and an empty `CALL () { ... }` is fully isolated. An outer variable
