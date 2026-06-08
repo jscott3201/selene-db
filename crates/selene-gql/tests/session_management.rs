@@ -136,6 +136,15 @@ fn default_session_time_zone_is_utc() {
 }
 
 #[test]
+fn non_iso_now_function_is_not_in_the_scalar_set() {
+    let graph = graph(7015);
+    let mut session = Session::new(&graph);
+
+    let err = run(&mut session, "RETURN now()").expect_err("NOW is not an ISO datetime function");
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
 fn set_time_zone_shifts_current_timestamp_offset() {
     let graph = graph(7011);
     let mut session = Session::new(&graph);
