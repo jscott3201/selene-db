@@ -2,10 +2,10 @@
 
 use selene_core::db_string;
 use selene_gql::{
-    AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ConditionClause,
-    EmptyProcedureRegistry, GqlStatus, GqlType, IsCheckKind, Literal, PipelineStatement,
-    QueryPipeline, ReturnClause, ReturnItem, Side, SourceSpan, Statement, TypeMismatchContext,
-    ValueExpr, analyze, parse,
+    AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BinaryOp,
+    ConditionClause, EmptyProcedureRegistry, ExpectedType, GqlStatus, GqlType, IsCheckKind,
+    Literal, PipelineStatement, QueryPipeline, ReturnClause, ReturnItem, Side, SourceSpan,
+    Statement, TypeMismatchContext, ValueExpr, analyze, parse,
 };
 
 fn analyze_one(source: &str) -> Result<AnalyzedStatement, AnalysisError> {
@@ -75,6 +75,30 @@ fn float_plus_integer_promotes_to_float64() {
     assert_eq!(
         projection_type(&analyzed, "sum"),
         AnalyzedType::Resolved(GqlType::Float64)
+    );
+}
+
+#[test]
+fn duration_addition_and_subtraction_analyze_as_duration() {
+    let analyzed = analyze_one("RETURN DURATION 'PT1H' + DURATION 'PT2H' AS span").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "span"),
+        AnalyzedType::Resolved(GqlType::Duration)
+    );
+
+    let analyzed = analyze_one("RETURN DURATION 'P4M' - DURATION 'P1M' AS span").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "span"),
+        AnalyzedType::Resolved(GqlType::Duration)
+    );
+}
+
+#[test]
+fn duration_unary_negation_analyzes_as_duration() {
+    let analyzed = analyze_one("RETURN -DURATION 'PT1H' AS span").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "span"),
+        AnalyzedType::Resolved(GqlType::Duration)
     );
 }
 
@@ -274,6 +298,24 @@ fn add_string_and_integer_errors() {
         err,
         AnalysisError::TypeMismatch {
             context: TypeMismatchContext::BinaryArithmetic { .. },
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
+}
+
+#[test]
+fn duration_add_integer_errors_on_integer_operand() {
+    let err = analyze_one("RETURN DURATION 'PT1H' + 1 AS x").unwrap_err();
+    assert!(matches!(
+        err,
+        AnalysisError::TypeMismatch {
+            context: TypeMismatchContext::BinaryArithmetic {
+                op: BinaryOp::Add,
+                side: Side::Rhs,
+            },
+            expected: ExpectedType::Specific(GqlType::Duration),
+            found: GqlType::Integer,
             ..
         }
     ));

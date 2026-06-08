@@ -61,6 +61,13 @@ fn status_for(source: &str) -> GqlStatus {
         .gqlstatus()
 }
 
+fn analysis_status_for(source: &str) -> GqlStatus {
+    let statement = selene_gql::parse(source).expect("test source parses");
+    selene_gql::analyze(statement, &selene_gql::EmptyProcedureRegistry, None)
+        .expect_err("test source fails analysis")
+        .gqlstatus()
+}
+
 #[test]
 fn duration_function_parses_string_and_null_parameters() {
     assert_eq!(
@@ -191,6 +198,64 @@ fn duration_between_preserves_direction_and_null_semantics() {
             "value"
         ),
         Value::Null
+    );
+}
+
+#[test]
+fn duration_addition_and_subtraction_normalize_same_unit_group_values() {
+    assert_eq!(
+        single_value(
+            "RETURN DURATION('PT1H30M') + DURATION('PT45M') AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("PT2H15M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION('PT2H') - DURATION('PT30M') AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("PT1H30M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION('P1Y10M') + DURATION('P4M') AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("P2Y2M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN DURATION('P1M') - DURATION('P3M') AS value", "value"),
+        Value::Duration(Box::new("-P2M".parse().unwrap()))
+    );
+}
+
+#[test]
+fn duration_arithmetic_preserves_unary_sign_and_null_semantics() {
+    assert_eq!(
+        single_value("RETURN -DURATION('PT1H') AS value", "value"),
+        Value::Duration(Box::new("-PT1H".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN DURATION('PT1H') + NULL AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(
+        single_value("RETURN NULL - DURATION('PT1H') AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(single_value("RETURN -NULL AS value", "value"), Value::Null);
+}
+
+#[test]
+fn duration_arithmetic_rejects_mismatched_unit_groups_and_scaling() {
+    assert_eq!(
+        status_for("RETURN DURATION('P1M') + DURATION('PT1H') AS value").as_str(),
+        "22G14"
+    );
+    assert_eq!(
+        analysis_status_for("RETURN DURATION('PT1H') * DURATION('PT2H') AS value"),
+        GqlStatus::DATATYPE_MISMATCH
     );
 }
 

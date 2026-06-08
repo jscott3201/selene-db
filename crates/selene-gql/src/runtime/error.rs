@@ -49,6 +49,8 @@ pub enum DataExceptionSubclass {
     ListElementError,
     /// Invalid duration format (`22G0H`).
     InvalidDurationFormat,
+    /// Incompatible temporal instant unit groups (`22G14`).
+    IncompatibleTemporalInstantUnitGroups,
     /// Multiple assignments to a graph element property (`22G0M`).
     MultipleAssignmentsToGraphElementProperty,
     /// Number of node properties exceeds supported maximum (`22G0S`).
@@ -90,6 +92,9 @@ impl DataExceptionSubclass {
             }
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
             Self::InvalidDurationFormat => GqlStatus::INVALID_DURATION_FORMAT,
+            Self::IncompatibleTemporalInstantUnitGroups => {
+                GqlStatus::INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS
+            }
             Self::MultipleAssignmentsToGraphElementProperty => {
                 GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY
             }
