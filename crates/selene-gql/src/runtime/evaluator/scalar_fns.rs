@@ -177,6 +177,10 @@ pub(super) fn eval_function_call(
             span,
             ctx,
         ),
+        "path_length" => identity_length_fns::eval_path_length(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
         "length" | "char_length" | "character_length" => string_fns::eval_length(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,

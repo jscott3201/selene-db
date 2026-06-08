@@ -69,6 +69,18 @@ pub(super) fn eval_cardinality(
     }
 }
 
+pub(super) fn eval_path_length(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match args.into_iter().next().expect("arity checked") {
+        Value::Null => Ok(Value::Null),
+        Value::Path(path) => Ok(Value::Int(path.segments.len() as i64)),
+        _ => data_exception_with(
+            DataExceptionSubclass::InvalidValueType,
+            "path_length argument is not a path",
+            span,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
