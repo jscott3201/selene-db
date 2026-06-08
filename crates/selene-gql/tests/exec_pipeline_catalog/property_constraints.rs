@@ -396,7 +396,7 @@ fn list_default_property_constraint_rejects_nested_shape_mismatch() {
 fn float_default_property_constraint_accepts_float_literal() {
     let graph = empty_closed_graph(3724);
     let plan = planned(
-        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5, small :: FLOAT32 DEFAULT 2.25)",
+        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5D, small :: FLOAT32 DEFAULT 2.25D)",
     );
 
     run_write(&graph, &plan)

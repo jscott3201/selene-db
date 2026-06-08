@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use pest::iterators::Pair;
+use rust_decimal::Decimal;
 use selene_core::DbString;
 
 use crate::{
@@ -63,6 +64,9 @@ pub(super) fn with_numeric_span(value: ValueExpr, source_span: SourceSpan) -> Va
         ValueExpr::Literal(Literal::RadixInteger(value, _, kind)) => {
             ValueExpr::Literal(Literal::RadixInteger(value, source_span, kind))
         }
+        ValueExpr::Literal(Literal::Decimal(value, _)) => {
+            ValueExpr::Literal(Literal::Decimal(value, source_span))
+        }
         ValueExpr::Literal(Literal::Float(value, _)) => {
             ValueExpr::Literal(Literal::Float(value, source_span))
         }
@@ -84,6 +88,7 @@ fn build_literal_child(child: Pair<'_, Rule>) -> Result<Literal, ParserError> {
             child_span,
         )),
         Rule::int_lit => parse_i64(child.as_str(), child_span),
+        Rule::decimal_lit => parse_decimal(child.as_str(), child_span),
         Rule::float_lit => parse_f64(child.as_str(), child_span),
         Rule::byte_string_lit => parse_byte_string_lit(child.as_str(), child_span),
         Rule::string_lit => parse_string(child.as_str(), child_span),
@@ -253,7 +258,7 @@ fn split_radix(text: &str) -> (&str, u32, Option<IntegerLiteralKind>) {
 fn parse_f64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
     let trimmed = text.strip_suffix(['f', 'd', 'F', 'D']).unwrap_or(text);
     validate_underscores(trimmed, span)?;
-    let normalized = trimmed.replace('_', "");
+    let normalized = normalize_float_image(&trimmed.replace('_', ""));
     normalized
         .parse::<f64>()
         .map(|value| Literal::Float(value, span))
@@ -264,6 +269,85 @@ fn parse_f64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
                 None,
             )
         })
+}
+
+fn parse_decimal(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
+    let trimmed = text.strip_suffix(['m', 'M']).unwrap_or(text);
+    validate_underscores(trimmed, span)?;
+    let normalized = normalize_decimal_image(&trimmed.replace('_', ""));
+    let parsed = if contains_exponent(&normalized) {
+        Decimal::from_scientific(&normalized)
+    } else {
+        normalized.parse::<Decimal>()
+    };
+    parsed
+        .map(|value| Literal::Decimal(value, span))
+        .map_err(|error| {
+            ParserError::syntax(
+                format!("invalid exact numeric literal: {error}"),
+                span,
+                Some("exact numeric literals must fit selene-db DECIMAL".into()),
+            )
+        })
+}
+
+fn normalize_decimal_image(image: &str) -> String {
+    if let Some(index) = image.find(['e', 'E']) {
+        let (mantissa, exponent) = image.split_at(index);
+        format!("{}{}", normalize_decimal_mantissa(mantissa), exponent)
+    } else {
+        normalize_decimal_mantissa(image)
+    }
+}
+
+fn normalize_decimal_mantissa(mantissa: &str) -> String {
+    let (sign, unsigned) = split_text_sign(mantissa);
+    let unsigned = if let Some(rest) = unsigned.strip_prefix('.') {
+        format!("0.{rest}")
+    } else if let Some(rest) = unsigned.strip_suffix('.') {
+        rest.to_owned()
+    } else {
+        unsigned.to_owned()
+    };
+    format!("{sign}{unsigned}")
+}
+
+fn normalize_float_image(image: &str) -> String {
+    if let Some(index) = image.find(['e', 'E']) {
+        let (mantissa, exponent) = image.split_at(index);
+        format!("{}{}", normalize_float_mantissa(mantissa), exponent)
+    } else {
+        normalize_float_mantissa(image)
+    }
+}
+
+fn normalize_float_mantissa(mantissa: &str) -> String {
+    let (sign, unsigned) = split_text_sign(mantissa);
+    let unsigned = if let Some(rest) = unsigned.strip_prefix('.') {
+        format!("0.{rest}")
+    } else if let Some(rest) = unsigned.strip_suffix('.') {
+        format!("{rest}.0")
+    } else {
+        unsigned.to_owned()
+    };
+    format!("{sign}{unsigned}")
+}
+
+fn split_text_sign(text: &str) -> (&str, &str) {
+    if let Some(rest) = text.strip_prefix('-') {
+        ("-", rest)
+    } else if let Some(rest) = text.strip_prefix('+') {
+        ("", rest)
+    } else {
+        ("", text)
+    }
+}
+
+fn contains_exponent(image: &str) -> bool {
+    image
+        .as_bytes()
+        .iter()
+        .any(|byte| matches!(byte, b'e' | b'E'))
 }
 
 fn parse_byte_string_lit(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {

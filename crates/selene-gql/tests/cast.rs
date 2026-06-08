@@ -329,11 +329,11 @@ fn cast_string_to_integer_returns_22018() {
 fn cast_float_to_integer_truncates_toward_zero() {
     // ISO §22.4 — truncate toward zero. 3.7 -> 3, -3.7 -> -3.
     assert_eq!(
-        execute_first_value("RETURN CAST(3.7 AS INTEGER) AS v"),
+        execute_first_value("RETURN CAST(3.7D AS INTEGER) AS v"),
         Value::Int(3)
     );
     assert_eq!(
-        execute_first_value("RETURN CAST(-3.7 AS INTEGER) AS v"),
+        execute_first_value("RETURN CAST(-3.7D AS INTEGER) AS v"),
         Value::Int(-3)
     );
 }
@@ -342,10 +342,10 @@ fn cast_float_to_integer_truncates_toward_zero() {
 fn cast_float_to_integer_overflow_returns_22003() {
     // 1.0e30 is far beyond i64::MAX (~9.2e18); the explicit range check
     // fires before Rust's saturating `as` cast hides the overflow. GQL
-    // float-literal grammar requires `digits.digits` (no bare scientific
-    // form), so the exponent is on a normalized literal.
+    // approximate-literal grammar uses the `D` suffix because bare common
+    // decimals are exact DECIMAL literals.
     assert_eq!(
-        execute_first_status("RETURN CAST(1.0e30 AS INTEGER) AS v"),
+        execute_first_status("RETURN CAST(1.0e30D AS INTEGER) AS v"),
         "22003"
     );
 }
@@ -385,7 +385,7 @@ fn cast_integer_to_float_preserves_value() {
 #[test]
 fn cast_float_to_string_round_trip() {
     assert_eq!(
-        as_string(execute_first_value("RETURN CAST(3.5 AS STRING) AS v")),
+        as_string(execute_first_value("RETURN CAST(3.5D AS STRING) AS v")),
         "3.5"
     );
 }
@@ -499,7 +499,7 @@ fn cast_integer_to_boolean_returns_22g03() {
 fn cast_float_to_boolean_returns_22g03() {
     // ISO §20.8 Table 4 marks AN→BO `N` (810 strict-ISO fix).
     assert_eq!(
-        execute_first_status("RETURN CAST(1.0 AS BOOLEAN) AS v"),
+        execute_first_status("RETURN CAST(1.0D AS BOOLEAN) AS v"),
         "22G03"
     );
 }

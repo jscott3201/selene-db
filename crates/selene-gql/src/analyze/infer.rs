@@ -28,6 +28,7 @@ pub(crate) fn literal(literal: &Literal) -> AnalyzedType {
         Literal::Integer(..) | Literal::RadixInteger(..) => {
             AnalyzedType::Resolved(GqlType::Integer)
         }
+        Literal::Decimal(..) => AnalyzedType::Resolved(GqlType::Decimal),
         Literal::Float(..) => AnalyzedType::Resolved(GqlType::Float),
         Literal::String(..) => AnalyzedType::Resolved(GqlType::String),
         Literal::Bytes(..) => AnalyzedType::Resolved(GqlType::Bytes),

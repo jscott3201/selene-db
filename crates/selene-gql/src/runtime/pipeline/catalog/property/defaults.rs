@@ -60,6 +60,7 @@ pub(super) fn literal_property_default_value(
         Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => {
             Ok(PropertyDefaultValue::Integer(*value))
         }
+        Literal::Decimal(value, _) => decimal_default_value(*value, span),
         Literal::String(value, _) => Ok(PropertyDefaultValue::String(value.clone())),
         Literal::Bytes(value, _) => Ok(PropertyDefaultValue::Bytes(value.to_vec())),
         Literal::Uuid(value, _) => db_string(&value.to_string())
@@ -562,6 +563,7 @@ fn render_float_literal(value: f64) -> Result<String, ExecutorError> {
     if !rendered.contains(|ch| ['.', 'e', 'E'].contains(&ch)) {
         rendered.push_str(".0");
     }
+    rendered.push('D');
     Ok(rendered)
 }
 

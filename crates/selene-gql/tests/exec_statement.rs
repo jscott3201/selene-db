@@ -212,7 +212,7 @@ fn catalog_float_default_properties_materialize_and_round_trip() {
     let mut session = Session::new(&graph);
 
     execute(
-        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5, small :: FLOAT32 DEFAULT 2.25)",
+        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5D, small :: FLOAT32 DEFAULT 2.25D)",
         &mut session,
     )
     .expect("catalog succeeds");
@@ -234,7 +234,7 @@ fn catalog_float_default_properties_materialize_and_round_trip() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(db_string(
-            "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5, small :: FLOAT32 DEFAULT 2.25)"
+            "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5D, small :: FLOAT32 DEFAULT 2.25D)"
         ))
     );
 }

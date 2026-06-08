@@ -462,6 +462,11 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
             span.hash(state);
             kind.hash(state);
         }
+        Literal::Decimal(value, span) => {
+            18u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
         Literal::Float(value, span) => {
             2u8.hash(state);
             value.to_bits().hash(state);

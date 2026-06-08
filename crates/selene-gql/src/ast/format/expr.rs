@@ -14,7 +14,8 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             crate::Literal::Bool(value, _) => out.push_str(if *value { "true" } else { "false" }),
             crate::Literal::Integer(value, _) => write!(out, "{value}")?,
             crate::Literal::RadixInteger(value, _, kind) => fmt_radix_integer(out, *value, *kind)?,
-            crate::Literal::Float(value, _) => write!(out, "{value}")?,
+            crate::Literal::Decimal(value, _) => write!(out, "{value}")?,
+            crate::Literal::Float(value, _) => fmt_float_literal(out, *value)?,
             crate::Literal::String(value, _) => write!(out, "'{}'", escape_string(value.as_str()))?,
             crate::Literal::Bytes(value, _) => {
                 out.push_str("X'");
@@ -263,6 +264,14 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
         ValueExpr::Cast {
             value, target_type, ..
         } => cast::fmt_cast(out, value, target_type)?,
+    }
+    Ok(())
+}
+
+fn fmt_float_literal(out: &mut String, value: f64) -> fmt::Result {
+    write!(out, "{value}")?;
+    if value.is_finite() {
+        out.push('D');
     }
     Ok(())
 }

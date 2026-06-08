@@ -34,6 +34,10 @@ fn optional_name(value: Option<selene_core::DbString>) -> Option<String> {
     value.map(|name| name.as_str().to_owned())
 }
 
+fn decimal(value: &str) -> rust_decimal::Decimal {
+    value.parse().expect("decimal literal parses")
+}
+
 fn assert_function_call(source: &str, expected_name: &str) {
     assert_function_call_with_args(source, expected_name, 0);
 }
@@ -68,20 +72,53 @@ fn parse_return_integer() {
 }
 
 #[test]
-fn parse_return_float() {
+fn parse_return_exact_decimal() {
     let item = only_item("RETURN 1.5");
     assert_eq!(
         item.expr,
-        ValueExpr::Literal(Literal::Float(1.5, SourceSpan::new(7, 3)))
+        ValueExpr::Literal(Literal::Decimal(decimal("1.5"), SourceSpan::new(7, 3)))
     );
 }
 
 #[test]
-fn parse_return_float_suffixes_are_case_insensitive() {
+fn parse_return_exact_decimal_forms() {
+    for (source, value, len) in [
+        ("RETURN 1.5M", "1.5", 4),
+        ("RETURN 1.5m", "1.5", 4),
+        ("RETURN .5", "0.5", 2),
+        ("RETURN 1.", "1", 2),
+        ("RETURN 1e2M", "100", 4),
+        ("RETURN 1.5e2m", "150", 6),
+    ] {
+        assert_eq!(
+            only_item(source).expr,
+            ValueExpr::Literal(Literal::Decimal(decimal(value), SourceSpan::new(7, len))),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn parse_return_float_forms() {
     for source in ["RETURN 1.5f", "RETURN 1.5F", "RETURN 1.5d", "RETURN 1.5D"] {
         assert_eq!(
             only_item(source).expr,
             ValueExpr::Literal(Literal::Float(1.5, SourceSpan::new(7, 4))),
+            "{source}"
+        );
+    }
+    for (source, value, len) in [
+        ("RETURN 1e2", 100.0, 3),
+        ("RETURN 1e2f", 100.0, 4),
+        ("RETURN 1e2D", 100.0, 4),
+        ("RETURN 1.0e30D", 1.0e30, 7),
+        ("RETURN 1F", 1.0, 2),
+        ("RETURN .5D", 0.5, 3),
+        ("RETURN 1.F", 1.0, 3),
+    ] {
+        assert_eq!(
+            only_item(source).expr,
+            ValueExpr::Literal(Literal::Float(value, SourceSpan::new(7, len))),
             "{source}"
         );
     }
@@ -192,11 +229,15 @@ fn parse_return_signed_integer() {
 fn parse_return_signed_float() {
     assert_eq!(
         only_item("RETURN -1.5").expr,
-        ValueExpr::Literal(Literal::Float(-1.5, SourceSpan::new(7, 4)))
+        ValueExpr::Literal(Literal::Decimal(decimal("-1.5"), SourceSpan::new(7, 4)))
     );
     assert_eq!(
         only_item("RETURN +0.25").expr,
-        ValueExpr::Literal(Literal::Float(0.25, SourceSpan::new(7, 5)))
+        ValueExpr::Literal(Literal::Decimal(decimal("0.25"), SourceSpan::new(7, 5)))
+    );
+    assert_eq!(
+        only_item("RETURN -1.5D").expr,
+        ValueExpr::Literal(Literal::Float(-1.5, SourceSpan::new(7, 5)))
     );
 }
 

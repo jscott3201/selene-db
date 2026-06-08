@@ -144,9 +144,9 @@ fn assert_data_exception_contains(err: ExecutorError, expected: &str) {
 #[test]
 fn scalar_numeric_functions_dispatch() {
     let table = execute_read(
-        "RETURN abs(-3) AS abs_value, ceil(1.2) AS ceil_value, floor(1.8) AS floor_value, \
+        "RETURN abs(-3) AS abs_value, ceil(1.2D) AS ceil_value, floor(1.8D) AS floor_value, \
          mod(7, 4) AS mod_value, sqrt(9) AS sqrt_value, \
-         power(2, 3) AS power_value, ceiling(1.2) AS ceiling_value",
+         power(2, 3) AS power_value, ceiling(1.2D) AS ceiling_value",
     );
 
     assert_eq!(column_values(&table, "abs_value"), vec![Value::Int(3)]);

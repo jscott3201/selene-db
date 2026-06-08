@@ -58,9 +58,9 @@ fn scalar_functions_numeric_gf01_enhanced_numeric_functions_return_expected_valu
     let cases = [
         ("RETURN abs(-3) AS value", Value::Int(3)),
         ("RETURN mod(7, 4) AS value", Value::Int(3)),
-        ("RETURN floor(1.8) AS value", Value::Float(1.0)),
-        ("RETURN ceil(1.2) AS value", Value::Float(2.0)),
-        ("RETURN ceiling(1.2) AS value", Value::Float(2.0)),
+        ("RETURN floor(1.8D) AS value", Value::Float(1.0)),
+        ("RETURN ceil(1.2D) AS value", Value::Float(2.0)),
+        ("RETURN ceiling(1.2D) AS value", Value::Float(2.0)),
         ("RETURN sqrt(9) AS value", Value::Float(3.0)),
     ];
 

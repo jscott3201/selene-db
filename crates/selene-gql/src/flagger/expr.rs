@@ -233,6 +233,7 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, feature_id, *span);
         }
         Literal::Float(_, span) => record_feature(uses, FeatureId::GA01, *span),
+        Literal::Decimal(_, span) => record_feature(uses, FeatureId::GV17, *span),
         Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
         Literal::Duration(_, span) => record_feature(uses, FeatureId::GV41, *span),
         Literal::String(_, _)

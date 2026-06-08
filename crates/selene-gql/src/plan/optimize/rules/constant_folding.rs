@@ -69,6 +69,9 @@ fn fold_unary(op: UnaryOp, operand: &ValueExpr, span: SourceSpan) -> Option<Valu
                 .and_then(i64::checked_neg)
                 .map(|folded| ValueExpr::Literal(Literal::Integer(folded, span)))
         }
+        (UnaryOp::Negate, Literal::Decimal(value, _)) => {
+            Some(ValueExpr::Literal(Literal::Decimal(-*value, span)))
+        }
         (UnaryOp::Negate, Literal::Float(value, _)) => finite_float(-value, span),
         (UnaryOp::Not, _)
         | (UnaryOp::Negate, Literal::Bool(_, _))
@@ -143,6 +146,17 @@ fn fold_arithmetic(
             };
             finite_float(folded, span)
         }
+        (Literal::Decimal(left, _), Literal::Decimal(right, _)) => {
+            let folded = match op {
+                BinaryOp::Add => left.checked_add(*right),
+                BinaryOp::Sub => left.checked_sub(*right),
+                BinaryOp::Mul => left.checked_mul(*right),
+                BinaryOp::Div => left.checked_div(*right),
+                BinaryOp::Mod => left.checked_rem(*right),
+                _ => return None,
+            }?;
+            Some(ValueExpr::Literal(Literal::Decimal(folded, span)))
+        }
         _ => None,
     }
 }
@@ -172,6 +186,9 @@ fn fold_comparison(
         }
         (Literal::Float(left, _), right) if left.is_finite() && integer_value(right).is_some() => {
             compare_partial(op, *left, integer_value(right)? as f64)?
+        }
+        (Literal::Decimal(left, _), Literal::Decimal(right, _)) => {
+            compare_ordering(op, left, right)
         }
         (Literal::String(left, _), Literal::String(right, _)) => {
             compare_ordering(op, left.as_str(), right.as_str())

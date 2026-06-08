@@ -264,7 +264,7 @@ fn pagerank_accepts_personalization_parameter() {
 
     let table = execute_rows(
         &mut session,
-        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', $seeds) YIELD node_id, score",
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', $seeds) YIELD node_id, score",
         &registry,
     );
 
@@ -292,7 +292,7 @@ fn pagerank_filters_results_by_label_and_limit() {
 
     let all_facts = execute_rows(
         &mut session,
-        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', NULL, 'Fact', NULL) \
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', NULL, 'Fact', NULL) \
          YIELD node_id, score",
         &registry,
     );
@@ -305,7 +305,7 @@ fn pagerank_filters_results_by_label_and_limit() {
 
     let top_fact = execute_rows(
         &mut session,
-        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', NULL, 'Fact', 1) \
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', NULL, 'Fact', 1) \
          YIELD node_id, score",
         &registry,
     );
@@ -313,7 +313,7 @@ fn pagerank_filters_results_by_label_and_limit() {
 
     let zero = execute_rows(
         &mut session,
-        "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', NULL, 'Fact', 0) \
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', NULL, 'Fact', 0) \
          YIELD node_id, score",
         &registry,
     );
@@ -340,12 +340,12 @@ fn pagerank_undirected_orientation_spreads_personalized_sink_seed() {
 
     let natural = execute_rows(
         &mut session,
-        "CALL algo.pagerank('p', 0.85, 1, 0.0, NULL, 'NATURAL', $seeds) YIELD node_id, score",
+        "CALL algo.pagerank('p', 0.85D, 1, 0.0D, NULL, 'NATURAL', $seeds) YIELD node_id, score",
         &registry,
     );
     let undirected = execute_rows(
         &mut session,
-        "CALL algo.pagerank('p', 0.85, 1, 0.0, NULL, 'UNDIRECTED', $seeds) YIELD node_id, score",
+        "CALL algo.pagerank('p', 0.85D, 1, 0.0D, NULL, 'UNDIRECTED', $seeds) YIELD node_id, score",
         &registry,
     );
     let score_for = |table: &BindingTable, node| {
@@ -385,7 +385,7 @@ fn pagerank_personalization_rejects_seed_outside_projection() {
 
     let err = session
         .execute_source(
-            "CALL algo.pagerank('p', 0.85, 10, 0.0, NULL, 'NATURAL', $seeds) YIELD node_id, score",
+            "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', $seeds) YIELD node_id, score",
             &registry,
         )
         .expect_err("out-of-projection seed rejected");
