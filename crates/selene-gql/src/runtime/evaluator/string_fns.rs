@@ -453,11 +453,11 @@ pub(super) fn eval_coalesce(
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
-    if args.is_empty() {
+    if args.len() < 2 {
         return Err(ExecutorError::FunctionArityMismatch {
             name: name.to_owned(),
-            expected: "at least 1",
-            actual: 0,
+            expected: "at least 2",
+            actual: args.len(),
             span,
         });
     }
