@@ -37,6 +37,8 @@ pub enum DataExceptionSubclass {
     InvalidCharacterValueForCast,
     /// Invalid time zone displacement value (`22009`).
     InvalidTimeZone,
+    /// Negative limit value (`22G02`).
+    NegativeLimitValue,
     /// Invalid value type (`22G03`).
     InvalidValueType,
     /// Values not comparable (`22G04`).
@@ -98,6 +100,7 @@ impl DataExceptionSubclass {
             Self::TrimError => GqlStatus::TRIM_ERROR,
             Self::InvalidCharacterValueForCast => GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST,
             Self::InvalidTimeZone => GqlStatus::INVALID_TIME_ZONE,
+            Self::NegativeLimitValue => GqlStatus::NEGATIVE_LIMIT_VALUE,
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
             Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
             Self::InvalidDatetimeFunctionFieldName => {

@@ -4,10 +4,10 @@ use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, thread};
 
 use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
-    AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry,
-    ExecutionPlan, ExecutorError, ExpectedType, GqlStatus, GqlType, LimitValue, OptimizeContext,
-    PipelineStatement, Session, Statement, StatementOutput, TypeMismatchContext, ValueExpr,
-    analyze, execute_statement, optimize, parse, plan,
+    AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, DataExceptionSubclass,
+    EmptyProcedureRegistry, ExecutionPlan, ExecutorError, ExpectedType, GqlStatus, GqlType,
+    LimitValue, OptimizeContext, PipelineStatement, Session, Statement, StatementOutput,
+    TypeMismatchContext, ValueExpr, analyze, execute_statement, optimize, parse, plan,
 };
 use selene_graph::SharedGraph;
 use serde_json::Value as JsonValue;
@@ -431,13 +431,12 @@ fn limit_parameter_negative_rejected() {
 
     assert!(matches!(
         err,
-        ExecutorError::InvalidParameterType {
-            ref expected,
-            actual: "negative integer",
+        ExecutorError::DataException {
+            subclass: DataExceptionSubclass::NegativeLimitValue,
             ..
-        } if expected == "non-negative integer"
+        }
     ));
-    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_PROCEDURE_ARGUMENT);
+    assert_eq!(err.gqlstatus(), GqlStatus::NEGATIVE_LIMIT_VALUE);
 }
 
 #[test]

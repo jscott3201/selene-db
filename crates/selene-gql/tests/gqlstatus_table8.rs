@@ -49,6 +49,7 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
         (DataExceptionSubclass::TrimError, "22027"),
         (DataExceptionSubclass::InvalidCharacterValueForCast, "22018"),
         (DataExceptionSubclass::InvalidTimeZone, "22009"),
+        (DataExceptionSubclass::NegativeLimitValue, "22G02"),
         (DataExceptionSubclass::InvalidValueType, "22G03"),
         (DataExceptionSubclass::ValuesNotComparable, "22G04"),
         (
