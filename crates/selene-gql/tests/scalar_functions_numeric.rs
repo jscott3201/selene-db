@@ -91,6 +91,17 @@ fn scalar_functions_numeric_gf01_enhanced_numeric_domain_errors_use_iso_statuses
 }
 
 #[test]
+fn scalar_functions_numeric_round_is_not_in_the_iso_numeric_function_set() {
+    let err = execute_read_result("RETURN round(1.6) AS value")
+        .expect_err("round is not in the closed scalar-function set");
+    assert!(matches!(
+        &err,
+        selene_gql::ExecutorError::UnknownFunction { name, .. } if name == "round"
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
 fn scalar_functions_numeric_gf02_trigonometric_functions_return_expected_values() {
     let cases = [
         ("RETURN sin(0) AS value", 0.0),

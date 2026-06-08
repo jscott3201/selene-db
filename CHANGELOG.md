@@ -145,6 +145,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     variant name and version-locked "not supported in vX" message strings from
     returning.
 
+### Removed
+
+- **Non-ISO `round(...)` scalar function.** The closed scalar-function runtime
+  no longer accepts `round(...)`; ISO §20.22 numeric value functions cover
+  `ABS`, `MOD`, trigonometric/logarithmic functions, `EXP`, `POWER`, `SQRT`,
+  `FLOOR`, `CEIL`, and `CEILING`, but not `ROUND`.
+
 ## [1.1.0] — 2026-05-31
 
 ### Removed
