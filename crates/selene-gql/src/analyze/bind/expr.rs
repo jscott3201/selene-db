@@ -350,11 +350,9 @@ fn is_aggregate_name(name: &selene_core::DbString) -> bool {
     [
         "count",
         "sum",
-        "average",
         "avg",
         "min",
         "max",
-        "collect",
         "collect_list",
         "stddev_pop",
         "stddev_samp",

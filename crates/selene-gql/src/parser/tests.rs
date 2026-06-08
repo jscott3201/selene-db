@@ -367,7 +367,7 @@ fn parse_rejects_non_count_aggregate_star_shapes() {
         "RETURN sum(*)",
         "RETURN count(DISTINCT *)",
         "RETURN avg(*)",
-        "RETURN collect(*)",
+        "RETURN collect_list(*)",
     ] {
         let err = parse(source).expect_err("invalid aggregate star shape should reject");
         assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
@@ -376,7 +376,11 @@ fn parse_rejects_non_count_aggregate_star_shapes() {
 
 #[test]
 fn parse_rejects_zero_argument_aggregates() {
-    for source in ["RETURN count()", "RETURN sum()", "RETURN collect(DISTINCT)"] {
+    for source in [
+        "RETURN count()",
+        "RETURN sum()",
+        "RETURN collect_list(DISTINCT)",
+    ] {
         let err = parse(source).expect_err("aggregate without value expression should reject");
         assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
     }

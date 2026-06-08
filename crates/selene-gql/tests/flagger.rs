@@ -327,15 +327,20 @@ fn gf10_iso_aggregate_functions_are_recorded_without_collect_alias() {
         assert_read_execution(source);
     }
 
-    let collect_alias = parse("UNWIND [1, 2] AS x RETURN collect(x)").expect("collect parses");
-    let observed = feature_walk(&collect_alias)
-        .into_iter()
-        .map(|feature| feature.feature_id)
-        .collect::<Vec<_>>();
-    assert!(
-        !observed.contains(&FeatureId::GF10),
-        "non-ISO collect alias must stay unattributed, observed {observed:?}"
-    );
+    for source in [
+        "UNWIND [1, 2] AS x RETURN collect(x)",
+        "UNWIND [1, 2] AS x RETURN average(x)",
+    ] {
+        let statement = parse(source).expect(source);
+        let observed = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            !observed.contains(&FeatureId::GF10),
+            "non-ISO aggregate alias must stay unattributed, observed {observed:?}"
+        );
+    }
 }
 
 #[test]

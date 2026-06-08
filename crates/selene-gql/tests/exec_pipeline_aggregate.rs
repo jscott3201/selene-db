@@ -4,7 +4,7 @@ mod exec_common;
 
 use selene_core::Value;
 
-use exec_common::{column_values, execute_read};
+use exec_common::{column_values, execute_read, execute_read_result};
 
 #[test]
 fn avg_empty_group_returns_null_not_division_by_zero() {
@@ -203,8 +203,8 @@ fn min_max_skip_null_inputs() {
 }
 
 #[test]
-fn collect_preserves_input_order() {
-    let table = execute_read("UNWIND [3, 1, 2] AS x RETURN collect(x) AS xs");
+fn collect_list_preserves_input_order() {
+    let table = execute_read("UNWIND [3, 1, 2] AS x RETURN collect_list(x) AS xs");
 
     assert_eq!(
         column_values(&table, "xs"),
@@ -217,8 +217,8 @@ fn collect_preserves_input_order() {
 }
 
 #[test]
-fn collect_includes_nulls() {
-    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN collect(x) AS xs");
+fn collect_list_includes_nulls() {
+    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN collect_list(x) AS xs");
 
     assert_eq!(
         column_values(&table, "xs"),
@@ -227,8 +227,8 @@ fn collect_includes_nulls() {
 }
 
 #[test]
-fn collect_distinct_dedups_cross_type_numeric_equivalents() {
-    let table = execute_read("UNWIND [1, 1.0, 2] AS x RETURN collect(DISTINCT x) AS xs");
+fn collect_list_distinct_dedups_cross_type_numeric_equivalents() {
+    let table = execute_read("UNWIND [1, 1.0, 2] AS x RETURN collect_list(DISTINCT x) AS xs");
     let values = column_values(&table, "xs");
 
     assert_eq!(values.len(), 1);
@@ -239,10 +239,21 @@ fn collect_distinct_dedups_cross_type_numeric_equivalents() {
 }
 
 #[test]
-fn collect_empty_returns_empty_list() {
-    let table = execute_read("MATCH (n:Missing) RETURN collect(n.age) AS xs");
+fn collect_list_empty_returns_empty_list() {
+    let table = execute_read("MATCH (n:Missing) RETURN collect_list(n.age) AS xs");
 
     assert_eq!(column_values(&table, "xs"), vec![Value::List(Vec::new())]);
+}
+
+#[test]
+fn non_iso_aggregate_aliases_are_not_in_the_aggregate_set() {
+    for source in [
+        "UNWIND [1, 2] AS x RETURN collect(x) AS xs",
+        "UNWIND [1, 2] AS x RETURN average(x) AS a",
+    ] {
+        let err = execute_read_result(source).expect_err("non-ISO aggregate alias rejects");
+        assert_eq!(err.gqlstatus().as_str(), "22G03", "{source}");
+    }
 }
 
 #[cfg(feature = "test-harness")]

@@ -661,8 +661,8 @@ record_field_type = { prop_ident ~ "::" ~ type_name }
 aggregate_expr         = { binary_aggregate_expr | general_aggregate_expr }
 general_aggregate_expr = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
 binary_aggregate_expr  = { binary_aggregate_op ~ "(" ~ expr ~ "," ~ expr ~ ")" }
-aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST" | ^"COLLECT"
-                  | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG" | ^"MIN" | ^"MAX" }
+aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST"
+                  | ^"COUNT" | ^"SUM" | ^"AVG" | ^"MIN" | ^"MAX" }
 binary_aggregate_op = { ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC" }
 star            = { "*" }
 
@@ -884,9 +884,9 @@ keyword = @{
     | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"ASC" | ^"DESC"
     | ^"START" | ^"COMMIT" | ^"ROLLBACK" | ^"UNION" | ^"INTERSECT" | ^"EXCEPT" | ^"OTHERWISE" | ^"NEXT"
     | ^"CAST" | ^"CASE" | ^"WHEN" | ^"THEN" | ^"ELSE" | ^"END"
-    | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG"
+    | ^"COUNT" | ^"SUM" | ^"AVG"
     | ^"STDDEV_SAMP" | ^"STDDEV_POP"
-    | ^"COLLECT_LIST" | ^"COLLECT"
+    | ^"COLLECT_LIST"
     | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"NULLS"
     | ^"CREATE" | ^"DROP"
     | ^"SELECT" | ^"FROM"
