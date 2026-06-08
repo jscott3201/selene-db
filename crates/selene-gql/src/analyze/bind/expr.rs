@@ -94,9 +94,19 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let operand_id = bind_value_expr(ctx, operand)?;
                 infer::unary(*op, ctx.expr_type(operand_id), operand.span())?
             }
-            ValueExpr::FunctionCall { args, .. } => {
-                bind_many(ctx, args)?;
-                AnalyzedType::Dynamic
+            ValueExpr::FunctionCall { name, args, .. } => {
+                if is_element_id_function(name) && args.len() == 1 {
+                    bind_singleton_element_variable_reference(
+                        ctx,
+                        &args[0],
+                        ElementReferenceRequirement::NodeOrEdge,
+                        "ELEMENT_ID argument",
+                    )?;
+                    AnalyzedType::Resolved(crate::GqlType::String)
+                } else {
+                    bind_many(ctx, args)?;
+                    AnalyzedType::Dynamic
+                }
             }
             ValueExpr::DurationBetween { start, end, .. } => {
                 bind_value_expr(ctx, start)?;
@@ -235,6 +245,10 @@ fn bind_property_exists_target(
         ElementReferenceRequirement::NodeOrEdge,
         "PROPERTY_EXISTS target",
     )
+}
+
+fn is_element_id_function(name: &crate::NonEmpty<selene_core::DbString>) -> bool {
+    name.len() == 1 && name.first().as_str().eq_ignore_ascii_case("element_id")
 }
 
 fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {

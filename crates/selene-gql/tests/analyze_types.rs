@@ -174,6 +174,15 @@ fn function_call_expression_stays_dynamic_until_scalar_dispatch() {
 }
 
 #[test]
+fn element_id_expression_is_string() {
+    let analyzed = analyze_one("MATCH (n) RETURN element_id(n) AS id").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "id"),
+        AnalyzedType::Resolved(GqlType::String)
+    );
+}
+
+#[test]
 fn count_subquery_is_integer() {
     let analyzed = analyze_one("MATCH (n) RETURN COUNT { MATCH (n)-[:K]->(m) } AS c").unwrap();
     assert_eq!(
