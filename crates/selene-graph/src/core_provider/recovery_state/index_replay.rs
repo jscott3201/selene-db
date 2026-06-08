@@ -380,6 +380,7 @@ pub(super) const fn typed_kind_from(kind: SchemaPropertyIndexKind) -> TypedIndex
         SchemaPropertyIndexKind::ZonedDateTime => TypedIndexKind::ZonedDateTime,
         SchemaPropertyIndexKind::LocalTime => TypedIndexKind::LocalTime,
         SchemaPropertyIndexKind::ZonedTime => TypedIndexKind::ZonedTime,
+        SchemaPropertyIndexKind::Duration => TypedIndexKind::Duration,
         SchemaPropertyIndexKind::Uuid => TypedIndexKind::Uuid,
     }
 }

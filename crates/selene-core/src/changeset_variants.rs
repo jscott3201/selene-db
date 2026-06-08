@@ -180,6 +180,7 @@ impl SchemaChange {
                 changeset_variant_string("schema.all.property.e"),
                 changeset_variant_string("schema.all.property.f"),
                 changeset_variant_string("schema.all.property.g"),
+                changeset_variant_string("schema.all.property.h"),
             ]),
             kinds: SmallVec::from_vec(vec![
                 SchemaPropertyIndexKind::U64,
@@ -189,6 +190,7 @@ impl SchemaChange {
                 SchemaPropertyIndexKind::ZonedDateTime,
                 SchemaPropertyIndexKind::LocalTime,
                 SchemaPropertyIndexKind::ZonedTime,
+                SchemaPropertyIndexKind::Duration,
             ]),
             name: Some(changeset_variant_string("schema.all.composite.index")),
         },

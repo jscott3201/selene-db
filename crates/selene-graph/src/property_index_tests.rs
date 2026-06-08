@@ -461,12 +461,15 @@ fn apply_node_update_moves_temporal_time_index_keys() {
     let zoned_dt = db_string("pi.temporal.update.zoned-dt").unwrap();
     let local_time = db_string("pi.temporal.update.local-time").unwrap();
     let zoned_time = db_string("pi.temporal.update.zoned-time").unwrap();
+    let duration = db_string("pi.temporal.update.duration").unwrap();
     let old_zdt = zoned("2026-05-07T09:00:00-04[America/New_York]");
     let new_zdt = zoned("2026-05-07T12:00:00-04[America/New_York]");
     let old_zt = zoned("2026-05-07T09:30:00-04[America/New_York]");
     let new_zt = zoned("2026-05-07T12:30:00-04[America/New_York]");
     let old_lt = "09:30:00".parse().unwrap();
     let new_lt = "12:30:00".parse().unwrap();
+    let old_duration = Value::Duration(Box::new("PT1H".parse().unwrap()));
+    let new_duration = Value::Duration(Box::new("PT2H".parse().unwrap()));
     let old_props = property_map([
         (
             zoned_dt.clone(),
@@ -477,6 +480,7 @@ fn apply_node_update_moves_temporal_time_index_keys() {
             zoned_time.clone(),
             Value::ZonedTime(Box::new(old_zt.clone())),
         ),
+        (duration.clone(), old_duration.clone()),
     ]);
     let new_props = property_map([
         (
@@ -488,6 +492,7 @@ fn apply_node_update_moves_temporal_time_index_keys() {
             zoned_time.clone(),
             Value::ZonedTime(Box::new(new_zt.clone())),
         ),
+        (duration.clone(), new_duration.clone()),
     ]);
     let labels = LabelSet::single(label.clone());
     let mut indexes = PropertyIndexMap::default();
@@ -502,6 +507,10 @@ fn apply_node_update_moves_temporal_time_index_keys() {
     indexes.insert(
         (label.clone(), zoned_time.clone()),
         entry(TypedIndexKind::ZonedTime),
+    );
+    indexes.insert(
+        (label.clone(), duration.clone()),
+        entry(TypedIndexKind::Duration),
     );
     apply_node_create(&mut indexes, &labels, &old_props, 12).unwrap();
 
@@ -555,12 +564,14 @@ fn apply_node_update_moves_temporal_time_index_keys() {
     assert!(
         rows(
             &indexes,
-            label,
+            label.clone(),
             zoned_time,
             &Value::ZonedTime(Box::new(new_zt))
         )
         .contains(12)
     );
+    assert!(rows(&indexes, label.clone(), duration.clone(), &old_duration).is_empty());
+    assert!(rows(&indexes, label, duration, &new_duration).contains(12));
 }
 
 #[test]

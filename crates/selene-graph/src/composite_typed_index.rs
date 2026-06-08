@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
 use roaring::RoaringBitmap;
-use selene_core::{DbString, Value};
+use selene_core::{DbString, DurationOrderKey, Value, duration_order_key};
 use smallvec::SmallVec;
 
 use crate::typed_index::{NotNanError, NotNanF32, NotNanF64, TypedIndexKind, TypedIndexValueError};
@@ -43,6 +43,8 @@ pub enum CompositeKeyComponent {
     LocalTime(jiff::civil::Time),
     /// Zoned time component.
     ZonedTime(jiff::Zoned),
+    /// Duration component.
+    Duration(DurationOrderKey),
     /// UUID component.
     Uuid(uuid::Uuid),
 }
@@ -65,6 +67,7 @@ impl Ord for CompositeKeyComponent {
             (K::ZonedDateTime(lhs), K::ZonedDateTime(rhs)) => lhs.cmp(rhs),
             (K::LocalTime(lhs), K::LocalTime(rhs)) => lhs.cmp(rhs),
             (K::ZonedTime(lhs), K::ZonedTime(rhs)) => lhs.cmp(rhs),
+            (K::Duration(lhs), K::Duration(rhs)) => lhs.cmp(rhs),
             (K::Uuid(lhs), K::Uuid(rhs)) => lhs.cmp(rhs),
             _ => self.discriminant().cmp(&rhs.discriminant()),
         }
@@ -95,6 +98,7 @@ impl Hash for CompositeKeyComponent {
             Self::ZonedDateTime(value) => value.hash(state),
             Self::LocalTime(value) => value.hash(state),
             Self::ZonedTime(value) => value.hash(state),
+            Self::Duration(value) => value.hash(state),
             Self::Uuid(value) => value.hash(state),
         }
     }
@@ -117,7 +121,8 @@ impl CompositeKeyComponent {
             Self::ZonedDateTime(_) => 11,
             Self::LocalTime(_) => 12,
             Self::ZonedTime(_) => 13,
-            Self::Uuid(_) => 14,
+            Self::Duration(_) => 14,
+            Self::Uuid(_) => 15,
         }
     }
 }
@@ -337,6 +342,9 @@ fn component_from_value(
         (TypedIndexKind::ZonedTime, Value::ZonedTime(value)) => {
             Ok(CompositeKeyComponent::ZonedTime((**value).clone()))
         }
+        (TypedIndexKind::Duration, Value::Duration(value)) => {
+            Ok(CompositeKeyComponent::Duration(duration_order_key(value)))
+        }
         (TypedIndexKind::Uuid, Value::Uuid(value)) => Ok(CompositeKeyComponent::Uuid(*value)),
         (expected_kind, value) => Err(TypedIndexValueError::KindMismatch {
             expected_kind,
@@ -421,6 +429,22 @@ mod tests {
         assert_eq!(
             component,
             CompositeKeyComponent::F32(NotNanF32::new(1.25_f32).unwrap())
+        );
+    }
+
+    #[test]
+    fn component_from_value_duration_kind() {
+        let value = Value::Duration(Box::new("PT1H2S".parse().unwrap()));
+
+        let component = component_from_value(TypedIndexKind::Duration, &value)
+            .expect("duration component coerces");
+
+        assert_eq!(
+            component,
+            CompositeKeyComponent::Duration(selene_core::duration_order_key(match &value {
+                Value::Duration(value) => value,
+                _ => unreachable!("test value is duration"),
+            }))
         );
     }
 

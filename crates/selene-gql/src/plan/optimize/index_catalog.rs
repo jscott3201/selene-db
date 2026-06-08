@@ -248,6 +248,8 @@ pub enum IndexKind {
     LocalTime,
     /// Zoned time typed index.
     ZonedTime,
+    /// Duration typed index.
+    Duration,
     /// UUID typed index.
     Uuid,
 }

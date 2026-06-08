@@ -135,7 +135,9 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::ZonedDateTime(lhs), Value::ZonedDateTime(rhs)) => lhs.cmp(rhs),
         (Value::LocalTime(lhs), Value::LocalTime(rhs)) => lhs.cmp(rhs),
         (Value::ZonedTime(lhs), Value::ZonedTime(rhs)) => lhs.cmp(rhs),
-        (Value::Duration(_), Value::Duration(_)) => duration_key(lhs).cmp(&duration_key(rhs)),
+        (Value::Duration(lhs), Value::Duration(rhs)) => {
+            selene_core::duration_order_key(lhs).cmp(&selene_core::duration_order_key(rhs))
+        }
         (Value::Bytes(lhs), Value::Bytes(rhs)) => lhs.as_ref().cmp(rhs.as_ref()),
         (Value::Uuid(lhs), Value::Uuid(rhs)) => lhs.cmp(rhs),
         (Value::NodeRef(lhs), Value::NodeRef(rhs)) => lhs.cmp(rhs),
@@ -317,24 +319,6 @@ fn compare_values(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::Null, _) | (_, Value::Null) => None,
         _ => compare_non_null(lhs, rhs),
     }
-}
-
-fn duration_key(value: &selene_core::Value) -> (i16, i32, i32, i32, i32, i64, i64, i64, i64, i64) {
-    let Value::Duration(value) = value else {
-        unreachable!("duration_key only receives Value::Duration");
-    };
-    (
-        value.get_years(),
-        value.get_months(),
-        value.get_weeks(),
-        value.get_days(),
-        value.get_hours(),
-        value.get_minutes(),
-        value.get_seconds(),
-        value.get_milliseconds(),
-        value.get_microseconds(),
-        value.get_nanoseconds(),
-    )
 }
 
 fn numeric_equal(lhs: &Value, rhs: &Value) -> Option<bool> {

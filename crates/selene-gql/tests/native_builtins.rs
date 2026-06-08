@@ -341,6 +341,7 @@ fn create_index_accepts_temporal_time_kind_aliases() {
         ("occurred_at", "zoned_datetime"),
         ("wall_time", "local_time"),
         ("clock_time", "zoned_time"),
+        ("span", "duration"),
     ] {
         session
             .execute_source(
@@ -356,9 +357,11 @@ fn create_index_accepts_temporal_time_kind_aliases() {
     assert!(properties.contains(&"occurred_at".to_owned()));
     assert!(properties.contains(&"wall_time".to_owned()));
     assert!(properties.contains(&"clock_time".to_owned()));
+    assert!(properties.contains(&"span".to_owned()));
     assert!(kinds.contains(&"zoned_datetime".to_owned()));
     assert!(kinds.contains(&"local_time".to_owned()));
     assert!(kinds.contains(&"zoned_time".to_owned()));
+    assert!(kinds.contains(&"duration".to_owned()));
 }
 
 #[test]

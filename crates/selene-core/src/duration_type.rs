@@ -20,6 +20,14 @@ pub enum DurationValueFamily {
     DayTime,
 }
 
+/// Ordered key used for duration comparisons and duration-backed indexes.
+///
+/// ISO duration values are field-based rather than a single fixed number of
+/// nanoseconds, so the engine orders them by their stored field tuple. Keeping
+/// this key in core lets GQL runtime ordering and graph indexes share one
+/// durable comparison definition.
+pub type DurationOrderKey = (i16, i32, i32, i32, i32, i64, i64, i64, i64, i64);
+
 impl DurationTypeQualifier {
     /// Canonical GQL spelling for this qualifier.
     #[must_use]
@@ -61,4 +69,21 @@ pub fn duration_value_family(value: &jiff::Span) -> Option<DurationValueFamily> 
         (false, true) => Some(DurationValueFamily::DayTime),
         (true, true) => None,
     }
+}
+
+/// Return the canonical ordered key for a duration span.
+#[must_use]
+pub fn duration_order_key(value: &jiff::Span) -> DurationOrderKey {
+    (
+        value.get_years(),
+        value.get_months(),
+        value.get_weeks(),
+        value.get_days(),
+        value.get_hours(),
+        value.get_minutes(),
+        value.get_seconds(),
+        value.get_milliseconds(),
+        value.get_microseconds(),
+        value.get_nanoseconds(),
+    )
 }

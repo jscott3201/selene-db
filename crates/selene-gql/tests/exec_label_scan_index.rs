@@ -335,6 +335,56 @@ fn exact_numeric_typed_indexes_return_same_rows_as_linear() {
 }
 
 #[test]
+fn duration_typed_index_returns_same_rows_as_linear() {
+    let graph = SharedGraph::new(GraphId::new(907));
+    let event = db_string("Event");
+    let elapsed = db_string("elapsed");
+    {
+        let mut txn = graph.begin_write();
+        {
+            let mut m = txn.mutator();
+            for value in ["PT30M", "PT1H", "PT2H", "P1M"] {
+                m.create_node(
+                    LabelSet::single(event.clone()),
+                    props([(
+                        elapsed.clone(),
+                        Value::Duration(Box::new(value.parse().unwrap())),
+                    )]),
+                )
+                .unwrap();
+            }
+        }
+        txn.commit().unwrap();
+    }
+    graph
+        .create_property_index(event, elapsed, TypedIndexKind::Duration)
+        .unwrap();
+    let source = "MATCH (n:Event) WHERE n.elapsed >= DURATION 'PT1H' AND n.elapsed < DURATION 'PT3H' RETURN n";
+
+    let mut indexed = Session::new(&graph);
+    let indexed_rows = node_ids(&rows(
+        indexed
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    ));
+
+    let mut linear = Session::new(&graph).without_index_selection();
+    let linear_rows = node_ids(&rows(
+        linear
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    ));
+
+    assert_eq!(indexed_rows, linear_rows);
+    assert_eq!(indexed_rows.len(), 2);
+    let dump = explain_dump(&mut indexed, source);
+    assert!(
+        dump.contains("TypedIndexRange"),
+        "duration range should render TypedIndexRange; got:\n{dump}"
+    );
+}
+
+#[test]
 fn explain_renders_label_index_by_default_and_linear_when_disabled() {
     let (graph, _persons) = build_graph();
     let source = "MATCH (n:Person) RETURN n";

@@ -285,6 +285,7 @@ fn index_kind_from(kind: TypedIndexKind) -> IndexKind {
         TypedIndexKind::ZonedDateTime => IndexKind::ZonedDateTime,
         TypedIndexKind::LocalTime => IndexKind::LocalTime,
         TypedIndexKind::ZonedTime => IndexKind::ZonedTime,
+        TypedIndexKind::Duration => IndexKind::Duration,
         TypedIndexKind::Uuid => IndexKind::Uuid,
     }
 }

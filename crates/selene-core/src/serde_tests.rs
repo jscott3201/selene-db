@@ -334,6 +334,7 @@ fn schema_change_postcard_round_trip() {
                 dbs("serde.schema.indexed.e"),
                 dbs("serde.schema.indexed.f"),
                 dbs("serde.schema.indexed.g"),
+                dbs("serde.schema.indexed.h"),
             ],
             kinds: smallvec![
                 SchemaPropertyIndexKind::U64,
@@ -343,6 +344,7 @@ fn schema_change_postcard_round_trip() {
                 SchemaPropertyIndexKind::ZonedDateTime,
                 SchemaPropertyIndexKind::LocalTime,
                 SchemaPropertyIndexKind::ZonedTime,
+                SchemaPropertyIndexKind::Duration,
             ],
             name: Some(dbs("serde.schema.composite.index.name")),
         },

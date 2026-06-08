@@ -99,9 +99,10 @@ fn parse_kind(value: DbString) -> Result<TypedIndexKind, ProcedureError> {
         "zoned_datetime" | "zoneddatetime" => Ok(TypedIndexKind::ZonedDateTime),
         "local_time" | "localtime" => Ok(TypedIndexKind::LocalTime),
         "zoned_time" | "zonedtime" => Ok(TypedIndexKind::ZonedTime),
+        "duration" => Ok(TypedIndexKind::Duration),
         "uuid" => Ok(TypedIndexKind::Uuid),
         _ => Err(invalid_arg(format!(
-            "unknown index kind '{raw}'; expected one of bool, i64, u64, i128, u128, decimal, f32, f64, string, date, local_datetime, zoned_datetime, local_time, zoned_time, uuid"
+            "unknown index kind '{raw}'; expected one of bool, i64, u64, i128, u128, decimal, f32, f64, string, date, local_datetime, zoned_datetime, local_time, zoned_time, duration, uuid"
         ))),
     }
 }

@@ -217,6 +217,9 @@ fn index_kind_for_property(
         PropertyValueType::ZonedDateTime => Ok(TypedIndexKind::ZonedDateTime),
         PropertyValueType::LocalTime => Ok(TypedIndexKind::LocalTime),
         PropertyValueType::ZonedTime => Ok(TypedIndexKind::ZonedTime),
+        PropertyValueType::Duration
+        | PropertyValueType::DurationYearToMonth
+        | PropertyValueType::DurationDayToSecond => Ok(TypedIndexKind::Duration),
         PropertyValueType::Uuid => Ok(TypedIndexKind::Uuid),
         value_type => Err(ExecutorError::GraphTypeViolation {
             message: format!(
