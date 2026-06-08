@@ -17,7 +17,7 @@ use super::{
         eval_binary, eval_float_power, numeric_to_f64,
     },
     concat_ops::ConcatCaps,
-    duration_fns, identity_length_fns, json_fns,
+    duration_fns, identity_length_fns, json_fns, modulus_fns,
     string_fns::{self, eval_fixed_args, eval_range_args},
     temporal_fns, uuid_fns,
 };
@@ -152,16 +152,11 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
-        "mod" => {
-            let args = eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?;
-            eval_binary(
-                BinaryOp::Mod,
-                args[0].clone(),
-                args[1].clone(),
-                span,
-                ConcatCaps::from_impl_defined(ctx.impl_defined_caps()),
-            )
-        }
+        "mod" => modulus_fns::eval_mod(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+            ctx,
+        ),
         "sqrt" => eval_sqrt(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
