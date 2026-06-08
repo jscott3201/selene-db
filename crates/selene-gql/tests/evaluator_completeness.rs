@@ -182,7 +182,8 @@ fn scalar_string_and_collection_functions_dispatch() {
         "RETURN length('abc') AS len, left('abcdef', 3) AS prefix, right('abcdef', 3) AS suffix, upper('ab') AS up, \
          lower('AB') AS low, trim(' x ') AS trimmed, coalesce(null, 'x') AS co, \
          size([1, 2, 3]) AS sz, \
-         char_length('café') AS char_len, character_length('日本') AS character_len",
+         char_length('café') AS char_len, character_length('日本') AS character_len, \
+         byte_length(X'CAFE00') AS byte_len, octet_length(X'CAFE') AS octet_len",
     );
 
     assert_eq!(column_values(&table, "len"), vec![Value::Int(3)]);
@@ -206,6 +207,8 @@ fn scalar_string_and_collection_functions_dispatch() {
         column_values(&table, "trimmed"),
         vec![Value::String(db_string("x"))]
     );
+    assert_eq!(column_values(&table, "byte_len"), vec![Value::Int(3)]);
+    assert_eq!(column_values(&table, "octet_len"), vec![Value::Int(2)]);
     assert_eq!(
         column_values(&table, "co"),
         vec![Value::String(db_string("x"))]

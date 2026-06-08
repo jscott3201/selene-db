@@ -351,3 +351,58 @@ fn char_length_has_no_optional_feature_attribution() {
         "char_length should not record an optional feature, observed {features:?}"
     );
 }
+
+#[test]
+fn byte_length_counts_octets_and_alias_matches() {
+    let cases = [
+        ("RETURN byte_length(X'') AS value", Value::Int(0)),
+        ("RETURN byte_length(X'CAFE00') AS value", Value::Int(3)),
+        ("RETURN OCTET_LENGTH(X'CA FE') AS value", Value::Int(2)),
+    ];
+
+    for (source, expected) in cases {
+        assert_eq!(single_value(source, "value"), expected, "source: {source}");
+    }
+
+    assert_eq!(
+        single_value("RETURN byte_length(X'CAFE') AS value", "value"),
+        single_value("RETURN octet_length(X'CAFE') AS value", "value")
+    );
+}
+
+#[test]
+fn byte_length_propagates_null_and_rejects_invalid_values() {
+    assert_eq!(
+        single_value("RETURN byte_length(null) AS value", "value"),
+        Value::Null
+    );
+
+    for source in [
+        "RETURN byte_length('café') AS value",
+        "RETURN octet_length(1) AS value",
+        "RETURN byte_length([X'CA']) AS value",
+        "MATCH (n:Person) RETURN octet_length(n) AS value LIMIT 1",
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
+fn byte_length_rejects_wrong_arity() {
+    assert_status("RETURN byte_length() AS value", "22G03");
+    assert_status("RETURN octet_length(X'CA', X'FE') AS value", "22G03");
+}
+
+#[test]
+fn byte_length_has_no_optional_feature_attribution() {
+    let statement = parse("RETURN octet_length(X'CAFE') AS value").expect("source parses");
+    let features = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        features.is_empty(),
+        "byte_length should not record an optional feature, observed {features:?}"
+    );
+}
