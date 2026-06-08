@@ -305,7 +305,11 @@ fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Executo
     eval_float_power(lhs, rhs, span)
 }
 
-fn eval_float_power(lhs: f64, rhs: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
+pub(super) fn eval_float_power(
+    lhs: f64,
+    rhs: f64,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     if lhs.is_nan() || rhs.is_nan() {
         return finite_power_result(f64::NAN, span);
     }
