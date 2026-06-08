@@ -31,9 +31,12 @@ fn status_for(source: &str) -> String {
 #[test]
 fn data_exception_subclasses_map_to_folded_table8_codes() {
     let cases = [
+        (DataExceptionSubclass::DataException, "22000"),
         (DataExceptionSubclass::StringDataRightTruncation, "22001"),
         (DataExceptionSubclass::NumericValueOutOfRange, "22003"),
+        (DataExceptionSubclass::NullValueNotAllowed, "22004"),
         (DataExceptionSubclass::InvalidDatetimeFormat, "22007"),
+        (DataExceptionSubclass::SubstringError, "22011"),
         (DataExceptionSubclass::DivisionByZero, "22012"),
         (
             DataExceptionSubclass::InvalidArgumentForNaturalLogarithm,
@@ -43,6 +46,9 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
             DataExceptionSubclass::InvalidArgumentForPowerFunction,
             "2201F",
         ),
+        (DataExceptionSubclass::TrimError, "22027"),
+        (DataExceptionSubclass::InvalidCharacterValueForCast, "22018"),
+        (DataExceptionSubclass::InvalidTimeZone, "22009"),
         (DataExceptionSubclass::InvalidValueType, "22G03"),
         (DataExceptionSubclass::ValuesNotComparable, "22G04"),
         (
@@ -90,6 +96,7 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
             DataExceptionSubclass::EdgePropertiesExceedSupportedMaximum,
             "22G0T",
         ),
+        (DataExceptionSubclass::RecordFieldsDoNotMatch, "22G0U"),
         (DataExceptionSubclass::RecordDataFieldUnassignable, "22G0X"),
         (DataExceptionSubclass::MalformedPath, "22G0Z"),
     ];

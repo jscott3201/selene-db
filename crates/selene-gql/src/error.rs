@@ -461,6 +461,11 @@ mod tests {
             ),
             (GqlStatus::LIST_DATA_RIGHT_TRUNCATION, "22G0B", *b"22"),
             (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
+            (
+                GqlStatus::INVALID_NUMBER_OF_PATHS_OR_GROUPS,
+                "22G0F",
+                *b"22",
+            ),
             (GqlStatus::INVALID_DURATION_FORMAT, "22G0H", *b"22"),
             (GqlStatus::PATH_DATA_RIGHT_TRUNCATION, "22G10", *b"22"),
             (
