@@ -102,8 +102,8 @@ pub(super) fn eval_localtime(ctx: &EvalCtx<'_, '_, '_, '_>) -> Result<Value, Exe
     Ok(Value::LocalTime(now_zoned(ctx).time()))
 }
 
-/// `LOCAL_TIME([string])`: current local time with no argument, or a local time
-/// parsed from a time string argument.
+/// `TIME([string])` / `LOCAL_TIME([string])`: current local time with no
+/// argument, or a local time parsed from a time string argument.
 pub(super) fn eval_local_time_constructor(
     args: Vec<Value>,
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -119,8 +119,9 @@ pub(super) fn eval_local_time_constructor(
     }
 }
 
-/// `LOCAL_DATETIME([string])`: current local datetime with no argument, or a
-/// local datetime parsed from a datetime string argument.
+/// `DATETIME([string])` / `LOCAL_DATETIME([string])`: current local datetime
+/// with no argument, or a local datetime parsed from a datetime string
+/// argument.
 pub(super) fn eval_local_datetime_constructor(
     args: Vec<Value>,
     ctx: &EvalCtx<'_, '_, '_, '_>,

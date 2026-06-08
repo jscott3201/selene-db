@@ -413,7 +413,7 @@ pub(super) fn eval_function_call(
             ctx,
             span,
         ),
-        "local_datetime" => temporal_fns::eval_local_datetime_constructor(
+        "datetime" | "local_datetime" => temporal_fns::eval_local_datetime_constructor(
             eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
             ctx,
             span,
@@ -442,7 +442,7 @@ pub(super) fn eval_function_call(
             ctx,
             span,
         ),
-        "local_time" => temporal_fns::eval_local_time_constructor(
+        "time" | "local_time" => temporal_fns::eval_local_time_constructor(
             eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
             ctx,
             span,

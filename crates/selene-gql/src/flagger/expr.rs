@@ -182,6 +182,11 @@ fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
         "cardinality" => Some(FeatureId::GF12),
         "size" => Some(FeatureId::GF13),
         "duration" | "duration_between" => Some(FeatureId::GV41),
+        "current_date" | "date" | "datetime" | "local_datetime" | "localtimestamp" | "time"
+        | "local_time" | "localtime" => Some(FeatureId::GV39),
+        "current_time" | "current_timestamp" | "zoned_datetime" | "zoned_time" => {
+            Some(FeatureId::GV40)
+        }
         "uuid" | "uuid_v4" | "uuid_v7" => Some(FeatureId::IM_UUID),
         "json"
         | "json_parse"
