@@ -387,6 +387,21 @@ fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
                 push_index_entries(&mut entries, IndexedValue::U64(*key), bitmap.iter());
             }
         }
+        TypedIndex::I128(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::I128(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::U128(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::U128(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::Decimal(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::Decimal(*key), bitmap.iter());
+            }
+        }
         TypedIndex::F64(index) => {
             for (key, bitmap) in index {
                 push_index_entries(&mut entries, IndexedValue::F64(*key), bitmap.iter());
@@ -510,6 +525,9 @@ enum IndexedValue {
     Bool(bool),
     I64(i64),
     U64(u64),
+    I128(i128),
+    U128(u128),
+    Decimal(rust_decimal::Decimal),
     F64(NotNanF64),
     String(DbString),
     Date(jiff::civil::Date),
@@ -522,6 +540,9 @@ fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
         (IndexedValue::Bool(expected), Value::Bool(actual)) => expected == *actual,
         (IndexedValue::I64(expected), Value::Int(actual)) => expected == *actual,
         (IndexedValue::U64(expected), Value::Uint(actual)) => expected == *actual,
+        (IndexedValue::I128(expected), Value::Int128(actual)) => expected == *actual,
+        (IndexedValue::U128(expected), Value::Uint128(actual)) => expected == *actual,
+        (IndexedValue::Decimal(expected), Value::Decimal(actual)) => expected == *actual,
         (IndexedValue::F64(expected), Value::Float(actual)) => {
             NotNanF64::new(*actual).is_ok_and(|actual| actual == expected)
         }
@@ -540,6 +561,9 @@ fn component_matches_value(component: &CompositeKeyComponent, value: &Value) -> 
         (CompositeKeyComponent::Bool(expected), Value::Bool(actual)) => expected == actual,
         (CompositeKeyComponent::I64(expected), Value::Int(actual)) => expected == actual,
         (CompositeKeyComponent::U64(expected), Value::Uint(actual)) => expected == actual,
+        (CompositeKeyComponent::I128(expected), Value::Int128(actual)) => expected == actual,
+        (CompositeKeyComponent::U128(expected), Value::Uint128(actual)) => expected == actual,
+        (CompositeKeyComponent::Decimal(expected), Value::Decimal(actual)) => expected == actual,
         (CompositeKeyComponent::F64(expected), Value::Float(actual)) => {
             NotNanF64::new(*actual).is_ok_and(|actual| actual == *expected)
         }

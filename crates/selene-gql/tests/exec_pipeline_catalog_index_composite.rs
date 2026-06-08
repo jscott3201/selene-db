@@ -126,7 +126,8 @@ fn create_sensor_type(graph: &SharedGraph) {
         graph,
         "CREATE NODE TYPE :Sensor \
          (ts :: INT64, reading_count :: UINT64, location :: STRING, value :: STRING, \
-          active :: BOOLEAN, tags :: LIST<STRING>)",
+          active :: BOOLEAN, signed :: INT128, unsigned :: UINT128, amount :: DECIMAL, \
+          tags :: LIST<STRING>)",
     )
     .unwrap();
 }
@@ -271,11 +272,16 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
         "CREATE INDEX reading_count_ts ON :Sensor(reading_count, ts)",
     )
     .unwrap();
+    run_ddl(
+        &graph,
+        "CREATE INDEX exact_numeric ON :Sensor(signed, unsigned, amount)",
+    )
+    .unwrap();
     let snapshot = graph.read();
     let rows = snapshot
         .iter_composite_property_index_entries()
         .collect::<Vec<_>>();
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 3);
     assert!(
         rows.iter()
             .any(|row| row.2.as_slice() == [TypedIndexKind::Bool, TypedIndexKind::I64])
@@ -284,6 +290,12 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
         rows.iter()
             .any(|row| row.2.as_slice() == [TypedIndexKind::U64, TypedIndexKind::I64])
     );
+    assert!(rows.iter().any(|row| row.2.as_slice()
+        == [
+            TypedIndexKind::I128,
+            TypedIndexKind::U128,
+            TypedIndexKind::Decimal
+        ]));
     drop(snapshot);
 
     let unsupported = graph_type_violation(&graph, "CREATE INDEX bad ON :Sensor(tags, ts)");

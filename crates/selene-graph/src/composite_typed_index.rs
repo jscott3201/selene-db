@@ -21,6 +21,12 @@ pub enum CompositeKeyComponent {
     I64(i64),
     /// Unsigned integer component.
     U64(u64),
+    /// Signed 128-bit integer component.
+    I128(i128),
+    /// Unsigned 128-bit integer component.
+    U128(u128),
+    /// Fixed-precision decimal component.
+    Decimal(rust_decimal::Decimal),
     /// Floating-point component with NaN excluded.
     F64(NotNanF64),
     /// Database-string component.
@@ -40,6 +46,9 @@ impl Ord for CompositeKeyComponent {
             (K::Bool(lhs), K::Bool(rhs)) => lhs.cmp(rhs),
             (K::I64(lhs), K::I64(rhs)) => lhs.cmp(rhs),
             (K::U64(lhs), K::U64(rhs)) => lhs.cmp(rhs),
+            (K::I128(lhs), K::I128(rhs)) => lhs.cmp(rhs),
+            (K::U128(lhs), K::U128(rhs)) => lhs.cmp(rhs),
+            (K::Decimal(lhs), K::Decimal(rhs)) => lhs.cmp(rhs),
             (K::F64(lhs), K::F64(rhs)) => lhs.cmp(rhs),
             (K::String(lhs), K::String(rhs)) => lhs.cmp(rhs),
             (K::Date(lhs), K::Date(rhs)) => lhs.cmp(rhs),
@@ -63,6 +72,9 @@ impl Hash for CompositeKeyComponent {
             Self::Bool(value) => value.hash(state),
             Self::I64(value) => value.hash(state),
             Self::U64(value) => value.hash(state),
+            Self::I128(value) => value.hash(state),
+            Self::U128(value) => value.hash(state),
+            Self::Decimal(value) => value.hash(state),
             Self::F64(value) => value.hash(state),
             Self::String(value) => value.hash(state),
             Self::Date(value) => value.hash(state),
@@ -78,11 +90,14 @@ impl CompositeKeyComponent {
             Self::Bool(_) => 0,
             Self::I64(_) => 1,
             Self::U64(_) => 2,
-            Self::F64(_) => 3,
-            Self::String(_) => 4,
-            Self::Date(_) => 5,
-            Self::LocalDateTime(_) => 6,
-            Self::Uuid(_) => 7,
+            Self::I128(_) => 3,
+            Self::U128(_) => 4,
+            Self::Decimal(_) => 5,
+            Self::F64(_) => 6,
+            Self::String(_) => 7,
+            Self::Date(_) => 8,
+            Self::LocalDateTime(_) => 9,
+            Self::Uuid(_) => 10,
         }
     }
 }
@@ -271,6 +286,11 @@ fn component_from_value(
         (TypedIndexKind::Bool, Value::Bool(value)) => Ok(CompositeKeyComponent::Bool(*value)),
         (TypedIndexKind::I64, Value::Int(value)) => Ok(CompositeKeyComponent::I64(*value)),
         (TypedIndexKind::U64, Value::Uint(value)) => Ok(CompositeKeyComponent::U64(*value)),
+        (TypedIndexKind::I128, Value::Int128(value)) => Ok(CompositeKeyComponent::I128(*value)),
+        (TypedIndexKind::U128, Value::Uint128(value)) => Ok(CompositeKeyComponent::U128(*value)),
+        (TypedIndexKind::Decimal, Value::Decimal(value)) => {
+            Ok(CompositeKeyComponent::Decimal(*value))
+        }
         (TypedIndexKind::F64, Value::Float(value)) => NotNanF64::new(*value)
             .map(CompositeKeyComponent::F64)
             .map_err(|NotNanError| TypedIndexValueError::NaN {
@@ -297,6 +317,10 @@ mod tests {
     use smallvec::smallvec;
 
     use super::*;
+
+    fn decimal(value: &str) -> rust_decimal::Decimal {
+        value.parse().expect("test decimal parses")
+    }
 
     #[test]
     fn component_from_value_string_kind() {
@@ -330,6 +354,27 @@ mod tests {
             component_from_value(TypedIndexKind::U64, &value).expect("u64 component coerces");
 
         assert_eq!(component, CompositeKeyComponent::U64(42));
+    }
+
+    #[test]
+    fn component_from_value_exact_numeric_kinds() {
+        let signed = Value::Int128(i128::MIN + 42);
+        let unsigned = Value::Uint128(u128::MAX - 42);
+        let amount = Value::Decimal(decimal("42.25"));
+
+        assert_eq!(
+            component_from_value(TypedIndexKind::I128, &signed).expect("i128 component coerces"),
+            CompositeKeyComponent::I128(i128::MIN + 42)
+        );
+        assert_eq!(
+            component_from_value(TypedIndexKind::U128, &unsigned).expect("u128 component coerces"),
+            CompositeKeyComponent::U128(u128::MAX - 42)
+        );
+        assert_eq!(
+            component_from_value(TypedIndexKind::Decimal, &amount)
+                .expect("decimal component coerces"),
+            CompositeKeyComponent::Decimal(decimal("42.25"))
+        );
     }
 
     #[test]

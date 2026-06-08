@@ -180,6 +180,9 @@ fn gql_type_to_index_kind(
         GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
             Ok(TypedIndexKind::U64)
         }
+        GqlType::Int128 => Ok(TypedIndexKind::I128),
+        GqlType::Uint128 => Ok(TypedIndexKind::U128),
+        GqlType::Decimal => Ok(TypedIndexKind::Decimal),
         GqlType::Float64 => Ok(TypedIndexKind::F64),
         GqlType::Date => Ok(TypedIndexKind::Date),
         GqlType::LocalDateTime => Ok(TypedIndexKind::LocalDateTime),
@@ -287,6 +290,9 @@ pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
         TypedIndexKind::Bool => "bool",
         TypedIndexKind::I64 => "i64",
         TypedIndexKind::U64 => "u64",
+        TypedIndexKind::I128 => "i128",
+        TypedIndexKind::U128 => "u128",
+        TypedIndexKind::Decimal => "decimal",
         TypedIndexKind::F64 => "f64",
         TypedIndexKind::String => "string",
         TypedIndexKind::Date => "date",

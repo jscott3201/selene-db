@@ -448,6 +448,113 @@ fn uint_typed_parameter_with_compatible_declaration_fires() {
 }
 
 #[test]
+fn int128_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Metric"),
+        db_string("signed"),
+        IndexKind::Integer128,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Metric) WHERE n.signed = $signed :: INT128 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Integer128);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "signed");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Int128));
+}
+
+#[test]
+fn uint128_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Metric"),
+        db_string("unsigned"),
+        IndexKind::UnsignedInteger128,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Metric) WHERE n.unsigned = $unsigned :: UINT128 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::UnsignedInteger128);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "unsigned");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Uint128));
+}
+
+#[test]
+fn decimal_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Metric"),
+        db_string("amount"),
+        IndexKind::Decimal,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Metric) WHERE n.amount = $amount :: DECIMAL RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Decimal);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "amount");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Decimal));
+}
+
+#[test]
+fn decimal_literal_with_decimal_index_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Metric"),
+        db_string("amount"),
+        IndexKind::Decimal,
+    );
+    let plan = optimized_one("MATCH (n:Metric) WHERE n.amount = 1.25 RETURN n", &catalog);
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Decimal);
+    assert!(matches!(
+        bounds,
+        TypedIndexBounds::Equality(IndexKey::Literal(selene_gql::Literal::Decimal(..)))
+    ));
+}
+
+#[test]
 fn contradictory_combined_bounds_keep_residual_predicate() {
     // `age > 10 AND age < 5` is empty. When `bounds_for_property` would
     // produce a contradictory combined Range (lo=10, hi=5), it refuses the

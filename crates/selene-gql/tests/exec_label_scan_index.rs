@@ -21,6 +21,10 @@ fn props<const N: usize>(pairs: [(DbString, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 
+fn decimal(value: &str) -> rust_decimal::Decimal {
+    value.parse().expect("test decimal parses")
+}
+
 fn rows(output: StatementOutput) -> BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
@@ -246,6 +250,88 @@ fn u64_typed_index_returns_same_rows_as_linear() {
         dump.contains("TypedIndexRange"),
         "u64 equality should render TypedIndexRange; got:\n{dump}"
     );
+}
+
+#[test]
+fn exact_numeric_typed_indexes_return_same_rows_as_linear() {
+    let graph = SharedGraph::new(GraphId::new(906));
+    let metric = db_string("Metric");
+    let signed = db_string("signed");
+    let unsigned = db_string("unsigned");
+    let amount = db_string("amount");
+    {
+        let mut txn = graph.begin_write();
+        {
+            let mut m = txn.mutator();
+            for (signed_value, unsigned_value, amount_value) in [
+                (i128::MIN + 8, u64::MAX as u128 + 8, decimal("1.25")),
+                (i128::MAX - 8, u128::MAX - 8, decimal("2.50")),
+                (i128::MAX - 8, u128::MAX - 8, decimal("2.50")),
+            ] {
+                m.create_node(
+                    LabelSet::single(metric.clone()),
+                    props([
+                        (signed.clone(), Value::Int128(signed_value)),
+                        (unsigned.clone(), Value::Uint128(unsigned_value)),
+                        (amount.clone(), Value::Decimal(amount_value)),
+                    ]),
+                )
+                .unwrap();
+            }
+        }
+        txn.commit().unwrap();
+    }
+    graph
+        .create_property_index(metric.clone(), signed, TypedIndexKind::I128)
+        .unwrap();
+    graph
+        .create_property_index(metric.clone(), unsigned, TypedIndexKind::U128)
+        .unwrap();
+    graph
+        .create_property_index(metric, amount, TypedIndexKind::Decimal)
+        .unwrap();
+
+    for (source, param, value) in [
+        (
+            "MATCH (n:Metric) WHERE n.signed = $signed :: INT128 RETURN n",
+            "signed",
+            Value::Int128(i128::MAX - 8),
+        ),
+        (
+            "MATCH (n:Metric) WHERE n.unsigned = $unsigned :: UINT128 RETURN n",
+            "unsigned",
+            Value::Uint128(u128::MAX - 8),
+        ),
+        (
+            "MATCH (n:Metric) WHERE n.amount = $amount :: DECIMAL RETURN n",
+            "amount",
+            Value::Decimal(decimal("2.50")),
+        ),
+    ] {
+        let mut indexed = Session::new(&graph);
+        indexed.bind_parameter(db_string(param), value.clone());
+        let indexed_rows = node_ids(&rows(
+            indexed
+                .execute_source(source, &EmptyProcedureRegistry)
+                .unwrap(),
+        ));
+
+        let mut linear = Session::new(&graph).without_index_selection();
+        linear.bind_parameter(db_string(param), value);
+        let linear_rows = node_ids(&rows(
+            linear
+                .execute_source(source, &EmptyProcedureRegistry)
+                .unwrap(),
+        ));
+
+        assert_eq!(indexed_rows, linear_rows, "row divergence for {source}");
+        assert_eq!(indexed_rows.len(), 2);
+        let dump = explain_dump(&mut indexed, source);
+        assert!(
+            dump.contains("TypedIndexRange"),
+            "exact numeric equality should render TypedIndexRange; got:\n{dump}"
+        );
+    }
 }
 
 #[test]
