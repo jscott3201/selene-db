@@ -342,6 +342,17 @@ fn parse_function_aggregate_star_and_distinct() {
             ..
         } if name.len() == 1 && name.first().as_str() == "percentile_cont" && args.len() == 2
     ));
+
+    assert!(matches!(
+        only_item("RETURN percentile_cont(DISTINCT n, 0.5)").expr,
+        ValueExpr::FunctionCall {
+            ref name,
+            star: false,
+            distinct: true,
+            ref args,
+            ..
+        } if name.len() == 1 && name.first().as_str() == "percentile_cont" && args.len() == 2
+    ));
 }
 
 #[test]
