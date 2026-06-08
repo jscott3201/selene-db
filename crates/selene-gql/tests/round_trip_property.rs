@@ -57,6 +57,33 @@ fn reserved_word_aliases_are_quoted_in_formatted_output() {
 }
 
 #[test]
+fn contextual_keyword_aliases_are_quoted_in_formatted_output() {
+    // Contextual grammar tokens still parse as bare identifiers in some slots,
+    // so structural round-trip alone cannot prove the formatter made the
+    // identifier role explicit. Pin the emitted quotes directly.
+    for keyword in [
+        "EXPLAIN",
+        "INDEXES",
+        "PROCEDURES",
+        "TRANSACTIONS",
+        "VALUE",
+        "NORMALIZE",
+        "PERCENTILE_CONT",
+        "PERCENTILE_DISC",
+    ] {
+        let source = format!("RETURN 1 AS \"{keyword}\"");
+        let parsed = parse(&source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert_eq!(formatted, source, "{keyword} alias remains quoted");
+        let reparsed = parse(&formatted).expect("formatted source parses");
+        assert!(
+            structurally_eq(&parsed, &reparsed),
+            "{keyword} alias round-trips structurally"
+        );
+    }
+}
+
+#[test]
 fn positive_read_corpus_round_trips_under_proptest() {
     let sources = load_default_corpus()
         .expect("corpus loads")
