@@ -2,10 +2,10 @@
 //!
 //! These functions read the per-session time-zone displacement threaded into
 //! [`TxContext`](crate::runtime::TxContext) (default UTC per Annex B ID048) and
-//! produce temporal [`Value`]s anchored to "now". Each call within one
-//! statement re-reads the wall clock; the session time zone selects how the
-//! instant is presented (zoned forms) and which local wall-clock components are
-//! returned (local forms).
+//! produce temporal [`Value`]s anchored to the statement's request timestamp.
+//! Each call within one statement uses the same captured instant; the session
+//! time zone selects how the instant is presented (zoned forms) and which local
+//! wall-clock components are returned (local forms).
 
 use selene_core::Value;
 
@@ -45,7 +45,7 @@ pub(super) fn eval_localtime(ctx: &EvalCtx<'_, '_, '_, '_>) -> Result<Value, Exe
     Ok(Value::LocalTime(now_zoned(ctx).time()))
 }
 
-/// Capture "now" rendered in the session time zone.
+/// Capture the request timestamp rendered in the session time zone.
 fn now_zoned(ctx: &EvalCtx<'_, '_, '_, '_>) -> jiff::Zoned {
-    jiff::Timestamp::now().to_zoned(ctx.tx.session_time_zone().clone())
+    ctx.tx.request_timestamp_zoned()
 }

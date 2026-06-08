@@ -78,6 +78,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **ISO §20.27 current-datetime request timestamp.** `current_timestamp()`,
+  `current_time()`, `current_date()`, `localtimestamp()`, and `localtime()` now
+  share one request timestamp captured on the statement `TxContext` instead of
+  re-reading the wall clock on each scalar-function call. Temporal casts that
+  need the current session date use the same captured request timestamp.
 - **Conformance-honesty: feature-ID corrections (CONFORMANCE-00).** Three
   fixes so the advertised optional-feature set matches the ISO taxonomy and the
   implemented surface:
