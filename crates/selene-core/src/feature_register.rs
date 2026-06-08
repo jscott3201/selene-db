@@ -348,6 +348,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV18,
     FeatureId::GV19,
     FeatureId::GV21,
+    FeatureId::GV23,
     FeatureId::GV24,
     FeatureId::GV35,
     FeatureId::GV39,
@@ -490,10 +491,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::GV22,
         "specified floating precision syntax is deferred",
-    ),
-    (
-        FeatureId::GV23,
-        "REAL/DOUBLE synonyms require preserving original type spelling through the flagger before claiming",
     ),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),

@@ -272,8 +272,8 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Uint, G::Uint8 | G::Uint16 | G::Uint32 | G::Uint64)
             | (P::Int128, G::Int128)
             | (P::Uint128, G::Uint128)
-            | (P::Float, G::Float | G::Float64)
-            | (P::Float32, G::Float32)
+            | (P::Float, G::Float | G::Float64 | G::Double)
+            | (P::Float32, G::Float32 | G::Real)
             | (P::Decimal, G::Decimal)
             | (P::String, G::String)
             | (P::Uuid, G::Uuid)
@@ -352,6 +352,10 @@ mod tests {
             PropertyValueType::Float,
             &GqlType::Float64
         ));
+        assert!(property_type_compatible(
+            PropertyValueType::Float,
+            &GqlType::Double
+        ));
         assert!(!property_type_compatible(
             PropertyValueType::Float,
             &GqlType::Float32
@@ -359,6 +363,10 @@ mod tests {
         assert!(property_type_compatible(
             PropertyValueType::Float32,
             &GqlType::Float32
+        ));
+        assert!(property_type_compatible(
+            PropertyValueType::Float32,
+            &GqlType::Real
         ));
         assert!(!property_type_compatible(
             PropertyValueType::Float32,

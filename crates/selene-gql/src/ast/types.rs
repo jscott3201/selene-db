@@ -48,6 +48,14 @@ pub enum GqlType {
     Float32,
     /// `FLOAT64`.
     Float64,
+    /// `REAL`.
+    ///
+    /// ISO floating-point type-name synonym with `FLOAT32` semantics.
+    Real,
+    /// `DOUBLE` or `DOUBLE PRECISION`.
+    ///
+    /// ISO floating-point type-name synonym with `FLOAT64` semantics.
+    Double,
     /// Byte-string type.
     Bytes,
     /// `UUID`.

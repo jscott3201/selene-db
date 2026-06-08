@@ -270,8 +270,8 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         IndexKind::Integer128 => matches!(ty, GqlType::Int128),
         IndexKind::UnsignedInteger128 => matches!(ty, GqlType::Uint128),
         IndexKind::Decimal => matches!(ty, GqlType::Decimal),
-        IndexKind::Float32 => matches!(ty, GqlType::Float32),
-        // BRIEF-154 PR #175 F2 (Codex P2): admit only `FLOAT64` for
+        IndexKind::Float32 => matches!(ty, GqlType::Float32 | GqlType::Real),
+        // BRIEF-154 PR #175 F2 (Codex P2): admit only concrete f64 type names for
         // `IndexKind::Float`. `GqlType::Float` is width-generic per
         // `parameter_type::validate_declared_type`, which accepts both
         // `Value::Float` and `Value::Float32`; but the runtime index
@@ -282,7 +282,7 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         // while the non-indexed equivalent query would compare normally
         // via `value_compare`. Reject `FLOAT` so it falls back to
         // Linear at plan time and the two paths agree.
-        IndexKind::Float => matches!(ty, GqlType::Float64),
+        IndexKind::Float => matches!(ty, GqlType::Float64 | GqlType::Double),
         IndexKind::String => matches!(ty, GqlType::String),
         IndexKind::Date => matches!(ty, GqlType::Date),
         IndexKind::LocalDateTime => matches!(ty, GqlType::LocalDateTime),

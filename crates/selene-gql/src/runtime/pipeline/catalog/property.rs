@@ -203,8 +203,8 @@ fn gql_type_to_scalar_property_value_type(
         }
         GqlType::Int128 => PropertyValueType::Int128,
         GqlType::Uint128 => PropertyValueType::Uint128,
-        GqlType::Float | GqlType::Float64 => PropertyValueType::Float,
-        GqlType::Float32 => PropertyValueType::Float32,
+        GqlType::Float | GqlType::Float64 | GqlType::Double => PropertyValueType::Float,
+        GqlType::Float32 | GqlType::Real => PropertyValueType::Float32,
         GqlType::Decimal => PropertyValueType::Decimal,
         GqlType::Bytes => PropertyValueType::Bytes,
         GqlType::Uuid => PropertyValueType::Uuid,

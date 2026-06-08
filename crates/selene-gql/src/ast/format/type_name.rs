@@ -25,6 +25,8 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         GqlType::Decimal => "DECIMAL".to_owned(),
         GqlType::Float32 => "FLOAT32".to_owned(),
         GqlType::Float64 => "FLOAT64".to_owned(),
+        GqlType::Real => "REAL".to_owned(),
+        GqlType::Double => "DOUBLE".to_owned(),
         GqlType::Bytes => "BYTES".to_owned(),
         GqlType::Uuid => "UUID".to_owned(),
         GqlType::Json => "JSON".to_owned(),

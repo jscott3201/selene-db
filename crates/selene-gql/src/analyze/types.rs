@@ -680,6 +680,8 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::Decimal => 16u8.hash(state),
         GqlType::Float32 => 17u8.hash(state),
         GqlType::Float64 => 18u8.hash(state),
+        GqlType::Real => 40u8.hash(state),
+        GqlType::Double => 41u8.hash(state),
         GqlType::Bytes => 19u8.hash(state),
         GqlType::ZonedDateTime => 22u8.hash(state),
         GqlType::LocalDateTime => 23u8.hash(state),

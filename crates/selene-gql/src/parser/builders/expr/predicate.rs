@@ -225,28 +225,12 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     // than building an upper-cased, whitespace-normalized `String`: the type
     // name (and every nested LIST/RECORD level) is compared allocation-free.
     let text = pair.as_str();
-    if keyword_tokens_eq(text, &["REAL"]) {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV23,
-            display_name: "Floating point type name synonyms",
-            span: source_span,
-            hint: "REAL spelling is outside the selene-db claim list; use FLOAT32 or FLOAT64",
-        });
-    }
     if keyword_tokens_eq(text, &["FLOAT16"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV20,
             display_name: "16 bit floating point numbers",
             span: source_span,
             hint: "FLOAT16 is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
-        });
-    }
-    if keyword_tokens_eq(text, &["DOUBLE"]) || keyword_tokens_eq(text, &["DOUBLE", "PRECISION"]) {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV23,
-            display_name: "Floating point type name synonyms",
-            span: source_span,
-            hint: "DOUBLE spelling is outside the selene-db v1.0 claim list; use FLOAT64",
         });
     }
     if keyword_tokens_eq(text, &["UINT256"]) {
@@ -368,6 +352,9 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         (&["DEC"], GqlType::Decimal),
         (&["FLOAT32"], GqlType::Float32),
         (&["FLOAT64"], GqlType::Float64),
+        (&["REAL"], GqlType::Real),
+        (&["DOUBLE"], GqlType::Double),
+        (&["DOUBLE", "PRECISION"], GqlType::Double),
         (&["STRING"], GqlType::String),
         (&["VARCHAR"], GqlType::String),
         (&["UUID"], GqlType::Uuid),

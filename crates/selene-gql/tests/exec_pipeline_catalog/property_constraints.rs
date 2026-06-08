@@ -415,6 +415,35 @@ fn float_default_property_constraint_accepts_float_literal() {
 }
 
 #[test]
+fn floating_type_synonym_properties_lower_to_canonical_catalog_types() {
+    let graph = empty_closed_graph(3736);
+    let plan = planned("CREATE NODE TYPE :Metric (small :: REAL, wide :: DOUBLE PRECISION)");
+
+    run_write(&graph, &plan)
+        .expect("floating synonym properties execute")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].value_type,
+        PropertyValueType::Float32
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[1].value_type,
+        PropertyValueType::Float
+    );
+
+    let (table, outcome) = run_write(&graph, &planned("SHOW NODE TYPES")).expect("show executes");
+    outcome.expect("show commit succeeds");
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Metric (small :: FLOAT32, wide :: FLOAT)"
+        ))
+    );
+}
+
+#[test]
 fn float_default_property_constraint_rejects_non_finite_literal() {
     let graph = empty_closed_graph(3731);
     let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.0e9999)");
