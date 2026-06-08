@@ -368,6 +368,7 @@ pub(super) const fn typed_kind_from(kind: SchemaPropertyIndexKind) -> TypedIndex
     match kind {
         SchemaPropertyIndexKind::Bool => TypedIndexKind::Bool,
         SchemaPropertyIndexKind::I64 => TypedIndexKind::I64,
+        SchemaPropertyIndexKind::U64 => TypedIndexKind::U64,
         SchemaPropertyIndexKind::F64 => TypedIndexKind::F64,
         SchemaPropertyIndexKind::String => TypedIndexKind::String,
         SchemaPropertyIndexKind::Date => TypedIndexKind::Date,

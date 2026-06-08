@@ -9,9 +9,7 @@ use std::sync::{
 use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
-use selene_core::{
-    Change, DbString, GraphId, HnswIndexConfig, SchemaChange, SchemaPropertyIndexKind,
-};
+use selene_core::{Change, DbString, GraphId, HnswIndexConfig, SchemaChange};
 use selene_persist::{AuditLog, SyncPolicy, WalConfig, WalWriter};
 
 use crate::adjacency::AdjacencyEdge;
@@ -23,6 +21,7 @@ use crate::graph::{PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
+use crate::schema_index_kind::schema_kind_from;
 use crate::store::{EdgeStore, RowIndex};
 use crate::typed_index::TypedIndexKind;
 use crate::vector_index::{
@@ -862,19 +861,6 @@ impl SharedGraphBuilder {
         )
     }
 }
-
-const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
-    match kind {
-        TypedIndexKind::Bool => SchemaPropertyIndexKind::Bool,
-        TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
-        TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
-        TypedIndexKind::String => SchemaPropertyIndexKind::String,
-        TypedIndexKind::Date => SchemaPropertyIndexKind::Date,
-        TypedIndexKind::LocalDateTime => SchemaPropertyIndexKind::LocalDateTime,
-        TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
-    }
-}
-
 pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
     graph.idx_label.clear();
     graph.idx_edge_label.clear();

@@ -19,6 +19,8 @@ pub enum CompositeKeyComponent {
     Bool(bool),
     /// Signed integer component.
     I64(i64),
+    /// Unsigned integer component.
+    U64(u64),
     /// Floating-point component with NaN excluded.
     F64(NotNanF64),
     /// Database-string component.
@@ -37,6 +39,7 @@ impl Ord for CompositeKeyComponent {
         match (self, rhs) {
             (K::Bool(lhs), K::Bool(rhs)) => lhs.cmp(rhs),
             (K::I64(lhs), K::I64(rhs)) => lhs.cmp(rhs),
+            (K::U64(lhs), K::U64(rhs)) => lhs.cmp(rhs),
             (K::F64(lhs), K::F64(rhs)) => lhs.cmp(rhs),
             (K::String(lhs), K::String(rhs)) => lhs.cmp(rhs),
             (K::Date(lhs), K::Date(rhs)) => lhs.cmp(rhs),
@@ -59,6 +62,7 @@ impl Hash for CompositeKeyComponent {
         match self {
             Self::Bool(value) => value.hash(state),
             Self::I64(value) => value.hash(state),
+            Self::U64(value) => value.hash(state),
             Self::F64(value) => value.hash(state),
             Self::String(value) => value.hash(state),
             Self::Date(value) => value.hash(state),
@@ -73,11 +77,12 @@ impl CompositeKeyComponent {
         match self {
             Self::Bool(_) => 0,
             Self::I64(_) => 1,
-            Self::F64(_) => 2,
-            Self::String(_) => 3,
-            Self::Date(_) => 4,
-            Self::LocalDateTime(_) => 5,
-            Self::Uuid(_) => 6,
+            Self::U64(_) => 2,
+            Self::F64(_) => 3,
+            Self::String(_) => 4,
+            Self::Date(_) => 5,
+            Self::LocalDateTime(_) => 6,
+            Self::Uuid(_) => 7,
         }
     }
 }
@@ -265,6 +270,7 @@ fn component_from_value(
     match (kind, value) {
         (TypedIndexKind::Bool, Value::Bool(value)) => Ok(CompositeKeyComponent::Bool(*value)),
         (TypedIndexKind::I64, Value::Int(value)) => Ok(CompositeKeyComponent::I64(*value)),
+        (TypedIndexKind::U64, Value::Uint(value)) => Ok(CompositeKeyComponent::U64(*value)),
         (TypedIndexKind::F64, Value::Float(value)) => NotNanF64::new(*value)
             .map(CompositeKeyComponent::F64)
             .map_err(|NotNanError| TypedIndexValueError::NaN {
@@ -314,6 +320,16 @@ mod tests {
             component_from_value(TypedIndexKind::Bool, &value).expect("bool component coerces");
 
         assert_eq!(component, CompositeKeyComponent::Bool(true));
+    }
+
+    #[test]
+    fn component_from_value_u64_kind() {
+        let value = Value::Uint(42);
+
+        let component =
+            component_from_value(TypedIndexKind::U64, &value).expect("u64 component coerces");
+
+        assert_eq!(component, CompositeKeyComponent::U64(42));
     }
 
     #[test]

@@ -289,6 +289,7 @@ fn check_value_index_kind(
     let matches = match expected {
         IndexKind::Boolean => matches!(value, Value::Bool(_)),
         IndexKind::Integer => matches!(value, Value::Int(_)),
+        IndexKind::UnsignedInteger => matches!(value, Value::Uint(_)),
         IndexKind::Float => matches!(value, Value::Float(_)),
         IndexKind::String => matches!(value, Value::String(_)),
         IndexKind::Date => matches!(value, Value::Date(_)),
@@ -310,6 +311,7 @@ fn index_kind_label(kind: IndexKind) -> &'static str {
     match kind {
         IndexKind::Boolean => "BOOLEAN",
         IndexKind::Integer => "INTEGER",
+        IndexKind::UnsignedInteger => "UINT64",
         IndexKind::Float => "FLOAT",
         IndexKind::String => "STRING",
         IndexKind::Date => "DATE",

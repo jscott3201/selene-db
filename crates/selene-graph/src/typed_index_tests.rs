@@ -17,6 +17,7 @@ fn kind_round_trips_for_each_variant() {
     for kind in [
         TypedIndexKind::Bool,
         TypedIndexKind::I64,
+        TypedIndexKind::U64,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,
@@ -32,6 +33,7 @@ fn kind_rkyv_round_trips_for_each_variant() {
     for kind in [
         TypedIndexKind::Bool,
         TypedIndexKind::I64,
+        TypedIndexKind::U64,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,
@@ -81,6 +83,7 @@ fn insert_remove_round_trips_for_each_kind() {
     let cases = [
         (TypedIndexKind::Bool, Value::Bool(true)),
         (TypedIndexKind::I64, Value::Int(7)),
+        (TypedIndexKind::U64, Value::Uint(7)),
         (TypedIndexKind::F64, Value::Float(7.0)),
         (TypedIndexKind::String, Value::String(string)),
         (TypedIndexKind::Date, Value::Date(date(2026, 5, 7))),
@@ -243,6 +246,22 @@ fn bool_range_scan_uses_false_then_true_order() {
 }
 
 #[test]
+fn u64_range_scan_uses_unsigned_order() {
+    let mut index = TypedIndex::new(TypedIndexKind::U64);
+    for (row, value) in [(0, 0), (1, 1), (2, u64::MAX)] {
+        index.insert(&Value::Uint(value), row).unwrap();
+    }
+
+    let result = index
+        .lookup_range(Value::Uint(1)..=Value::Uint(u64::MAX))
+        .expect("u64 range kind matches");
+
+    assert!(!result.contains(0));
+    assert!(result.contains(1));
+    assert!(result.contains(2));
+}
+
+#[test]
 fn prefix_scan_matches_string_keys_only() {
     let alpha = db_string("typed-index.prefix.alpha").unwrap();
     let beta = db_string("typed-index.beta").unwrap();
@@ -280,6 +299,7 @@ fn typed_key_unindexable_value_rejects_kind_mismatch() {
     for kind in [
         TypedIndexKind::Bool,
         TypedIndexKind::I64,
+        TypedIndexKind::U64,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,

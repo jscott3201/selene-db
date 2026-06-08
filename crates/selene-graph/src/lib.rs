@@ -36,6 +36,7 @@ pub(crate) mod property_index;
 pub(crate) mod provider_fanout;
 mod recover;
 pub(crate) mod reentry;
+pub(crate) mod schema_index_kind;
 pub mod shared;
 mod shared_snapshot;
 pub mod store;

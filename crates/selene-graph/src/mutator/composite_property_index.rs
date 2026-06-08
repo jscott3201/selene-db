@@ -4,6 +4,7 @@ use selene_core::{Change, DbString, SchemaChange, SchemaPropertyIndexKind};
 use smallvec::SmallVec;
 
 use crate::graph::{CompositePropertyIndexEntry, composite_property_key};
+use crate::schema_index_kind::schema_kind_from;
 use crate::{GraphError, GraphResult, Mutator, TypedIndexKind};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
@@ -115,18 +116,6 @@ fn validate_shape(properties: &[DbString], kinds: &[TypedIndexKind]) -> Result<(
 
 fn schema_kinds_from(kinds: &[TypedIndexKind]) -> SmallVec<[SchemaPropertyIndexKind; 4]> {
     kinds.iter().copied().map(schema_kind_from).collect()
-}
-
-const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
-    match kind {
-        TypedIndexKind::Bool => SchemaPropertyIndexKind::Bool,
-        TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
-        TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
-        TypedIndexKind::String => SchemaPropertyIndexKind::String,
-        TypedIndexKind::Date => SchemaPropertyIndexKind::Date,
-        TypedIndexKind::LocalDateTime => SchemaPropertyIndexKind::LocalDateTime,
-        TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
-    }
 }
 
 #[cfg(test)]

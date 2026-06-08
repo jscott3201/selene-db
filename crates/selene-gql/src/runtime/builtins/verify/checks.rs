@@ -382,6 +382,11 @@ fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
                 push_index_entries(&mut entries, IndexedValue::I64(*key), bitmap.iter());
             }
         }
+        TypedIndex::U64(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::U64(*key), bitmap.iter());
+            }
+        }
         TypedIndex::F64(index) => {
             for (key, bitmap) in index {
                 push_index_entries(&mut entries, IndexedValue::F64(*key), bitmap.iter());
@@ -504,6 +509,7 @@ fn composite_property_values<'a>(
 enum IndexedValue {
     Bool(bool),
     I64(i64),
+    U64(u64),
     F64(NotNanF64),
     String(DbString),
     Date(jiff::civil::Date),
@@ -515,6 +521,7 @@ fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
     match (bucket, value) {
         (IndexedValue::Bool(expected), Value::Bool(actual)) => expected == *actual,
         (IndexedValue::I64(expected), Value::Int(actual)) => expected == *actual,
+        (IndexedValue::U64(expected), Value::Uint(actual)) => expected == *actual,
         (IndexedValue::F64(expected), Value::Float(actual)) => {
             NotNanF64::new(*actual).is_ok_and(|actual| actual == expected)
         }
@@ -532,6 +539,7 @@ fn component_matches_value(component: &CompositeKeyComponent, value: &Value) -> 
     match (component, value) {
         (CompositeKeyComponent::Bool(expected), Value::Bool(actual)) => expected == actual,
         (CompositeKeyComponent::I64(expected), Value::Int(actual)) => expected == actual,
+        (CompositeKeyComponent::U64(expected), Value::Uint(actual)) => expected == actual,
         (CompositeKeyComponent::F64(expected), Value::Float(actual)) => {
             NotNanF64::new(*actual).is_ok_and(|actual| actual == *expected)
         }

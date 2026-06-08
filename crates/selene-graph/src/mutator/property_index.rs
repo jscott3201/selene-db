@@ -1,8 +1,9 @@
 //! Property-index mutation methods for the transaction mutator.
 
-use selene_core::{Change, DbString, SchemaChange, SchemaPropertyIndexKind};
+use selene_core::{Change, DbString, SchemaChange};
 
 use crate::graph::PropertyIndexEntry;
+use crate::schema_index_kind::schema_kind_from;
 use crate::{GraphError, GraphResult, Mutator, TypedIndexKind};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
@@ -84,18 +85,6 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             change: SchemaChange::PropertyIndexDropped { label, property },
         });
         Ok(())
-    }
-}
-
-const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
-    match kind {
-        TypedIndexKind::Bool => SchemaPropertyIndexKind::Bool,
-        TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
-        TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
-        TypedIndexKind::String => SchemaPropertyIndexKind::String,
-        TypedIndexKind::Date => SchemaPropertyIndexKind::Date,
-        TypedIndexKind::LocalDateTime => SchemaPropertyIndexKind::LocalDateTime,
-        TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
     }
 }
 

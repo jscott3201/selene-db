@@ -194,6 +194,65 @@ fn apply_update_moves_bool_composite_component() {
 }
 
 #[test]
+fn apply_update_moves_u64_composite_component() {
+    let label = db_string("cpi.u64.label").unwrap();
+    let count = db_string("cpi.u64.count").unwrap();
+    let location = db_string("cpi.u64.location").unwrap();
+    let mut indexes = CompositeIndexMap::default();
+    let properties = smallvec![count.clone(), location.clone()];
+    insert_entry(
+        &mut indexes,
+        label.clone(),
+        properties.clone(),
+        smallvec![TypedIndexKind::U64, TypedIndexKind::String],
+    );
+    let old_props = property_map([
+        (count.clone(), Value::Uint(7)),
+        (location.clone(), Value::String(db_string("north").unwrap())),
+    ]);
+    let new_props = property_map([
+        (count.clone(), Value::Uint(8)),
+        (location.clone(), Value::String(db_string("north").unwrap())),
+    ]);
+
+    apply_node_create(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        5,
+    )
+    .unwrap();
+    apply_node_update(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        &LabelSet::single(label.clone()),
+        &new_props,
+        5,
+    )
+    .unwrap();
+
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            &properties,
+            &[Value::Uint(7), Value::String(db_string("north").unwrap())]
+        )
+        .is_empty()
+    );
+    assert!(
+        rows(
+            &indexes,
+            label,
+            &properties,
+            &[Value::Uint(8), Value::String(db_string("north").unwrap())]
+        )
+        .contains(5)
+    );
+}
+
+#[test]
 fn apply_create_skips_partial_composite_values() {
     let label = db_string("cpi.partial.label").unwrap();
     let ts = db_string("cpi.partial.ts").unwrap();
