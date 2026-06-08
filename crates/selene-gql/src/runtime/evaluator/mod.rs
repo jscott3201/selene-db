@@ -10,6 +10,7 @@ mod binary_ops;
 mod case;
 mod cast;
 mod collections;
+mod diagnostics;
 mod duration_fns;
 mod duration_ops;
 mod identity_length_fns;
@@ -19,6 +20,7 @@ mod scalar_fns;
 mod string_fns;
 mod subquery;
 mod temporal_fns;
+mod temporal_ops;
 mod uuid_fns;
 
 use selene_core::{EdgeId, NodeId, Value};
