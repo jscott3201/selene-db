@@ -236,6 +236,17 @@ fn substring_function_is_not_in_the_iso_scalar_set() {
 }
 
 #[test]
+fn coalesce_requires_at_least_two_arguments() {
+    let err =
+        execute_read_result("RETURN coalesce('x') AS value").expect_err("single argument rejects");
+    assert!(matches!(
+        &err,
+        ExecutorError::FunctionArityMismatch { name, .. } if name == "coalesce"
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
 fn fold_normalizes_result_when_source_is_nfc() {
     assert_eq!(
         string_value(single_value("RETURN UPPER('\u{0390}') AS value", "value")),
