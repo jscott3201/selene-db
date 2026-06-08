@@ -93,6 +93,41 @@ pub(super) fn eval_elements(args: Vec<Value>, span: SourceSpan) -> Result<Value,
     }
 }
 
+pub(super) fn eval_labels(
+    args: Vec<Value>,
+    span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Value, ExecutorError> {
+    match args.into_iter().next().expect("arity checked") {
+        Value::Null => Ok(Value::Null),
+        Value::NodeRef(id) => Ok(Value::List(
+            ctx.tx
+                .snapshot()
+                .node_labels(id)
+                .map(|labels| {
+                    labels
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        )),
+        Value::EdgeRef(id) => Ok(Value::List(
+            ctx.tx
+                .snapshot()
+                .edge_label(id)
+                .map(|label| vec![Value::String(label.clone())])
+                .unwrap_or_default(),
+        )),
+        _ => data_exception_with(
+            DataExceptionSubclass::InvalidValueType,
+            "labels argument is not a graph element",
+            span,
+        ),
+    }
+}
+
 fn path_element_list(path: Path) -> Vec<Value> {
     let capacity = path
         .segments

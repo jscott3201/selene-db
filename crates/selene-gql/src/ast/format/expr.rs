@@ -113,8 +113,8 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             distinct,
             ..
         } => {
-            if is_elements_function_name(name) {
-                out.push_str("ELEMENTS");
+            if let Some(keyword) = keyword_function_name(name) {
+                out.push_str(keyword);
             } else {
                 for (index, part) in name.iter().enumerate() {
                     if index > 0 {
@@ -286,8 +286,18 @@ fn format_zoned_time(value: &jiff::Zoned) -> String {
     format!("{}{}", value.time(), value.offset())
 }
 
-fn is_elements_function_name(name: &crate::NonEmpty<selene_core::DbString>) -> bool {
-    name.len() == 1 && name.first().as_str().eq_ignore_ascii_case("elements")
+fn keyword_function_name(name: &crate::NonEmpty<selene_core::DbString>) -> Option<&'static str> {
+    if name.len() != 1 {
+        return None;
+    }
+    let segment = name.first().as_str();
+    if segment.eq_ignore_ascii_case("elements") {
+        Some("ELEMENTS")
+    } else if segment.eq_ignore_ascii_case("labels") {
+        Some("LABELS")
+    } else {
+        None
+    }
 }
 
 fn fmt_variadic(out: &mut String, name: &str, items: &[ValueExpr]) -> fmt::Result {
