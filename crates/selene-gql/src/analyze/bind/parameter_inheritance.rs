@@ -282,6 +282,9 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
                 stack.push(target.as_mut());
             }
             ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::PathConstructor {
+                elements: items, ..
+            }
             | ValueExpr::AllDifferent { items, .. }
             | ValueExpr::Same { items, .. }
             | ValueExpr::FunctionCall { args: items, .. } => stack.extend(items.iter_mut()),

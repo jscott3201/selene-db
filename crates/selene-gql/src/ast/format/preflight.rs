@@ -172,6 +172,7 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             validate_expr(index)
         }
         ValueExpr::ListLiteral { items, .. } => validate_exprs(items),
+        ValueExpr::PathConstructor { elements, .. } => validate_exprs(elements),
         ValueExpr::RecordLiteral { fields, .. } => {
             for (_, value) in fields {
                 validate_expr(value)?;

@@ -322,6 +322,9 @@ fn collect_value_parameter_declarations(
                 stack.push(target);
             }
             ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::PathConstructor {
+                elements: items, ..
+            }
             | ValueExpr::AllDifferent { items, .. }
             | ValueExpr::Same { items, .. }
             | ValueExpr::FunctionCall { args: items, .. } => stack.extend(items.iter()),

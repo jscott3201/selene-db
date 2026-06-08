@@ -63,6 +63,13 @@ pub enum ValueExpr {
         /// Source span of the record.
         span: SourceSpan,
     },
+    /// `PATH[<node>, <edge>, <node>, ...]` constructor.
+    PathConstructor {
+        /// Alternating node/edge/node reference expressions.
+        elements: Vec<ValueExpr>,
+        /// Source span of the path constructor.
+        span: SourceSpan,
+    },
     /// Binary operator expression.
     BinaryOp {
         /// Operator.
@@ -319,6 +326,7 @@ impl ValueExpr {
             | Self::ListAccess { span, .. }
             | Self::ListLiteral { span, .. }
             | Self::RecordLiteral { span, .. }
+            | Self::PathConstructor { span, .. }
             | Self::BinaryOp { span, .. }
             | Self::UnaryOp { span, .. }
             | Self::FunctionCall { span, .. }

@@ -72,6 +72,7 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
             "22G0T",
         ),
         (DataExceptionSubclass::RecordDataFieldUnassignable, "22G0X"),
+        (DataExceptionSubclass::MalformedPath, "22G0Z"),
     ];
 
     for (subclass, expected) in cases {

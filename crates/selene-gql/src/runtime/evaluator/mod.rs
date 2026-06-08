@@ -15,6 +15,7 @@ mod duration_fns;
 mod duration_ops;
 mod identity_length_fns;
 mod json_fns;
+mod path_constructor;
 mod predicates;
 mod scalar_fns;
 mod string_fns;
@@ -97,6 +98,9 @@ pub fn evaluate(
             .map(|item| evaluate(item, binding, schema, ctx))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::List),
+        ValueExpr::PathConstructor { elements, span } => {
+            path_constructor::eval_path_constructor(elements, *span, binding, schema, ctx)
+        }
         ValueExpr::Parameter {
             name,
             declared_type,

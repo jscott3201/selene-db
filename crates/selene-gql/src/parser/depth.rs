@@ -129,6 +129,9 @@ fn push_expr<'a>(
             work.push(Node::Expr(index, next));
         }
         ValueExpr::ListLiteral { items, .. }
+        | ValueExpr::PathConstructor {
+            elements: items, ..
+        }
         | ValueExpr::AllDifferent { items, .. }
         | ValueExpr::Same { items, .. } => {
             for item in items {

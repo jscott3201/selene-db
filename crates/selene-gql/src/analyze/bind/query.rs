@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-use super::{BindContext, call, expr, pattern};
+use super::{BindContext, call, expr, expr_depth, pattern};
 use crate::analyze::scope::ScopeKind;
 
 pub(crate) fn bind_query_pipeline(
@@ -75,7 +75,7 @@ fn bind_inline_call(
             hint: None,
         });
     }
-    expr::check_query_subquery_depth(&call.body, 1)?;
+    expr_depth::check_query_subquery_depth(&call.body, 1)?;
     let bind_result = match &call.variable_scope {
         // GP03 (ISO §15.2): explicit variable scope — the body sees ONLY the
         // named imports. An empty list (`CALL () { ... }`) is fully isolated.
@@ -325,6 +325,9 @@ fn validate_percentile_independent_refs_in_expr(
                 stack.push(target);
             }
             ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::PathConstructor {
+                elements: items, ..
+            }
             | ValueExpr::AllDifferent { items, .. }
             | ValueExpr::Same { items, .. }
             | ValueExpr::FunctionCall { args: items, .. } => {

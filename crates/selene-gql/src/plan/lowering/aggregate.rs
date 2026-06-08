@@ -149,6 +149,9 @@ fn collect_aggregates(
             collect_aggregates(index, analyzed, rewrite)?;
         }
         ValueExpr::ListLiteral { items, .. }
+        | ValueExpr::PathConstructor {
+            elements: items, ..
+        }
         | ValueExpr::AllDifferent { items, .. }
         | ValueExpr::Same { items, .. } => {
             for item in items {
@@ -338,6 +341,10 @@ fn rewrite_aggregate_refs(
             args: rewrite_exprs(args, aggregate_names, analyzed),
             star: *star,
             distinct: *distinct,
+            span: *span,
+        },
+        ValueExpr::PathConstructor { elements, span } => ValueExpr::PathConstructor {
+            elements: rewrite_exprs(elements, aggregate_names, analyzed),
             span: *span,
         },
         ValueExpr::DurationBetween {

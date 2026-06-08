@@ -56,6 +56,11 @@ pub enum TypeMismatchContext {
     TrimSource,
     /// Explicit TRIM character operand.
     TrimCharacter,
+    /// `PATH[...]` element expression.
+    PathConstructorElement {
+        /// Zero-based path element-list position.
+        position: usize,
+    },
     /// CASE branch result unification failed.
     CaseBranchUnification,
     /// List literal element unification failed.
@@ -104,6 +109,9 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::NormalizeFunction => f.write_str("NORMALIZE operand"),
             Self::TrimSource => f.write_str("TRIM source operand"),
             Self::TrimCharacter => f.write_str("TRIM character operand"),
+            Self::PathConstructorElement { position } => {
+                write!(f, "PATH element {position}")
+            }
             Self::CaseBranchUnification => f.write_str("CASE branch result"),
             Self::ListLiteralUnification => f.write_str("list literal element"),
             Self::InListUnification => f.write_str("IN-list value"),

@@ -73,6 +73,16 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             }
             out.push('}');
         }
+        ValueExpr::PathConstructor { elements, .. } => {
+            out.push_str("PATH[");
+            for (index, element) in elements.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                fmt_expr(out, element)?;
+            }
+            out.push(']');
+        }
         ValueExpr::BinaryOp { op, lhs, rhs, .. } => {
             // `MOD` and `POWER` are runtime-only operators with no infix
             // spelling in ISO GQL; round-trip them through their scalar
