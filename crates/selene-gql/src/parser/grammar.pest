@@ -660,7 +660,7 @@ record_field_type = { prop_ident ~ "::" ~ type_name }
 // Aggregates with optional DISTINCT (spec section20.9)
 aggregate_expr         = { binary_aggregate_expr | general_aggregate_expr }
 general_aggregate_expr = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
-binary_aggregate_expr  = { binary_aggregate_op ~ "(" ~ expr ~ "," ~ expr ~ ")" }
+binary_aggregate_expr  = { binary_aggregate_op ~ "(" ~ distinct_kw? ~ expr ~ "," ~ expr ~ ")" }
 aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST"
                   | ^"COUNT" | ^"SUM" | ^"AVG" | ^"MIN" | ^"MAX" }
 binary_aggregate_op = { ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC" }
