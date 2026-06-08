@@ -113,6 +113,10 @@ fn trim_list_function_removes_tail_elements() {
         Value::List(vec![Value::Int(1), Value::Int(2)])
     );
     assert_eq!(
+        single_value("RETURN trim([1, 2, 3, 4], 2M) AS value", "value"),
+        Value::List(vec![Value::Int(1), Value::Int(2)])
+    );
+    assert_eq!(
         single_value("RETURN trim([1, 2], 0) AS value", "value"),
         Value::List(vec![Value::Int(1), Value::Int(2)])
     );
@@ -137,13 +141,17 @@ fn trim_list_function_propagates_nulls_in_iso_evaluation_order() {
 #[test]
 fn trim_list_function_reports_list_element_errors() {
     assert_status("RETURN trim([1], -1) AS value", "22G0C");
+    assert_status("RETURN trim([1], -1M) AS value", "22G0C");
     assert_status("RETURN trim([1], 2) AS value", "22G0C");
+    assert_status("RETURN trim([1], 2M) AS value", "22G0C");
 }
 
 #[test]
 fn trim_list_function_rejects_non_list_or_non_integer_arguments() {
     assert_status("RETURN trim('abc', 1) AS value", "22G03");
     assert_status("RETURN trim([1], 1.5) AS value", "22G03");
+    assert_status("RETURN trim([1], 1.5M) AS value", "22G03");
+    assert_status("RETURN trim([1], -1.5M) AS value", "22G03");
 }
 
 #[test]
