@@ -520,12 +520,26 @@ fn node_labels(
     match label_expr {
         None => Ok(LabelSet::new()),
         Some(LabelExpr::Single(label)) => Ok(LabelSet::single(label.clone())),
-        // ISO-legal label-expression forms (conjunction/disjunction) are not yet
-        // implemented in the mutation surface; 42N01, not an internal-invariant break.
-        Some(_) => Err(ExecutorError::FeatureNotSupportedYet {
-            feature: "INSERT label expression form",
-            span,
-        }),
+        Some(LabelExpr::Conjunction(parts)) => {
+            let mut labels = LabelSet::new();
+            for part in parts {
+                let LabelExpr::Single(label) = part else {
+                    return Err(unsupported_node_label_expr(span));
+                };
+                labels.insert(label.clone());
+            }
+            Ok(labels)
+        }
+        // Other ISO-legal label-expression forms are not yet implemented in the
+        // mutation surface; 42N01, not an internal-invariant break.
+        Some(_) => Err(unsupported_node_label_expr(span)),
+    }
+}
+
+fn unsupported_node_label_expr(span: SourceSpan) -> ExecutorError {
+    ExecutorError::FeatureNotSupportedYet {
+        feature: "INSERT label expression form",
+        span,
     }
 }
 

@@ -171,6 +171,26 @@ fn insert_node_with_label_creates_node_in_graph() {
 }
 
 #[test]
+fn insert_node_with_label_conjunction_creates_multi_label_node() {
+    let graph = empty_graph();
+    let plan = planned("INSERT (n:Person&Customer {name: 'Alice'}) RETURN n");
+
+    let (table, outcome) = run_write(&graph, &plan).expect("write executes");
+
+    let node = first_node(&table, "n");
+    let snapshot = graph.read();
+    let labels = snapshot.node_labels(node).expect("node labels exist");
+    assert_eq!(labels.len(), 2);
+    assert!(labels.contains(&db_string("Customer")));
+    assert!(labels.contains(&db_string("Person")));
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::NodeCreated { labels, .. }]
+            if labels == &LabelSet::from_iter([db_string("Customer"), db_string("Person")])
+    ));
+}
+
+#[test]
 fn insert_node_extends_row_with_new_node_id_at_planner_assigned_column() {
     let graph = graph_with_person("Alice");
     let plan = planned("MATCH (p:Person) INSERT (n:Person) RETURN p, n");
