@@ -244,6 +244,38 @@ fn insert_edge_between_two_matched_bindings_creates_edge() {
 }
 
 #[test]
+fn insert_edge_without_label_reports_edge_label_minimum_error() {
+    let graph = empty_graph();
+    let plan = planned("INSERT (:A)-[]->(:B) RETURN 1 AS ok");
+
+    let err = run_write(&graph, &plan).expect_err("unlabeled INSERT edge rejects");
+
+    assert_eq!(
+        err.gqlstatus(),
+        GqlStatus::EDGE_LABELS_BELOW_SUPPORTED_MINIMUM
+    );
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 0);
+    assert_eq!(snapshot.edge_count(), 0);
+}
+
+#[test]
+fn insert_edge_label_conjunction_reports_edge_label_maximum_error() {
+    let graph = empty_graph();
+    let plan = planned("INSERT (:A)-[:REL&ALT]->(:B) RETURN 1 AS ok");
+
+    let err = run_write(&graph, &plan).expect_err("multi-label INSERT edge rejects");
+
+    assert_eq!(
+        err.gqlstatus(),
+        GqlStatus::EDGE_LABELS_EXCEED_SUPPORTED_MAXIMUM
+    );
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 0);
+    assert_eq!(snapshot.edge_count(), 0);
+}
+
+#[test]
 fn undirected_insert_edge_is_rejected_at_runtime() {
     let graph = empty_graph();
     let mut plan = planned("INSERT (:A)-[:REL]->(:B) RETURN 1 AS ok");

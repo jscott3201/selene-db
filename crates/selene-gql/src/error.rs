@@ -109,6 +109,14 @@ impl GqlStatus {
     pub const INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS: Self = Self(*b"22G14");
     /// Maps to GQLSTATUS 22G0M per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY: Self = Self(*b"22G0M");
+    /// Maps to GQLSTATUS 22G0N per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NODE_LABELS_BELOW_SUPPORTED_MINIMUM: Self = Self(*b"22G0N");
+    /// Maps to GQLSTATUS 22G0P per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NODE_LABELS_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0P");
+    /// Maps to GQLSTATUS 22G0Q per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const EDGE_LABELS_BELOW_SUPPORTED_MINIMUM: Self = Self(*b"22G0Q");
+    /// Maps to GQLSTATUS 22G0R per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const EDGE_LABELS_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0R");
     /// Maps to GQLSTATUS 22G0S per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const NODE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0S");
     /// Maps to GQLSTATUS 22G0T per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -463,6 +471,26 @@ mod tests {
             (
                 GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY,
                 "22G0M",
+                *b"22",
+            ),
+            (
+                GqlStatus::NODE_LABELS_BELOW_SUPPORTED_MINIMUM,
+                "22G0N",
+                *b"22",
+            ),
+            (
+                GqlStatus::NODE_LABELS_EXCEED_SUPPORTED_MAXIMUM,
+                "22G0P",
+                *b"22",
+            ),
+            (
+                GqlStatus::EDGE_LABELS_BELOW_SUPPORTED_MINIMUM,
+                "22G0Q",
+                *b"22",
+            ),
+            (
+                GqlStatus::EDGE_LABELS_EXCEED_SUPPORTED_MAXIMUM,
+                "22G0R",
                 *b"22",
             ),
             (

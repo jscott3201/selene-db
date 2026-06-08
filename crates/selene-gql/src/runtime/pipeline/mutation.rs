@@ -546,11 +546,16 @@ fn unsupported_node_label_expr(span: SourceSpan) -> ExecutorError {
 fn edge_label(label_expr: Option<&LabelExpr>, span: SourceSpan) -> Result<DbString, ExecutorError> {
     match label_expr {
         Some(LabelExpr::Single(label)) => Ok(label.clone()),
-        // An edge insert with no label is an internal-invariant break: the binder must
-        // have supplied exactly one edge label by this point.
-        None => Err(ExecutorError::ImplementationDefined {
-            detail: "INSERT edge label required",
-        }),
+        None => Err(ExecutorError::data_exception(
+            DataExceptionSubclass::EdgeLabelsBelowSupportedMinimum,
+            "INSERT edge requires one label under IL001",
+            span,
+        )),
+        Some(LabelExpr::Conjunction(_)) => Err(ExecutorError::data_exception(
+            DataExceptionSubclass::EdgeLabelsExceedSupportedMaximum,
+            "INSERT edge supports exactly one label under IL001",
+            span,
+        )),
         // ISO-legal edge label-expression forms are not yet implemented; 42N01.
         Some(_) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "INSERT edge label expression form",
