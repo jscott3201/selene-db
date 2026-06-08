@@ -585,6 +585,7 @@ primary = {
   | trim_expr
   | aggregate_expr
   | literal
+  | current_datetime_function
   | function_call
   | paren_expr
   | typed_param_ref
@@ -660,6 +661,27 @@ aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST" | ^"COLLECT
                   | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG" | ^"MIN" | ^"MAX" }
 binary_aggregate_op = { ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC" }
 star            = { "*" }
+
+// ISO/IEC 39075:2024 section 20.27 current-datetime value functions.
+// The `!("(")` guards keep existing ordinary niladic function calls such as
+// `current_date()` on the function_call path while admitting keyword syntax.
+current_datetime_function = {
+    current_date_function
+  | current_time_function
+  | current_timestamp_function
+  | local_timestamp_function
+  | local_time_function
+}
+current_date_function      = { current_date_kw ~ !("(") }
+current_time_function      = { current_time_kw ~ !("(") }
+current_timestamp_function = { current_timestamp_kw ~ !("(") }
+local_timestamp_function   = { local_timestamp_kw ~ !("(") }
+local_time_function        = { local_time_kw ~ ("(" ~ ")")? }
+current_date_kw            = @{ ^"CURRENT_DATE" ~ !(LETTER | NUMBER | "_") }
+current_time_kw            = @{ ^"CURRENT_TIME" ~ !(LETTER | NUMBER | "_") }
+current_timestamp_kw       = @{ ^"CURRENT_TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
+local_timestamp_kw         = @{ ^"LOCAL_TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
+local_time_kw              = @{ ^"LOCAL_TIME" ~ !(LETTER | NUMBER | "_") }
 
 function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }
 paren_expr      = { "(" ~ expr ~ ")" }

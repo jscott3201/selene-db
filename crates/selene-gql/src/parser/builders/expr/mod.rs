@@ -53,6 +53,7 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
             })
         }
         Rule::function_call => call::build_function_call(pair),
+        Rule::current_datetime_function => call::build_current_datetime_function(pair),
         Rule::normalize_expr => call::build_normalize_expr(pair),
         Rule::aggregate_expr => call::build_aggregate_expr(first_child(pair)?),
         Rule::paren_expr => build_value_expr(first_child(pair)?),

@@ -145,6 +145,41 @@ fn non_iso_now_function_is_not_in_the_scalar_set() {
 }
 
 #[test]
+fn current_datetime_keyword_forms_execute() {
+    let graph = graph(7016);
+    let mut session = Session::new(&graph);
+
+    run(&mut session, "SESSION SET TIME ZONE '+03:00'").expect("set tz");
+
+    let value = single_value(run(&mut session, "RETURN CURRENT_TIMESTAMP").expect("timestamp"));
+    let Value::ZonedDateTime(zoned) = value else {
+        panic!("expected zoned datetime, got {value:?}");
+    };
+    assert_eq!(zoned.offset().seconds(), 3 * 3600);
+
+    assert!(matches!(
+        single_value(run(&mut session, "RETURN CURRENT_DATE").expect("date")),
+        Value::Date(_)
+    ));
+    assert!(matches!(
+        single_value(run(&mut session, "RETURN CURRENT_TIME").expect("time")),
+        Value::ZonedTime(_)
+    ));
+    assert!(matches!(
+        single_value(run(&mut session, "RETURN LOCAL_TIMESTAMP").expect("local timestamp")),
+        Value::LocalDateTime(_)
+    ));
+    assert!(matches!(
+        single_value(run(&mut session, "RETURN LOCAL_TIME").expect("local time")),
+        Value::LocalTime(_)
+    ));
+    assert!(matches!(
+        single_value(run(&mut session, "RETURN LOCAL_TIME()").expect("local time parens")),
+        Value::LocalTime(_)
+    ));
+}
+
+#[test]
 fn set_time_zone_shifts_current_timestamp_offset() {
     let graph = graph(7011);
     let mut session = Session::new(&graph);

@@ -8,6 +8,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Current-datetime keyword forms (ISO §20.27).** The parser now accepts bare
+  `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCAL_TIMESTAMP`, and
+  `LOCAL_TIME` value functions, plus the ISO optional `LOCAL_TIME()` spelling.
+  These forms lower into the same niladic temporal evaluators as the existing
+  call spellings, preserving request-stable timestamps and session time-zone
+  semantics.
 - **GP03 — explicit variable-scope `CALL` subqueries (ISO §15.2).** `CALL (x, y) { ... }`
   now binds and executes: the subquery body sees **only** the named imported
   variables, and an empty `CALL () { ... }` is fully isolated. An outer variable

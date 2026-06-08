@@ -34,6 +34,25 @@ fn optional_name(value: Option<selene_core::DbString>) -> Option<String> {
     value.map(|name| name.as_str().to_owned())
 }
 
+fn assert_function_call(source: &str, expected_name: &str) {
+    let expr = only_item(source).expr;
+    let ValueExpr::FunctionCall {
+        ref name,
+        ref args,
+        star,
+        distinct,
+        ..
+    } = expr
+    else {
+        panic!("expected function call expression for {source}");
+    };
+    assert_eq!(name.len(), 1, "{source}");
+    assert_eq!(name.first().as_str(), expected_name, "{source}");
+    assert!(args.is_empty(), "{source}");
+    assert!(!star, "{source}");
+    assert!(!distinct, "{source}");
+}
+
 #[test]
 fn parse_return_integer() {
     let item = only_item("RETURN 1");
@@ -339,6 +358,22 @@ fn parse_function_aggregate_star_and_distinct() {
             ..
         } if name.len() == 1 && name.first().as_str() == "percentile_cont" && args.len() == 2
     ));
+}
+
+#[test]
+fn parse_current_datetime_keyword_functions() {
+    assert_function_call("RETURN CURRENT_DATE", "current_date");
+    assert_function_call("RETURN CURRENT_TIME", "current_time");
+    assert_function_call("RETURN CURRENT_TIMESTAMP", "current_timestamp");
+    assert_function_call("RETURN LOCAL_TIMESTAMP", "localtimestamp");
+    assert_function_call("RETURN LOCAL_TIME", "localtime");
+    assert_function_call("RETURN LOCAL_TIME()", "localtime");
+
+    assert_function_call("RETURN current_date()", "current_date");
+    assert_function_call("RETURN current_time()", "current_time");
+    assert_function_call("RETURN current_timestamp()", "current_timestamp");
+    assert_function_call("RETURN localtimestamp()", "localtimestamp");
+    assert_function_call("RETURN localtime()", "localtime");
 }
 
 #[test]
