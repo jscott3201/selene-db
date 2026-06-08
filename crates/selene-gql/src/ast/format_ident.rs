@@ -16,9 +16,7 @@ use selene_core::DbString;
 /// argument list shape diverges. [`fmt_call_segment`] consults this set
 /// to opt out of quoting in the call-name context.
 const AGGREGATE_OPS: &[&str] = &[
-    "AVERAGE",
     "AVG",
-    "COLLECT",
     "COLLECT_LIST",
     "COUNT",
     "MAX",
@@ -50,8 +48,8 @@ const AGGREGATE_OPS: &[&str] = &[
 #[rustfmt::skip]
 const KEYWORDS: &[&str] = &[
     "ACYCLIC", "ALL", "ALL_DIFFERENT", "AND", "ANY", "ARRAY", "AS", "ASC",
-    "AVERAGE", "AVG", "BIGINT", "BINDING", "BINDINGS", "BOOL", "BOOLEAN", "BOTH",
-    "BY", "BYTEA", "BYTES", "CALL", "CASE", "CAST", "COLLECT", "COLLECT_LIST",
+    "AVG", "BIGINT", "BINDING", "BINDINGS", "BOOL", "BOOLEAN", "BOTH",
+    "BY", "BYTEA", "BYTES", "CALL", "CASE", "CAST", "COLLECT_LIST",
     "COMMIT", "CONNECTING", "CONTAINS", "COUNT", "CREATE", "DATE", "DATETIME",
     "DAY", "DEC", "DECIMAL", "DEFAULT", "DELETE", "DESC", "DESTINATION",
     "DETACH", "DICTIONARY", "DIFFERENT", "DIRECTED", "DISTINCT", "DOUBLE",

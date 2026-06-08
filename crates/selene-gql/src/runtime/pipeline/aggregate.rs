@@ -353,12 +353,12 @@ fn classify(aggregate: &Aggregate) -> Result<AggregateFn, ExecutorError> {
     match name {
         "count" => Ok(AggregateFn::Count),
         "sum" => Ok(AggregateFn::Sum),
-        "avg" | "average" => Ok(AggregateFn::Avg),
+        "avg" => Ok(AggregateFn::Avg),
         "stddev_pop" => Ok(AggregateFn::StddevPop),
         "stddev_samp" => Ok(AggregateFn::StddevSamp),
         "min" => Ok(AggregateFn::Min),
         "max" => Ok(AggregateFn::Max),
-        "collect" | "collect_list" => Ok(AggregateFn::Collect),
+        "collect_list" => Ok(AggregateFn::Collect),
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "aggregate function not implemented",
         }),
