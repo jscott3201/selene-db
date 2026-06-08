@@ -47,8 +47,8 @@ const CASES: &[ExpressionCase] = &[
     },
     ExpressionCase {
         group: "scalar_fn",
-        name: "length",
-        source: "RETURN length('alphabet') AS v",
+        name: "char_length",
+        source: "RETURN char_length('alphabet') AS v",
         parameters: ParameterSet::None,
     },
     ExpressionCase {

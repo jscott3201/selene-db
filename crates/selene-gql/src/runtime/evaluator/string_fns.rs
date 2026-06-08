@@ -95,7 +95,7 @@ pub(super) fn eval_length(args: Vec<Value>, span: SourceSpan) -> Result<Value, E
         return Ok(Value::Null);
     }
     let Some(value) = string_slice(&value) else {
-        return data_exception("length argument is not a string", span);
+        return data_exception("character length argument is not a string", span);
     };
     Ok(Value::Int(value.chars().count() as i64))
 }

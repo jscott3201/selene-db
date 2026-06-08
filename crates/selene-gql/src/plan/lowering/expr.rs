@@ -690,7 +690,7 @@ fn span_contains(outer: SourceSpan, inner: SourceSpan) -> bool {
 
 /// Aggregate function names recognised by the planner. Mirrors the parser
 /// grammar's `aggregate_op` rule (lower-cased after `lowercase_db_string`). A scalar
-/// function call with the same arity (e.g. `length(s)`) must not be lifted into
+/// function call with the same arity (e.g. `char_length(s)`) must not be lifted into
 /// `PipelineOp::GroupBy.aggregates`, so this list — not arity — is the gate.
 const AGGREGATE_NAMES: &[&str] = &[
     "stddev_samp",
