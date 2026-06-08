@@ -349,15 +349,15 @@ fn parse_current_datetime_keyword_functions() {
     assert_function_call("RETURN CURRENT_DATE", "current_date");
     assert_function_call("RETURN CURRENT_TIME", "current_time");
     assert_function_call("RETURN CURRENT_TIMESTAMP", "current_timestamp");
-    assert_function_call("RETURN LOCAL_TIMESTAMP", "localtimestamp");
-    assert_function_call("RETURN LOCAL_TIME", "localtime");
-    assert_function_call("RETURN LOCAL_TIME()", "localtime");
+    assert_function_call("RETURN LOCAL_TIMESTAMP", "local_datetime");
+    assert_function_call("RETURN LOCAL_TIME", "local_time");
+    assert_function_call("RETURN LOCAL_TIME()", "local_time");
 
     assert_function_call("RETURN current_date()", "current_date");
     assert_function_call("RETURN current_time()", "current_time");
     assert_function_call("RETURN current_timestamp()", "current_timestamp");
-    assert_function_call("RETURN localtimestamp()", "localtimestamp");
-    assert_function_call("RETURN localtime()", "localtime");
+    assert_function_call("RETURN local_datetime()", "local_datetime");
+    assert_function_call("RETURN local_time()", "local_time");
     assert_function_call_with_args("RETURN LOCAL_TIME('12:34:56')", "LOCAL_TIME", 1);
 }
 

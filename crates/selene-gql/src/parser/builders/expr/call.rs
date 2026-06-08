@@ -94,8 +94,8 @@ pub(super) fn build_current_datetime_function(
         Rule::current_date_function => "current_date",
         Rule::current_time_function => "current_time",
         Rule::current_timestamp_function => "current_timestamp",
-        Rule::local_timestamp_function => "localtimestamp",
-        Rule::local_time_function => "localtime",
+        Rule::local_timestamp_function => "local_datetime",
+        Rule::local_time_function => "local_time",
         _ => {
             return Err(unexpected_pair(
                 function_pair,

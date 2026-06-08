@@ -413,10 +413,6 @@ pub(super) fn eval_function_call(
             ctx,
             span,
         ),
-        "localtimestamp" => {
-            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
-            temporal_fns::eval_localtimestamp(ctx)
-        }
         "date" => temporal_fns::eval_date_constructor(
             eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
             ctx,
@@ -442,10 +438,6 @@ pub(super) fn eval_function_call(
             ctx,
             span,
         ),
-        "localtime" => {
-            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
-            temporal_fns::eval_localtime(ctx)
-        }
         _ => Err(ExecutorError::UnknownFunction {
             name: display_name,
             span,
