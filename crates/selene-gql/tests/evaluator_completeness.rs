@@ -227,6 +227,41 @@ fn scalar_string_and_collection_functions_dispatch() {
 }
 
 #[test]
+fn current_datetime_functions_share_one_request_timestamp() {
+    let caps = selene_gql::ImplDefinedCaps::default();
+    let ctx = exec_common::empty_graph_context(&caps);
+    let schema = BindingTableSchema { columns: vec![] };
+    let binding = Binding::empty();
+    let eval_current = |name: &str| {
+        selene_gql::runtime::evaluate_for_test(
+            &function_call(name, vec![]),
+            &binding,
+            &schema,
+            &ctx,
+        )
+        .expect("current-datetime function evaluates")
+    };
+
+    let current_timestamp = eval_current("current_timestamp");
+    let Value::ZonedDateTime(zoned) = &current_timestamp else {
+        panic!("current_timestamp produced {current_timestamp:?}");
+    };
+    std::thread::sleep(std::time::Duration::from_millis(2));
+
+    assert_eq!(eval_current("current_timestamp"), current_timestamp);
+    assert_eq!(
+        eval_current("current_time"),
+        Value::ZonedTime(zoned.clone())
+    );
+    assert_eq!(eval_current("current_date"), Value::Date(zoned.date()));
+    assert_eq!(
+        eval_current("localtimestamp"),
+        Value::LocalDateTime(zoned.datetime())
+    );
+    assert_eq!(eval_current("localtime"), Value::LocalTime(zoned.time()));
+}
+
+#[test]
 fn scalar_function_errors_have_typed_statuses() {
     let unknown = ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![db_string("missing_fn")]).expect("non-empty"),

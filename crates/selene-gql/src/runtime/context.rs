@@ -65,6 +65,7 @@ pub struct TxContext<'a, 'g> {
     write_txn: Option<&'a mut WriteTxn<'g>>,
     maintenance_graph: Option<&'g SharedGraph>,
     session_time_zone: jiff::tz::TimeZone,
+    request_timestamp: jiff::Timestamp,
     /// GQLRT-05 per-statement memo of correlated-subquery target schemas, keyed
     /// by the subquery expression id. Within one statement an EXISTS/COUNT
     /// expression is evaluated by exactly one filter/project op whose input
@@ -156,6 +157,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             write_txn: None,
             maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
@@ -206,6 +208,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             write_txn: None,
             maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
@@ -256,6 +259,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             write_txn: Some(txn),
             maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
@@ -287,6 +291,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             write_txn: None,
             maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
@@ -319,6 +324,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             write_txn: Some(txn),
             maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
@@ -351,6 +357,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             write_txn: None,
             maintenance_graph: Some(graph),
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
@@ -396,6 +403,17 @@ impl<'a, 'g> TxContext<'a, 'g> {
     #[must_use]
     pub fn session_time_zone(&self) -> &jiff::tz::TimeZone {
         &self.session_time_zone
+    }
+
+    /// Render this statement's request timestamp in the session time zone.
+    ///
+    /// ISO/IEC 39075:2024 section 20.27 sets the current request timestamp once
+    /// before evaluating a datetime value function, so all current-datetime
+    /// reads within this statement share this instant.
+    #[must_use]
+    pub fn request_timestamp_zoned(&self) -> jiff::Zoned {
+        self.request_timestamp
+            .to_zoned(self.session_time_zone.clone())
     }
 
     /// Return the cached target schema for the correlated subquery `expr_id`,
@@ -695,6 +713,20 @@ mod tests {
         registry: &'a EmptyProcedureRegistry,
     ) -> TxContext<'a, 'a> {
         TxContext::read_only(graph.clone(), caps, registry, &[])
+    }
+
+    #[test]
+    fn request_timestamp_is_stable_within_context() {
+        let graph = Arc::new(SeleneGraph::new(GraphId::new(8_808)));
+        let caps = ImplDefinedCaps::default();
+        let registry = EmptyProcedureRegistry;
+        let ctx = read_only_ctx(&graph, &caps, &registry);
+
+        let first = ctx.request_timestamp_zoned();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let second = ctx.request_timestamp_zoned();
+
+        assert_eq!(first, second);
     }
 
     #[test]

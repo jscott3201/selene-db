@@ -172,9 +172,7 @@ fn zoned_from_local_time(
 }
 
 fn current_session_date(ctx: &EvalCtx<'_, '_, '_, '_>) -> jiff::civil::Date {
-    jiff::Timestamp::now()
-        .to_zoned(ctx.tx.session_time_zone().clone())
-        .date()
+    ctx.tx.request_timestamp_zoned().date()
 }
 
 fn temporal_cast_to_type_feature(target: &GqlType) -> &'static str {
