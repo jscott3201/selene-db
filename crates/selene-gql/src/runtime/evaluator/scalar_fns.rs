@@ -229,10 +229,7 @@ pub(super) fn eval_function_call(
             span,
             str::to_lowercase,
         ),
-        "trim" => string_fns::eval_trim(
-            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
-            span,
-        ),
+        "trim" => string_fns::eval_trim_function(&display_name, args, span, binding, schema, ctx),
         "coalesce" => string_fns::eval_coalesce(&display_name, args, span, binding, schema, ctx),
         "nullif" => string_fns::eval_nullif(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
