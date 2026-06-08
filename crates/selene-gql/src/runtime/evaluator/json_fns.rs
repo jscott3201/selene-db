@@ -1,5 +1,6 @@
 //! Implementation-defined JSON scalar functions.
 
+use rust_decimal::{Decimal, prelude::ToPrimitive};
 use selene_core::{JsonValue, Value, db_string};
 
 use crate::{
@@ -610,11 +611,11 @@ fn json_array_index(
 ) -> Result<Option<usize>, ExecutorError> {
     match value {
         Value::Int(value) => Ok(json_signed_array_index(*value, len)),
+        Value::Int128(value) => Ok(json_signed_wide_array_index(*value, len)),
         Value::Uint(value) => Ok(usize::try_from(*value).ok().filter(|idx| *idx < len)),
-        _ => Err(data_exception_value(
-            format!("{function} array index is not an integer"),
-            span,
-        )),
+        Value::Uint128(value) => Ok(usize::try_from(*value).ok().filter(|idx| *idx < len)),
+        Value::Decimal(value) => json_decimal_array_index(*value, len, function, span),
+        _ => Err(json_array_index_error(function, span)),
     }
 }
 
@@ -624,4 +625,36 @@ fn json_signed_array_index(value: i64, len: usize) -> Option<usize> {
     }
     let offset = usize::try_from(value.unsigned_abs()).ok()?;
     (offset <= len).then_some(len - offset)
+}
+
+fn json_signed_wide_array_index(value: i128, len: usize) -> Option<usize> {
+    if value >= 0 {
+        return usize::try_from(value).ok().filter(|idx| *idx < len);
+    }
+    let offset = usize::try_from(value.unsigned_abs()).ok()?;
+    (offset <= len).then_some(len - offset)
+}
+
+fn json_decimal_array_index(
+    value: Decimal,
+    len: usize,
+    function: &'static str,
+    span: SourceSpan,
+) -> Result<Option<usize>, ExecutorError> {
+    if value.trunc() != value {
+        return Err(json_array_index_error(function, span));
+    }
+    if value >= Decimal::ZERO {
+        return Ok(value
+            .to_u128()
+            .and_then(|index| usize::try_from(index).ok())
+            .filter(|idx| *idx < len));
+    }
+    Ok(value
+        .to_i128()
+        .and_then(|index| json_signed_wide_array_index(index, len)))
+}
+
+fn json_array_index_error(function: &'static str, span: SourceSpan) -> ExecutorError {
+    data_exception_value(format!("{function} array index is not an integer"), span)
 }

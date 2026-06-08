@@ -287,6 +287,22 @@ fn json_get_selects_objects_and_arrays() {
         string_value(r#"RETURN json_get_text(json('[10,20,30]'), -1) AS value"#),
         "30"
     );
+    assert_eq!(
+        string_value(r#"RETURN json_get_text(json('[10,20,30]'), CAST(1 AS INT128)) AS value"#),
+        "20"
+    );
+    assert_eq!(
+        string_value(r#"RETURN json_get_text(json('[10,20,30]'), CAST(1 AS UINT128)) AS value"#),
+        "20"
+    );
+    assert_eq!(
+        string_value(r#"RETURN json_get_text(json('[10,20,30]'), 1M) AS value"#),
+        "20"
+    );
+    assert_eq!(
+        string_value(r#"RETURN json_get_text(json('[10,20,30]'), -1M) AS value"#),
+        "30"
+    );
 }
 
 #[test]
@@ -362,6 +378,7 @@ fn json_get_path_returns_sql_null_for_absent_or_inapplicable_paths() {
         r#"RETURN json_get_path(json('{"a":{"b":1}}'), 'a', NULL, 'b') AS value"#,
         r#"RETURN json_get_path(NULL, 'a', 'b') AS value"#,
         r#"RETURN json_get_path(json('[{"a":1}]'), 99, 'a') AS value"#,
+        r#"RETURN json_get(json('[1,2]'), 9999999999999999999999999999M) AS value"#,
         r#"RETURN json_get_path(json('{"a":1}'), 'a', 'b') AS value"#,
         r#"RETURN json_get_path_text(json('{"a":{"b":null}}'), 'a', 'b') AS value"#,
     ] {
@@ -374,6 +391,8 @@ fn json_get_path_reports_data_exceptions_for_bad_selectors() {
     for source in [
         r#"RETURN json_get_path(json('{"a":1}'), 7) AS value"#,
         r#"RETURN json_get_path(json('[1,2]'), 'bad') AS value"#,
+        r#"RETURN json_get(json('[1,2]'), 1.5M) AS value"#,
+        r#"RETURN json_get(json('[1,2]'), -1.5M) AS value"#,
         r#"RETURN json_get_path(7, 'a') AS value"#,
     ] {
         assert_status(source, "22G03");
@@ -386,6 +405,8 @@ fn json_has_path_distinguishes_json_null_from_missing_paths() {
         r#"RETURN json_has_path(json('{"a":{"b":1}}'), 'a', 'b') AS value"#,
         r#"RETURN json_has_path(json('{"a":{"b":null}}'), 'a', 'b') AS value"#,
         r#"RETURN json_has_path(json('{"a":[1,2,3]}'), 'a', -1) AS value"#,
+        r#"RETURN json_has_path(json('[1,2,3]'), CAST(1 AS INT128)) AS value"#,
+        r#"RETURN json_has_path(json('[1,2,3]'), 1M) AS value"#,
     ] {
         assert!(bool_value(source), "{source}");
     }
