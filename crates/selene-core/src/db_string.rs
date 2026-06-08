@@ -1,17 +1,19 @@
-//! Engine-owned database strings backed by standard [`String`] storage.
+//! Engine-owned database strings backed by shared string storage.
 //!
 //! `DbString` is an owned string newtype used for GQL string values, graph
-//! labels, property keys, aliases, and procedure-name segments. There is no
-//! process-global string pool, specialized small-string storage, or
-//! distinct-string cardinality cap: [`db_string`] simply constructs an owned
-//! [`DbString`] after enforcing the per-string byte cap (`IL013`).
+//! labels, property keys, aliases, and procedure-name segments. Cloning a
+//! `DbString` shares the same allocation, but construction never consults a
+//! process-global string pool. There is no interning table, specialized
+//! small-string storage, or distinct-string cardinality cap: [`db_string`]
+//! simply constructs an owned [`DbString`] after enforcing the per-string byte
+//! cap (`IL013`).
 //!
 //! The only construction guard is the `IL013` per-string byte limit
 //! ([`MAX_DB_STRING_BYTES`]); a string at or below it constructs an
 //! [`DbString`], a longer one raises [`CoreError::StringTooLong`] (GQLSTATUS
 //! `22G03`).
 
-use std::{borrow::Borrow, fmt};
+use std::{borrow::Borrow, fmt, sync::Arc};
 
 use rkyv::{
     Archive, Deserialize as RkyvDeserialize, Place, Serialize as RkyvSerialize, SerializeUnsized,
@@ -48,18 +50,18 @@ fn ensure_within_string_cap(s: &str) -> CoreResult<()> {
 
 /// Owned database string.
 ///
-/// `DbString` is a standard [`String`] newtype. It is owned and `'static` (no
+/// `DbString` is a shared [`Arc<str>`] newtype. It is owned and `'static` (no
 /// borrow), so the multi-writer committer's
 /// `assert_send_static::<SealedCommit>()` proof holds for free. Ordering is
 /// **lexicographic** through the inner string, so query-visible comparisons and
 /// `BTreeMap`/`BTreeSet` iteration are content-ordered.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
-pub struct DbString(String);
+pub struct DbString(Arc<str>);
 
 /// Construct an owned [`DbString`] from a string slice.
 ///
-/// Construction is a plain [`String`] allocation guarded only by the `IL013`
+/// Construction allocates shared string storage guarded only by the `IL013`
 /// per-string byte cap; there is no global pool, specialized small-string
 /// storage, or distinct-string cardinality cap.
 ///
@@ -69,14 +71,14 @@ pub struct DbString(String);
 /// [`MAX_DB_STRING_BYTES`] (IL013).
 pub fn db_string(s: &str) -> CoreResult<DbString> {
     ensure_within_string_cap(s)?;
-    Ok(DbString(s.to_owned()))
+    Ok(DbString(Arc::from(s)))
 }
 
 impl DbString {
     /// Construct a [`DbString`] from an owned [`String`].
     ///
-    /// This preserves the same `IL013` guard as [`db_string`] without copying
-    /// when the caller already owns decoded or rendered text.
+    /// This preserves the same `IL013` guard as [`db_string`] and moves the
+    /// owned string into shared storage.
     ///
     /// # Errors
     ///
@@ -84,19 +86,22 @@ impl DbString {
     /// [`MAX_DB_STRING_BYTES`] (IL013).
     pub fn from_string(value: String) -> CoreResult<Self> {
         ensure_within_string_cap(&value)?;
-        Ok(Self(value))
+        Ok(Self(Arc::from(value)))
     }
 
     /// Return this database string as a string slice.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        self.0.as_str()
+        &self.0
     }
 
-    /// Consume this database string and return its owned [`String`].
+    /// Consume this database string and return an owned [`String`].
+    ///
+    /// The returned string is copied out of the shared storage. Prefer
+    /// [`DbString::as_str`] when a borrowed view is enough.
     #[must_use]
     pub fn into_string(self) -> String {
-        self.0
+        self.0.to_string()
     }
 }
 
@@ -219,6 +224,28 @@ mod tests {
     }
 
     #[test]
+    fn cloned_string_shares_storage() {
+        let value = db_string("shared-storage").unwrap();
+        let cloned = value.clone();
+        assert_eq!(value, cloned);
+        assert!(std::ptr::eq(
+            value.as_str().as_ptr(),
+            cloned.as_str().as_ptr()
+        ));
+    }
+
+    #[test]
+    fn separate_construction_is_not_interning() {
+        let left = db_string("not-interned").unwrap();
+        let right = db_string("not-interned").unwrap();
+        assert_eq!(left, right);
+        assert!(!std::ptr::eq(
+            left.as_str().as_ptr(),
+            right.as_str().as_ptr()
+        ));
+    }
+
+    #[test]
     fn owned_string_constructs_without_changing_content() {
         let source = String::from("owned-alpha");
         let value = DbString::from_string(source).expect("owned DB string construction succeeds");
@@ -249,9 +276,9 @@ mod tests {
     }
 
     #[test]
-    fn db_string_is_string_sized() {
-        // DbString wraps a standard String.
-        assert_eq!(std::mem::size_of::<DbString>(), 24);
+    fn db_string_is_arc_str_sized() {
+        // `Arc<str>` is a fat pointer: pointer + length.
+        assert_eq!(std::mem::size_of::<DbString>(), 16);
     }
 
     #[test]
@@ -313,7 +340,7 @@ mod tests {
     #[test]
     fn rkyv_archives_resolved_string() {
         // Wire-stability guard: the newtype archives its string content as an
-        // ArchivedString.
+        // ArchivedString rather than exposing the in-memory Arc layout.
         let key = db_string("db_string.rkyv.portable").unwrap();
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap();
         let archived =
