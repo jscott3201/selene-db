@@ -761,6 +761,7 @@ literal = {
   | time_lit
   | duration_lit
   | uuid_lit
+  | decimal_lit
   | float_lit
   | int_lit
   | byte_string_lit
@@ -781,10 +782,31 @@ hex_int_lit = { "0x" ~ ("_"? ~ ASCII_HEX_DIGIT)+ }
 oct_int_lit = { "0o" ~ ("_"? ~ ('0'..'7'))+ }
 bin_int_lit = { "0b" ~ ("_"? ~ ("0" | "1"))+ }
 
-// Float: digits.digits with optional exponent and ISO approximate suffix
-float_lit = @{
-    ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? ~ ("f" | "F" | "d" | "D")?
+// Exact and approximate numerics per ISO/IEC 39075:2024 §21.2.
+decimal_lit = @{
+    ("+" | "-")? ~ (
+        decimal_scientific ~ exact_number_suffix
+      | decimal_common ~ exact_number_suffix
+      | dec_int_lit ~ exact_number_suffix
+      | decimal_common ~ !numeric_continuation
+    )
 }
+
+float_lit = @{
+    ("+" | "-")? ~ (
+        decimal_scientific ~ approximate_number_suffix?
+      | decimal_common ~ approximate_number_suffix
+      | dec_int_lit ~ approximate_number_suffix
+    )
+}
+decimal_scientific = { decimal_mantissa ~ ("e" | "E") ~ signed_dec_int_lit }
+decimal_mantissa = { decimal_common | dec_int_lit }
+decimal_common = { dec_int_lit ~ "." ~ dec_int_lit? | "." ~ dec_int_lit }
+signed_dec_int_lit = { ("+" | "-")? ~ dec_int_lit }
+exact_number_suffix = { "M" | "m" }
+approximate_number_suffix = { "F" | "f" | "D" | "d" }
+numeric_suffix = { exact_number_suffix | approximate_number_suffix }
+numeric_continuation = { numeric_suffix | "e" | "E" }
 
 // Strings: SINGLE-QUOTE ONLY (spec-aligned)
 // Double-quotes are delimited identifiers (see ident rule).

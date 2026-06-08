@@ -88,6 +88,7 @@ fn render_literal(literal: &Literal) -> String {
         Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => {
             format!("INTEGER {value}")
         }
+        Literal::Decimal(value, _) => format!("DECIMAL {value}"),
         Literal::Float(value, _) => format!("FLOAT {value}"),
         Literal::String(value, _) => format!("STRING '{}'", value.as_str()),
         Literal::Bytes(value, _) => format!("BYTES X'{}'", hex_bytes(value)),

@@ -71,10 +71,19 @@ fn integer_arithmetic_promotes_to_integer() {
 
 #[test]
 fn float_plus_integer_promotes_to_float64() {
-    let analyzed = analyze_one("RETURN 1 + 2.0 AS sum").unwrap();
+    let analyzed = analyze_one("RETURN 1 + 2.0D AS sum").unwrap();
     assert_eq!(
         projection_type(&analyzed, "sum"),
         AnalyzedType::Resolved(GqlType::Float64)
+    );
+}
+
+#[test]
+fn decimal_plus_integer_promotes_to_decimal() {
+    let analyzed = analyze_one("RETURN 1 + 2.0 AS sum").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "sum"),
+        AnalyzedType::Resolved(GqlType::Decimal)
     );
 }
 

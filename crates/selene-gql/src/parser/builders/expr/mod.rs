@@ -256,6 +256,7 @@ fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     match (is_negative, operand) {
         (false, value @ ValueExpr::Literal(Literal::Integer(_, _)))
         | (false, value @ ValueExpr::Literal(Literal::RadixInteger(_, _, _)))
+        | (false, value @ ValueExpr::Literal(Literal::Decimal(_, _)))
         | (false, value @ ValueExpr::Literal(Literal::Float(_, _))) => {
             Ok(literal::with_numeric_span(value, source_span))
         }
@@ -285,6 +286,9 @@ fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
         }
         (true, ValueExpr::Literal(Literal::Float(value, _))) => {
             Ok(ValueExpr::Literal(Literal::Float(-value, source_span)))
+        }
+        (true, ValueExpr::Literal(Literal::Decimal(value, _))) => {
+            Ok(ValueExpr::Literal(Literal::Decimal(-value, source_span)))
         }
         (false, value) => Ok(value),
         (true, value) => Ok(ValueExpr::UnaryOp {

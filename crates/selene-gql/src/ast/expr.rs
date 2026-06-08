@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use rust_decimal::Decimal;
 use selene_core::DbString;
 
 use crate::ast::{
@@ -470,6 +471,8 @@ pub enum Literal {
     Integer(i64, SourceSpan),
     /// Signed 64-bit integer literal written with a non-decimal radix prefix.
     RadixInteger(i64, SourceSpan, IntegerLiteralKind),
+    /// Exact fixed-precision decimal literal.
+    Decimal(Decimal, SourceSpan),
     /// 64-bit floating-point literal.
     Float(f64, SourceSpan),
     /// Database-string literal.
@@ -518,6 +521,9 @@ impl PartialEq for Literal {
                 Self::RadixInteger(lhs, lhs_span, lhs_kind),
                 Self::RadixInteger(rhs, rhs_span, rhs_kind),
             ) => lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind,
+            (Self::Decimal(lhs, lhs_span), Self::Decimal(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
             (Self::Float(lhs, lhs_span), Self::Float(rhs, rhs_span)) => {
                 lhs == rhs && lhs_span == rhs_span
             }
@@ -562,6 +568,7 @@ impl Literal {
             Self::Bool(_, span)
             | Self::Integer(_, span)
             | Self::RadixInteger(_, span, _)
+            | Self::Decimal(_, span)
             | Self::Float(_, span)
             | Self::String(_, span)
             | Self::Bytes(_, span)
@@ -586,6 +593,7 @@ impl Literal {
             Self::Bool(_, span)
             | Self::Integer(_, span)
             | Self::RadixInteger(_, span, _)
+            | Self::Decimal(_, span)
             | Self::Float(_, span)
             | Self::String(_, span)
             | Self::Bytes(_, span)

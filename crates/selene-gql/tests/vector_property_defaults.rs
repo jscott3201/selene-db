@@ -71,7 +71,7 @@ fn vector_default_materializes_and_round_trips_through_show() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(db_string(
-            "CREATE NODE TYPE :Doc (embedding :: VECTOR DEFAULT [1.0, 0.0, 2.5])"
+            "CREATE NODE TYPE :Doc (embedding :: VECTOR DEFAULT [1.0D, 0.0D, 2.5D])"
         ))
     );
 }

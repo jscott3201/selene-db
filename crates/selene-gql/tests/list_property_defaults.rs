@@ -87,7 +87,7 @@ fn list_defaults_materialize_and_round_trip_through_show() {
         Value::String(db_string(
             "CREATE NODE TYPE :Doc (tags :: LIST<STRING> DEFAULT ['alpha', 'beta'], \
              matrix :: LIST<LIST<INTEGER>> DEFAULT [[1, 2], [3]], \
-             embeddings :: LIST<VECTOR> DEFAULT [[1.0, 0.0], [0.0, 1.0]])"
+             embeddings :: LIST<VECTOR> DEFAULT [[1.0D, 0.0D], [0.0D, 1.0D]])"
         ))
     );
 }

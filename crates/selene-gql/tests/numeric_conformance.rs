@@ -70,6 +70,64 @@ fn decimal_param_equals_integer_literal() {
     );
 }
 
+#[test]
+fn exact_decimal_literals_materialize_as_decimal() {
+    let graph = session_graph(9004);
+    let mut session = Session::new(&graph);
+
+    for (source, expected) in [
+        ("RETURN 1.25 AS v", "1.25"),
+        ("RETURN 1.25M AS v", "1.25"),
+        ("RETURN .25 AS v", "0.25"),
+        ("RETURN 1. AS v", "1"),
+        ("RETURN 1e2M AS v", "100"),
+    ] {
+        assert_eq!(
+            single_value(&mut session, source),
+            Value::Decimal(expected.parse().expect("decimal parses")),
+            "source: {source}"
+        );
+    }
+}
+
+#[test]
+fn approximate_numeric_literals_materialize_as_float() {
+    let graph = session_graph(9005);
+    let mut session = Session::new(&graph);
+
+    for (source, expected) in [
+        ("RETURN 1e2 AS v", 100.0),
+        ("RETURN 1e2D AS v", 100.0),
+        ("RETURN 1.25D AS v", 1.25),
+        ("RETURN 1F AS v", 1.0),
+    ] {
+        assert_eq!(
+            single_value(&mut session, source),
+            Value::Float(expected),
+            "source: {source}"
+        );
+    }
+}
+
+#[test]
+fn numeric_literal_typed_predicates_distinguish_exact_and_approximate() {
+    let graph = session_graph(9006);
+    let mut session = Session::new(&graph);
+
+    assert_eq!(
+        single_value(&mut session, "RETURN 1.25 IS TYPED DECIMAL AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        single_value(&mut session, "RETURN 1.25D IS TYPED FLOAT AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        single_value(&mut session, "RETURN 1e2 IS TYPED FLOAT AS ok"),
+        Value::Bool(true)
+    );
+}
+
 // --- GQLRT-27: aggregation over 128-bit / Decimal columns ---
 
 #[test]

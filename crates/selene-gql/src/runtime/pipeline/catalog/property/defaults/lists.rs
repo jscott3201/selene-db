@@ -1,5 +1,6 @@
 //! LIST and VECTOR property-default helpers.
 
+use rust_decimal::prelude::ToPrimitive;
 use selene_core::{CoreError, PropertyValueType, VectorValue};
 use selene_graph::{PropertyDefaultValue, PropertyElementType};
 
@@ -111,6 +112,7 @@ fn vector_component(expr: &ValueExpr, span: crate::SourceSpan) -> Result<f32, Ex
     match expr {
         ValueExpr::Literal(Literal::Integer(value, _))
         | ValueExpr::Literal(Literal::RadixInteger(value, _, _)) => Ok(*value as f32),
+        ValueExpr::Literal(Literal::Decimal(value, _)) => finite_decimal_to_f32(value, span),
         ValueExpr::Literal(Literal::Float(value, _)) => finite_f64_to_f32(*value, span),
         ValueExpr::UnaryOp {
             op: UnaryOp::Negate,
@@ -131,12 +133,22 @@ fn negated_vector_component(
     match expr {
         ValueExpr::Literal(Literal::Integer(value, _))
         | ValueExpr::Literal(Literal::RadixInteger(value, _, _)) => Ok(-(*value as f32)),
+        ValueExpr::Literal(Literal::Decimal(value, _)) => finite_decimal_to_f32(&-*value, span),
         ValueExpr::Literal(Literal::Float(value, _)) => finite_f64_to_f32(-*value, span),
         _ => Err(vector_default_invalid_type(
             "VECTOR DEFAULT negation must apply to a numeric literal",
             span,
         )),
     }
+}
+
+fn finite_decimal_to_f32(
+    value: &rust_decimal::Decimal,
+    span: crate::SourceSpan,
+) -> Result<f32, ExecutorError> {
+    value.to_f32().ok_or_else(|| {
+        vector_default_out_of_range("VECTOR DEFAULT component exceeds FLOAT32 range", span)
+    })
 }
 
 fn finite_f64_to_f32(value: f64, span: crate::SourceSpan) -> Result<f32, ExecutorError> {
