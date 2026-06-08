@@ -25,7 +25,7 @@ pub(super) fn eval_current_timestamp(
     Ok(Value::ZonedDateTime(Box::new(now_zoned(ctx))))
 }
 
-/// `localtimestamp()`: the current local (zoneless) datetime, with wall-clock
+/// `LOCAL_TIMESTAMP`: the current local (zoneless) datetime, with wall-clock
 /// components taken in the session time zone (ISO section 20.27).
 pub(super) fn eval_localtimestamp(ctx: &EvalCtx<'_, '_, '_, '_>) -> Result<Value, ExecutorError> {
     Ok(Value::LocalDateTime(now_zoned(ctx).datetime()))
@@ -96,7 +96,7 @@ pub(super) fn eval_zoned_datetime_constructor(
     }
 }
 
-/// `localtime()`: the current local (zoneless) time, with wall-clock components
+/// `LOCAL_TIME`: the current local (zoneless) time, with wall-clock components
 /// taken in the session time zone (ISO section 20.27).
 pub(super) fn eval_localtime(ctx: &EvalCtx<'_, '_, '_, '_>) -> Result<Value, ExecutorError> {
     Ok(Value::LocalTime(now_zoned(ctx).time()))

@@ -96,10 +96,6 @@ fn current_datetime_functions_share_one_request_timestamp() {
     assert_eq!(eval_current("current_date"), Value::Date(zoned.date()));
     assert_eq!(eval_current("date"), Value::Date(zoned.date()));
     assert_eq!(
-        eval_current("localtimestamp"),
-        Value::LocalDateTime(zoned.datetime())
-    );
-    assert_eq!(
         eval_current("local_datetime"),
         Value::LocalDateTime(zoned.datetime())
     );
@@ -107,9 +103,17 @@ fn current_datetime_functions_share_one_request_timestamp() {
         eval_current("datetime"),
         Value::LocalDateTime(zoned.datetime())
     );
-    assert_eq!(eval_current("localtime"), Value::LocalTime(zoned.time()));
     assert_eq!(eval_current("local_time"), Value::LocalTime(zoned.time()));
     assert_eq!(eval_current("time"), Value::LocalTime(zoned.time()));
+}
+
+#[test]
+fn compact_local_datetime_aliases_are_not_scalar_functions() {
+    assert_eq!(
+        status_for("RETURN localtimestamp() AS value").as_str(),
+        "22G03"
+    );
+    assert_eq!(status_for("RETURN localtime() AS value").as_str(), "22G03");
 }
 
 #[test]
