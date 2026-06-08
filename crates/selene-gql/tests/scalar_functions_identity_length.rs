@@ -12,10 +12,10 @@ use selene_core::{
     feature_register::FeatureId,
 };
 use selene_gql::{
-    Binding, BindingTable, BindingTableSchema, GqlType, ProcedureContext, ProcedureError,
-    ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
+    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, GqlType, ProcedureContext,
+    ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
     ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry, ProcedureResult,
-    ProcedureSignature, ProcedureTier, Session, StatementOutput, feature_walk, parse,
+    ProcedureSignature, ProcedureTier, Session, StatementOutput, analyze, feature_walk, parse,
 };
 use selene_graph::SharedGraph;
 use smallvec::smallvec;
@@ -31,6 +31,13 @@ fn single_value(source: &str, column: &str) -> Value {
 
 fn assert_status(source: &str, expected: &str) {
     let err = execute_read_result(source).expect_err("query should fail");
+    assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
+}
+
+fn assert_analysis_status(source: &str, expected: &str) {
+    let statement = parse(source).expect("source parses");
+    let err =
+        analyze(statement, &EmptyProcedureRegistry, None).expect_err("source should not analyze");
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
 }
 
@@ -161,21 +168,15 @@ fn element_id_returns_string_for_nodes_and_edges() {
 }
 
 #[test]
-fn element_id_propagates_null() {
-    assert_eq!(
-        single_value("RETURN element_id(null) AS id", "id"),
-        Value::Null
-    );
-}
-
-#[test]
-fn element_id_rejects_non_element_arguments() {
+fn element_id_requires_singleton_element_variable_reference() {
     for source in [
+        "RETURN element_id(null) AS id",
         "RETURN element_id(1) AS id",
         "RETURN element_id('x') AS id",
+        "MATCH (n:Person) RETURN element_id(n.name) AS id LIMIT 1",
         "MATCH (n:Person) RETURN element_id([n]) AS id LIMIT 1",
     ] {
-        assert_status(source, "22G03");
+        assert_analysis_status(source, "42002");
     }
 }
 
