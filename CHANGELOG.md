@@ -103,6 +103,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **SIZE list-only semantics (ISO §20.22).** `SIZE(...)` now accepts only list
+  values, matching the ISO rule that `SIZE(<list>)` is effectively
+  `CARDINALITY(<list>)`. `CARDINALITY(...)` remains the broader cardinality
+  expression for binding tables, paths, lists, and records.
 - **ISO §20.27 current-datetime request timestamp.** `current_timestamp()`,
   `current_time()`, `current_date()`, `localtimestamp()`, and `localtime()` now
   share one request timestamp captured on the statement `TxContext` instead of

@@ -305,6 +305,64 @@ fn cardinality_records_gf12_feature() {
 }
 
 #[test]
+fn size_counts_lists_only() {
+    assert_eq!(
+        single_value("RETURN size([1, 2, 3]) AS value", "value"),
+        Value::Int(3)
+    );
+    assert_eq!(
+        single_value("RETURN size([]) AS value", "value"),
+        Value::Int(0)
+    );
+}
+
+#[test]
+fn size_propagates_null_and_rejects_non_lists() {
+    assert_eq!(
+        single_value("RETURN size(null) AS value", "value"),
+        Value::Null
+    );
+
+    for source in [
+        "RETURN size('abc') AS value",
+        "RETURN size({a: 1}) AS value",
+        "RETURN size(1) AS value",
+        "MATCH (n:Person) RETURN size(n) AS value LIMIT 1",
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
+fn size_is_list_only_while_cardinality_still_counts_records() {
+    assert_eq!(
+        single_value("RETURN cardinality({a: 1, b: 2}) AS value", "value"),
+        Value::Int(2)
+    );
+    assert_status("RETURN size({a: 1, b: 2}) AS value", "22G03");
+}
+
+#[test]
+fn size_rejects_wrong_arity() {
+    assert_status("RETURN size() AS value", "22G03");
+    assert_status("RETURN size([1], [2]) AS value", "22G03");
+}
+
+#[test]
+fn size_records_gf13_feature() {
+    let statement = parse("RETURN size([1, 2, 3]) AS value").expect("source parses");
+    let features = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        features.contains(&FeatureId::GF13),
+        "size should record GF13, observed {features:?}"
+    );
+}
+
+#[test]
 fn path_length_counts_path_edges() {
     let graph = SharedGraph::new(GraphId::new(9203));
     let mut session = Session::new(&graph);

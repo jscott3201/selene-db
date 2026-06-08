@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{Record, Value};
+use selene_core::Value;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::{
@@ -455,20 +455,7 @@ pub(super) fn eval_size(args: Vec<Value>, span: SourceSpan) -> Result<Value, Exe
     match args.into_iter().next().expect("arity checked") {
         Value::Null => Ok(Value::Null),
         Value::List(values) => Ok(Value::Int(values.len() as i64)),
-        Value::Record(record) => {
-            let len = match *record {
-                Record::Open(fields) => fields.len(),
-                _ => return data_exception("unsupported record shape", span),
-            };
-            Ok(Value::Int(len as i64))
-        }
-        Value::RecordTyped(record) => Ok(Value::Int(record.values.len() as i64)),
-        value => {
-            let Some(value) = string_slice(&value) else {
-                return data_exception("size argument is not a list, record, or string", span);
-            };
-            Ok(Value::Int(value.chars().count() as i64))
-        }
+        _ => data_exception("size argument is not a list", span),
     }
 }
 

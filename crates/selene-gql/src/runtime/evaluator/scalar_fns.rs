@@ -1,6 +1,6 @@
 //! Scalar function evaluation.
 //!
-//! Dispatches the v1.1 closed scalar-function set case-insensitively. Each
+//! Dispatches the current closed scalar-function set case-insensitively. Each
 //! function owns arity checking; `NULL` propagates except where short-circuit
 //! functions (`coalesce`, `nullif`) define different behavior.
 
