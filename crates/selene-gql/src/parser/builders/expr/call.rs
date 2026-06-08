@@ -48,6 +48,38 @@ pub(super) fn build_function_call(pair: Pair<'_, Rule>) -> Result<ValueExpr, Par
     })
 }
 
+pub(super) fn build_current_datetime_function(
+    pair: Pair<'_, Rule>,
+) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let function_pair = first_child(pair)?;
+    let name = match function_pair.as_rule() {
+        Rule::current_date_function => "current_date",
+        Rule::current_time_function => "current_time",
+        Rule::current_timestamp_function => "current_timestamp",
+        Rule::local_timestamp_function => "localtimestamp",
+        Rule::local_time_function => "localtime",
+        _ => {
+            return Err(unexpected_pair(
+                function_pair,
+                "unexpected current-datetime function",
+            ));
+        }
+    };
+    Ok(ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![db_string_from_owned(
+            name.to_owned(),
+            source_span,
+            "current-datetime function name",
+        )?])
+        .expect("literal vector is non-empty"),
+        args: Vec::new(),
+        star: false,
+        distinct: false,
+        span: source_span,
+    })
+}
+
 pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut name = None;
