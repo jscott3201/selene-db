@@ -89,6 +89,7 @@ fn runtime_data_exceptions_emit_specific_subclasses() {
         ("RETURN 9223372036854775807 + 1 AS v", "22003"),
         ("RETURN 1 / 0 AS v", "22012"),
         ("RETURN power(0, -1) AS v", "2201F"),
+        ("RETURN sqrt(-1) AS v", "2201F"),
         ("RETURN 'x' + 1 AS v", "22G03"),
         ("RETURN DURATION('P1M') + DURATION('PT1H') AS v", "22G14"),
         ("RETURN {a: 1, a: 2} AS v", "22G0X"),

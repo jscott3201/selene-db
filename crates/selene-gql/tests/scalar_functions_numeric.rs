@@ -175,7 +175,7 @@ fn scalar_functions_numeric_gf01_enhanced_numeric_functions_reject_non_numeric_a
 
 #[test]
 fn scalar_functions_numeric_gf01_enhanced_numeric_domain_errors_use_iso_statuses() {
-    assert_status("RETURN sqrt(-1) AS value", "22003");
+    assert_status("RETURN sqrt(-1) AS value", "2201F");
     assert_status("RETURN mod(7, 0) AS value", "22012");
 }
 

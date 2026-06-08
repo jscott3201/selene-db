@@ -14,7 +14,7 @@ use crate::{
 use super::{
     binary_ops::{
         data_exception, data_exception_value, data_exception_value_with, data_exception_with,
-        eval_binary, numeric_to_f64,
+        eval_binary, eval_float_power, numeric_to_f64,
     },
     concat_ops::ConcatCaps,
     duration_fns, identity_length_fns, json_fns,
@@ -679,23 +679,7 @@ fn eval_sqrt(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError>
     let Some(value) = numeric_to_f64(&value) else {
         return data_exception("sqrt argument is not numeric", span);
     };
-    if value < 0.0 {
-        return data_exception_with(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "sqrt argument is negative",
-            span,
-        );
-    }
-    let value = value.sqrt();
-    if value.is_finite() {
-        Ok(Value::Float(value))
-    } else {
-        data_exception_with(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "sqrt result is non-finite",
-            span,
-        )
-    }
+    eval_float_power(value, 0.5, span)
 }
 
 fn single_segment_name(name: &NonEmpty<DbString>) -> Option<String> {
