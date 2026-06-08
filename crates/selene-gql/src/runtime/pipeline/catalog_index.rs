@@ -167,6 +167,7 @@ fn gql_type_to_index_kind(
     span: SourceSpan,
 ) -> Result<TypedIndexKind, ExecutorError> {
     match gql_type {
+        GqlType::Boolean => Ok(TypedIndexKind::Bool),
         GqlType::String => Ok(TypedIndexKind::String),
         GqlType::Uuid => Ok(TypedIndexKind::Uuid),
         GqlType::Integer
@@ -280,6 +281,7 @@ fn same_property_set(lhs: &[DbString], rhs: &[DbString]) -> bool {
 
 pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
     match kind {
+        TypedIndexKind::Bool => "bool",
         TypedIndexKind::I64 => "i64",
         TypedIndexKind::F64 => "f64",
         TypedIndexKind::String => "string",

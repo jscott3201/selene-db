@@ -15,7 +15,9 @@ use selene_gql::{
     ExecutorError, GqlStatus, PipelineOp, TxContext, analyze, execute_pipeline, parse, plan,
 };
 use selene_graph::{EdgeEndpointDef, EdgeTypeDef};
-use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
+use selene_graph::{
+    GraphError, GraphTypeDef, NodeTypeDef, SharedGraph, TypedIndexKind, ValidationMode,
+};
 
 use exec_common::db_string;
 
@@ -179,13 +181,23 @@ fn create_node_type_unindexed_property_does_not_create_property_index() {
 }
 
 #[test]
-fn create_node_type_indexed_unsupported_type_reports_feature_not_supported() {
+fn create_node_type_bool_indexed_property_creates_property_index() {
     let graph = empty_closed_graph(3719);
     let plan = planned("CREATE NODE TYPE :Sensor (active :: BOOLEAN INDEXED)");
 
-    let err = run_write(&graph, &plan).expect_err("BOOLEAN inline index unsupported");
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    outcome.expect("commit succeeds");
 
-    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+    let sensor = db_string("Sensor");
+    let active = db_string("active");
+    assert_eq!(
+        graph
+            .read()
+            .property_index_for(&sensor, &active)
+            .expect("bool index exists")
+            .kind(),
+        TypedIndexKind::Bool
+    );
 }
 
 #[test]

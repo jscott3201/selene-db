@@ -125,7 +125,7 @@ fn create_sensor_type(graph: &SharedGraph) {
     run_ddl(
         graph,
         "CREATE NODE TYPE :Sensor \
-         (ts :: INT64, location :: STRING, value :: STRING, active :: BOOLEAN)",
+         (ts :: INT64, location :: STRING, value :: STRING, active :: BOOLEAN, tags :: LIST<STRING>)",
     )
     .unwrap();
 }
@@ -264,8 +264,20 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
     assert!(duplicate.contains("contains duplicates"));
     assert!(duplicate.contains("ts"));
 
-    let unsupported = graph_type_violation(&graph, "CREATE INDEX bad ON :Sensor(active, ts)");
-    assert!(unsupported.contains("property kind Bool is not supported"));
+    run_ddl(&graph, "CREATE INDEX active_ts ON :Sensor(active, ts)").unwrap();
+    let snapshot = graph.read();
+    let rows = snapshot
+        .iter_composite_property_index_entries()
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        rows[0].2.as_slice(),
+        &[TypedIndexKind::Bool, TypedIndexKind::I64]
+    );
+    drop(snapshot);
+
+    let unsupported = graph_type_violation(&graph, "CREATE INDEX bad ON :Sensor(tags, ts)");
+    assert!(unsupported.contains("property kind List is not supported"));
 
     let edge = graph_type_violation(&graph, "CREATE INDEX edge_idx ON :Likes(score, score)");
     assert!(edge.contains("BRIEF-140c"));

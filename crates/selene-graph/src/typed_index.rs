@@ -6,7 +6,7 @@
 //! write-side (`insert`, `remove`) and read/diff-side (`lookup_eq`, the
 //! per-type closures in `lookup_range`, and `values_share_key`) caller. A
 //! `STRING` value always resolves directly to its database-string key. Kind
-//! mismatch (e.g. a `Value::Bool` against any index) and NaN still raise
+//! mismatch (e.g. a `Value::Json` against any index) and NaN still raise
 //! `TypedIndexValueError`; a kind-mismatched read returns `None` to the caller
 //! so it drops to a runtime scan.
 //!
@@ -38,6 +38,8 @@ use serde::{Deserialize, Serialize};
     Serialize,
 )]
 pub enum TypedIndexKind {
+    /// Boolean value. Backs [`Value::Bool`].
+    Bool,
     /// Signed 64-bit integer. Backs [`Value::Int`].
     I64,
     /// Finite `f64`. Backs [`Value::Float`]; NaN is rejected.
@@ -115,6 +117,8 @@ impl Hash for NotNanF64 {
 /// Built-in per-`(label, property)` node value index.
 #[derive(Clone, Debug)]
 pub enum TypedIndex {
+    /// Boolean index.
+    Bool(BTreeMap<bool, RoaringBitmap>),
     /// Signed integer index.
     I64(BTreeMap<i64, RoaringBitmap>),
     /// Floating-point index with NaN excluded.
@@ -134,6 +138,7 @@ impl TypedIndex {
     #[must_use]
     pub fn new(kind: TypedIndexKind) -> Self {
         match kind {
+            TypedIndexKind::Bool => Self::Bool(BTreeMap::new()),
             TypedIndexKind::I64 => Self::I64(BTreeMap::new()),
             TypedIndexKind::F64 => Self::F64(BTreeMap::new()),
             TypedIndexKind::String => Self::String(BTreeMap::new()),
@@ -147,6 +152,7 @@ impl TypedIndex {
     #[must_use]
     pub const fn kind(&self) -> TypedIndexKind {
         match self {
+            Self::Bool(_) => TypedIndexKind::Bool,
             Self::I64(_) => TypedIndexKind::I64,
             Self::F64(_) => TypedIndexKind::F64,
             Self::String(_) => TypedIndexKind::String,
@@ -165,6 +171,7 @@ impl TypedIndex {
     #[must_use]
     pub fn cardinality(&self) -> u64 {
         match self {
+            Self::Bool(index) => cardinality(index),
             Self::I64(index) => cardinality(index),
             Self::F64(index) => cardinality(index),
             Self::String(index) => cardinality(index),
@@ -184,6 +191,7 @@ impl TypedIndex {
     #[must_use]
     pub fn distinct_keys(&self) -> u64 {
         match self {
+            Self::Bool(index) => index.len() as u64,
             Self::I64(index) => index.len() as u64,
             Self::F64(index) => index.len() as u64,
             Self::String(index) => index.len() as u64,
@@ -206,6 +214,7 @@ impl TypedIndex {
     #[must_use]
     pub(crate) fn buckets_eq(&self, reference: &Self) -> bool {
         match (self, reference) {
+            (Self::Bool(lhs), Self::Bool(rhs)) => lhs == rhs,
             (Self::I64(lhs), Self::I64(rhs)) => lhs == rhs,
             (Self::F64(lhs), Self::F64(rhs)) => lhs == rhs,
             (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
@@ -224,6 +233,7 @@ impl TypedIndex {
     #[must_use]
     pub(crate) fn has_empty_bucket(&self) -> bool {
         match self {
+            Self::Bool(index) => index.values().any(RoaringBitmap::is_empty),
             Self::I64(index) => index.values().any(RoaringBitmap::is_empty),
             Self::F64(index) => index.values().any(RoaringBitmap::is_empty),
             Self::String(index) => index.values().any(RoaringBitmap::is_empty),
@@ -237,6 +247,10 @@ impl TypedIndex {
     pub(crate) fn insert(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
         match (self, typed_key(value, expected_kind)?) {
+            (Self::Bool(index), TypedKey::Bool(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
             (Self::I64(index), TypedKey::I64(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
@@ -275,6 +289,10 @@ impl TypedIndex {
     pub(crate) fn remove(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
         match (self, typed_key(value, expected_kind)?) {
+            (Self::Bool(index), TypedKey::Bool(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
             (Self::I64(index), TypedKey::I64(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
@@ -318,6 +336,7 @@ impl TypedIndex {
             Err(_) => return None,
         };
         match (self, key) {
+            (Self::Bool(index), TypedKey::Bool(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::I64(index), TypedKey::I64(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::F64(index), TypedKey::F64(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::String(index), TypedKey::String(key)) => Some(cow_or_empty(index.get(&key))),
@@ -337,6 +356,21 @@ impl TypedIndex {
         R: RangeBounds<Value>,
     {
         match self {
+            Self::Bool(index) => {
+                let start = bound_to_key(range.start_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::Bool) {
+                        Ok(TypedKey::Bool(key)) => Some(key),
+                        _ => None,
+                    }
+                })?;
+                let end = bound_to_key(range.end_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::Bool) {
+                        Ok(TypedKey::Bool(key)) => Some(key),
+                        _ => None,
+                    }
+                })?;
+                Some(range_union(index, &start, &end))
+            }
             Self::I64(index) => {
                 let start = bound_to_key(range.start_bound(), |value| {
                     match typed_key(value, TypedIndexKind::I64) {
@@ -488,6 +522,7 @@ impl TypedIndex {
     pub(crate) fn values_share_key(&self, lhs: &Value, rhs: &Value) -> bool {
         let kind = self.kind();
         match (self, typed_key(lhs, kind), typed_key(rhs, kind)) {
+            (Self::Bool(_), Ok(TypedKey::Bool(lhs)), Ok(TypedKey::Bool(rhs))) => lhs == rhs,
             (Self::I64(_), Ok(TypedKey::I64(lhs)), Ok(TypedKey::I64(rhs))) => lhs == rhs,
             (Self::F64(_), Ok(TypedKey::F64(lhs)), Ok(TypedKey::F64(rhs))) => lhs == rhs,
             (Self::String(_), Ok(TypedKey::String(lhs)), Ok(TypedKey::String(rhs))) => lhs == rhs,
@@ -541,6 +576,7 @@ impl TypedIndexValueError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum TypedKey {
+    Bool(bool),
     I64(i64),
     F64(NotNanF64),
     String(DbString),
@@ -552,6 +588,7 @@ enum TypedKey {
 impl TypedKey {
     const fn observed(&self) -> &'static str {
         match self {
+            Self::Bool(_) => "Bool",
             Self::I64(_) => "Int",
             Self::F64(_) => "Float",
             Self::String(_) => "String",
@@ -577,6 +614,7 @@ fn typed_key(
     expected_kind: TypedIndexKind,
 ) -> Result<TypedKey, TypedIndexValueError> {
     match value {
+        Value::Bool(value) => Ok(TypedKey::Bool(*value)),
         Value::Int(value) => Ok(TypedKey::I64(*value)),
         Value::Float(value) => NotNanF64::new(*value)
             .map(TypedKey::F64)

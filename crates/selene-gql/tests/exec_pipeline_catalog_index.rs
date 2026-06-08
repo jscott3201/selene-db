@@ -237,10 +237,6 @@ fn create_index_rejects_deferred_or_invalid_shapes_with_precise_errors() {
             "CREATE INDEX zdt_idx ON :Sensor(zdt)",
             "property kind ZonedDateTime is not supported",
         ),
-        (
-            "CREATE INDEX bool_idx ON :Sensor(active)",
-            "property kind Bool is not supported",
-        ),
     ] {
         let message = graph_type_violation(&graph, source);
         assert!(message.contains(expected), "{source}: {message}");
@@ -253,11 +249,13 @@ fn create_index_infers_all_supported_storage_kinds() {
     run_ddl(
         &graph,
         "CREATE NODE TYPE :T \
-         (i :: INT64, f :: FLOAT64, s :: STRING, d :: DATE, ldt :: LOCAL DATETIME, u :: UUID)",
+         (b :: BOOLEAN, i :: INT64, f :: FLOAT64, s :: STRING, d :: DATE, \
+          ldt :: LOCAL DATETIME, u :: UUID)",
     )
     .unwrap();
 
     for (name, property, kind) in [
+        ("t_b", "b", TypedIndexKind::Bool),
         ("t_i", "i", TypedIndexKind::I64),
         ("t_f", "f", TypedIndexKind::F64),
         ("t_s", "s", TypedIndexKind::String),
@@ -285,24 +283,22 @@ fn named_index_survives_wal_recovery() {
         .unwrap();
     let mut changes = Vec::new();
     changes.extend(
-        run_ddl(&graph, "CREATE NODE TYPE :Sensor (ts :: LOCAL DATETIME)")
+        run_ddl(&graph, "CREATE NODE TYPE :Sensor (active :: BOOLEAN)")
             .unwrap()
             .changes,
     );
     changes.extend(
-        run_ddl(&graph, "CREATE INDEX sensor_ts_idx ON :Sensor(ts)")
+        run_ddl(&graph, "CREATE INDEX sensor_active_idx ON :Sensor(active)")
             .unwrap()
             .changes,
     );
     append_wal(&dir, &changes);
 
     let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    assert_eq!(index_entry(&recovered, "Sensor", "ts"), None);
     assert_eq!(
-        index_entry(&recovered, "Sensor", "ts"),
-        Some((
-            TypedIndexKind::LocalDateTime,
-            Some(db_string("sensor_ts_idx"))
-        ))
+        index_entry(&recovered, "Sensor", "active"),
+        Some((TypedIndexKind::Bool, Some(db_string("sensor_active_idx"))))
     );
     let _ = fs::remove_dir_all(dir);
 }

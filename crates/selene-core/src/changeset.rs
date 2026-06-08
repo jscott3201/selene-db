@@ -568,6 +568,8 @@ pub enum SchemaVectorIndexKind {
 /// depend on graph storage internals.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum SchemaPropertyIndexKind {
+    /// Boolean value.
+    Bool,
     /// Signed 64-bit integer.
     I64,
     /// Finite 64-bit floating-point value.

@@ -129,6 +129,71 @@ fn apply_create_update_delete_moves_composite_rows() {
 }
 
 #[test]
+fn apply_update_moves_bool_composite_component() {
+    let label = db_string("cpi.bool.label").unwrap();
+    let active = db_string("cpi.bool.active").unwrap();
+    let location = db_string("cpi.bool.location").unwrap();
+    let mut indexes = CompositeIndexMap::default();
+    let properties = smallvec![active.clone(), location.clone()];
+    insert_entry(
+        &mut indexes,
+        label.clone(),
+        properties.clone(),
+        smallvec![TypedIndexKind::Bool, TypedIndexKind::String],
+    );
+    let old_props = property_map([
+        (active.clone(), Value::Bool(false)),
+        (location.clone(), Value::String(db_string("north").unwrap())),
+    ]);
+    let new_props = property_map([
+        (active.clone(), Value::Bool(true)),
+        (location.clone(), Value::String(db_string("north").unwrap())),
+    ]);
+
+    apply_node_create(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        4,
+    )
+    .unwrap();
+    apply_node_update(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        &LabelSet::single(label.clone()),
+        &new_props,
+        4,
+    )
+    .unwrap();
+
+    assert!(
+        rows(
+            &indexes,
+            label.clone(),
+            &properties,
+            &[
+                Value::Bool(false),
+                Value::String(db_string("north").unwrap())
+            ]
+        )
+        .is_empty()
+    );
+    assert!(
+        rows(
+            &indexes,
+            label,
+            &properties,
+            &[
+                Value::Bool(true),
+                Value::String(db_string("north").unwrap())
+            ]
+        )
+        .contains(4)
+    );
+}
+
+#[test]
 fn apply_create_skips_partial_composite_values() {
     let label = db_string("cpi.partial.label").unwrap();
     let ts = db_string("cpi.partial.ts").unwrap();
