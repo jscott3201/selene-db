@@ -375,24 +375,52 @@ pub(super) fn eval_function_call(
             )?,
             span,
         ),
-        // ISO/IEC 39075:2024 section 20.27 current-datetime functions. Each is
-        // niladic and reads the session time zone threaded into the context.
+        // ISO/IEC 39075:2024 section 20.27 current-datetime functions and
+        // constructor forms. Niladic paths read the session time zone threaded
+        // into the context; constructor paths may parse one string argument.
         "current_timestamp" => {
             eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
             temporal_fns::eval_current_timestamp(ctx)
         }
+        "zoned_datetime" => temporal_fns::eval_zoned_datetime_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "local_datetime" => temporal_fns::eval_local_datetime_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
         "localtimestamp" => {
             eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
             temporal_fns::eval_localtimestamp(ctx)
         }
-        "current_date" => {
-            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
-            temporal_fns::eval_current_date(ctx)
-        }
-        "current_time" => {
-            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
-            temporal_fns::eval_current_time(ctx)
-        }
+        "date" => temporal_fns::eval_date_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "current_date" => temporal_fns::eval_date_constructor(
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "zoned_time" => temporal_fns::eval_zoned_time_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "current_time" => temporal_fns::eval_zoned_time_constructor(
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "local_time" => temporal_fns::eval_local_time_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
         "localtime" => {
             eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
             temporal_fns::eval_localtime(ctx)
