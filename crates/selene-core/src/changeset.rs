@@ -580,6 +580,8 @@ pub enum SchemaPropertyIndexKind {
     U128,
     /// Fixed-precision decimal value.
     Decimal,
+    /// Finite 32-bit floating-point value.
+    F32,
     /// Finite 64-bit floating-point value.
     F64,
     /// Database string.

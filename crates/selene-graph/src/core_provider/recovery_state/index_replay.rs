@@ -372,6 +372,7 @@ pub(super) const fn typed_kind_from(kind: SchemaPropertyIndexKind) -> TypedIndex
         SchemaPropertyIndexKind::I128 => TypedIndexKind::I128,
         SchemaPropertyIndexKind::U128 => TypedIndexKind::U128,
         SchemaPropertyIndexKind::Decimal => TypedIndexKind::Decimal,
+        SchemaPropertyIndexKind::F32 => TypedIndexKind::F32,
         SchemaPropertyIndexKind::F64 => TypedIndexKind::F64,
         SchemaPropertyIndexKind::String => TypedIndexKind::String,
         SchemaPropertyIndexKind::Date => TypedIndexKind::Date,

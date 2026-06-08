@@ -91,13 +91,14 @@ fn parse_kind(value: DbString) -> Result<TypedIndexKind, ProcedureError> {
         "i128" | "int128" => Ok(TypedIndexKind::I128),
         "u128" | "uint128" => Ok(TypedIndexKind::U128),
         "decimal" | "dec" => Ok(TypedIndexKind::Decimal),
+        "f32" | "float32" => Ok(TypedIndexKind::F32),
         "f64" | "float" => Ok(TypedIndexKind::F64),
         "string" => Ok(TypedIndexKind::String),
         "date" => Ok(TypedIndexKind::Date),
         "local_datetime" | "localdatetime" => Ok(TypedIndexKind::LocalDateTime),
         "uuid" => Ok(TypedIndexKind::Uuid),
         _ => Err(invalid_arg(format!(
-            "unknown index kind '{raw}'; expected one of bool, i64, u64, i128, u128, decimal, f64, string, date, local_datetime, uuid"
+            "unknown index kind '{raw}'; expected one of bool, i64, u64, i128, u128, decimal, f32, f64, string, date, local_datetime, uuid"
         ))),
     }
 }

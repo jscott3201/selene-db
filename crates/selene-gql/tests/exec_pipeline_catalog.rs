@@ -250,6 +250,24 @@ fn create_node_type_exact_numeric_indexed_properties_create_property_indexes() {
 }
 
 #[test]
+fn create_node_type_float32_indexed_property_creates_property_index() {
+    let graph = empty_closed_graph(3726);
+    let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT32 INDEXED)");
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    outcome.expect("commit succeeds");
+
+    assert_eq!(
+        graph
+            .read()
+            .property_index_for(&db_string("Metric"), &db_string("score"))
+            .expect("float32 index exists")
+            .kind(),
+        TypedIndexKind::F32
+    );
+}
+
+#[test]
 fn create_node_type_float_indexed_reports_feature_not_supported() {
     let graph = empty_closed_graph(3722);
     let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT INDEXED)");

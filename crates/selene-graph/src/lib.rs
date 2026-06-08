@@ -43,6 +43,7 @@ pub mod store;
 pub mod text_index;
 pub mod text_search;
 pub mod type_validator;
+mod typed_float_key;
 pub mod typed_index;
 pub mod vector_index;
 pub mod vector_search;
@@ -91,7 +92,8 @@ pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use text_index::{TextIndex, TextIndexMemoryUsage, TextIndexStats};
 pub use text_search::{TextSearchError, TextSearchHit};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
-pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
+pub use typed_float_key::{NotNanError, NotNanF32, NotNanF64};
+pub use typed_index::{TypedIndex, TypedIndexKind};
 pub use vector_index::{
     IVF_REBUILD_MIN_PENDING_RETRAIN_ENTRIES, IVF_REBUILD_PENDING_RETRAIN_BASIS_POINTS, VectorIndex,
     VectorIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMemoryUsage,

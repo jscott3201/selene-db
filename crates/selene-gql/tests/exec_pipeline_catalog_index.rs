@@ -250,8 +250,8 @@ fn create_index_infers_all_supported_storage_kinds() {
         &graph,
         "CREATE NODE TYPE :T \
          (b :: BOOLEAN, i :: INT64, n :: UINT64, i128 :: INT128, u128 :: UINT128, \
-          dec :: DECIMAL, f :: FLOAT64, s :: STRING, d :: DATE, ldt :: LOCAL DATETIME, \
-          u :: UUID)",
+          dec :: DECIMAL, f32 :: FLOAT32, f :: FLOAT64, s :: STRING, d :: DATE, \
+          ldt :: LOCAL DATETIME, u :: UUID)",
     )
     .unwrap();
 
@@ -262,6 +262,7 @@ fn create_index_infers_all_supported_storage_kinds() {
         ("t_i128", "i128", TypedIndexKind::I128),
         ("t_u128", "u128", TypedIndexKind::U128),
         ("t_dec", "dec", TypedIndexKind::Decimal),
+        ("t_f32", "f32", TypedIndexKind::F32),
         ("t_f", "f", TypedIndexKind::F64),
         ("t_s", "s", TypedIndexKind::String),
         ("t_d", "d", TypedIndexKind::Date),

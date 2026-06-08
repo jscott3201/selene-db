@@ -241,9 +241,9 @@ pub(super) fn equality_candidates<'a>(
 /// - `IndexKind::Integer128`, `UnsignedInteger128`, and `Decimal` keys are
 ///   `Value::Int128`, `Value::Uint128`, and `Value::Decimal` respectively.
 ///   They intentionally admit only their exact typed parameter declarations.
-/// - `IndexKind::Float` keys are `Value::Float` (f64). `FLOAT` and `FLOAT64`
-///   bind to `Value::Float`; `FLOAT32` binds to `Value::Float32` and would
-///   need an explicit cast, so it is rejected.
+/// - `IndexKind::Float32` keys are `Value::Float32`; `IndexKind::Float` keys
+///   are `Value::Float` (f64). `FLOAT` is width-generic, so both float index
+///   kinds reject it and only admit precise width declarations.
 /// - `IndexKind::String`, `Date`, `LocalDateTime`, `Uuid` are 1:1 with the
 ///   matching GqlType variant. `STRING` binds to `Value::String`.
 ///
@@ -271,6 +271,7 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         IndexKind::Integer128 => matches!(ty, GqlType::Int128),
         IndexKind::UnsignedInteger128 => matches!(ty, GqlType::Uint128),
         IndexKind::Decimal => matches!(ty, GqlType::Decimal),
+        IndexKind::Float32 => matches!(ty, GqlType::Float32),
         // BRIEF-154 PR #175 F2 (Codex P2): admit only `FLOAT64` for
         // `IndexKind::Float`. `GqlType::Float` is width-generic per
         // `parameter_type::validate_declared_type`, which accepts both
