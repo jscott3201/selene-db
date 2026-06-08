@@ -530,6 +530,10 @@ mod tests {
         for (status, code, class) in cases {
             assert_eq!(status.as_str(), code);
             assert_eq!(status.class(), class);
+            assert!(
+                selene_core::gqlstatus_name(code).is_some(),
+                "GQLSTATUS {code} is public in selene-gql but missing from selene-core names"
+            );
         }
     }
 
