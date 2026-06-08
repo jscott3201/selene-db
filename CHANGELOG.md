@@ -19,6 +19,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   string-parameter temporal parsing. They now also accept record-constructor
   parameters, validate ISO field-name sets with `22G05`, and report invalid
   datetime field values with `22G06`.
+- **Duration value function records (ISO §20.29).** `DURATION(...)` now accepts
+  string parameters and open record-constructor parameters. Year/month records
+  build year-month durations, day/time records build day-time durations, invalid
+  duration field sets report `22G07`, and invalid generated duration text
+  reports `22G0H`.
 - **GP03 — explicit variable-scope `CALL` subqueries (ISO §15.2).** `CALL (x, y) { ... }`
   now binds and executes: the subquery body sees **only** the named imported
   variables, and an empty `CALL () { ... }` is fully isolated. An outer variable

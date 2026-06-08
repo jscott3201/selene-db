@@ -88,6 +88,8 @@ impl GqlStatus {
     pub const INVALID_DATETIME_FUNCTION_FIELD_NAME: Self = Self(*b"22G05");
     /// Maps to GQLSTATUS 22G06 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_DATETIME_FUNCTION_VALUE: Self = Self(*b"22G06");
+    /// Maps to GQLSTATUS 22G07 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DURATION_FUNCTION_FIELD_NAME: Self = Self(*b"22G07");
     /// Maps to GQLSTATUS 22G0C per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const LIST_ELEMENT_ERROR: Self = Self(*b"22G0C");
     /// Maps to GQLSTATUS 22G0F per ISO/IEC 39075:2024 section 23.1 Table 8
@@ -433,6 +435,11 @@ mod tests {
                 *b"22",
             ),
             (GqlStatus::INVALID_DATETIME_FUNCTION_VALUE, "22G06", *b"22"),
+            (
+                GqlStatus::INVALID_DURATION_FUNCTION_FIELD_NAME,
+                "22G07",
+                *b"22",
+            ),
             (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
             (GqlStatus::INVALID_DURATION_FORMAT, "22G0H", *b"22"),
             (
