@@ -236,6 +236,8 @@ pub(super) fn equality_candidates<'a>(
 ///   are admissible: `INTEGER | INT8 | INT16 | INT32 | INT64 | SMALLINT | BIGINT`.
 ///   `INT128` (`Value::Int128`), the unsigned family (`Value::Uint{,128}`), and
 ///   `DECIMAL` are NOT `Value::Int` — reject.
+/// - `IndexKind::UnsignedInteger` keys are `Value::Uint` (u64), which maps to
+///   the fixed-width unsigned family up to `UINT64`.
 /// - `IndexKind::Float` keys are `Value::Float` (f64). `FLOAT` and `FLOAT64`
 ///   bind to `Value::Float`; `FLOAT32` binds to `Value::Float32` and would
 ///   need an explicit cast, so it is rejected.
@@ -257,6 +259,12 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
                 | GqlType::SmallInt
                 | GqlType::BigInt
         ),
+        IndexKind::UnsignedInteger => {
+            matches!(
+                ty,
+                GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64
+            )
+        }
         // BRIEF-154 PR #175 F2 (Codex P2): admit only `FLOAT64` for
         // `IndexKind::Float`. `GqlType::Float` is width-generic per
         // `parameter_type::validate_declared_type`, which accepts both

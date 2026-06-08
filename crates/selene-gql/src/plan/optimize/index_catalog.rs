@@ -224,6 +224,8 @@ pub enum IndexKind {
     Boolean,
     /// Signed integer typed index.
     Integer,
+    /// Unsigned integer typed index.
+    UnsignedInteger,
     /// Floating-point typed index.
     Float,
     /// String typed index.

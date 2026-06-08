@@ -205,6 +205,7 @@ fn index_kind_for_property(
     match property_def.value_type {
         PropertyValueType::Bool => Ok(TypedIndexKind::Bool),
         PropertyValueType::Int => Ok(TypedIndexKind::I64),
+        PropertyValueType::Uint => Ok(TypedIndexKind::U64),
         PropertyValueType::Float => Ok(TypedIndexKind::F64),
         PropertyValueType::String => Ok(TypedIndexKind::String),
         PropertyValueType::Date => Ok(TypedIndexKind::Date),

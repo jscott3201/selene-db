@@ -125,7 +125,8 @@ fn create_sensor_type(graph: &SharedGraph) {
     run_ddl(
         graph,
         "CREATE NODE TYPE :Sensor \
-         (ts :: INT64, location :: STRING, value :: STRING, active :: BOOLEAN, tags :: LIST<STRING>)",
+         (ts :: INT64, reading_count :: UINT64, location :: STRING, value :: STRING, \
+          active :: BOOLEAN, tags :: LIST<STRING>)",
     )
     .unwrap();
 }
@@ -265,14 +266,23 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
     assert!(duplicate.contains("ts"));
 
     run_ddl(&graph, "CREATE INDEX active_ts ON :Sensor(active, ts)").unwrap();
+    run_ddl(
+        &graph,
+        "CREATE INDEX reading_count_ts ON :Sensor(reading_count, ts)",
+    )
+    .unwrap();
     let snapshot = graph.read();
     let rows = snapshot
         .iter_composite_property_index_entries()
         .collect::<Vec<_>>();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].2.as_slice(),
-        &[TypedIndexKind::Bool, TypedIndexKind::I64]
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .any(|row| row.2.as_slice() == [TypedIndexKind::Bool, TypedIndexKind::I64])
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.2.as_slice() == [TypedIndexKind::U64, TypedIndexKind::I64])
     );
     drop(snapshot);
 

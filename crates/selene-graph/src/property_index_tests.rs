@@ -339,6 +339,36 @@ fn apply_node_update_moves_bool_index_key() {
 }
 
 #[test]
+fn apply_node_update_moves_u64_index_key() {
+    let label = db_string("pi.u64.update.label").unwrap();
+    let count = db_string("pi.u64.update.count").unwrap();
+    let old_props = property_map([(count.clone(), Value::Uint(7))]);
+    let new_props = property_map([(count.clone(), Value::Uint(u64::MAX))]);
+    let mut indexes = PropertyIndexMap::default();
+    indexes.insert((label.clone(), count.clone()), entry(TypedIndexKind::U64));
+    apply_node_create(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        10,
+    )
+    .unwrap();
+
+    apply_node_update(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        &LabelSet::single(label.clone()),
+        &new_props,
+        10,
+    )
+    .unwrap();
+
+    assert!(rows(&indexes, label.clone(), count.clone(), &Value::Uint(7)).is_empty());
+    assert!(rows(&indexes, label, count, &Value::Uint(u64::MAX)).contains(10));
+}
+
+#[test]
 fn apply_node_update_moves_string_index_key() {
     // SET against an INDEXED column moves the row from the previous key to
     // the new one.

@@ -199,6 +199,56 @@ fn bool_typed_index_returns_same_rows_as_linear() {
 }
 
 #[test]
+fn u64_typed_index_returns_same_rows_as_linear() {
+    let graph = SharedGraph::new(GraphId::new(905));
+    let sensor = db_string("Sensor");
+    let reading_count = db_string("reading_count");
+    {
+        let mut txn = graph.begin_write();
+        {
+            let mut m = txn.mutator();
+            for value in [7_u64, 8, u64::MAX, 8] {
+                m.create_node(
+                    LabelSet::single(sensor.clone()),
+                    props([(reading_count.clone(), Value::Uint(value))]),
+                )
+                .unwrap();
+            }
+        }
+        txn.commit().unwrap();
+    }
+    graph
+        .create_property_index(sensor, reading_count, TypedIndexKind::U64)
+        .unwrap();
+    let source = "MATCH (n:Sensor) WHERE n.reading_count = $needle :: UINT64 RETURN n";
+
+    let mut indexed = Session::new(&graph);
+    indexed.bind_parameter(db_string("needle"), Value::Uint(8));
+    let indexed_rows = node_ids(&rows(
+        indexed
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    ));
+
+    let mut linear = Session::new(&graph).without_index_selection();
+    linear.bind_parameter(db_string("needle"), Value::Uint(8));
+    let linear_rows = node_ids(&rows(
+        linear
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    ));
+
+    assert_eq!(indexed_rows, linear_rows);
+    assert_eq!(indexed_rows.len(), 2, "two sensors with count=8");
+
+    let dump = explain_dump(&mut indexed, source);
+    assert!(
+        dump.contains("TypedIndexRange"),
+        "u64 equality should render TypedIndexRange; got:\n{dump}"
+    );
+}
+
+#[test]
 fn explain_renders_label_index_by_default_and_linear_when_disabled() {
     let (graph, _persons) = build_graph();
     let source = "MATCH (n:Person) RETURN n";

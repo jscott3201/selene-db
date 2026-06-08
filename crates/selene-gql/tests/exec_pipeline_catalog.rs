@@ -201,6 +201,26 @@ fn create_node_type_bool_indexed_property_creates_property_index() {
 }
 
 #[test]
+fn create_node_type_uint_indexed_property_creates_property_index() {
+    let graph = empty_closed_graph(3720);
+    let plan = planned("CREATE NODE TYPE :Sensor (reading_count :: UINT64 INDEXED)");
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    outcome.expect("commit succeeds");
+
+    let sensor = db_string("Sensor");
+    let reading_count = db_string("reading_count");
+    assert_eq!(
+        graph
+            .read()
+            .property_index_for(&sensor, &reading_count)
+            .expect("uint index exists")
+            .kind(),
+        TypedIndexKind::U64
+    );
+}
+
+#[test]
 fn create_node_type_float_indexed_reports_feature_not_supported() {
     let graph = empty_closed_graph(3722);
     let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT INDEXED)");

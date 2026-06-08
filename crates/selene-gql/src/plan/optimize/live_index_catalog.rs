@@ -273,6 +273,7 @@ fn index_kind_from(kind: TypedIndexKind) -> IndexKind {
     match kind {
         TypedIndexKind::Bool => IndexKind::Boolean,
         TypedIndexKind::I64 => IndexKind::Integer,
+        TypedIndexKind::U64 => IndexKind::UnsignedInteger,
         TypedIndexKind::F64 => IndexKind::Float,
         TypedIndexKind::String => IndexKind::String,
         TypedIndexKind::Date => IndexKind::Date,
