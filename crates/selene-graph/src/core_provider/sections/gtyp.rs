@@ -164,6 +164,7 @@ mod tests {
         let host = db_string("host").unwrap();
         let ports = db_string("ports").unwrap();
         let nested = db_string("nested").unwrap();
+        let open_nested = db_string("open_nested").unwrap();
         let flag = db_string("flag").unwrap();
         let record_field_types = RecordFieldTypes(vec![
             RecordFieldTypeDef {
@@ -176,6 +177,11 @@ mod tests {
                 field_type: RecordFieldType::List(Box::new(RecordFieldType::Scalar(
                     PropertyValueType::Int,
                 ))),
+                required: false,
+            },
+            RecordFieldTypeDef {
+                name: open_nested,
+                field_type: RecordFieldType::OpenRecord,
                 required: false,
             },
             RecordFieldTypeDef {

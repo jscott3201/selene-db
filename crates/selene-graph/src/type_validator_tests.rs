@@ -515,6 +515,66 @@ fn closed_record_accepts_and_rejects_nested() {
 }
 
 #[test]
+fn nested_open_record_field_accepts_any_record_shape() {
+    let declaration = PropertyTypeDef {
+        name: db_string("payload"),
+        value_type: PropertyValueType::RecordTyped,
+        list_element_type: None,
+        required: true,
+        default: None,
+        immutable: false,
+        unique: false,
+        record_field_types: Some(RecordFieldTypes(vec![
+            RecordFieldTypeDef {
+                name: db_string("meta"),
+                field_type: RecordFieldType::OpenRecord,
+                required: true,
+            },
+            RecordFieldTypeDef {
+                name: db_string("snapshots"),
+                field_type: RecordFieldType::List(Box::new(RecordFieldType::OpenRecord)),
+                required: true,
+            },
+        ])),
+    };
+    let conforming = open_record(&[
+        (
+            "meta",
+            open_record(&[("kind", Value::String(db_string("agent")))]),
+        ),
+        (
+            "snapshots",
+            Value::List(vec![
+                open_record(&[("id", Value::String(db_string("a")))]),
+                open_record(&[("id", Value::String(db_string("b")))]),
+            ]),
+        ),
+    ]);
+    assert!(property_value_matches(&declaration, &conforming));
+
+    let bad_meta = open_record(&[
+        ("meta", Value::String(db_string("not-record"))),
+        (
+            "snapshots",
+            Value::List(vec![open_record(&[("id", Value::String(db_string("a")))])]),
+        ),
+    ]);
+    assert!(!property_value_matches(&declaration, &bad_meta));
+
+    let bad_snapshot = open_record(&[
+        (
+            "meta",
+            open_record(&[("kind", Value::String(db_string("agent")))]),
+        ),
+        (
+            "snapshots",
+            Value::List(vec![Value::String(db_string("not-record"))]),
+        ),
+    ]);
+    assert!(!property_value_matches(&declaration, &bad_snapshot));
+}
+
+#[test]
 fn closed_record_validates_recordtyped_positionally() {
     let declaration = closed_record_declaration();
     // Positional [host=String, port=Int] conforms.

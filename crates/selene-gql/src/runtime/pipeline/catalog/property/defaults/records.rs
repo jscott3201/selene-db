@@ -111,6 +111,15 @@ fn typed_field_default_value(
             };
             list_field_default_value(items, inner, span)
         }
+        RecordFieldType::OpenRecord => {
+            let ValueExpr::RecordLiteral { fields, .. } = expr else {
+                return Err(record_fields_mismatch(
+                    "open RECORD DEFAULT fields must use record literals".to_owned(),
+                    span,
+                ));
+            };
+            record_default_value(fields, None, span)
+        }
         RecordFieldType::Record(inner) => {
             let ValueExpr::RecordLiteral { fields, .. } = expr else {
                 return Err(record_fields_mismatch(

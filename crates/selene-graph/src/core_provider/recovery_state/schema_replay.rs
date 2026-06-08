@@ -262,16 +262,11 @@ fn runtime_record_field_type(
         selene_core::RecordFieldStructureType::List(inner) => Ok(RecordFieldType::List(Box::new(
             runtime_record_field_type(inner, depth + 1)?,
         ))),
-        // A nested RECORD field is structurally always closed: the rkyv `RecordFieldType`
-        // descriptor has no open-record field variant, and GQL lowering rejects open nested
-        // record fields, so an `Open` here means a corrupt WAL payload.
         selene_core::RecordFieldStructureType::Record(inner) => match inner.as_ref() {
             selene_core::RecordFieldStructure::Closed(defs) => Ok(RecordFieldType::Record(
                 Box::new(runtime_record_field_types(defs, depth + 1)?),
             )),
-            selene_core::RecordFieldStructure::Open => Err(inconsistent(
-                "WAL record field type contains an unsupported open nested RECORD",
-            )),
+            selene_core::RecordFieldStructure::Open => Ok(RecordFieldType::OpenRecord),
         },
     }
 }
