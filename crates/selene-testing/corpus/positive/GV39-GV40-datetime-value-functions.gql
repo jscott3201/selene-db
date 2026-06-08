@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GV39
+// also-covers: GV40
+// expects: parse-ok
+RETURN DATE(), TIME(), DATETIME(), LOCAL_TIME(), LOCAL_DATETIME(), ZONED_TIME(), ZONED_DATETIME()

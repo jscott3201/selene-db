@@ -103,8 +103,13 @@ fn current_datetime_functions_share_one_request_timestamp() {
         eval_current("local_datetime"),
         Value::LocalDateTime(zoned.datetime())
     );
+    assert_eq!(
+        eval_current("datetime"),
+        Value::LocalDateTime(zoned.datetime())
+    );
     assert_eq!(eval_current("localtime"), Value::LocalTime(zoned.time()));
     assert_eq!(eval_current("local_time"), Value::LocalTime(zoned.time()));
+    assert_eq!(eval_current("time"), Value::LocalTime(zoned.time()));
 }
 
 #[test]
@@ -143,7 +148,19 @@ fn current_datetime_constructors_parse_string_parameters() {
         Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
     );
     assert_eq!(
+        eval(&function_call(
+            "datetime",
+            vec![string_lit("2026-05-07T12:34:56")]
+        ))
+        .unwrap(),
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+    );
+    assert_eq!(
         eval(&function_call("local_time", vec![string_lit("12:34:56")])).unwrap(),
+        Value::LocalTime("12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        eval(&function_call("time", vec![string_lit("12:34:56")])).unwrap(),
         Value::LocalTime("12:34:56".parse().unwrap())
     );
 
@@ -183,7 +200,21 @@ fn current_datetime_record_constructors_build_values() {
     );
     assert_eq!(
         single_value(
+            "RETURN TIME({hour: 1, minute: 2, second: 3, millisecond: 4}) AS value",
+            "value"
+        ),
+        Value::LocalTime("01:02:03.004".parse().unwrap())
+    );
+    assert_eq!(
+        single_value(
             "RETURN LOCAL_DATETIME({year: 2026, month: 5, day: 7, hour: 12, minute: 34}) AS value",
+            "value"
+        ),
+        Value::LocalDateTime("2026-05-07T12:34:00".parse().unwrap())
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DATETIME({year: 2026, month: 5, day: 7, hour: 12, minute: 34}) AS value",
             "value"
         ),
         Value::LocalDateTime("2026-05-07T12:34:00".parse().unwrap())

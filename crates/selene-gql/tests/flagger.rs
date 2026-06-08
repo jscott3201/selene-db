@@ -279,6 +279,35 @@ fn cardinality_function_is_supported_and_recorded() {
 }
 
 #[test]
+fn datetime_value_functions_record_temporal_features() {
+    for (source, expected) in [
+        ("RETURN CURRENT_DATE", FeatureId::GV39),
+        ("RETURN DATE()", FeatureId::GV39),
+        ("RETURN TIME()", FeatureId::GV39),
+        ("RETURN DATETIME()", FeatureId::GV39),
+        ("RETURN LOCAL_TIME", FeatureId::GV39),
+        ("RETURN LOCAL_TIME()", FeatureId::GV39),
+        ("RETURN LOCAL_DATETIME()", FeatureId::GV39),
+        ("RETURN CURRENT_TIME", FeatureId::GV40),
+        ("RETURN ZONED_TIME()", FeatureId::GV40),
+        ("RETURN CURRENT_TIMESTAMP", FeatureId::GV40),
+        ("RETURN ZONED_DATETIME()", FeatureId::GV40),
+    ] {
+        let statement = parse(source).expect(source);
+        let observed = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            observed.contains(&expected),
+            "{source} should record {expected}, observed {observed:?}"
+        );
+        assert_read_plan(source);
+        assert_read_execution(source);
+    }
+}
+
+#[test]
 fn gf10_iso_aggregate_functions_are_recorded_without_collect_alias() {
     for source in [
         "UNWIND [1, 2] AS x RETURN stddev_pop(x)",
