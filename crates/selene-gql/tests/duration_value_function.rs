@@ -107,6 +107,26 @@ fn duration_record_constructor_builds_year_month_and_day_time_values() {
 }
 
 #[test]
+fn duration_absolute_value_function_returns_non_negative_duration() {
+    assert_eq!(
+        single_value("RETURN ABS(DURATION('-P2M')) AS value", "value"),
+        Value::Duration(Box::new("P2M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN ABS(DURATION('-PT1H2.003S')) AS value", "value"),
+        Value::Duration(Box::new("PT1H2.003S".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN ABS(DURATION('P3DT4H')) AS value", "value"),
+        Value::Duration(Box::new("P3DT4H".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN ABS(NULL) AS value", "value"),
+        Value::Null
+    );
+}
+
+#[test]
 fn duration_record_constructor_rejects_invalid_fields_and_format_values() {
     assert_eq!(
         status_for("RETURN DURATION({foo: 1}) AS value"),

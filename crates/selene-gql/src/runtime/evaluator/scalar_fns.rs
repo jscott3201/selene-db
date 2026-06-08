@@ -463,7 +463,8 @@ fn eval_abs(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> 
             "numeric result is non-finite",
             span,
         ),
-        _ => data_exception("abs argument is not numeric", span),
+        Value::Duration(value) => Ok(Value::Duration(Box::new(value.abs()))),
+        _ => data_exception("abs argument is not numeric or duration", span),
     }
 }
 
