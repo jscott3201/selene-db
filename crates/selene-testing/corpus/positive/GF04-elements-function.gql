@@ -1,0 +1,6 @@
+// corpus: positive
+// feature: GF04
+// also-covers: GV50
+// expects: parse-ok
+MATCH p = (a)-[]->(b)
+RETURN ELEMENTS(p) AS path_elements

@@ -1,6 +1,6 @@
 //! Identity and length scalar function evaluation.
 
-use selene_core::{Record, Value};
+use selene_core::{Path, Record, Value};
 
 use crate::{
     SourceSpan,
@@ -79,6 +79,34 @@ pub(super) fn eval_path_length(args: Vec<Value>, span: SourceSpan) -> Result<Val
             span,
         ),
     }
+}
+
+pub(super) fn eval_elements(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match args.into_iter().next().expect("arity checked") {
+        Value::Null => Ok(Value::Null),
+        Value::Path(path) => Ok(Value::List(path_element_list(*path))),
+        _ => data_exception_with(
+            DataExceptionSubclass::InvalidValueType,
+            "elements argument is not a path",
+            span,
+        ),
+    }
+}
+
+fn path_element_list(path: Path) -> Vec<Value> {
+    let capacity = path
+        .segments
+        .len()
+        .checked_mul(2)
+        .and_then(|len| len.checked_add(1))
+        .expect("path element list length fits in usize");
+    let mut values = Vec::with_capacity(capacity);
+    values.push(Value::NodeRef(path.start));
+    for segment in path.segments {
+        values.push(Value::EdgeRef(segment.edge));
+        values.push(Value::NodeRef(segment.node));
+    }
+    values
 }
 
 #[cfg(test)]

@@ -48,6 +48,10 @@ pub(super) fn build_function_call(pair: Pair<'_, Rule>) -> Result<ValueExpr, Par
     })
 }
 
+pub(super) fn build_elements_function(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+    build_keyword_function(pair, "elements")
+}
+
 pub(super) fn build_current_datetime_function(
     pair: Pair<'_, Rule>,
 ) -> Result<ValueExpr, ParserError> {
@@ -74,6 +78,36 @@ pub(super) fn build_current_datetime_function(
         )?])
         .expect("literal vector is non-empty"),
         args: Vec::new(),
+        star: false,
+        distinct: false,
+        span: source_span,
+    })
+}
+
+fn build_keyword_function(pair: Pair<'_, Rule>, name: &str) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut args = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::elements_synonym => {}
+            Rule::arg_list => {
+                args = child
+                    .into_inner()
+                    .filter(|arg| arg.as_rule() == Rule::expr)
+                    .map(|arg| build_value_expr(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+            }
+            _ => return Err(unexpected_pair(child, "unexpected keyword-function child")),
+        }
+    }
+    Ok(ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![db_string_from_owned(
+            name.to_owned(),
+            source_span,
+            "keyword function name",
+        )?])
+        .expect("literal vector is non-empty"),
+        args,
         star: false,
         distinct: false,
         span: source_span,

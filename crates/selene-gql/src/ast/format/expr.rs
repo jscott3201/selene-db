@@ -113,11 +113,15 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             distinct,
             ..
         } => {
-            for (index, part) in name.iter().enumerate() {
-                if index > 0 {
-                    out.push('.');
+            if is_elements_function_name(name) {
+                out.push_str("ELEMENTS");
+            } else {
+                for (index, part) in name.iter().enumerate() {
+                    if index > 0 {
+                        out.push('.');
+                    }
+                    out.push_str(&fmt_call_segment(part.clone()));
                 }
-                out.push_str(&fmt_call_segment(part.clone()));
             }
             out.push('(');
             if *distinct {
@@ -260,6 +264,10 @@ fn format_zoned_datetime(value: &jiff::Zoned) -> String {
 
 fn format_zoned_time(value: &jiff::Zoned) -> String {
     format!("{}{}", value.time(), value.offset())
+}
+
+fn is_elements_function_name(name: &crate::NonEmpty<selene_core::DbString>) -> bool {
+    name.len() == 1 && name.first().as_str().eq_ignore_ascii_case("elements")
 }
 
 fn fmt_variadic(out: &mut String, name: &str, items: &[ValueExpr]) -> fmt::Result {
