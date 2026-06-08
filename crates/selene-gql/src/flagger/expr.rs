@@ -101,6 +101,9 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             if is_list_value_function(name, args.len()) {
                 record_feature(uses, FeatureId::GV50, *span);
             }
+            if is_byte_string_trim_function(name, args) {
+                record_feature(uses, FeatureId::GF07, *span);
+            }
             if let Some(feature_id) = aggregate_function_feature(name) {
                 record_feature(uses, feature_id, *span);
             }
@@ -217,6 +220,12 @@ fn is_list_value_function(name: &NonEmpty<DbString>, arity: usize) -> bool {
     let function_name = name.first().as_str();
     (arity == 2 && function_name.eq_ignore_ascii_case("trim"))
         || (arity == 1 && function_name.eq_ignore_ascii_case("elements"))
+}
+
+fn is_byte_string_trim_function(name: &NonEmpty<DbString>, args: &[ValueExpr]) -> bool {
+    name.len() == 1
+        && name.first().as_str().eq_ignore_ascii_case("trim")
+        && matches!(args, [arg] if is_byte_string_expr(arg))
 }
 
 fn aggregate_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {

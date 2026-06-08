@@ -171,6 +171,10 @@ fn byte_string_left_and_right_follow_iso_substring_rules() {
 #[test]
 fn byte_string_trim_follows_iso_trim_rules() {
     assert_eq!(
+        first_value("RETURN TRIM(X'20CA20') AS payload"),
+        bytes(&[0xca])
+    );
+    assert_eq!(
         first_value("RETURN TRIM(BOTH X'00' FROM X'0000CAFE00') AS payload"),
         bytes(&[0xca, 0xfe])
     );
@@ -225,6 +229,7 @@ fn byte_string_trim_infers_bytes_and_records_gf07() {
         "RETURN TRIM(BOTH X'00' FROM X'00CA00') AS payload",
         FeatureId::GF07,
     );
+    assert_feature_recorded("RETURN TRIM(X'20CA20') AS payload", FeatureId::GF07);
 }
 
 #[test]
