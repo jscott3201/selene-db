@@ -11,7 +11,9 @@ fn create_node_type_temporal_time_indexed_properties_create_property_indexes() {
     let plan = planned(
         "CREATE NODE TYPE :Event \
          (occurred_at :: ZONED DATETIME INDEXED, wall_time :: LOCAL TIME INDEXED, \
-          clock_time :: ZONED TIME INDEXED)",
+          clock_time :: ZONED TIME INDEXED, span :: DURATION INDEXED, \
+          billing_cycle :: DURATION (YEAR TO MONTH) INDEXED, \
+          elapsed :: DURATION (DAY TO SECOND) INDEXED)",
     );
 
     let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
@@ -20,7 +22,10 @@ fn create_node_type_temporal_time_indexed_properties_create_property_indexes() {
     let event = db_string("Event");
     for (property, expected) in [
         ("clock_time", TypedIndexKind::ZonedTime),
+        ("billing_cycle", TypedIndexKind::Duration),
+        ("elapsed", TypedIndexKind::Duration),
         ("occurred_at", TypedIndexKind::ZonedDateTime),
+        ("span", TypedIndexKind::Duration),
         ("wall_time", TypedIndexKind::LocalTime),
     ] {
         assert_eq!(
@@ -47,4 +52,5 @@ fn create_node_type_temporal_time_indexed_properties_create_property_indexes() {
     assert!(rendered.contains(&"local_time".to_owned()));
     assert!(rendered.contains(&"zoned_datetime".to_owned()));
     assert!(rendered.contains(&"zoned_time".to_owned()));
+    assert!(rendered.contains(&"duration".to_owned()));
 }

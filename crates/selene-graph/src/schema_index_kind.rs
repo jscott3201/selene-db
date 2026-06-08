@@ -21,6 +21,7 @@ pub(crate) const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyInde
         TypedIndexKind::ZonedDateTime => SchemaPropertyIndexKind::ZonedDateTime,
         TypedIndexKind::LocalTime => SchemaPropertyIndexKind::LocalTime,
         TypedIndexKind::ZonedTime => SchemaPropertyIndexKind::ZonedTime,
+        TypedIndexKind::Duration => SchemaPropertyIndexKind::Duration,
         TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
     }
 }

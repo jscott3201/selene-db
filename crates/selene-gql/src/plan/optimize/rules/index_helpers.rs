@@ -93,8 +93,9 @@ pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
         Literal::ZonedDateTime(_, _) => Some(IndexKind::ZonedDateTime),
         Literal::LocalTime(_, _) => Some(IndexKind::LocalTime),
         Literal::ZonedTime(_, _) => Some(IndexKind::ZonedTime),
+        Literal::Duration(_, _) => Some(IndexKind::Duration),
         Literal::Uuid(_, _) => Some(IndexKind::Uuid),
-        Literal::Bytes(_, _) | Literal::Duration(_, _) | Literal::Null(_) => None,
+        Literal::Bytes(_, _) | Literal::Null(_) => None,
     }
 }
 
@@ -288,6 +289,12 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         IndexKind::ZonedDateTime => matches!(ty, GqlType::ZonedDateTime),
         IndexKind::LocalTime => matches!(ty, GqlType::LocalTime),
         IndexKind::ZonedTime => matches!(ty, GqlType::ZonedTime),
+        IndexKind::Duration => {
+            matches!(
+                ty,
+                GqlType::Duration | GqlType::DurationYearToMonth | GqlType::DurationDayToSecond
+            )
+        }
         IndexKind::Uuid => matches!(ty, GqlType::Uuid),
     }
 }

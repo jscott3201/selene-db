@@ -46,7 +46,10 @@ pub use changeset::{
     Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
 };
 pub use db_string::{DbString, db_string};
-pub use duration_type::{DurationTypeQualifier, DurationValueFamily, duration_value_family};
+pub use duration_type::{
+    DurationOrderKey, DurationTypeQualifier, DurationValueFamily, duration_order_key,
+    duration_value_family,
+};
 pub use error::{CoreError, CoreResult};
 pub use extension_type_ids::{
     ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_RDF, SELENE_TIMESERIES,

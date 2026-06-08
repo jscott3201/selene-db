@@ -128,7 +128,8 @@ fn create_sensor_type(graph: &SharedGraph) {
          (ts :: INT64, reading_count :: UINT64, location :: STRING, value :: STRING, \
           active :: BOOLEAN, signed :: INT128, unsigned :: UINT128, amount :: DECIMAL, \
           score :: FLOAT32, observed_at :: ZONED DATETIME, observed_local :: LOCAL TIME, \
-          observed_zone_time :: ZONED TIME, tags :: LIST<STRING>)",
+          observed_zone_time :: ZONED TIME, observed_duration :: DURATION, \
+          tags :: LIST<STRING>)",
     )
     .unwrap();
 }
@@ -280,7 +281,7 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
     .unwrap();
     run_ddl(
         &graph,
-        "CREATE INDEX temporal_times ON :Sensor(observed_at, observed_local, observed_zone_time)",
+        "CREATE INDEX temporal_times ON :Sensor(observed_at, observed_local, observed_zone_time, observed_duration)",
     )
     .unwrap();
     let snapshot = graph.read();
@@ -307,7 +308,8 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
         == [
             TypedIndexKind::ZonedDateTime,
             TypedIndexKind::LocalTime,
-            TypedIndexKind::ZonedTime
+            TypedIndexKind::ZonedTime,
+            TypedIndexKind::Duration
         ]));
     drop(snapshot);
 

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::ops::{Bound, RangeBounds};
 
 use roaring::RoaringBitmap;
-use selene_core::{DbString, Value};
+use selene_core::{DbString, DurationOrderKey, Value, duration_order_key};
 
 use super::{NotNanError, NotNanF32, NotNanF64, TypedIndexKind};
 
@@ -60,6 +60,7 @@ pub(super) enum TypedKey {
     ZonedDateTime(jiff::Zoned),
     LocalTime(jiff::civil::Time),
     ZonedTime(jiff::Zoned),
+    Duration(DurationOrderKey),
     Uuid(uuid::Uuid),
 }
 
@@ -80,6 +81,7 @@ impl TypedKey {
             Self::ZonedDateTime(_) => "ZonedDateTime",
             Self::LocalTime(_) => "LocalTime",
             Self::ZonedTime(_) => "ZonedTime",
+            Self::Duration(_) => "Duration",
             Self::Uuid(_) => "Uuid",
         }
     }
@@ -113,6 +115,7 @@ pub(super) fn typed_key(
         Value::ZonedDateTime(value) => Ok(TypedKey::ZonedDateTime((**value).clone())),
         Value::LocalTime(value) => Ok(TypedKey::LocalTime(*value)),
         Value::ZonedTime(value) => Ok(TypedKey::ZonedTime((**value).clone())),
+        Value::Duration(value) => Ok(TypedKey::Duration(duration_order_key(value))),
         Value::Uuid(value) => Ok(TypedKey::Uuid(*value)),
         _ => Err(TypedIndexValueError::KindMismatch {
             expected_kind,

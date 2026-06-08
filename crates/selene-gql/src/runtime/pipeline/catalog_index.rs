@@ -190,6 +190,9 @@ fn gql_type_to_index_kind(
         GqlType::ZonedDateTime => Ok(TypedIndexKind::ZonedDateTime),
         GqlType::LocalTime => Ok(TypedIndexKind::LocalTime),
         GqlType::ZonedTime => Ok(TypedIndexKind::ZonedTime),
+        GqlType::Duration | GqlType::DurationYearToMonth | GqlType::DurationDayToSecond => {
+            Ok(TypedIndexKind::Duration)
+        }
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "inline INDEXED for this GQL type",
             span,
@@ -305,6 +308,7 @@ pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
         TypedIndexKind::ZonedDateTime => "zoned_datetime",
         TypedIndexKind::LocalTime => "local_time",
         TypedIndexKind::ZonedTime => "zoned_time",
+        TypedIndexKind::Duration => "duration",
         TypedIndexKind::Uuid => "uuid",
     }
 }

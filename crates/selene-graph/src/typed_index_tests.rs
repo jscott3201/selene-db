@@ -33,6 +33,7 @@ fn kind_round_trips_for_each_variant() {
         TypedIndexKind::ZonedDateTime,
         TypedIndexKind::LocalTime,
         TypedIndexKind::ZonedTime,
+        TypedIndexKind::Duration,
         TypedIndexKind::Uuid,
     ] {
         assert_eq!(TypedIndex::new(kind).kind(), kind);
@@ -56,6 +57,7 @@ fn kind_rkyv_round_trips_for_each_variant() {
         TypedIndexKind::ZonedDateTime,
         TypedIndexKind::LocalTime,
         TypedIndexKind::ZonedTime,
+        TypedIndexKind::Duration,
         TypedIndexKind::Uuid,
     ] {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&kind).unwrap();
@@ -143,6 +145,10 @@ fn insert_remove_round_trips_for_each_kind() {
             Value::ZonedTime(Box::new(
                 "2026-05-07T12:30:00-04[America/New_York]".parse().unwrap(),
             )),
+        ),
+        (
+            TypedIndexKind::Duration,
+            Value::Duration(Box::new("PT1H2S".parse().unwrap())),
         ),
         (TypedIndexKind::Uuid, Value::Uuid(uuid)),
     ];
@@ -261,6 +267,31 @@ fn temporal_range_scans_use_value_order() {
 }
 
 #[test]
+fn duration_range_scan_uses_shared_duration_order_key() {
+    let mut index = TypedIndex::new(TypedIndexKind::Duration);
+    for (row, value) in [(0, "P1M"), (1, "PT1H"), (2, "PT2H"), (3, "P1DT1H")] {
+        index
+            .insert(&Value::Duration(Box::new(value.parse().unwrap())), row)
+            .unwrap();
+    }
+
+    let result = index
+        .lookup_range(
+            Value::Duration(Box::new("PT1H".parse().unwrap()))
+                ..=Value::Duration(Box::new("P1DT1H".parse().unwrap())),
+        )
+        .expect("duration range kind matches");
+
+    assert!(
+        !result.contains(0),
+        "year/month duration is outside day-time range"
+    );
+    assert!(result.contains(1));
+    assert!(result.contains(2));
+    assert!(result.contains(3));
+}
+
+#[test]
 fn cardinality_sums_across_keys_and_prunes_empty_keys() {
     let mut index = TypedIndex::new(TypedIndexKind::I64);
     index.insert(&Value::Int(1), 0).unwrap();
@@ -331,6 +362,13 @@ fn distinct_keys_each_kind() {
     lt.insert(&Value::LocalTime(time(1, 0, 0, 0)), 0).unwrap();
     lt.insert(&Value::LocalTime(time(2, 0, 0, 0)), 1).unwrap();
     assert_eq!(lt.distinct_keys(), 2);
+
+    let mut dur = TypedIndex::new(TypedIndexKind::Duration);
+    dur.insert(&Value::Duration(Box::new("PT1H".parse().unwrap())), 0)
+        .unwrap();
+    dur.insert(&Value::Duration(Box::new("PT2H".parse().unwrap())), 1)
+        .unwrap();
+    assert_eq!(dur.distinct_keys(), 2);
 }
 
 #[test]
@@ -494,6 +532,7 @@ fn typed_key_unindexable_value_rejects_kind_mismatch() {
         TypedIndexKind::ZonedDateTime,
         TypedIndexKind::LocalTime,
         TypedIndexKind::ZonedTime,
+        TypedIndexKind::Duration,
         TypedIndexKind::Uuid,
     ] {
         let err = typed_key(&value, kind).expect_err("unindexable value rejects");

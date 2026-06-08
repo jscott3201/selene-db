@@ -596,6 +596,8 @@ pub enum SchemaPropertyIndexKind {
     LocalTime,
     /// Zoned time.
     ZonedTime,
+    /// Duration.
+    Duration,
     /// UUID.
     Uuid,
 }

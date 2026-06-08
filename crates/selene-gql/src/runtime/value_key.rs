@@ -171,19 +171,7 @@ fn hash_value_variant_strict<H: Hasher>(value: &Value, state: &mut H) {
         Value::Date(value) => value.hash(state),
         Value::ZonedTime(value) => value.hash(state),
         Value::LocalTime(value) => value.hash(state),
-        Value::Duration(value) => (
-            value.get_years(),
-            value.get_months(),
-            value.get_weeks(),
-            value.get_days(),
-            value.get_hours(),
-            value.get_minutes(),
-            value.get_seconds(),
-            value.get_milliseconds(),
-            value.get_microseconds(),
-            value.get_nanoseconds(),
-        )
-            .hash(state),
+        Value::Duration(value) => selene_core::duration_order_key(value).hash(state),
         Value::Extended { type_id, payload } => {
             type_id.hash(state);
             payload.as_ref().hash(state);

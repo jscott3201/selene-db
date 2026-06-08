@@ -5,7 +5,7 @@
 //! summarizing the inconsistencies it found; the orchestration and row shaping
 //! live in the parent [`super`] module.
 
-use selene_core::{DbString, EdgeId, NodeId, Value};
+use selene_core::{DbString, DurationOrderKey, EdgeId, NodeId, Value, duration_order_key};
 use selene_graph::{
     AdjacencyEntry, CompositeKey, CompositeKeyComponent, CompositeTypedIndex, NotNanF32, NotNanF64,
     RowIndex, SeleneGraph, TypedIndex,
@@ -458,6 +458,11 @@ fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
                 );
             }
         }
+        TypedIndex::Duration(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::Duration(*key), bitmap.iter());
+            }
+        }
         TypedIndex::Uuid(index) => {
             for (key, bitmap) in index {
                 push_index_entries(
@@ -564,6 +569,7 @@ enum IndexedValue {
     ZonedDateTime(jiff::Zoned),
     LocalTime(jiff::civil::Time),
     ZonedTime(jiff::Zoned),
+    Duration(DurationOrderKey),
     Uuid(String),
 }
 
@@ -591,6 +597,9 @@ fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
         }
         (IndexedValue::LocalTime(expected), Value::LocalTime(actual)) => expected == *actual,
         (IndexedValue::ZonedTime(expected), Value::ZonedTime(actual)) => expected == **actual,
+        (IndexedValue::Duration(expected), Value::Duration(actual)) => {
+            expected == duration_order_key(actual)
+        }
         (IndexedValue::Uuid(expected), Value::Uuid(actual)) => expected == actual.to_string(),
         _ => false,
     }
@@ -623,6 +632,9 @@ fn component_matches_value(component: &CompositeKeyComponent, value: &Value) -> 
         }
         (CompositeKeyComponent::ZonedTime(expected), Value::ZonedTime(actual)) => {
             expected == actual.as_ref()
+        }
+        (CompositeKeyComponent::Duration(expected), Value::Duration(actual)) => {
+            *expected == duration_order_key(actual)
         }
         (CompositeKeyComponent::Uuid(expected), Value::Uuid(actual)) => expected == actual,
         _ => false,

@@ -2,13 +2,8 @@
 //!
 //! # Value coercion
 //!
-//! `typed_key` is the single `Value`→`TypedKey` coercion shared by every
-//! write-side (`insert`, `remove`) and read/diff-side (`lookup_eq`, the
-//! per-type closures in `lookup_range`, and `values_share_key`) caller. A
-//! `STRING` value always resolves directly to its database-string key. Kind
-//! mismatch (e.g. a `Value::Json` against any index) and NaN still raise
-//! `TypedIndexValueError`; a kind-mismatched read returns `None` to the caller
-//! so it drops to a runtime scan.
+//! `typed_key` is the single `Value`→`TypedKey` coercion shared by write, read,
+//! and diff callers. Kind-mismatched reads return `None` so callers can scan.
 //!
 //! The same collapse is mirrored in [`crate::composite_typed_index`] for
 //! composite indexes.
@@ -18,7 +13,7 @@ use std::collections::BTreeMap;
 use std::ops::{Bound, RangeBounds};
 
 use roaring::RoaringBitmap;
-use selene_core::{DbString, Value};
+use selene_core::{DbString, DurationOrderKey, Value};
 use serde::{Deserialize, Serialize};
 
 mod keying;
@@ -71,6 +66,8 @@ pub enum TypedIndexKind {
     LocalTime,
     /// Zoned time. Backs [`Value::ZonedTime`].
     ZonedTime,
+    /// Duration. Backs [`Value::Duration`].
+    Duration,
     /// UUID. Backs [`Value::Uuid`].
     Uuid,
 }
@@ -106,6 +103,8 @@ pub enum TypedIndex {
     LocalTime(BTreeMap<jiff::civil::Time, RoaringBitmap>),
     /// Zoned time index.
     ZonedTime(BTreeMap<jiff::Zoned, RoaringBitmap>),
+    /// Duration index.
+    Duration(BTreeMap<DurationOrderKey, RoaringBitmap>),
     /// UUID index.
     Uuid(BTreeMap<uuid::Uuid, RoaringBitmap>),
 }
@@ -129,6 +128,7 @@ impl TypedIndex {
             TypedIndexKind::ZonedDateTime => Self::ZonedDateTime(BTreeMap::new()),
             TypedIndexKind::LocalTime => Self::LocalTime(BTreeMap::new()),
             TypedIndexKind::ZonedTime => Self::ZonedTime(BTreeMap::new()),
+            TypedIndexKind::Duration => Self::Duration(BTreeMap::new()),
             TypedIndexKind::Uuid => Self::Uuid(BTreeMap::new()),
         }
     }
@@ -151,6 +151,7 @@ impl TypedIndex {
             Self::ZonedDateTime(_) => TypedIndexKind::ZonedDateTime,
             Self::LocalTime(_) => TypedIndexKind::LocalTime,
             Self::ZonedTime(_) => TypedIndexKind::ZonedTime,
+            Self::Duration(_) => TypedIndexKind::Duration,
             Self::Uuid(_) => TypedIndexKind::Uuid,
         }
     }
@@ -178,6 +179,7 @@ impl TypedIndex {
             Self::ZonedDateTime(index) => cardinality(index),
             Self::LocalTime(index) => cardinality(index),
             Self::ZonedTime(index) => cardinality(index),
+            Self::Duration(index) => cardinality(index),
             Self::Uuid(index) => cardinality(index),
         }
     }
@@ -206,6 +208,7 @@ impl TypedIndex {
             Self::ZonedDateTime(index) => index.len() as u64,
             Self::LocalTime(index) => index.len() as u64,
             Self::ZonedTime(index) => index.len() as u64,
+            Self::Duration(index) => index.len() as u64,
             Self::Uuid(index) => index.len() as u64,
         }
     }
@@ -237,6 +240,7 @@ impl TypedIndex {
             (Self::ZonedDateTime(lhs), Self::ZonedDateTime(rhs)) => lhs == rhs,
             (Self::LocalTime(lhs), Self::LocalTime(rhs)) => lhs == rhs,
             (Self::ZonedTime(lhs), Self::ZonedTime(rhs)) => lhs == rhs,
+            (Self::Duration(lhs), Self::Duration(rhs)) => lhs == rhs,
             (Self::Uuid(lhs), Self::Uuid(rhs)) => lhs == rhs,
             _ => false,
         }
@@ -264,6 +268,7 @@ impl TypedIndex {
             Self::ZonedDateTime(index) => index.values().any(RoaringBitmap::is_empty),
             Self::LocalTime(index) => index.values().any(RoaringBitmap::is_empty),
             Self::ZonedTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::Duration(index) => index.values().any(RoaringBitmap::is_empty),
             Self::Uuid(index) => index.values().any(RoaringBitmap::is_empty),
         }
     }
@@ -325,6 +330,10 @@ impl TypedIndex {
                 Ok(())
             }
             (Self::ZonedTime(index), TypedKey::ZonedTime(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::Duration(index), TypedKey::Duration(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
             }
@@ -402,6 +411,10 @@ impl TypedIndex {
                 remove_row(index, &key, row);
                 Ok(())
             }
+            (Self::Duration(index), TypedKey::Duration(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
             (Self::Uuid(index), TypedKey::Uuid(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
@@ -447,6 +460,7 @@ impl TypedIndex {
             (Self::ZonedTime(index), TypedKey::ZonedTime(key)) => {
                 Some(cow_or_empty(index.get(&key)))
             }
+            (Self::Duration(index), TypedKey::Duration(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::Uuid(index), TypedKey::Uuid(key)) => Some(cow_or_empty(index.get(&key))),
             _ => None,
         }
@@ -554,6 +568,12 @@ impl TypedIndex {
                     _ => None,
                 })
             }
+            Self::Duration(index) => {
+                typed_range_union(index, &range, TypedIndexKind::Duration, |key| match key {
+                    TypedKey::Duration(key) => Some(key),
+                    _ => None,
+                })
+            }
             Self::Uuid(index) => {
                 typed_range_union(index, &range, TypedIndexKind::Uuid, |key| match key {
                     TypedKey::Uuid(key) => Some(key),
@@ -642,6 +662,9 @@ impl TypedIndex {
                 lhs == rhs
             }
             (Self::ZonedTime(_), Ok(TypedKey::ZonedTime(lhs)), Ok(TypedKey::ZonedTime(rhs))) => {
+                lhs == rhs
+            }
+            (Self::Duration(_), Ok(TypedKey::Duration(lhs)), Ok(TypedKey::Duration(rhs))) => {
                 lhs == rhs
             }
             (Self::Uuid(_), Ok(TypedKey::Uuid(lhs)), Ok(TypedKey::Uuid(rhs))) => lhs == rhs,

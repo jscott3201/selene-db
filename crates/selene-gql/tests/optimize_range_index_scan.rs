@@ -48,6 +48,11 @@ fn event_catalog() -> MockIndexCatalog {
             db_string("clock_time"),
             IndexKind::ZonedTime,
         )
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("elapsed"),
+            IndexKind::Duration,
+        )
 }
 
 fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
@@ -174,6 +179,21 @@ fn temporal_literals_fire_typed_index_ranges() {
         ScanAccess::TypedIndexRange {
             kind: IndexKind::ZonedTime,
             bounds: TypedIndexBounds::Equality(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.elapsed >= DURATION 'PT1H' AND n.elapsed < DURATION 'PT3H' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::Duration,
+            bounds: TypedIndexBounds::Range { .. },
             ..
         }
     ));
