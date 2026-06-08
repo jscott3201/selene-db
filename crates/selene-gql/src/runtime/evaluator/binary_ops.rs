@@ -75,6 +75,7 @@ pub(super) fn eval_unary(
             Value::Float(value) => Ok(Value::Float(-value)),
             Value::Float32(value) => Ok(Value::Float32(-value)),
             Value::Decimal(value) => Ok(Value::Decimal(-value)),
+            Value::Duration(value) => Ok(Value::Duration(Box::new((*value).negate()))),
             Value::Null => Ok(Value::Null),
             _ => data_exception("unary minus operand is not numeric", span),
         },
@@ -173,6 +174,9 @@ fn eval_arithmetic(
         return Ok(Value::Null);
     }
     match (lhs, rhs) {
+        (Value::Duration(lhs), Value::Duration(rhs)) => {
+            super::duration_ops::eval_arithmetic(op, *lhs, *rhs, span)
+        }
         (Value::Int(lhs), Value::Int(rhs)) => eval_int_arithmetic(op, lhs, rhs, span),
         (Value::Uint(lhs), Value::Uint(rhs)) => eval_uint_arithmetic(op, lhs, rhs, span),
         (Value::Int128(lhs), Value::Int128(rhs)) => eval_i128_arithmetic(op, lhs, rhs, span),

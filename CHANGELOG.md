@@ -28,6 +28,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   propagation. `DURATION_BETWEEN(<temporal>, <temporal>)` now implements the
   ISO §20.28 two-argument default `DAY TO SECOND` form for comparable temporal
   instant families.
+- **Duration value expressions (ISO §20.28).** Duration unary sign and
+  duration `+` / `-` now execute for same-unit-group duration operands, preserve
+  `NULL` propagation, normalize year-month and day-time results, and report
+  incompatible year-month versus day-time operands with `22G14`.
 - **List TRIM value function (ISO §20.16).** `TRIM(<list>, <count>)` now
   returns the list with `<count>` tail elements removed, evaluates the count
   before the list per the ISO null short-circuit rule, and reports list-element

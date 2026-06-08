@@ -1,5 +1,6 @@
 //! Expression type-inference helpers.
 
+mod duration;
 mod numeric;
 mod trim;
 
@@ -11,7 +12,10 @@ use crate::{
     },
 };
 
-use self::numeric::{is_numeric, numeric_promotion};
+use self::{
+    duration::duration_add_sub,
+    numeric::{is_numeric, numeric_promotion},
+};
 
 pub(crate) use self::numeric::argument_assignable;
 pub(crate) use self::trim::trim;
@@ -47,12 +51,16 @@ pub(crate) fn binary(
     rhs_span: SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
     match op {
-        BinaryOp::Add
-        | BinaryOp::Sub
-        | BinaryOp::Mul
-        | BinaryOp::Div
-        | BinaryOp::Mod
-        | BinaryOp::Power => arithmetic(op, lhs, lhs_span, rhs, rhs_span),
+        BinaryOp::Add | BinaryOp::Sub => {
+            if let Some(result) = duration_add_sub(op, lhs, lhs_span, rhs, rhs_span) {
+                result
+            } else {
+                arithmetic(op, lhs, lhs_span, rhs, rhs_span)
+            }
+        }
+        BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Power => {
+            arithmetic(op, lhs, lhs_span, rhs, rhs_span)
+        }
         BinaryOp::Eq | BinaryOp::Ne => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             comparison(op, lhs, lhs_span, rhs, rhs_span)
@@ -77,6 +85,9 @@ pub(crate) fn unary(
         UnaryOp::Negate => match operand {
             AnalyzedType::Dynamic => Ok(AnalyzedType::Dynamic),
             AnalyzedType::Resolved(ty) if is_numeric(ty) => Ok(operand.clone()),
+            AnalyzedType::Resolved(GqlType::Duration) => {
+                Ok(AnalyzedType::Resolved(GqlType::Duration))
+            }
             // Per ISO/IEC 39075:2024 three-valued logic, `- NULL` yields NULL.
             // The runtime returns `Value::Null`; the analyzer must not reject.
             AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Null)),

@@ -11,6 +11,7 @@ mod case;
 mod cast;
 mod collections;
 mod duration_fns;
+mod duration_ops;
 mod identity_length_fns;
 mod json_fns;
 mod predicates;

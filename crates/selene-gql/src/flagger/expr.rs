@@ -229,6 +229,7 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
         }
         Literal::Float(_, span) => record_feature(uses, FeatureId::GA01, *span),
         Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
+        Literal::Duration(_, span) => record_feature(uses, FeatureId::GV41, *span),
         Literal::String(_, _)
         | Literal::Bytes(_, _)
         | Literal::Bool(_, _)
@@ -238,7 +239,6 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
         | Literal::Date(_, _)
         | Literal::ZonedTime(_, _)
         | Literal::LocalTime(_, _)
-        | Literal::Duration(_, _)
         | Literal::Null(_) => {}
     }
 }
@@ -385,6 +385,13 @@ mod tests {
         ValueExpr::Literal(Literal::Float(value, span(offset)))
     }
 
+    fn duration(value: &str, offset: u32) -> ValueExpr {
+        ValueExpr::Literal(Literal::Duration(
+            Box::new(value.parse().expect("duration literal parses")),
+            span(offset),
+        ))
+    }
+
     fn ids(expr: &ValueExpr) -> Vec<FeatureId> {
         let mut uses = Vec::new();
         value(expr, &mut uses);
@@ -443,6 +450,12 @@ mod tests {
         assert_eq!(uses[0].span.byte_offset, 0);
         assert_eq!(uses[1].feature_id, FeatureId::GA01);
         assert_eq!(uses[1].span.byte_offset, 3);
+    }
+
+    #[test]
+    fn duration_literal_records_duration_feature() {
+        let observed = ids(&duration("PT1H", 4));
+        assert_eq!(observed, vec![FeatureId::GV41]);
     }
 
     #[test]
