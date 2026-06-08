@@ -142,6 +142,18 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// ISO 20.9 forbids aggregate functions directly containing aggregate
+    /// functions.
+    #[error("invalid aggregate expression: {message}")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    AggregateNestingViolation {
+        /// Human-readable ISO 20.9 rule failure.
+        message: String,
+        /// Source span of the nested aggregate expression.
+        #[label("aggregate cannot contain another aggregate")]
+        span: SourceSpan,
+    },
+
     /// A reference is syntactically resolved but not valid in this expression context.
     #[error("invalid reference: {message}")]
     #[diagnostic(code(SLENE_GQL_42002))]
@@ -459,6 +471,7 @@ impl AnalysisError {
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::AggregateNestingViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {

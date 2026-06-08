@@ -14,6 +14,7 @@ use crate::{
 };
 
 use super::{BindContext, call, expr, expr_depth, pattern};
+use crate::analyze::bind::aggregate_rules;
 use crate::analyze::scope::ScopeKind;
 
 pub(crate) fn bind_query_pipeline(
@@ -248,6 +249,7 @@ fn bind_return_inputs(
     if let Some(value) = having {
         expr::bind_condition(ctx, value, ConditionClause::Having)?;
     }
+    aggregate_rules::validate_aggregate_nesting(items, having)?;
     validate_percentile_independent_refs(ctx, row_scope, items, group_by, having)?;
     Ok(())
 }

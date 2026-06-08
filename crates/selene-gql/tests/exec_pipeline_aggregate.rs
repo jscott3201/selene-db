@@ -3,7 +3,7 @@
 mod exec_common;
 
 use selene_core::Value;
-use selene_gql::parse;
+use selene_gql::{EmptyProcedureRegistry, GqlStatus, analyze, parse};
 
 use exec_common::{column_values, execute_read, execute_read_result};
 
@@ -203,6 +203,21 @@ fn aggregate_all_quantifier_matches_implicit_all() {
 fn aggregate_set_quantifier_does_not_apply_to_count_star() {
     for source in ["RETURN count(ALL *) AS c", "RETURN count(DISTINCT *) AS c"] {
         parse(source).expect_err("quantified COUNT(*) is not a valid aggregate shape");
+    }
+}
+
+#[test]
+fn nested_aggregate_calls_reject_during_analysis() {
+    for source in [
+        "UNWIND [1, 2] AS x RETURN sum(count(x)) AS nested",
+        "UNWIND [1, 2] AS x RETURN sum(abs(count(x))) AS nested",
+        "UNWIND [1, 2] AS x RETURN percentile_cont(x, avg(x)) AS nested",
+        "UNWIND [1, 2] AS x RETURN sum(x) AS s HAVING max(count(x)) > 1",
+    ] {
+        let statement = parse(source).expect("source parses");
+        let error = analyze(statement, &EmptyProcedureRegistry, None)
+            .expect_err("nested aggregate should reject during analysis");
+        assert_eq!(error.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
     }
 }
 

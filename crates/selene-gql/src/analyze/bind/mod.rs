@@ -1,5 +1,6 @@
 //! Bind-pass orchestration.
 
+pub(crate) mod aggregate_rules;
 pub(crate) mod call;
 pub(crate) mod ddl;
 pub(crate) mod element_ref;
