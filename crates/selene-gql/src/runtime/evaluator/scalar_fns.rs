@@ -181,7 +181,7 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
-        "length" | "char_length" | "character_length" => string_fns::eval_length(
+        "char_length" | "character_length" => string_fns::eval_length(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),

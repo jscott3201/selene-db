@@ -523,10 +523,11 @@ fn anonymous_intermediate_node_does_not_leak_to_next_edge() {
 #[test]
 fn scalar_functions_are_not_classified_as_aggregates_in_group_by() {
     // Why: prior `aggregate_name` returned Some for any single-segment
-    // function call, so scalar functions like `length` were lifted into
+    // function call, so scalar functions like `char_length` were lifted into
     // `GroupBy.aggregates` even though they are pure scalars.
-    let plan =
-        plan_one("MATCH (n) RETURN length(n.name) AS l, count(*) AS c GROUP BY length(n.name)");
+    let plan = plan_one(
+        "MATCH (n) RETURN char_length(n.name) AS l, count(*) AS c GROUP BY char_length(n.name)",
+    );
     let mut aggregate_names: Vec<String> = Vec::new();
     for op in &plan.pipeline {
         if let PipelineOp::GroupBy { aggregates, .. } = op {
@@ -540,8 +541,8 @@ fn scalar_functions_are_not_classified_as_aggregates_in_group_by() {
         "count must remain an aggregate: {aggregate_names:?}"
     );
     assert!(
-        !aggregate_names.iter().any(|name| name == "length"),
-        "length must not be classified as an aggregate: {aggregate_names:?}"
+        !aggregate_names.iter().any(|name| name == "char_length"),
+        "char_length must not be classified as an aggregate: {aggregate_names:?}"
     );
 }
 

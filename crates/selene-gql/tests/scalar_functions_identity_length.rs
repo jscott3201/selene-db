@@ -403,6 +403,11 @@ fn char_length_rejects_wrong_arity() {
 }
 
 #[test]
+fn non_iso_length_function_is_not_in_the_scalar_set() {
+    assert_status("RETURN length('abc') AS value", "22G03");
+}
+
+#[test]
 fn char_length_has_no_optional_feature_attribution() {
     let statement = parse("RETURN char_length('abc') AS value").expect("source parses");
     let features = feature_walk(&statement)

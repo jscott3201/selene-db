@@ -179,7 +179,7 @@ fn ceiling_alias_returns_same_as_ceil() {
 #[test]
 fn scalar_string_and_collection_functions_dispatch() {
     let table = execute_read(
-        "RETURN length('abc') AS len, left('abcdef', 3) AS prefix, right('abcdef', 3) AS suffix, upper('ab') AS up, \
+        "RETURN char_length('abc') AS len, left('abcdef', 3) AS prefix, right('abcdef', 3) AS suffix, upper('ab') AS up, \
          lower('AB') AS low, trim(' x ') AS trimmed, coalesce(null, 'x') AS co, \
          size([1, 2, 3]) AS sz, \
          char_length('café') AS char_len, character_length('日本') AS character_len, \
