@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use rust_decimal::{Decimal, prelude::ToPrimitive};
 use selene_core::Value;
 use unicode_normalization::UnicodeNormalization;
 
@@ -503,8 +504,21 @@ fn normalize_string(value: &str, form: NormalForm) -> String {
 
 fn string_length_count(value: &Value, span: SourceSpan) -> Result<usize, ExecutorError> {
     match value {
-        Value::Int(value) if *value >= 0 => Ok(*value as usize),
-        Value::Int(_) => Err(data_exception_value_with(
+        Value::Int(value) if *value >= 0 => usize::try_from(*value).map_err(|_| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer argument is too large",
+                span,
+            )
+        }),
+        Value::Int128(value) if *value >= 0 => usize::try_from(*value).map_err(|_| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer argument is too large",
+                span,
+            )
+        }),
+        Value::Int(_) | Value::Int128(_) => Err(data_exception_value_with(
             DataExceptionSubclass::SubstringError,
             "string length is negative",
             span,
@@ -516,6 +530,27 @@ fn string_length_count(value: &Value, span: SourceSpan) -> Result<usize, Executo
                 span,
             )
         }),
+        Value::Uint128(value) => usize::try_from(*value).map_err(|_| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer argument is too large",
+                span,
+            )
+        }),
+        Value::Decimal(value) if value.trunc() == *value && *value >= Decimal::ZERO => {
+            value.to_usize().ok_or_else(|| {
+                data_exception_value_with(
+                    DataExceptionSubclass::NumericValueOutOfRange,
+                    "integer argument is too large",
+                    span,
+                )
+            })
+        }
+        Value::Decimal(value) if *value < Decimal::ZERO => Err(data_exception_value_with(
+            DataExceptionSubclass::SubstringError,
+            "string length is negative",
+            span,
+        )),
         _ => data_exception("string length is not an integer", span),
     }
 }

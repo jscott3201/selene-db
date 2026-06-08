@@ -198,6 +198,12 @@ fn left_and_right_return_unicode_prefixes_and_suffixes() {
         ("RETURN right('café', 2) AS value", "fé"),
         ("RETURN left('日本語', 2) AS value", "日本"),
         ("RETURN right('日本語', 99) AS value", "日本語"),
+        ("RETURN left('abcdef', CAST('2' AS INT128)) AS value", "ab"),
+        (
+            "RETURN right('abcdef', CAST('2' AS UINT128)) AS value",
+            "ef",
+        ),
+        ("RETURN left('abcdef', 2M) AS value", "ab"),
     ];
     for (source, expected) in cases {
         assert_eq!(string_value(single_value(source, "value")), expected);
@@ -220,6 +226,8 @@ fn left_and_right_propagate_nulls_and_reject_bad_lengths() {
     }
     assert_status("RETURN left('abc', -1) AS value", "22011");
     assert_status("RETURN right('abc', -1) AS value", "22011");
+    assert_status("RETURN left('abc', -1M) AS value", "22011");
+    assert_status("RETURN left('abc', 1.5M) AS value", "22G03");
     assert_status("RETURN left('abc', 'x') AS value", "22G03");
     assert_status("RETURN right(7, 1) AS value", "22G03");
 }
