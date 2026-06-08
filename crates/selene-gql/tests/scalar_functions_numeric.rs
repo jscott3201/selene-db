@@ -5,6 +5,7 @@
 mod exec_common;
 
 use exec_common::{column_values, db_string, execute_read, execute_read_result};
+use rust_decimal::Decimal;
 use selene_core::{GraphId, Value, feature_register::FeatureId};
 use selene_gql::{EmptyProcedureRegistry, Session, feature_walk, parse};
 use selene_graph::SharedGraph;
@@ -34,6 +35,24 @@ fn assert_status(source: &str, expected: &str) {
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
 }
 
+fn execute_with_decimal_params(
+    source: &str,
+    params: &[(&str, Decimal)],
+) -> selene_gql::BindingTable {
+    let graph = SharedGraph::new(GraphId::new(13_522));
+    let mut session = Session::new(&graph);
+    for (name, value) in params {
+        session.bind_parameter(db_string(name), Value::Decimal(*value));
+    }
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect("query succeeds");
+    let selene_gql::StatementOutput::Rows(table) = output else {
+        panic!("expected rows");
+    };
+    table
+}
+
 #[test]
 fn scalar_functions_numeric_gf01_enhanced_numeric_functions_return_expected_values() {
     let cases = [
@@ -48,6 +67,44 @@ fn scalar_functions_numeric_gf01_enhanced_numeric_functions_return_expected_valu
     for (source, expected) in cases {
         assert_eq!(single_value(source, "value"), expected, "source: {source}");
     }
+}
+
+#[test]
+fn scalar_functions_numeric_floor_and_ceiling_preserve_exact_numeric_inputs() {
+    let integer = execute_read(
+        "RETURN floor(3) AS floor_value, ceil(3) AS ceil_value, ceiling(3) AS ceiling_value",
+    );
+    assert_eq!(column_values(&integer, "floor_value"), vec![Value::Int(3)]);
+    assert_eq!(column_values(&integer, "ceil_value"), vec![Value::Int(3)]);
+    assert_eq!(
+        column_values(&integer, "ceiling_value"),
+        vec![Value::Int(3)]
+    );
+
+    let decimal = execute_with_decimal_params(
+        "RETURN floor($pos) AS floor_pos, ceil($pos) AS ceil_pos, \
+                floor($neg) AS floor_neg, ceiling($neg) AS ceiling_neg",
+        &[
+            ("pos", "1.8".parse().expect("decimal parses")),
+            ("neg", "-1.2".parse().expect("decimal parses")),
+        ],
+    );
+    assert_eq!(
+        column_values(&decimal, "floor_pos"),
+        vec![Value::Decimal(Decimal::from(1))]
+    );
+    assert_eq!(
+        column_values(&decimal, "ceil_pos"),
+        vec![Value::Decimal(Decimal::from(2))]
+    );
+    assert_eq!(
+        column_values(&decimal, "floor_neg"),
+        vec![Value::Decimal(Decimal::from(-2))]
+    );
+    assert_eq!(
+        column_values(&decimal, "ceiling_neg"),
+        vec![Value::Decimal(Decimal::from(-1))]
+    );
 }
 
 #[test]
