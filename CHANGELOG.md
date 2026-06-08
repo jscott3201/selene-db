@@ -25,7 +25,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   duration field sets report `22G07`, and invalid generated duration text
   reports `22G0H`. `ABS(<duration>)` now implements the ISO duration absolute
   value function, returning a non-negative duration while preserving `NULL`
-  propagation.
+  propagation. `DURATION_BETWEEN(<temporal>, <temporal>)` now implements the
+  ISO §20.28 two-argument default `DAY TO SECOND` form for comparable temporal
+  instant families.
 - **List TRIM value function (ISO §20.16).** `TRIM(<list>, <count>)` now
   returns the list with `<count>` tail elements removed, evaluates the count
   before the list per the ISO null short-circuit rule, and reports list-element

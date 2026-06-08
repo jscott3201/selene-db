@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GV41
+// expects: parse-ok
+RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-03')) AS span

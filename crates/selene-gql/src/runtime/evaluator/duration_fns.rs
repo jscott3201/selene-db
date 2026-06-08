@@ -1,7 +1,12 @@
-//! Duration scalar function evaluation (ISO/IEC 39075:2024 section 20.29).
+//! Duration scalar function evaluation (ISO/IEC 39075:2024 sections 20.28 and
+//! 20.29).
 
 use std::collections::BTreeSet;
 
+use jiff::{
+    TimestampDifference, Unit, ZonedDifference,
+    civil::{DateDifference, DateTimeDifference, TimeDifference},
+};
 use selene_core::{DbString, Record, Value};
 
 use crate::{
@@ -36,6 +41,60 @@ pub(super) fn eval_duration_function(
             span,
         )),
     }
+}
+
+/// `DURATION_BETWEEN(<temporal>, <temporal>)`: return the day-time duration
+/// from the first instant to the second. This implements the ISO two-argument
+/// form, whose omitted temporal duration qualifier defaults to `DAY TO SECOND`.
+pub(super) fn eval_duration_between_function(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let [start, end]: [Value; 2] = args.try_into().expect("arity checked by caller");
+    if matches!(start, Value::Null) || matches!(end, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let duration = match (start, end) {
+        (Value::Date(start), Value::Date(end)) => {
+            start.until(DateDifference::new(end).largest(Unit::Day))
+        }
+        (Value::LocalDateTime(start), Value::LocalDateTime(end)) => start.until(
+            DateTimeDifference::new(end)
+                .smallest(Unit::Nanosecond)
+                .largest(Unit::Day),
+        ),
+        (Value::LocalTime(start), Value::LocalTime(end)) => start.until(
+            TimeDifference::new(end)
+                .smallest(Unit::Nanosecond)
+                .largest(Unit::Hour),
+        ),
+        (Value::ZonedDateTime(start), Value::ZonedDateTime(end)) => start.until(
+            ZonedDifference::new(&end)
+                .smallest(Unit::Nanosecond)
+                .largest(Unit::Day),
+        ),
+        (Value::ZonedTime(start), Value::ZonedTime(end)) => start.timestamp().until(
+            TimestampDifference::new(end.timestamp())
+                .smallest(Unit::Nanosecond)
+                .largest(Unit::Hour),
+        ),
+        _ => {
+            return Err(ExecutorError::data_exception(
+                DataExceptionSubclass::InvalidValueType,
+                "DURATION_BETWEEN arguments are not comparable temporal instants",
+                span,
+            ));
+        }
+    };
+    duration
+        .map(|duration| Value::Duration(Box::new(duration)))
+        .map_err(|error| {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                format!("DURATION_BETWEEN result is out of range: {error}"),
+                span,
+            )
+        })
 }
 
 fn duration_from_record(
