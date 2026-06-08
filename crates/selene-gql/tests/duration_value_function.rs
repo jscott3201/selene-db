@@ -127,6 +127,81 @@ fn duration_absolute_value_function_returns_non_negative_duration() {
 }
 
 #[test]
+fn duration_between_returns_day_time_duration_for_temporal_instants() {
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-03')) AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("PT172800S".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(LOCAL_DATETIME('2026-01-01T00:00:00'), \
+             LOCAL_DATETIME('2026-01-02T01:01:01.000000002')) AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("PT90061.000000002S".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(LOCAL_TIME('12:00:00'), LOCAL_TIME('14:30:00')) AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("PT9000S".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(ZONED_DATETIME('2026-01-01T00:00:00Z'), \
+             ZONED_DATETIME('2026-01-01T01:00:00Z')) AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("PT3600S".parse().unwrap()))
+    );
+}
+
+#[test]
+fn duration_between_preserves_direction_and_null_semantics() {
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(DATE('2026-01-03'), DATE('2026-01-01')) AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("-PT172800S".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(NULL, DATE('2026-01-01')) AS value",
+            "value"
+        ),
+        Value::Null
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(DATE('2026-01-01'), NULL) AS value",
+            "value"
+        ),
+        Value::Null
+    );
+}
+
+#[test]
+fn duration_between_rejects_non_temporal_and_mixed_temporal_families() {
+    assert_eq!(
+        status_for("RETURN DURATION_BETWEEN(TRUE, DATE('2026-01-01')) AS value").as_str(),
+        "22G03"
+    );
+    assert_eq!(
+        status_for(
+            "RETURN DURATION_BETWEEN(DATE('2026-01-01'), \
+             LOCAL_DATETIME('2026-01-02T00:00:00')) AS value"
+        )
+        .as_str(),
+        "22G03"
+    );
+}
+
+#[test]
 fn duration_record_constructor_rejects_invalid_fields_and_format_values() {
     assert_eq!(
         status_for("RETURN DURATION({foo: 1}) AS value"),

@@ -185,6 +185,10 @@ pub(super) fn eval_function_call(
             ctx,
             span,
         ),
+        "duration_between" => duration_fns::eval_duration_between_function(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
         "char_length" | "character_length" => string_fns::eval_length(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,

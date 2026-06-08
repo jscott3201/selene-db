@@ -173,6 +173,7 @@ fn scalar_function_feature(name: &NonEmpty<DbString>) -> Option<FeatureId> {
         "btrim" | "ltrim" | "rtrim" => Some(FeatureId::GF05),
         "cardinality" => Some(FeatureId::GF12),
         "size" => Some(FeatureId::GF13),
+        "duration" | "duration_between" => Some(FeatureId::GV41),
         "uuid" | "uuid_v4" | "uuid_v7" => Some(FeatureId::IM_UUID),
         "json"
         | "json_parse"

@@ -1,4 +1,5 @@
-//! Duration scalar function evaluation (ISO/IEC 39075:2024 section 20.29).
+//! Duration scalar function evaluation (ISO/IEC 39075:2024 sections 20.28 and
+//! 20.29).
 
 use std::collections::BTreeSet;
 
@@ -36,6 +37,46 @@ pub(super) fn eval_duration_function(
             span,
         )),
     }
+}
+
+/// `DURATION_BETWEEN(<temporal>, <temporal>)`: return the day-time duration
+/// from the first instant to the second. This implements the ISO two-argument
+/// form, whose omitted temporal duration qualifier defaults to `DAY TO SECOND`.
+pub(super) fn eval_duration_between_function(
+    args: Vec<Value>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let [start, end]: [Value; 2] = args.try_into().expect("arity checked by caller");
+    if matches!(start, Value::Null) || matches!(end, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let duration = match (start, end) {
+        (Value::Date(start), Value::Date(end)) => end.duration_since(start),
+        (Value::LocalDateTime(start), Value::LocalDateTime(end)) => end.duration_since(start),
+        (Value::LocalTime(start), Value::LocalTime(end)) => end.duration_since(start),
+        (Value::ZonedDateTime(start), Value::ZonedDateTime(end)) => {
+            end.timestamp().duration_since(start.timestamp())
+        }
+        (Value::ZonedTime(start), Value::ZonedTime(end)) => {
+            end.timestamp().duration_since(start.timestamp())
+        }
+        _ => {
+            return Err(ExecutorError::data_exception(
+                DataExceptionSubclass::InvalidValueType,
+                "DURATION_BETWEEN arguments are not comparable temporal instants",
+                span,
+            ));
+        }
+    };
+    jiff::Span::try_from(duration)
+        .map(|duration| Value::Duration(Box::new(duration)))
+        .map_err(|error| {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                format!("DURATION_BETWEEN result is out of range: {error}"),
+                span,
+            )
+        })
 }
 
 fn duration_from_record(
