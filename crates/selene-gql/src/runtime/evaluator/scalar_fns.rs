@@ -180,6 +180,11 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
+        "labels" => identity_length_fns::eval_labels(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            ctx,
+        ),
         "duration" => duration_fns::eval_duration_function(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             ctx,

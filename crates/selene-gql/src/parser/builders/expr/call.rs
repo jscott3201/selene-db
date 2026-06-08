@@ -55,6 +55,23 @@ pub(super) fn build_elements_function(pair: Pair<'_, Rule>) -> Result<ValueExpr,
     build_keyword_function(pair, "elements")
 }
 
+pub(super) fn build_labels_function(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let arg = build_value_expr(first_child(pair)?)?;
+    Ok(ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![db_string_from_owned(
+            "labels".to_owned(),
+            source_span,
+            "keyword function name",
+        )?])
+        .expect("literal vector is non-empty"),
+        args: vec![arg],
+        star: false,
+        distinct: false,
+        span: source_span,
+    })
+}
+
 pub(super) fn build_current_datetime_function(
     pair: Pair<'_, Rule>,
 ) -> Result<ValueExpr, ParserError> {
