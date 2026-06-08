@@ -49,6 +49,10 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
             "22G05",
         ),
         (DataExceptionSubclass::InvalidDatetimeFunctionValue, "22G06"),
+        (
+            DataExceptionSubclass::InvalidDurationFunctionFieldName,
+            "22G07",
+        ),
         (DataExceptionSubclass::ListElementError, "22G0C"),
         (DataExceptionSubclass::InvalidDurationFormat, "22G0H"),
         (

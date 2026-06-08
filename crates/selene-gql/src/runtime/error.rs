@@ -43,6 +43,8 @@ pub enum DataExceptionSubclass {
     InvalidDatetimeFunctionFieldName,
     /// Invalid date, time, or datetime function value (`22G06`).
     InvalidDatetimeFunctionValue,
+    /// Invalid duration function field name (`22G07`).
+    InvalidDurationFunctionFieldName,
     /// List element error (`22G0C`).
     ListElementError,
     /// Invalid duration format (`22G0H`).
@@ -83,6 +85,9 @@ impl DataExceptionSubclass {
                 GqlStatus::INVALID_DATETIME_FUNCTION_FIELD_NAME
             }
             Self::InvalidDatetimeFunctionValue => GqlStatus::INVALID_DATETIME_FUNCTION_VALUE,
+            Self::InvalidDurationFunctionFieldName => {
+                GqlStatus::INVALID_DURATION_FUNCTION_FIELD_NAME
+            }
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
             Self::InvalidDurationFormat => GqlStatus::INVALID_DURATION_FORMAT,
             Self::MultipleAssignmentsToGraphElementProperty => {

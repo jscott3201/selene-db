@@ -16,7 +16,7 @@ use super::{
         data_exception, data_exception_value, data_exception_value_with, data_exception_with,
         eval_binary, numeric_to_f64,
     },
-    identity_length_fns, json_fns,
+    duration_fns, identity_length_fns, json_fns,
     string_fns::{self, eval_fixed_args, eval_range_args},
     temporal_fns, uuid_fns,
 };
@@ -179,6 +179,11 @@ pub(super) fn eval_function_call(
         ),
         "path_length" => identity_length_fns::eval_path_length(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "duration" => duration_fns::eval_duration_function(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            ctx,
             span,
         ),
         "char_length" | "character_length" => string_fns::eval_length(
