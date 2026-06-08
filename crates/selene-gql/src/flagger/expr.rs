@@ -69,6 +69,10 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
         }
         ValueExpr::ListLiteral { span, .. } => record_feature(uses, FeatureId::GV50, *span),
         ValueExpr::RecordLiteral { span, .. } => record_feature(uses, FeatureId::GV45, *span),
+        ValueExpr::PathConstructor { span, .. } => {
+            record_feature(uses, FeatureId::GE06, *span);
+            record_feature(uses, FeatureId::GV55, *span);
+        }
         ValueExpr::BinaryOp { op, span, .. } => {
             if matches!(
                 op,

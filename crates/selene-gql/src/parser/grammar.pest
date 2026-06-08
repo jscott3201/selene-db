@@ -580,6 +580,7 @@ primary = {
   | case_expr
   | cast_expr
   | labels_expr
+  | path_constructor
   | record_constructor
   | normalize_expr
   | trim_expr
@@ -638,6 +639,7 @@ else_clause  = { ^"ELSE" ~ expr }
 
 cast_expr     = { ^"CAST" ~ "(" ~ expr ~ ^"AS" ~ type_name ~ ")" }
 labels_expr   = { ^"LABELS" ~ "(" ~ expr ~ ")" }
+path_constructor = { ^"PATH" ~ "[" ~ expr ~ ("," ~ expr ~ "," ~ expr)* ~ "]" }
 
 normalize_expr = { ^"NORMALIZE" ~ "(" ~ expr ~ ("," ~ normal_form)? ~ ")" }
 

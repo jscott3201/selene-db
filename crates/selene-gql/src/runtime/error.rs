@@ -61,6 +61,8 @@ pub enum DataExceptionSubclass {
     RecordFieldsDoNotMatch,
     /// Record data field unassignable (`22G0X`).
     RecordDataFieldUnassignable,
+    /// Malformed path (`22G0Z`).
+    MalformedPath,
 }
 
 impl DataExceptionSubclass {
@@ -106,6 +108,7 @@ impl DataExceptionSubclass {
             }
             Self::RecordFieldsDoNotMatch => GqlStatus::RECORD_FIELDS_DO_NOT_MATCH,
             Self::RecordDataFieldUnassignable => GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE,
+            Self::MalformedPath => GqlStatus::MALFORMED_PATH,
         }
     }
 }

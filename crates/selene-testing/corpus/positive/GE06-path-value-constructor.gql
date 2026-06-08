@@ -1,0 +1,6 @@
+// corpus: positive
+// feature: GE06
+// also-covers: GV55
+// expects: parse-ok
+MATCH (n)
+RETURN PATH[n] AS p

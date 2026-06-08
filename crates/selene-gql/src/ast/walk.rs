@@ -45,6 +45,9 @@ impl ValueExpr {
                 f(index);
             }
             Self::ListLiteral { items, .. }
+            | Self::PathConstructor {
+                elements: items, ..
+            }
             | Self::AllDifferent { items, .. }
             | Self::Same { items, .. } => {
                 for item in items {
@@ -129,6 +132,9 @@ impl ValueExpr {
                 f(index);
             }
             Self::ListLiteral { items, .. }
+            | Self::PathConstructor {
+                elements: items, ..
+            }
             | Self::AllDifferent { items, .. }
             | Self::Same { items, .. } => {
                 for item in items {
@@ -216,6 +222,7 @@ impl ValueExpr {
             | Self::ListAccess { span, .. }
             | Self::ListLiteral { span, .. }
             | Self::RecordLiteral { span, .. }
+            | Self::PathConstructor { span, .. }
             | Self::BinaryOp { span, .. }
             | Self::UnaryOp { span, .. }
             | Self::FunctionCall { span, .. }

@@ -77,6 +77,7 @@ feature_ids! {
     GD01 = "GD01" => "Updatable graphs";
     GE04 = "GE04" => "Parameters";
     GE05 = "GE05" => "Named parameters";
+    GE06 = "GE06" => "Path value construction";
     GE07 = "GE07" => "XOR operator";
     // ISO/IEC 39075:2024 Annex D Table D.1 row 77 / subclause 17.7: GE08 is
     // "Reference parameters", NOT a CAST feature. selene-db does not implement
@@ -252,6 +253,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GD01,
     FeatureId::GE04,
     FeatureId::GE05,
+    FeatureId::GE06,
     FeatureId::GE07,
     FeatureId::GF01,
     FeatureId::GF02,

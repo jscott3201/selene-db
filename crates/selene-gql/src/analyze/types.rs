@@ -264,6 +264,11 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             }
             span.hash(state);
         }
+        ValueExpr::PathConstructor { elements, span } => {
+            25u8.hash(state);
+            hash_exprs(elements, state, memo);
+            span.hash(state);
+        }
         ValueExpr::BinaryOp { op, lhs, rhs, span } => {
             7u8.hash(state);
             op.hash(state);

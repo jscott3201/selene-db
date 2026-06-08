@@ -72,6 +72,19 @@ pub(super) fn build_labels_function(pair: Pair<'_, Rule>) -> Result<ValueExpr, P
     })
 }
 
+pub(super) fn build_path_constructor(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let elements = pair
+        .into_inner()
+        .filter(|child| child.as_rule() == Rule::expr)
+        .map(build_value_expr)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ValueExpr::PathConstructor {
+        elements,
+        span: source_span,
+    })
+}
+
 pub(super) fn build_current_datetime_function(
     pair: Pair<'_, Rule>,
 ) -> Result<ValueExpr, ParserError> {
