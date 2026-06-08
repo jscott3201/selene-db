@@ -345,7 +345,7 @@ fn has_effective_final_limit_one(body: &QueryPipeline, return_index: usize) -> b
         .unwrap_or(false)
 }
 
-fn is_aggregate_name(name: &selene_core::DbString) -> bool {
+pub(super) fn is_aggregate_name(name: &selene_core::DbString) -> bool {
     let name = name.as_str();
     [
         "count",
