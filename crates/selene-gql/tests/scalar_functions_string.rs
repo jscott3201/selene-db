@@ -133,6 +133,25 @@ fn normalize_accepts_all_unicode_normal_forms() {
 }
 
 #[test]
+fn normalize_reports_right_truncation_when_result_exceeds_cap() {
+    assert_eq!(
+        status_with_caps(
+            "RETURN NORMALIZE('\u{00e9}', NFD) AS value",
+            ImplDefinedCaps::default().with_max_string_length(1),
+        ),
+        "22001"
+    );
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN NORMALIZE('\u{00e9}', NFD) AS value",
+            "value",
+            ImplDefinedCaps::default().with_max_string_length(2),
+        )),
+        "e\u{301}"
+    );
+}
+
+#[test]
 fn normalize_propagates_null_and_rejects_non_string_source() {
     assert_eq!(
         single_value("RETURN NORMALIZE(null) AS value", "value"),
@@ -229,6 +248,40 @@ fn fold_keeps_non_normalized_source_result_unforced() {
     assert_eq!(
         string_value(single_value("RETURN UPPER('e\u{0301}') AS value", "value")),
         "E\u{0301}"
+    );
+}
+
+#[test]
+fn fold_functions_report_right_truncation_when_result_exceeds_cap() {
+    assert_eq!(
+        status_with_caps(
+            "RETURN UPPER('\u{00df}') AS value",
+            ImplDefinedCaps::default().with_max_string_length(1),
+        ),
+        "22001"
+    );
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN UPPER('\u{00df}') AS value",
+            "value",
+            ImplDefinedCaps::default().with_max_string_length(2),
+        )),
+        "SS"
+    );
+    assert_eq!(
+        status_with_caps(
+            "RETURN LOWER('\u{0130}') AS value",
+            ImplDefinedCaps::default().with_max_string_length(1),
+        ),
+        "22001"
+    );
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN LOWER('\u{0130}') AS value",
+            "value",
+            ImplDefinedCaps::default().with_max_string_length(2),
+        )),
+        "i\u{0307}"
     );
 }
 

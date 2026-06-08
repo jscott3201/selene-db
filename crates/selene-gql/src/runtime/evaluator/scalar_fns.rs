@@ -245,11 +245,13 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             str::to_uppercase,
+            ctx.impl_defined_caps().max_string_length,
         ),
         "lower" => string_fns::eval_string_transform(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             str::to_lowercase,
+            ctx.impl_defined_caps().max_string_length,
         ),
         "trim" => string_fns::eval_trim_function(&display_name, args, span, binding, schema, ctx),
         "coalesce" => string_fns::eval_coalesce(&display_name, args, span, binding, schema, ctx),
