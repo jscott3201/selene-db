@@ -99,6 +99,18 @@ fn percentile_distinct_applies_to_dependent_values() {
 }
 
 #[test]
+fn percentile_all_quantifier_matches_implicit_all() {
+    let table = execute(
+        "UNWIND [1, 1, 4] AS x \
+         RETURN percentile_cont(ALL x, 0.5) AS continuous, \
+                percentile_disc(ALL x, 0.5) AS discrete",
+    );
+
+    assert_eq!(column_values(&table, "continuous"), vec![Value::Float(1.0)]);
+    assert_eq!(column_values(&table, "discrete"), vec![Value::Int(1)]);
+}
+
+#[test]
 fn percentile_functions_accept_wide_unsigned_dependent_values() {
     let graph = SharedGraph::new(GraphId::new(13_504));
     let mut session = Session::new(&graph);

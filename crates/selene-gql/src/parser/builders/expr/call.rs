@@ -201,6 +201,7 @@ pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
     let source_span = span(&pair);
     let mut name = None;
     let mut distinct = false;
+    let mut quantifier = false;
     let mut star = false;
     let mut args = Vec::new();
 
@@ -209,7 +210,11 @@ pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
             Rule::aggregate_op | Rule::binary_aggregate_op => {
                 name = Some(lowercase_db_string(child)?)
             }
-            Rule::distinct_kw => distinct = true,
+            Rule::distinct_kw => {
+                distinct = true;
+                quantifier = true;
+            }
+            Rule::all_kw => quantifier = true,
             Rule::star => star = true,
             Rule::expr => args.push(build_value_expr(child)?),
             _ => return Err(unexpected_pair(child, "unexpected aggregate child")),
@@ -219,7 +224,7 @@ pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
     let segment = name.ok_or_else(|| {
         ParserError::syntax("aggregate expression is missing name", source_span, None)
     })?;
-    validate_aggregate_shape(&segment, distinct, star, args.len(), source_span)?;
+    validate_aggregate_shape(&segment, quantifier, star, args.len(), source_span)?;
     Ok(ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![segment]).expect("grammar guarantees >= 1: aggregate_op"),
         args,
@@ -231,13 +236,13 @@ pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
 
 fn validate_aggregate_shape(
     name: &DbString,
-    distinct: bool,
+    quantifier: bool,
     star: bool,
     arg_count: usize,
     span: SourceSpan,
 ) -> Result<(), ParserError> {
     if star {
-        if name.as_str() == "count" && !distinct {
+        if name.as_str() == "count" && !quantifier {
             return Ok(());
         }
         return Err(ParserError::syntax(
