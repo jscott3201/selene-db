@@ -23,6 +23,8 @@ const AGGREGATE_OPS: &[&str] = &[
     "COUNT",
     "MAX",
     "MIN",
+    "PERCENTILE_CONT",
+    "PERCENTILE_DISC",
     "STDDEV_POP",
     "STDDEV_SAMP",
     "SUM",
@@ -45,12 +47,6 @@ const AGGREGATE_OPS: &[&str] = &[
 // removed for ISO faithfulness (LIKE, BETWEEN, GRANT, REVOKE, ROLE, USER,
 // PASSWORD, PROCEDURE, TRIGGER, TRIGGERS, MATERIALIZED, VIEW, VIEWS, AT, AFTER,
 // EXECUTE) were dropped from this set so it again mirrors grammar.pest.
-// Known pre-existing under-list gap (NOT introduced by the purge): a few
-// CONTEXTUAL keywords added by later briefs — EXPLAIN, INDEXES, PROCEDURES,
-// TRANSACTIONS, VALUE, NORMALIZE, PERCENTILE_CONT/DISC — are grammar tokens not
-// listed here. They are contextual (e.g. `VALUE {`, `NORMALIZE(`), so a bare
-// identifier of the same spelling still parses; adding them needs per-token
-// aggregate-vs-call analysis (cf. AGGREGATE_OPS) and is tracked separately.
 #[rustfmt::skip]
 const KEYWORDS: &[&str] = &[
     "ACYCLIC", "ALL", "ALL_DIFFERENT", "AND", "ANY", "ARRAY", "AS", "ASC",
@@ -78,6 +74,21 @@ const KEYWORDS: &[&str] = &[
     "WALK", "WARN", "WHEN", "WHERE", "WITH", "XOR", "YEAR", "YIELD", "ZONED",
 ];
 
+/// Contextual keyword tokens that must be quoted in identifier slots.
+///
+/// These tokens are not globally reserved by the parser because each appears
+/// only in a specific grammar context (`EXPLAIN`, `SHOW INDEXES`,
+/// `NORMALIZE(...)`, `PERCENTILE_CONT(...)`, ...). A bare identifier with the
+/// same spelling can still parse as an identifier, but emitting it bare hides
+/// its identifier role in formatted output and leaves future grammar additions
+/// room to break round trips. Keep them out of [`KEYWORDS`] so function-call
+/// formatting can continue to apply call-specific rules.
+#[rustfmt::skip]
+const CONTEXTUAL_IDENTIFIER_KEYWORDS: &[&str] = &[
+    "EXPLAIN", "INDEXES", "NORMALIZE", "PERCENTILE_CONT", "PERCENTILE_DISC",
+    "PROCEDURES", "TRANSACTIONS", "VALUE",
+];
+
 /// Format an identifier slot (binding name, alias name, property key).
 ///
 /// Returns the bare identifier when it is a simple ASCII ident and not a
@@ -85,7 +96,8 @@ const KEYWORDS: &[&str] = &[
 /// with embedded `"` escaped as `""`.
 pub(super) fn fmt_ident(value: DbString) -> String {
     let value = value.as_str();
-    if is_simple_ident(value) && !KEYWORDS.contains(&value.to_ascii_uppercase().as_str()) {
+    let upper = value.to_ascii_uppercase();
+    if is_simple_ident(value) && !is_identifier_keyword(&upper) {
         return value.to_owned();
     }
     format!("\"{}\"", value.replace('"', "\"\""))
@@ -128,4 +140,8 @@ fn is_simple_ident(value: &str) -> bool {
         return false;
     };
     (first == '_' || first.is_alphabetic()) && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
+}
+
+fn is_identifier_keyword(upper: &str) -> bool {
+    KEYWORDS.contains(&upper) || CONTEXTUAL_IDENTIFIER_KEYWORDS.contains(&upper)
 }
