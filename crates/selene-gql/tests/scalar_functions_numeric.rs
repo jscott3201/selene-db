@@ -108,6 +108,30 @@ fn scalar_functions_numeric_floor_and_ceiling_preserve_exact_numeric_inputs() {
 }
 
 #[test]
+fn scalar_functions_numeric_abs_preserves_decimal_inputs() {
+    let table = execute_with_decimal_params(
+        "RETURN abs($neg) AS neg_abs, abs($pos) AS pos_abs, abs($zero) AS zero_abs",
+        &[
+            ("neg", "-123.45".parse().expect("decimal parses")),
+            ("pos", "123.45".parse().expect("decimal parses")),
+            ("zero", "0.00".parse().expect("decimal parses")),
+        ],
+    );
+    assert_eq!(
+        column_values(&table, "neg_abs"),
+        vec![Value::Decimal("123.45".parse().expect("decimal parses"))]
+    );
+    assert_eq!(
+        column_values(&table, "pos_abs"),
+        vec![Value::Decimal("123.45".parse().expect("decimal parses"))]
+    );
+    assert_eq!(
+        column_values(&table, "zero_abs"),
+        vec![Value::Decimal("0.00".parse().expect("decimal parses"))]
+    );
+}
+
+#[test]
 fn scalar_functions_numeric_gf01_enhanced_numeric_functions_propagate_null() {
     for source in [
         "RETURN abs(null) AS value",

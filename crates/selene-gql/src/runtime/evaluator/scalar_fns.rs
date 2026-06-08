@@ -475,6 +475,7 @@ fn eval_abs(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> 
                 span,
             )
         }),
+        Value::Decimal(value) => Ok(Value::Decimal(value.abs())),
         Value::Uint(value) => Ok(Value::Uint(value)),
         Value::Uint128(value) => Ok(Value::Uint128(value)),
         Value::Float(value) if value.is_finite() => Ok(Value::Float(value.abs())),
