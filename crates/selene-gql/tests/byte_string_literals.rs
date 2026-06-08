@@ -161,11 +161,27 @@ fn byte_string_left_and_right_follow_iso_substring_rules() {
         bytes(&[])
     );
     assert_eq!(
+        first_value("RETURN left(X'CAFE00', CAST('2' AS INT128)) AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        first_value("RETURN right(X'CAFE00', CAST('2' AS UINT128)) AS payload"),
+        bytes(&[0xfe, 0x00])
+    );
+    assert_eq!(
+        first_value("RETURN left(X'CAFE00', 2M) AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
         first_value("RETURN left(X'CAFE', null) AS payload"),
         Value::Null
     );
     assert_eq!(first_value("RETURN left(null, 1) AS payload"), Value::Null);
     assert_eq!(first_status("RETURN left(X'CAFE', -1) AS payload"), "22011");
+    assert_eq!(
+        first_status("RETURN left(X'CAFE', 1.5M) AS payload"),
+        "22G03"
+    );
 }
 
 #[test]
