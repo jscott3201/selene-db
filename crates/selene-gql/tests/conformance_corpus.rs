@@ -156,6 +156,12 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
         ("G037-questioned-edge.gql", &["G036", "G037"]),
         ("GE04-parameters.gql", &["GE04", "GE05"]),
         ("GF01-enhanced-numeric.gql", &["GA01", "GF01"]),
+        (
+            "GL04-GL10-numeric-literal-source-forms.gql",
+            &[
+                "GA01", "GL04", "GL05", "GL06", "GL07", "GL08", "GL09", "GL10", "GV17",
+            ],
+        ),
         ("GP01-inline-procedure.gql", &["GP01", "GP02"]),
         ("GQ18-value-subquery.gql", &["GQ13", "GQ18"]),
         ("GV45-record-literal.gql", &["GV45", "GV50"]),

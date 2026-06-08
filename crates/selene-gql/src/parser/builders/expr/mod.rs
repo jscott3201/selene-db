@@ -256,8 +256,8 @@ fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     match (is_negative, operand) {
         (false, value @ ValueExpr::Literal(Literal::Integer(_, _)))
         | (false, value @ ValueExpr::Literal(Literal::RadixInteger(_, _, _)))
-        | (false, value @ ValueExpr::Literal(Literal::Decimal(_, _)))
-        | (false, value @ ValueExpr::Literal(Literal::Float(_, _))) => {
+        | (false, value @ ValueExpr::Literal(Literal::Decimal(_, _, _)))
+        | (false, value @ ValueExpr::Literal(Literal::Float(_, _, _))) => {
             Ok(literal::with_numeric_span(value, source_span))
         }
         (true, ValueExpr::Literal(Literal::Integer(value, _))) => {
@@ -284,12 +284,12 @@ fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
                 kind,
             )))
         }
-        (true, ValueExpr::Literal(Literal::Float(value, _))) => {
-            Ok(ValueExpr::Literal(Literal::Float(-value, source_span)))
-        }
-        (true, ValueExpr::Literal(Literal::Decimal(value, _))) => {
-            Ok(ValueExpr::Literal(Literal::Decimal(-value, source_span)))
-        }
+        (true, ValueExpr::Literal(Literal::Float(value, _, kind))) => Ok(ValueExpr::Literal(
+            Literal::Float(-value, source_span, kind),
+        )),
+        (true, ValueExpr::Literal(Literal::Decimal(value, _, kind))) => Ok(ValueExpr::Literal(
+            Literal::Decimal(-value, source_span, kind),
+        )),
         (false, value) => Ok(value),
         (true, value) => Ok(ValueExpr::UnaryOp {
             op: UnaryOp::Negate,

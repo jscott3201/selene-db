@@ -84,13 +84,13 @@ pub(super) fn binding_index_target(
 pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
     match literal {
         Literal::Integer(_, _) | Literal::RadixInteger(_, _, _) => Some(IndexKind::Integer),
-        Literal::Float(_, _) => Some(IndexKind::Float),
+        Literal::Float(_, _, _) => Some(IndexKind::Float),
         Literal::String(_, _) => Some(IndexKind::String),
         Literal::Date(_, _) => Some(IndexKind::Date),
         Literal::LocalDateTime(_, _) => Some(IndexKind::LocalDateTime),
         Literal::Uuid(_, _) => Some(IndexKind::Uuid),
         Literal::Bool(_, _)
-        | Literal::Decimal(_, _)
+        | Literal::Decimal(_, _, _)
         | Literal::Bytes(_, _)
         | Literal::ZonedDateTime(_, _)
         | Literal::ZonedTime(_, _)

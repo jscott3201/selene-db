@@ -277,7 +277,7 @@ fn literal_summary(expr: &ValueExpr) -> String {
     match expr {
         ValueExpr::Literal(Literal::Bool(value, _)) => format!("Bool({value})"),
         ValueExpr::Literal(Literal::Integer(value, _)) => format!("Integer({value})"),
-        ValueExpr::Literal(Literal::Float(value, _)) => format!("Float({value})"),
+        ValueExpr::Literal(Literal::Float(value, _, _)) => format!("Float({value})"),
         ValueExpr::Literal(Literal::String(value, _)) => format!("String({})", value.as_str()),
         ValueExpr::Literal(Literal::Null(_)) => "Null".to_string(),
         other => format!("{other:?}"),

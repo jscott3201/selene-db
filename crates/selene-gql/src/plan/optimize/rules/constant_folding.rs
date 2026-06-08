@@ -4,7 +4,8 @@ use selene_core::DbString;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::{
-    BinaryOp, ImplDefinedCaps, Literal, SourceSpan, UnaryOp, ValueExpr,
+    BinaryOp, DecimalLiteralKind, FloatLiteralKind, ImplDefinedCaps, Literal, SourceSpan, UnaryOp,
+    ValueExpr,
     plan::{
         ExecutionPlan,
         optimize::{OptimizeContext, Rule, Transformed, walk},
@@ -69,10 +70,10 @@ fn fold_unary(op: UnaryOp, operand: &ValueExpr, span: SourceSpan) -> Option<Valu
                 .and_then(i64::checked_neg)
                 .map(|folded| ValueExpr::Literal(Literal::Integer(folded, span)))
         }
-        (UnaryOp::Negate, Literal::Decimal(value, _)) => {
-            Some(ValueExpr::Literal(Literal::Decimal(-*value, span)))
+        (UnaryOp::Negate, Literal::Decimal(value, _, kind)) => {
+            Some(ValueExpr::Literal(Literal::Decimal(-*value, span, *kind)))
         }
-        (UnaryOp::Negate, Literal::Float(value, _)) => finite_float(-value, span),
+        (UnaryOp::Negate, Literal::Float(value, _, kind)) => finite_float(-value, span, *kind),
         (UnaryOp::Not, _)
         | (UnaryOp::Negate, Literal::Bool(_, _))
         | (UnaryOp::Negate, Literal::String(_, _))
@@ -135,7 +136,7 @@ fn fold_arithmetic(
             }?;
             Some(ValueExpr::Literal(Literal::Integer(folded, span)))
         }
-        (Literal::Float(left, _), Literal::Float(right, _)) => {
+        (Literal::Float(left, _, _), Literal::Float(right, _, _)) => {
             let folded = match op {
                 BinaryOp::Add => left + right,
                 BinaryOp::Sub => left - right,
@@ -144,9 +145,13 @@ fn fold_arithmetic(
                 BinaryOp::Mod if *right != 0.0 => left % right,
                 _ => return None,
             };
-            finite_float(folded, span)
+            finite_float(
+                folded,
+                span,
+                FloatLiteralKind::CommonOrIntegerWithDoubleSuffix,
+            )
         }
-        (Literal::Decimal(left, _), Literal::Decimal(right, _)) => {
+        (Literal::Decimal(left, _, _), Literal::Decimal(right, _, _)) => {
             let folded = match op {
                 BinaryOp::Add => left.checked_add(*right),
                 BinaryOp::Sub => left.checked_sub(*right),
@@ -155,7 +160,11 @@ fn fold_arithmetic(
                 BinaryOp::Mod => left.checked_rem(*right),
                 _ => return None,
             }?;
-            Some(ValueExpr::Literal(Literal::Decimal(folded, span)))
+            Some(ValueExpr::Literal(Literal::Decimal(
+                folded,
+                span,
+                DecimalLiteralKind::CommonWithoutSuffix,
+            )))
         }
         _ => None,
     }
@@ -176,18 +185,22 @@ fn fold_comparison(
         (left, right) if integer_value(left).is_some() && integer_value(right).is_some() => {
             compare_ordering(op, &integer_value(left)?, &integer_value(right)?)
         }
-        (Literal::Float(left, _), Literal::Float(right, _))
+        (Literal::Float(left, _, _), Literal::Float(right, _, _))
             if left.is_finite() && right.is_finite() =>
         {
             compare_partial(op, *left, *right)?
         }
-        (left, Literal::Float(right, _)) if right.is_finite() && integer_value(left).is_some() => {
+        (left, Literal::Float(right, _, _))
+            if right.is_finite() && integer_value(left).is_some() =>
+        {
             compare_partial(op, integer_value(left)? as f64, *right)?
         }
-        (Literal::Float(left, _), right) if left.is_finite() && integer_value(right).is_some() => {
+        (Literal::Float(left, _, _), right)
+            if left.is_finite() && integer_value(right).is_some() =>
+        {
             compare_partial(op, *left, integer_value(right)? as f64)?
         }
-        (Literal::Decimal(left, _), Literal::Decimal(right, _)) => {
+        (Literal::Decimal(left, _, _), Literal::Decimal(right, _, _)) => {
             compare_ordering(op, left, right)
         }
         (Literal::String(left, _), Literal::String(right, _)) => {
@@ -295,10 +308,10 @@ fn byte_suffix_is_zero(lhs: &[u8], rhs: &[u8], suffix_len: usize) -> bool {
             .all(|byte| *byte == 0)
 }
 
-fn finite_float(value: f64, span: SourceSpan) -> Option<ValueExpr> {
+fn finite_float(value: f64, span: SourceSpan, kind: FloatLiteralKind) -> Option<ValueExpr> {
     value
         .is_finite()
-        .then_some(ValueExpr::Literal(Literal::Float(value, span)))
+        .then_some(ValueExpr::Literal(Literal::Float(value, span, kind)))
 }
 
 fn compare_ordering<T: Ord>(op: BinaryOp, lhs: T, rhs: T) -> bool {

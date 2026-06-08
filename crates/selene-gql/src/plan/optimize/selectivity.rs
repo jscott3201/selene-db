@@ -84,8 +84,8 @@ fn equality_literal_value(expr: &ValueExpr) -> Option<Value> {
     match literal {
         Literal::Bool(value, _) => Some(Value::Bool(*value)),
         Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => Some(Value::Int(*value)),
-        Literal::Decimal(value, _) => Some(Value::Decimal(*value)),
-        Literal::Float(value, _) => Some(Value::Float(*value)),
+        Literal::Decimal(value, _, _) => Some(Value::Decimal(*value)),
+        Literal::Float(value, _, _) => Some(Value::Float(*value)),
         Literal::String(value, _) => Some(Value::String(value.clone())),
         Literal::Bytes(value, _) => Some(Value::Bytes(value.clone())),
         Literal::Uuid(value, _) => Some(Value::Uuid(*value)),

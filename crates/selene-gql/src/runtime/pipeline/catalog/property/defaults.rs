@@ -60,7 +60,7 @@ pub(super) fn literal_property_default_value(
         Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => {
             Ok(PropertyDefaultValue::Integer(*value))
         }
-        Literal::Decimal(value, _) => decimal_default_value(*value, span),
+        Literal::Decimal(value, _, _) => decimal_default_value(*value, span),
         Literal::String(value, _) => Ok(PropertyDefaultValue::String(value.clone())),
         Literal::Bytes(value, _) => Ok(PropertyDefaultValue::Bytes(value.to_vec())),
         Literal::Uuid(value, _) => db_string(&value.to_string())
@@ -72,7 +72,7 @@ pub(super) fn literal_property_default_value(
                     span,
                 )
             }),
-        Literal::Float(value, _) => float_default_value(*value, span),
+        Literal::Float(value, _, _) => float_default_value(*value, span),
         Literal::ZonedDateTime(value, _) => {
             temporal_default_value("ZONED DATETIME", zoned_datetime_image(value), span)
                 .map(PropertyDefaultValue::ZonedDateTime)
