@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GF04
+// expects: parse-ok
+MATCH p = (a)-[]->(b)
+RETURN path_length(p) AS edge_count

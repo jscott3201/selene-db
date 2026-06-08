@@ -140,6 +140,14 @@ fn two_edge_path_value() -> Value {
     }))
 }
 
+fn zero_edge_path_value() -> Value {
+    Value::Path(Box::new(Path {
+        graph: GraphId::new(1),
+        start: NodeId::new(1),
+        segments: smallvec![],
+    }))
+}
+
 #[test]
 fn element_id_returns_string_for_nodes_and_edges() {
     assert_external_id(
@@ -293,6 +301,62 @@ fn cardinality_records_gf12_feature() {
     assert!(
         features.contains(&FeatureId::GF12),
         "cardinality should record GF12, observed {features:?}"
+    );
+}
+
+#[test]
+fn path_length_counts_path_edges() {
+    let graph = SharedGraph::new(GraphId::new(9203));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(db_string("p"), two_edge_path_value());
+    session.bind_parameter(db_string("empty"), zero_edge_path_value());
+
+    let table = rows_from_output(
+        session
+            .execute_source(
+                "RETURN path_length($p) AS path_edges, path_length($empty) AS empty_edges",
+                &BindingTableFixtureRegistry,
+            )
+            .expect("source executes"),
+    );
+
+    assert_eq!(column_values(&table, "path_edges"), vec![Value::Int(2)]);
+    assert_eq!(column_values(&table, "empty_edges"), vec![Value::Int(0)]);
+}
+
+#[test]
+fn path_length_propagates_null_and_rejects_invalid_values() {
+    assert_eq!(
+        single_value("RETURN path_length(null) AS value", "value"),
+        Value::Null
+    );
+
+    for source in [
+        "RETURN path_length(1) AS value",
+        "RETURN path_length([1]) AS value",
+        "MATCH (n:Person) RETURN path_length(n) AS value LIMIT 1",
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
+fn path_length_rejects_wrong_arity() {
+    assert_status("RETURN path_length() AS value", "22G03");
+    assert_status("RETURN path_length(null, null) AS value", "22G03");
+}
+
+#[test]
+fn path_length_records_gf04_feature() {
+    let statement = parse("RETURN path_length(null) AS value").expect("source parses");
+    let features = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        features.contains(&FeatureId::GF04),
+        "path_length should record GF04, observed {features:?}"
     );
 }
 

@@ -95,6 +95,7 @@ feature_ids! {
     GF01 = "GF01" => "Enhanced numeric functions";
     GF02 = "GF02" => "Trigonometric functions";
     GF03 = "GF03" => "Logarithmic functions";
+    GF04 = "GF04" => "Enhanced path functions";
     GF05 = "GF05" => "Multi-character TRIM function";
     GF06 = "GF06" => "Explicit TRIM function";
     GF07 = "GF07" => "Byte string TRIM function";
@@ -255,6 +256,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GF01,
     FeatureId::GF02,
     FeatureId::GF03,
+    FeatureId::GF04,
     FeatureId::GF05,
     FeatureId::GF06,
     FeatureId::GF07,
