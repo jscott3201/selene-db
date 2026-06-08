@@ -16,6 +16,7 @@ use super::{
         data_exception, data_exception_value, data_exception_value_with, data_exception_with,
         eval_binary, numeric_to_f64,
     },
+    concat_ops::ConcatCaps,
     duration_fns, identity_length_fns, json_fns,
     string_fns::{self, eval_fixed_args, eval_range_args},
     temporal_fns, uuid_fns,
@@ -158,7 +159,7 @@ pub(super) fn eval_function_call(
                 args[0].clone(),
                 args[1].clone(),
                 span,
-                ctx.impl_defined_caps().max_path_length,
+                ConcatCaps::from_impl_defined(ctx.impl_defined_caps()),
             )
         }
         "sqrt" => eval_sqrt(
@@ -172,7 +173,7 @@ pub(super) fn eval_function_call(
                 args[0].clone(),
                 args[1].clone(),
                 span,
-                ctx.impl_defined_caps().max_path_length,
+                ConcatCaps::from_impl_defined(ctx.impl_defined_caps()),
             )
         }
         "element_id" => identity_length_fns::eval_element_id(

@@ -8,7 +8,9 @@ use exec_common::{column_values, db_string, execute_read, execute_read_result};
 use selene_core::{
     EdgeDirection, EdgeId, GraphId, NodeId, Path, PathSegment, Value, feature_register::FeatureId,
 };
-use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput, feature_walk, parse};
+use selene_gql::{
+    EmptyProcedureRegistry, ImplDefinedCaps, Session, StatementOutput, feature_walk, parse,
+};
 use selene_graph::SharedGraph;
 use smallvec::smallvec;
 
@@ -21,6 +23,15 @@ fn single_value(source: &str, column: &str) -> Value {
 
 fn assert_status(source: &str, expected: &str) {
     let err = execute_read_result(source).expect_err("query should fail");
+    assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
+}
+
+fn assert_status_with_caps(source: &str, caps: ImplDefinedCaps, expected: &str) {
+    let graph = SharedGraph::new(GraphId::new(9_307));
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
+    let err = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("query should fail");
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
 }
 
@@ -56,6 +67,43 @@ fn rows_from_output(output: StatementOutput) -> selene_gql::BindingTable {
         panic!("RETURN should produce rows");
     };
     table
+}
+
+#[test]
+fn list_concatenation_combines_ordered_items() {
+    assert_eq!(
+        single_value("RETURN [1, 2] || [3, 4] AS value", "value"),
+        Value::List(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3),
+            Value::Int(4),
+        ])
+    );
+}
+
+#[test]
+fn list_concatenation_propagates_null() {
+    assert_eq!(
+        single_value("RETURN [1] || NULL AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(
+        single_value("RETURN NULL || [1] AS value", "value"),
+        Value::Null
+    );
+}
+
+#[test]
+fn list_concatenation_honors_configured_cardinality_cap() {
+    let caps = ImplDefinedCaps::default().with_max_list_length(1);
+    assert_status_with_caps("RETURN [1] || [2] AS value", caps, "22G0B");
+}
+
+#[test]
+fn list_literal_honors_configured_cardinality_cap() {
+    let caps = ImplDefinedCaps::default().with_max_list_length(1);
+    assert_status_with_caps("RETURN [1, 2] AS value", caps, "22G0B");
 }
 
 #[test]
