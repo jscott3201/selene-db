@@ -5,7 +5,8 @@ use selene_core::{
     feature_register::FeatureId,
 };
 use selene_gql::{
-    EmptyProcedureRegistry, PipelineStatement, Session, StatementOutput, ValueExpr, analyze,
+    EmptyProcedureRegistry, ImplDefinedCaps, PipelineStatement, Session, StatementOutput,
+    ValueExpr, analyze,
     ast::{format_read_statement, structurally_eq},
     feature_walk, parse,
 };
@@ -59,7 +60,12 @@ fn single_value(graph: &SharedGraph, source: &str) -> Value {
 }
 
 fn status(graph: &SharedGraph, source: &str) -> String {
+    status_with_caps(graph, source, ImplDefinedCaps::default())
+}
+
+fn status_with_caps(graph: &SharedGraph, source: &str, caps: ImplDefinedCaps) -> String {
     let mut session = Session::new(graph);
+    session = session.with_impl_defined_caps(caps);
     session
         .execute_source(source, &EmptyProcedureRegistry)
         .expect_err("query errors")
@@ -168,4 +174,91 @@ fn path_constructor_records_path_construction_features() {
         .collect::<Vec<_>>();
     assert!(features.contains(&FeatureId::GE06), "observed {features:?}");
     assert!(features.contains(&FeatureId::GV55), "observed {features:?}");
+}
+
+#[test]
+fn path_concatenation_merges_connected_paths() {
+    let graph = build_chain_graph();
+    let value = single_value(
+        &graph,
+        "MATCH (a:A)-[e:K]->(b:B)-[f:K]->(c:C) \
+         RETURN PATH[a, e, b] || PATH[b, f, c] AS p",
+    );
+    let Value::Path(path) = value else {
+        panic!("expected path value");
+    };
+    assert_eq!(path.graph, GraphId::new(62_001));
+    assert_eq!(path.start, NodeId::new(1));
+    assert_eq!(
+        path.segments.as_slice(),
+        &[
+            PathSegment {
+                edge: EdgeId::new(1),
+                direction: EdgeDirection::Outgoing,
+                node: NodeId::new(2),
+            },
+            PathSegment {
+                edge: EdgeId::new(2),
+                direction: EdgeDirection::Outgoing,
+                node: NodeId::new(3),
+            },
+        ]
+    );
+}
+
+#[test]
+fn path_concatenation_accepts_single_node_left_path() {
+    let graph = build_chain_graph();
+    let value = single_value(
+        &graph,
+        "MATCH (a:A)-[e:K]->(b:B) RETURN PATH[a] || PATH[a, e, b] AS p",
+    );
+    let Value::Path(path) = value else {
+        panic!("expected path value");
+    };
+    assert_eq!(path.start, NodeId::new(1));
+    assert_eq!(
+        path.segments.as_slice(),
+        &[PathSegment {
+            edge: EdgeId::new(1),
+            direction: EdgeDirection::Outgoing,
+            node: NodeId::new(2),
+        }]
+    );
+}
+
+#[test]
+fn path_concatenation_propagates_null() {
+    let graph = build_chain_graph();
+    assert_eq!(
+        single_value(&graph, "MATCH (a:A) RETURN PATH[a] || NULL AS p"),
+        Value::Null
+    );
+}
+
+#[test]
+fn path_concatenation_reports_malformed_path_for_disconnected_endpoints() {
+    let graph = build_chain_graph();
+    assert_eq!(
+        status(
+            &graph,
+            "MATCH (a:A)-[e:K]->(b:B), (c:C) RETURN PATH[a, e, b] || PATH[c] AS p"
+        ),
+        "22G0Z"
+    );
+}
+
+#[test]
+fn path_concatenation_honors_configured_path_length_cap() {
+    let graph = build_chain_graph();
+    let caps = ImplDefinedCaps::default().with_max_path_length(1);
+    assert_eq!(
+        status_with_caps(
+            &graph,
+            "MATCH (a:A)-[e:K]->(b:B)-[f:K]->(c:C) \
+             RETURN PATH[a, e, b] || PATH[b, f, c] AS p",
+            caps,
+        ),
+        "22G10"
+    );
 }

@@ -153,7 +153,13 @@ pub(super) fn eval_function_call(
         ),
         "mod" => {
             let args = eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?;
-            eval_binary(BinaryOp::Mod, args[0].clone(), args[1].clone(), span)
+            eval_binary(
+                BinaryOp::Mod,
+                args[0].clone(),
+                args[1].clone(),
+                span,
+                ctx.impl_defined_caps().max_path_length,
+            )
         }
         "sqrt" => eval_sqrt(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
@@ -161,7 +167,13 @@ pub(super) fn eval_function_call(
         ),
         "power" => {
             let args = eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?;
-            eval_binary(BinaryOp::Power, args[0].clone(), args[1].clone(), span)
+            eval_binary(
+                BinaryOp::Power,
+                args[0].clone(),
+                args[1].clone(),
+                span,
+                ctx.impl_defined_caps().max_path_length,
+            )
         }
         "element_id" => identity_length_fns::eval_element_id(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,

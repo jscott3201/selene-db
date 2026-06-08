@@ -232,6 +232,24 @@ fn byte_string_concat_returns_bytes_type() {
 }
 
 #[test]
+fn path_concat_returns_path_type() {
+    let analyzed = analyze_one("MATCH (a) RETURN PATH[a] || PATH[a] AS p").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "p"),
+        AnalyzedType::Resolved(GqlType::Path)
+    );
+}
+
+#[test]
+fn concat_accepts_static_null_operand() {
+    let analyzed = analyze_one("RETURN NULL || 'tail' AS value").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "value"),
+        AnalyzedType::Resolved(GqlType::String)
+    );
+}
+
+#[test]
 fn expr_type_table_is_deterministic_for_same_source() {
     let left = analyze_one("RETURN 1 + 2 AS sum").unwrap();
     let right = analyze_one("RETURN 1 + 2 AS sum").unwrap();
@@ -450,7 +468,7 @@ fn boolean_operator_rejects_static_non_boolean_operand() {
 }
 
 #[test]
-fn concat_rejects_static_non_list_string_or_bytes_operand() {
+fn concat_rejects_static_non_list_string_bytes_or_path_operand() {
     let (context, _) = type_mismatch("RETURN 'a' || 1 AS x");
     assert!(matches!(
         context,

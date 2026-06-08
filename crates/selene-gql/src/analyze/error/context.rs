@@ -28,7 +28,7 @@ pub enum TypeMismatchContext {
         /// Offending operand side.
         side: Side,
     },
-    /// String/list concatenation.
+    /// String/list/bytes/path concatenation.
     BinaryConcat {
         /// Offending operand side.
         side: Side,
@@ -142,8 +142,8 @@ pub enum ExpectedType {
     StringOrBytes,
     /// Comparable type.
     Comparable,
-    /// List, string, or bytes type.
-    ListStringOrBytes,
+    /// List, string, bytes, or path type.
+    ListStringBytesOrPath,
     /// List type.
     List,
     /// Non-negative integer amount.
@@ -160,7 +160,7 @@ impl std::fmt::Display for ExpectedType {
             Self::String => f.write_str("string"),
             Self::StringOrBytes => f.write_str("string or bytes"),
             Self::Comparable => f.write_str("comparable"),
-            Self::ListStringOrBytes => f.write_str("list, string, or bytes"),
+            Self::ListStringBytesOrPath => f.write_str("list, string, bytes, or path"),
             Self::List => f.write_str("list"),
             Self::LimitAmount => f.write_str("non-negative integer"),
             Self::Specific(ty) => write!(f, "{ty:?}"),

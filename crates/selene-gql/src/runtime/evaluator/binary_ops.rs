@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::cmp::Ordering;
 
 use rust_decimal::prelude::ToPrimitive;
 use selene_core::Value;
@@ -11,6 +11,8 @@ use crate::{
     },
 };
 
+use super::{boolean_ops, concat_ops::eval_concat};
+
 pub(super) use super::diagnostics::{
     data_exception, data_exception_value, data_exception_value_with, data_exception_with,
     string_value,
@@ -21,10 +23,11 @@ pub(super) fn eval_binary(
     lhs: Value,
     rhs: Value,
     span: SourceSpan,
+    max_path_length: u32,
 ) -> Result<Value, ExecutorError> {
     match op {
-        BinaryOp::And => eval_and(lhs, rhs, span),
-        BinaryOp::Or => eval_or(lhs, rhs, span),
+        BinaryOp::And => boolean_ops::eval_and(lhs, rhs, span),
+        BinaryOp::Or => boolean_ops::eval_or(lhs, rhs, span),
         BinaryOp::Eq | BinaryOp::Ne => eval_equality(op, &lhs, &rhs),
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             eval_ordering(op, lhs, rhs, span)
@@ -33,8 +36,8 @@ pub(super) fn eval_binary(
             eval_arithmetic(op, lhs, rhs, span)
         }
         BinaryOp::Power => eval_power(lhs, rhs, span),
-        BinaryOp::Xor => eval_xor(lhs, rhs, span),
-        BinaryOp::Concat => eval_concat(lhs, rhs, span),
+        BinaryOp::Xor => boolean_ops::eval_xor(lhs, rhs, span),
+        BinaryOp::Concat => eval_concat(lhs, rhs, span, max_path_length),
         BinaryOp::Contains => eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.contains(rhs)),
         BinaryOp::StartsWith => {
             eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.starts_with(rhs))
@@ -93,37 +96,6 @@ fn negate_overflow(span: SourceSpan) -> ExecutorError {
         "negation overflow: result is out of the signed integer range",
         span,
     )
-}
-
-fn eval_and(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match (truth(lhs, span)?, truth(rhs, span)?) {
-        (Some(false), _) | (_, Some(false)) => Ok(Value::Bool(false)),
-        (Some(true), Some(true)) => Ok(Value::Bool(true)),
-        _ => Ok(Value::Null),
-    }
-}
-
-fn eval_or(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match (truth(lhs, span)?, truth(rhs, span)?) {
-        (Some(true), _) | (_, Some(true)) => Ok(Value::Bool(true)),
-        (Some(false), Some(false)) => Ok(Value::Bool(false)),
-        _ => Ok(Value::Null),
-    }
-}
-
-fn truth(value: Value, span: SourceSpan) -> Result<Option<bool>, ExecutorError> {
-    match value {
-        Value::Bool(value) => Ok(Some(value)),
-        Value::Null => Ok(None),
-        _ => data_exception("boolean operator operand is not boolean", span),
-    }
-}
-
-fn eval_xor(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match (truth(lhs, span)?, truth(rhs, span)?) {
-        (Some(lhs), Some(rhs)) => Ok(Value::Bool(lhs ^ rhs)),
-        _ => Ok(Value::Null),
-    }
 }
 
 pub(super) fn eval_equality(
@@ -387,32 +359,6 @@ fn is_integral(value: f64) -> bool {
 
 fn is_even_integer(value: f64) -> bool {
     value.rem_euclid(2.0) == 0.0
-}
-
-fn eval_concat(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
-        return Ok(Value::Null);
-    }
-    match (lhs, rhs) {
-        (Value::String(lhs), Value::String(rhs)) => string_value(&format!("{lhs}{rhs}"), span),
-        (Value::Bytes(lhs), Value::Bytes(rhs)) => {
-            let total_len = lhs.len().checked_add(rhs.len()).ok_or_else(|| {
-                data_exception_value("byte-string concatenation length overflows", span)
-            })?;
-            let mut value = Vec::with_capacity(total_len);
-            value.extend_from_slice(&lhs);
-            value.extend_from_slice(&rhs);
-            Ok(Value::Bytes(Arc::<[u8]>::from(value.into_boxed_slice())))
-        }
-        (Value::List(mut lhs), Value::List(rhs)) => {
-            lhs.extend(rhs);
-            Ok(Value::List(lhs))
-        }
-        _ => data_exception(
-            "concatenation operands must both be strings, byte strings, or lists",
-            span,
-        ),
-    }
 }
 
 fn eval_string_predicate(

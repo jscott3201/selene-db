@@ -55,6 +55,7 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
         ),
         (DataExceptionSubclass::ListElementError, "22G0C"),
         (DataExceptionSubclass::InvalidDurationFormat, "22G0H"),
+        (DataExceptionSubclass::PathDataRightTruncation, "22G10"),
         (
             DataExceptionSubclass::IncompatibleTemporalInstantUnitGroups,
             "22G14",

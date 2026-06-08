@@ -99,6 +99,8 @@ impl GqlStatus {
     pub const INVALID_NUMBER_OF_PATHS_OR_GROUPS: Self = Self(*b"22G0F");
     /// Maps to GQLSTATUS 22G0H per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_DURATION_FORMAT: Self = Self(*b"22G0H");
+    /// Maps to GQLSTATUS 22G10 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const PATH_DATA_RIGHT_TRUNCATION: Self = Self(*b"22G10");
     /// Maps to GQLSTATUS 22G14 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS: Self = Self(*b"22G14");
     /// Maps to GQLSTATUS 22G0M per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -446,6 +448,7 @@ mod tests {
             ),
             (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
             (GqlStatus::INVALID_DURATION_FORMAT, "22G0H", *b"22"),
+            (GqlStatus::PATH_DATA_RIGHT_TRUNCATION, "22G10", *b"22"),
             (
                 GqlStatus::INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS,
                 "22G14",
