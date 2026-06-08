@@ -161,11 +161,7 @@ fn gql_type_to_record_field_type(
         GqlType::Record(record_type) => {
             match gql_record_to_record_field_types(record_type, depth + 1)? {
                 Some(fields) => Ok(RecordFieldType::Record(Box::new(fields))),
-                // An open/bare nested `RECORD` field has no closed structure to persist; defer
-                // it (consistent with deferring top-level `LIST<RECORD>`). Declare its fields.
-                None => Err(ExecutorError::ImplementationDefined {
-                    detail: "open/bare RECORD is not supported as a nested record field type; declare its fields",
-                }),
+                None => Ok(RecordFieldType::OpenRecord),
             }
         }
         _ => gql_type_to_scalar_property_value_type(gql_type).map(RecordFieldType::Scalar),
@@ -280,6 +276,7 @@ fn render_record_field_type(field_type: &RecordFieldType) -> String {
             scalar_property_value_type_name(*value_type).to_owned()
         }
         RecordFieldType::List(inner) => format!("LIST<{}>", render_record_field_type(inner)),
+        RecordFieldType::OpenRecord => "RECORD".to_owned(),
         RecordFieldType::Record(inner) => render_record_field_types(inner),
         _ => "<unsupported-record-field>".to_owned(),
     }

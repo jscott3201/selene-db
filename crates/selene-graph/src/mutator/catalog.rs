@@ -579,6 +579,9 @@ fn core_record_field_structure_type(
         RecordFieldType::List(inner) => selene_core::RecordFieldStructureType::List(Box::new(
             core_record_field_structure_type(inner, depth + 1)?,
         )),
+        RecordFieldType::OpenRecord => selene_core::RecordFieldStructureType::Record(Box::new(
+            selene_core::RecordFieldStructure::Open,
+        )),
         RecordFieldType::Record(inner) => selene_core::RecordFieldStructureType::Record(Box::new(
             core_record_field_structure(inner, depth + 1)?,
         )),

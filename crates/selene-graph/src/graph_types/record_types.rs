@@ -105,7 +105,9 @@ pub enum RecordFieldType {
     Scalar(PropertyValueType),
     /// `LIST` field type.
     List(#[rkyv(omit_bounds)] Box<RecordFieldType>),
-    /// Nested `RECORD` field type.
+    /// Open/bare nested `RECORD` field type.
+    OpenRecord,
+    /// Closed/typed nested `RECORD` field type.
     Record(#[rkyv(omit_bounds)] Box<RecordFieldTypes>),
 }
 
@@ -119,6 +121,7 @@ impl RecordFieldType {
                 Value::List(values) => values.iter().all(|value| inner.matches(value)),
                 _ => false,
             },
+            Self::OpenRecord => matches!(value, Value::Record(_) | Value::RecordTyped(_)),
             Self::Record(inner) => inner.matches(value),
         }
     }
@@ -227,6 +230,7 @@ fn validate_record_field_type(
         RecordFieldType::List(inner) => {
             validate_record_field_type(type_name, property_name, inner, depth + 1)
         }
+        RecordFieldType::OpenRecord => Ok(()),
         RecordFieldType::Record(inner) => {
             validate_record_field_types(type_name, property_name, inner, depth + 1)
         }

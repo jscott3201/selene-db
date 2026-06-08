@@ -52,6 +52,30 @@ fn show_node_types_renders_closed_record_field_structure() {
 }
 
 #[test]
+fn show_node_types_renders_nested_open_record_fields() {
+    let graph = empty_closed_graph(3746);
+    let ddl = planned(
+        "CREATE NODE TYPE :Event (payload :: RECORD{meta :: RECORD, snapshots :: LIST<RECORD>})",
+    );
+    run_write(&graph, &ddl)
+        .expect("nested open RECORD type executes")
+        .1
+        .expect("nested open RECORD property type commits");
+
+    let (table, outcome) = run_write(&graph, &planned("SHOW NODE TYPES")).expect("show executes");
+    outcome.expect("show commits");
+
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
+        panic!("definition is a string");
+    };
+    assert_eq!(
+        definition.as_str(),
+        "CREATE NODE TYPE :Event (payload :: RECORD { meta :: RECORD, snapshots :: LIST<RECORD> })"
+    );
+    parse(definition.as_str()).expect("nested open RECORD definition round-trips");
+}
+
+#[test]
 fn closed_record_property_type_lowers_end_to_end() {
     // Full grammar -> builder -> analyzer -> lowering -> closed-graph commit for a typed
     // RECORD declaration.
@@ -59,6 +83,36 @@ fn closed_record_property_type_lowers_end_to_end() {
     let plan = planned("CREATE NODE TYPE :Host (config :: RECORD{host :: STRING, port :: INT})");
     let (_table, outcome) = run_write(&graph, &plan).expect("closed RECORD type executes");
     outcome.expect("closed RECORD property type commits");
+}
+
+#[test]
+fn nested_open_record_fields_validate_data_writes() {
+    let graph = empty_closed_graph(3747);
+
+    let ddl = planned(
+        "CREATE NODE TYPE :Event (payload :: RECORD{meta :: RECORD, snapshots :: LIST<RECORD>})",
+    );
+    run_write(&graph, &ddl)
+        .expect("nested open RECORD type executes")
+        .1
+        .expect("nested open RECORD property type commits");
+
+    let conforming = planned(
+        "INSERT (n:Event {payload: RECORD{\
+         meta: RECORD{kind: 'agent', score: 1}, \
+         snapshots: [RECORD{id: 'a'}, RECORD{id: 'b', ok: true}]}})",
+    );
+    run_write(&graph, &conforming)
+        .expect("conforming nested open record write executes")
+        .1
+        .expect("conforming nested open record commits");
+
+    let violating = planned(
+        "INSERT (n:Event {payload: RECORD{meta: 'not-a-record', snapshots: [RECORD{id: 'a'}]}})",
+    );
+    let (_table, outcome) = run_write(&graph, &violating).expect("violating write executes");
+    let error = outcome.expect_err("non-record nested field is rejected at commit");
+    assert_eq!(error.gqlstatus(), "G2000");
 }
 
 #[test]
@@ -181,6 +235,47 @@ fn open_record_default_accepts_recursive_untyped_record_literal() {
             (
                 "nested",
                 record_default(vec![("ok", PropertyDefaultValue::Boolean(true))])
+            ),
+        ]))
+    );
+}
+
+#[test]
+fn nested_open_record_default_accepts_record_literals() {
+    let graph = empty_closed_graph(3748);
+    let plan = planned(
+        "CREATE NODE TYPE :Event (payload :: RECORD{meta :: RECORD, snapshots :: LIST<RECORD>} \
+         DEFAULT RECORD{\
+           meta: RECORD{kind: 'agent', score: 1}, \
+           snapshots: [RECORD{id: 'a'}, RECORD{id: 'b', ok: true}]\
+         })",
+    );
+
+    run_write(&graph, &plan)
+        .expect("nested open RECORD default executes")
+        .1
+        .expect("nested open RECORD default commits");
+
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(record_default(vec![
+            (
+                "meta",
+                record_default(vec![
+                    ("kind", PropertyDefaultValue::String(db_string("agent"))),
+                    ("score", PropertyDefaultValue::Integer(1)),
+                ])
+            ),
+            (
+                "snapshots",
+                list_default(vec![
+                    record_default(vec![("id", PropertyDefaultValue::String(db_string("a")))]),
+                    record_default(vec![
+                        ("id", PropertyDefaultValue::String(db_string("b"))),
+                        ("ok", PropertyDefaultValue::Boolean(true)),
+                    ]),
+                ])
             ),
         ]))
     );

@@ -21,7 +21,8 @@ use crate::{
 
 use super::{append_wal, empty_closed_graph_type, temp_dir};
 
-/// A nested closed-record descriptor: `RECORD{a :: INT, b :: LIST<STRING>, c :: RECORD{d :: BOOL}}`.
+/// A nested record descriptor:
+/// `RECORD{a :: INT, b :: LIST<STRING>, c :: RECORD{d :: BOOL}, meta :: RECORD}`.
 fn nested_record_field_types() -> RecordFieldTypes {
     RecordFieldTypes(vec![
         RecordFieldTypeDef {
@@ -46,6 +47,11 @@ fn nested_record_field_types() -> RecordFieldTypes {
                 },
             ]))),
             required: true,
+        },
+        RecordFieldTypeDef {
+            name: db_string("meta").unwrap(),
+            field_type: RecordFieldType::OpenRecord,
+            required: false,
         },
     ])
 }
@@ -91,7 +97,7 @@ fn recover_closed_wal_only_preserves_closed_record_property() {
     let property = &graph_type.node_types[0].properties[0];
     assert_eq!(property.name, config);
     assert_eq!(property.value_type, PropertyValueType::RecordTyped);
-    // Full structural equality pins that the nested LIST + nested RECORD field types
+    // Full structural equality pins that the nested LIST + open/closed RECORD field types
     // survived the serde encode → WAL → serde decode round-trip intact.
     assert_eq!(property.record_field_types, Some(field_types));
     let _ = fs::remove_dir_all(dir);
