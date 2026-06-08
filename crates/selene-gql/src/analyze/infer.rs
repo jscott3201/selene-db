@@ -13,7 +13,7 @@ use crate::{
 };
 
 use self::{
-    duration::duration_add_sub,
+    duration::{duration_add_sub, duration_mul_div},
     numeric::{is_numeric, numeric_promotion},
 };
 
@@ -58,9 +58,14 @@ pub(crate) fn binary(
                 arithmetic(op, lhs, lhs_span, rhs, rhs_span)
             }
         }
-        BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod | BinaryOp::Power => {
-            arithmetic(op, lhs, lhs_span, rhs, rhs_span)
+        BinaryOp::Mul | BinaryOp::Div => {
+            if let Some(result) = duration_mul_div(op, lhs, lhs_span, rhs, rhs_span) {
+                result
+            } else {
+                arithmetic(op, lhs, lhs_span, rhs, rhs_span)
+            }
         }
+        BinaryOp::Mod | BinaryOp::Power => arithmetic(op, lhs, lhs_span, rhs, rhs_span),
         BinaryOp::Eq | BinaryOp::Ne => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             comparison(op, lhs, lhs_span, rhs, rhs_span)

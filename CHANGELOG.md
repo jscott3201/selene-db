@@ -31,7 +31,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Duration value expressions (ISO §20.28).** Duration unary sign and
   duration `+` / `-` now execute for same-unit-group duration operands, preserve
   `NULL` propagation, normalize year-month and day-time results, and report
-  incompatible year-month versus day-time operands with `22G14`.
+  incompatible year-month versus day-time operands with `22G14`. Duration
+  scaling now supports `<duration> * <number>`, `<number> * <duration>`, and
+  `<duration> / <number>`, with `22012` for division by zero and `22003` for
+  unrepresentable fractional year-month results.
 - **List TRIM value function (ISO §20.16).** `TRIM(<list>, <count>)` now
   returns the list with `<count>` tail elements removed, evaluates the count
   before the list per the ISO null short-circuit rule, and reports list-element

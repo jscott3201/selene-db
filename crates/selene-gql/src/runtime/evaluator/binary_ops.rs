@@ -177,6 +177,18 @@ fn eval_arithmetic(
         (Value::Duration(lhs), Value::Duration(rhs)) => {
             super::duration_ops::eval_arithmetic(op, *lhs, *rhs, span)
         }
+        (Value::Duration(lhs), rhs) if matches!(op, BinaryOp::Mul | BinaryOp::Div) => {
+            let Some(coefficient) = numeric_to_f64(&rhs) else {
+                return data_exception("duration scaling coefficient is not numeric", span);
+            };
+            super::duration_ops::eval_scaling(op, *lhs, coefficient, span)
+        }
+        (lhs, Value::Duration(rhs)) if op == BinaryOp::Mul => {
+            let Some(coefficient) = numeric_to_f64(&lhs) else {
+                return data_exception("duration scaling coefficient is not numeric", span);
+            };
+            super::duration_ops::eval_scaling(op, *rhs, coefficient, span)
+        }
         (Value::Int(lhs), Value::Int(rhs)) => eval_int_arithmetic(op, lhs, rhs, span),
         (Value::Uint(lhs), Value::Uint(rhs)) => eval_uint_arithmetic(op, lhs, rhs, span),
         (Value::Int128(lhs), Value::Int128(rhs)) => eval_i128_arithmetic(op, lhs, rhs, span),

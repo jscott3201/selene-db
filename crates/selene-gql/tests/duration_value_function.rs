@@ -248,7 +248,54 @@ fn duration_arithmetic_preserves_unary_sign_and_null_semantics() {
 }
 
 #[test]
-fn duration_arithmetic_rejects_mismatched_unit_groups_and_scaling() {
+fn duration_scaling_normalizes_same_unit_group_values() {
+    assert_eq!(
+        single_value("RETURN DURATION('PT1H30M') * 2 AS value", "value"),
+        Value::Duration(Box::new("PT3H".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN 2 * DURATION('PT45M') AS value", "value"),
+        Value::Duration(Box::new("PT1H30M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN DURATION('PT3H') / 2 AS value", "value"),
+        Value::Duration(Box::new("PT1H30M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN DURATION('PT1H') * 1.5 AS value", "value"),
+        Value::Duration(Box::new("PT1H30M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION('P2DT3H4M5.000000006S') * 1 AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("P2DT3H4M5.000000006S".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value("RETURN DURATION('P1Y') * 0.5 AS value", "value"),
+        Value::Duration(Box::new("P6M".parse().unwrap()))
+    );
+}
+
+#[test]
+fn duration_scaling_preserves_null_semantics() {
+    assert_eq!(
+        single_value("RETURN DURATION('PT1H') * NULL AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(
+        single_value("RETURN NULL * DURATION('PT1H') AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(
+        single_value("RETURN DURATION('PT1H') / NULL AS value", "value"),
+        Value::Null
+    );
+}
+
+#[test]
+fn duration_arithmetic_rejects_mismatched_unit_groups_and_duration_products() {
     assert_eq!(
         status_for("RETURN DURATION('P1M') + DURATION('PT1H') AS value").as_str(),
         "22G14"
@@ -256,6 +303,18 @@ fn duration_arithmetic_rejects_mismatched_unit_groups_and_scaling() {
     assert_eq!(
         analysis_status_for("RETURN DURATION('PT1H') * DURATION('PT2H') AS value"),
         GqlStatus::DATATYPE_MISMATCH
+    );
+}
+
+#[test]
+fn duration_scaling_rejects_invalid_coefficients() {
+    assert_eq!(
+        status_for("RETURN DURATION('PT1H') / 0 AS value").as_str(),
+        "22012"
+    );
+    assert_eq!(
+        status_for("RETURN DURATION('P1M') / 2 AS value").as_str(),
+        "22003"
     );
 }
 
