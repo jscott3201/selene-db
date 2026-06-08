@@ -4,7 +4,8 @@
 //! These tests exercise the embedder-facing path
 //! [`Session::with_impl_defined_caps`] end to end via `execute_source` — proving
 //! the configured caps reach (a) the plan-time variable-length quantifier gate,
-//! (b) the same gate *inside* a subquery body, and (c) the runtime cap checks.
+//! (b) the same gate *inside* a subquery body, and (c) runtime cap checks for
+//! string, byte-string, list, path, set-op, and group-by producers.
 //! Before this wiring an embedder had no path to set non-default caps; the
 //! quantifier gate read `ImplDefinedCaps::default()` directly, so a caller value
 //! could not loosen or tighten it.
@@ -19,6 +20,21 @@ use selene_graph::SharedGraph;
 
 fn graph(id: u64) -> SharedGraph {
     SharedGraph::new(GraphId::new(id))
+}
+
+fn status_with_caps(source: &str, caps: ImplDefinedCaps, id: u64) -> String {
+    let graph = graph(id);
+    status_with_graph_and_caps(&graph, source, caps)
+}
+
+fn status_with_graph_and_caps(graph: &SharedGraph, source: &str, caps: ImplDefinedCaps) -> String {
+    let mut session = Session::new(graph).with_impl_defined_caps(caps);
+    session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("statement should fail")
+        .gqlstatus()
+        .as_str()
+        .to_owned()
 }
 
 /// A low `max_quantifier` set on the session is honored by the plan-time gate:
@@ -106,6 +122,67 @@ fn session_max_quantifier_cap_applies_inside_subquery() {
 
     assert!(matches!(err, ExecutorError::Plan { .. }), "got {err:?}");
     assert_eq!(err.gqlstatus().as_str(), "5GQL1");
+}
+
+/// The configured character-string cap reaches the runtime concatenation
+/// producer. This pins the session-surface half of IL013 for character strings.
+#[test]
+fn session_max_string_length_cap_flows_to_runtime() {
+    let caps = ImplDefinedCaps::DEFAULT.with_max_string_length(3);
+
+    assert_eq!(
+        status_with_caps("RETURN 'ab' || 'cd' AS value", caps, 9_807),
+        "22001"
+    );
+}
+
+/// The configured byte-string cap reaches the runtime concatenation producer.
+/// This pins the session-surface half of IL013 for byte strings.
+#[test]
+fn session_max_byte_string_length_cap_flows_to_runtime() {
+    let caps = ImplDefinedCaps::DEFAULT.with_max_byte_string_length(1);
+
+    assert_eq!(
+        status_with_caps("RETURN X'CA' || X'FE' AS value", caps, 9_808),
+        "22001"
+    );
+}
+
+/// The configured list cardinality cap reaches list literal materialization.
+/// This pins the list branch of the IL015 constructed-value cap surface.
+#[test]
+fn session_max_list_length_cap_flows_to_runtime() {
+    let caps = ImplDefinedCaps::DEFAULT.with_max_list_length(1);
+
+    assert_eq!(
+        status_with_caps("RETURN [1, 2] AS value", caps, 9_809),
+        "22G0B"
+    );
+}
+
+/// The configured path cap reaches path-concatenation materialization. This
+/// pins the path branch of the IL015 constructed-value cap surface.
+#[test]
+fn session_max_path_length_cap_flows_to_runtime() {
+    let graph = graph(9_810);
+    let caps = ImplDefinedCaps::DEFAULT.with_max_path_length(1);
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
+    session
+        .execute_source(
+            "INSERT (a:A)-[:K]->(b:B)-[:K]->(c:C)",
+            &EmptyProcedureRegistry,
+        )
+        .expect("seed graph inserts");
+
+    assert_eq!(
+        status_with_graph_and_caps(
+            &graph,
+            "MATCH (a:A)-[e:K]->(b:B)-[f:K]->(c:C) \
+             RETURN PATH[a, e, b] || PATH[b, f, c] AS p",
+            caps,
+        ),
+        "22G10"
+    );
 }
 
 /// A non-quantifier cap (`set_op_key_cap`) also flows through the public path:
