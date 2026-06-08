@@ -604,7 +604,8 @@ fixture** (the headline scale); `empty_commit` shows the scale axis.
 | `provider_fanout/active_hint_wal_dependency_edge_delete_k40` | 40 `DEPENDS_ON` deletes + WAL + active-hint provider | 4.55 ms | WAL-backed dependency deletes stay in the same cost band as active-set deletes. |
 | `bound_type_validation/unbound_commit` | 10k / 50k / 100k | 291 / 246 / 320 µs | Commit without graph-type validation. |
 | `bound_type_validation/bound_commit_simple` | 10k / 50k / 100k | 304 / 250 / 350 µs | Typed-commit validation delta (small). |
-| `bound_type_validation/bound_commit_unique` | 1k quick | 349.53 µs | Hash-keyed `UNIQUE` validation over one unique string property. Command: `scripts/run-benches.sh --profile quick --bench bound_type_validation --filter bound_commit_unique`. |
+| `bound_type_validation/bound_commit_unique` | 1k quick | 108.11 µs | Unique declaration present, but the 100-write batch updates a non-unique property and stays on the delta gate. Command: `scripts/run-benches.sh --profile quick --bench bound_type_validation --filter bound_commit_unique/1000`. |
+| `bound_type_validation/bound_commit_unique_value_update` | 1k quick | 320.91 µs | 100 unique string property updates validated through delta-scoped candidate conflict checks instead of rebuilding all unique-property state. Command: `scripts/run-benches.sh --profile quick --bench bound_type_validation --filter bound_commit_unique_value_update`. |
 | `bound_type_validation/bound_commit_rich` | 10k / 50k / 100k | 1.01 / 1.14 / 1.67 ms | Wider type-graph validation delta. |
 | `bound_type_validation/bound_schema_change` | 10k / 50k / 100k | 2.92 / 18.6 / 39.3 ms | Full graph-state revalidation; scales with N. |
 | `graph_mixed_workload/point_read_update_r60w40` | 10k / 50k / 100k | 9.207 / 11.045 / 16.699 ms | One scalar cycle: 60 snapshot point reads interleaved with 40 non-indexed property-update commits. Fixture clone/setup excluded; no vector index or WAL. |

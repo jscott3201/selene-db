@@ -11,7 +11,9 @@ use crate::graph_types::{EdgeEndpointDef, GraphTypeDef, PropertyTypeDef, Validat
 
 mod unique;
 
-pub(crate) use unique::{unique_property_check_required, validate_unique_property_state};
+#[cfg(test)]
+pub(crate) use unique::unique_property_check_required;
+pub(crate) use unique::{validate_unique_property_changes, validate_unique_property_state};
 
 /// Identifier for a typed graph entity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

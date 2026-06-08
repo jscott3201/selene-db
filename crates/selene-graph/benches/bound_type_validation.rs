@@ -37,7 +37,18 @@ fn bench_bound_type_validation(c: &mut Criterion) {
 
         bench_update_case(&mut group, "unbound_commit", scale, unbound_graph);
         bench_update_case(&mut group, "bound_commit_simple", scale, simple_graph);
-        bench_update_case(&mut group, "bound_commit_unique", scale, unique_graph);
+        bench_update_case(
+            &mut group,
+            "bound_commit_unique",
+            scale,
+            unique_graph.clone(),
+        );
+        bench_unique_value_update_case(
+            &mut group,
+            "bound_commit_unique_value_update",
+            scale,
+            unique_graph,
+        );
         bench_update_case(&mut group, "bound_commit_rich", scale, rich_graph.clone());
         bench_schema_change_case(&mut group, scale, rich_graph);
     }
@@ -92,6 +103,25 @@ fn bench_schema_change_case(
     });
 }
 
+fn bench_unique_value_update_case(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &'static str,
+    scale: usize,
+    graph: SeleneGraph,
+) {
+    group.throughput(Throughput::Elements(UPDATE_BATCH as u64));
+    group.bench_function(BenchmarkId::new(name, scale), |b| {
+        b.iter_batched(
+            || SharedGraph::from_graph(graph.clone()),
+            |shared| {
+                let changes = update_unique_batch(&shared);
+                std::hint::black_box((shared, changes))
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
 fn update_batch(shared: &SharedGraph) -> usize {
     let score = label("score");
     let mut txn = shared.begin_write();
@@ -100,6 +130,32 @@ fn update_batch(shared: &SharedGraph) -> usize {
         for idx in 0..UPDATE_BATCH {
             let diff = PropertyDiff::new([(score.clone(), Value::Int(idx as i64))], [])
                 .expect("property diff is valid");
+            mutator
+                .update_node(
+                    selene_core::NodeId::new(idx as u64 + 1),
+                    LabelDiff::new([], []).expect("label diff is valid"),
+                    diff,
+                )
+                .expect("node update succeeds");
+        }
+    }
+    txn.commit().expect("commit succeeds").changes.len()
+}
+
+fn update_unique_batch(shared: &SharedGraph) -> usize {
+    let name = label("name");
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        for idx in 0..UPDATE_BATCH {
+            let diff = PropertyDiff::new(
+                [(
+                    name.clone(),
+                    Value::String(label(&format!("updated-node-{idx}"))),
+                )],
+                [],
+            )
+            .expect("property diff is valid");
             mutator
                 .update_node(
                     selene_core::NodeId::new(idx as u64 + 1),

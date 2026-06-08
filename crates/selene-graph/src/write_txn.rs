@@ -315,12 +315,12 @@ impl<'g> WriteTxn<'g> {
                         .into_iter()
                         .map(|warning| CommitWarning { warning }),
                 );
-            } else if crate::type_validator::unique_property_check_required(
-                &self.changes,
-                self.read(),
-                type_def,
-            )? {
-                crate::type_validator::validate_unique_property_state(self.read(), type_def)?;
+            } else {
+                crate::type_validator::validate_unique_property_changes(
+                    &self.changes,
+                    self.read(),
+                    type_def,
+                )?;
             }
         }
         for warning in validation_warnings {
