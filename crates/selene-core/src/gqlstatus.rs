@@ -26,6 +26,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("2201E", "invalid-argument-for-natural-logarithm"),
     ("2201F", "invalid-argument-for-power-function"),
     ("22027", "trim-error"),
+    ("22G02", "negative-limit-value"),
     ("22G03", "invalid-value-type"),
     ("22G04", "values-not-comparable"),
     ("22G05", "invalid-date-time-or-datetime-function-field-name"),

@@ -1,6 +1,6 @@
 use crate::{
     LimitAmount, SourceSpan,
-    runtime::{BindingTable, ExecutorError, TxContext, parameter_type},
+    runtime::{BindingTable, DataExceptionSubclass, ExecutorError, TxContext, parameter_type},
 };
 use selene_core::{DbString, Value};
 
@@ -31,6 +31,7 @@ pub(super) fn resolve_amount(
             span,
         } => match ctx.parameters().get(name) {
             Some(value) => {
+                reject_null_limit_value(value, *span)?;
                 if let Some(declared_type) = declared_type {
                     parameter_type::validate_declared_type(
                         name.clone(),
@@ -52,10 +53,25 @@ pub(super) fn resolve_amount(
 fn parameter_amount(name: DbString, span: SourceSpan, value: &Value) -> Result<u64, ExecutorError> {
     match value {
         Value::Int(value) if *value >= 0 => Ok(*value as u64),
-        Value::Int(_) => Err(invalid_parameter_type(name, span, "negative integer")),
+        Value::Int(_) => Err(ExecutorError::data_exception(
+            DataExceptionSubclass::NegativeLimitValue,
+            "LIMIT/OFFSET parameter must be non-negative",
+            span,
+        )),
         Value::Uint(value) => Ok(*value),
         _ => Err(invalid_parameter_type(name, span, value_type_name(value))),
     }
+}
+
+fn reject_null_limit_value(value: &Value, span: SourceSpan) -> Result<(), ExecutorError> {
+    if matches!(value, Value::Null) {
+        return Err(ExecutorError::data_exception(
+            DataExceptionSubclass::NullValueNotAllowed,
+            "LIMIT/OFFSET parameter cannot be NULL",
+            span,
+        ));
+    }
+    Ok(())
 }
 
 fn invalid_parameter_type(name: DbString, span: SourceSpan, actual: &'static str) -> ExecutorError {
