@@ -5,8 +5,12 @@
 mod exec_common;
 
 use exec_common::{column_values, execute_read, execute_read_result};
-use selene_core::{Value, feature_register::FeatureId};
-use selene_gql::{EmptyProcedureRegistry, ExecutorError, analyze, feature_walk, parse};
+use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_gql::{
+    EmptyProcedureRegistry, ExecutorError, ImplDefinedCaps, Session, StatementOutput, analyze,
+    feature_walk, parse,
+};
+use selene_graph::SharedGraph;
 
 fn single_value(source: &str, column: &str) -> Value {
     let table = execute_read(source);
@@ -26,6 +30,30 @@ fn assert_status(source: &str, expected: &str) {
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
 }
 
+fn single_value_with_caps(source: &str, column: &str, caps: ImplDefinedCaps) -> Value {
+    let graph = SharedGraph::new(GraphId::new(24_001));
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .unwrap_or_else(|err| panic!("execute failed for `{source}`: {err:?}"));
+    let StatementOutput::Rows(table) = output else {
+        panic!("expected rows for `{source}`");
+    };
+    let mut values = column_values(&table, column);
+    assert_eq!(values.len(), 1);
+    values.pop().expect("one row")
+}
+
+fn status_with_caps(source: &str, caps: ImplDefinedCaps) -> String {
+    let graph = SharedGraph::new(GraphId::new(24_002));
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
+    session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("query should fail")
+        .gqlstatus()
+        .to_string()
+}
+
 fn string_value(value: Value) -> String {
     let Value::String(value) = value else {
         panic!("expected String, got {value:?}");
@@ -42,6 +70,36 @@ fn assert_feature_recorded(source: &str, expected: FeatureId) {
     assert!(
         observed.contains(&expected),
         "{source} should record {expected:?}, observed {observed:?}"
+    );
+}
+
+#[test]
+fn character_string_concatenation_truncates_only_whitespace_overflow() {
+    let caps = ImplDefinedCaps::default().with_max_string_length(3);
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN 'ab' || 'c  ' AS value",
+            "value",
+            caps,
+        )),
+        "abc"
+    );
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN '\u{00e9}' || 'x ' AS value",
+            "value",
+            ImplDefinedCaps::default().with_max_string_length(2),
+        )),
+        "\u{00e9}x"
+    );
+}
+
+#[test]
+fn character_string_concatenation_reports_right_truncation() {
+    let caps = ImplDefinedCaps::default().with_max_string_length(3);
+    assert_eq!(
+        status_with_caps("RETURN 'ab' || 'cd' AS value", caps),
+        "22001"
     );
 }
 

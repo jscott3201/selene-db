@@ -15,6 +15,8 @@ use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError,
 pub enum DataExceptionSubclass {
     /// Generic data exception fallback for genuinely unclassified runtime data failures.
     DataException,
+    /// String data, right truncation (`22001`).
+    StringDataRightTruncation,
     /// Numeric value out of range (`22003`).
     NumericValueOutOfRange,
     /// Null value not allowed (`22004`).
@@ -75,6 +77,7 @@ impl DataExceptionSubclass {
     pub const fn gqlstatus(self) -> GqlStatus {
         match self {
             Self::DataException => GqlStatus::DATA_EXCEPTION,
+            Self::StringDataRightTruncation => GqlStatus::STRING_DATA_RIGHT_TRUNCATION,
             Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
             Self::NullValueNotAllowed => GqlStatus::NULL_VALUE_NOT_ALLOWED,
             Self::InvalidDatetimeFormat => GqlStatus::INVALID_DATETIME_FORMAT,

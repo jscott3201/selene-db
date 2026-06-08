@@ -643,6 +643,10 @@ pub struct ImplDefinedCaps {
     pub max_quantifier: u32,
     /// Fixed-point optimizer iteration cap.
     pub max_optimizer_iterations: u32,
+    /// Maximum character length for character-string concatenation results.
+    pub max_string_length: u32,
+    /// Maximum byte length for byte-string concatenation results.
+    pub max_byte_string_length: u32,
     /// Default maximum path length for future path execution.
     pub max_path_length: u32,
     /// Maximum list cardinality for constructed list values.
@@ -682,6 +686,12 @@ impl ImplDefinedCaps {
     /// Default maximum distinct groups a `GROUP BY` may materialize.
     pub const DEFAULT_GROUP_BY_KEY_CAP: usize = 1_000_000;
 
+    /// Default maximum character length for character-string concatenation results.
+    pub const DEFAULT_MAX_STRING_LENGTH: u32 = u32::MAX;
+
+    /// Default maximum byte length for byte-string concatenation results.
+    pub const DEFAULT_MAX_BYTE_STRING_LENGTH: u32 = u32::MAX;
+
     /// Default maximum cardinality for constructed list values.
     pub const DEFAULT_MAX_LIST_LENGTH: u32 = 1_000_000;
 
@@ -693,6 +703,8 @@ impl ImplDefinedCaps {
     pub const DEFAULT: Self = Self {
         max_quantifier: 100,
         max_optimizer_iterations: 8,
+        max_string_length: Self::DEFAULT_MAX_STRING_LENGTH,
+        max_byte_string_length: Self::DEFAULT_MAX_BYTE_STRING_LENGTH,
         max_path_length: 32,
         max_list_length: Self::DEFAULT_MAX_LIST_LENGTH,
         max_wco_traversal_nodes: 64,
@@ -723,6 +735,20 @@ impl ImplDefinedCaps {
     #[must_use]
     pub const fn with_max_path_length(mut self, max_path_length: u32) -> Self {
         self.max_path_length = max_path_length;
+        self
+    }
+
+    /// Return a copy with a different character-string concat length cap (ISO IL013).
+    #[must_use]
+    pub const fn with_max_string_length(mut self, max_string_length: u32) -> Self {
+        self.max_string_length = max_string_length;
+        self
+    }
+
+    /// Return a copy with a different byte-string concat length cap (ISO IL013).
+    #[must_use]
+    pub const fn with_max_byte_string_length(mut self, max_byte_string_length: u32) -> Self {
+        self.max_byte_string_length = max_byte_string_length;
         self
     }
 

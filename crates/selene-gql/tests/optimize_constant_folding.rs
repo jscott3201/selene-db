@@ -2,9 +2,9 @@
 
 use selene_core::DbString;
 use selene_gql::{
-    AnalyzedStatement, BinaryOp, CatalogOp, EmptyProcedureRegistry, Literal, MutationOp,
-    PipelineOp, PlannedTypePropertyConstraint, ProcedureOutputColumn, SourceSpan, ValueExpr,
-    analyze, optimize, parse, plan,
+    AnalyzedStatement, BinaryOp, CatalogOp, EmptyProcedureRegistry, ImplDefinedCaps, Literal,
+    MutationOp, PipelineOp, PlannedTypePropertyConstraint, ProcedureOutputColumn, SourceSpan,
+    ValueExpr, analyze, optimize, parse, plan, plan::plan_with_caps,
 };
 use selene_testing::MockProcedureRegistry;
 
@@ -17,6 +17,12 @@ fn optimized_one(source: &str) -> selene_gql::ExecutionPlan {
     let analyzed = analyzed(source);
     let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("test input plans");
     optimize(plan, &selene_gql::OptimizeContext::default())
+}
+
+fn optimized_one_with_caps(source: &str, caps: &ImplDefinedCaps) -> selene_gql::ExecutionPlan {
+    let analyzed = analyzed(source);
+    let plan = plan_with_caps(&analyzed, &EmptyProcedureRegistry, caps).expect("test input plans");
+    optimize(plan, &selene_gql::OptimizeContext::new(caps))
 }
 
 fn optimized_with_registry(
@@ -70,6 +76,40 @@ fn folds_boolean_unary_and_string_byte_concat() {
     assert!(matches!(
         project_expr(&plan),
         ValueExpr::Literal(Literal::Bytes(value, _)) if value.as_ref() == [0xca, 0xfe, 0x00]
+    ));
+}
+
+#[test]
+fn string_byte_concat_folding_respects_length_caps() {
+    let string_caps = ImplDefinedCaps::default().with_max_string_length(3);
+    let plan = optimized_one_with_caps("RETURN 'ab' || 'c  ' AS x", &string_caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "abc"
+    ));
+    let plan = optimized_one_with_caps("RETURN 'ab' || 'cd' AS x", &string_caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::BinaryOp {
+            op: selene_gql::BinaryOp::Concat,
+            ..
+        }
+    ));
+
+    let byte_caps = ImplDefinedCaps::default().with_max_byte_string_length(3);
+    let plan = optimized_one_with_caps("RETURN X'CAFE' || X'0000' AS x", &byte_caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bytes(value, _)) if value.as_ref() == [0xca, 0xfe, 0x00]
+    ));
+    let byte_error_caps = ImplDefinedCaps::default().with_max_byte_string_length(1);
+    let plan = optimized_one_with_caps("RETURN X'CA' || X'FE' AS x", &byte_error_caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::BinaryOp {
+            op: selene_gql::BinaryOp::Concat,
+            ..
+        }
     ));
 }
 

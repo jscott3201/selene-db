@@ -5,7 +5,7 @@ use std::sync::Arc;
 use selene_core::{GraphId, Value, feature_register::FeatureId};
 use selene_gql::{
     AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry, GqlType,
-    ParserError, PipelineStatement, Session, StatementOutput,
+    ImplDefinedCaps, ParserError, PipelineStatement, Session, StatementOutput,
     ast::{format_read_statement, structurally_eq},
     feature_walk, parse,
 };
@@ -26,6 +26,29 @@ fn first_value(source: &str) -> Value {
 fn first_status(source: &str) -> String {
     let graph = SharedGraph::new(GraphId::new(14_201));
     let mut session = Session::new(&graph);
+    session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("statement errors")
+        .gqlstatus()
+        .as_str()
+        .to_owned()
+}
+
+fn first_value_with_caps(source: &str, caps: ImplDefinedCaps) -> Value {
+    let graph = SharedGraph::new(GraphId::new(14_203));
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .unwrap_or_else(|err| panic!("execute failed for `{source}`: {err:?}"));
+    let StatementOutput::Rows(table) = output else {
+        panic!("`{source}` produced non-row output");
+    };
+    table.rows()[0].values()[0].clone()
+}
+
+fn first_status_with_caps(source: &str, caps: ImplDefinedCaps) -> String {
+    let graph = SharedGraph::new(GraphId::new(14_204));
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
     session
         .execute_source(source, &EmptyProcedureRegistry)
         .expect_err("statement errors")
@@ -215,6 +238,24 @@ fn byte_string_concatenation_uses_byte_string_result_type() {
         bytes(&[0xca])
     );
     assert_eq!(first_status("RETURN X'CA' || 'FE' AS payload"), "22G03");
+}
+
+#[test]
+fn byte_string_concatenation_truncates_only_zero_byte_overflow() {
+    let caps = ImplDefinedCaps::default().with_max_byte_string_length(3);
+    assert_eq!(
+        first_value_with_caps("RETURN X'CAFE' || X'0000' AS payload", caps),
+        bytes(&[0xca, 0xfe, 0x00])
+    );
+}
+
+#[test]
+fn byte_string_concatenation_reports_right_truncation() {
+    let caps = ImplDefinedCaps::default().with_max_byte_string_length(1);
+    assert_eq!(
+        first_status_with_caps("RETURN X'CA' || X'FE' AS payload", caps),
+        "22001"
+    );
 }
 
 #[test]

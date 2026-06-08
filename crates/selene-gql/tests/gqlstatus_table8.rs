@@ -31,6 +31,7 @@ fn status_for(source: &str) -> String {
 #[test]
 fn data_exception_subclasses_map_to_folded_table8_codes() {
     let cases = [
+        (DataExceptionSubclass::StringDataRightTruncation, "22001"),
         (DataExceptionSubclass::NumericValueOutOfRange, "22003"),
         (DataExceptionSubclass::InvalidDatetimeFormat, "22007"),
         (DataExceptionSubclass::DivisionByZero, "22012"),
