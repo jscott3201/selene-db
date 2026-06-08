@@ -45,6 +45,22 @@ fn cast_to_float32_returns_float32_value() {
 }
 
 #[test]
+fn floating_type_synonym_casts_use_concrete_widths() {
+    assert_eq!(
+        first_value("RETURN CAST(1.5 AS REAL) AS v"),
+        Value::Float32(1.5_f32)
+    );
+    assert_eq!(
+        first_value("RETURN CAST(1.5 AS DOUBLE) AS v"),
+        Value::Float(1.5)
+    );
+    assert_eq!(
+        first_value("RETURN CAST(1.5 AS DOUBLE PRECISION) IS TYPED DOUBLE AS ok"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn cast_float32_overflow_returns_22003() {
     assert_eq!(
         bound_status("RETURN CAST($p AS FLOAT32) AS v", Value::Float(f64::MAX)),

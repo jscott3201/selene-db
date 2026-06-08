@@ -101,8 +101,8 @@ fn numeric_kind(ty: &GqlType) -> Option<NumericKind> {
         }),
         GqlType::Decimal => NumericKind::Decimal,
         GqlType::Float => NumericKind::Float(FloatKind::Unsized),
-        GqlType::Float32 => NumericKind::Float(FloatKind::F32),
-        GqlType::Float64 => NumericKind::Float(FloatKind::F64),
+        GqlType::Float32 | GqlType::Real => NumericKind::Float(FloatKind::F32),
+        GqlType::Float64 | GqlType::Double => NumericKind::Float(FloatKind::F64),
         _ => return None,
     })
 }

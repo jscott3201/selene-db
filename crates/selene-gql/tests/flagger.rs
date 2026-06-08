@@ -628,21 +628,6 @@ fn named_procedure_call_feature_is_supported() {
 }
 
 #[test]
-fn real_type_spelling_rejects_as_gv23_synonym() {
-    let error = parse("RETURN n IS TYPED REAL").expect_err("REAL spelling is unclaimed");
-    let ParserError::UnsupportedFeature {
-        feature_id,
-        display_name,
-        ..
-    } = error
-    else {
-        panic!("expected UnsupportedFeature");
-    };
-    assert_eq!(feature_id, FeatureId::GV23);
-    assert_eq!(display_name, "Floating point type name synonyms");
-}
-
-#[test]
 fn byte_string_length_type_forms_reject_as_specific_gv_features() {
     for (source, expected, name) in [
         (

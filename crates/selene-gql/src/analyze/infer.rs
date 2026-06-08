@@ -676,6 +676,8 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Decimal
         | GqlType::Float32
         | GqlType::Float64
+        | GqlType::Real
+        | GqlType::Double
         | GqlType::Bytes
         | GqlType::Uuid
         | GqlType::Json
