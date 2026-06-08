@@ -102,8 +102,19 @@ fn quantifier_features_are_claimed_supported() {
 }
 
 #[test]
-fn radix_literal_features_are_claimed_supported() {
-    for feature in [FeatureId::GL01, FeatureId::GL02, FeatureId::GL03] {
+fn numeric_literal_features_are_claimed_supported() {
+    for feature in [
+        FeatureId::GL01,
+        FeatureId::GL02,
+        FeatureId::GL03,
+        FeatureId::GL04,
+        FeatureId::GL05,
+        FeatureId::GL06,
+        FeatureId::GL07,
+        FeatureId::GL08,
+        FeatureId::GL09,
+        FeatureId::GL10,
+    ] {
         assert!(SUPPORTED_FEATURES.contains(&feature));
         assert!(
             !NOT_SUPPORTED_RATIONALE

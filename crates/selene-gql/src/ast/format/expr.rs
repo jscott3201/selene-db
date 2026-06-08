@@ -3,7 +3,10 @@
 use std::fmt::{self, Write as _};
 
 use super::super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
-use super::super::{IntegerLiteralKind, TemporalDurationQualifier, UnaryOp, ValueExpr};
+use super::super::{
+    DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, TemporalDurationQualifier, UnaryOp,
+    ValueExpr,
+};
 use super::is_check::{fmt_is_check, fmt_normal_form};
 use super::keywords::fmt_binary;
 use super::{cast, fmt_match, fmt_parameter, fmt_pipeline, trim};
@@ -14,8 +17,10 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             crate::Literal::Bool(value, _) => out.push_str(if *value { "true" } else { "false" }),
             crate::Literal::Integer(value, _) => write!(out, "{value}")?,
             crate::Literal::RadixInteger(value, _, kind) => fmt_radix_integer(out, *value, *kind)?,
-            crate::Literal::Decimal(value, _) => write!(out, "{value}")?,
-            crate::Literal::Float(value, _) => fmt_float_literal(out, *value)?,
+            crate::Literal::Decimal(value, _, kind) => {
+                fmt_decimal_literal(out, value, *kind)?;
+            }
+            crate::Literal::Float(value, _, kind) => fmt_float_literal(out, *value, *kind)?,
             crate::Literal::String(value, _) => write!(out, "'{}'", escape_string(value.as_str()))?,
             crate::Literal::Bytes(value, _) => {
                 out.push_str("X'");
@@ -268,10 +273,31 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
     Ok(())
 }
 
-fn fmt_float_literal(out: &mut String, value: f64) -> fmt::Result {
-    write!(out, "{value}")?;
-    if value.is_finite() {
-        out.push('D');
+fn fmt_decimal_literal(
+    out: &mut String,
+    value: &rust_decimal::Decimal,
+    kind: DecimalLiteralKind,
+) -> fmt::Result {
+    match kind {
+        DecimalLiteralKind::CommonWithoutSuffix => {
+            write!(out, "{value}")?;
+            if !value.to_string().contains('.') {
+                out.push('.');
+            }
+        }
+        DecimalLiteralKind::CommonOrIntegerWithSuffix => write!(out, "{value}M")?,
+        DecimalLiteralKind::ScientificWithSuffix => write!(out, "{value}E0M")?,
+    }
+    Ok(())
+}
+
+fn fmt_float_literal(out: &mut String, value: f64, kind: FloatLiteralKind) -> fmt::Result {
+    match kind {
+        FloatLiteralKind::ScientificWithoutSuffix => write!(out, "{value:e}")?,
+        FloatLiteralKind::CommonOrIntegerWithFloatSuffix => write!(out, "{value}F")?,
+        FloatLiteralKind::CommonOrIntegerWithDoubleSuffix => write!(out, "{value}D")?,
+        FloatLiteralKind::ScientificWithFloatSuffix => write!(out, "{value:e}F")?,
+        FloatLiteralKind::ScientificWithDoubleSuffix => write!(out, "{value:e}D")?,
     }
     Ok(())
 }

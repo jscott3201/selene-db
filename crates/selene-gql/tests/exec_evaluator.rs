@@ -8,8 +8,8 @@ use exec_common::empty_graph_context;
 use selene_core::{Value, db_string};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
-    GqlType, ImplDefinedCaps, IsCheckKind, Literal, NonEmpty, RecordType, SourceSpan, TruthValue,
-    UnaryOp, ValueExpr,
+    FloatLiteralKind, GqlType, ImplDefinedCaps, IsCheckKind, Literal, NonEmpty, RecordType,
+    SourceSpan, TruthValue, UnaryOp, ValueExpr,
 };
 
 fn span() -> SourceSpan {
@@ -33,7 +33,11 @@ fn int_lit(value: i64) -> ValueExpr {
 }
 
 fn float_lit(value: f64) -> ValueExpr {
-    lit(Literal::Float(value, span()))
+    lit(Literal::Float(
+        value,
+        span(),
+        FloatLiteralKind::CommonOrIntegerWithDoubleSuffix,
+    ))
 }
 
 fn var(name: selene_core::DbString) -> ValueExpr {

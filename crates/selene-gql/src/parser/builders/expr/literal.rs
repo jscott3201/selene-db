@@ -8,7 +8,9 @@ use selene_core::DbString;
 
 use crate::{
     GqlStatus,
-    ast::{IntegerLiteralKind, Literal, SourceSpan, ValueExpr},
+    ast::{
+        DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, Literal, SourceSpan, ValueExpr,
+    },
     error::ParserError,
     temporal_parse::{self, ParsedDateTime, ParsedTime},
 };
@@ -64,11 +66,11 @@ pub(super) fn with_numeric_span(value: ValueExpr, source_span: SourceSpan) -> Va
         ValueExpr::Literal(Literal::RadixInteger(value, _, kind)) => {
             ValueExpr::Literal(Literal::RadixInteger(value, source_span, kind))
         }
-        ValueExpr::Literal(Literal::Decimal(value, _)) => {
-            ValueExpr::Literal(Literal::Decimal(value, source_span))
+        ValueExpr::Literal(Literal::Decimal(value, _, kind)) => {
+            ValueExpr::Literal(Literal::Decimal(value, source_span, kind))
         }
-        ValueExpr::Literal(Literal::Float(value, _)) => {
-            ValueExpr::Literal(Literal::Float(value, source_span))
+        ValueExpr::Literal(Literal::Float(value, _, kind)) => {
+            ValueExpr::Literal(Literal::Float(value, source_span, kind))
         }
         other => other,
     }
@@ -256,12 +258,13 @@ fn split_radix(text: &str) -> (&str, u32, Option<IntegerLiteralKind>) {
 }
 
 fn parse_f64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
+    let kind = classify_float_literal(text);
     let trimmed = text.strip_suffix(['f', 'd', 'F', 'D']).unwrap_or(text);
     validate_underscores(trimmed, span)?;
     let normalized = normalize_float_image(&trimmed.replace('_', ""));
     normalized
         .parse::<f64>()
-        .map(|value| Literal::Float(value, span))
+        .map(|value| Literal::Float(value, span, kind))
         .map_err(|error| {
             ParserError::syntax(
                 format!("invalid floating-point literal: {error}"),
@@ -272,6 +275,7 @@ fn parse_f64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
 }
 
 fn parse_decimal(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
+    let kind = classify_decimal_literal(text);
     let trimmed = text.strip_suffix(['m', 'M']).unwrap_or(text);
     validate_underscores(trimmed, span)?;
     let normalized = normalize_decimal_image(&trimmed.replace('_', ""));
@@ -281,7 +285,7 @@ fn parse_decimal(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
         normalized.parse::<Decimal>()
     };
     parsed
-        .map(|value| Literal::Decimal(value, span))
+        .map(|value| Literal::Decimal(value, span, kind))
         .map_err(|error| {
             ParserError::syntax(
                 format!("invalid exact numeric literal: {error}"),
@@ -289,6 +293,35 @@ fn parse_decimal(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
                 Some("exact numeric literals must fit selene-db DECIMAL".into()),
             )
         })
+}
+
+fn classify_decimal_literal(text: &str) -> DecimalLiteralKind {
+    let (_, unsigned) = split_text_sign(text);
+    let has_suffix = unsigned.ends_with(['m', 'M']);
+    let body = unsigned.strip_suffix(['m', 'M']).unwrap_or(unsigned);
+    if contains_exponent(body) {
+        DecimalLiteralKind::ScientificWithSuffix
+    } else if has_suffix {
+        DecimalLiteralKind::CommonOrIntegerWithSuffix
+    } else {
+        DecimalLiteralKind::CommonWithoutSuffix
+    }
+}
+
+fn classify_float_literal(text: &str) -> FloatLiteralKind {
+    let (_, unsigned) = split_text_sign(text);
+    let suffix = unsigned.as_bytes().last().copied();
+    let body = unsigned
+        .strip_suffix(['f', 'd', 'F', 'D'])
+        .unwrap_or(unsigned);
+    match (contains_exponent(body), suffix) {
+        (true, Some(b'f' | b'F')) => FloatLiteralKind::ScientificWithFloatSuffix,
+        (true, Some(b'd' | b'D')) => FloatLiteralKind::ScientificWithDoubleSuffix,
+        (true, _) => FloatLiteralKind::ScientificWithoutSuffix,
+        (false, Some(b'f' | b'F')) => FloatLiteralKind::CommonOrIntegerWithFloatSuffix,
+        (false, Some(b'd' | b'D')) => FloatLiteralKind::CommonOrIntegerWithDoubleSuffix,
+        (false, _) => FloatLiteralKind::ScientificWithoutSuffix,
+    }
 }
 
 fn normalize_decimal_image(image: &str) -> String {

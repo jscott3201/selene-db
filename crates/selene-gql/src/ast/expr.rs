@@ -472,9 +472,9 @@ pub enum Literal {
     /// Signed 64-bit integer literal written with a non-decimal radix prefix.
     RadixInteger(i64, SourceSpan, IntegerLiteralKind),
     /// Exact fixed-precision decimal literal.
-    Decimal(Decimal, SourceSpan),
+    Decimal(Decimal, SourceSpan, DecimalLiteralKind),
     /// 64-bit floating-point literal.
-    Float(f64, SourceSpan),
+    Float(f64, SourceSpan, FloatLiteralKind),
     /// Database-string literal.
     String(DbString, SourceSpan),
     /// Byte-string literal.
@@ -508,6 +508,32 @@ pub enum IntegerLiteralKind {
     Binary,
 }
 
+/// Source spelling class for an exact decimal literal.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum DecimalLiteralKind {
+    /// Common decimal notation without an exact-number suffix.
+    CommonWithoutSuffix,
+    /// Common decimal notation or decimal integer with an exact-number suffix.
+    CommonOrIntegerWithSuffix,
+    /// Scientific decimal notation with an exact-number suffix.
+    ScientificWithSuffix,
+}
+
+/// Source spelling class for an approximate numeric literal.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum FloatLiteralKind {
+    /// Scientific decimal notation without an approximate-number suffix.
+    ScientificWithoutSuffix,
+    /// Common decimal notation or decimal integer with an `F` suffix.
+    CommonOrIntegerWithFloatSuffix,
+    /// Common decimal notation or decimal integer with a `D` suffix.
+    CommonOrIntegerWithDoubleSuffix,
+    /// Scientific decimal notation with an `F` suffix.
+    ScientificWithFloatSuffix,
+    /// Scientific decimal notation with a `D` suffix.
+    ScientificWithDoubleSuffix,
+}
+
 impl PartialEq for Literal {
     fn eq(&self, rhs: &Self) -> bool {
         match (self, rhs) {
@@ -521,11 +547,11 @@ impl PartialEq for Literal {
                 Self::RadixInteger(lhs, lhs_span, lhs_kind),
                 Self::RadixInteger(rhs, rhs_span, rhs_kind),
             ) => lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind,
-            (Self::Decimal(lhs, lhs_span), Self::Decimal(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
+            (Self::Decimal(lhs, lhs_span, lhs_kind), Self::Decimal(rhs, rhs_span, rhs_kind)) => {
+                lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind
             }
-            (Self::Float(lhs, lhs_span), Self::Float(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
+            (Self::Float(lhs, lhs_span, lhs_kind), Self::Float(rhs, rhs_span, rhs_kind)) => {
+                lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind
             }
             (Self::String(lhs, lhs_span), Self::String(rhs, rhs_span)) => {
                 lhs == rhs && lhs_span == rhs_span
@@ -568,8 +594,8 @@ impl Literal {
             Self::Bool(_, span)
             | Self::Integer(_, span)
             | Self::RadixInteger(_, span, _)
-            | Self::Decimal(_, span)
-            | Self::Float(_, span)
+            | Self::Decimal(_, span, _)
+            | Self::Float(_, span, _)
             | Self::String(_, span)
             | Self::Bytes(_, span)
             | Self::Uuid(_, span)
@@ -593,8 +619,8 @@ impl Literal {
             Self::Bool(_, span)
             | Self::Integer(_, span)
             | Self::RadixInteger(_, span, _)
-            | Self::Decimal(_, span)
-            | Self::Float(_, span)
+            | Self::Decimal(_, span, _)
+            | Self::Float(_, span, _)
             | Self::String(_, span)
             | Self::Bytes(_, span)
             | Self::Uuid(_, span)

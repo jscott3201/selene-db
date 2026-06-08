@@ -117,7 +117,8 @@ these types is rejected at parse or analyze time.
 | Hex | `0xCAFE`, `-0x1A` | Feature `GL01`; normalizes to i64 unless explicitly cast. |
 | Oct | `0o777` | Feature `GL02`; normalizes to i64 unless explicitly cast. |
 | Bin | `0b1010` | Feature `GL03`; normalizes to i64 unless explicitly cast. |
-| Float | `1.5`, `1.5e10`, `1.5f` (f32), `1.5d` (f64 explicit) | Default f64. |
+| Exact decimal | `1.5`, `.5`, `1.`, `1.5M`, `1e2M` | Features `GL04`-`GL06`; lowers to `DECIMAL`. |
+| Approximate float | `1e2`, `1.5F`, `1.5D`, `1e2F`, `1e2D` | Features `GL07`-`GL10` for suffix forms; lowers to f64. |
 
 ### Identifiers and delimited identifiers
 

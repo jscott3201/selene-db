@@ -5,7 +5,10 @@ use selene_core::{DbString, feature_register::FeatureId};
 use crate::{
     NonEmpty, ValueExpr,
     ast::{
-        expr::{BinaryOp, IntegerLiteralKind, IsCheckKind, Literal},
+        expr::{
+            BinaryOp, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, IsCheckKind,
+            Literal,
+        },
         types::{GqlType, RecordType},
     },
 };
@@ -232,8 +235,14 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
             };
             record_feature(uses, feature_id, *span);
         }
-        Literal::Float(_, span) => record_feature(uses, FeatureId::GA01, *span),
-        Literal::Decimal(_, span) => record_feature(uses, FeatureId::GV17, *span),
+        Literal::Float(_, span, kind) => {
+            record_feature(uses, FeatureId::GA01, *span);
+            float_literal(*kind, *span, uses);
+        }
+        Literal::Decimal(_, span, kind) => {
+            record_feature(uses, FeatureId::GV17, *span);
+            decimal_literal(*kind, *span, uses);
+        }
         Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
         Literal::Duration(_, span) => record_feature(uses, FeatureId::GV41, *span),
         Literal::String(_, _)
@@ -246,6 +255,36 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
         | Literal::ZonedTime(_, _)
         | Literal::LocalTime(_, _)
         | Literal::Null(_) => {}
+    }
+}
+
+fn decimal_literal(kind: DecimalLiteralKind, span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
+    let feature_id = match kind {
+        DecimalLiteralKind::CommonWithoutSuffix => FeatureId::GL04,
+        DecimalLiteralKind::CommonOrIntegerWithSuffix => FeatureId::GL05,
+        DecimalLiteralKind::ScientificWithSuffix => FeatureId::GL06,
+    };
+    record_feature(uses, feature_id, span);
+}
+
+fn float_literal(kind: FloatLiteralKind, span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
+    match kind {
+        FloatLiteralKind::ScientificWithoutSuffix => {}
+        FloatLiteralKind::CommonOrIntegerWithFloatSuffix => {
+            record_feature(uses, FeatureId::GL07, span);
+        }
+        FloatLiteralKind::CommonOrIntegerWithDoubleSuffix => {
+            record_feature(uses, FeatureId::GL07, span);
+            record_feature(uses, FeatureId::GL10, span);
+        }
+        FloatLiteralKind::ScientificWithFloatSuffix => {
+            record_feature(uses, FeatureId::GL08, span);
+            record_feature(uses, FeatureId::GL09, span);
+        }
+        FloatLiteralKind::ScientificWithDoubleSuffix => {
+            record_feature(uses, FeatureId::GL08, span);
+            record_feature(uses, FeatureId::GL10, span);
+        }
     }
 }
 
@@ -377,7 +416,7 @@ mod tests {
 
     use crate::ast::ValueExpr;
     use crate::ast::expr::{BinaryOp, IsCheckKind, Literal};
-    use crate::ast::span::SourceSpan;
+    use crate::ast::{expr::FloatLiteralKind, span::SourceSpan};
 
     use super::{FeatureUse, value};
 
@@ -390,7 +429,11 @@ mod tests {
     }
 
     fn float(value: f64, offset: u32) -> ValueExpr {
-        ValueExpr::Literal(Literal::Float(value, span(offset)))
+        ValueExpr::Literal(Literal::Float(
+            value,
+            span(offset),
+            FloatLiteralKind::CommonOrIntegerWithDoubleSuffix,
+        ))
     }
 
     fn duration(value: &str, offset: u32) -> ValueExpr {

@@ -346,8 +346,8 @@ fn compare_literals(a: &Literal, b: &Literal) -> Option<std::cmp::Ordering> {
         | (Literal::RadixInteger(lhs, _, _), Literal::RadixInteger(rhs, _, _)) => {
             Some(lhs.cmp(rhs))
         }
-        (Literal::Float(lhs, _), Literal::Float(rhs, _)) => lhs.partial_cmp(rhs),
-        (Literal::Decimal(lhs, _), Literal::Decimal(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::Float(lhs, _, _), Literal::Float(rhs, _, _)) => lhs.partial_cmp(rhs),
+        (Literal::Decimal(lhs, _, _), Literal::Decimal(rhs, _, _)) => Some(lhs.cmp(rhs)),
         (Literal::String(lhs, _), Literal::String(rhs, _)) => Some(lhs.as_str().cmp(rhs.as_str())),
         (Literal::Bytes(lhs, _), Literal::Bytes(rhs, _)) => Some(lhs.as_ref().cmp(rhs.as_ref())),
         (Literal::Date(lhs, _), Literal::Date(rhs, _)) => Some(lhs.cmp(rhs)),
