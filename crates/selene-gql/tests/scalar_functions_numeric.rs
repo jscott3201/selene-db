@@ -132,6 +132,14 @@ fn scalar_functions_numeric_abs_preserves_decimal_inputs() {
 }
 
 #[test]
+fn scalar_functions_numeric_abs_preserves_float32_inputs() {
+    assert_eq!(
+        single_value("RETURN abs(CAST('-1.5' AS FLOAT32)) AS value", "value"),
+        Value::Float32(1.5_f32)
+    );
+}
+
+#[test]
 fn scalar_functions_numeric_gf01_enhanced_numeric_functions_propagate_null() {
     for source in [
         "RETURN abs(null) AS value",

@@ -479,7 +479,7 @@ fn eval_abs(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> 
         Value::Uint(value) => Ok(Value::Uint(value)),
         Value::Uint128(value) => Ok(Value::Uint128(value)),
         Value::Float(value) if value.is_finite() => Ok(Value::Float(value.abs())),
-        Value::Float32(value) if value.is_finite() => Ok(Value::Float(f64::from(value).abs())),
+        Value::Float32(value) if value.is_finite() => Ok(Value::Float32(value.abs())),
         Value::Float(_) | Value::Float32(_) => data_exception_with(
             DataExceptionSubclass::NumericValueOutOfRange,
             "numeric result is non-finite",
