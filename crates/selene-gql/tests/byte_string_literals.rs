@@ -203,7 +203,7 @@ fn byte_string_trim_follows_iso_trim_rules() {
         bytes(&[0x00, 0x00, 0xca, 0xfe])
     );
     assert_eq!(
-        first_value("RETURN TRIM(FROM X'20CA20') AS payload"),
+        first_value("RETURN TRIM(BOTH FROM X'20CA20') AS payload"),
         bytes(&[0xca])
     );
     assert_eq!(

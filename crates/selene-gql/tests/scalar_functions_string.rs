@@ -364,6 +364,7 @@ fn ordinary_trim_defaults_to_space_character_only() {
 fn explicit_trim_supports_both_leading_trailing_and_defaults() {
     let cases = [
         ("RETURN TRIM(BOTH 'x' FROM 'xxhellox') AS value", "hello"),
+        ("RETURN TRIM('x' FROM 'xxhellox') AS value", "hello"),
         (
             "RETURN TRIM(LEADING 'x' FROM 'xxhellox') AS value",
             "hellox",
@@ -372,11 +373,18 @@ fn explicit_trim_supports_both_leading_trailing_and_defaults() {
             "RETURN TRIM(TRAILING 'x' FROM 'xxhellox') AS value",
             "xxhello",
         ),
-        ("RETURN TRIM(FROM ' hello ') AS value", "hello"),
+        ("RETURN TRIM(BOTH FROM ' hello ') AS value", "hello"),
     ];
     for (source, expected) in cases {
         assert_eq!(string_value(single_value(source, "value")), expected);
     }
+}
+
+#[test]
+fn explicit_trim_rejects_empty_from_operands() {
+    let err = parse("RETURN TRIM(FROM ' hello ') AS value")
+        .expect_err("FROM requires trim spec or character");
+    assert!(matches!(err, selene_gql::ParserError::SyntaxError { .. }));
 }
 
 #[test]
