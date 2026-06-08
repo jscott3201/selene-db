@@ -35,6 +35,10 @@ fn optional_name(value: Option<selene_core::DbString>) -> Option<String> {
 }
 
 fn assert_function_call(source: &str, expected_name: &str) {
+    assert_function_call_with_args(source, expected_name, 0);
+}
+
+fn assert_function_call_with_args(source: &str, expected_name: &str, expected_args: usize) {
     let expr = only_item(source).expr;
     let ValueExpr::FunctionCall {
         ref name,
@@ -48,7 +52,7 @@ fn assert_function_call(source: &str, expected_name: &str) {
     };
     assert_eq!(name.len(), 1, "{source}");
     assert_eq!(name.first().as_str(), expected_name, "{source}");
-    assert!(args.is_empty(), "{source}");
+    assert_eq!(args.len(), expected_args, "{source}");
     assert!(!star, "{source}");
     assert!(!distinct, "{source}");
 }
@@ -374,6 +378,7 @@ fn parse_current_datetime_keyword_functions() {
     assert_function_call("RETURN current_timestamp()", "current_timestamp");
     assert_function_call("RETURN localtimestamp()", "localtimestamp");
     assert_function_call("RETURN localtime()", "localtime");
+    assert_function_call_with_args("RETURN LOCAL_TIME('12:34:56')", "LOCAL_TIME", 1);
 }
 
 #[test]

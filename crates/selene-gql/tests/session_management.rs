@@ -180,6 +180,46 @@ fn current_datetime_keyword_forms_execute() {
 }
 
 #[test]
+fn current_datetime_constructor_forms_execute() {
+    let graph = graph(7017);
+    let mut session = Session::new(&graph);
+
+    run(&mut session, "SESSION SET TIME ZONE '+03:00'").expect("set tz");
+
+    assert!(matches!(
+        single_value(run(&mut session, "RETURN DATE()").expect("date")),
+        Value::Date(_)
+    ));
+
+    let value = single_value(run(&mut session, "RETURN ZONED_TIME()").expect("zoned time"));
+    let Value::ZonedTime(zoned_time) = value else {
+        panic!("expected zoned time, got {value:?}");
+    };
+    assert_eq!(zoned_time.offset().seconds(), 3 * 3600);
+
+    let value = single_value(run(&mut session, "RETURN ZONED_DATETIME()").expect("zoned dt"));
+    let Value::ZonedDateTime(zoned_datetime) = value else {
+        panic!("expected zoned datetime, got {value:?}");
+    };
+    assert_eq!(zoned_datetime.offset().seconds(), 3 * 3600);
+
+    assert!(matches!(
+        single_value(run(&mut session, "RETURN LOCAL_DATETIME()").expect("local dt")),
+        Value::LocalDateTime(_)
+    ));
+    assert_eq!(
+        single_value(
+            run(&mut session, "RETURN LOCAL_TIME('12:34:56')").expect("local time string")
+        ),
+        Value::LocalTime("12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        single_value(run(&mut session, "RETURN DATE('2026-05-07')").expect("date string")),
+        Value::Date("2026-05-07".parse().unwrap())
+    );
+}
+
+#[test]
 fn set_time_zone_shifts_current_timestamp_offset() {
     let graph = graph(7011);
     let mut session = Session::new(&graph);
