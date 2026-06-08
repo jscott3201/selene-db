@@ -85,6 +85,7 @@ fn string_arg(value: &Value, name: &'static str) -> Result<DbString, ProcedureEr
 fn parse_kind(value: DbString) -> Result<TypedIndexKind, ProcedureError> {
     let raw = value.as_str();
     match raw.to_ascii_lowercase().as_str() {
+        "bool" | "boolean" => Ok(TypedIndexKind::Bool),
         "i64" | "integer" | "int" => Ok(TypedIndexKind::I64),
         "f64" | "float" => Ok(TypedIndexKind::F64),
         "string" => Ok(TypedIndexKind::String),
@@ -92,7 +93,7 @@ fn parse_kind(value: DbString) -> Result<TypedIndexKind, ProcedureError> {
         "local_datetime" | "localdatetime" => Ok(TypedIndexKind::LocalDateTime),
         "uuid" => Ok(TypedIndexKind::Uuid),
         _ => Err(invalid_arg(format!(
-            "unknown index kind '{raw}'; expected one of i64, f64, string, date, local_datetime, uuid"
+            "unknown index kind '{raw}'; expected one of bool, i64, f64, string, date, local_datetime, uuid"
         ))),
     }
 }

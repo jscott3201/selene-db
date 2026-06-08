@@ -309,6 +309,36 @@ fn apply_node_create_admits_string_into_string_index() {
 }
 
 #[test]
+fn apply_node_update_moves_bool_index_key() {
+    let label = db_string("pi.bool.update.label").unwrap();
+    let active = db_string("pi.bool.update.active").unwrap();
+    let old_props = property_map([(active.clone(), Value::Bool(false))]);
+    let new_props = property_map([(active.clone(), Value::Bool(true))]);
+    let mut indexes = PropertyIndexMap::default();
+    indexes.insert((label.clone(), active.clone()), entry(TypedIndexKind::Bool));
+    apply_node_create(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        9,
+    )
+    .unwrap();
+
+    apply_node_update(
+        &mut indexes,
+        &LabelSet::single(label.clone()),
+        &old_props,
+        &LabelSet::single(label.clone()),
+        &new_props,
+        9,
+    )
+    .unwrap();
+
+    assert!(rows(&indexes, label.clone(), active.clone(), &Value::Bool(false)).is_empty());
+    assert!(rows(&indexes, label, active, &Value::Bool(true)).contains(9));
+}
+
+#[test]
 fn apply_node_update_moves_string_index_key() {
     // SET against an INDEXED column moves the row from the previous key to
     // the new one.

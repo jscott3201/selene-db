@@ -261,6 +261,25 @@ fn create_index_then_show_indexes_confirms_funnel_commit() {
 }
 
 #[test]
+fn create_index_accepts_boolean_kind_alias() {
+    let graph = graph(330_026);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL selene.create_index('Sensor', 'active', 'boolean')",
+            &registry,
+        )
+        .expect("boolean index creation executes");
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    assert_eq!(string_column(&table, "label"), vec!["Sensor"]);
+    assert_eq!(string_column(&table, "property"), vec!["active"]);
+    assert_eq!(string_column(&table, "kind"), vec!["bool"]);
+}
+
+#[test]
 fn drop_index_removes_the_index_through_the_funnel() {
     let graph = graph(330_007);
     let registry = BuiltinProcedureRegistry::new();

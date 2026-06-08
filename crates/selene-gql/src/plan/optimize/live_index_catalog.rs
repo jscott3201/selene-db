@@ -271,6 +271,7 @@ fn avg_bucket(cardinality: u64, distinct_keys: u64) -> u64 {
 /// Map a storage-level [`TypedIndexKind`] to the optimizer's [`IndexKind`].
 fn index_kind_from(kind: TypedIndexKind) -> IndexKind {
     match kind {
+        TypedIndexKind::Bool => IndexKind::Boolean,
         TypedIndexKind::I64 => IndexKind::Integer,
         TypedIndexKind::F64 => IndexKind::Float,
         TypedIndexKind::String => IndexKind::String,

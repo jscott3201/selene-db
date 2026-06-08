@@ -203,6 +203,7 @@ fn index_kind_for_property(
             span,
         })?;
     match property_def.value_type {
+        PropertyValueType::Bool => Ok(TypedIndexKind::Bool),
         PropertyValueType::Int => Ok(TypedIndexKind::I64),
         PropertyValueType::Float => Ok(TypedIndexKind::F64),
         PropertyValueType::String => Ok(TypedIndexKind::String),

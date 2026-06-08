@@ -312,7 +312,7 @@ fn schema_change_postcard_round_trip() {
         SchemaChange::PropertyIndexCreated {
             label: node_label.clone(),
             property: dbs("serde.schema.indexed"),
-            kind: SchemaPropertyIndexKind::I64,
+            kind: SchemaPropertyIndexKind::Bool,
         },
         SchemaChange::PropertyIndexDropped {
             label: node_label.clone(),
@@ -328,7 +328,7 @@ fn schema_change_postcard_round_trip() {
             label: node_label.clone(),
             properties: smallvec![dbs("serde.schema.indexed.a"), dbs("serde.schema.indexed.b")],
             kinds: smallvec![
-                SchemaPropertyIndexKind::I64,
+                SchemaPropertyIndexKind::Bool,
                 SchemaPropertyIndexKind::String
             ],
             name: Some(dbs("serde.schema.composite.index.name")),

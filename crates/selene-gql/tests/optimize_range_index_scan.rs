@@ -390,6 +390,35 @@ fn typed_parameter_with_compatible_declaration_fires() {
 }
 
 #[test]
+fn boolean_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("active"),
+        IndexKind::Boolean,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.active = $active :: BOOLEAN RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Boolean);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "active");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Boolean));
+}
+
+#[test]
 fn contradictory_combined_bounds_keep_residual_predicate() {
     // `age > 10 AND age < 5` is empty. When `bounds_for_property` would
     // produce a contradictory combined Range (lo=10, hi=5), it refuses the

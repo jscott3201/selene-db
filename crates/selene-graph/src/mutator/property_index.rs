@@ -89,6 +89,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
 const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
     match kind {
+        TypedIndexKind::Bool => SchemaPropertyIndexKind::Bool,
         TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
         TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
         TypedIndexKind::String => SchemaPropertyIndexKind::String,

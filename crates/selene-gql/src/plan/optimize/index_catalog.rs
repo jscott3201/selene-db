@@ -220,6 +220,8 @@ impl CompositeIndexHandle {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum IndexKind {
+    /// Boolean typed index.
+    Boolean,
     /// Signed integer typed index.
     Integer,
     /// Floating-point typed index.

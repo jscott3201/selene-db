@@ -372,6 +372,11 @@ pub(super) fn check_roaring_bitmap_density(snapshot: &SeleneGraph) -> CheckResul
 fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
     let mut entries = Vec::new();
     match index {
+        TypedIndex::Bool(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::Bool(*key), bitmap.iter());
+            }
+        }
         TypedIndex::I64(index) => {
             for (key, bitmap) in index {
                 push_index_entries(&mut entries, IndexedValue::I64(*key), bitmap.iter());
@@ -497,6 +502,7 @@ fn composite_property_values<'a>(
 
 #[derive(Clone, Debug)]
 enum IndexedValue {
+    Bool(bool),
     I64(i64),
     F64(NotNanF64),
     String(DbString),
@@ -507,6 +513,7 @@ enum IndexedValue {
 
 fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
     match (bucket, value) {
+        (IndexedValue::Bool(expected), Value::Bool(actual)) => expected == *actual,
         (IndexedValue::I64(expected), Value::Int(actual)) => expected == *actual,
         (IndexedValue::F64(expected), Value::Float(actual)) => {
             NotNanF64::new(*actual).is_ok_and(|actual| actual == expected)
@@ -523,6 +530,7 @@ fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
 
 fn component_matches_value(component: &CompositeKeyComponent, value: &Value) -> bool {
     match (component, value) {
+        (CompositeKeyComponent::Bool(expected), Value::Bool(actual)) => expected == actual,
         (CompositeKeyComponent::I64(expected), Value::Int(actual)) => expected == actual,
         (CompositeKeyComponent::F64(expected), Value::Float(actual)) => {
             NotNanF64::new(*actual).is_ok_and(|actual| actual == *expected)

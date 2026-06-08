@@ -287,6 +287,7 @@ fn check_value_index_kind(
     span: SourceSpan,
 ) -> Result<(), ExecutorError> {
     let matches = match expected {
+        IndexKind::Boolean => matches!(value, Value::Bool(_)),
         IndexKind::Integer => matches!(value, Value::Int(_)),
         IndexKind::Float => matches!(value, Value::Float(_)),
         IndexKind::String => matches!(value, Value::String(_)),
@@ -307,6 +308,7 @@ fn check_value_index_kind(
 
 fn index_kind_label(kind: IndexKind) -> &'static str {
     match kind {
+        IndexKind::Boolean => "BOOLEAN",
         IndexKind::Integer => "INTEGER",
         IndexKind::Float => "FLOAT",
         IndexKind::String => "STRING",

@@ -15,6 +15,8 @@ pub type CompositeKey = SmallVec<[CompositeKeyComponent; 4]>;
 /// One ordered component in a [`CompositeKey`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompositeKeyComponent {
+    /// Boolean component.
+    Bool(bool),
     /// Signed integer component.
     I64(i64),
     /// Floating-point component with NaN excluded.
@@ -33,6 +35,7 @@ impl Ord for CompositeKeyComponent {
     fn cmp(&self, rhs: &Self) -> std::cmp::Ordering {
         use CompositeKeyComponent as K;
         match (self, rhs) {
+            (K::Bool(lhs), K::Bool(rhs)) => lhs.cmp(rhs),
             (K::I64(lhs), K::I64(rhs)) => lhs.cmp(rhs),
             (K::F64(lhs), K::F64(rhs)) => lhs.cmp(rhs),
             (K::String(lhs), K::String(rhs)) => lhs.cmp(rhs),
@@ -54,6 +57,7 @@ impl Hash for CompositeKeyComponent {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.discriminant().hash(state);
         match self {
+            Self::Bool(value) => value.hash(state),
             Self::I64(value) => value.hash(state),
             Self::F64(value) => value.hash(state),
             Self::String(value) => value.hash(state),
@@ -67,12 +71,13 @@ impl Hash for CompositeKeyComponent {
 impl CompositeKeyComponent {
     const fn discriminant(&self) -> u8 {
         match self {
-            Self::I64(_) => 0,
-            Self::F64(_) => 1,
-            Self::String(_) => 2,
-            Self::Date(_) => 3,
-            Self::LocalDateTime(_) => 4,
-            Self::Uuid(_) => 5,
+            Self::Bool(_) => 0,
+            Self::I64(_) => 1,
+            Self::F64(_) => 2,
+            Self::String(_) => 3,
+            Self::Date(_) => 4,
+            Self::LocalDateTime(_) => 5,
+            Self::Uuid(_) => 6,
         }
     }
 }
@@ -258,6 +263,7 @@ fn component_from_value(
     value: &Value,
 ) -> Result<CompositeKeyComponent, TypedIndexValueError> {
     match (kind, value) {
+        (TypedIndexKind::Bool, Value::Bool(value)) => Ok(CompositeKeyComponent::Bool(*value)),
         (TypedIndexKind::I64, Value::Int(value)) => Ok(CompositeKeyComponent::I64(*value)),
         (TypedIndexKind::F64, Value::Float(value)) => NotNanF64::new(*value)
             .map(CompositeKeyComponent::F64)
@@ -298,6 +304,16 @@ mod tests {
             panic!("expected String component, got {component:?}");
         };
         assert_eq!(db_string.as_str(), probe);
+    }
+
+    #[test]
+    fn component_from_value_bool_kind() {
+        let value = Value::Bool(true);
+
+        let component =
+            component_from_value(TypedIndexKind::Bool, &value).expect("bool component coerces");
+
+        assert_eq!(component, CompositeKeyComponent::Bool(true));
     }
 
     #[test]

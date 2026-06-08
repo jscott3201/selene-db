@@ -454,8 +454,7 @@ impl SharedGraph {
     pub fn index_provider_by_tag(&self, tag: ProviderTag) -> Option<Arc<dyn IndexProvider>> {
         self.providers
             .iter()
-            .find(|provider| provider.provider_tag() == tag)
-            .map(Arc::clone)
+            .find_map(|provider| (provider.provider_tag() == tag).then(|| Arc::clone(provider)))
     }
 
     /// Borrow the fixed provider registry for executor procedure contexts.
@@ -866,6 +865,7 @@ impl SharedGraphBuilder {
 
 const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
     match kind {
+        TypedIndexKind::Bool => SchemaPropertyIndexKind::Bool,
         TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
         TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
         TypedIndexKind::String => SchemaPropertyIndexKind::String,

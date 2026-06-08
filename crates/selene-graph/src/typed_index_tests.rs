@@ -15,6 +15,7 @@ fn row_index(index: &TypedIndex, value: &Value) -> RoaringBitmap {
 #[test]
 fn kind_round_trips_for_each_variant() {
     for kind in [
+        TypedIndexKind::Bool,
         TypedIndexKind::I64,
         TypedIndexKind::F64,
         TypedIndexKind::String,
@@ -29,6 +30,7 @@ fn kind_round_trips_for_each_variant() {
 #[test]
 fn kind_rkyv_round_trips_for_each_variant() {
     for kind in [
+        TypedIndexKind::Bool,
         TypedIndexKind::I64,
         TypedIndexKind::F64,
         TypedIndexKind::String,
@@ -77,6 +79,7 @@ fn insert_remove_round_trips_for_each_kind() {
     let string = db_string("typed-index.string").unwrap();
     let uuid = uuid::Uuid::from_u128(7);
     let cases = [
+        (TypedIndexKind::Bool, Value::Bool(true)),
         (TypedIndexKind::I64, Value::Int(7)),
         (TypedIndexKind::F64, Value::Float(7.0)),
         (TypedIndexKind::String, Value::String(string)),
@@ -226,6 +229,20 @@ fn range_scan_honors_included_and_excluded_bounds() {
 }
 
 #[test]
+fn bool_range_scan_uses_false_then_true_order() {
+    let mut index = TypedIndex::new(TypedIndexKind::Bool);
+    index.insert(&Value::Bool(false), 0).unwrap();
+    index.insert(&Value::Bool(true), 1).unwrap();
+
+    let result = index
+        .lookup_range(Value::Bool(false)..Value::Bool(true))
+        .expect("bool range kind matches");
+
+    assert!(result.contains(0));
+    assert!(!result.contains(1), "exclusive high endpoint excluded");
+}
+
+#[test]
 fn prefix_scan_matches_string_keys_only() {
     let alpha = db_string("typed-index.prefix.alpha").unwrap();
     let beta = db_string("typed-index.beta").unwrap();
@@ -256,11 +273,12 @@ fn typed_key_string_returns_string_key() {
 
 #[test]
 fn typed_key_unindexable_value_rejects_kind_mismatch() {
-    // A value whose variant has no typed-key coercion (e.g. BOOLEAN) fails
+    // A value whose variant has no typed-key coercion (e.g. NULL) fails
     // KindMismatch for every index kind.
-    let value = Value::Bool(true);
+    let value = Value::Null;
 
     for kind in [
+        TypedIndexKind::Bool,
         TypedIndexKind::I64,
         TypedIndexKind::F64,
         TypedIndexKind::String,
@@ -272,7 +290,7 @@ fn typed_key_unindexable_value_rejects_kind_mismatch() {
         assert!(matches!(
             err,
             TypedIndexValueError::KindMismatch {
-                observed: "Bool",
+                observed: "Null",
                 ..
             }
         ));
