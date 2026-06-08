@@ -435,31 +435,36 @@ fn concat(
     )?;
     match (lhs, rhs) {
         (AnalyzedType::Dynamic, _) | (_, AnalyzedType::Dynamic) => Ok(AnalyzedType::Dynamic),
-        (AnalyzedType::Resolved(GqlType::String), AnalyzedType::Resolved(GqlType::String)) => {
-            Ok(AnalyzedType::Resolved(GqlType::String))
+        (AnalyzedType::Resolved(lhs_ty), AnalyzedType::Resolved(rhs_ty)) => {
+            concat_result_type(lhs_ty, rhs_ty)
+                .map(AnalyzedType::Resolved)
+                .ok_or_else(|| {
+                    type_mismatch(
+                        TypeMismatchContext::BinaryConcat { side: Side::Rhs },
+                        ExpectedType::Specific(lhs_ty.clone()),
+                        rhs_ty.clone(),
+                        rhs_span,
+                    )
+                })
         }
-        (AnalyzedType::Resolved(GqlType::Bytes), AnalyzedType::Resolved(GqlType::Bytes)) => {
-            Ok(AnalyzedType::Resolved(GqlType::Bytes))
+    }
+}
+
+fn concat_result_type(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
+    if matches!(lhs, GqlType::Null) {
+        return Some(rhs.clone());
+    }
+    if matches!(rhs, GqlType::Null) {
+        return Some(lhs.clone());
+    }
+    match (lhs, rhs) {
+        (GqlType::String, GqlType::String) => Some(GqlType::String),
+        (GqlType::Bytes, GqlType::Bytes) => Some(GqlType::Bytes),
+        (GqlType::Path, GqlType::Path) => Some(GqlType::Path),
+        (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
+            meet_gql_types(lhs_inner, rhs_inner).map(|inner| GqlType::List(Box::new(inner)))
         }
-        (
-            AnalyzedType::Resolved(GqlType::List(lhs_inner)),
-            AnalyzedType::Resolved(GqlType::List(rhs_inner)),
-        ) => meet_gql_types(lhs_inner, rhs_inner)
-            .map(|inner| AnalyzedType::Resolved(GqlType::List(Box::new(inner))))
-            .ok_or_else(|| {
-                type_mismatch(
-                    TypeMismatchContext::BinaryConcat { side: Side::Rhs },
-                    ExpectedType::Specific(GqlType::List(lhs_inner.clone())),
-                    GqlType::List(rhs_inner.clone()),
-                    rhs_span,
-                )
-            }),
-        (AnalyzedType::Resolved(lhs_ty), AnalyzedType::Resolved(rhs_ty)) => Err(type_mismatch(
-            TypeMismatchContext::BinaryConcat { side: Side::Rhs },
-            ExpectedType::Specific(lhs_ty.clone()),
-            rhs_ty.clone(),
-            rhs_span,
-        )),
+        _ => None,
     }
 }
 
@@ -572,12 +577,14 @@ fn expect_concat_operand(
 ) -> Result<(), AnalysisError> {
     match ty {
         AnalyzedType::Dynamic
+        | AnalyzedType::Resolved(GqlType::Null)
         | AnalyzedType::Resolved(GqlType::String)
         | AnalyzedType::Resolved(GqlType::Bytes)
-        | AnalyzedType::Resolved(GqlType::List(_)) => Ok(()),
+        | AnalyzedType::Resolved(GqlType::List(_))
+        | AnalyzedType::Resolved(GqlType::Path) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
-            ExpectedType::ListStringOrBytes,
+            ExpectedType::ListStringBytesOrPath,
             found.clone(),
             span,
         )),

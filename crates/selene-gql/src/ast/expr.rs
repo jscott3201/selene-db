@@ -384,7 +384,7 @@ pub enum BinaryOp {
     Or,
     /// Boolean exclusive-or.
     Xor,
-    /// String/list concatenation.
+    /// String/list/bytes/path concatenation.
     Concat,
     /// `CONTAINS`.
     Contains,

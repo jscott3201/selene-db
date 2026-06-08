@@ -49,6 +49,8 @@ pub enum DataExceptionSubclass {
     ListElementError,
     /// Invalid duration format (`22G0H`).
     InvalidDurationFormat,
+    /// Path data, right truncation (`22G10`).
+    PathDataRightTruncation,
     /// Incompatible temporal instant unit groups (`22G14`).
     IncompatibleTemporalInstantUnitGroups,
     /// Multiple assignments to a graph element property (`22G0M`).
@@ -94,6 +96,7 @@ impl DataExceptionSubclass {
             }
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
             Self::InvalidDurationFormat => GqlStatus::INVALID_DURATION_FORMAT,
+            Self::PathDataRightTruncation => GqlStatus::PATH_DATA_RIGHT_TRUNCATION,
             Self::IncompatibleTemporalInstantUnitGroups => {
                 GqlStatus::INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS
             }

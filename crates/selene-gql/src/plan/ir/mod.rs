@@ -713,6 +713,13 @@ impl ImplDefinedCaps {
         self
     }
 
+    /// Return a copy with a different maximum path length cap (ISO IL015).
+    #[must_use]
+    pub const fn with_max_path_length(mut self, max_path_length: u32) -> Self {
+        self.max_path_length = max_path_length;
+        self
+    }
+
     /// Return the configured set-operation key cap.
     #[must_use]
     pub const fn set_op_key_cap(&self) -> usize {

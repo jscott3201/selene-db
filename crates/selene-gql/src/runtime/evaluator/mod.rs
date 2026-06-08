@@ -1,15 +1,18 @@
 //! Residual-filter expression evaluator.
 //!
 //! BRIEF-116 factors evaluator behavior by expression family:
-//! [`binary_ops`] owns operators, [`predicates`] owns GQL predicate forms,
-//! [`scalar_fns`] owns the v1.1 closed scalar-function set, [`case`] owns
-//! searched `CASE`, [`collections`] owns list/record expressions, and
+//! [`binary_ops`] owns operators, [`boolean_ops`] owns boolean connectors,
+//! [`predicates`] owns GQL predicate forms, [`scalar_fns`] owns the v1.1 closed
+//! scalar-function set, [`case`] owns searched `CASE`, [`collections`] owns
+//! list/record expressions, [`concat_ops`] owns concatenation, and
 //! [`subquery`] owns planned expression subqueries.
 
 mod binary_ops;
+mod boolean_ops;
 mod case;
 mod cast;
 mod collections;
+mod concat_ops;
 mod diagnostics;
 mod duration_fns;
 mod duration_ops;
@@ -62,7 +65,13 @@ pub fn evaluate(
         ValueExpr::BinaryOp { op, lhs, rhs, span } => {
             let lhs = evaluate(lhs, binding, schema, ctx)?;
             let rhs = evaluate(rhs, binding, schema, ctx)?;
-            eval_binary(*op, lhs, rhs, *span)
+            eval_binary(
+                *op,
+                lhs,
+                rhs,
+                *span,
+                ctx.impl_defined_caps().max_path_length,
+            )
         }
         ValueExpr::UnaryOp { op, operand, span } => {
             let value = evaluate(operand, binding, schema, ctx)?;
