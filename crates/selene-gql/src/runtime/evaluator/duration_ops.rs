@@ -61,8 +61,8 @@ pub(super) fn eval_scaling(
     if !coefficient.is_finite() {
         return Err(overflow(span));
     }
-    let factor = match op {
-        BinaryOp::Mul => coefficient,
+    match op {
+        BinaryOp::Mul => {}
         BinaryOp::Div if coefficient == 0.0 => {
             return Err(ExecutorError::data_exception(
                 DataExceptionSubclass::DivisionByZero,
@@ -70,11 +70,8 @@ pub(super) fn eval_scaling(
                 span,
             ));
         }
-        BinaryOp::Div => 1.0 / coefficient,
+        BinaryOp::Div => {}
         _ => unreachable!("guarded by eval_scaling"),
-    };
-    if !factor.is_finite() {
-        return Err(overflow(span));
     }
 
     let Some(group) = unit_group(&duration) else {
@@ -86,8 +83,8 @@ pub(super) fn eval_scaling(
     };
     let duration = match group {
         DurationUnitGroup::Zero => Ok(Span::new()),
-        DurationUnitGroup::YearMonth => scale_year_month(&duration, factor, span),
-        DurationUnitGroup::DayTime => scale_day_time(&duration, factor, span),
+        DurationUnitGroup::YearMonth => scale_year_month(op, &duration, coefficient, span),
+        DurationUnitGroup::DayTime => scale_day_time(op, &duration, coefficient, span),
     }?;
     Ok(Value::Duration(Box::new(duration)))
 }
@@ -177,9 +174,35 @@ fn span_from_total_months(total: i64, span: SourceSpan) -> Result<Span, Executor
     })
 }
 
-fn scale_year_month(value: &Span, factor: f64, span: SourceSpan) -> Result<Span, ExecutorError> {
-    let total = total_year_months(value) as f64;
-    let scaled = total * factor;
+fn scale_year_month(
+    op: BinaryOp,
+    value: &Span,
+    coefficient: f64,
+    span: SourceSpan,
+) -> Result<Span, ExecutorError> {
+    let total = total_year_months(value);
+    if let Some(integer) = integral_coefficient(coefficient) {
+        let total = i128::from(total);
+        let scaled = match op {
+            BinaryOp::Mul => total.checked_mul(integer).ok_or_else(|| overflow(span))?,
+            BinaryOp::Div => {
+                if total % integer != 0 {
+                    return Err(ExecutorError::data_exception(
+                        DataExceptionSubclass::NumericValueOutOfRange,
+                        "duration scaling produced fractional months",
+                        span,
+                    ));
+                }
+                total.checked_div(integer).ok_or_else(|| overflow(span))?
+            }
+            _ => unreachable!("guarded by eval_scaling"),
+        };
+        let scaled = i64::try_from(scaled).map_err(|_| overflow(span))?;
+        return span_from_total_months(scaled, span);
+    }
+
+    let factor = scaling_factor_for_op(op, coefficient, span)?;
+    let scaled = (total as f64) * factor;
     if !scaled.is_finite() {
         return Err(overflow(span));
     }
@@ -199,6 +222,35 @@ fn scale_year_month(value: &Span, factor: f64, span: SourceSpan) -> Result<Span,
 
 fn is_effectively_integral(value: f64, truncated: f64) -> bool {
     (value - truncated).abs() <= f64::EPSILON * value.abs().max(1.0)
+}
+
+fn integral_coefficient(value: f64) -> Option<i128> {
+    if value.is_finite()
+        && value.fract() == 0.0
+        && value >= i128::MIN as f64
+        && value <= i128::MAX as f64
+    {
+        Some(value as i128)
+    } else {
+        None
+    }
+}
+
+fn scaling_factor_for_op(
+    op: BinaryOp,
+    coefficient: f64,
+    span: SourceSpan,
+) -> Result<f64, ExecutorError> {
+    let factor = match op {
+        BinaryOp::Mul => coefficient,
+        BinaryOp::Div => 1.0 / coefficient,
+        _ => unreachable!("guarded by eval_scaling"),
+    };
+    if factor.is_finite() {
+        Ok(factor)
+    } else {
+        Err(overflow(span))
+    }
 }
 
 fn day_time_arithmetic(
@@ -222,9 +274,22 @@ fn day_time_arithmetic(
     })
 }
 
-fn scale_day_time(value: &Span, factor: f64, span: SourceSpan) -> Result<Span, ExecutorError> {
+fn scale_day_time(
+    op: BinaryOp,
+    value: &Span,
+    coefficient: f64,
+    span: SourceSpan,
+) -> Result<Span, ExecutorError> {
     let total = total_day_time_nanos(value, span)?;
-    let scaled = scale_i128_by_f64(total, factor, span)?;
+    let scaled = if let Some(integer) = integral_coefficient(coefficient) {
+        match op {
+            BinaryOp::Mul => total.checked_mul(integer).ok_or_else(|| overflow(span))?,
+            BinaryOp::Div => total.checked_div(integer).ok_or_else(|| overflow(span))?,
+            _ => unreachable!("guarded by eval_scaling"),
+        }
+    } else {
+        scale_i128_by_f64(total, scaling_factor_for_op(op, coefficient, span)?, span)?
+    };
     span_from_total_nanos(scaled, span)
 }
 

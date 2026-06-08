@@ -266,6 +266,13 @@ fn duration_scaling_normalizes_same_unit_group_values() {
         Value::Duration(Box::new("PT1H30M".parse().unwrap()))
     );
     assert_eq!(
+        single_value(
+            "RETURN DURATION('P2DT3H4M5.000000006S') * 1 AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("P2DT3H4M5.000000006S".parse().unwrap()))
+    );
+    assert_eq!(
         single_value("RETURN DURATION('P1Y') * 0.5 AS value", "value"),
         Value::Duration(Box::new("P6M".parse().unwrap()))
     );
