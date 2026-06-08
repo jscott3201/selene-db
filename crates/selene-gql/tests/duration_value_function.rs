@@ -133,7 +133,7 @@ fn duration_between_returns_day_time_duration_for_temporal_instants() {
             "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-03')) AS value",
             "value"
         ),
-        Value::Duration(Box::new("PT172800S".parse().unwrap()))
+        Value::Duration(Box::new("P2D".parse().unwrap()))
     );
     assert_eq!(
         single_value(
@@ -141,14 +141,14 @@ fn duration_between_returns_day_time_duration_for_temporal_instants() {
              LOCAL_DATETIME('2026-01-02T01:01:01.000000002')) AS value",
             "value"
         ),
-        Value::Duration(Box::new("PT90061.000000002S".parse().unwrap()))
+        Value::Duration(Box::new("P1DT1H1M1.000000002S".parse().unwrap()))
     );
     assert_eq!(
         single_value(
             "RETURN DURATION_BETWEEN(LOCAL_TIME('12:00:00'), LOCAL_TIME('14:30:00')) AS value",
             "value"
         ),
-        Value::Duration(Box::new("PT9000S".parse().unwrap()))
+        Value::Duration(Box::new("PT2H30M".parse().unwrap()))
     );
     assert_eq!(
         single_value(
@@ -156,7 +156,15 @@ fn duration_between_returns_day_time_duration_for_temporal_instants() {
              ZONED_DATETIME('2026-01-01T01:00:00Z')) AS value",
             "value"
         ),
-        Value::Duration(Box::new("PT3600S".parse().unwrap()))
+        Value::Duration(Box::new("PT1H".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(ZONED_TIME('12:00:00Z'), \
+             ZONED_TIME('14:30:00Z')) AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("PT2H30M".parse().unwrap()))
     );
 }
 
@@ -167,7 +175,7 @@ fn duration_between_preserves_direction_and_null_semantics() {
             "RETURN DURATION_BETWEEN(DATE('2026-01-03'), DATE('2026-01-01')) AS value",
             "value"
         ),
-        Value::Duration(Box::new("-PT172800S".parse().unwrap()))
+        Value::Duration(Box::new("-P2D".parse().unwrap()))
     );
     assert_eq!(
         single_value(

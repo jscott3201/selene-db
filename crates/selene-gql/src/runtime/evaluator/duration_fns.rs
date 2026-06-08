@@ -3,6 +3,10 @@
 
 use std::collections::BTreeSet;
 
+use jiff::{
+    TimestampDifference, Unit, ZonedDifference,
+    civil::{DateDifference, DateTimeDifference, TimeDifference},
+};
 use selene_core::{DbString, Record, Value};
 
 use crate::{
@@ -51,15 +55,29 @@ pub(super) fn eval_duration_between_function(
         return Ok(Value::Null);
     }
     let duration = match (start, end) {
-        (Value::Date(start), Value::Date(end)) => end.duration_since(start),
-        (Value::LocalDateTime(start), Value::LocalDateTime(end)) => end.duration_since(start),
-        (Value::LocalTime(start), Value::LocalTime(end)) => end.duration_since(start),
-        (Value::ZonedDateTime(start), Value::ZonedDateTime(end)) => {
-            end.timestamp().duration_since(start.timestamp())
+        (Value::Date(start), Value::Date(end)) => {
+            start.until(DateDifference::new(end).largest(Unit::Day))
         }
-        (Value::ZonedTime(start), Value::ZonedTime(end)) => {
-            end.timestamp().duration_since(start.timestamp())
-        }
+        (Value::LocalDateTime(start), Value::LocalDateTime(end)) => start.until(
+            DateTimeDifference::new(end)
+                .smallest(Unit::Nanosecond)
+                .largest(Unit::Day),
+        ),
+        (Value::LocalTime(start), Value::LocalTime(end)) => start.until(
+            TimeDifference::new(end)
+                .smallest(Unit::Nanosecond)
+                .largest(Unit::Hour),
+        ),
+        (Value::ZonedDateTime(start), Value::ZonedDateTime(end)) => start.until(
+            ZonedDifference::new(&end)
+                .smallest(Unit::Nanosecond)
+                .largest(Unit::Day),
+        ),
+        (Value::ZonedTime(start), Value::ZonedTime(end)) => start.timestamp().until(
+            TimestampDifference::new(end.timestamp())
+                .smallest(Unit::Nanosecond)
+                .largest(Unit::Hour),
+        ),
         _ => {
             return Err(ExecutorError::data_exception(
                 DataExceptionSubclass::InvalidValueType,
@@ -68,7 +86,7 @@ pub(super) fn eval_duration_between_function(
             ));
         }
     };
-    jiff::Span::try_from(duration)
+    duration
         .map(|duration| Value::Duration(Box::new(duration)))
         .map_err(|error| {
             ExecutorError::data_exception(
