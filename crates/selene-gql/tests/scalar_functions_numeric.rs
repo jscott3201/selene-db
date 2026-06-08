@@ -289,6 +289,7 @@ fn scalar_functions_numeric_gf03_logarithmic_functions_return_expected_values() 
         ("RETURN log10(100) AS value", 2.0),
         ("RETURN exp(0) AS value", 1.0),
         ("RETURN exp(1) AS value", std::f64::consts::E),
+        ("RETURN power(2, 3) AS value", 8.0),
     ];
 
     for (source, expected) in cases {
