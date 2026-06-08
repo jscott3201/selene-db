@@ -209,6 +209,7 @@ fn index_kind_for_property(
         PropertyValueType::Int128 => Ok(TypedIndexKind::I128),
         PropertyValueType::Uint128 => Ok(TypedIndexKind::U128),
         PropertyValueType::Decimal => Ok(TypedIndexKind::Decimal),
+        PropertyValueType::Float32 => Ok(TypedIndexKind::F32),
         PropertyValueType::Float => Ok(TypedIndexKind::F64),
         PropertyValueType::String => Ok(TypedIndexKind::String),
         PropertyValueType::Date => Ok(TypedIndexKind::Date),

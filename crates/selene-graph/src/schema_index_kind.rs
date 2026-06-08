@@ -13,6 +13,7 @@ pub(crate) const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyInde
         TypedIndexKind::I128 => SchemaPropertyIndexKind::I128,
         TypedIndexKind::U128 => SchemaPropertyIndexKind::U128,
         TypedIndexKind::Decimal => SchemaPropertyIndexKind::Decimal,
+        TypedIndexKind::F32 => SchemaPropertyIndexKind::F32,
         TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
         TypedIndexKind::String => SchemaPropertyIndexKind::String,
         TypedIndexKind::Date => SchemaPropertyIndexKind::Date,

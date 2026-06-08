@@ -277,6 +277,7 @@ fn index_kind_from(kind: TypedIndexKind) -> IndexKind {
         TypedIndexKind::I128 => IndexKind::Integer128,
         TypedIndexKind::U128 => IndexKind::UnsignedInteger128,
         TypedIndexKind::Decimal => IndexKind::Decimal,
+        TypedIndexKind::F32 => IndexKind::Float32,
         TypedIndexKind::F64 => IndexKind::Float,
         TypedIndexKind::String => IndexKind::String,
         TypedIndexKind::Date => IndexKind::Date,

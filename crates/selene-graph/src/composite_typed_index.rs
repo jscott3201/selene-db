@@ -7,7 +7,7 @@ use roaring::RoaringBitmap;
 use selene_core::{DbString, Value};
 use smallvec::SmallVec;
 
-use crate::typed_index::{NotNanError, NotNanF64, TypedIndexKind, TypedIndexValueError};
+use crate::typed_index::{NotNanError, NotNanF32, NotNanF64, TypedIndexKind, TypedIndexValueError};
 
 /// Composite key used by a composite-property index.
 pub type CompositeKey = SmallVec<[CompositeKeyComponent; 4]>;
@@ -27,6 +27,8 @@ pub enum CompositeKeyComponent {
     U128(u128),
     /// Fixed-precision decimal component.
     Decimal(rust_decimal::Decimal),
+    /// 32-bit floating-point component with NaN excluded.
+    F32(NotNanF32),
     /// Floating-point component with NaN excluded.
     F64(NotNanF64),
     /// Database-string component.
@@ -49,6 +51,7 @@ impl Ord for CompositeKeyComponent {
             (K::I128(lhs), K::I128(rhs)) => lhs.cmp(rhs),
             (K::U128(lhs), K::U128(rhs)) => lhs.cmp(rhs),
             (K::Decimal(lhs), K::Decimal(rhs)) => lhs.cmp(rhs),
+            (K::F32(lhs), K::F32(rhs)) => lhs.cmp(rhs),
             (K::F64(lhs), K::F64(rhs)) => lhs.cmp(rhs),
             (K::String(lhs), K::String(rhs)) => lhs.cmp(rhs),
             (K::Date(lhs), K::Date(rhs)) => lhs.cmp(rhs),
@@ -75,6 +78,7 @@ impl Hash for CompositeKeyComponent {
             Self::I128(value) => value.hash(state),
             Self::U128(value) => value.hash(state),
             Self::Decimal(value) => value.hash(state),
+            Self::F32(value) => value.hash(state),
             Self::F64(value) => value.hash(state),
             Self::String(value) => value.hash(state),
             Self::Date(value) => value.hash(state),
@@ -93,11 +97,12 @@ impl CompositeKeyComponent {
             Self::I128(_) => 3,
             Self::U128(_) => 4,
             Self::Decimal(_) => 5,
-            Self::F64(_) => 6,
-            Self::String(_) => 7,
-            Self::Date(_) => 8,
-            Self::LocalDateTime(_) => 9,
-            Self::Uuid(_) => 10,
+            Self::F32(_) => 6,
+            Self::F64(_) => 7,
+            Self::String(_) => 8,
+            Self::Date(_) => 9,
+            Self::LocalDateTime(_) => 10,
+            Self::Uuid(_) => 11,
         }
     }
 }
@@ -291,6 +296,11 @@ fn component_from_value(
         (TypedIndexKind::Decimal, Value::Decimal(value)) => {
             Ok(CompositeKeyComponent::Decimal(*value))
         }
+        (TypedIndexKind::F32, Value::Float32(value)) => NotNanF32::new(*value)
+            .map(CompositeKeyComponent::F32)
+            .map_err(|NotNanError| TypedIndexValueError::NaN {
+                expected_kind: TypedIndexKind::F32,
+            }),
         (TypedIndexKind::F64, Value::Float(value)) => NotNanF64::new(*value)
             .map(CompositeKeyComponent::F64)
             .map_err(|NotNanError| TypedIndexValueError::NaN {
@@ -374,6 +384,19 @@ mod tests {
             component_from_value(TypedIndexKind::Decimal, &amount)
                 .expect("decimal component coerces"),
             CompositeKeyComponent::Decimal(decimal("42.25"))
+        );
+    }
+
+    #[test]
+    fn component_from_value_float32_kind() {
+        let value = Value::Float32(1.25_f32);
+
+        let component =
+            component_from_value(TypedIndexKind::F32, &value).expect("f32 component coerces");
+
+        assert_eq!(
+            component,
+            CompositeKeyComponent::F32(NotNanF32::new(1.25_f32).unwrap())
         );
     }
 

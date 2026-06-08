@@ -127,7 +127,7 @@ fn create_sensor_type(graph: &SharedGraph) {
         "CREATE NODE TYPE :Sensor \
          (ts :: INT64, reading_count :: UINT64, location :: STRING, value :: STRING, \
           active :: BOOLEAN, signed :: INT128, unsigned :: UINT128, amount :: DECIMAL, \
-          tags :: LIST<STRING>)",
+          score :: FLOAT32, tags :: LIST<STRING>)",
     )
     .unwrap();
 }
@@ -274,7 +274,7 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
     .unwrap();
     run_ddl(
         &graph,
-        "CREATE INDEX exact_numeric ON :Sensor(signed, unsigned, amount)",
+        "CREATE INDEX exact_numeric ON :Sensor(signed, unsigned, amount, score)",
     )
     .unwrap();
     let snapshot = graph.read();
@@ -294,7 +294,8 @@ fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
         == [
             TypedIndexKind::I128,
             TypedIndexKind::U128,
-            TypedIndexKind::Decimal
+            TypedIndexKind::Decimal,
+            TypedIndexKind::F32
         ]));
     drop(snapshot);
 

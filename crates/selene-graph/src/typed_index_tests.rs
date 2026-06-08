@@ -25,6 +25,7 @@ fn kind_round_trips_for_each_variant() {
         TypedIndexKind::I128,
         TypedIndexKind::U128,
         TypedIndexKind::Decimal,
+        TypedIndexKind::F32,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,
@@ -44,6 +45,7 @@ fn kind_rkyv_round_trips_for_each_variant() {
         TypedIndexKind::I128,
         TypedIndexKind::U128,
         TypedIndexKind::Decimal,
+        TypedIndexKind::F32,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,
@@ -59,11 +61,13 @@ fn kind_rkyv_round_trips_for_each_variant() {
 
 #[test]
 fn not_nan_rejects_nan() {
+    assert_eq!(NotNanF32::new(f32::NAN), Err(NotNanError));
     assert_eq!(NotNanF64::new(f64::NAN), Err(NotNanError));
 }
 
 #[test]
 fn not_nan_preserves_zero_sign_as_distinct_keys() {
+    assert_ne!(NotNanF32::new(0.0).unwrap(), NotNanF32::new(-0.0).unwrap());
     assert_ne!(NotNanF64::new(0.0).unwrap(), NotNanF64::new(-0.0).unwrap());
 }
 
@@ -72,12 +76,25 @@ fn not_nan_total_order_matches_total_cmp() {
     let values = [f64::NEG_INFINITY, -1.0, -0.0, 0.0, 1.0, f64::INFINITY]
         .map(|value| NotNanF64::new(value).unwrap());
     assert!(values.windows(2).all(|pair| pair[0] < pair[1]));
+
+    let values = [f32::NEG_INFINITY, -1.0, -0.0, 0.0, 1.0, f32::INFINITY]
+        .map(|value| NotNanF32::new(value).unwrap());
+    assert!(values.windows(2).all(|pair| pair[0] < pair[1]));
 }
 
 #[test]
 fn not_nan_hash_agrees_with_eq() {
     let lhs = NotNanF64::new(42.0).unwrap();
     let rhs = NotNanF64::new(42.0).unwrap();
+    let mut lhs_hasher = DefaultHasher::new();
+    let mut rhs_hasher = DefaultHasher::new();
+    lhs.hash(&mut lhs_hasher);
+    rhs.hash(&mut rhs_hasher);
+    assert_eq!(lhs, rhs);
+    assert_eq!(lhs_hasher.finish(), rhs_hasher.finish());
+
+    let lhs = NotNanF32::new(42.0).unwrap();
+    let rhs = NotNanF32::new(42.0).unwrap();
     let mut lhs_hasher = DefaultHasher::new();
     let mut rhs_hasher = DefaultHasher::new();
     lhs.hash(&mut lhs_hasher);
@@ -97,6 +114,7 @@ fn insert_remove_round_trips_for_each_kind() {
         (TypedIndexKind::I128, Value::Int128(i128::MIN + 7)),
         (TypedIndexKind::U128, Value::Uint128(u128::MAX - 7)),
         (TypedIndexKind::Decimal, Value::Decimal(decimal("7.50"))),
+        (TypedIndexKind::F32, Value::Float32(7.0_f32)),
         (TypedIndexKind::F64, Value::Float(7.0)),
         (TypedIndexKind::String, Value::String(string)),
         (TypedIndexKind::Date, Value::Date(date(2026, 5, 7))),
@@ -151,6 +169,15 @@ fn insert_errors_on_kind_mismatch() {
 
 #[test]
 fn float_insert_errors_on_nan() {
+    let mut index = TypedIndex::new(TypedIndexKind::F32);
+    let err = index.insert(&Value::Float32(f32::NAN), 0);
+    assert!(matches!(
+        err,
+        Err(TypedIndexValueError::NaN {
+            expected_kind: TypedIndexKind::F32
+        })
+    ));
+
     let mut index = TypedIndex::new(TypedIndexKind::F64);
     let err = index.insert(&Value::Float(f64::NAN), 0);
     assert!(matches!(
@@ -159,6 +186,23 @@ fn float_insert_errors_on_nan() {
             expected_kind: TypedIndexKind::F64
         })
     ));
+}
+
+#[test]
+fn f32_range_scan_uses_total_float_order() {
+    let mut index = TypedIndex::new(TypedIndexKind::F32);
+    for (row, value) in [(0, -1.0_f32), (1, -0.0_f32), (2, 0.0_f32), (3, 1.0_f32)] {
+        index.insert(&Value::Float32(value), row).unwrap();
+    }
+
+    let result = index
+        .lookup_range(Value::Float32(-0.0_f32)..=Value::Float32(1.0_f32))
+        .expect("f32 range kind matches");
+
+    assert!(!result.contains(0));
+    assert!(result.contains(1));
+    assert!(result.contains(2));
+    assert!(result.contains(3));
 }
 
 #[test]
@@ -382,6 +426,7 @@ fn typed_key_unindexable_value_rejects_kind_mismatch() {
         TypedIndexKind::I128,
         TypedIndexKind::U128,
         TypedIndexKind::Decimal,
+        TypedIndexKind::F32,
         TypedIndexKind::F64,
         TypedIndexKind::String,
         TypedIndexKind::Date,

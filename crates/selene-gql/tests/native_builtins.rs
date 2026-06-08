@@ -299,7 +299,7 @@ fn create_index_accepts_uint64_kind_alias() {
 }
 
 #[test]
-fn create_index_accepts_exact_numeric_kind_aliases() {
+fn create_index_accepts_numeric_kind_aliases() {
     let graph = graph(330_028);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -308,6 +308,7 @@ fn create_index_accepts_exact_numeric_kind_aliases() {
         ("signed", "int128"),
         ("unsigned", "uint128"),
         ("amount", "decimal"),
+        ("score", "float32"),
     ] {
         session
             .execute_source(
@@ -323,9 +324,11 @@ fn create_index_accepts_exact_numeric_kind_aliases() {
     assert!(properties.contains(&"signed".to_owned()));
     assert!(properties.contains(&"unsigned".to_owned()));
     assert!(properties.contains(&"amount".to_owned()));
+    assert!(properties.contains(&"score".to_owned()));
     assert!(kinds.contains(&"i128".to_owned()));
     assert!(kinds.contains(&"u128".to_owned()));
     assert!(kinds.contains(&"decimal".to_owned()));
+    assert!(kinds.contains(&"f32".to_owned()));
 }
 
 #[test]

@@ -365,6 +365,52 @@ fn float64_typed_param_against_float_index_fires() {
 }
 
 #[test]
+fn float32_typed_param_against_float32_index_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("score"),
+        IndexKind::Float32,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.score = $score :: FLOAT32 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Float32);
+    assert!(matches!(
+        bounds,
+        TypedIndexBounds::Equality(IndexKey::Parameter {
+            declared_type: Some(selene_gql::GqlType::Float32),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn generic_float_typed_param_against_float32_index_falls_back_to_linear() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("score"),
+        IndexKind::Float32,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.score = $score :: FLOAT RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(
+        matches!(scan.access, ScanAccess::Linear),
+        "expected Linear fallback for `$p :: FLOAT` against IndexKind::Float32, got {:?}",
+        scan.access
+    );
+    assert_eq!(scan.property_predicates.len(), 1);
+}
+
+#[test]
 fn typed_parameter_with_compatible_declaration_fires() {
     // BRIEF-154 §B.5 happy path: a STRING-typed parameter against a STRING
     // index admits at plan time.

@@ -14,14 +14,14 @@
 //! composite indexes.
 
 use std::borrow::Cow;
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::ops::{Bound, RangeBounds};
 
 use roaring::RoaringBitmap;
 use selene_core::{DbString, Value};
 use serde::{Deserialize, Serialize};
+
+pub use crate::typed_float_key::{NotNanError, NotNanF32, NotNanF64};
 
 /// Indexable value kind for v1.0 built-in node property indexes.
 #[derive(
@@ -50,6 +50,8 @@ pub enum TypedIndexKind {
     U128,
     /// Fixed-precision decimal. Backs [`Value::Decimal`].
     Decimal,
+    /// Finite `f32`. Backs [`Value::Float32`]; NaN is rejected.
+    F32,
     /// Finite `f64`. Backs [`Value::Float`]; NaN is rejected.
     F64,
     /// Database string. Backs [`Value::String`].
@@ -60,66 +62,6 @@ pub enum TypedIndexKind {
     LocalDateTime,
     /// UUID. Backs [`Value::Uuid`].
     Uuid,
-}
-
-/// Marker error returned when a raw `f64` cannot be admitted to [`NotNanF64`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("NaN is not an indexable f64 value")]
-pub struct NotNanError;
-
-/// `f64` wrapper with total ordering via [`f64::total_cmp`].
-///
-/// The constructor rejects NaN because NaN has no useful equality or range
-/// semantics for a graph property index. `+0.0` and `-0.0` remain distinct
-/// keys because equality and hashing use the underlying bit pattern.
-#[derive(Clone, Copy, Debug)]
-pub struct NotNanF64(f64);
-
-impl NotNanF64 {
-    /// Construct a finite-or-infinite ordered f64 key.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NotNanError`] when `value` is NaN.
-    pub fn new(value: f64) -> Result<Self, NotNanError> {
-        if value.is_nan() {
-            Err(NotNanError)
-        } else {
-            Ok(Self(value))
-        }
-    }
-
-    /// Return the underlying `f64`.
-    #[must_use]
-    pub const fn get(self) -> f64 {
-        self.0
-    }
-}
-
-impl PartialEq for NotNanF64 {
-    fn eq(&self, rhs: &Self) -> bool {
-        self.0.to_bits() == rhs.0.to_bits()
-    }
-}
-
-impl Eq for NotNanF64 {}
-
-impl PartialOrd for NotNanF64 {
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        Some(self.cmp(rhs))
-    }
-}
-
-impl Ord for NotNanF64 {
-    fn cmp(&self, rhs: &Self) -> Ordering {
-        self.0.total_cmp(&rhs.0)
-    }
-}
-
-impl Hash for NotNanF64 {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
-    }
 }
 
 /// Built-in per-`(label, property)` node value index.
@@ -137,6 +79,8 @@ pub enum TypedIndex {
     U128(BTreeMap<u128, RoaringBitmap>),
     /// Fixed-precision decimal index.
     Decimal(BTreeMap<rust_decimal::Decimal, RoaringBitmap>),
+    /// 32-bit floating-point index with NaN excluded.
+    F32(BTreeMap<NotNanF32, RoaringBitmap>),
     /// Floating-point index with NaN excluded.
     F64(BTreeMap<NotNanF64, RoaringBitmap>),
     /// Database-string index.
@@ -160,6 +104,7 @@ impl TypedIndex {
             TypedIndexKind::I128 => Self::I128(BTreeMap::new()),
             TypedIndexKind::U128 => Self::U128(BTreeMap::new()),
             TypedIndexKind::Decimal => Self::Decimal(BTreeMap::new()),
+            TypedIndexKind::F32 => Self::F32(BTreeMap::new()),
             TypedIndexKind::F64 => Self::F64(BTreeMap::new()),
             TypedIndexKind::String => Self::String(BTreeMap::new()),
             TypedIndexKind::Date => Self::Date(BTreeMap::new()),
@@ -178,6 +123,7 @@ impl TypedIndex {
             Self::I128(_) => TypedIndexKind::I128,
             Self::U128(_) => TypedIndexKind::U128,
             Self::Decimal(_) => TypedIndexKind::Decimal,
+            Self::F32(_) => TypedIndexKind::F32,
             Self::F64(_) => TypedIndexKind::F64,
             Self::String(_) => TypedIndexKind::String,
             Self::Date(_) => TypedIndexKind::Date,
@@ -201,6 +147,7 @@ impl TypedIndex {
             Self::I128(index) => cardinality(index),
             Self::U128(index) => cardinality(index),
             Self::Decimal(index) => cardinality(index),
+            Self::F32(index) => cardinality(index),
             Self::F64(index) => cardinality(index),
             Self::String(index) => cardinality(index),
             Self::Date(index) => cardinality(index),
@@ -225,6 +172,7 @@ impl TypedIndex {
             Self::I128(index) => index.len() as u64,
             Self::U128(index) => index.len() as u64,
             Self::Decimal(index) => index.len() as u64,
+            Self::F32(index) => index.len() as u64,
             Self::F64(index) => index.len() as u64,
             Self::String(index) => index.len() as u64,
             Self::Date(index) => index.len() as u64,
@@ -252,6 +200,7 @@ impl TypedIndex {
             (Self::I128(lhs), Self::I128(rhs)) => lhs == rhs,
             (Self::U128(lhs), Self::U128(rhs)) => lhs == rhs,
             (Self::Decimal(lhs), Self::Decimal(rhs)) => lhs == rhs,
+            (Self::F32(lhs), Self::F32(rhs)) => lhs == rhs,
             (Self::F64(lhs), Self::F64(rhs)) => lhs == rhs,
             (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
             (Self::Date(lhs), Self::Date(rhs)) => lhs == rhs,
@@ -275,6 +224,7 @@ impl TypedIndex {
             Self::I128(index) => index.values().any(RoaringBitmap::is_empty),
             Self::U128(index) => index.values().any(RoaringBitmap::is_empty),
             Self::Decimal(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::F32(index) => index.values().any(RoaringBitmap::is_empty),
             Self::F64(index) => index.values().any(RoaringBitmap::is_empty),
             Self::String(index) => index.values().any(RoaringBitmap::is_empty),
             Self::Date(index) => index.values().any(RoaringBitmap::is_empty),
@@ -308,6 +258,10 @@ impl TypedIndex {
                 Ok(())
             }
             (Self::Decimal(index), TypedKey::Decimal(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::F32(index), TypedKey::F32(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
             }
@@ -369,6 +323,10 @@ impl TypedIndex {
                 remove_row(index, &key, row);
                 Ok(())
             }
+            (Self::F32(index), TypedKey::F32(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
             (Self::F64(index), TypedKey::F64(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
@@ -414,6 +372,7 @@ impl TypedIndex {
             (Self::I128(index), TypedKey::I128(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::U128(index), TypedKey::U128(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::Decimal(index), TypedKey::Decimal(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::F32(index), TypedKey::F32(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::F64(index), TypedKey::F64(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::String(index), TypedKey::String(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::Date(index), TypedKey::Date(key)) => Some(cow_or_empty(index.get(&key))),
@@ -517,6 +476,21 @@ impl TypedIndex {
                 let end = bound_to_key(range.end_bound(), |value| {
                     match typed_key(value, TypedIndexKind::Decimal) {
                         Ok(TypedKey::Decimal(key)) => Some(key),
+                        _ => None,
+                    }
+                })?;
+                Some(range_union(index, &start, &end))
+            }
+            Self::F32(index) => {
+                let start = bound_to_key(range.start_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::F32) {
+                        Ok(TypedKey::F32(key)) => Some(key),
+                        _ => None,
+                    }
+                })?;
+                let end = bound_to_key(range.end_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::F32) {
+                        Ok(TypedKey::F32(key)) => Some(key),
                         _ => None,
                     }
                 })?;
@@ -666,6 +640,7 @@ impl TypedIndex {
             (Self::Decimal(_), Ok(TypedKey::Decimal(lhs)), Ok(TypedKey::Decimal(rhs))) => {
                 lhs == rhs
             }
+            (Self::F32(_), Ok(TypedKey::F32(lhs)), Ok(TypedKey::F32(rhs))) => lhs == rhs,
             (Self::F64(_), Ok(TypedKey::F64(lhs)), Ok(TypedKey::F64(rhs))) => lhs == rhs,
             (Self::String(_), Ok(TypedKey::String(lhs)), Ok(TypedKey::String(rhs))) => lhs == rhs,
             (Self::Date(_), Ok(TypedKey::Date(lhs)), Ok(TypedKey::Date(rhs))) => lhs == rhs,
@@ -724,6 +699,7 @@ enum TypedKey {
     I128(i128),
     U128(u128),
     Decimal(rust_decimal::Decimal),
+    F32(NotNanF32),
     F64(NotNanF64),
     String(DbString),
     Date(jiff::civil::Date),
@@ -740,6 +716,7 @@ impl TypedKey {
             Self::I128(_) => "Int128",
             Self::U128(_) => "Uint128",
             Self::Decimal(_) => "Decimal",
+            Self::F32(_) => "Float32",
             Self::F64(_) => "Float",
             Self::String(_) => "String",
             Self::Date(_) => "Date",
@@ -770,6 +747,11 @@ fn typed_key(
         Value::Int128(value) => Ok(TypedKey::I128(*value)),
         Value::Uint128(value) => Ok(TypedKey::U128(*value)),
         Value::Decimal(value) => Ok(TypedKey::Decimal(*value)),
+        Value::Float32(value) => NotNanF32::new(*value)
+            .map(TypedKey::F32)
+            .map_err(|NotNanError| TypedIndexValueError::NaN {
+                expected_kind: TypedIndexKind::F32,
+            }),
         Value::Float(value) => NotNanF64::new(*value)
             .map(TypedKey::F64)
             .map_err(|NotNanError| TypedIndexValueError::NaN {

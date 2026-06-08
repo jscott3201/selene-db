@@ -232,7 +232,9 @@ pub enum IndexKind {
     UnsignedInteger128,
     /// Decimal typed index.
     Decimal,
-    /// Floating-point typed index.
+    /// 32-bit floating-point typed index.
+    Float32,
+    /// 64-bit floating-point typed index.
     Float,
     /// String typed index.
     String,
