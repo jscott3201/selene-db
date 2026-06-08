@@ -375,8 +375,9 @@ pub(super) fn eval_function_call(
             )?,
             span,
         ),
-        // ISO/IEC 39075:2024 section 20.27 current-datetime functions. Each is
-        // niladic and reads the session time zone threaded into the context.
+        // ISO/IEC 39075:2024 section 20.27 current-datetime functions and
+        // constructor forms. Niladic paths read the session time zone threaded
+        // into the context; constructor paths may parse one string argument.
         "current_timestamp" => {
             eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
             temporal_fns::eval_current_timestamp(ctx)
