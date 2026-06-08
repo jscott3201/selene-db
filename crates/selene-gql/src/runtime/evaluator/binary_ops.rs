@@ -281,24 +281,6 @@ fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Executo
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
-    if let (Value::Int(lhs), Value::Int(rhs)) = (&lhs, &rhs)
-        && *rhs >= 0
-    {
-        let exponent = u32::try_from(*rhs).map_err(|_| {
-            data_exception_value_with(
-                DataExceptionSubclass::NumericValueOutOfRange,
-                "integer exponent is negative or too large",
-                span,
-            )
-        })?;
-        return lhs.checked_pow(exponent).map(Value::Int).ok_or_else(|| {
-            data_exception_value_with(
-                DataExceptionSubclass::NumericValueOutOfRange,
-                "integer exponentiation overflow",
-                span,
-            )
-        });
-    }
     let (Some(lhs), Some(rhs)) = (numeric_to_f64(&lhs), numeric_to_f64(&rhs)) else {
         return data_exception("power operands are not numeric", span);
     };

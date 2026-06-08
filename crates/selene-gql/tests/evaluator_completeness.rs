@@ -157,7 +157,10 @@ fn scalar_numeric_functions_dispatch() {
     );
     assert_eq!(column_values(&table, "mod_value"), vec![Value::Int(3)]);
     assert_eq!(column_values(&table, "sqrt_value"), vec![Value::Float(3.0)]);
-    assert_eq!(column_values(&table, "power_value"), vec![Value::Int(8)]);
+    assert_eq!(
+        column_values(&table, "power_value"),
+        vec![Value::Float(8.0)]
+    );
     assert_eq!(
         column_values(&table, "ceiling_value"),
         vec![Value::Float(2.0)]
@@ -303,10 +306,7 @@ fn binary_operator_completion_covers_power_xor_concat_and_string_predicates() {
 fn power_negative_integer_exponent_uses_float_path() {
     assert_float_near(single_value("RETURN power(2, -1) AS value", "value"), 0.5);
     assert_float_near(single_value("RETURN power(10, -2) AS value", "value"), 0.01);
-    assert_eq!(
-        single_value("RETURN power(2, 3) AS value", "value"),
-        Value::Int(8)
-    );
+    assert_float_near(single_value("RETURN power(2, 3) AS value", "value"), 8.0);
 
     let err = execute_read_result("RETURN power(0, -1) AS value")
         .expect_err("zero raised to a negative exponent is invalid");

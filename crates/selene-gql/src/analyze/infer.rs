@@ -68,7 +68,11 @@ pub(crate) fn binary(
                 arithmetic(op, lhs, lhs_span, rhs, rhs_span)
             }
         }
-        BinaryOp::Mod | BinaryOp::Power => arithmetic(op, lhs, lhs_span, rhs, rhs_span),
+        BinaryOp::Mod => arithmetic(op, lhs, lhs_span, rhs, rhs_span),
+        BinaryOp::Power => arithmetic(op, lhs, lhs_span, rhs, rhs_span).map(|ty| match ty {
+            AnalyzedType::Dynamic => AnalyzedType::Dynamic,
+            AnalyzedType::Resolved(_) => AnalyzedType::Resolved(GqlType::Float),
+        }),
         BinaryOp::Eq | BinaryOp::Ne => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             comparison(op, lhs, lhs_span, rhs, rhs_span)
