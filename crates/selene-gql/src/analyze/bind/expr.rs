@@ -98,6 +98,11 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 bind_many(ctx, args)?;
                 AnalyzedType::Dynamic
             }
+            ValueExpr::DurationBetween { start, end, .. } => {
+                bind_value_expr(ctx, start)?;
+                bind_value_expr(ctx, end)?;
+                AnalyzedType::Resolved(crate::GqlType::Duration)
+            }
             ValueExpr::Normalize { source, .. } => {
                 let source_id = bind_value_expr(ctx, source)?;
                 infer::normalize(ctx.expr_type(source_id), source.span())?
@@ -258,6 +263,10 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             ValueExpr::UnaryOp { operand, .. } => stack.push((operand, next)),
             ValueExpr::FunctionCall { args, .. } => {
                 stack.extend(args.iter().rev().map(|arg| (arg, next)));
+            }
+            ValueExpr::DurationBetween { start, end, .. } => {
+                stack.push((end, next));
+                stack.push((start, next));
             }
             ValueExpr::IsCheck { operand, kind, .. } => {
                 stack.push((operand, next));
@@ -459,6 +468,10 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
                 if let ValueExpr::InList { operand, .. } = expr {
                     stack.push((operand, depth));
                 }
+            }
+            ValueExpr::DurationBetween { start, end, .. } => {
+                stack.push((end, depth));
+                stack.push((start, depth));
             }
             ValueExpr::InListExpression { operand, list, .. } => {
                 stack.push((list, depth));

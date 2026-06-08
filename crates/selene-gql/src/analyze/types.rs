@@ -291,6 +291,18 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             distinct.hash(state);
             span.hash(state);
         }
+        ValueExpr::DurationBetween {
+            start,
+            end,
+            qualifier,
+            span,
+        } => {
+            24u8.hash(state);
+            hash_child(start, state, memo);
+            hash_child(end, state, memo);
+            qualifier.hash(state);
+            span.hash(state);
+        }
         ValueExpr::Normalize { source, form, span } => {
             22u8.hash(state);
             hash_child(source, state, memo);

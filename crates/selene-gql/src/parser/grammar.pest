@@ -587,6 +587,7 @@ primary = {
   | aggregate_expr
   | literal
   | current_datetime_function
+  | duration_between_expr
   | function_call
   | paren_expr
   | typed_param_ref
@@ -684,6 +685,17 @@ current_time_kw            = @{ ^"CURRENT_TIME" ~ !(LETTER | NUMBER | "_") }
 current_timestamp_kw       = @{ ^"CURRENT_TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
 local_timestamp_kw         = @{ ^"LOCAL_TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
 local_time_kw              = @{ ^"LOCAL_TIME" ~ !(LETTER | NUMBER | "_") }
+
+// ISO/IEC 39075:2024 §20.28 datetime subtraction. This must be tried before
+// generic `function_call` so the trailing temporal duration qualifier is part
+// of the expression instead of leftover input.
+duration_between_expr = {
+    duration_between_kw ~ "(" ~ expr ~ "," ~ expr ~ ")" ~ temporal_duration_qualifier?
+}
+temporal_duration_qualifier = { year_to_month_qualifier | day_to_second_qualifier }
+year_to_month_qualifier = { ^"YEAR" ~ ^"TO" ~ ^"MONTH" }
+day_to_second_qualifier = { ^"DAY" ~ ^"TO" ~ ^"SECOND" }
+duration_between_kw = @{ ^"DURATION_BETWEEN" ~ !(LETTER | NUMBER | "_") }
 
 function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }
 elements_function = { elements_synonym ~ "(" ~ arg_list? ~ ")" }

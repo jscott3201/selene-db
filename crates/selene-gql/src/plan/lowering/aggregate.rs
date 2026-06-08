@@ -169,6 +169,10 @@ fn collect_aggregates(
                 collect_aggregates(arg, analyzed, rewrite)?;
             }
         }
+        ValueExpr::DurationBetween { start, end, .. } => {
+            collect_aggregates(start, analyzed, rewrite)?;
+            collect_aggregates(end, analyzed, rewrite)?;
+        }
         ValueExpr::IsCheck { operand, kind, .. } => {
             collect_aggregates(operand, analyzed, rewrite)?;
             collect_is_check_aggregates(kind, analyzed, rewrite)?;
@@ -334,6 +338,17 @@ fn rewrite_aggregate_refs(
             args: rewrite_exprs(args, aggregate_names, analyzed),
             star: *star,
             distinct: *distinct,
+            span: *span,
+        },
+        ValueExpr::DurationBetween {
+            start,
+            end,
+            qualifier,
+            span,
+        } => ValueExpr::DurationBetween {
+            start: Box::new(rewrite_aggregate_refs(start, aggregate_names, analyzed)),
+            end: Box::new(rewrite_aggregate_refs(end, aggregate_names, analyzed)),
+            qualifier: *qualifier,
             span: *span,
         },
         ValueExpr::IsCheck {

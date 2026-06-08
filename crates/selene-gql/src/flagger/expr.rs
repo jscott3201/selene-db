@@ -98,6 +98,7 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
                 record_feature(uses, feature_id, *span);
             }
         }
+        ValueExpr::DurationBetween { span, .. } => record_feature(uses, FeatureId::GV41, *span),
         ValueExpr::Trim {
             character,
             source,

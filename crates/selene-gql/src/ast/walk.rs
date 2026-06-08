@@ -66,6 +66,10 @@ impl ValueExpr {
                     f(arg);
                 }
             }
+            Self::DurationBetween { start, end, .. } => {
+                f(start);
+                f(end);
+            }
             Self::Normalize { source, .. } => f(source),
             Self::Trim {
                 character, source, ..
@@ -146,6 +150,10 @@ impl ValueExpr {
                     f(arg);
                 }
             }
+            Self::DurationBetween { start, end, .. } => {
+                f(start);
+                f(end);
+            }
             Self::Normalize { source, .. } => f(source),
             Self::Trim {
                 character, source, ..
@@ -211,6 +219,7 @@ impl ValueExpr {
             | Self::BinaryOp { span, .. }
             | Self::UnaryOp { span, .. }
             | Self::FunctionCall { span, .. }
+            | Self::DurationBetween { span, .. }
             | Self::IsCheck { span, .. }
             | Self::InList { span, .. }
             | Self::InListExpression { span, .. }

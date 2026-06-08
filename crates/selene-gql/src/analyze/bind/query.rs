@@ -330,6 +330,10 @@ fn validate_percentile_independent_refs_in_expr(
             | ValueExpr::FunctionCall { args: items, .. } => {
                 stack.extend(items.iter());
             }
+            ValueExpr::DurationBetween { start, end, .. } => {
+                stack.push(end);
+                stack.push(start);
+            }
             ValueExpr::RecordLiteral { fields, .. } => {
                 stack.extend(fields.iter().map(|(_, field)| field));
             }

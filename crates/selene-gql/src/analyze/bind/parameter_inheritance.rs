@@ -285,6 +285,10 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
             | ValueExpr::AllDifferent { items, .. }
             | ValueExpr::Same { items, .. }
             | ValueExpr::FunctionCall { args: items, .. } => stack.extend(items.iter_mut()),
+            ValueExpr::DurationBetween { start, end, .. } => {
+                stack.push(end.as_mut());
+                stack.push(start.as_mut());
+            }
             ValueExpr::RecordLiteral { fields, .. } => {
                 stack.extend(fields.iter_mut().map(|(_, value)| value));
             }

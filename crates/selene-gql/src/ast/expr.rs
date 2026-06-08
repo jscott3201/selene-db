@@ -102,6 +102,17 @@ pub enum ValueExpr {
         /// Source span of the call.
         span: SourceSpan,
     },
+    /// `DURATION_BETWEEN(<start>, <end>) [<temporal duration qualifier>]`.
+    DurationBetween {
+        /// Start temporal value expression.
+        start: Box<ValueExpr>,
+        /// End temporal value expression.
+        end: Box<ValueExpr>,
+        /// Requested duration unit group.
+        qualifier: TemporalDurationQualifier,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
     /// `IS` predicate family.
     IsCheck {
         /// Checked operand.
@@ -238,6 +249,15 @@ pub enum ValueExpr {
     },
 }
 
+/// Temporal duration qualifier for `DURATION_BETWEEN`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum TemporalDurationQualifier {
+    /// `YEAR TO MONTH`.
+    YearToMonth,
+    /// `DAY TO SECOND`.
+    DayToSecond,
+}
+
 impl Drop for ValueExpr {
     /// Tear this expression down iteratively rather than with the compiler's
     /// derived recursive destructor.
@@ -302,6 +322,7 @@ impl ValueExpr {
             | Self::BinaryOp { span, .. }
             | Self::UnaryOp { span, .. }
             | Self::FunctionCall { span, .. }
+            | Self::DurationBetween { span, .. }
             | Self::IsCheck { span, .. }
             | Self::InList { span, .. }
             | Self::InListExpression { span, .. }

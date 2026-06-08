@@ -109,6 +109,19 @@ pub fn evaluate(
             distinct,
             span,
         } => eval_function_call(name, args, (*star, *distinct), *span, binding, schema, ctx),
+        ValueExpr::DurationBetween {
+            start,
+            end,
+            qualifier,
+            span,
+        } => duration_fns::eval_duration_between_function(
+            vec![
+                evaluate(start, binding, schema, ctx)?,
+                evaluate(end, binding, schema, ctx)?,
+            ],
+            *qualifier,
+            *span,
+        ),
         ValueExpr::Normalize { source, form, span } => {
             let value = evaluate(source, binding, schema, ctx)?;
             string_fns::eval_normalize(value, *form, *span)

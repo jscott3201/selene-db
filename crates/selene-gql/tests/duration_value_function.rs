@@ -174,6 +174,42 @@ fn duration_between_returns_day_time_duration_for_temporal_instants() {
         ),
         Value::Duration(Box::new("PT2H30M".parse().unwrap()))
     );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(LOCAL_TIME('12:00:00'), LOCAL_TIME('14:30:00')) \
+             DAY TO SECOND AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("PT2H30M".parse().unwrap()))
+    );
+}
+
+#[test]
+fn duration_between_year_to_month_returns_calendar_duration() {
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-03-01')) \
+             YEAR TO MONTH AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("P2M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(DATE('2026-03-01'), DATE('2026-01-01')) \
+             YEAR TO MONTH AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("-P2M".parse().unwrap()))
+    );
+    assert_eq!(
+        single_value(
+            "RETURN DURATION_BETWEEN(LOCAL_DATETIME('2026-01-01T00:00:00'), \
+             LOCAL_DATETIME('2027-03-01T00:00:00')) YEAR TO MONTH AS value",
+            "value"
+        ),
+        Value::Duration(Box::new("P1Y2M".parse().unwrap()))
+    );
 }
 
 #[test]
@@ -331,6 +367,21 @@ fn duration_between_rejects_non_temporal_and_mixed_temporal_families() {
         )
         .as_str(),
         "22G03"
+    );
+    assert_eq!(
+        status_for(
+            "RETURN DURATION_BETWEEN(LOCAL_TIME('12:00:00'), LOCAL_TIME('14:00:00')) \
+             YEAR TO MONTH AS value"
+        )
+        .as_str(),
+        "22G03"
+    );
+    assert_eq!(
+        status_for(
+            "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-02'), \
+             'DAY TO SECOND') AS value"
+        ),
+        GqlStatus::DATATYPE_MISMATCH
     );
 }
 

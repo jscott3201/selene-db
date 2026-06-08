@@ -3,7 +3,7 @@
 use std::fmt::{self, Write as _};
 
 use super::super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
-use super::super::{IntegerLiteralKind, UnaryOp, ValueExpr};
+use super::super::{IntegerLiteralKind, TemporalDurationQualifier, UnaryOp, ValueExpr};
 use super::is_check::{fmt_is_check, fmt_normal_form};
 use super::keywords::fmt_binary;
 use super::{cast, fmt_match, fmt_parameter, fmt_pipeline, trim};
@@ -139,6 +139,19 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             }
             out.push(')');
         }
+        ValueExpr::DurationBetween {
+            start,
+            end,
+            qualifier,
+            ..
+        } => {
+            out.push_str("DURATION_BETWEEN(");
+            fmt_expr(out, start)?;
+            out.push_str(", ");
+            fmt_expr(out, end)?;
+            out.push_str(") ");
+            out.push_str(fmt_temporal_duration_qualifier(*qualifier));
+        }
         ValueExpr::Normalize { source, form, .. } => {
             out.push_str("NORMALIZE(");
             fmt_expr(out, source)?;
@@ -255,6 +268,13 @@ fn fmt_radix_integer(out: &mut String, value: i64, kind: IntegerLiteralKind) -> 
         IntegerLiteralKind::Hexadecimal => write!(out, "{sign}0x{magnitude:X}"),
         IntegerLiteralKind::Octal => write!(out, "{sign}0o{magnitude:o}"),
         IntegerLiteralKind::Binary => write!(out, "{sign}0b{magnitude:b}"),
+    }
+}
+
+fn fmt_temporal_duration_qualifier(qualifier: TemporalDurationQualifier) -> &'static str {
+    match qualifier {
+        TemporalDurationQualifier::YearToMonth => "YEAR TO MONTH",
+        TemporalDurationQualifier::DayToSecond => "DAY TO SECOND",
     }
 }
 

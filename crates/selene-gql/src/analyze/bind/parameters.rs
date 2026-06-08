@@ -325,6 +325,10 @@ fn collect_value_parameter_declarations(
             | ValueExpr::AllDifferent { items, .. }
             | ValueExpr::Same { items, .. }
             | ValueExpr::FunctionCall { args: items, .. } => stack.extend(items.iter()),
+            ValueExpr::DurationBetween { start, end, .. } => {
+                stack.push(end);
+                stack.push(start);
+            }
             ValueExpr::RecordLiteral { fields, .. } => {
                 stack.extend(fields.iter().map(|(_, value)| value));
             }

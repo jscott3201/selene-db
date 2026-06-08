@@ -7,7 +7,7 @@
 use selene_core::{DbString, Value};
 
 use crate::{
-    BinaryOp, NonEmpty, SourceSpan, ValueExpr,
+    BinaryOp, NonEmpty, SourceSpan, TemporalDurationQualifier, ValueExpr,
     runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
@@ -187,6 +187,7 @@ pub(super) fn eval_function_call(
         ),
         "duration_between" => duration_fns::eval_duration_between_function(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            TemporalDurationQualifier::DayToSecond,
             span,
         ),
         "char_length" | "character_length" => string_fns::eval_length(
