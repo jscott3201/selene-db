@@ -53,6 +53,7 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
             DataExceptionSubclass::InvalidDurationFunctionFieldName,
             "22G07",
         ),
+        (DataExceptionSubclass::ListDataRightTruncation, "22G0B"),
         (DataExceptionSubclass::ListElementError, "22G0C"),
         (DataExceptionSubclass::InvalidDurationFormat, "22G0H"),
         (DataExceptionSubclass::PathDataRightTruncation, "22G10"),

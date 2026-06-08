@@ -5,17 +5,36 @@ use std::sync::Arc;
 use selene_core::{NodeId, Path, Value};
 
 use crate::{
-    SourceSpan,
+    ImplDefinedCaps, SourceSpan,
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
 use super::diagnostics::{data_exception, data_exception_value, data_exception_with, string_value};
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ConcatCaps {
+    max_list_length: u32,
+    max_path_length: u32,
+}
+
+impl ConcatCaps {
+    pub(super) const fn from_impl_defined(caps: &ImplDefinedCaps) -> Self {
+        Self {
+            max_list_length: caps.max_list_length,
+            max_path_length: caps.max_path_length,
+        }
+    }
+
+    fn max_list_length(self) -> usize {
+        usize::try_from(self.max_list_length).unwrap_or(usize::MAX)
+    }
+}
+
 pub(super) fn eval_concat(
     lhs: Value,
     rhs: Value,
     span: SourceSpan,
-    max_path_length: u32,
+    caps: ConcatCaps,
 ) -> Result<Value, ExecutorError> {
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
@@ -32,10 +51,26 @@ pub(super) fn eval_concat(
             Ok(Value::Bytes(Arc::<[u8]>::from(value.into_boxed_slice())))
         }
         (Value::List(mut lhs), Value::List(rhs)) => {
+            let total_len = lhs.len().checked_add(rhs.len()).ok_or_else(|| {
+                ExecutorError::data_exception(
+                    DataExceptionSubclass::ListDataRightTruncation,
+                    "list concatenation length overflows",
+                    span,
+                )
+            })?;
+            if total_len > caps.max_list_length() {
+                return data_exception_with(
+                    DataExceptionSubclass::ListDataRightTruncation,
+                    "list concatenation exceeds the configured maximum list cardinality",
+                    span,
+                );
+            }
             lhs.extend(rhs);
             Ok(Value::List(lhs))
         }
-        (Value::Path(lhs), Value::Path(rhs)) => concat_paths(*lhs, *rhs, span, max_path_length),
+        (Value::Path(lhs), Value::Path(rhs)) => {
+            concat_paths(*lhs, *rhs, span, caps.max_path_length)
+        }
         _ => data_exception(
             "concatenation operands must both be strings, byte strings, lists, or paths",
             span,

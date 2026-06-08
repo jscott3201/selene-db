@@ -645,6 +645,8 @@ pub struct ImplDefinedCaps {
     pub max_optimizer_iterations: u32,
     /// Default maximum path length for future path execution.
     pub max_path_length: u32,
+    /// Maximum list cardinality for constructed list values.
+    pub max_list_length: u32,
     /// Maximum number of expand nodes WCO cycle detection will inspect.
     pub max_wco_traversal_nodes: u32,
     /// Maximum unique row keys a set operation may hold while counting rows.
@@ -680,6 +682,9 @@ impl ImplDefinedCaps {
     /// Default maximum distinct groups a `GROUP BY` may materialize.
     pub const DEFAULT_GROUP_BY_KEY_CAP: usize = 1_000_000;
 
+    /// Default maximum cardinality for constructed list values.
+    pub const DEFAULT_MAX_LIST_LENGTH: u32 = 1_000_000;
+
     /// The default implementation-defined caps as a `const`.
     ///
     /// Const-constructible so `const fn` callers (e.g. `Session::new`) can seed
@@ -689,6 +694,7 @@ impl ImplDefinedCaps {
         max_quantifier: 100,
         max_optimizer_iterations: 8,
         max_path_length: 32,
+        max_list_length: Self::DEFAULT_MAX_LIST_LENGTH,
         max_wco_traversal_nodes: 64,
         set_op_key_cap: NonZeroUsize::new(Self::DEFAULT_SET_OP_KEY_CAP)
             .expect("default set-op key cap is non-zero"),
@@ -717,6 +723,13 @@ impl ImplDefinedCaps {
     #[must_use]
     pub const fn with_max_path_length(mut self, max_path_length: u32) -> Self {
         self.max_path_length = max_path_length;
+        self
+    }
+
+    /// Return a copy with a different maximum list cardinality cap (ISO IL015).
+    #[must_use]
+    pub const fn with_max_list_length(mut self, max_list_length: u32) -> Self {
+        self.max_list_length = max_list_length;
         self
     }
 

@@ -11,7 +11,10 @@ use crate::{
     },
 };
 
-use super::{boolean_ops, concat_ops::eval_concat};
+use super::{
+    boolean_ops,
+    concat_ops::{ConcatCaps, eval_concat},
+};
 
 pub(super) use super::diagnostics::{
     data_exception, data_exception_value, data_exception_value_with, data_exception_with,
@@ -23,7 +26,7 @@ pub(super) fn eval_binary(
     lhs: Value,
     rhs: Value,
     span: SourceSpan,
-    max_path_length: u32,
+    concat_caps: ConcatCaps,
 ) -> Result<Value, ExecutorError> {
     match op {
         BinaryOp::And => boolean_ops::eval_and(lhs, rhs, span),
@@ -37,7 +40,7 @@ pub(super) fn eval_binary(
         }
         BinaryOp::Power => eval_power(lhs, rhs, span),
         BinaryOp::Xor => boolean_ops::eval_xor(lhs, rhs, span),
-        BinaryOp::Concat => eval_concat(lhs, rhs, span, max_path_length),
+        BinaryOp::Concat => eval_concat(lhs, rhs, span, concat_caps),
         BinaryOp::Contains => eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.contains(rhs)),
         BinaryOp::StartsWith => {
             eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.starts_with(rhs))

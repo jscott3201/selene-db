@@ -31,7 +31,7 @@ use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
     Literal, SourceSpan, ValueExpr,
-    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
+    runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 // Used only by `evaluate_for_test` below, which is itself gated to the
 // test/`test-harness` surface (D21). Without the matching gate these imports
@@ -43,6 +43,7 @@ use self::{
     binary_ops::{eval_binary, eval_in_list, eval_in_list_expression, eval_unary},
     case::eval_case,
     collections::{eval_list_access, eval_record_literal, record_field},
+    concat_ops::ConcatCaps,
     predicates::{eval_all_different, eval_is_check, eval_property_exists, eval_same},
     scalar_fns::eval_function_call,
     subquery::{eval_count_subquery, eval_exists, eval_value_subquery},
@@ -70,7 +71,7 @@ pub fn evaluate(
                 lhs,
                 rhs,
                 *span,
-                ctx.impl_defined_caps().max_path_length,
+                ConcatCaps::from_impl_defined(ctx.impl_defined_caps()),
             )
         }
         ValueExpr::UnaryOp { op, operand, span } => {
@@ -102,11 +103,9 @@ pub fn evaluate(
             let list = evaluate(list, binding, schema, ctx)?;
             eval_in_list_expression(value, list, *negated, *span)
         }
-        ValueExpr::ListLiteral { items, .. } => items
-            .iter()
-            .map(|item| evaluate(item, binding, schema, ctx))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Value::List),
+        ValueExpr::ListLiteral { items, span } => {
+            eval_list_literal(items, *span, binding, schema, ctx)
+        }
         ValueExpr::PathConstructor { elements, span } => {
             path_constructor::eval_path_constructor(elements, *span, binding, schema, ctx)
         }
@@ -197,6 +196,29 @@ pub fn evaluate(
             cast::eval_cast(evaluated, target_type, *span, ctx)
         }
     }
+}
+
+fn eval_list_literal(
+    items: &[ValueExpr],
+    span: SourceSpan,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Value, ExecutorError> {
+    let max_list_length =
+        usize::try_from(ctx.impl_defined_caps().max_list_length).unwrap_or(usize::MAX);
+    if items.len() > max_list_length {
+        return Err(ExecutorError::data_exception(
+            DataExceptionSubclass::ListDataRightTruncation,
+            "list literal exceeds the configured maximum list cardinality",
+            span,
+        ));
+    }
+    items
+        .iter()
+        .map(|item| evaluate(item, binding, schema, ctx))
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::List)
 }
 
 /// Evaluate an expression without a plan-level subquery registry.

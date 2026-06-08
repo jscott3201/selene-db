@@ -218,7 +218,8 @@ impl<'g> Session<'g> {
     /// Set the implementation-defined planning/runtime caps for subsequent
     /// statements (ISO IL013/IL015/IL018 limit surfaces — e.g.
     /// [`max_quantifier`](ImplDefinedCaps::max_quantifier), set-op / `GROUP BY`
-    /// key caps, optimizer-iteration and path-length bounds).
+    /// key caps, optimizer-iteration, path-length, and list-cardinality
+    /// bounds).
     ///
     /// The caps are baked into every plan lowered for this session, so they are
     /// honored by both the plan-time variable-length quantifier gate and the

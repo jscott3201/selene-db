@@ -45,6 +45,8 @@ pub enum DataExceptionSubclass {
     InvalidDatetimeFunctionValue,
     /// Invalid duration function field name (`22G07`).
     InvalidDurationFunctionFieldName,
+    /// List data, right truncation (`22G0B`).
+    ListDataRightTruncation,
     /// List element error (`22G0C`).
     ListElementError,
     /// Invalid duration format (`22G0H`).
@@ -94,6 +96,7 @@ impl DataExceptionSubclass {
             Self::InvalidDurationFunctionFieldName => {
                 GqlStatus::INVALID_DURATION_FUNCTION_FIELD_NAME
             }
+            Self::ListDataRightTruncation => GqlStatus::LIST_DATA_RIGHT_TRUNCATION,
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
             Self::InvalidDurationFormat => GqlStatus::INVALID_DURATION_FORMAT,
             Self::PathDataRightTruncation => GqlStatus::PATH_DATA_RIGHT_TRUNCATION,
