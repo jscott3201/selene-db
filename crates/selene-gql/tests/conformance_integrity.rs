@@ -62,8 +62,8 @@ fn record_type_features_are_claimed_supported() {
 
 #[test]
 fn deferred_reference_value_type_features_remain_unsupported() {
-    // GRAPH/TABLE reference types and explicit nullability stay deferred.
-    for feature in [FeatureId::GV60, FeatureId::GV61, FeatureId::GV90] {
+    // GRAPH/TABLE reference types stay deferred.
+    for feature in [FeatureId::GV60, FeatureId::GV61] {
         assert!(!SUPPORTED_FEATURES.contains(&feature), "{feature}");
         assert!(
             NOT_SUPPORTED_RATIONALE
@@ -72,6 +72,17 @@ fn deferred_reference_value_type_features_remain_unsupported() {
             "{feature}"
         );
     }
+}
+
+#[test]
+fn explicit_value_type_nullability_is_claimed_supported() {
+    assert!(SUPPORTED_FEATURES.contains(&FeatureId::GV90));
+    assert!(
+        !NOT_SUPPORTED_RATIONALE
+            .iter()
+            .any(|(unsupported, _)| *unsupported == FeatureId::GV90),
+        "GV90 must not remain in NOT_SUPPORTED_RATIONALE"
+    );
 }
 
 #[test]

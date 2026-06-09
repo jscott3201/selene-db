@@ -262,6 +262,7 @@ pub(super) fn validate_node_label_transition(
 pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlType) -> bool {
     use GqlType as G;
     use PropertyValueType as P;
+    let found = found.strip_not_null();
     matches!(
         (declared, found),
         (P::Bool, G::Boolean)

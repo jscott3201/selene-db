@@ -132,9 +132,11 @@ fn drop_index_plan_preserves_name_and_if_exists() {
 #[test]
 fn all_property_constraints_lower() {
     // The ISO/IEC 39075:2024 §18 property constraints the engine accepts:
-    // NOT NULL, DEFAULT, IMMUTABLE, UNIQUE, INDEXED. (Donor full-text/time-series
-    // constraints — SEARCHABLE/DICTIONARY/FILL/INTERVAL/ENCODING — were removed
-    // from the grammar; they are now clean 42001 syntax errors.)
+    // DEFAULT, IMMUTABLE, UNIQUE, INDEXED. Explicit value-type nullability is
+    // carried on the GqlType and lowered to the required-property bit at the
+    // catalog boundary. Donor full-text/time-series constraints —
+    // SEARCHABLE/DICTIONARY/FILL/INTERVAL/ENCODING — were removed from the
+    // grammar; they are now clean 42001 syntax errors.
     let plan = plan_one(
         "CREATE NODE TYPE :Sensor \
          (v :: STRING NOT NULL DEFAULT 'x' IMMUTABLE UNIQUE INDEXED)",
@@ -142,7 +144,11 @@ fn all_property_constraints_lower() {
     let CatalogOp::CreateNodeType { properties, .. } = catalog_op(&plan) else {
         panic!("expected create node type");
     };
-    assert_eq!(properties[0].constraints.len(), 5);
+    assert!(matches!(
+        &properties[0].gql_type,
+        GqlType::NotNull(inner) if **inner == GqlType::String
+    ));
+    assert_eq!(properties[0].constraints.len(), 4);
 }
 
 #[test]

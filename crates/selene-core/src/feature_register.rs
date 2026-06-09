@@ -363,6 +363,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV48,
     FeatureId::GV50,
     FeatureId::GV55,
+    FeatureId::GV90,
 ];
 
 /// Rationale for referenced optional features not currently claimed.
@@ -504,10 +505,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::GV61,
         "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
-    ),
-    (
-        FeatureId::GV90,
-        "explicit value type nullability requires type-level nullability on GqlType; reclaim once the type AST carries the marker",
     ),
 ];
 

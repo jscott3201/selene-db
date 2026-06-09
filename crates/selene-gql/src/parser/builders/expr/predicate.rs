@@ -215,7 +215,10 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
 }
 
 fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
-    debug_assert_eq!(pair.as_rule(), Rule::type_name);
+    debug_assert!(matches!(
+        pair.as_rule(),
+        Rule::type_name | Rule::type_name_base
+    ));
     let source_span = span(&pair);
     if depth > MAX_NESTING_DEPTH {
         return Err(ParserError::NestingLimitExceeded {
@@ -223,6 +226,21 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             span: source_span,
         });
     }
+
+    if pair.as_rule() == Rule::type_name {
+        let mut children = pair.into_inner();
+        let base = children.next().ok_or_else(|| {
+            ParserError::syntax("type name is missing base type", source_span, None)
+        })?;
+        let has_not_null = children.any(|child| child.as_rule() == Rule::type_not_null);
+        let ty = build_type_name_with_depth(base, depth)?;
+        return Ok(if has_not_null {
+            GqlType::NotNull(Box::new(ty))
+        } else {
+            ty
+        });
+    }
+
     // Match the raw token sequence case- and whitespace-insensitively rather
     // than building an upper-cased, whitespace-normalized `String`: the type
     // name (and every nested LIST/RECORD level) is compared allocation-free.

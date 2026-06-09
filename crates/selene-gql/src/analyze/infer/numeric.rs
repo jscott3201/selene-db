@@ -25,9 +25,14 @@ pub(crate) fn is_numeric(ty: &GqlType) -> bool {
 
 /// Return true if `arg_ty` can flow into a procedure parameter of `param_ty`.
 pub(crate) fn argument_assignable(arg_ty: &GqlType, param_ty: &GqlType, nullable: bool) -> bool {
+    if matches!(param_ty, GqlType::NotNull(_)) && matches!(arg_ty, GqlType::Null) {
+        return false;
+    }
     if matches!(arg_ty, GqlType::Null) {
         return nullable;
     }
+    let arg_ty = arg_ty.strip_not_null();
+    let param_ty = param_ty.strip_not_null();
     if arg_ty == param_ty {
         return true;
     }
@@ -58,7 +63,7 @@ enum FloatKind {
 }
 
 fn numeric_kind(ty: &GqlType) -> Option<NumericKind> {
-    Some(match ty {
+    Some(match ty.strip_not_null() {
         GqlType::Integer | GqlType::BigInt | GqlType::Int64 => NumericKind::Integer(IntegerKind {
             signed: true,
             width: 64,

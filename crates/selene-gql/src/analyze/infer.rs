@@ -112,7 +112,8 @@ pub(crate) fn unary(
             )),
         },
         UnaryOp::Not => match operand {
-            AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => {
+            AnalyzedType::Dynamic => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
+            AnalyzedType::Resolved(ty) if matches!(ty.strip_not_null(), GqlType::Boolean) => {
                 Ok(AnalyzedType::Resolved(GqlType::Boolean))
             }
             // `NOT NULL` yields UNKNOWN; the static result stays Boolean.
@@ -213,7 +214,7 @@ pub(crate) fn in_list_expression(
     list_span: SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
     if let AnalyzedType::Resolved(list_ty) = list {
-        match list_ty {
+        match list_ty.strip_not_null() {
             GqlType::List(item_ty) => {
                 if let AnalyzedType::Resolved(operand_ty) = operand
                     && meet_gql_types(operand_ty, item_ty).is_none()
@@ -318,7 +319,10 @@ pub(crate) fn condition(
     clause: ConditionClause,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => Ok(()),
+        AnalyzedType::Dynamic => Ok(()),
+        AnalyzedType::Resolved(found) if matches!(found.strip_not_null(), GqlType::Boolean) => {
+            Ok(())
+        }
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             TypeMismatchContext::Condition { clause },
             ExpectedType::Specific(GqlType::Boolean),
@@ -456,15 +460,15 @@ fn concat(
 
 fn concat_result_type(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
     if matches!(lhs, GqlType::Null) {
-        return Some(rhs.clone());
+        return Some(rhs.strip_not_null().clone());
     }
     if matches!(rhs, GqlType::Null) {
-        return Some(lhs.clone());
+        return Some(lhs.strip_not_null().clone());
     }
     if is_byte_string(lhs) && is_byte_string(rhs) {
         return Some(GqlType::Bytes);
     }
-    match (lhs, rhs) {
+    match (lhs.strip_not_null(), rhs.strip_not_null()) {
         (GqlType::String, GqlType::String) => Some(GqlType::String),
         (GqlType::Path, GqlType::Path) => Some(GqlType::Path),
         (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
@@ -527,9 +531,10 @@ fn expect_boolean(
     match ty {
         // A NULL operand is accepted: under three-valued logic a boolean
         // operator over NULL yields NULL, not a type error (runtime parity).
-        AnalyzedType::Dynamic
-        | AnalyzedType::Resolved(GqlType::Boolean)
-        | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Resolved(found) if matches!(found.strip_not_null(), GqlType::Boolean) => {
+            Ok(())
+        }
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::Boolean,
@@ -545,9 +550,10 @@ fn expect_string(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic
-        | AnalyzedType::Resolved(GqlType::String)
-        | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Resolved(found) if matches!(found.strip_not_null(), GqlType::String) => {
+            Ok(())
+        }
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::String,
@@ -582,13 +588,19 @@ fn expect_concat_operand(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic
-        | AnalyzedType::Resolved(GqlType::Null)
-        | AnalyzedType::Resolved(GqlType::String)
-        | AnalyzedType::Resolved(GqlType::Bytes)
-        | AnalyzedType::Resolved(GqlType::ByteString(_))
-        | AnalyzedType::Resolved(GqlType::List(_))
-        | AnalyzedType::Resolved(GqlType::Path) => Ok(()),
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Resolved(found)
+            if matches!(
+                found.strip_not_null(),
+                GqlType::String
+                    | GqlType::Bytes
+                    | GqlType::ByteString(_)
+                    | GqlType::List(_)
+                    | GqlType::Path
+            ) =>
+        {
+            Ok(())
+        }
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::ListStringBytesOrPath,
@@ -627,15 +639,26 @@ fn meet_gql_types(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
         return Some(lhs.clone());
     }
     if matches!(lhs, GqlType::Null) {
-        return Some(rhs.clone());
+        return Some(rhs.strip_not_null().clone());
     }
     if matches!(rhs, GqlType::Null) {
-        return Some(lhs.clone());
+        return Some(lhs.strip_not_null().clone());
     }
     if is_numeric(lhs) && is_numeric(rhs) {
         return numeric_promotion(lhs, rhs);
     }
-    match (lhs, rhs) {
+    let lhs_base = lhs.strip_not_null();
+    let rhs_base = rhs.strip_not_null();
+    if lhs_base == rhs_base {
+        return Some(
+            if matches!(lhs, GqlType::NotNull(_)) && matches!(rhs, GqlType::NotNull(_)) {
+                GqlType::NotNull(Box::new(lhs_base.clone()))
+            } else {
+                lhs_base.clone()
+            },
+        );
+    }
+    match (lhs_base, rhs_base) {
         (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
             meet_gql_types(lhs_inner, rhs_inner).map(|ty| GqlType::List(Box::new(ty)))
         }
@@ -658,7 +681,7 @@ fn type_mismatch(
 }
 
 fn is_byte_string(ty: &GqlType) -> bool {
-    matches!(ty, GqlType::Bytes | GqlType::ByteString(_))
+    matches!(ty.strip_not_null(), GqlType::Bytes | GqlType::ByteString(_))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -677,7 +700,7 @@ fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
     if is_numeric(ty) {
         return Some(ComparableFamily::Numeric);
     }
-    Some(match ty {
+    Some(match ty.strip_not_null() {
         GqlType::Boolean => ComparableFamily::Boolean,
         GqlType::String => ComparableFamily::String,
         GqlType::Bytes | GqlType::ByteString(_) => ComparableFamily::Bytes,

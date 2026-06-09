@@ -583,8 +583,10 @@ fn is_typed_and_is_normalized_evaluate() {
 #[test]
 fn null_is_typed_matrix_is_two_valued() {
     for (ty, negated, expected) in [
-        (GqlType::String, false, false),
-        (GqlType::String, true, true),
+        (GqlType::String, false, true),
+        (GqlType::String, true, false),
+        (GqlType::NotNull(Box::new(GqlType::String)), false, false),
+        (GqlType::NotNull(Box::new(GqlType::String)), true, true),
         (GqlType::Null, false, true),
         (GqlType::Null, true, false),
     ] {

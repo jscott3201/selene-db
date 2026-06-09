@@ -706,6 +706,10 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
             29u8.hash(state);
             hash_gql_type(inner, state);
         }
+        GqlType::NotNull(inner) => {
+            46u8.hash(state);
+            hash_gql_type(inner, state);
+        }
         GqlType::Path => 30u8.hash(state),
         GqlType::GraphRef => 31u8.hash(state),
         GqlType::NodeRef => 32u8.hash(state),

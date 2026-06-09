@@ -707,7 +707,10 @@ var_ref         = { ident }
 // -- Type names (for CAST) ------------------------------------------
 // PEG ordering: longer alternatives BEFORE shorter to prevent prefix matching.
 
-type_name = {
+type_name = { type_name_base ~ type_not_null? }
+type_not_null = { ^"NOT" ~ ^"NULL" }
+
+type_name_base = {
     ^"BOOLEAN" | ^"BOOL"
   | signed_integer_precision_type
   | unsigned_integer_precision_type

@@ -15,10 +15,15 @@ use crate::{GqlType, RecordType};
 
 /// Return true when `value` structurally conforms to the AST type `ty`.
 ///
-/// This is a two-valued (not three-valued) test: a `Value::Null` operand conforms only to
-/// `GqlType::Null`, so `NULL IS TYPED <T>` is `false` for any material `T`.
+/// This is a two-valued (not three-valued) test: a nullable value type accepts
+/// `Value::Null` unless it is explicitly wrapped in [`GqlType::NotNull`].
 pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
     match ty {
+        GqlType::NotNull(inner) => {
+            !matches!(value, Value::Null) && value_matches_gql_type(value, inner)
+        }
+        GqlType::Nothing => false,
+        _ if matches!(value, Value::Null) => true,
         GqlType::String => matches!(value, Value::String(_)),
         GqlType::Uuid => matches!(value, Value::Uuid(_)),
         GqlType::Json => matches!(value, Value::Json(_)),
@@ -76,7 +81,6 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::EdgeRef => matches!(value, Value::EdgeRef(_)),
         GqlType::TableRef => matches!(value, Value::TableRef(_)),
         GqlType::Null => matches!(value, Value::Null),
-        GqlType::Nothing => false,
     }
 }
 

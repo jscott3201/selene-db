@@ -98,6 +98,8 @@ pub enum GqlType {
     Record(RecordType),
     /// `LIST<T>`.
     List(Box<GqlType>),
+    /// Explicitly non-null value type (`<value type> NOT NULL`).
+    NotNull(Box<GqlType>),
     /// `PATH`.
     Path,
     /// Graph reference.
@@ -185,11 +187,21 @@ pub enum RecordType {
 }
 
 impl GqlType {
+    /// Return the underlying value type after removing explicit `NOT NULL` wrappers.
+    #[must_use]
+    pub fn strip_not_null(&self) -> &Self {
+        let mut ty = self;
+        while let Self::NotNull(inner) = ty {
+            ty = inner;
+        }
+        ty
+    }
+
     /// Return true when this type is any duration family.
     #[must_use]
-    pub const fn is_duration(&self) -> bool {
+    pub fn is_duration(&self) -> bool {
         matches!(
-            self,
+            self.strip_not_null(),
             Self::Duration | Self::DurationYearToMonth | Self::DurationDayToSecond
         )
     }

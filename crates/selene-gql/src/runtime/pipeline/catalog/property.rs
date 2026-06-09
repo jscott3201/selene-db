@@ -28,9 +28,10 @@ fn property_def(
     property: &PlannedTypePropertyDef,
     allow_inline_indexed: bool,
 ) -> Result<PropertyTypeDef, ExecutorError> {
+    let (gql_type, required_from_type) = strip_top_level_not_null(&property.gql_type);
     let (value_type, list_element_type, record_field_types) =
-        gql_type_to_property_value_type(&property.gql_type)?;
-    let mut required = false;
+        gql_type_to_property_value_type(gql_type, property.span)?;
+    let mut required = required_from_type;
     let mut default = None;
     let mut default_span = property.span;
     let mut immutable = false;
@@ -93,34 +94,44 @@ type LoweredPropertyType = (
 
 fn gql_type_to_property_value_type(
     gql_type: &GqlType,
+    span: crate::SourceSpan,
 ) -> Result<LoweredPropertyType, ExecutorError> {
     match gql_type {
         GqlType::List(inner) => {
-            let element_type = gql_type_to_property_element_type(inner, 1)?;
+            let element_type = gql_type_to_property_element_type(inner, 1, span)?;
             Ok((PropertyValueType::List, Some(element_type), None))
         }
         // A top-level `RECORD` declaration lowers to the RecordTyped tag. A closed
         // `RECORD { .. }` carries its field-type descriptor; an open/bare `RECORD` carries
         // `None` (permissive, accepts any record value).
         GqlType::Record(record_type) => {
-            let record_field_types = gql_record_to_record_field_types(record_type, 1)?;
+            let record_field_types = gql_record_to_record_field_types(record_type, 1, span)?;
             Ok((PropertyValueType::RecordTyped, None, record_field_types))
         }
-        _ => gql_type_to_scalar_property_value_type(gql_type)
+        GqlType::NotNull(_) => Err(nested_not_null_property_type_error(span)),
+        _ => gql_type_to_scalar_property_value_type(gql_type, span)
             .map(|value_type| (value_type, None, None)),
+    }
+}
+
+fn strip_top_level_not_null(gql_type: &GqlType) -> (&GqlType, bool) {
+    match gql_type {
+        GqlType::NotNull(inner) => (inner, true),
+        _ => (gql_type, false),
     }
 }
 
 /// Lower a record TYPE into the catalog descriptor. `RecordType::Open` (bare `RECORD`)
 /// yields `None` (permissive); `RecordType::Closed` yields the field-type list.
 ///
-/// The grammar does not (yet) capture a per-field `<not null>`, so every declared field is
-/// required-present per ISO 39075:2024 §4.15.4 (a closed record value has the same
-/// field-name set as the descriptor). The descriptor's optional-field capability is latent
-/// for a future `NOT NULL` field-type extension.
+/// The graph catalog does not persist per-field nullability yet, so every
+/// declared field is required-present per ISO 39075:2024 §4.15.4 (a closed
+/// record value has the same field-name set as the descriptor). Nested
+/// `NOT NULL` markers are rejected before this lowering step can erase them.
 fn gql_record_to_record_field_types(
     record_type: &RecordType,
     depth: u32,
+    span: crate::SourceSpan,
 ) -> Result<Option<RecordFieldTypes>, ExecutorError> {
     if depth > MAX_NESTING_DEPTH {
         return Err(ExecutorError::ImplementationDefined {
@@ -135,7 +146,7 @@ fn gql_record_to_record_field_types(
                 .map(|(name, gql_type)| {
                     Ok(RecordFieldTypeDef {
                         name: name.clone(),
-                        field_type: gql_type_to_record_field_type(gql_type, depth)?,
+                        field_type: gql_type_to_record_field_type(gql_type, depth, span)?,
                         required: true,
                     })
                 })
@@ -148,6 +159,7 @@ fn gql_record_to_record_field_types(
 fn gql_type_to_record_field_type(
     gql_type: &GqlType,
     depth: u32,
+    span: crate::SourceSpan,
 ) -> Result<RecordFieldType, ExecutorError> {
     if depth > MAX_NESTING_DEPTH {
         return Err(ExecutorError::ImplementationDefined {
@@ -156,21 +168,23 @@ fn gql_type_to_record_field_type(
     }
     match gql_type {
         GqlType::List(inner) => Ok(RecordFieldType::List(Box::new(
-            gql_type_to_record_field_type(inner, depth + 1)?,
+            gql_type_to_record_field_type(inner, depth + 1, span)?,
         ))),
         GqlType::Record(record_type) => {
-            match gql_record_to_record_field_types(record_type, depth + 1)? {
+            match gql_record_to_record_field_types(record_type, depth + 1, span)? {
                 Some(fields) => Ok(RecordFieldType::Record(Box::new(fields))),
                 None => Ok(RecordFieldType::OpenRecord),
             }
         }
-        _ => gql_type_to_scalar_property_value_type(gql_type).map(RecordFieldType::Scalar),
+        GqlType::NotNull(_) => Err(nested_not_null_property_type_error(span)),
+        _ => gql_type_to_scalar_property_value_type(gql_type, span).map(RecordFieldType::Scalar),
     }
 }
 
 fn gql_type_to_property_element_type(
     gql_type: &GqlType,
     depth: u32,
+    span: crate::SourceSpan,
 ) -> Result<PropertyElementType, ExecutorError> {
     if depth > MAX_NESTING_DEPTH {
         return Err(ExecutorError::ImplementationDefined {
@@ -179,16 +193,21 @@ fn gql_type_to_property_element_type(
     }
     match gql_type {
         GqlType::List(inner) => Ok(PropertyElementType::List(Box::new(
-            gql_type_to_property_element_type(inner, depth + 1)?,
+            gql_type_to_property_element_type(inner, depth + 1, span)?,
         ))),
-        _ => gql_type_to_scalar_property_value_type(gql_type).map(PropertyElementType::Scalar),
+        GqlType::NotNull(_) => Err(nested_not_null_property_type_error(span)),
+        _ => {
+            gql_type_to_scalar_property_value_type(gql_type, span).map(PropertyElementType::Scalar)
+        }
     }
 }
 
 fn gql_type_to_scalar_property_value_type(
     gql_type: &GqlType,
+    span: crate::SourceSpan,
 ) -> Result<PropertyValueType, ExecutorError> {
     Ok(match gql_type {
+        GqlType::NotNull(_) => return Err(nested_not_null_property_type_error(span)),
         GqlType::String => PropertyValueType::String,
         GqlType::Boolean => PropertyValueType::Bool,
         GqlType::Integer
@@ -234,6 +253,13 @@ fn gql_type_to_scalar_property_value_type(
             });
         }
     })
+}
+
+fn nested_not_null_property_type_error(span: crate::SourceSpan) -> ExecutorError {
+    ExecutorError::FeatureNotSupportedYet {
+        feature: "nested property value type nullability",
+        span,
+    }
 }
 
 pub(super) fn render_property_value_type(
