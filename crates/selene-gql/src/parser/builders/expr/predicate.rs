@@ -474,7 +474,7 @@ fn parse_numeric_type_precision(text: &str, span: SourceSpan) -> Result<u16, Par
             "numeric type precision exceeds the implementation-defined maximum",
             span,
             Some(
-                "selene-db currently supports integer precision through INT128/UINT128 and floating precision through FLOAT64"
+                "selene-db currently supports integer precision through INT128/UINT128 and floating precision/scale through FLOAT64"
                     .into(),
             ),
         )
@@ -489,36 +489,70 @@ fn parse_numeric_type_precision(text: &str, span: SourceSpan) -> Result<u16, Par
     Ok(precision)
 }
 
+fn parse_numeric_type_scale(text: &str, span: SourceSpan) -> Result<u16, ParserError> {
+    let normalized = text.replace('_', "");
+    normalized.parse::<u16>().map_err(|_err| {
+        ParserError::syntax(
+            "numeric type scale exceeds the implementation-defined maximum",
+            span,
+            Some("selene-db currently supports approximate numeric scale through FLOAT64".into()),
+        )
+    })
+}
+
 fn build_float_precision_type_name(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<GqlType, ParserError> {
-    let precision_pair = pair
-        .clone()
-        .into_inner()
+    let mut children = pair.clone().into_inner();
+    let precision_pair = children
         .find(|child| child.as_rule() == Rule::numeric_type_precision)
         .ok_or_else(|| ParserError::syntax("FLOAT type is missing precision", source_span, None))?;
     let precision = parse_numeric_type_precision(precision_pair.as_str(), span(&precision_pair))?;
-    float_precision_type(precision, source_span)
+    let scale = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::numeric_type_scale)
+        .map(|scale_pair| parse_numeric_type_scale(scale_pair.as_str(), span(&scale_pair)))
+        .transpose()?;
+    if let Some(scale) = scale
+        && scale > precision
+    {
+        return Err(ParserError::syntax(
+            "numeric type scale must be less than or equal to precision",
+            source_span,
+            None,
+        ));
+    }
+    float_precision_type(precision, scale, source_span)
 }
 
-fn float_precision_type(precision: u16, span: SourceSpan) -> Result<GqlType, ParserError> {
-    match precision {
-        1..=24 => Ok(GqlType::Float32),
-        25..=53 => Ok(GqlType::Float64),
-        54..=113 => Err(ParserError::UnsupportedFeature {
+fn float_precision_type(
+    precision: u16,
+    scale: Option<u16>,
+    span: SourceSpan,
+) -> Result<GqlType, ParserError> {
+    let scale = scale.unwrap_or(0);
+    if precision <= 23 && scale <= 7 {
+        return Ok(GqlType::Float32);
+    }
+    if precision <= 52 && scale <= 10 {
+        return Ok(GqlType::Float64);
+    }
+    if precision <= 112 && scale <= 14 {
+        return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV25,
             display_name: "128 bit floating point numbers",
             span,
-            hint: "this precision requires FLOAT128, which is outside the selene-db v1.0 claim list",
-        }),
-        _ => Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV26,
-            display_name: "256 bit floating point numbers",
-            span,
-            hint: "this precision requires a floating-point type wider than FLOAT128, which is outside the selene-db v1.0 claim list",
-        }),
+            hint: "this precision/scale request requires FLOAT128, which is outside the selene-db v1.0 claim list",
+        });
     }
+    Err(ParserError::UnsupportedFeature {
+        feature_id: FeatureId::GV26,
+        display_name: "256 bit floating point numbers",
+        span,
+        hint: "this precision/scale request requires FLOAT256 or a floating-point type wider than FLOAT128, which is outside the selene-db v1.0 claim list",
+    })
 }
 
 fn signed_integer_precision_type(precision: u16, span: SourceSpan) -> Result<GqlType, ParserError> {

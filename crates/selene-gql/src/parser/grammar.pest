@@ -760,8 +760,9 @@ signed_integer_precision_type = {
 unsigned_integer_precision_type = {
     (^"UNSIGNED" ~ ^"INTEGER" | ^"UINT") ~ "(" ~ numeric_type_precision ~ ")"
 }
-float_precision_type = { ^"FLOAT" ~ "(" ~ numeric_type_precision ~ ")" }
+float_precision_type = { ^"FLOAT" ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
 numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
+numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 duration_type = { ^"DURATION" ~ ("(" ~ temporal_duration_qualifier ~ ")")? }
 
 byte_string_type = {

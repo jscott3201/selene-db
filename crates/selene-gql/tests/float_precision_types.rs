@@ -51,10 +51,22 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 fn specified_float_precision_formats_to_supported_normal_form() {
     for (source, expected) in [
         ("RETURN n IS TYPED FLOAT(1)", "RETURN n IS TYPED FLOAT32"),
-        ("RETURN n IS TYPED FLOAT(24)", "RETURN n IS TYPED FLOAT32"),
-        ("RETURN n IS TYPED FLOAT(25)", "RETURN n IS TYPED FLOAT64"),
-        ("RETURN n IS TYPED FLOAT(53)", "RETURN n IS TYPED FLOAT64"),
-        ("RETURN n IS TYPED FLOAT(5_3)", "RETURN n IS TYPED FLOAT64"),
+        ("RETURN n IS TYPED FLOAT(23)", "RETURN n IS TYPED FLOAT32"),
+        ("RETURN n IS TYPED FLOAT(1, 0)", "RETURN n IS TYPED FLOAT32"),
+        ("RETURN n IS TYPED FLOAT(24)", "RETURN n IS TYPED FLOAT64"),
+        ("RETURN n IS TYPED FLOAT(52)", "RETURN n IS TYPED FLOAT64"),
+        (
+            "RETURN n IS TYPED FLOAT(2_3, 7)",
+            "RETURN n IS TYPED FLOAT32",
+        ),
+        (
+            "RETURN n IS TYPED FLOAT(23, 8)",
+            "RETURN n IS TYPED FLOAT64",
+        ),
+        (
+            "RETURN n IS TYPED FLOAT(52, 10)",
+            "RETURN n IS TYPED FLOAT64",
+        ),
     ] {
         let parsed = parse(source).expect(source);
         let formatted = format_read_statement(&parsed).expect("read statement formats");
@@ -67,8 +79,8 @@ fn specified_float_precision_formats_to_supported_normal_form() {
 #[test]
 fn specified_float_precision_records_gv22_and_normal_form_width() {
     for (source, expected_width_feature) in [
-        ("RETURN n IS TYPED FLOAT(24)", FeatureId::GV21),
-        ("RETURN n IS TYPED FLOAT(53)", FeatureId::GV24),
+        ("RETURN n IS TYPED FLOAT(23, 7)", FeatureId::GV21),
+        ("RETURN n IS TYPED FLOAT(52, 10)", FeatureId::GV24),
     ] {
         let observed = feature_walk(&parse(source).expect(source))
             .into_iter()
@@ -88,26 +100,33 @@ fn specified_float_precision_records_gv22_and_normal_form_width() {
 #[test]
 fn specified_float_precision_uses_selected_runtime_width() {
     assert_eq!(
-        first_value("RETURN CAST(1.5 AS FLOAT(24)) AS v"),
+        first_value("RETURN CAST(1.5 AS FLOAT(23)) AS v"),
         Value::Float32(1.5_f32)
     );
     assert_eq!(
-        first_value("RETURN CAST(1.5 AS FLOAT(25)) AS v"),
+        first_value("RETURN CAST(1.5 AS FLOAT(24)) AS v"),
         Value::Float(1.5)
     );
     assert_eq!(
-        first_value("RETURN CAST(1.5 AS FLOAT(53)) IS TYPED FLOAT64 AS ok"),
+        first_value("RETURN CAST(1.5 AS FLOAT(23, 8)) AS v"),
+        Value::Float(1.5)
+    );
+    assert_eq!(
+        first_value("RETURN CAST(1.5 AS FLOAT(52, 10)) IS TYPED FLOAT64 AS ok"),
         Value::Bool(true)
     );
     assert_eq!(
         bind_and_eval(
             Value::Float32(1.25_f32),
-            "RETURN $p IS TYPED FLOAT(24) AS ok"
+            "RETURN $p IS TYPED FLOAT(23, 7) AS ok"
         ),
         Value::Bool(true)
     );
     assert_eq!(
-        bind_and_eval(Value::Float(1.25), "RETURN $p IS TYPED FLOAT(24) AS ok"),
+        bind_and_eval(
+            Value::Float32(1.25_f32),
+            "RETURN $p IS TYPED FLOAT(23, 8) AS ok"
+        ),
         Value::Bool(false)
     );
 }
@@ -118,7 +137,7 @@ fn specified_float_precision_lowers_catalog_property_types() {
     let mut session = Session::new(&graph);
     session
         .execute_source(
-            "CREATE NODE TYPE :Metric (small :: FLOAT(24), wide :: FLOAT(53))",
+            "CREATE NODE TYPE :Metric (small :: FLOAT(23, 7), wide :: FLOAT(24), scaled :: FLOAT(23, 8))",
             &EmptyProcedureRegistry,
         )
         .expect("catalog DDL executes");
@@ -127,6 +146,7 @@ fn specified_float_precision_lowers_catalog_property_types() {
     let properties = &graph_type.node_types[0].properties;
     assert_eq!(properties[0].value_type, PropertyValueType::Float32);
     assert_eq!(properties[1].value_type, PropertyValueType::Float);
+    assert_eq!(properties[2].value_type, PropertyValueType::Float);
 
     let show = session
         .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
@@ -137,7 +157,7 @@ fn specified_float_precision_lowers_catalog_property_types() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(db_string(
-            "CREATE NODE TYPE :Metric (small :: FLOAT32, wide :: FLOAT)"
+            "CREATE NODE TYPE :Metric (small :: FLOAT32, wide :: FLOAT, scaled :: FLOAT)"
         ))
     );
 }
@@ -148,6 +168,8 @@ fn invalid_or_unsupported_float_precision_reports_honest_parse_errors() {
         "RETURN n IS TYPED FLOAT(0)",
         "RETURN n IS TYPED FLOAT(7_)",
         "RETURN n IS TYPED FLOAT(1__2)",
+        "RETURN n IS TYPED FLOAT(10, 1__0)",
+        "RETURN n IS TYPED FLOAT(10, 11)",
     ] {
         let err = parse(source).expect_err(source);
         assert!(
@@ -157,9 +179,11 @@ fn invalid_or_unsupported_float_precision_reports_honest_parse_errors() {
     }
 
     for (source, expected_feature) in [
-        ("RETURN n IS TYPED FLOAT(54)", FeatureId::GV25),
-        ("RETURN n IS TYPED FLOAT(113)", FeatureId::GV25),
-        ("RETURN n IS TYPED FLOAT(114)", FeatureId::GV26),
+        ("RETURN n IS TYPED FLOAT(53)", FeatureId::GV25),
+        ("RETURN n IS TYPED FLOAT(23, 11)", FeatureId::GV25),
+        ("RETURN n IS TYPED FLOAT(112, 14)", FeatureId::GV25),
+        ("RETURN n IS TYPED FLOAT(113)", FeatureId::GV26),
+        ("RETURN n IS TYPED FLOAT(15, 15)", FeatureId::GV26),
     ] {
         let err = parse(source).expect_err(source);
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
