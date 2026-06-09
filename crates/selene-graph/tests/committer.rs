@@ -60,6 +60,7 @@ fn person_graph_type() -> GraphTypeDef {
                 default: None,
                 immutable: false,
                 unique: false,
+                decimal_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,

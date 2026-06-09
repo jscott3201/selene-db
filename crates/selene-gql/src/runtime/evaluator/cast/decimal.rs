@@ -26,11 +26,10 @@
 
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
-use selene_core::Value;
+use selene_core::{DecimalType, Value, round_decimal_to_type};
 
 use crate::{
     SourceSpan,
-    ast::DecimalType,
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
@@ -38,8 +37,6 @@ use super::{
     non_iso_static_source_for_target,
     numeric_text::{NumericText, classify_signed_numeric_text},
 };
-use crate::runtime::decimal_type::round_decimal_to_type;
-
 /// Out-of-target-range overflow (`22003` numeric value out of range).
 fn out_of_range(message: &'static str, span: SourceSpan) -> ExecutorError {
     ExecutorError::data_exception(DataExceptionSubclass::NumericValueOutOfRange, message, span)

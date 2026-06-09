@@ -273,6 +273,7 @@ fn property_defs(count: usize) -> Vec<PropertyTypeDef> {
             default: None,
             immutable: false,
             unique: false,
+            decimal_type: None,
             record_field_types: None,
         })
         .collect()

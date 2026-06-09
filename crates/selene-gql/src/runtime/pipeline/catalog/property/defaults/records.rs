@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::{DbString, PropertyValueType};
+use selene_core::{DbString, DecimalType, PropertyValueType, decimal_fits_type};
 use selene_graph::{
     PropertyDefaultRecordField, PropertyDefaultValue, RecordFieldType, RecordFieldTypes,
 };
@@ -117,6 +117,7 @@ fn typed_field_default_value(
             };
             super::lists::vector_default_value(items, span)
         }
+        RecordFieldType::Decimal(decimal_type) => decimal_field_default(expr, *decimal_type, span),
         RecordFieldType::Scalar(value_type) => scalar_field_default(expr, *value_type, span),
         RecordFieldType::List(inner) => {
             let ValueExpr::ListLiteral { items, .. } = expr else {
@@ -150,6 +151,33 @@ fn typed_field_default_value(
             span,
         )),
     }
+}
+
+fn decimal_field_default(
+    expr: &ValueExpr,
+    decimal_type: DecimalType,
+    span: crate::SourceSpan,
+) -> Result<PropertyDefaultValue, ExecutorError> {
+    let default = scalar_field_default(expr, PropertyValueType::Decimal, span)?;
+    let value = default.to_value().map_err(|err| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            format!("RECORD DEFAULT DECIMAL field is invalid: {err}"),
+            span,
+        )
+    })?;
+    if matches!(value, selene_core::Value::Null)
+        || matches!(
+            value,
+            selene_core::Value::Decimal(value) if decimal_fits_type(value, decimal_type)
+        )
+    {
+        return Ok(default);
+    }
+    Err(record_field_unassignable(
+        "RECORD DEFAULT DECIMAL field is not assignable to declared precision/scale".to_owned(),
+        span,
+    ))
 }
 
 fn list_field_default_value(

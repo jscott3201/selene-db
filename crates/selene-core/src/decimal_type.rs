@@ -1,17 +1,63 @@
-//! Runtime helpers for user-specified decimal exact numeric type envelopes.
+//! Decimal precision/scale envelopes for exact numeric values.
 
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 
-use crate::ast::DecimalType;
+/// Maximum decimal precision currently representable by selene-db's
+/// `rust_decimal`-backed [`crate::Value::Decimal`] storage.
+pub const MAX_DECIMAL_PRECISION: u16 = 29;
+
+/// Maximum decimal scale currently representable by selene-db's
+/// `rust_decimal`-backed [`crate::Value::Decimal`] storage.
+pub const MAX_DECIMAL_SCALE: u16 = Decimal::MAX_SCALE as u16;
+
+/// User-specified decimal exact numeric type metadata.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct DecimalType {
+    /// Decimal precision in digits.
+    pub precision: u16,
+    /// Decimal scale in digits.
+    pub scale: u16,
+}
+
+impl DecimalType {
+    /// Construct a decimal type when precision and scale fit the current
+    /// implementation-defined decimal value envelope.
+    #[must_use]
+    pub const fn new(precision: u16, scale: u16) -> Option<Self> {
+        if precision == 0
+            || precision > MAX_DECIMAL_PRECISION
+            || scale > precision
+            || scale > MAX_DECIMAL_SCALE
+        {
+            return None;
+        }
+        Some(Self { precision, scale })
+    }
+}
 
 /// Return true when `value` can be represented exactly by `decimal_type`.
-pub(crate) fn decimal_fits_type(value: Decimal, decimal_type: DecimalType) -> bool {
+#[must_use]
+pub fn decimal_fits_type(value: Decimal, decimal_type: DecimalType) -> bool {
     decimal_fits(value, decimal_type).is_some()
 }
 
 /// Round `value` to the target scale and return it if it fits the requested
 /// precision/scale envelope.
-pub(crate) fn round_decimal_to_type(value: Decimal, decimal_type: DecimalType) -> Option<Decimal> {
+#[must_use]
+pub fn round_decimal_to_type(value: Decimal, decimal_type: DecimalType) -> Option<Decimal> {
     let rounded = value.round_dp(u32::from(decimal_type.scale));
     decimal_fits(rounded, decimal_type)
 }
@@ -55,8 +101,7 @@ fn decimal_digit_count(value: i128) -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{decimal_fits_type, round_decimal_to_type};
-    use crate::ast::DecimalType;
+    use super::{DecimalType, decimal_fits_type, round_decimal_to_type};
 
     fn ty(precision: u16, scale: u16) -> DecimalType {
         DecimalType::new(precision, scale).expect("valid decimal type")

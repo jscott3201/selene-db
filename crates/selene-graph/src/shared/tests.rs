@@ -78,6 +78,7 @@ fn sample_type() -> GraphTypeDef {
                 default: None,
                 immutable: false,
                 unique: false,
+                decimal_type: None,
                 record_field_types: None,
             }],
             validation_mode: crate::ValidationMode::Strict,

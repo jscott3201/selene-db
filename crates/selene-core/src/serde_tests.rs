@@ -527,6 +527,41 @@ fn nested_record_field_structure_postcard_round_trip() {
 }
 
 #[test]
+fn decimal_type_metadata_postcard_round_trip() {
+    let decimal_type = DecimalType::new(5, 2).expect("valid decimal type");
+    let value_type = ValueType {
+        predefined: Some(PredefinedValueType::Decimal),
+        decimal_type: Some(decimal_type),
+        union: None,
+        list_of: None,
+        record: None,
+        not_null: false,
+        cardinality: ValueTypeCardinality::ExactlyOne,
+    };
+    rt(&value_type);
+
+    let structure = RecordFieldStructureType::Decimal(decimal_type);
+    rt(&structure);
+
+    let def = PropertyDef {
+        name: dbs("core.decimal.typed"),
+        value_type,
+        nullable: false,
+        default: Some(Value::Decimal("123.45".parse().unwrap())),
+        immutable: false,
+        unique: false,
+        record_fields: Some(Box::new(RecordFieldStructure::Closed(vec![
+            RecordFieldStructureDef {
+                name: dbs("core.decimal.field"),
+                field_type: structure,
+                required: true,
+            },
+        ]))),
+    };
+    rt(&def);
+}
+
+#[test]
 fn extended_value_payload_postcard_round_trip() {
     let value = Value::Extended {
         type_id: ExtensionTypeId(0x100),

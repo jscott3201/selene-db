@@ -14,6 +14,7 @@ fn unique_person_graph_type() -> GraphTypeDef {
                 default: None,
                 immutable: false,
                 unique: true,
+                decimal_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,

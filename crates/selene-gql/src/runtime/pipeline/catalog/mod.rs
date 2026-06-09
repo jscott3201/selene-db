@@ -697,7 +697,8 @@ fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorE
                 render_property_value_type(
                     property.value_type,
                     property.list_element_type.as_ref(),
-                    property.record_field_types.as_ref()
+                    property.record_field_types.as_ref(),
+                    property.decimal_type,
                 ),
                 nullability,
                 default,

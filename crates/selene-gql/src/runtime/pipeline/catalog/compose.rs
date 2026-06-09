@@ -95,12 +95,24 @@ fn check_property_match(
                 parent.value_type,
                 parent.list_element_type.as_ref(),
                 parent.record_field_types.as_ref(),
+                parent.decimal_type,
             ),
             render_property_value_type(
                 child.value_type,
                 child.list_element_type.as_ref(),
                 child.record_field_types.as_ref(),
+                child.decimal_type,
             ),
+            span,
+        ));
+    }
+    if parent.decimal_type != child.decimal_type {
+        return Err(property_conflict(
+            parent,
+            child_type,
+            "decimal precision/scale",
+            render_decimal(parent.decimal_type),
+            render_decimal(child.decimal_type),
             span,
         ));
     }
@@ -157,6 +169,14 @@ fn check_property_match(
     Ok(())
 }
 
+fn render_decimal(value: Option<selene_core::DecimalType>) -> String {
+    match value {
+        Some(value) if value.scale == 0 => format!("DECIMAL({})", value.precision),
+        Some(value) => format!("DECIMAL({}, {})", value.precision, value.scale),
+        None => "DECIMAL".to_owned(),
+    }
+}
+
 fn property_conflict(
     parent: &PropertyTypeDef,
     child_type: DbString,
@@ -190,8 +210,9 @@ fn render_list_element(element: Option<&PropertyElementType>) -> String {
     match element {
         None => "none".to_owned(),
         Some(PropertyElementType::Scalar(value_type)) => {
-            render_property_value_type(*value_type, None, None)
+            render_property_value_type(*value_type, None, None, None)
         }
+        Some(PropertyElementType::Decimal(decimal_type)) => render_decimal(Some(*decimal_type)),
         Some(PropertyElementType::List(inner)) => {
             format!("LIST<{}>", render_list_element(Some(inner)))
         }

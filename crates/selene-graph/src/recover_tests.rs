@@ -299,6 +299,7 @@ fn recover_closed_wal_only_preserves_typed_list_property() {
                     default: None,
                     immutable: false,
                     unique: false,
+                    decimal_type: None,
                     record_field_types: None,
                 }],
                 ValidationMode::Strict,

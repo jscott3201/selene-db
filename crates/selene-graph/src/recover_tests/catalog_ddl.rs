@@ -18,26 +18,33 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     let device_id = db_string("device_id").unwrap();
     let score = db_string("score").unwrap();
     let small_score = db_string("small_score").unwrap();
+    let decimal_type = selene_core::DecimalType::new(5, 2).unwrap();
+    let list_decimal_type = selene_core::DecimalType::new(4, 1).unwrap();
+    let record_decimal_type = selene_core::DecimalType::new(6, 3).unwrap();
     let exact_numeric_defaults = [
         (
             db_string("unsigned_count").unwrap(),
             selene_core::PropertyValueType::Uint,
             PropertyDefaultValue::Uint(42),
+            None,
         ),
         (
             db_string("wide_signed").unwrap(),
             selene_core::PropertyValueType::Int128,
             PropertyDefaultValue::Int128(i128::MIN),
+            None,
         ),
         (
             db_string("wide_unsigned").unwrap(),
             selene_core::PropertyValueType::Uint128,
             PropertyDefaultValue::Uint128(u128::MAX),
+            None,
         ),
         (
             db_string("decimal_score").unwrap(),
             selene_core::PropertyValueType::Decimal,
             PropertyDefaultValue::Decimal(db_string("123.450").unwrap()),
+            Some(decimal_type),
         ),
     ];
     let temporal_defaults = [
@@ -93,10 +100,10 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     )];
     let list_defaults = [(
         db_string("tags").unwrap(),
-        PropertyElementType::Scalar(selene_core::PropertyValueType::String),
+        PropertyElementType::Decimal(list_decimal_type),
         PropertyDefaultValue::List(vec![
-            Box::new(PropertyDefaultValue::String(db_string("alpha").unwrap())),
-            Box::new(PropertyDefaultValue::String(db_string("beta").unwrap())),
+            Box::new(PropertyDefaultValue::Decimal(db_string("1.2").unwrap())),
+            Box::new(PropertyDefaultValue::Decimal(db_string("2.3").unwrap())),
         ]),
     )];
     let record_defaults = [(
@@ -112,6 +119,11 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 field_type: RecordFieldType::Scalar(selene_core::PropertyValueType::Int),
                 required: true,
             },
+            RecordFieldTypeDef {
+                name: db_string("amount").unwrap(),
+                field_type: RecordFieldType::Decimal(record_decimal_type),
+                required: true,
+            },
         ]),
         PropertyDefaultValue::Record(vec![
             PropertyDefaultRecordField {
@@ -122,27 +134,41 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 name: db_string("port").unwrap(),
                 value: Box::new(PropertyDefaultValue::Integer(1)),
             },
+            PropertyDefaultRecordField {
+                name: db_string("amount").unwrap(),
+                value: Box::new(PropertyDefaultValue::Decimal(db_string("1.234").unwrap())),
+            },
         ]),
     )];
     let changes = {
         let mut txn = shared.begin_write();
         let mut properties = base_properties(&serial, &payload, &device_id, &score, &small_score);
-        properties.extend(
-            exact_numeric_defaults
-                .iter()
-                .chain(temporal_defaults.iter())
-                .chain(vector_defaults.iter())
-                .map(|(name, value_type, default)| PropertyTypeDef {
-                    name: name.clone(),
-                    value_type: *value_type,
-                    list_element_type: None,
-                    required: false,
-                    default: Some(default.clone()),
-                    immutable: false,
-                    unique: false,
-                    record_field_types: None,
-                }),
-        );
+        properties.extend(exact_numeric_defaults.iter().map(
+            |(name, value_type, default, decimal_type)| PropertyTypeDef {
+                name: name.clone(),
+                value_type: *value_type,
+                list_element_type: None,
+                required: false,
+                default: Some(default.clone()),
+                immutable: false,
+                unique: false,
+                decimal_type: *decimal_type,
+                record_field_types: None,
+            },
+        ));
+        properties.extend(temporal_defaults.iter().chain(vector_defaults.iter()).map(
+            |(name, value_type, default)| PropertyTypeDef {
+                name: name.clone(),
+                value_type: *value_type,
+                list_element_type: None,
+                required: false,
+                default: Some(default.clone()),
+                immutable: false,
+                unique: false,
+                decimal_type: None,
+                record_field_types: None,
+            },
+        ));
         properties.extend(list_defaults.iter().map(|(name, element_type, default)| {
             PropertyTypeDef {
                 name: name.clone(),
@@ -152,6 +178,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 default: Some(default.clone()),
                 immutable: false,
                 unique: false,
+                decimal_type: None,
                 record_field_types: None,
             }
         }));
@@ -164,6 +191,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 default: Some(default.clone()),
                 immutable: false,
                 unique: false,
+                decimal_type: None,
                 record_field_types: Some(field_types.clone()),
             }
         }));
@@ -209,10 +237,13 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         &score,
         &small_score,
     );
-    for (offset, (name, _value_type, default)) in exact_numeric_defaults.iter().enumerate() {
+    for (offset, (name, _value_type, default, decimal_type)) in
+        exact_numeric_defaults.iter().enumerate()
+    {
         let property = &graph_type.node_types[0].properties[5 + offset];
         assert_eq!(&property.name, name);
         assert_eq!(property.default.as_ref(), Some(default));
+        assert_eq!(property.decimal_type, *decimal_type);
     }
     let temporal_start = 5 + exact_numeric_defaults.len();
     for (offset, (name, _value_type, default)) in temporal_defaults.iter().enumerate() {
@@ -260,6 +291,7 @@ fn base_properties(
             default: Some(PropertyDefaultValue::String(db_string("unknown").unwrap())),
             immutable: true,
             unique: true,
+            decimal_type: None,
             record_field_types: None,
         },
         PropertyTypeDef {
@@ -270,6 +302,7 @@ fn base_properties(
             default: Some(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE])),
             immutable: false,
             unique: false,
+            decimal_type: None,
             record_field_types: None,
         },
         PropertyTypeDef {
@@ -282,6 +315,7 @@ fn base_properties(
             )),
             immutable: false,
             unique: false,
+            decimal_type: None,
             record_field_types: None,
         },
         PropertyTypeDef {
@@ -292,6 +326,7 @@ fn base_properties(
             default: Some(PropertyDefaultValue::Float(1.5_f64.to_bits())),
             immutable: false,
             unique: false,
+            decimal_type: None,
             record_field_types: None,
         },
         PropertyTypeDef {
@@ -302,6 +337,7 @@ fn base_properties(
             default: Some(PropertyDefaultValue::Float32(2.25_f32.to_bits())),
             immutable: false,
             unique: false,
+            decimal_type: None,
             record_field_types: None,
         },
     ]

@@ -20,6 +20,7 @@ pub mod change_kind;
 pub mod changeset;
 mod changeset_variants;
 pub mod db_string;
+mod decimal_type;
 mod duration_type;
 pub mod error;
 pub mod extension_type_ids;
@@ -46,6 +47,9 @@ pub use changeset::{
     Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
 };
 pub use db_string::{DbString, db_string};
+pub use decimal_type::{
+    DecimalType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, decimal_fits_type, round_decimal_to_type,
+};
 pub use duration_type::{
     DurationOrderKey, DurationTypeQualifier, DurationValueFamily, duration_order_key,
     duration_value_family,

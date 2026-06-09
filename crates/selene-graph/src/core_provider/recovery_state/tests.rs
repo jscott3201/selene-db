@@ -89,6 +89,7 @@ fn core_string_property(name: &str, required: bool) -> PropertyDefV1 {
         name: db_string(name).unwrap(),
         value_type: ValueType {
             predefined: Some(PredefinedValueType::String),
+            decimal_type: None,
             union: None,
             list_of: None,
             record: None,

@@ -223,6 +223,7 @@ fn runtime_properties(
                 default: runtime_default_value(property.default.as_ref())?,
                 immutable: property.immutable,
                 unique: property.unique,
+                decimal_type: runtime_decimal_type(&property.value_type, value_type),
                 record_field_types,
             })
         })
@@ -258,6 +259,9 @@ fn runtime_record_field_type(
     match field_type {
         selene_core::RecordFieldStructureType::Scalar(value_type) => {
             Ok(RecordFieldType::Scalar(*value_type))
+        }
+        selene_core::RecordFieldStructureType::Decimal(decimal_type) => {
+            Ok(RecordFieldType::Decimal(*decimal_type))
         }
         selene_core::RecordFieldStructureType::List(inner) => Ok(RecordFieldType::List(Box::new(
             runtime_record_field_type(inner, depth + 1)?,
@@ -314,8 +318,18 @@ fn runtime_value_type(
         ));
     }
     let Some(predefined) = value_type.predefined else {
+        if value_type.decimal_type.is_some() {
+            return Err(inconsistent(
+                "WAL property definition declares decimal precision without DECIMAL type",
+            ));
+        }
         return Ok((PropertyValueType::Null, None));
     };
+    if value_type.decimal_type.is_some() && predefined != PredefinedValueType::Decimal {
+        return Err(inconsistent(
+            "WAL property definition declares decimal precision for non-DECIMAL type",
+        ));
+    }
     Ok((runtime_predefined_value_type(predefined)?, None))
 }
 
@@ -340,14 +354,30 @@ fn runtime_element_type(
         ));
     }
     let Some(predefined) = value_type.predefined else {
+        if value_type.decimal_type.is_some() {
+            return Err(inconsistent(
+                "WAL list property definition declares decimal precision without DECIMAL type",
+            ));
+        }
         return Ok(apply_element_nullability(
             value_type.not_null,
             PropertyElementType::Scalar(PropertyValueType::Null),
         ));
     };
+    if value_type.decimal_type.is_some() && predefined != PredefinedValueType::Decimal {
+        return Err(inconsistent(
+            "WAL list property definition declares decimal precision for non-DECIMAL type",
+        ));
+    }
     Ok(apply_element_nullability(
         value_type.not_null,
-        PropertyElementType::Scalar(runtime_predefined_value_type(predefined)?),
+        match predefined {
+            PredefinedValueType::Decimal => match value_type.decimal_type {
+                Some(decimal_type) => PropertyElementType::Decimal(decimal_type),
+                None => PropertyElementType::Scalar(PropertyValueType::Decimal),
+            },
+            _ => PropertyElementType::Scalar(runtime_predefined_value_type(predefined)?),
+        },
     ))
 }
 
@@ -359,6 +389,17 @@ fn apply_element_nullability(
         PropertyElementType::NotNull(Box::new(element_type))
     } else {
         element_type
+    }
+}
+
+fn runtime_decimal_type(
+    value_type: &ValueType,
+    runtime_value_type: PropertyValueType,
+) -> Option<selene_core::DecimalType> {
+    if runtime_value_type == PropertyValueType::Decimal {
+        value_type.decimal_type
+    } else {
+        None
     }
 }
 

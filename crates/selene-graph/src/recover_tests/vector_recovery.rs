@@ -298,6 +298,7 @@ fn recover_closed_wal_only_preserves_vector_property_type() {
                     default: None,
                     immutable: false,
                     unique: false,
+                    decimal_type: None,
                     record_field_types: None,
                 }],
                 ValidationMode::Strict,

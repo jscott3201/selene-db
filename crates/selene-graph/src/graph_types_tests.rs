@@ -15,6 +15,7 @@ fn property(name: &str) -> PropertyTypeDef {
         default: None,
         immutable: false,
         unique: false,
+        decimal_type: None,
         record_field_types: None,
     }
 }
