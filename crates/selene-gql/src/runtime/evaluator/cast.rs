@@ -25,6 +25,8 @@
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source or
 //!   any cast whose target is `NULL` / `NOTHING`).
 
+use std::sync::Arc;
+
 use selene_core::{DbString, JsonValue, Value};
 
 use crate::{
@@ -125,7 +127,7 @@ pub(super) fn eval_cast(
                 span,
             ));
         }
-        Value::Bytes(_) if !matches!(target_type, GqlType::Bytes) => {
+        Value::Bytes(_) if !matches!(target_type, GqlType::Bytes | GqlType::ByteString(_)) => {
             // ISO §20.8 Table 4: byte strings only cast to byte strings. Every
             // byte-string source to a non-BYTES target is an invalid
             // source/target combination, not an unimplemented conversion.
@@ -165,7 +167,8 @@ pub(super) fn eval_cast(
         GqlType::Decimal => decimal::numeric_to_decimal(value, span),
         GqlType::Boolean => cast_to_boolean(value, span),
         GqlType::String => cast_to_string(value, span),
-        GqlType::Bytes => cast_to_bytes(value, span),
+        GqlType::Bytes => cast_to_bytes(value, None, span),
+        GqlType::ByteString(byte_type) => cast_to_bytes(value, Some(byte_type), span),
         GqlType::Uuid => cast_to_uuid(value, span),
         GqlType::Json => cast_to_json(value, span),
         GqlType::Vector => cast_to_vector(value, span),
@@ -300,14 +303,61 @@ fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> 
     }
 }
 
-fn cast_to_bytes(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+fn cast_to_bytes(
+    value: Value,
+    target_type: Option<&crate::ast::ByteStringType>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     match value {
-        Value::Bytes(value) => Ok(Value::Bytes(value)),
+        Value::Bytes(value) => coerce_bytes_to_type(value, target_type, span),
         _ => Err(non_iso_combination(
             "CAST from a non-BYTES type to BYTES is not a valid type combination",
             span,
         )),
     }
+}
+
+fn coerce_bytes_to_type(
+    value: Arc<[u8]>,
+    target_type: Option<&crate::ast::ByteStringType>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Some(target_type) = target_type else {
+        return Ok(Value::Bytes(value));
+    };
+    let len = value.len() as u64;
+    if len >= target_type.min_len && len <= target_type.max_len {
+        return Ok(Value::Bytes(value));
+    }
+    if len < target_type.min_len {
+        let target_len = usize::try_from(target_type.min_len).map_err(|_| {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "byte string target minimum length exceeds supported range",
+                span,
+            )
+        })?;
+        let mut padded = Vec::with_capacity(target_len);
+        padded.extend_from_slice(&value);
+        padded.resize(target_len, 0);
+        return Ok(Value::Bytes(Arc::<[u8]>::from(padded.into_boxed_slice())));
+    }
+
+    let max_len = usize::try_from(target_type.max_len).map_err(|_| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "byte string target maximum length exceeds supported range",
+            span,
+        )
+    })?;
+    if value[max_len..].iter().any(|byte| *byte != 0) {
+        return Err(ExecutorError::data_exception(
+            DataExceptionSubclass::StringDataRightTruncation,
+            "byte string cast would truncate non-zero trailing bytes",
+            span,
+        ));
+    }
+    Ok(Value::Bytes(Arc::<[u8]>::from(&value[..max_len])))
 }
 
 fn cast_to_list(
@@ -415,7 +465,7 @@ fn format_float(f: f64) -> String {
 
 fn cast_to_type_feature(target: &GqlType) -> &'static str {
     match target {
-        GqlType::Bytes => "CAST to BYTES",
+        GqlType::Bytes | GqlType::ByteString(_) => "CAST to BYTES",
         GqlType::ZonedDateTime => "CAST to ZONED DATETIME",
         GqlType::LocalDateTime => "CAST to LOCAL DATETIME",
         GqlType::Date => "CAST to DATE",

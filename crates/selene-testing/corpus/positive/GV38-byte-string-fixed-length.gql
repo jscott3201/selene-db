@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GV38
+// also-covers: GV35
+// expects: parse-ok
+RETURN X'CAFE' IS TYPED BINARY(2)

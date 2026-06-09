@@ -628,7 +628,7 @@ fn named_procedure_call_feature_is_supported() {
 }
 
 #[test]
-fn byte_string_length_type_forms_reject_as_specific_gv_features() {
+fn byte_string_length_type_forms_record_specific_gv_features() {
     for (source, expected, name) in [
         (
             "RETURN n IS TYPED BYTES(1, 16)",
@@ -646,18 +646,19 @@ fn byte_string_length_type_forms_reject_as_specific_gv_features() {
             "Specified byte string fixed length",
         ),
     ] {
-        let error = parse(source).expect_err(source);
-        let ParserError::UnsupportedFeature {
-            feature_id,
-            display_name,
-            ..
-        } = error
-        else {
-            panic!("expected UnsupportedFeature for {source:?}, got {error:?}");
-        };
-        assert_eq!(feature_id, expected, "{source}");
-        assert_eq!(display_name, name, "{source}");
-        assert_eq!(error.gqlstatus().as_str(), "42N01", "{source}");
+        let statement = parse(source).expect(source);
+        let observed = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            observed.contains(&FeatureId::GV35),
+            "{source} should record GV35"
+        );
+        assert!(
+            observed.contains(&expected),
+            "{source} should record {name} ({expected:?}), observed {observed:?}"
+        );
     }
 }
 

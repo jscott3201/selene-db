@@ -5,7 +5,8 @@ use selene_core::feature_register::FeatureId;
 
 use crate::{
     ast::{
-        BinaryOp, GqlType, IsCheckKind, NormalForm, RecordType, SourceSpan, TruthValue, ValueExpr,
+        BinaryOp, ByteStringType, ByteStringTypeForm, GqlType, IsCheckKind, NormalForm, RecordType,
+        SourceSpan, TruthValue, ValueExpr,
     },
     error::ParserError,
     parser::MAX_NESTING_DEPTH,
@@ -404,34 +405,72 @@ fn build_byte_string_type_name(text: &str, span: SourceSpan) -> Result<GqlType, 
     if !text.contains('(') {
         return Ok(GqlType::Bytes);
     }
+    let lengths = parse_byte_string_lengths(text, span)?;
     if keyword_starts_with(text, "BINARY") {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV38,
-            display_name: "Specified byte string fixed length",
-            span,
-            hint: "fixed-length BINARY(n) is outside the selene-db v1.0 claim list; use BYTES",
-        });
+        let [length] = byte_string_single_length(&lengths, span)?;
+        return byte_string_type(length, length, ByteStringTypeForm::BinaryFixed, span);
     }
     if keyword_starts_with(text, "VARBINARY") {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV37,
-            display_name: "Specified byte string maximum length",
-            span,
-            hint: "length-qualified VARBINARY(n) is outside the selene-db v1.0 claim list; use BYTES",
-        });
+        let [max] = byte_string_single_length(&lengths, span)?;
+        return byte_string_type(0, max, ByteStringTypeForm::VarbinaryMax, span);
     }
-    if text.contains(',') {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV36,
-            display_name: "Specified byte string minimum length",
+    match lengths.as_slice() {
+        [max] => byte_string_type(0, *max, ByteStringTypeForm::BytesMax, span),
+        [min, max] => byte_string_type(*min, *max, ByteStringTypeForm::BytesMinMax, span),
+        _ => Err(ParserError::syntax(
+            "byte string type expects one or two length bounds",
             span,
-            hint: "BYTES(min,max) is outside the selene-db v1.0 claim list; use BYTES",
-        });
+            None,
+        )),
     }
-    Err(ParserError::UnsupportedFeature {
-        feature_id: FeatureId::GV37,
-        display_name: "Specified byte string maximum length",
-        span,
-        hint: "BYTES(max) is outside the selene-db v1.0 claim list; use BYTES",
-    })
+}
+
+fn parse_byte_string_lengths(text: &str, span: SourceSpan) -> Result<Vec<u64>, ParserError> {
+    let open = text.find('(').ok_or_else(|| {
+        ParserError::syntax("byte string type is missing length bounds", span, None)
+    })?;
+    let close = text.rfind(')').ok_or_else(|| {
+        ParserError::syntax(
+            "byte string type is missing closing parenthesis",
+            span,
+            None,
+        )
+    })?;
+    text[open + 1..close]
+        .split(',')
+        .map(str::trim)
+        .map(|part| {
+            part.parse::<u64>().map_err(|_| {
+                ParserError::syntax("byte string length exceeds supported range", span, None)
+            })
+        })
+        .collect()
+}
+
+fn byte_string_single_length(lengths: &[u64], span: SourceSpan) -> Result<[u64; 1], ParserError> {
+    match lengths {
+        [length] => Ok([*length]),
+        _ => Err(ParserError::syntax(
+            "byte string type expects exactly one length bound",
+            span,
+            None,
+        )),
+    }
+}
+
+fn byte_string_type(
+    min_len: u64,
+    max_len: u64,
+    form: ByteStringTypeForm,
+    span: SourceSpan,
+) -> Result<GqlType, ParserError> {
+    ByteStringType::new(min_len, max_len, form)
+        .map(GqlType::ByteString)
+        .ok_or_else(|| {
+            ParserError::syntax(
+                "byte string length bounds require max > 0 and min <= max",
+                span,
+                None,
+            )
+        })
 }

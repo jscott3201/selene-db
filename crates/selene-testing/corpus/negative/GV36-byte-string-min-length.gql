@@ -1,4 +1,0 @@
-// corpus: negative
-// feature: GV36
-// expects: parse-rejected(GV36)
-RETURN n IS TYPED BYTES(1, 16)

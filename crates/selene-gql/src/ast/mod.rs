@@ -39,5 +39,5 @@ pub use statement::{
     QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement, TypedBinding,
     UnwindStatement, WithClause,
 };
-pub use types::{GqlType, RecordType};
+pub use types::{ByteStringType, ByteStringTypeForm, GqlType, RecordType};
 pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};

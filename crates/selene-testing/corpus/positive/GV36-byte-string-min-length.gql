@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GV36
+// also-covers: GV35, GV37
+// expects: parse-ok
+RETURN X'CAFE' IS TYPED BYTES(1, 16)

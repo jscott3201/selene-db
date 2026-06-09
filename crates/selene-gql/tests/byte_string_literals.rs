@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_core::{DbString, GraphId, Value, feature_register::FeatureId};
 use selene_gql::{
     AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry, GqlType,
     ImplDefinedCaps, ParserError, PipelineStatement, Session, StatementOutput,
@@ -46,6 +46,31 @@ fn first_value_with_caps(source: &str, caps: ImplDefinedCaps) -> Value {
     table.rows()[0].values()[0].clone()
 }
 
+fn first_value_with_parameter(source: &str, name: &str, value: Value) -> Value {
+    let graph = SharedGraph::new(GraphId::new(14_205));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(db_string(name), value);
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .unwrap_or_else(|err| panic!("execute failed for `{source}`: {err:?}"));
+    let StatementOutput::Rows(table) = output else {
+        panic!("`{source}` produced non-row output");
+    };
+    table.rows()[0].values()[0].clone()
+}
+
+fn first_status_with_parameter(source: &str, name: &str, value: Value) -> String {
+    let graph = SharedGraph::new(GraphId::new(14_206));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(db_string(name), value);
+    session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("statement errors")
+        .gqlstatus()
+        .as_str()
+        .to_owned()
+}
+
 fn first_status_with_caps(source: &str, caps: ImplDefinedCaps) -> String {
     let graph = SharedGraph::new(GraphId::new(14_204));
     let mut session = Session::new(&graph).with_impl_defined_caps(caps);
@@ -59,6 +84,10 @@ fn first_status_with_caps(source: &str, caps: ImplDefinedCaps) -> String {
 
 fn bytes(values: &[u8]) -> Value {
     Value::Bytes(Arc::<[u8]>::from(values))
+}
+
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn analyze_one(source: &str) -> AnalyzedStatement {
@@ -131,6 +160,91 @@ fn byte_string_literal_infers_bytes_and_is_typed_bytes() {
     assert_eq!(
         first_value("RETURN X'CAFE' IS TYPED BYTES AS ok"),
         Value::Bool(true)
+    );
+}
+
+#[test]
+fn bounded_byte_string_forms_parse_flag_and_format() {
+    for (source, expected) in [
+        ("RETURN X'CAFE' IS TYPED BYTES(2) AS ok", FeatureId::GV37),
+        ("RETURN X'CAFE' IS TYPED BYTES(1, 4) AS ok", FeatureId::GV36),
+        ("RETURN X'CAFE' IS TYPED BINARY(2) AS ok", FeatureId::GV38),
+        (
+            "RETURN X'CAFE' IS TYPED VARBINARY(2) AS ok",
+            FeatureId::GV37,
+        ),
+    ] {
+        parse(source).unwrap_or_else(|err| panic!("bounded byte-string type parses: {err:?}"));
+        assert_feature_recorded(source, FeatureId::GV35);
+        assert_feature_recorded(source, expected);
+    }
+
+    let fixed = parse("RETURN X'CAFE' IS TYPED BINARY(2) AS ok").expect("source parses");
+    let formatted = format_read_statement(&fixed).expect("formats");
+    assert_eq!(formatted, "RETURN X'CAFE' IS TYPED BYTES(2, 2) AS ok");
+    let reparsed = parse(&formatted).expect("formatted source reparses");
+    assert!(structurally_eq(&fixed, &reparsed));
+
+    let variable = parse("RETURN X'CAFE' IS TYPED VARBINARY(4) AS ok").expect("source parses");
+    let formatted = format_read_statement(&variable).expect("formats");
+    assert_eq!(formatted, "RETURN X'CAFE' IS TYPED BYTES(4) AS ok");
+    let reparsed = parse(&formatted).expect("formatted source reparses");
+    assert!(structurally_eq(&variable, &reparsed));
+}
+
+#[test]
+fn bounded_byte_string_type_predicates_check_length_bounds() {
+    assert_eq!(
+        first_value("RETURN X'CAFE' IS TYPED BYTES(2) AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN X'CAFE00' IS TYPED BYTES(2) AS ok"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        first_value("RETURN X'CA' IS TYPED BYTES(2, 4) AS ok"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        first_value("RETURN X'CAFE00' IS TYPED BYTES(2, 4) AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN X'CAFE' IS TYPED BINARY(2) AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN X'CA' IS TYPED BINARY(2) AS ok"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        first_value("RETURN X'CAFE00' IS TYPED VARBINARY(2) AS ok"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn bounded_byte_string_cast_pads_and_truncates_trailing_zeroes() {
+    assert_eq!(
+        first_value("RETURN CAST(X'CA' AS BYTES(2, 4)) AS payload"),
+        bytes(&[0xca, 0x00])
+    );
+    assert_eq!(
+        first_value("RETURN CAST(X'CA' AS BINARY(3)) AS payload"),
+        bytes(&[0xca, 0x00, 0x00])
+    );
+    assert_eq!(
+        first_value("RETURN CAST(X'CAFE00' AS VARBINARY(2)) AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        first_value("RETURN CAST(X'CAFE00' AS BYTES(1, 2)) AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        first_status("RETURN CAST(X'CAFE01' AS VARBINARY(2)) AS payload"),
+        "22001"
     );
 }
 
@@ -249,6 +363,28 @@ fn byte_string_trim_infers_bytes_and_records_gf07() {
 }
 
 #[test]
+fn bounded_byte_string_trim_and_concat_infer_plain_bytes() {
+    assert_eq!(
+        projection_type(
+            &analyze_one("RETURN X'CA' || CAST(X'FE' AS BINARY(1)) AS payload"),
+            "payload"
+        ),
+        AnalyzedType::Resolved(GqlType::Bytes)
+    );
+    assert_eq!(
+        first_value("RETURN X'CA' || CAST(X'FE' AS BINARY(1)) AS payload"),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        projection_type(
+            &analyze_one("RETURN TRIM(BOTH CAST(X'00' AS BINARY(1)) FROM X'00CA00') AS payload"),
+            "payload"
+        ),
+        AnalyzedType::Resolved(GqlType::Bytes)
+    );
+}
+
+#[test]
 fn byte_string_concatenation_uses_byte_string_result_type() {
     assert_eq!(
         first_value("RETURN X'CA' || X'FE00' AS payload"),
@@ -300,6 +436,38 @@ fn bare_byte_string_type_aliases_normalize_to_bytes() {
         first_value("RETURN X'CAFE' IS TYPED VARBINARY AS ok"),
         Value::Bool(true)
     );
+}
+
+#[test]
+fn typed_parameters_enforce_bounded_byte_string_lengths() {
+    assert_eq!(
+        first_value_with_parameter(
+            "RETURN $payload :: BYTES(2, 4) AS payload",
+            "payload",
+            bytes(&[0xca, 0xfe])
+        ),
+        bytes(&[0xca, 0xfe])
+    );
+    assert_eq!(
+        first_status_with_parameter(
+            "RETURN $payload :: BYTES(2, 4) AS payload",
+            "payload",
+            bytes(&[0xca])
+        ),
+        "22G03"
+    );
+}
+
+#[test]
+fn bounded_byte_string_type_bounds_reject_invalid_lengths() {
+    for source in [
+        "RETURN X'CA' IS TYPED BYTES(0) AS ok",
+        "RETURN X'CA' IS TYPED BYTES(4, 2) AS ok",
+        "RETURN X'CA' IS TYPED BINARY(0) AS ok",
+        "RETURN X'CA' IS TYPED VARBINARY(0) AS ok",
+    ] {
+        parse(source).expect_err("invalid byte-string bounds reject");
+    }
 }
 
 #[test]

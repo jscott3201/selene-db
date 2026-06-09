@@ -462,9 +462,11 @@ fn concat_result_type(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
     if matches!(rhs, GqlType::Null) {
         return Some(lhs.clone());
     }
+    if is_byte_string(lhs) && is_byte_string(rhs) {
+        return Some(GqlType::Bytes);
+    }
     match (lhs, rhs) {
         (GqlType::String, GqlType::String) => Some(GqlType::String),
-        (GqlType::Bytes, GqlType::Bytes) => Some(GqlType::Bytes),
         (GqlType::Path, GqlType::Path) => Some(GqlType::Path),
         (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
             meet_gql_types(lhs_inner, rhs_inner).map(|inner| GqlType::List(Box::new(inner)))
@@ -585,6 +587,7 @@ fn expect_concat_operand(
         | AnalyzedType::Resolved(GqlType::Null)
         | AnalyzedType::Resolved(GqlType::String)
         | AnalyzedType::Resolved(GqlType::Bytes)
+        | AnalyzedType::Resolved(GqlType::ByteString(_))
         | AnalyzedType::Resolved(GqlType::List(_))
         | AnalyzedType::Resolved(GqlType::Path) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
@@ -655,6 +658,10 @@ fn type_mismatch(
     }
 }
 
+fn is_byte_string(ty: &GqlType) -> bool {
+    matches!(ty, GqlType::Bytes | GqlType::ByteString(_))
+}
+
 fn is_supported_typed_target(ty: &GqlType) -> bool {
     match ty {
         GqlType::String
@@ -679,6 +686,7 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Real
         | GqlType::Double
         | GqlType::Bytes
+        | GqlType::ByteString(_)
         | GqlType::Uuid
         | GqlType::Json
         | GqlType::ZonedDateTime
@@ -724,7 +732,7 @@ fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
     Some(match ty {
         GqlType::Boolean => ComparableFamily::Boolean,
         GqlType::String => ComparableFamily::String,
-        GqlType::Bytes => ComparableFamily::Bytes,
+        GqlType::Bytes | GqlType::ByteString(_) => ComparableFamily::Bytes,
         GqlType::Uuid => ComparableFamily::Uuid,
         GqlType::NodeRef => ComparableFamily::NodeRef,
         GqlType::EdgeRef => ComparableFamily::EdgeRef,
