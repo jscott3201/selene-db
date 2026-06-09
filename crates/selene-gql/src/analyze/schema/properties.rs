@@ -269,7 +269,10 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
                 P::Int,
                 G::Integer | G::Int8 | G::Int16 | G::Int32 | G::Int64 | G::SmallInt | G::BigInt
             )
-            | (P::Uint, G::Uint8 | G::Uint16 | G::Uint32 | G::Uint64)
+            | (
+                P::Uint,
+                G::Uint8 | G::Uint16 | G::Uint32 | G::Uint64 | G::USmallInt | G::Uint | G::UBigInt
+            )
             | (P::Int128, G::Int128)
             | (P::Uint128, G::Uint128)
             | (P::Float, G::Float | G::Float64 | G::Double)

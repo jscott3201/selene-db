@@ -40,6 +40,12 @@ pub enum GqlType {
     Uint64,
     /// `UINT128`.
     Uint128,
+    /// `USMALLINT`.
+    USmallInt,
+    /// `UINT`.
+    Uint,
+    /// `UBIGINT`.
+    UBigInt,
     /// `SMALLINT`.
     SmallInt,
     /// `BIGINT`.

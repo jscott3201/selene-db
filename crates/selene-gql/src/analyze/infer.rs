@@ -3,9 +3,10 @@
 mod duration;
 mod numeric;
 mod trim;
+mod typed_target;
 
 use crate::{
-    BinaryOp, GqlType, IsCheckKind, Literal, RecordType, SourceSpan, UnaryOp,
+    BinaryOp, GqlType, IsCheckKind, Literal, SourceSpan, UnaryOp,
     analyze::{
         error::{AnalysisError, ConditionClause, ExpectedType, Side, TypeMismatchContext},
         types::AnalyzedType,
@@ -15,6 +16,7 @@ use crate::{
 use self::{
     duration::{duration_add_sub, duration_mul_div, temporal_duration_add_sub},
     numeric::{is_numeric, numeric_promotion},
+    typed_target::is_supported_typed_target,
 };
 
 pub(crate) use self::numeric::argument_assignable;
@@ -100,8 +102,7 @@ pub(crate) fn unary(
             AnalyzedType::Resolved(ty) if ty.is_duration() => {
                 Ok(AnalyzedType::Resolved(GqlType::Duration))
             }
-            // Per ISO/IEC 39075:2024 three-valued logic, `- NULL` yields NULL.
-            // The runtime returns `Value::Null`; the analyzer must not reject.
+            // Three-valued logic: `- NULL` yields NULL, so analysis must not reject.
             AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Null)),
             AnalyzedType::Resolved(found) => Err(type_mismatch(
                 TypeMismatchContext::UnaryNegate,
@@ -114,9 +115,7 @@ pub(crate) fn unary(
             AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => {
                 Ok(AnalyzedType::Resolved(GqlType::Boolean))
             }
-            // `NOT NULL` yields NULL (UNKNOWN) under three-valued logic; the
-            // runtime returns `Value::Null`. The static result type stays
-            // Boolean (the UNKNOWN truth value lives in the Boolean domain).
+            // `NOT NULL` yields UNKNOWN; the static result stays Boolean.
             AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
             AnalyzedType::Resolved(found) => Err(type_mismatch(
                 TypeMismatchContext::UnaryNot,
@@ -660,57 +659,6 @@ fn type_mismatch(
 
 fn is_byte_string(ty: &GqlType) -> bool {
     matches!(ty, GqlType::Bytes | GqlType::ByteString(_))
-}
-
-fn is_supported_typed_target(ty: &GqlType) -> bool {
-    match ty {
-        GqlType::String
-        | GqlType::Boolean
-        | GqlType::Integer
-        | GqlType::Float
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::Int128
-        | GqlType::Uint8
-        | GqlType::Uint16
-        | GqlType::Uint32
-        | GqlType::Uint64
-        | GqlType::Uint128
-        | GqlType::SmallInt
-        | GqlType::BigInt
-        | GqlType::Decimal
-        | GqlType::Float32
-        | GqlType::Float64
-        | GqlType::Real
-        | GqlType::Double
-        | GqlType::Bytes
-        | GqlType::ByteString(_)
-        | GqlType::Uuid
-        | GqlType::Json
-        | GqlType::ZonedDateTime
-        | GqlType::LocalDateTime
-        | GqlType::Date
-        | GqlType::ZonedTime
-        | GqlType::LocalTime
-        | GqlType::Duration
-        | GqlType::DurationYearToMonth
-        | GqlType::DurationDayToSecond
-        | GqlType::Vector
-        | GqlType::Path
-        | GqlType::Null
-        | GqlType::Nothing => true,
-        GqlType::List(inner) => is_supported_typed_target(inner),
-        // Why: per ISO 39075:2024 §18.9 <record type> + §19.6 <value type predicate>, a
-        // record type is an authorized typed-predicate target. Closed-record field types
-        // are validated recursively, mirroring the List(inner) arm above.
-        GqlType::Record(RecordType::Open) => true,
-        GqlType::Record(RecordType::Closed(fields)) => {
-            fields.iter().all(|(_, ty)| is_supported_typed_target(ty))
-        }
-        GqlType::GraphRef | GqlType::NodeRef | GqlType::EdgeRef | GqlType::TableRef => false,
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

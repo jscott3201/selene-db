@@ -234,7 +234,8 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "FLOAT16 is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
         });
     }
-    if keyword_tokens_eq(text, &["UINT256"]) {
+    if keyword_tokens_eq(text, &["UINT256"]) || keyword_tokens_eq(text, &["UNSIGNED", "INTEGER256"])
+    {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV15,
             display_name: "256 bit unsigned integer numbers",
@@ -242,7 +243,10 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "UINT256 is outside the selene-db v1.0 claim list",
         });
     }
-    if keyword_tokens_eq(text, &["INT256"]) {
+    if keyword_tokens_eq(text, &["INT256"])
+        || keyword_tokens_eq(text, &["INTEGER256"])
+        || keyword_tokens_eq(text, &["SIGNED", "INTEGER256"])
+    {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV16,
             display_name: "256 bit signed integer numbers",
@@ -332,7 +336,29 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     const SCALAR_TYPES: &[(&[&str], GqlType)] = &[
         (&["BOOLEAN"], GqlType::Boolean),
         (&["BOOL"], GqlType::Boolean),
+        (&["SIGNED", "SMALL", "INTEGER"], GqlType::SmallInt),
+        (&["SIGNED", "BIG", "INTEGER"], GqlType::BigInt),
+        (&["SIGNED", "INTEGER8"], GqlType::Int8),
+        (&["SIGNED", "INTEGER16"], GqlType::Int16),
+        (&["SIGNED", "INTEGER32"], GqlType::Int32),
+        (&["SIGNED", "INTEGER64"], GqlType::Int64),
+        (&["SIGNED", "INTEGER128"], GqlType::Int128),
         (&["SIGNED", "INTEGER"], GqlType::Integer),
+        (&["UNSIGNED", "SMALL", "INTEGER"], GqlType::USmallInt),
+        (&["UNSIGNED", "BIG", "INTEGER"], GqlType::UBigInt),
+        (&["UNSIGNED", "INTEGER8"], GqlType::Uint8),
+        (&["UNSIGNED", "INTEGER16"], GqlType::Uint16),
+        (&["UNSIGNED", "INTEGER32"], GqlType::Uint32),
+        (&["UNSIGNED", "INTEGER64"], GqlType::Uint64),
+        (&["UNSIGNED", "INTEGER128"], GqlType::Uint128),
+        (&["UNSIGNED", "INTEGER"], GqlType::Uint),
+        (&["BIG", "INTEGER"], GqlType::BigInt),
+        (&["SMALL", "INTEGER"], GqlType::SmallInt),
+        (&["INTEGER8"], GqlType::Int8),
+        (&["INTEGER16"], GqlType::Int16),
+        (&["INTEGER32"], GqlType::Int32),
+        (&["INTEGER64"], GqlType::Int64),
+        (&["INTEGER128"], GqlType::Int128),
         (&["INTEGER"], GqlType::Integer),
         (&["INT"], GqlType::Integer),
         (&["INT8"], GqlType::Int8),
@@ -342,12 +368,14 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         (&["INT128"], GqlType::Int128),
         (&["SMALLINT"], GqlType::SmallInt),
         (&["BIGINT"], GqlType::BigInt),
-        (&["UINT"], GqlType::Uint64),
+        (&["UINT"], GqlType::Uint),
         (&["UINT64"], GqlType::Uint64),
         (&["UINT8"], GqlType::Uint8),
         (&["UINT16"], GqlType::Uint16),
         (&["UINT32"], GqlType::Uint32),
         (&["UINT128"], GqlType::Uint128),
+        (&["USMALLINT"], GqlType::USmallInt),
+        (&["UBIGINT"], GqlType::UBigInt),
         (&["FLOAT"], GqlType::Float),
         (&["DECIMAL"], GqlType::Decimal),
         (&["DEC"], GqlType::Decimal),

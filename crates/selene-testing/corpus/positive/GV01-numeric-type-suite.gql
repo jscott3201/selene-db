@@ -2,4 +2,36 @@
 // feature: GV01
 // also-covers: GV02, GV03, GV04, GV05, GV06, GV07, GV08, GV09, GV10, GV11, GV12, GV13, GV14, GV17, GV18, GV19, GV21, GV24
 // expects: parse-ok
-CREATE NODE TYPE :Numbers (u8 :: UINT8, i8 :: INT8, u16 :: UINT16, i16 :: INT16, small :: SMALLINT, u32 :: UINT32, i32 :: INT32, regular :: UINT, big :: BIGINT, i64 :: INT64, u128 :: UINT128, i128 :: INT128, dec :: DECIMAL, f32 :: FLOAT32, f64 :: FLOAT64)
+CREATE NODE TYPE :Numbers (
+  u8 :: UINT8,
+  u8_verbose :: UNSIGNED INTEGER8,
+  i8 :: INT8,
+  i8_verbose :: INTEGER8,
+  u16 :: UINT16,
+  u16_verbose :: UNSIGNED INTEGER16,
+  i16 :: INT16,
+  i16_verbose :: SIGNED INTEGER16,
+  usmall :: USMALLINT,
+  small :: SMALLINT,
+  small_verbose :: SMALL INTEGER,
+  u32 :: UINT32,
+  u32_verbose :: UNSIGNED INTEGER32,
+  i32 :: INT32,
+  i32_verbose :: INTEGER32,
+  regular :: UINT,
+  regular_verbose :: UNSIGNED INTEGER,
+  ubig :: UBIGINT,
+  big :: BIGINT,
+  big_verbose :: SIGNED BIG INTEGER,
+  u64 :: UINT64,
+  u64_verbose :: UNSIGNED INTEGER64,
+  i64 :: INT64,
+  i64_verbose :: SIGNED INTEGER64,
+  u128 :: UINT128,
+  u128_verbose :: UNSIGNED INTEGER128,
+  i128 :: INT128,
+  i128_verbose :: INTEGER128,
+  dec :: DECIMAL,
+  f32 :: FLOAT32,
+  f64 :: FLOAT64
+)

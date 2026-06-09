@@ -83,15 +83,15 @@ fn numeric_kind(ty: &GqlType) -> Option<NumericKind> {
             signed: false,
             width: 8,
         }),
-        GqlType::Uint16 => NumericKind::Integer(IntegerKind {
+        GqlType::Uint16 | GqlType::USmallInt => NumericKind::Integer(IntegerKind {
             signed: false,
             width: 16,
         }),
-        GqlType::Uint32 => NumericKind::Integer(IntegerKind {
+        GqlType::Uint32 | GqlType::Uint => NumericKind::Integer(IntegerKind {
             signed: false,
             width: 32,
         }),
-        GqlType::Uint64 => NumericKind::Integer(IntegerKind {
+        GqlType::Uint64 | GqlType::UBigInt => NumericKind::Integer(IntegerKind {
             signed: false,
             width: 64,
         }),

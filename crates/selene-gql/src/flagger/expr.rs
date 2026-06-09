@@ -356,10 +356,7 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
             record_feature(uses, FeatureId::GV04, span);
             record_feature(uses, FeatureId::GV09, span);
         }
-        GqlType::SmallInt => {
-            record_feature(uses, FeatureId::GV05, span);
-            record_feature(uses, FeatureId::GV18, span);
-        }
+        GqlType::SmallInt => record_feature(uses, FeatureId::GV18, span),
         GqlType::Uint32 => {
             record_feature(uses, FeatureId::GV06, span);
             record_feature(uses, FeatureId::GV09, span);
@@ -369,12 +366,13 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
             record_feature(uses, FeatureId::GV09, span);
         }
         GqlType::Uint64 => {
-            record_feature(uses, FeatureId::GV08, span);
             record_feature(uses, FeatureId::GV11, span);
             record_feature(uses, FeatureId::GV09, span);
         }
+        GqlType::USmallInt => record_feature(uses, FeatureId::GV05, span),
+        GqlType::Uint => record_feature(uses, FeatureId::GV08, span),
+        GqlType::UBigInt => record_feature(uses, FeatureId::GV10, span),
         GqlType::BigInt => {
-            record_feature(uses, FeatureId::GV10, span);
             record_feature(uses, FeatureId::GV19, span);
         }
         GqlType::Int64 => {
