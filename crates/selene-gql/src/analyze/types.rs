@@ -681,6 +681,10 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::SmallInt => 14u8.hash(state),
         GqlType::BigInt => 15u8.hash(state),
         GqlType::Decimal => 16u8.hash(state),
+        GqlType::DecimalExact(decimal) => {
+            47u8.hash(state);
+            decimal.hash(state);
+        }
         GqlType::Float32 => 17u8.hash(state),
         GqlType::Float64 => 18u8.hash(state),
         GqlType::Real => 40u8.hash(state),

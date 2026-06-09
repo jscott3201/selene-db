@@ -36,6 +36,7 @@ CREATE NODE TYPE :Numbers (
   i128 :: INT128,
   i128_verbose :: INTEGER128,
   dec :: DECIMAL,
+  dec_scaled :: DEC(5, 2),
   f32 :: FLOAT32,
   f64 :: FLOAT64
 )

@@ -569,6 +569,7 @@ fn is_limit_amount_type(ty: &GqlType) -> bool {
             | GqlType::BigInt
             | GqlType::Int128
             | GqlType::Decimal
+            | GqlType::DecimalExact(_)
             | GqlType::Uint8
             | GqlType::Uint16
             | GqlType::Uint32

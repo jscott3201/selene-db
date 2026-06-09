@@ -11,6 +11,7 @@
 
 use selene_core::{DurationTypeQualifier, Record, Value};
 
+use super::decimal_type::decimal_fits_type;
 use crate::{GqlType, RecordType};
 
 /// Return true when `value` structurally conforms to the AST type `ty`.
@@ -47,6 +48,9 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::Float32 | GqlType::Real => matches!(value, Value::Float32(_)),
         GqlType::Float64 | GqlType::Double => matches!(value, Value::Float(_)),
         GqlType::Decimal => matches!(value, Value::Decimal(_)),
+        GqlType::DecimalExact(decimal_type) => {
+            matches!(value, Value::Decimal(value) if decimal_fits_type(*value, *decimal_type))
+        }
         GqlType::Bytes => matches!(value, Value::Bytes(_)),
         GqlType::ByteString(byte_type) => match value {
             Value::Bytes(value) => {

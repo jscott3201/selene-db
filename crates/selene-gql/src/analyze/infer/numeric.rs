@@ -5,7 +5,7 @@ use crate::GqlType;
 /// Find the promoted result type for numeric operands.
 #[must_use]
 pub(crate) fn numeric_promotion(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
-    if lhs == rhs && is_numeric(lhs) {
+    if lhs == rhs && is_numeric(lhs) && !matches!(lhs.strip_not_null(), GqlType::DecimalExact(_)) {
         return Some(lhs.clone());
     }
     match (numeric_kind(lhs)?, numeric_kind(rhs)?) {
@@ -104,7 +104,7 @@ fn numeric_kind(ty: &GqlType) -> Option<NumericKind> {
             signed: false,
             width: 128,
         }),
-        GqlType::Decimal => NumericKind::Decimal,
+        GqlType::Decimal | GqlType::DecimalExact(_) => NumericKind::Decimal,
         GqlType::Float => NumericKind::Float(FloatKind::Unsized),
         GqlType::Float32 | GqlType::Real => NumericKind::Float(FloatKind::F32),
         GqlType::Float64 | GqlType::Double => NumericKind::Float(FloatKind::F64),

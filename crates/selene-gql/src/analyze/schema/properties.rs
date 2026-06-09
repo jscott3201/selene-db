@@ -278,7 +278,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Uint128, G::Uint128)
             | (P::Float, G::Float | G::Float64 | G::Double)
             | (P::Float32, G::Float32 | G::Real)
-            | (P::Decimal, G::Decimal)
+            | (P::Decimal, G::Decimal | G::DecimalExact(_))
             | (P::String, G::String)
             | (P::Uuid, G::Uuid)
             | (P::Bytes, G::Bytes | G::ByteString(_))
