@@ -68,6 +68,17 @@ pub(super) fn eval_cast(
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
+    if let GqlType::NotNull(inner) = target_type {
+        if matches!(value, Value::Null) {
+            return Err(ExecutorError::data_exception(
+                DataExceptionSubclass::NullValueNotAllowed,
+                "CAST to a NOT NULL value type cannot produce NULL",
+                span,
+            ));
+        }
+        return eval_cast(value, inner, span, ctx);
+    }
+
     // §22 universal: NULL casts to NULL regardless of target.
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
@@ -483,6 +494,7 @@ fn cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::Vector => "CAST to VECTOR",
         GqlType::Json => "CAST to JSON",
         GqlType::Record(_) => "CAST to RECORD",
+        GqlType::NotNull(inner) => cast_to_type_feature(inner),
         GqlType::Path => "CAST to PATH",
         GqlType::GraphRef => "CAST to GRAPH",
         GqlType::NodeRef => "CAST to NODE",

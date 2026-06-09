@@ -4,6 +4,7 @@ use crate::{GqlType, RecordType};
 
 pub(super) fn is_supported_typed_target(ty: &GqlType) -> bool {
     match ty {
+        GqlType::NotNull(inner) => is_supported_typed_target(inner),
         GqlType::String
         | GqlType::Boolean
         | GqlType::Integer

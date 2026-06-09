@@ -124,11 +124,11 @@ fn parse_type_ddl() {
     };
     assert_eq!(label.as_str(), "Person");
     assert_eq!(properties.len(), 2);
-    assert_eq!(properties[1].gql_type, GqlType::Integer);
     assert!(matches!(
-        properties[1].constraints.as_slice(),
-        [TypePropertyConstraint::NotNull(_)]
+        &properties[1].gql_type,
+        GqlType::NotNull(inner) if **inner == GqlType::Integer
     ));
+    assert!(properties[1].constraints.is_empty());
 
     let DdlStatement::CreateNodeType {
         extends,
@@ -205,16 +205,22 @@ fn parse_edge_type_and_show_ddl() {
 
 #[test]
 fn parse_type_property_constraints_exhaustively() {
-    // The five ISO/IEC 39075:2024 §18 property constraints the grammar accepts.
-    // Donor full-text/time-series constraints (SEARCHABLE/DICTIONARY/FILL/
-    // INTERVAL/ENCODING) were removed from the grammar — see
+    // The ISO/IEC 39075:2024 §18 property constraints the engine accepts:
+    // DEFAULT, IMMUTABLE, UNIQUE, INDEXED. Explicit value-type nullability is
+    // carried on the GqlType and lowered to the required-property bit at the
+    // catalog boundary. Donor full-text/time-series constraints (SEARCHABLE/
+    // DICTIONARY/FILL/INTERVAL/ENCODING) were removed from the grammar — see
     // `donor_property_constraints_are_syntax_errors`.
     let DdlStatement::CreateNodeType { properties, .. } = parse_ddl(
         "CREATE NODE TYPE :Sensor (v :: STRING NOT NULL DEFAULT 'x' IMMUTABLE UNIQUE INDEXED)",
     ) else {
         panic!("expected CREATE NODE TYPE");
     };
-    assert_eq!(properties[0].constraints.len(), 5);
+    assert!(matches!(
+        &properties[0].gql_type,
+        GqlType::NotNull(inner) if **inner == GqlType::String
+    ));
+    assert_eq!(properties[0].constraints.len(), 4);
 }
 
 #[test]

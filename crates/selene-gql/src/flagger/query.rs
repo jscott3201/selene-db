@@ -119,12 +119,13 @@ pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<F
 
 fn limit_value(value: &LimitValue, uses: &mut Vec<FeatureUse>) {
     if let LimitValue::Parameter {
-        declared_type: Some(_),
+        declared_type: Some(ty),
         span,
         ..
     } = value
     {
         record_feature(uses, FeatureId::IM_TYPED_PARAMS, *span);
+        expr::gql_type(ty, *span, uses);
     }
 }
 

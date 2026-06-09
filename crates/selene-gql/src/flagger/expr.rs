@@ -39,6 +39,9 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             if declared_type.is_some() {
                 record_feature(uses, FeatureId::IM_TYPED_PARAMS, *span);
             }
+            if let Some(ty) = declared_type {
+                gql_type(ty, *span, uses);
+            }
             return;
         }
         ValueExpr::IsCheck {
@@ -163,14 +166,14 @@ fn is_byte_string_expr(value: &ValueExpr) -> bool {
         ValueExpr::Literal(Literal::Bytes(_, _)) => true,
         ValueExpr::Cast { target_type, .. } => {
             matches!(
-                target_type.as_ref(),
+                target_type.as_ref().strip_not_null(),
                 GqlType::Bytes | GqlType::ByteString(_)
             )
         }
         ValueExpr::Parameter {
-            declared_type: Some(GqlType::Bytes | GqlType::ByteString(_)),
+            declared_type: Some(ty),
             ..
-        } => true,
+        } => matches!(ty.strip_not_null(), GqlType::Bytes | GqlType::ByteString(_)),
         _ => false,
     }
 }
@@ -336,6 +339,10 @@ fn is_check(kind: &IsCheckKind, span: crate::SourceSpan, uses: &mut Vec<FeatureU
 
 pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
     match ty {
+        GqlType::NotNull(inner) => {
+            record_feature(uses, FeatureId::GV90, span);
+            gql_type(inner, span, uses);
+        }
         GqlType::Uuid => record_feature(uses, FeatureId::IM_UUID, span),
         GqlType::Json => record_feature(uses, FeatureId::IM_JSON, span),
         GqlType::Vector => record_feature(uses, FeatureId::IM_VECTOR, span),
@@ -553,11 +560,11 @@ mod tests {
 
     #[test]
     fn is_check_source_of_orders_operand_then_kind_then_value() {
-        // `(p :: INT8) IS SOURCE OF (e :: INT8)`: the operand subtree's
-        // `IM_TYPED_PARAMS`, then the `IS SOURCE OF` `G112`, then the value
-        // subtree's `IM_TYPED_PARAMS` must appear in that exact order — the
-        // ordering `for_each_child` alone cannot express, hence the explicit
-        // `IsCheck` arm.
+        // `(p :: INT8) IS SOURCE OF (e :: INT8)`: the operand subtree's typed
+        // parameter and declared-type features, then the `IS SOURCE OF` `G112`,
+        // then the value subtree's typed parameter and declared-type features
+        // must appear in that exact order — the ordering `for_each_child` alone
+        // cannot express, hence the explicit `IsCheck` arm.
         let typed_param = |name: &str, offset: u32| ValueExpr::Parameter {
             name: selene_core::db_string(name).expect("string fits DB string cap"),
             declared_type: Some(crate::ast::types::GqlType::Int8),
@@ -575,18 +582,22 @@ mod tests {
             .iter()
             .map(|feature| (feature.feature_id, feature.span.byte_offset))
             .collect();
-        // operand: GE04/GE05/IM_TYPED_PARAMS @1, then G112 @10, then value:
-        // GE04/GE05/IM_TYPED_PARAMS @20.
+        // operand: GE04/GE05/IM_TYPED_PARAMS/GV02/GV09 @1, then G112 @10,
+        // then value: GE04/GE05/IM_TYPED_PARAMS/GV02/GV09 @20.
         assert_eq!(
             trace,
             vec![
                 (FeatureId::GE04, 1),
                 (FeatureId::GE05, 1),
                 (FeatureId::IM_TYPED_PARAMS, 1),
+                (FeatureId::GV02, 1),
+                (FeatureId::GV09, 1),
                 (FeatureId::G112, 10),
                 (FeatureId::GE04, 20),
                 (FeatureId::GE05, 20),
                 (FeatureId::IM_TYPED_PARAMS, 20),
+                (FeatureId::GV02, 20),
+                (FeatureId::GV09, 20),
             ]
         );
     }

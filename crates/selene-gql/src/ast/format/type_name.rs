@@ -51,6 +51,7 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         // Recurse into the element type so `LIST<INT8>` round-trips through
         // parse-format-parse without rewriting the element type.
         GqlType::List(inner) => format!("LIST<{}>", fmt_type(inner)),
+        GqlType::NotNull(inner) => format!("{} NOT NULL", fmt_type(inner)),
         GqlType::Path => "PATH".to_owned(),
         GqlType::Null => "NULL".to_owned(),
         GqlType::Nothing => "NOTHING".to_owned(),

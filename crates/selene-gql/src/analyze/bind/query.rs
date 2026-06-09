@@ -559,7 +559,7 @@ fn bind_limit_value(value: &LimitValue) -> Result<(), AnalysisError> {
 
 fn is_limit_amount_type(ty: &GqlType) -> bool {
     matches!(
-        ty,
+        ty.strip_not_null(),
         GqlType::Integer
             | GqlType::Int8
             | GqlType::Int16

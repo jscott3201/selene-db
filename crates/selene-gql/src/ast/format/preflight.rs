@@ -266,6 +266,7 @@ fn validate_type(ty: &GqlType) -> Result<(), FormatError> {
     }
     match ty {
         GqlType::List(inner) => validate_type(inner)?,
+        GqlType::NotNull(inner) => validate_type(inner)?,
         // Closed record types render their field structure, so each field's
         // value type must also be formattable (a nested reference type would
         // otherwise slip past the gate). The open form has no fields to check.
@@ -281,6 +282,7 @@ fn validate_type(ty: &GqlType) -> Result<(), FormatError> {
 
 fn ast_only_type_variant(ty: &GqlType) -> Option<&'static str> {
     match ty {
+        GqlType::NotNull(inner) => ast_only_type_variant(inner),
         GqlType::GraphRef => Some("GraphRef"),
         GqlType::NodeRef => Some("NodeRef"),
         GqlType::EdgeRef => Some("EdgeRef"),

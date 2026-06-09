@@ -585,6 +585,7 @@ fn render_gql_type(ty: &GqlType) -> String {
             format!("RECORD {{ {rendered} }}")
         }
         GqlType::List(inner) => format!("LIST<{}>", render_gql_type(inner)),
+        GqlType::NotNull(inner) => format!("{} NOT NULL", render_gql_type(inner)),
         GqlType::Path => "PATH".to_owned(),
         GqlType::GraphRef => "GRAPH".to_owned(),
         GqlType::NodeRef => "NODE".to_owned(),
