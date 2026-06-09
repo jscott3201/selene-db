@@ -21,6 +21,9 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
     let decimal_type = selene_core::DecimalType::new(5, 2).unwrap();
     let list_decimal_type = selene_core::DecimalType::new(4, 1).unwrap();
     let record_decimal_type = selene_core::DecimalType::new(6, 3).unwrap();
+    let character_string_type = selene_core::CharacterStringType::new(2, 4).unwrap();
+    let list_character_string_type = selene_core::CharacterStringType::new(1, 2).unwrap();
+    let record_character_string_type = selene_core::CharacterStringType::new(4, 4).unwrap();
     let byte_string_type = selene_core::ByteStringType::new(2, 4).unwrap();
     let list_byte_string_type = selene_core::ByteStringType::new(1, 2).unwrap();
     let record_byte_string_type = selene_core::ByteStringType::new(4, 4).unwrap();
@@ -97,6 +100,11 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         PropertyDefaultValue::Bytes(vec![0xCA, 0xFE]),
         byte_string_type,
     )];
+    let character_string_defaults = [(
+        db_string("bounded_name").unwrap(),
+        PropertyDefaultValue::String(db_string("ok").unwrap()),
+        character_string_type,
+    )];
     let vector_defaults = [(
         db_string("embedding").unwrap(),
         selene_core::PropertyValueType::Vector,
@@ -123,6 +131,14 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 Box::new(PropertyDefaultValue::Bytes(vec![0xBE, 0xEF])),
             ]),
         ),
+        (
+            db_string("names").unwrap(),
+            PropertyElementType::CharacterString(list_character_string_type),
+            PropertyDefaultValue::List(vec![
+                Box::new(PropertyDefaultValue::String(db_string("a").unwrap())),
+                Box::new(PropertyDefaultValue::String(db_string("bc").unwrap())),
+            ]),
+        ),
     ];
     let record_defaults = [(
         db_string("config").unwrap(),
@@ -147,6 +163,11 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 field_type: RecordFieldType::ByteString(record_byte_string_type),
                 required: true,
             },
+            RecordFieldTypeDef {
+                name: db_string("code").unwrap(),
+                field_type: RecordFieldType::CharacterString(record_character_string_type),
+                required: true,
+            },
         ]),
         PropertyDefaultValue::Record(vec![
             PropertyDefaultRecordField {
@@ -165,6 +186,10 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 name: db_string("digest").unwrap(),
                 value: Box::new(PropertyDefaultValue::Bytes(vec![0xCA, 0xFE, 0xBA, 0xBE])),
             },
+            PropertyDefaultRecordField {
+                name: db_string("code").unwrap(),
+                value: Box::new(PropertyDefaultValue::String(db_string("code").unwrap())),
+            },
         ]),
     )];
     let changes = {
@@ -180,6 +205,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 immutable: false,
                 unique: false,
                 decimal_type: *decimal_type,
+                character_string_type: None,
                 byte_string_type: None,
                 record_field_types: None,
             },
@@ -194,6 +220,22 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 immutable: false,
                 unique: false,
                 decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
+                record_field_types: None,
+            },
+        ));
+        properties.extend(character_string_defaults.iter().map(
+            |(name, default, character_string_type)| PropertyTypeDef {
+                name: name.clone(),
+                value_type: selene_core::PropertyValueType::String,
+                list_element_type: None,
+                required: false,
+                default: Some(default.clone()),
+                immutable: false,
+                unique: false,
+                decimal_type: None,
+                character_string_type: Some(*character_string_type),
                 byte_string_type: None,
                 record_field_types: None,
             },
@@ -210,6 +252,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                     immutable: false,
                     unique: false,
                     decimal_type: None,
+                    character_string_type: None,
                     byte_string_type: Some(*byte_string_type),
                     record_field_types: None,
                 }),
@@ -224,6 +267,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 immutable: false,
                 unique: false,
                 decimal_type: None,
+                character_string_type: None,
                 byte_string_type: None,
                 record_field_types: None,
             }
@@ -238,6 +282,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 immutable: false,
                 unique: false,
                 decimal_type: None,
+                character_string_type: None,
                 byte_string_type: None,
                 record_field_types: Some(field_types.clone()),
             }
@@ -305,7 +350,17 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         assert_eq!(&property.name, name);
         assert_eq!(property.default.as_ref(), Some(default));
     }
-    let byte_string_start = vector_start + vector_defaults.len();
+    let character_string_start = vector_start + vector_defaults.len();
+    for (offset, (name, default, character_string_type)) in
+        character_string_defaults.iter().enumerate()
+    {
+        let property = &graph_type.node_types[0].properties[character_string_start + offset];
+        assert_eq!(&property.name, name);
+        assert_eq!(property.value_type, selene_core::PropertyValueType::String);
+        assert_eq!(property.character_string_type, Some(*character_string_type));
+        assert_eq!(property.default.as_ref(), Some(default));
+    }
+    let byte_string_start = character_string_start + character_string_defaults.len();
     for (offset, (name, default, byte_string_type)) in byte_string_defaults.iter().enumerate() {
         let property = &graph_type.node_types[0].properties[byte_string_start + offset];
         assert_eq!(&property.name, name);
@@ -347,6 +402,7 @@ fn base_properties(
             immutable: true,
             unique: true,
             decimal_type: None,
+            character_string_type: None,
             byte_string_type: None,
             record_field_types: None,
         },
@@ -359,6 +415,7 @@ fn base_properties(
             immutable: false,
             unique: false,
             decimal_type: None,
+            character_string_type: None,
             byte_string_type: None,
             record_field_types: None,
         },
@@ -373,6 +430,7 @@ fn base_properties(
             immutable: false,
             unique: false,
             decimal_type: None,
+            character_string_type: None,
             byte_string_type: None,
             record_field_types: None,
         },
@@ -385,6 +443,7 @@ fn base_properties(
             immutable: false,
             unique: false,
             decimal_type: None,
+            character_string_type: None,
             byte_string_type: None,
             record_field_types: None,
         },
@@ -397,6 +456,7 @@ fn base_properties(
             immutable: false,
             unique: false,
             decimal_type: None,
+            character_string_type: None,
             byte_string_type: None,
             record_field_types: None,
         },

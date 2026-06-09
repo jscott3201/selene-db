@@ -255,6 +255,11 @@ fn property_conflicts_name_each_mismatched_field() {
             "property 'a' redeclared with different list element type (parent: INTEGER, child: STRING) on child type Child",
         ),
         (
+            "CREATE NODE TYPE :Parent (a :: STRING(2, 4))",
+            "CREATE NODE TYPE :Child EXTENDS :Parent (a :: VARCHAR(4))",
+            "property 'a' redeclared with different character-string length (parent: STRING(2, 4), child: STRING(4)) on child type Child",
+        ),
+        (
             "CREATE NODE TYPE :Parent (a :: BYTES(2))",
             "CREATE NODE TYPE :Child EXTENDS :Parent (a :: BYTES(4))",
             "property 'a' redeclared with different byte-string length (parent: BYTES(2), child: BYTES(4)) on child type Child",

@@ -188,6 +188,7 @@ fn factory_reset_resets_closed_graph_to_open() {
                 default: None,
                 unique: false,
                 decimal_type: None,
+                character_string_type: None,
                 byte_string_type: None,
                 record_field_types: None,
             }],

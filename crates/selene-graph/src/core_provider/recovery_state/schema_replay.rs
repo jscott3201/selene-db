@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use selene_core::{
-    ByteStringType, DbString, EdgeEndpointDef as CoreEdgeEndpointDef, LabelSet,
-    PredefinedValueType, PropertyValueType, SchemaChange, ValueType,
+    ByteStringType, CharacterStringType, DbString, EdgeEndpointDef as CoreEdgeEndpointDef,
+    LabelSet, PredefinedValueType, PropertyValueType, SchemaChange, ValueType,
 };
 
 use crate::core_provider::inconsistent;
@@ -199,28 +199,34 @@ fn runtime_properties(
             // `Some(Closed)` ⇒ a closed/typed `RECORD{..}`. The coarse `RecordTyped` tag is
             // derived here (not stored on `ValueType`) so commit-time GG02 validation treats
             // it correctly. Per ISO 39075:2024 §18.9/§18.10 (GV46/GV47/GV48).
-            let (value_type, list_element_type, record_field_types, byte_string_type) =
-                match property.record_fields.as_deref() {
-                    Some(selene_core::RecordFieldStructure::Open) => {
-                        (PropertyValueType::RecordTyped, None, None, None)
-                    }
-                    Some(selene_core::RecordFieldStructure::Closed(defs)) => (
-                        PropertyValueType::RecordTyped,
+            let (
+                value_type,
+                list_element_type,
+                record_field_types,
+                character_string_type,
+                byte_string_type,
+            ) = match property.record_fields.as_deref() {
+                Some(selene_core::RecordFieldStructure::Open) => {
+                    (PropertyValueType::RecordTyped, None, None, None, None)
+                }
+                Some(selene_core::RecordFieldStructure::Closed(defs)) => (
+                    PropertyValueType::RecordTyped,
+                    None,
+                    Some(runtime_record_field_types(defs, 1)?),
+                    None,
+                    None,
+                ),
+                None => {
+                    let (value_type, list_element_type) = runtime_value_type(&property.value_type)?;
+                    (
+                        value_type,
+                        list_element_type,
                         None,
-                        Some(runtime_record_field_types(defs, 1)?),
-                        None,
-                    ),
-                    None => {
-                        let (value_type, list_element_type) =
-                            runtime_value_type(&property.value_type)?;
-                        (
-                            value_type,
-                            list_element_type,
-                            None,
-                            runtime_byte_string_type(&property.value_type, value_type),
-                        )
-                    }
-                };
+                        runtime_character_string_type(&property.value_type, value_type),
+                        runtime_byte_string_type(&property.value_type, value_type),
+                    )
+                }
+            };
             Ok(PropertyTypeDef {
                 name: property.name.clone(),
                 value_type,
@@ -230,6 +236,7 @@ fn runtime_properties(
                 immutable: property.immutable,
                 unique: property.unique,
                 decimal_type: runtime_decimal_type(&property.value_type, value_type),
+                character_string_type,
                 byte_string_type,
                 record_field_types,
             })
@@ -266,6 +273,9 @@ fn runtime_record_field_type(
     match field_type {
         selene_core::RecordFieldStructureType::Scalar(value_type) => {
             Ok(RecordFieldType::Scalar(*value_type))
+        }
+        selene_core::RecordFieldStructureType::CharacterString(character_string_type) => {
+            Ok(RecordFieldType::CharacterString(*character_string_type))
         }
         selene_core::RecordFieldStructureType::Decimal(decimal_type) => {
             Ok(RecordFieldType::Decimal(*decimal_type))
@@ -336,6 +346,11 @@ fn runtime_value_type(
                 "WAL property definition declares decimal precision without DECIMAL type",
             ));
         }
+        if value_type.character_string_type.is_some() {
+            return Err(inconsistent(
+                "WAL property definition declares character-string length without STRING type",
+            ));
+        }
         if value_type.byte_string_type.is_some() {
             return Err(inconsistent(
                 "WAL property definition declares byte-string length without BYTES type",
@@ -346,6 +361,11 @@ fn runtime_value_type(
     if value_type.decimal_type.is_some() && predefined != PredefinedValueType::Decimal {
         return Err(inconsistent(
             "WAL property definition declares decimal precision for non-DECIMAL type",
+        ));
+    }
+    if value_type.character_string_type.is_some() && predefined != PredefinedValueType::String {
+        return Err(inconsistent(
+            "WAL property definition declares character-string length for non-STRING type",
         ));
     }
     if value_type.byte_string_type.is_some() && predefined != PredefinedValueType::Bytes {
@@ -383,6 +403,11 @@ fn runtime_element_type(
                 "WAL list property definition declares decimal precision without DECIMAL type",
             ));
         }
+        if value_type.character_string_type.is_some() {
+            return Err(inconsistent(
+                "WAL list property definition declares character-string length without STRING type",
+            ));
+        }
         if value_type.byte_string_type.is_some() {
             return Err(inconsistent(
                 "WAL list property definition declares byte-string length without BYTES type",
@@ -398,6 +423,11 @@ fn runtime_element_type(
             "WAL list property definition declares decimal precision for non-DECIMAL type",
         ));
     }
+    if value_type.character_string_type.is_some() && predefined != PredefinedValueType::String {
+        return Err(inconsistent(
+            "WAL list property definition declares character-string length for non-STRING type",
+        ));
+    }
     if value_type.byte_string_type.is_some() && predefined != PredefinedValueType::Bytes {
         return Err(inconsistent(
             "WAL list property definition declares byte-string length for non-BYTES type",
@@ -406,6 +436,12 @@ fn runtime_element_type(
     Ok(apply_element_nullability(
         value_type.not_null,
         match predefined {
+            PredefinedValueType::String => match value_type.character_string_type {
+                Some(character_string_type) => {
+                    PropertyElementType::CharacterString(character_string_type)
+                }
+                None => PropertyElementType::Scalar(PropertyValueType::String),
+            },
             PredefinedValueType::Decimal => match value_type.decimal_type {
                 Some(decimal_type) => PropertyElementType::Decimal(decimal_type),
                 None => PropertyElementType::Scalar(PropertyValueType::Decimal),
@@ -441,6 +477,17 @@ fn runtime_decimal_type(
     }
 }
 
+fn runtime_character_string_type(
+    value_type: &ValueType,
+    runtime_value_type: PropertyValueType,
+) -> Option<CharacterStringType> {
+    if runtime_value_type == PropertyValueType::String {
+        value_type.character_string_type
+    } else {
+        None
+    }
+}
+
 fn runtime_byte_string_type(
     value_type: &ValueType,
     runtime_value_type: PropertyValueType,
@@ -459,6 +506,11 @@ fn reject_scalar_descriptor_on_container(
     if value_type.decimal_type.is_some() {
         return Err(inconsistent(format!(
             "{context} declares decimal precision on a container type"
+        )));
+    }
+    if value_type.character_string_type.is_some() {
+        return Err(inconsistent(format!(
+            "{context} declares character-string length on a container type"
         )));
     }
     if value_type.byte_string_type.is_some() {

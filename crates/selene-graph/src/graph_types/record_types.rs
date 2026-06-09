@@ -12,8 +12,8 @@
 use std::collections::BTreeSet;
 
 use selene_core::{
-    ByteStringType, DbString, DecimalType, PropertyValueType, Record, Value, byte_string_fits_type,
-    decimal_fits_type,
+    ByteStringType, CharacterStringType, DbString, DecimalType, PropertyValueType, Record, Value,
+    byte_string_fits_type, character_string_fits_type, decimal_fits_type,
 };
 use serde::{Deserialize, Serialize};
 
@@ -106,6 +106,8 @@ pub struct RecordFieldTypeDef {
 pub enum RecordFieldType {
     /// Scalar field type.
     Scalar(PropertyValueType),
+    /// STRING field type with a user-specified length envelope.
+    CharacterString(CharacterStringType),
     /// DECIMAL field type with a user-specified precision/scale envelope.
     Decimal(DecimalType),
     /// BYTES field type with a user-specified length envelope.
@@ -128,6 +130,9 @@ impl RecordFieldType {
             Self::NotNull(inner) => !matches!(value, Value::Null) && inner.matches(value),
             _ if matches!(value, Value::Null) => true,
             Self::Scalar(value_type) => value_type.matches(value),
+            Self::CharacterString(character_string_type) => {
+                matches!(value, Value::String(value) if character_string_fits_type(value, *character_string_type))
+            }
             Self::Decimal(decimal_type) => {
                 matches!(value, Value::Decimal(value) if decimal_fits_type(*value, *decimal_type))
             }
@@ -250,6 +255,7 @@ fn validate_record_field_type(
             ),
         }),
         RecordFieldType::Scalar(_)
+        | RecordFieldType::CharacterString(_)
         | RecordFieldType::Decimal(_)
         | RecordFieldType::ByteString(_) => Ok(()),
         RecordFieldType::List(inner) => {

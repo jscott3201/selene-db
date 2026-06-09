@@ -1,7 +1,8 @@
 //! Typed `LIST<T>` element descriptors for the closed-graph catalog.
 
 use selene_core::{
-    ByteStringType, DecimalType, PropertyValueType, Value, byte_string_fits_type, decimal_fits_type,
+    ByteStringType, CharacterStringType, DecimalType, PropertyValueType, Value,
+    byte_string_fits_type, character_string_fits_type, decimal_fits_type,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,8 @@ use serde::{Deserialize, Serialize};
 pub enum PropertyElementType {
     /// Scalar list element type.
     Scalar(PropertyValueType),
+    /// STRING list element type with a user-specified length envelope.
+    CharacterString(CharacterStringType),
     /// DECIMAL list element type with a user-specified precision/scale envelope.
     Decimal(DecimalType),
     /// BYTES list element type with a user-specified length envelope.
@@ -43,6 +46,7 @@ impl PropertyElementType {
     pub const fn value_type(&self) -> PropertyValueType {
         match self {
             Self::Scalar(value_type) => *value_type,
+            Self::CharacterString(_) => PropertyValueType::String,
             Self::Decimal(_) => PropertyValueType::Decimal,
             Self::ByteString(_) => PropertyValueType::Bytes,
             Self::List(_) => PropertyValueType::List,
@@ -57,6 +61,9 @@ impl PropertyElementType {
             Self::NotNull(inner) => !matches!(value, Value::Null) && inner.matches(value),
             _ if matches!(value, Value::Null) => true,
             Self::Scalar(value_type) => value_type.matches(value),
+            Self::CharacterString(character_string_type) => {
+                matches!(value, Value::String(value) if character_string_fits_type(value, *character_string_type))
+            }
             Self::Decimal(decimal_type) => {
                 matches!(value, Value::Decimal(value) if decimal_fits_type(*value, *decimal_type))
             }

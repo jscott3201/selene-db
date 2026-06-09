@@ -347,6 +347,19 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
         GqlType::Json => record_feature(uses, FeatureId::IM_JSON, span),
         GqlType::Vector => record_feature(uses, FeatureId::IM_VECTOR, span),
         GqlType::String | GqlType::Boolean | GqlType::Integer | GqlType::Float => {}
+        GqlType::CharacterString(character_type) => match character_type.form {
+            crate::ast::CharacterStringTypeForm::StringMax
+            | crate::ast::CharacterStringTypeForm::VarcharMax => {
+                record_feature(uses, FeatureId::GV31, span);
+            }
+            crate::ast::CharacterStringTypeForm::StringMinMax => {
+                record_feature(uses, FeatureId::GV30, span);
+                record_feature(uses, FeatureId::GV31, span);
+            }
+            crate::ast::CharacterStringTypeForm::CharFixed => {
+                record_feature(uses, FeatureId::GV32, span);
+            }
+        },
         GqlType::Uint8 => {
             record_feature(uses, FeatureId::GV01, span);
             record_feature(uses, FeatureId::GV09, span);

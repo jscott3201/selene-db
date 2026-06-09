@@ -9,7 +9,9 @@
 //! deliberately stricter than the `CAST` subset/projection rule in
 //! [`crate::runtime::evaluator::cast`].)
 
-use selene_core::{DurationTypeQualifier, Record, Value, decimal_fits_type};
+use selene_core::{
+    DurationTypeQualifier, Record, Value, character_string_fits_type, decimal_fits_type,
+};
 
 use crate::{GqlType, RecordType};
 
@@ -25,6 +27,15 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::Nothing => false,
         _ if matches!(value, Value::Null) => true,
         GqlType::String => matches!(value, Value::String(_)),
+        GqlType::CharacterString(character_type) => {
+            matches!(value, Value::String(value) if character_string_fits_type(
+                value,
+                selene_core::CharacterStringType {
+                    min_len: character_type.min_len,
+                    max_len: character_type.max_len,
+                },
+            ))
+        }
         GqlType::Uuid => matches!(value, Value::Uuid(_)),
         GqlType::Json => matches!(value, Value::Json(_)),
         GqlType::Boolean => matches!(value, Value::Bool(_)),

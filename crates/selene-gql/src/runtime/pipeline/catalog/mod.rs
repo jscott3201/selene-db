@@ -532,6 +532,12 @@ pub(super) fn runtime_db_string_owned(value: String) -> Result<DbString, Executo
 fn render_gql_type(ty: &GqlType) -> String {
     match ty {
         GqlType::String => "STRING".to_owned(),
+        GqlType::CharacterString(character) if character.min_len == 0 => {
+            format!("STRING({})", character.max_len)
+        }
+        GqlType::CharacterString(character) => {
+            format!("STRING({}, {})", character.min_len, character.max_len)
+        }
         GqlType::Boolean => "BOOLEAN".to_owned(),
         GqlType::Integer => "INTEGER".to_owned(),
         GqlType::Float => "FLOAT".to_owned(),
@@ -699,6 +705,7 @@ fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorE
                     property.list_element_type.as_ref(),
                     property.record_field_types.as_ref(),
                     property.decimal_type,
+                    property.character_string_type,
                     property.byte_string_type,
                 ),
                 nullability,

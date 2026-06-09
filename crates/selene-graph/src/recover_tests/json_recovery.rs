@@ -94,6 +94,7 @@ fn recover_closed_wal_only_preserves_json_property_type() {
                     immutable: false,
                     unique: false,
                     decimal_type: None,
+                    character_string_type: None,
                     byte_string_type: None,
                     record_field_types: None,
                 }],

@@ -290,7 +290,7 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         // via `value_compare`. Reject `FLOAT` so it falls back to
         // Linear at plan time and the two paths agree.
         IndexKind::Float => matches!(ty, GqlType::Float64 | GqlType::Double),
-        IndexKind::String => matches!(ty, GqlType::String),
+        IndexKind::String => matches!(ty, GqlType::String | GqlType::CharacterString(_)),
         IndexKind::Date => matches!(ty, GqlType::Date),
         IndexKind::LocalDateTime => matches!(ty, GqlType::LocalDateTime),
         IndexKind::ZonedDateTime => matches!(ty, GqlType::ZonedDateTime),

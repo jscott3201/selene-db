@@ -2,8 +2,8 @@
 
 use rust_decimal::prelude::ToPrimitive;
 use selene_core::{
-    ByteStringType, CoreError, DecimalType, PropertyValueType, VectorValue, byte_string_fits_type,
-    decimal_fits_type,
+    ByteStringType, CharacterStringType, CoreError, DecimalType, PropertyValueType, VectorValue,
+    byte_string_fits_type, character_string_fits_type, decimal_fits_type,
 };
 use selene_graph::{PropertyDefaultValue, PropertyElementType};
 
@@ -50,6 +50,9 @@ fn list_element_default_value(
         PropertyElementType::Decimal(decimal_type) => {
             decimal_element_default(expr, *decimal_type, span)
         }
+        PropertyElementType::CharacterString(character_string_type) => {
+            character_string_element_default(expr, *character_string_type, span)
+        }
         PropertyElementType::ByteString(byte_string_type) => {
             byte_string_element_default(expr, *byte_string_type, span)
         }
@@ -68,6 +71,33 @@ fn list_element_default_value(
             span,
         )),
     }
+}
+
+fn character_string_element_default(
+    expr: &ValueExpr,
+    character_string_type: CharacterStringType,
+    span: crate::SourceSpan,
+) -> Result<PropertyDefaultValue, ExecutorError> {
+    let default = scalar_element_default(expr, PropertyValueType::String, span)?;
+    let value = default.to_value().map_err(|err| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            format!("LIST DEFAULT STRING element is invalid: {err}"),
+            span,
+        )
+    })?;
+    if matches!(value, selene_core::Value::Null)
+        || matches!(
+            value,
+            selene_core::Value::String(value) if character_string_fits_type(&value, character_string_type)
+        )
+    {
+        return Ok(default);
+    }
+    Err(list_default_invalid_type(
+        "LIST DEFAULT STRING element is not assignable to declared character length",
+        span,
+    ))
 }
 
 fn byte_string_element_default(

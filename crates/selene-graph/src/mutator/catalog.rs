@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use selene_core::{
-    ByteStringType, Change, DbString, EdgeEndpointDef as CoreEdgeEndpointDef, GraphTypeId,
-    LabelSet, PredefinedValueType, PropertyDef, PropertyValueType, SchemaChange, ValueType,
+    ByteStringType, Change, CharacterStringType, DbString, EdgeEndpointDef as CoreEdgeEndpointDef,
+    GraphTypeId, LabelSet, PredefinedValueType, PropertyDef, PropertyValueType, SchemaChange,
+    ValueType,
 };
 use smallvec::SmallVec;
 
@@ -392,6 +393,7 @@ fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
                 property.value_type,
                 property.list_element_type.as_ref(),
                 property.decimal_type,
+                property.character_string_type,
                 property.byte_string_type,
                 property.required,
             )?,
@@ -421,6 +423,7 @@ fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
                 property.value_type,
                 property.list_element_type.as_ref(),
                 property.decimal_type,
+                property.character_string_type,
                 property.byte_string_type,
                 property.required,
             )?,
@@ -452,6 +455,7 @@ fn core_value_type(
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
     decimal_type: Option<selene_core::DecimalType>,
+    character_string_type: Option<CharacterStringType>,
     byte_string_type: Option<ByteStringType>,
     required: bool,
 ) -> GraphResult<ValueType> {
@@ -461,7 +465,12 @@ fn core_value_type(
         })?;
         ValueType::list_of(core_element_value_type(element_type, 1)?)
     } else {
-        core_scalar_value_type(value_type, decimal_type, byte_string_type)
+        core_scalar_value_type(
+            value_type,
+            decimal_type,
+            character_string_type,
+            byte_string_type,
+        )
     };
     value_type.not_null = required;
     Ok(value_type)
@@ -478,15 +487,23 @@ fn core_element_value_type(
     }
     match element_type {
         PropertyElementType::Scalar(value_type) => {
-            Ok(core_scalar_value_type(*value_type, None, None))
+            Ok(core_scalar_value_type(*value_type, None, None, None))
         }
+        PropertyElementType::CharacterString(character_string_type) => Ok(core_scalar_value_type(
+            PropertyValueType::String,
+            None,
+            Some(*character_string_type),
+            None,
+        )),
         PropertyElementType::Decimal(decimal_type) => Ok(core_scalar_value_type(
             PropertyValueType::Decimal,
             Some(*decimal_type),
             None,
+            None,
         )),
         PropertyElementType::ByteString(byte_string_type) => Ok(core_scalar_value_type(
             PropertyValueType::Bytes,
+            None,
             None,
             Some(*byte_string_type),
         )),
@@ -505,6 +522,7 @@ fn core_element_value_type(
 fn core_scalar_value_type(
     value_type: PropertyValueType,
     decimal_type: Option<selene_core::DecimalType>,
+    character_string_type: Option<CharacterStringType>,
     byte_string_type: Option<ByteStringType>,
 ) -> ValueType {
     let predefined = match value_type {
@@ -543,6 +561,11 @@ fn core_scalar_value_type(
         predefined,
         decimal_type: if value_type == PropertyValueType::Decimal {
             decimal_type
+        } else {
+            None
+        },
+        character_string_type: if value_type == PropertyValueType::String {
+            character_string_type
         } else {
             None
         },
@@ -612,6 +635,9 @@ fn core_record_field_structure_type(
     Ok(match field_type {
         RecordFieldType::Scalar(value_type) => {
             selene_core::RecordFieldStructureType::Scalar(*value_type)
+        }
+        RecordFieldType::CharacterString(character_string_type) => {
+            selene_core::RecordFieldStructureType::CharacterString(*character_string_type)
         }
         RecordFieldType::Decimal(decimal_type) => {
             selene_core::RecordFieldStructureType::Decimal(*decimal_type)

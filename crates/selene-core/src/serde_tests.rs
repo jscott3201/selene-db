@@ -532,6 +532,7 @@ fn decimal_type_metadata_postcard_round_trip() {
     let value_type = ValueType {
         predefined: Some(PredefinedValueType::Decimal),
         decimal_type: Some(decimal_type),
+        character_string_type: None,
         byte_string_type: None,
         union: None,
         list_of: None,
@@ -563,11 +564,50 @@ fn decimal_type_metadata_postcard_round_trip() {
 }
 
 #[test]
+fn character_string_type_metadata_postcard_round_trip() {
+    let character_string_type =
+        CharacterStringType::new(2, 4).expect("valid character-string type");
+    let value_type = ValueType {
+        predefined: Some(PredefinedValueType::String),
+        decimal_type: None,
+        character_string_type: Some(character_string_type),
+        byte_string_type: None,
+        union: None,
+        list_of: None,
+        record: None,
+        not_null: false,
+        cardinality: ValueTypeCardinality::ExactlyOne,
+    };
+    rt(&value_type);
+
+    let structure = RecordFieldStructureType::CharacterString(character_string_type);
+    rt(&structure);
+
+    let def = PropertyDef {
+        name: dbs("core.string.typed"),
+        value_type,
+        nullable: false,
+        default: Some(Value::String(dbs("core"))),
+        immutable: false,
+        unique: false,
+        record_fields: Some(Box::new(RecordFieldStructure::Closed(vec![
+            RecordFieldStructureDef {
+                name: dbs("core.string.field"),
+                field_type: structure,
+                required: true,
+            },
+        ]))),
+    };
+    rt(&def);
+}
+
+#[test]
 fn byte_string_type_metadata_postcard_round_trip() {
     let byte_string_type = ByteStringType::new(2, 4).expect("valid byte-string type");
     let value_type = ValueType {
         predefined: Some(PredefinedValueType::Bytes),
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: Some(byte_string_type),
         union: None,
         list_of: None,

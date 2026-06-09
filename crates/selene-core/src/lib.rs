@@ -20,6 +20,7 @@ pub mod cancellation;
 pub mod change_kind;
 pub mod changeset;
 mod changeset_variants;
+mod character_string_type;
 pub mod db_string;
 mod decimal_type;
 mod duration_type;
@@ -48,6 +49,7 @@ pub use change_kind::ChangeKind;
 pub use changeset::{
     Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
 };
+pub use character_string_type::{CharacterStringType, character_string_fits_type};
 pub use db_string::{DbString, db_string};
 pub use decimal_type::{
     DecimalType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, decimal_fits_type, round_decimal_to_type,

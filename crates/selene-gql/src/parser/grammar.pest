@@ -738,7 +738,7 @@ type_name_base = {
   | ^"FLOAT" | ^"REAL"
   | decimal_precision_type
   | ^"DECIMAL" | ^"DEC"
-  | ^"STRING" | ^"VARCHAR"
+  | character_string_type
   | ^"UUID"
   | ^"JSON"
   | ^"VECTOR"
@@ -766,6 +766,13 @@ decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision 
 numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 duration_type = { ^"DURATION" ~ ("(" ~ temporal_duration_qualifier ~ ")")? }
+
+character_string_type = {
+    ^"STRING" ~ ("(" ~ character_string_length ~ ("," ~ character_string_length)? ~ ")")?
+  | ^"CHAR" ~ ("(" ~ character_string_length ~ ")")?
+  | ^"VARCHAR" ~ ("(" ~ character_string_length ~ ")")?
+}
+character_string_length = @{ ASCII_DIGIT+ }
 
 byte_string_type = {
     ^"BYTES" ~ ("(" ~ byte_string_length ~ ("," ~ byte_string_length)? ~ ")")?

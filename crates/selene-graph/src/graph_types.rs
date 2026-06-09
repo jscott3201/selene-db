@@ -6,7 +6,9 @@ mod record_types;
 
 use std::{collections::BTreeSet, fmt};
 
-use selene_core::{ByteStringType, DbString, DecimalType, LabelSet, PropertyValueType};
+use selene_core::{
+    ByteStringType, CharacterStringType, DbString, DecimalType, LabelSet, PropertyValueType,
+};
 use serde::{Deserialize, Serialize};
 
 pub use property_defaults::{PropertyDefaultRecordField, PropertyDefaultValue};
@@ -253,6 +255,16 @@ fn validate_property_element_types(
                 ),
             });
         }
+        if property.character_string_type.is_some()
+            && property.value_type != PropertyValueType::String
+        {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares character-string length for non-STRING value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        }
         if property.byte_string_type.is_some() && property.value_type != PropertyValueType::Bytes {
             return Err(GraphError::Inconsistent {
                 reason: format!(
@@ -326,6 +338,7 @@ fn validate_property_element_type(
             ),
         }),
         PropertyElementType::Scalar(_)
+        | PropertyElementType::CharacterString(_)
         | PropertyElementType::Decimal(_)
         | PropertyElementType::ByteString(_) => Ok(()),
         PropertyElementType::List(inner) => {
@@ -536,6 +549,9 @@ pub struct PropertyTypeDef {
     /// Declared decimal precision/scale when [`PropertyTypeDef::value_type`] is
     /// `Decimal`.
     pub decimal_type: Option<DecimalType>,
+    /// Declared character-string length when [`PropertyTypeDef::value_type`] is
+    /// `String`.
+    pub character_string_type: Option<CharacterStringType>,
     /// Declared byte-string length when [`PropertyTypeDef::value_type`] is `Bytes`.
     pub byte_string_type: Option<ByteStringType>,
     /// Declared field types when [`PropertyTypeDef::value_type`] is `RecordTyped`.

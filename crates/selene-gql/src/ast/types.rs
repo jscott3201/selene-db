@@ -10,6 +10,8 @@ use selene_core::{DbString, DecimalType};
 pub enum GqlType {
     /// `STRING`.
     String,
+    /// Bounded character-string type.
+    CharacterString(CharacterStringType),
     /// `BOOLEAN`.
     Boolean,
     /// `INTEGER`.
@@ -116,6 +118,66 @@ pub enum GqlType {
     Null,
     /// `NOTHING`.
     Nothing,
+}
+
+/// Parsed bounded character-string type metadata.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct CharacterStringType {
+    /// Minimum character length accepted by the type.
+    pub min_len: u64,
+    /// Maximum character length accepted by the type.
+    pub max_len: u64,
+    /// Parsed syntactic form used for feature stamping.
+    pub form: CharacterStringTypeForm,
+}
+
+/// Parsed bounded character-string syntactic form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum CharacterStringTypeForm {
+    /// `STRING(max)`.
+    StringMax,
+    /// `STRING(min,max)`.
+    StringMinMax,
+    /// `CHAR(fixed)` or bare `CHAR`.
+    CharFixed,
+    /// `VARCHAR(max)`.
+    VarcharMax,
+}
+
+impl CharacterStringType {
+    /// Construct a character-string type when the length bounds are valid.
+    #[must_use]
+    pub const fn new(min_len: u64, max_len: u64, form: CharacterStringTypeForm) -> Option<Self> {
+        if max_len == 0 || min_len > max_len {
+            return None;
+        }
+        Some(Self {
+            min_len,
+            max_len,
+            form,
+        })
+    }
+
+    /// Return true if this type is fixed-length.
+    #[must_use]
+    pub const fn is_fixed_length(&self) -> bool {
+        self.min_len == self.max_len
+    }
+}
+
+impl PartialEq for CharacterStringType {
+    fn eq(&self, other: &Self) -> bool {
+        self.min_len == other.min_len && self.max_len == other.max_len
+    }
+}
+
+impl Eq for CharacterStringType {}
+
+impl Hash for CharacterStringType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.min_len.hash(state);
+        self.max_len.hash(state);
+    }
 }
 
 /// Parsed bounded byte-string type metadata.
