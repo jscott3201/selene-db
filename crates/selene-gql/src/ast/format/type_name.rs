@@ -28,6 +28,12 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         GqlType::Real => "REAL".to_owned(),
         GqlType::Double => "DOUBLE".to_owned(),
         GqlType::Bytes => "BYTES".to_owned(),
+        GqlType::ByteString(bytes) if bytes.min_len == 0 => {
+            format!("BYTES({})", bytes.max_len)
+        }
+        GqlType::ByteString(bytes) => {
+            format!("BYTES({}, {})", bytes.min_len, bytes.max_len)
+        }
         GqlType::Uuid => "UUID".to_owned(),
         GqlType::Json => "JSON".to_owned(),
         GqlType::ZonedDateTime => "ZONED DATETIME".to_owned(),

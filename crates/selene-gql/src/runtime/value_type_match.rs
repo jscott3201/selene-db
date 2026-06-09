@@ -40,6 +40,13 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::Float64 | GqlType::Double => matches!(value, Value::Float(_)),
         GqlType::Decimal => matches!(value, Value::Decimal(_)),
         GqlType::Bytes => matches!(value, Value::Bytes(_)),
+        GqlType::ByteString(byte_type) => match value {
+            Value::Bytes(value) => {
+                let len = value.len() as u64;
+                len >= byte_type.min_len && len <= byte_type.max_len
+            }
+            _ => false,
+        },
         GqlType::ZonedDateTime => matches!(value, Value::ZonedDateTime(_)),
         GqlType::LocalDateTime => matches!(value, Value::LocalDateTime(_)),
         GqlType::Date => matches!(value, Value::Date(_)),

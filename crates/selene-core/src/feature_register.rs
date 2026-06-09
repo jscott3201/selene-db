@@ -351,6 +351,9 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV23,
     FeatureId::GV24,
     FeatureId::GV35,
+    FeatureId::GV36,
+    FeatureId::GV37,
+    FeatureId::GV38,
     FeatureId::GV39,
     FeatureId::GV40,
     FeatureId::GV41,
@@ -494,18 +497,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),
-    (
-        FeatureId::GV36,
-        "byte string min/max length constraints require length-carrying GqlType metadata",
-    ),
-    (
-        FeatureId::GV37,
-        "byte string maximum length constraints require length-carrying GqlType metadata",
-    ),
-    (
-        FeatureId::GV38,
-        "fixed-length byte string constraints require length-carrying GqlType metadata",
-    ),
     (
         FeatureId::GV60,
         "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",

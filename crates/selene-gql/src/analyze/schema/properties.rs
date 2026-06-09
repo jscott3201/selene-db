@@ -277,7 +277,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Decimal, G::Decimal)
             | (P::String, G::String)
             | (P::Uuid, G::Uuid)
-            | (P::Bytes, G::Bytes)
+            | (P::Bytes, G::Bytes | G::ByteString(_))
             | (P::Json, G::Json)
             | (P::List, G::List(_))
             // Every record property declaration — open `RECORD` and closed `RECORD{..}`

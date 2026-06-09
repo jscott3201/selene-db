@@ -161,9 +161,14 @@ fn value_children(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
 fn is_byte_string_expr(value: &ValueExpr) -> bool {
     match value {
         ValueExpr::Literal(Literal::Bytes(_, _)) => true,
-        ValueExpr::Cast { target_type, .. } => target_type.as_ref() == &GqlType::Bytes,
+        ValueExpr::Cast { target_type, .. } => {
+            matches!(
+                target_type.as_ref(),
+                GqlType::Bytes | GqlType::ByteString(_)
+            )
+        }
         ValueExpr::Parameter {
-            declared_type: Some(GqlType::Bytes),
+            declared_type: Some(GqlType::Bytes | GqlType::ByteString(_)),
             ..
         } => true,
         _ => false,
@@ -397,6 +402,22 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
         }
         GqlType::Bytes => {
             record_feature(uses, FeatureId::GV35, span);
+        }
+        GqlType::ByteString(byte_type) => {
+            record_feature(uses, FeatureId::GV35, span);
+            match byte_type.form {
+                crate::ast::ByteStringTypeForm::BytesMax
+                | crate::ast::ByteStringTypeForm::VarbinaryMax => {
+                    record_feature(uses, FeatureId::GV37, span);
+                }
+                crate::ast::ByteStringTypeForm::BytesMinMax => {
+                    record_feature(uses, FeatureId::GV36, span);
+                    record_feature(uses, FeatureId::GV37, span);
+                }
+                crate::ast::ByteStringTypeForm::BinaryFixed => {
+                    record_feature(uses, FeatureId::GV38, span);
+                }
+            }
         }
         GqlType::Date | GqlType::LocalDateTime | GqlType::LocalTime => {
             record_feature(uses, FeatureId::GV39, span);
