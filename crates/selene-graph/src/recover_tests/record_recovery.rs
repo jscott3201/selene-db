@@ -22,7 +22,7 @@ use crate::{
 use super::{append_wal, empty_closed_graph_type, temp_dir};
 
 /// A nested record descriptor:
-/// `RECORD{a :: INT, b :: LIST<STRING>, c :: RECORD{d :: BOOL}, meta :: RECORD}`.
+/// `RECORD{a :: INT NOT NULL, b :: LIST<STRING NOT NULL>, c :: RECORD{d :: BOOL NOT NULL}, meta :: RECORD}`.
 fn nested_record_field_types() -> RecordFieldTypes {
     RecordFieldTypes(vec![
         RecordFieldTypeDef {
@@ -32,9 +32,9 @@ fn nested_record_field_types() -> RecordFieldTypes {
         },
         RecordFieldTypeDef {
             name: db_string("b").unwrap(),
-            field_type: RecordFieldType::List(Box::new(RecordFieldType::Scalar(
-                PropertyValueType::String,
-            ))),
+            field_type: RecordFieldType::List(Box::new(RecordFieldType::NotNull(Box::new(
+                RecordFieldType::Scalar(PropertyValueType::String),
+            )))),
             required: false,
         },
         RecordFieldTypeDef {
@@ -42,7 +42,9 @@ fn nested_record_field_types() -> RecordFieldTypes {
             field_type: RecordFieldType::Record(Box::new(RecordFieldTypes(vec![
                 RecordFieldTypeDef {
                     name: db_string("d").unwrap(),
-                    field_type: RecordFieldType::Scalar(PropertyValueType::Bool),
+                    field_type: RecordFieldType::NotNull(Box::new(RecordFieldType::Scalar(
+                        PropertyValueType::Bool,
+                    ))),
                     required: true,
                 },
             ]))),

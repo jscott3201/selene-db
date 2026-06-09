@@ -370,10 +370,9 @@ fn open_record(fields: &[(&str, Value)]) -> Value {
     )))
 }
 
-/// A `config` RECORD descriptor with a required `host :: STRING` and an optional
-/// `port :: INT`. The optional field is set directly on the descriptor — GQL DDL has no
-/// field-nullability syntax today (the grammar's `record_field_type` is `name :: type`
-/// only), so the `required: false` path is reachable only via a hand-built descriptor.
+/// A `config` RECORD descriptor with `host :: STRING NOT NULL` and
+/// `port :: INT`. Closed-record field names are mandatory by set equality;
+/// `required` controls whether the field value itself may be NULL.
 fn closed_record_declaration() -> PropertyTypeDef {
     PropertyTypeDef {
         name: db_string("config"),
@@ -408,15 +407,15 @@ fn closed_record_accepts_conforming_value() {
             ("port", Value::Int(8080)),
         ])
     ));
-    // Optional field may be omitted.
-    assert!(property_value_matches(
+    // Nullable fields still must be present in a closed record value.
+    assert!(!property_value_matches(
         &declaration,
         &open_record(&[("host", Value::String(db_string("h")))])
     ));
 }
 
 #[test]
-fn closed_record_rejects_missing_required_field() {
+fn closed_record_rejects_missing_declared_field() {
     let declaration = closed_record_declaration();
     assert!(!property_value_matches(
         &declaration,
@@ -429,7 +428,7 @@ fn closed_record_rejects_wrong_field_type() {
     let declaration = closed_record_declaration();
     assert!(!property_value_matches(
         &declaration,
-        &open_record(&[("host", Value::Int(1))])
+        &open_record(&[("host", Value::Int(1)), ("port", Value::Int(80))])
     ));
 }
 
@@ -586,7 +585,7 @@ fn closed_record_validates_recordtyped_positionally() {
     }));
     assert!(property_value_matches(&declaration, &conforming));
 
-    // Optional port omitted (None at its position) conforms.
+    // Nullable port represented as positional NULL conforms.
     let optional_omitted = Value::RecordTyped(Box::new(RecordTyped {
         type_id: RecordTypeId::new(1),
         values: [Some(Value::String(db_string("h"))), None]
@@ -612,8 +611,9 @@ fn closed_record_validates_recordtyped_positionally() {
 
 #[test]
 fn closed_record_optional_field_accepts_explicit_null() {
-    // An optional field set to an explicit NULL conforms — consistent with the absent and
-    // positional-`None` cases — while a required field set to NULL is rejected.
+    // A nullable field set to explicit NULL conforms, while a NOT NULL field set
+    // to NULL is rejected. Missing nullable fields are still rejected by closed
+    // record field-name-set equality.
     let declaration = closed_record_declaration();
 
     // Open form: optional `port` present as explicit NULL conforms.

@@ -268,6 +268,9 @@ fn runtime_record_field_type(
             )),
             selene_core::RecordFieldStructure::Open => Ok(RecordFieldType::OpenRecord),
         },
+        selene_core::RecordFieldStructureType::NotNull(inner) => Ok(RecordFieldType::NotNull(
+            Box::new(runtime_record_field_type(inner, depth)?),
+        )),
     }
 }
 
@@ -326,10 +329,10 @@ fn runtime_element_type(
         ));
     }
     if let Some(element_type) = value_type.list_of.as_deref() {
-        return Ok(PropertyElementType::List(Box::new(runtime_element_type(
-            element_type,
-            depth + 1,
-        )?)));
+        return Ok(apply_element_nullability(
+            value_type.not_null,
+            PropertyElementType::List(Box::new(runtime_element_type(element_type, depth + 1)?)),
+        ));
     }
     if value_type.record.is_some() || value_type.union.is_some() {
         return Err(inconsistent(
@@ -337,11 +340,26 @@ fn runtime_element_type(
         ));
     }
     let Some(predefined) = value_type.predefined else {
-        return Ok(PropertyElementType::Scalar(PropertyValueType::Null));
+        return Ok(apply_element_nullability(
+            value_type.not_null,
+            PropertyElementType::Scalar(PropertyValueType::Null),
+        ));
     };
-    Ok(PropertyElementType::Scalar(runtime_predefined_value_type(
-        predefined,
-    )?))
+    Ok(apply_element_nullability(
+        value_type.not_null,
+        PropertyElementType::Scalar(runtime_predefined_value_type(predefined)?),
+    ))
+}
+
+fn apply_element_nullability(
+    not_null: bool,
+    element_type: PropertyElementType,
+) -> PropertyElementType {
+    if not_null {
+        PropertyElementType::NotNull(Box::new(element_type))
+    } else {
+        element_type
+    }
 }
 
 fn runtime_predefined_value_type(

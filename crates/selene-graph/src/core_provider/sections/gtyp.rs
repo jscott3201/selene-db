@@ -157,8 +157,8 @@ mod tests {
     #[test]
     fn gtyp_round_trips_record_field_types() {
         // A closed/typed RECORD property descriptor must survive the GTYP rkyv archive,
-        // including nested LIST and RECORD field types (exercises the bytecheck recursion
-        // bounds on RecordFieldType across the archive).
+        // including nested LIST/RECORD/NOT NULL field types (exercises the
+        // bytecheck recursion bounds on RecordFieldType across the archive).
         let person = db_string("RecordPerson").unwrap();
         let config = db_string("config").unwrap();
         let host = db_string("host").unwrap();
@@ -174,9 +174,9 @@ mod tests {
             },
             RecordFieldTypeDef {
                 name: ports,
-                field_type: RecordFieldType::List(Box::new(RecordFieldType::Scalar(
-                    PropertyValueType::Int,
-                ))),
+                field_type: RecordFieldType::List(Box::new(RecordFieldType::NotNull(Box::new(
+                    RecordFieldType::Scalar(PropertyValueType::Int),
+                )))),
                 required: false,
             },
             RecordFieldTypeDef {

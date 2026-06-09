@@ -371,6 +371,8 @@ pub enum RecordFieldStructureType {
     List(Box<RecordFieldStructureType>),
     /// Nested RECORD field type.
     Record(Box<RecordFieldStructure>),
+    /// Explicitly non-null field or nested element type.
+    NotNull(Box<RecordFieldStructureType>),
 }
 
 /// Property schema definition.

@@ -5,7 +5,7 @@ use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlStatus, GqlType, PipelineStatement, Session,
     Statement, StatementOutput, ValueExpr, ast::format_read_statement, feature_walk, parse,
 };
-use selene_graph::{GraphTypeDef, SharedGraph};
+use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
 
 fn db_string(value: &str) -> selene_core::DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
@@ -229,16 +229,106 @@ fn catalog_lowers_top_level_not_null_to_required_property() {
 }
 
 #[test]
-fn catalog_rejects_nested_property_nullability_until_descriptors_can_persist_it() {
+fn catalog_persists_nested_property_nullability_descriptors() {
     let graph = closed_graph(9014);
     let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Thing (\
+             nullable_xs :: LIST<INT>, \
+             strict_xs :: LIST<INT NOT NULL>, \
+             payload :: RECORD{\
+                 nullable :: INT, \
+                 strict :: INT NOT NULL, \
+                 labels :: LIST<STRING NOT NULL>})",
+            &EmptyProcedureRegistry,
+        )
+        .expect("nested catalog nullability creates");
+
+    let graph_type = graph.graph_type().expect("graph has type");
+    let properties = &graph_type.node_types[0].properties;
+    assert!(matches!(
+        properties[0].list_element_type.as_ref(),
+        Some(PropertyElementType::Scalar(
+            selene_core::PropertyValueType::Int
+        ))
+    ));
+    assert!(matches!(
+        properties[1].list_element_type.as_ref(),
+        Some(PropertyElementType::NotNull(inner))
+            if matches!(inner.as_ref(), PropertyElementType::Scalar(selene_core::PropertyValueType::Int))
+    ));
+    let record_fields = properties[2]
+        .record_field_types
+        .as_ref()
+        .expect("record fields");
+    assert!(!record_fields.0[0].required);
+    assert!(record_fields.0[1].required);
+    assert!(matches!(
+        &record_fields.0[2].field_type,
+        RecordFieldType::List(inner)
+            if matches!(
+                inner.as_ref(),
+                RecordFieldType::NotNull(strict)
+                    if matches!(
+                        strict.as_ref(),
+                        RecordFieldType::Scalar(selene_core::PropertyValueType::String)
+                    )
+            )
+    ));
+
+    let show = session
+        .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
+        .expect("show succeeds");
+    let StatementOutput::Rows(table) = show else {
+        panic!("SHOW returns rows");
+    };
+    let Value::String(definition) = table.rows()[0].values()[1].clone() else {
+        panic!("definition is string");
+    };
+    assert_eq!(
+        definition.as_str(),
+        "CREATE NODE TYPE :Thing (nullable_xs :: LIST<INTEGER>, strict_xs :: LIST<INTEGER NOT NULL>, payload :: RECORD { nullable :: INTEGER, strict :: INTEGER NOT NULL, labels :: LIST<STRING NOT NULL> })"
+    );
+    parse(definition.as_str()).expect("SHOW definition round-trips through parser");
+}
+
+#[test]
+fn nested_property_nullability_validates_data_writes() {
+    let graph = closed_graph(9016);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Thing (\
+             nullable_xs :: LIST<INT>, \
+             strict_xs :: LIST<INT NOT NULL>, \
+             payload :: RECORD{\
+                 nullable :: INT, \
+                 strict :: INT NOT NULL, \
+                 labels :: LIST<STRING NOT NULL>})",
+            &EmptyProcedureRegistry,
+        )
+        .expect("nested catalog nullability creates");
+
+    session
+        .execute_source(
+            "INSERT (:Thing {\
+             nullable_xs: [NULL, 1], \
+             strict_xs: [1], \
+             payload: RECORD{nullable: NULL, strict: 7, labels: ['a']}})",
+            &EmptyProcedureRegistry,
+        )
+        .expect("nullable nested fields and elements accept NULL");
+
     for source in [
-        "CREATE NODE TYPE :Thing (xs :: LIST<INT NOT NULL>)",
-        "CREATE NODE TYPE :Thing (r :: RECORD{a :: INT NOT NULL})",
+        "INSERT (:Thing {nullable_xs: [1], strict_xs: [NULL], payload: RECORD{nullable: NULL, strict: 7, labels: ['a']}})",
+        "INSERT (:Thing {nullable_xs: [1], strict_xs: [1], payload: RECORD{nullable: NULL, strict: NULL, labels: ['a']}})",
+        "INSERT (:Thing {nullable_xs: [1], strict_xs: [1], payload: RECORD{nullable: NULL, strict: 7, labels: [NULL]}})",
+        "INSERT (:Thing {nullable_xs: [1], strict_xs: [1], payload: RECORD{strict: 7, labels: ['a']}})",
     ] {
         let err = session
             .execute_source(source, &EmptyProcedureRegistry)
-            .expect_err("nested catalog NOT NULL is unsupported");
-        assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+            .expect_err("non-conforming nested nullability is rejected");
+        assert_eq!(err.gqlstatus(), GqlStatus::GRAPH_TYPE_VIOLATION);
     }
 }

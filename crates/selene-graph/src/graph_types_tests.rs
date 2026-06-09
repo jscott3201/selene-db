@@ -619,26 +619,23 @@ fn rkyv_round_trips_graph_type_def_with_oneof() {
 }
 
 #[test]
-fn list_element_null_is_rejected_strictly() {
-    // GRAPH-41 / GV90 (Explicit value type nullability — NOT_SUPPORTED): the
-    // engine cannot spell `LIST<T NULL>` or `LIST<T NOT NULL>`; a `LIST<T>`
-    // descriptor matches elements strictly by type, so a NULL element never
-    // conforms to a non-NULL element type. This pins the single, internally
-    // consistent "not offered" semantics — a change here is a deliberate GV90
-    // decision, not an accident.
+fn list_element_nullability_is_explicit() {
     let int_list = PropertyElementType::Scalar(PropertyValueType::Int);
     assert!(
         int_list.matches(&Value::Int(7)),
         "a typed Int element conforms to LIST<Int>"
     );
     assert!(
-        !int_list.matches(&Value::Null),
-        "a NULL element does NOT conform to LIST<Int> (no per-element nullability)"
+        int_list.matches(&Value::Null),
+        "a NULL element conforms to nullable LIST<Int>"
     );
 
-    // Only an explicit LIST<NULL> descriptor accepts a NULL element — the engine
-    // offers no element-nullability modifier on a non-NULL element type.
-    let null_list = PropertyElementType::Scalar(PropertyValueType::Null);
-    assert!(null_list.matches(&Value::Null));
-    assert!(!null_list.matches(&Value::Int(7)));
+    let strict_int_list = PropertyElementType::NotNull(Box::new(PropertyElementType::Scalar(
+        PropertyValueType::Int,
+    )));
+    assert!(strict_int_list.matches(&Value::Int(7)));
+    assert!(
+        !strict_int_list.matches(&Value::Null),
+        "explicit LIST<Int NOT NULL> rejects NULL elements"
+    );
 }

@@ -282,7 +282,7 @@ fn nested_open_record_default_accepts_record_literals() {
 }
 
 #[test]
-fn record_default_rejects_missing_required_field() {
+fn record_default_rejects_missing_declared_field() {
     let graph = empty_closed_graph(3722);
     let plan = planned(
         "CREATE NODE TYPE :Host (config :: RECORD{host :: STRING, port :: INTEGER} \
@@ -295,7 +295,7 @@ fn record_default_rejects_missing_required_field() {
     assert!(matches!(
         err,
         ExecutorError::DataException { message, .. }
-            if message.contains("missing required field port")
+            if message.contains("missing declared field port")
     ));
 }
 
@@ -332,6 +332,24 @@ fn record_default_rejects_unassignable_field() {
         err,
         ExecutorError::DataException { message, .. }
             if message.contains("not assignable to declared field type")
+    ));
+}
+
+#[test]
+fn record_default_rejects_null_not_null_field() {
+    let graph = empty_closed_graph(3726);
+    let plan = planned(
+        "CREATE NODE TYPE :Host (config :: RECORD{host :: STRING NOT NULL, port :: INTEGER} \
+         DEFAULT RECORD{host: NULL, port: 1})",
+    );
+
+    let err = run_write(&graph, &plan).expect_err("NULL RECORD default field rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "22G0X");
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("field host cannot be NULL")
     ));
 }
 

@@ -195,6 +195,9 @@ fn render_list_element(element: Option<&PropertyElementType>) -> String {
         Some(PropertyElementType::List(inner)) => {
             format!("LIST<{}>", render_list_element(Some(inner)))
         }
+        Some(PropertyElementType::NotNull(inner)) => {
+            format!("{} NOT NULL", render_list_element(Some(inner)))
+        }
         Some(_) => "<unsupported-element>".to_owned(),
     }
 }

@@ -63,20 +63,26 @@ fn closed_record_default_value(
                 span,
             ));
         };
+        let value = typed_field_default_value(expr, &field_type.field_type, span)?;
+        if field_type.required && matches!(value, PropertyDefaultValue::Null) {
+            return Err(record_field_unassignable(
+                format!(
+                    "RECORD DEFAULT field {} cannot be NULL for a NOT NULL field",
+                    field_type.name
+                ),
+                span,
+            ));
+        }
         output.push(PropertyDefaultRecordField {
             name: name.clone(),
-            value: Box::new(typed_field_default_value(
-                expr,
-                &field_type.field_type,
-                span,
-            )?),
+            value: Box::new(value),
         });
     }
     for field_type in &field_types.0 {
-        if field_type.required && !seen.contains(&field_type.name) {
+        if !seen.contains(&field_type.name) {
             return Err(record_fields_mismatch(
                 format!(
-                    "RECORD DEFAULT is missing required field {}",
+                    "RECORD DEFAULT is missing declared field {}",
                     field_type.name
                 ),
                 span,
@@ -92,6 +98,16 @@ fn typed_field_default_value(
     span: crate::SourceSpan,
 ) -> Result<PropertyDefaultValue, ExecutorError> {
     match field_type {
+        RecordFieldType::NotNull(inner) => {
+            let value = typed_field_default_value(expr, inner, span)?;
+            if matches!(value, PropertyDefaultValue::Null) {
+                return Err(record_field_unassignable(
+                    "RECORD DEFAULT field cannot be NULL for a NOT NULL field type".to_owned(),
+                    span,
+                ));
+            }
+            Ok(value)
+        }
         RecordFieldType::Scalar(PropertyValueType::Vector) => {
             let ValueExpr::ListLiteral { items, .. } = expr else {
                 return Err(record_field_unassignable(
@@ -178,7 +194,7 @@ fn scalar_field_default(
             span,
         )
     })?;
-    if value_type.matches(&value) {
+    if matches!(value, selene_core::Value::Null) || value_type.matches(&value) {
         return Ok(default);
     }
     Err(record_field_unassignable(

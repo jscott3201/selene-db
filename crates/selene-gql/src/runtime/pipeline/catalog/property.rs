@@ -98,7 +98,7 @@ fn gql_type_to_property_value_type(
 ) -> Result<LoweredPropertyType, ExecutorError> {
     match gql_type {
         GqlType::List(inner) => {
-            let element_type = gql_type_to_property_element_type(inner, 1, span)?;
+            let element_type = gql_type_to_property_element_type(inner, 1)?;
             Ok((PropertyValueType::List, Some(element_type), None))
         }
         // A top-level `RECORD` declaration lowers to the RecordTyped tag. A closed
@@ -108,8 +108,8 @@ fn gql_type_to_property_value_type(
             let record_field_types = gql_record_to_record_field_types(record_type, 1, span)?;
             Ok((PropertyValueType::RecordTyped, None, record_field_types))
         }
-        GqlType::NotNull(_) => Err(nested_not_null_property_type_error(span)),
-        _ => gql_type_to_scalar_property_value_type(gql_type, span)
+        GqlType::NotNull(inner) => gql_type_to_property_value_type(inner, span),
+        _ => gql_type_to_scalar_property_value_type(gql_type)
             .map(|value_type| (value_type, None, None)),
     }
 }
@@ -124,10 +124,10 @@ fn strip_top_level_not_null(gql_type: &GqlType) -> (&GqlType, bool) {
 /// Lower a record TYPE into the catalog descriptor. `RecordType::Open` (bare `RECORD`)
 /// yields `None` (permissive); `RecordType::Closed` yields the field-type list.
 ///
-/// The graph catalog does not persist per-field nullability yet, so every
-/// declared field is required-present per ISO 39075:2024 §4.15.4 (a closed
-/// record value has the same field-name set as the descriptor). Nested
-/// `NOT NULL` markers are rejected before this lowering step can erase them.
+/// Field names remain required-present per ISO 39075:2024 §4.15.4 (a closed
+/// record value has the same field-name set as the descriptor). A field-level
+/// `NOT NULL` marker is carried on [`RecordFieldTypeDef::required`]; nested
+/// markers inside LIST/RECORD field types are carried as [`RecordFieldType::NotNull`].
 fn gql_record_to_record_field_types(
     record_type: &RecordType,
     depth: u32,
@@ -144,10 +144,11 @@ fn gql_record_to_record_field_types(
             let defs = fields
                 .iter()
                 .map(|(name, gql_type)| {
+                    let (gql_type, required) = strip_top_level_not_null(gql_type);
                     Ok(RecordFieldTypeDef {
                         name: name.clone(),
                         field_type: gql_type_to_record_field_type(gql_type, depth, span)?,
-                        required: true,
+                        required,
                     })
                 })
                 .collect::<Result<Vec<_>, ExecutorError>>()?;
@@ -176,15 +177,16 @@ fn gql_type_to_record_field_type(
                 None => Ok(RecordFieldType::OpenRecord),
             }
         }
-        GqlType::NotNull(_) => Err(nested_not_null_property_type_error(span)),
-        _ => gql_type_to_scalar_property_value_type(gql_type, span).map(RecordFieldType::Scalar),
+        GqlType::NotNull(inner) => Ok(RecordFieldType::NotNull(Box::new(
+            gql_type_to_record_field_type(inner, depth, span)?,
+        ))),
+        _ => gql_type_to_scalar_property_value_type(gql_type).map(RecordFieldType::Scalar),
     }
 }
 
 fn gql_type_to_property_element_type(
     gql_type: &GqlType,
     depth: u32,
-    span: crate::SourceSpan,
 ) -> Result<PropertyElementType, ExecutorError> {
     if depth > MAX_NESTING_DEPTH {
         return Err(ExecutorError::ImplementationDefined {
@@ -193,21 +195,20 @@ fn gql_type_to_property_element_type(
     }
     match gql_type {
         GqlType::List(inner) => Ok(PropertyElementType::List(Box::new(
-            gql_type_to_property_element_type(inner, depth + 1, span)?,
+            gql_type_to_property_element_type(inner, depth + 1)?,
         ))),
-        GqlType::NotNull(_) => Err(nested_not_null_property_type_error(span)),
-        _ => {
-            gql_type_to_scalar_property_value_type(gql_type, span).map(PropertyElementType::Scalar)
-        }
+        GqlType::NotNull(inner) => Ok(PropertyElementType::NotNull(Box::new(
+            gql_type_to_property_element_type(inner, depth)?,
+        ))),
+        _ => gql_type_to_scalar_property_value_type(gql_type).map(PropertyElementType::Scalar),
     }
 }
 
 fn gql_type_to_scalar_property_value_type(
     gql_type: &GqlType,
-    span: crate::SourceSpan,
 ) -> Result<PropertyValueType, ExecutorError> {
     Ok(match gql_type {
-        GqlType::NotNull(_) => return Err(nested_not_null_property_type_error(span)),
+        GqlType::NotNull(inner) => return gql_type_to_scalar_property_value_type(inner),
         GqlType::String => PropertyValueType::String,
         GqlType::Boolean => PropertyValueType::Bool,
         GqlType::Integer
@@ -255,13 +256,6 @@ fn gql_type_to_scalar_property_value_type(
     })
 }
 
-fn nested_not_null_property_type_error(span: crate::SourceSpan) -> ExecutorError {
-    ExecutorError::FeatureNotSupportedYet {
-        feature: "nested property value type nullability",
-        span,
-    }
-}
-
 pub(super) fn render_property_value_type(
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
@@ -289,10 +283,12 @@ fn render_record_field_types(fields: &RecordFieldTypes) -> String {
         .0
         .iter()
         .map(|field| {
+            let nullability = if field.required { " NOT NULL" } else { "" };
             format!(
-                "{} :: {}",
+                "{} :: {}{}",
                 field.name,
-                render_record_field_type(&field.field_type)
+                render_record_field_type(&field.field_type),
+                nullability
             )
         })
         .collect::<Vec<_>>()
@@ -308,6 +304,7 @@ fn render_record_field_type(field_type: &RecordFieldType) -> String {
         RecordFieldType::List(inner) => format!("LIST<{}>", render_record_field_type(inner)),
         RecordFieldType::OpenRecord => "RECORD".to_owned(),
         RecordFieldType::Record(inner) => render_record_field_types(inner),
+        RecordFieldType::NotNull(inner) => format!("{} NOT NULL", render_record_field_type(inner)),
         _ => "<unsupported-record-field>".to_owned(),
     }
 }
@@ -319,6 +316,9 @@ fn render_property_element_type(element_type: &PropertyElementType) -> String {
         }
         PropertyElementType::List(inner) => {
             format!("LIST<{}>", render_property_element_type(inner))
+        }
+        PropertyElementType::NotNull(inner) => {
+            format!("{} NOT NULL", render_property_element_type(inner))
         }
         _ => "<unsupported-element>".to_owned(),
     }
