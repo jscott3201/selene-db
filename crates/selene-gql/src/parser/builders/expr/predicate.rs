@@ -15,6 +15,7 @@ use crate::{
 use super::{Rule, build_value_expr, literal};
 use crate::parser::builders::{
     db_string_pair, keyword_starts_with, keyword_tokens_eq, not_implemented, pattern, span,
+    unexpected_pair,
 };
 
 pub(super) fn apply_is_suffix(
@@ -226,6 +227,14 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     // than building an upper-cased, whitespace-normalized `String`: the type
     // name (and every nested LIST/RECORD level) is compared allocation-free.
     let text = pair.as_str();
+    if let Some(integer_precision) = pair.clone().into_inner().find(|child| {
+        matches!(
+            child.as_rule(),
+            Rule::signed_integer_precision_type | Rule::unsigned_integer_precision_type
+        )
+    }) {
+        return build_integer_precision_type_name(integer_precision, source_span);
+    }
     if keyword_tokens_eq(text, &["FLOAT16"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV20,
@@ -408,6 +417,83 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         &pair,
         "this GQL type constructor is not yet supported",
     ))
+}
+
+fn build_integer_precision_type_name(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<GqlType, ParserError> {
+    let precision_pair = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::numeric_type_precision)
+        .ok_or_else(|| {
+            ParserError::syntax("integer type is missing precision", source_span, None)
+        })?;
+    let precision = parse_numeric_type_precision(precision_pair.as_str(), span(&precision_pair))?;
+    match pair.as_rule() {
+        Rule::signed_integer_precision_type => {
+            signed_integer_precision_type(precision, source_span)
+        }
+        Rule::unsigned_integer_precision_type => {
+            unsigned_integer_precision_type(precision, source_span)
+        }
+        _ => Err(unexpected_pair(pair, "expected integer precision type")),
+    }
+}
+
+fn parse_numeric_type_precision(text: &str, span: SourceSpan) -> Result<u16, ParserError> {
+    let normalized = text.replace('_', "");
+    let precision = normalized.parse::<u16>().map_err(|_err| {
+        ParserError::syntax(
+            "numeric type precision exceeds the implementation-defined maximum",
+            span,
+            Some("selene-db currently supports integer precision through INT128/UINT128".into()),
+        )
+    })?;
+    if precision == 0 {
+        return Err(ParserError::syntax(
+            "numeric type precision must be greater than or equal to 1",
+            span,
+            None,
+        ));
+    }
+    Ok(precision)
+}
+
+fn signed_integer_precision_type(precision: u16, span: SourceSpan) -> Result<GqlType, ParserError> {
+    match precision {
+        1..=7 => Ok(GqlType::Int8),
+        8..=15 => Ok(GqlType::Int16),
+        16..=31 => Ok(GqlType::Int32),
+        32..=63 => Ok(GqlType::Int64),
+        64..=127 => Ok(GqlType::Int128),
+        _ => Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV16,
+            display_name: "256 bit signed integer numbers",
+            span,
+            hint: "this precision requires a signed integer wider than INT128, which is outside the selene-db v1.0 claim list",
+        }),
+    }
+}
+
+fn unsigned_integer_precision_type(
+    precision: u16,
+    span: SourceSpan,
+) -> Result<GqlType, ParserError> {
+    match precision {
+        1..=8 => Ok(GqlType::Uint8),
+        9..=16 => Ok(GqlType::Uint16),
+        17..=32 => Ok(GqlType::Uint32),
+        33..=64 => Ok(GqlType::Uint64),
+        65..=128 => Ok(GqlType::Uint128),
+        _ => Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV15,
+            display_name: "256 bit unsigned integer numbers",
+            span,
+            hint: "this precision requires an unsigned integer wider than UINT128, which is outside the selene-db v1.0 claim list",
+        }),
+    }
 }
 
 fn build_duration_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {

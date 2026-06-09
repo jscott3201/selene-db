@@ -709,6 +709,8 @@ var_ref         = { ident }
 
 type_name = {
     ^"BOOLEAN" | ^"BOOL"
+  | signed_integer_precision_type
+  | unsigned_integer_precision_type
   | ^"SIGNED" ~ ^"SMALL" ~ ^"INTEGER"
   | ^"SIGNED" ~ ^"BIG" ~ ^"INTEGER"
   | ^"SIGNED" ~ ^"INTEGER256" | ^"SIGNED" ~ ^"INTEGER128"
@@ -748,6 +750,13 @@ type_name = {
   | ^"RECORD"
   | ^"NOTHING" | ^"NULL"
 }
+signed_integer_precision_type = {
+    (^"SIGNED" ~ ^"INTEGER" | ^"INTEGER" | ^"INT") ~ "(" ~ numeric_type_precision ~ ")"
+}
+unsigned_integer_precision_type = {
+    (^"UNSIGNED" ~ ^"INTEGER" | ^"UINT") ~ "(" ~ numeric_type_precision ~ ")"
+}
+numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 duration_type = { ^"DURATION" ~ ("(" ~ temporal_duration_qualifier ~ ")")? }
 
 byte_string_type = {
