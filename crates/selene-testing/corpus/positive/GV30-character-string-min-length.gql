@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GV30
+// also-covers: GV31
+// expects: parse-ok
+RETURN 'selene' IS TYPED STRING(1, 16)

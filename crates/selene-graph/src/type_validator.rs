@@ -4,7 +4,7 @@ use std::fmt;
 
 use selene_core::{
     Change, DbString, EdgeId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value,
-    byte_string_fits_type, decimal_fits_type,
+    byte_string_fits_type, character_string_fits_type, decimal_fits_type,
 };
 
 use crate::graph::SeleneGraph;
@@ -531,6 +531,12 @@ fn property_value_matches(declaration: &PropertyTypeDef, value: &Value) -> bool 
         PropertyValueType::Decimal => match declaration.decimal_type {
             Some(decimal_type) => {
                 matches!(value, Value::Decimal(value) if decimal_fits_type(*value, decimal_type))
+            }
+            None => declaration.value_type.matches(value),
+        },
+        PropertyValueType::String => match declaration.character_string_type {
+            Some(character_string_type) => {
+                matches!(value, Value::String(value) if character_string_fits_type(value, character_string_type))
             }
             None => declaration.value_type.matches(value),
         },

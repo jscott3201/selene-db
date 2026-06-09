@@ -200,6 +200,9 @@ feature_ids! {
     GV24 = "GV24" => "64 bit floating point numbers";
     GV25 = "GV25" => "128 bit floating point numbers";
     GV26 = "GV26" => "256 bit floating point numbers";
+    GV30 = "GV30" => "Specified character string minimum length";
+    GV31 = "GV31" => "Specified character string maximum length";
+    GV32 = "GV32" => "Specified character string fixed length";
     GV35 = "GV35" => "Byte string types";
     GV36 = "GV36" => "Specified byte string minimum length";
     GV37 = "GV37" => "Specified byte string maximum length";
@@ -351,6 +354,9 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV22,
     FeatureId::GV23,
     FeatureId::GV24,
+    FeatureId::GV30,
+    FeatureId::GV31,
+    FeatureId::GV32,
     FeatureId::GV35,
     FeatureId::GV36,
     FeatureId::GV37,

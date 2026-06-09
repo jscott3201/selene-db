@@ -32,6 +32,7 @@ fn graph_type() -> GraphTypeDef {
                     immutable: false,
                     unique: false,
                     decimal_type: None,
+                    character_string_type: None,
                     byte_string_type: None,
                     record_field_types: None,
                 }],
@@ -49,6 +50,7 @@ fn graph_type() -> GraphTypeDef {
                     immutable: false,
                     unique: false,
                     decimal_type: None,
+                    character_string_type: None,
                     byte_string_type: None,
                     record_field_types: None,
                 }],
@@ -69,6 +71,7 @@ fn graph_type() -> GraphTypeDef {
                 immutable: false,
                 unique: false,
                 decimal_type: None,
+                character_string_type: None,
                 byte_string_type: None,
                 record_field_types: None,
             }],
@@ -128,6 +131,7 @@ fn validate_entity_state_accepts_vector_property() {
                 immutable: false,
                 unique: false,
                 decimal_type: None,
+                character_string_type: None,
                 byte_string_type: None,
                 record_field_types: None,
             }],
@@ -281,6 +285,7 @@ fn legacy_untyped_list_declaration_accepts_any_list_elements() {
         immutable: false,
         unique: false,
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: None,
         record_field_types: None,
     };
@@ -303,6 +308,7 @@ fn vector_declaration_matches_only_vector_values() {
         immutable: false,
         unique: false,
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: None,
         record_field_types: None,
     };
@@ -395,6 +401,7 @@ fn closed_record_declaration() -> PropertyTypeDef {
         immutable: false,
         unique: false,
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: None,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
@@ -472,6 +479,7 @@ fn closed_record_accepts_and_rejects_nested() {
         immutable: false,
         unique: false,
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: None,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
@@ -540,6 +548,7 @@ fn nested_open_record_field_accepts_any_record_shape() {
         immutable: false,
         unique: false,
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: None,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
@@ -668,6 +677,7 @@ fn open_bare_record_declaration_accepts_any_record() {
         immutable: false,
         unique: false,
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: None,
         record_field_types: None,
     };

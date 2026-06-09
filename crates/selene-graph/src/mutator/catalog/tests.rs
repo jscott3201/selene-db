@@ -86,6 +86,7 @@ fn create_node_type_updates_bound_type_and_emits_schema_change() {
                         immutable: false,
                         unique: false,
                         decimal_type: None,
+                        character_string_type: None,
                         byte_string_type: None,
                         record_field_types: None,
                     }],

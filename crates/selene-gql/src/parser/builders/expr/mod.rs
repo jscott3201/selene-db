@@ -3,6 +3,7 @@
 mod call;
 mod literal;
 mod predicate;
+mod type_name;
 
 use pest::iterators::Pair;
 
@@ -84,7 +85,7 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
 }
 
 pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
-    predicate::build_type_name(pair)
+    type_name::build_type_name(pair)
 }
 
 fn build_cast_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {

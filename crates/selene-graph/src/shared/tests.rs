@@ -79,6 +79,7 @@ fn sample_type() -> GraphTypeDef {
                 immutable: false,
                 unique: false,
                 decimal_type: None,
+                character_string_type: None,
                 byte_string_type: None,
                 record_field_types: None,
             }],

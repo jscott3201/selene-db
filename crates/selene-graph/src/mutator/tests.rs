@@ -512,6 +512,7 @@ fn remove_node_property_rejects_immutable_property() {
                 immutable: true,
                 unique: false,
                 decimal_type: None,
+                character_string_type: None,
                 byte_string_type: None,
                 record_field_types: None,
             }],

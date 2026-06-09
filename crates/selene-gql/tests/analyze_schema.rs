@@ -32,6 +32,7 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
         immutable: false,
         unique: false,
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: None,
         record_field_types: None,
     }
@@ -49,6 +50,7 @@ fn host_record_graph_type() -> GraphTypeDef {
         immutable: false,
         unique: false,
         decimal_type: None,
+        character_string_type: None,
         byte_string_type: None,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {

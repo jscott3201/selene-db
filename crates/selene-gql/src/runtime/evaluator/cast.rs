@@ -147,7 +147,12 @@ pub(super) fn eval_cast(
                 span,
             ));
         }
-        Value::Json(_) if !matches!(target_type, GqlType::Json | GqlType::String) => {
+        Value::Json(_)
+            if !matches!(
+                target_type,
+                GqlType::Json | GqlType::String | GqlType::CharacterString(_)
+            ) =>
+        {
             return Err(non_iso_combination(
                 "CAST from JSON to this target is not a valid type combination",
                 span,
@@ -186,7 +191,10 @@ pub(super) fn eval_cast(
             decimal::numeric_to_decimal_exact(value, *decimal_type, span)
         }
         GqlType::Boolean => cast_to_boolean(value, span),
-        GqlType::String => cast_to_string(value, span),
+        GqlType::String => cast_to_string(value, None, span),
+        GqlType::CharacterString(character_type) => {
+            cast_to_string(value, Some(character_type), span)
+        }
         GqlType::Bytes => cast_to_bytes(value, None, span),
         GqlType::ByteString(byte_type) => cast_to_bytes(value, Some(byte_type), span),
         GqlType::Uuid => cast_to_uuid(value, span),
@@ -238,7 +246,11 @@ fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
     }
 }
 
-fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+fn cast_to_string(
+    value: Value,
+    target_type: Option<&crate::ast::CharacterStringType>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     let rendered: String = match value {
         // ISO §20.8 GR4(j)(v)(1): boolean→string renders the UPPERCASE literal
         // `'TRUE'`/`'FALSE'` (GR4v), not lowercase.
@@ -271,8 +283,10 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
             });
         }
     };
-    // CAST output strings construct a plain `Value::String`; the only guard is
-    // the IL013 per-string byte cap (there is no global string pool).
+    // CAST output strings construct a plain `Value::String`; the global guard
+    // remains IL013, while an explicit target type applies the character-count
+    // envelope before storage construction.
+    let rendered = coerce_string_to_type(rendered, target_type, span)?;
     match DbString::from_string(rendered) {
         Ok(db_string) => Ok(Value::String(db_string)),
         Err(_err) => Err(ExecutorError::data_exception(
@@ -281,6 +295,61 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
             span,
         )),
     }
+}
+
+fn coerce_string_to_type(
+    mut value: String,
+    target_type: Option<&crate::ast::CharacterStringType>,
+    span: SourceSpan,
+) -> Result<String, ExecutorError> {
+    let Some(target_type) = target_type else {
+        return Ok(value);
+    };
+    let len = value.chars().count();
+    let len_u64 = u64::try_from(len).map_err(|_| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "character string source length exceeds supported range",
+            span,
+        )
+    })?;
+    if len_u64 >= target_type.min_len && len_u64 <= target_type.max_len {
+        return Ok(value);
+    }
+    if len_u64 < target_type.min_len {
+        let target_len = usize::try_from(target_type.min_len).map_err(|_| {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "character string target minimum length exceeds supported range",
+                span,
+            )
+        })?;
+        value.extend(std::iter::repeat_n(' ', target_len - len));
+        return Ok(value);
+    }
+
+    let max_len = usize::try_from(target_type.max_len).map_err(|_| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "character string target maximum length exceeds supported range",
+            span,
+        )
+    })?;
+    let truncate_at = value
+        .char_indices()
+        .nth(max_len)
+        .map(|(offset, _)| offset)
+        .unwrap_or(value.len());
+    let trailing = &value[truncate_at..];
+    if trailing.chars().any(|character| !character.is_whitespace()) {
+        return Err(ExecutorError::data_exception(
+            DataExceptionSubclass::StringDataRightTruncation,
+            "character string cast would truncate non-whitespace trailing characters",
+            span,
+        ));
+    }
+    value.truncate(truncate_at);
+    Ok(value)
 }
 
 fn cast_to_json(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -486,6 +555,7 @@ fn format_float(f: f64) -> String {
 fn cast_to_type_feature(target: &GqlType) -> &'static str {
     match target {
         GqlType::DecimalExact(_) => "CAST to DECIMAL",
+        GqlType::CharacterString(_) => "CAST to STRING",
         GqlType::Bytes | GqlType::ByteString(_) => "CAST to BYTES",
         GqlType::ZonedDateTime => "CAST to ZONED DATETIME",
         GqlType::LocalDateTime => "CAST to LOCAL DATETIME",

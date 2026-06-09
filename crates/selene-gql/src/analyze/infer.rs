@@ -469,7 +469,7 @@ fn concat_result_type(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
         return Some(GqlType::Bytes);
     }
     match (lhs.strip_not_null(), rhs.strip_not_null()) {
-        (GqlType::String, GqlType::String) => Some(GqlType::String),
+        (lhs, rhs) if is_character_string(lhs) && is_character_string(rhs) => Some(GqlType::String),
         (GqlType::Path, GqlType::Path) => Some(GqlType::Path),
         (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
             meet_gql_types(lhs_inner, rhs_inner).map(|inner| GqlType::List(Box::new(inner)))
@@ -551,9 +551,7 @@ fn expect_string(
 ) -> Result<(), AnalysisError> {
     match ty {
         AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
-        AnalyzedType::Resolved(found) if matches!(found.strip_not_null(), GqlType::String) => {
-            Ok(())
-        }
+        AnalyzedType::Resolved(found) if is_character_string(found) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::String,
@@ -593,6 +591,7 @@ fn expect_concat_operand(
             if matches!(
                 found.strip_not_null(),
                 GqlType::String
+                    | GqlType::CharacterString(_)
                     | GqlType::Bytes
                     | GqlType::ByteString(_)
                     | GqlType::List(_)
@@ -684,6 +683,13 @@ fn is_byte_string(ty: &GqlType) -> bool {
     matches!(ty.strip_not_null(), GqlType::Bytes | GqlType::ByteString(_))
 }
 
+fn is_character_string(ty: &GqlType) -> bool {
+    matches!(
+        ty.strip_not_null(),
+        GqlType::String | GqlType::CharacterString(_)
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ComparableFamily {
     Boolean,
@@ -702,7 +708,7 @@ fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
     }
     Some(match ty.strip_not_null() {
         GqlType::Boolean => ComparableFamily::Boolean,
-        GqlType::String => ComparableFamily::String,
+        GqlType::String | GqlType::CharacterString(_) => ComparableFamily::String,
         GqlType::Bytes | GqlType::ByteString(_) => ComparableFamily::Bytes,
         GqlType::Uuid => ComparableFamily::Uuid,
         GqlType::NodeRef => ComparableFamily::NodeRef,

@@ -19,7 +19,7 @@ pub(crate) fn trim(
             validate_trim_character(character, None)?;
             AnalyzedType::Dynamic
         }
-        AnalyzedType::Resolved(GqlType::String) => {
+        AnalyzedType::Resolved(GqlType::String | GqlType::CharacterString(_)) => {
             validate_trim_character(character, Some(GqlType::String))?;
             AnalyzedType::Resolved(GqlType::String)
         }
@@ -54,7 +54,9 @@ fn trim_character_result(
     };
     match character {
         AnalyzedType::Dynamic => Ok(None),
-        AnalyzedType::Resolved(GqlType::String) => Ok(Some(GqlType::String)),
+        AnalyzedType::Resolved(GqlType::String | GqlType::CharacterString(_)) => {
+            Ok(Some(GqlType::String))
+        }
         AnalyzedType::Resolved(GqlType::Null) => Ok(Some(GqlType::Null)),
         AnalyzedType::Resolved(GqlType::Bytes | GqlType::ByteString(_)) => Ok(Some(GqlType::Bytes)),
         AnalyzedType::Resolved(actual) => Err(type_mismatch(
@@ -76,13 +78,21 @@ fn validate_trim_character(
     match (expected_family, actual) {
         (_, AnalyzedType::Dynamic)
         | (_, AnalyzedType::Resolved(GqlType::Null))
-        | (Some(GqlType::String), AnalyzedType::Resolved(GqlType::String))
+        | (
+            Some(GqlType::String),
+            AnalyzedType::Resolved(GqlType::String | GqlType::CharacterString(_)),
+        )
         | (Some(GqlType::Bytes), AnalyzedType::Resolved(GqlType::Bytes | GqlType::ByteString(_))) => {
             Ok(())
         }
         (
             None,
-            AnalyzedType::Resolved(GqlType::String | GqlType::Bytes | GqlType::ByteString(_)),
+            AnalyzedType::Resolved(
+                GqlType::String
+                | GqlType::CharacterString(_)
+                | GqlType::Bytes
+                | GqlType::ByteString(_),
+            ),
         ) => Ok(()),
         (Some(expected), AnalyzedType::Resolved(actual)) => Err(type_mismatch(
             TypeMismatchContext::TrimCharacter,

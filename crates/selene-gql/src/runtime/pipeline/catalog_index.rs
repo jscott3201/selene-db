@@ -168,7 +168,7 @@ fn gql_type_to_index_kind(
 ) -> Result<TypedIndexKind, ExecutorError> {
     match gql_type {
         GqlType::Boolean => Ok(TypedIndexKind::Bool),
-        GqlType::String => Ok(TypedIndexKind::String),
+        GqlType::String | GqlType::CharacterString(_) => Ok(TypedIndexKind::String),
         GqlType::Uuid => Ok(TypedIndexKind::Uuid),
         GqlType::Integer
         | GqlType::Int8

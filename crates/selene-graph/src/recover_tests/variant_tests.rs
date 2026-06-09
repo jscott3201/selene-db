@@ -668,6 +668,7 @@ fn legacy_string_property(name: &str, required: bool) -> PropertyDefV1 {
         value_type: ValueType {
             predefined: Some(PredefinedValueType::String),
             decimal_type: None,
+            character_string_type: None,
             byte_string_type: None,
             union: None,
             list_of: None,

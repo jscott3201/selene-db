@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use selene_core::{
-    ByteStringType, DbString, DecimalType, PropertyValueType, byte_string_fits_type,
-    decimal_fits_type,
+    ByteStringType, CharacterStringType, DbString, DecimalType, PropertyValueType,
+    byte_string_fits_type, character_string_fits_type, decimal_fits_type,
 };
 use selene_graph::{
     PropertyDefaultRecordField, PropertyDefaultValue, RecordFieldType, RecordFieldTypes,
@@ -121,6 +121,9 @@ fn typed_field_default_value(
             super::lists::vector_default_value(items, span)
         }
         RecordFieldType::Decimal(decimal_type) => decimal_field_default(expr, *decimal_type, span),
+        RecordFieldType::CharacterString(character_string_type) => {
+            character_string_field_default(expr, *character_string_type, span)
+        }
         RecordFieldType::ByteString(byte_string_type) => {
             byte_string_field_default(expr, *byte_string_type, span)
         }
@@ -157,6 +160,33 @@ fn typed_field_default_value(
             span,
         )),
     }
+}
+
+fn character_string_field_default(
+    expr: &ValueExpr,
+    character_string_type: CharacterStringType,
+    span: crate::SourceSpan,
+) -> Result<PropertyDefaultValue, ExecutorError> {
+    let default = scalar_field_default(expr, PropertyValueType::String, span)?;
+    let value = default.to_value().map_err(|err| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            format!("RECORD DEFAULT STRING field is invalid: {err}"),
+            span,
+        )
+    })?;
+    if matches!(value, selene_core::Value::Null)
+        || matches!(
+            value,
+            selene_core::Value::String(value) if character_string_fits_type(&value, character_string_type)
+        )
+    {
+        return Ok(default);
+    }
+    Err(record_field_unassignable(
+        "RECORD DEFAULT STRING field is not assignable to declared character length".to_owned(),
+        span,
+    ))
 }
 
 fn byte_string_field_default(
