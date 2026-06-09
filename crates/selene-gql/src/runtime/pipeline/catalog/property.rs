@@ -4,8 +4,8 @@ mod defaults;
 
 pub(super) use defaults::render_property_default_value;
 use defaults::{
-    DefaultValidationContext, coerce_property_default_value, property_default_value,
-    validate_default_value,
+    DefaultValidationContext, coerce_property_default_value, coerce_property_descriptor_default,
+    property_default_value, validate_default_value,
 };
 use selene_core::{
     ByteStringType as CoreByteStringType, CharacterStringType as CoreCharacterStringType,
@@ -75,21 +75,22 @@ fn property_def(
     let default = default
         .map(|default| coerce_property_default_value(value_type, default, default_span))
         .transpose()?;
+    let context = DefaultValidationContext {
+        property: property.name.clone(),
+        value_type,
+        decimal_type,
+        character_string_type,
+        byte_string_type,
+        list_element_type: list_element_type.as_ref(),
+        record_field_types: record_field_types.as_ref(),
+        required,
+        span: default_span,
+    };
+    let default = default
+        .map(|default| coerce_property_descriptor_default(&context, default))
+        .transpose()?;
     if let Some(default) = &default {
-        validate_default_value(
-            &DefaultValidationContext {
-                property: property.name.clone(),
-                value_type,
-                decimal_type,
-                character_string_type,
-                byte_string_type,
-                list_element_type: list_element_type.as_ref(),
-                record_field_types: record_field_types.as_ref(),
-                required,
-                span: default_span,
-            },
-            default,
-        )?;
+        validate_default_value(&context, default)?;
     }
     Ok(PropertyTypeDef {
         name: property.name.clone(),
