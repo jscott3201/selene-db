@@ -53,7 +53,7 @@ pub(in crate::core_provider) fn decode_graph_types(
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{GraphId, LabelSet, PropertyValueType, db_string};
+    use selene_core::{DecimalType, GraphId, LabelSet, PropertyValueType, db_string};
 
     use super::*;
     use crate::SharedGraph;
@@ -166,11 +166,21 @@ mod tests {
         let nested = db_string("nested").unwrap();
         let open_nested = db_string("open_nested").unwrap();
         let flag = db_string("flag").unwrap();
+        let amount = db_string("amount").unwrap();
+        let history = db_string("history").unwrap();
+        let decimal = DecimalType::new(5, 2).unwrap();
+        let history_decimal = DecimalType::new(4, 1).unwrap();
+        let nested_decimal = DecimalType::new(6, 3).unwrap();
         let record_field_types = RecordFieldTypes(vec![
             RecordFieldTypeDef {
                 name: host,
                 field_type: RecordFieldType::Scalar(PropertyValueType::String),
                 required: true,
+            },
+            RecordFieldTypeDef {
+                name: amount.clone(),
+                field_type: RecordFieldType::Decimal(nested_decimal),
+                required: false,
             },
             RecordFieldTypeDef {
                 name: ports,
@@ -201,16 +211,43 @@ mod tests {
             node_types: vec![NodeTypeDef {
                 name: person.clone(),
                 key_labels: LabelSet::single(person),
-                properties: vec![PropertyTypeDef {
-                    name: config,
-                    value_type: PropertyValueType::RecordTyped,
-                    list_element_type: None,
-                    required: false,
-                    default: None,
-                    immutable: false,
-                    unique: false,
-                    record_field_types: Some(record_field_types.clone()),
-                }],
+                properties: vec![
+                    PropertyTypeDef {
+                        name: config,
+                        value_type: PropertyValueType::RecordTyped,
+                        list_element_type: None,
+                        required: false,
+                        default: None,
+                        immutable: false,
+                        unique: false,
+                        decimal_type: None,
+                        record_field_types: Some(record_field_types.clone()),
+                    },
+                    PropertyTypeDef {
+                        name: amount.clone(),
+                        value_type: PropertyValueType::Decimal,
+                        list_element_type: None,
+                        required: false,
+                        default: None,
+                        immutable: false,
+                        unique: false,
+                        decimal_type: Some(decimal),
+                        record_field_types: None,
+                    },
+                    PropertyTypeDef {
+                        name: history,
+                        value_type: PropertyValueType::List,
+                        list_element_type: Some(crate::graph_types::PropertyElementType::Decimal(
+                            history_decimal,
+                        )),
+                        required: false,
+                        default: None,
+                        immutable: false,
+                        unique: false,
+                        decimal_type: None,
+                        record_field_types: None,
+                    },
+                ],
                 validation_mode: ValidationMode::Strict,
             }],
             edge_types: Vec::new(),
@@ -234,6 +271,16 @@ mod tests {
         let property = &decoded_graph_type.node_types[0].properties[0];
         assert_eq!(property.value_type, PropertyValueType::RecordTyped);
         assert_eq!(property.record_field_types, Some(record_field_types));
+        let property = &decoded_graph_type.node_types[0].properties[1];
+        assert_eq!(property.value_type, PropertyValueType::Decimal);
+        assert_eq!(property.decimal_type, Some(decimal));
+        let property = &decoded_graph_type.node_types[0].properties[2];
+        assert_eq!(
+            property.list_element_type,
+            Some(crate::graph_types::PropertyElementType::Decimal(
+                history_decimal
+            ))
+        );
     }
 
     #[test]

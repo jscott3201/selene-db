@@ -391,6 +391,7 @@ fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
             value_type: core_value_type(
                 property.value_type,
                 property.list_element_type.as_ref(),
+                property.decimal_type,
                 property.required,
             )?,
             nullable: !property.required,
@@ -418,6 +419,7 @@ fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
             value_type: core_value_type(
                 property.value_type,
                 property.list_element_type.as_ref(),
+                property.decimal_type,
                 property.required,
             )?,
             nullable: !property.required,
@@ -447,6 +449,7 @@ const fn core_validation_mode(mode: ValidationMode) -> selene_core::ValidationMo
 fn core_value_type(
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
+    decimal_type: Option<selene_core::DecimalType>,
     required: bool,
 ) -> GraphResult<ValueType> {
     let mut value_type = if value_type == PropertyValueType::List {
@@ -455,7 +458,7 @@ fn core_value_type(
         })?;
         ValueType::list_of(core_element_value_type(element_type, 1)?)
     } else {
-        core_scalar_value_type(value_type)
+        core_scalar_value_type(value_type, decimal_type)
     };
     value_type.not_null = required;
     Ok(value_type)
@@ -471,7 +474,11 @@ fn core_element_value_type(
         });
     }
     match element_type {
-        PropertyElementType::Scalar(value_type) => Ok(core_scalar_value_type(*value_type)),
+        PropertyElementType::Scalar(value_type) => Ok(core_scalar_value_type(*value_type, None)),
+        PropertyElementType::Decimal(decimal_type) => Ok(core_scalar_value_type(
+            PropertyValueType::Decimal,
+            Some(*decimal_type),
+        )),
         PropertyElementType::List(inner) => Ok(ValueType::list_of(core_element_value_type(
             inner,
             depth + 1,
@@ -484,7 +491,10 @@ fn core_element_value_type(
     }
 }
 
-fn core_scalar_value_type(value_type: PropertyValueType) -> ValueType {
+fn core_scalar_value_type(
+    value_type: PropertyValueType,
+    decimal_type: Option<selene_core::DecimalType>,
+) -> ValueType {
     let predefined = match value_type {
         PropertyValueType::Bool => Some(PredefinedValueType::Bool),
         PropertyValueType::Int => Some(PredefinedValueType::Int),
@@ -519,6 +529,11 @@ fn core_scalar_value_type(value_type: PropertyValueType) -> ValueType {
     };
     ValueType {
         predefined,
+        decimal_type: if value_type == PropertyValueType::Decimal {
+            decimal_type
+        } else {
+            None
+        },
         union: None,
         list_of: None,
         record: None,
@@ -580,6 +595,9 @@ fn core_record_field_structure_type(
     Ok(match field_type {
         RecordFieldType::Scalar(value_type) => {
             selene_core::RecordFieldStructureType::Scalar(*value_type)
+        }
+        RecordFieldType::Decimal(decimal_type) => {
+            selene_core::RecordFieldStructureType::Decimal(*decimal_type)
         }
         RecordFieldType::List(inner) => selene_core::RecordFieldStructureType::List(Box::new(
             core_record_field_structure_type(inner, depth + 1)?,

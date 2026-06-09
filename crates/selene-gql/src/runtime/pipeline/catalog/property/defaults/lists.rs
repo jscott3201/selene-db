@@ -1,7 +1,7 @@
 //! LIST and VECTOR property-default helpers.
 
 use rust_decimal::prelude::ToPrimitive;
-use selene_core::{CoreError, PropertyValueType, VectorValue};
+use selene_core::{CoreError, DecimalType, PropertyValueType, VectorValue, decimal_fits_type};
 use selene_graph::{PropertyDefaultValue, PropertyElementType};
 
 use crate::{DataExceptionSubclass, ExecutorError, Literal, UnaryOp, ValueExpr};
@@ -44,6 +44,9 @@ fn list_element_default_value(
             };
             vector_default_value(items, span)
         }
+        PropertyElementType::Decimal(decimal_type) => {
+            decimal_element_default(expr, *decimal_type, span)
+        }
         PropertyElementType::Scalar(value_type) => scalar_element_default(expr, *value_type, span),
         PropertyElementType::List(inner) => {
             let ValueExpr::ListLiteral { items, .. } = expr else {
@@ -59,6 +62,33 @@ fn list_element_default_value(
             span,
         )),
     }
+}
+
+fn decimal_element_default(
+    expr: &ValueExpr,
+    decimal_type: DecimalType,
+    span: crate::SourceSpan,
+) -> Result<PropertyDefaultValue, ExecutorError> {
+    let default = scalar_element_default(expr, PropertyValueType::Decimal, span)?;
+    let value = default.to_value().map_err(|err| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            format!("LIST DEFAULT DECIMAL element is invalid: {err}"),
+            span,
+        )
+    })?;
+    if matches!(value, selene_core::Value::Null)
+        || matches!(
+            value,
+            selene_core::Value::Decimal(value) if decimal_fits_type(value, decimal_type)
+        )
+    {
+        return Ok(default);
+    }
+    Err(list_default_invalid_type(
+        "LIST DEFAULT DECIMAL element is not assignable to declared precision/scale",
+        span,
+    ))
 }
 
 fn scalar_element_default(

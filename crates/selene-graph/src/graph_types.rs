@@ -5,7 +5,7 @@ mod record_types;
 
 use std::{collections::BTreeSet, fmt};
 
-use selene_core::{DbString, LabelSet, PropertyValueType, Value};
+use selene_core::{DbString, DecimalType, LabelSet, PropertyValueType, Value, decimal_fits_type};
 use serde::{Deserialize, Serialize};
 
 pub use property_defaults::{PropertyDefaultRecordField, PropertyDefaultValue};
@@ -243,6 +243,14 @@ fn validate_property_element_types(
     properties: &[PropertyTypeDef],
 ) -> GraphResult<()> {
     for property in properties {
+        if property.decimal_type.is_some() && property.value_type != PropertyValueType::Decimal {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares decimal precision for non-DECIMAL value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        }
         if property.value_type == PropertyValueType::List {
             let Some(element_type) = property.list_element_type.as_ref() else {
                 // Legacy snapshots written before typed LIST<T> descriptors
@@ -307,7 +315,7 @@ fn validate_property_element_type(
                 element_type.value_type()
             ),
         }),
-        PropertyElementType::Scalar(_) => Ok(()),
+        PropertyElementType::Scalar(_) | PropertyElementType::Decimal(_) => Ok(()),
         PropertyElementType::List(inner) => {
             validate_property_element_type(type_name, property_name, inner, depth + 1)
         }
@@ -513,6 +521,9 @@ pub struct PropertyTypeDef {
     pub immutable: bool,
     /// Whether non-null property values must be unique within the declaring type.
     pub unique: bool,
+    /// Declared decimal precision/scale when [`PropertyTypeDef::value_type`] is
+    /// `Decimal`.
+    pub decimal_type: Option<DecimalType>,
     /// Declared field types when [`PropertyTypeDef::value_type`] is `RecordTyped`.
     /// `Some` only for closed/typed `RECORD` declarations; `None` for open `Record`
     /// and every non-record value type (symmetric to
@@ -542,6 +553,8 @@ pub struct PropertyTypeDef {
 pub enum PropertyElementType {
     /// Scalar list element type.
     Scalar(PropertyValueType),
+    /// DECIMAL list element type with a user-specified precision/scale envelope.
+    Decimal(DecimalType),
     /// Nested list element type.
     List(#[rkyv(omit_bounds)] Box<PropertyElementType>),
     /// Explicitly non-null element type.
@@ -554,6 +567,7 @@ impl PropertyElementType {
     pub const fn value_type(&self) -> PropertyValueType {
         match self {
             Self::Scalar(value_type) => *value_type,
+            Self::Decimal(_) => PropertyValueType::Decimal,
             Self::List(_) => PropertyValueType::List,
             Self::NotNull(inner) => inner.value_type(),
         }
@@ -566,6 +580,9 @@ impl PropertyElementType {
             Self::NotNull(inner) => !matches!(value, Value::Null) && inner.matches(value),
             _ if matches!(value, Value::Null) => true,
             Self::Scalar(value_type) => value_type.matches(value),
+            Self::Decimal(decimal_type) => {
+                matches!(value, Value::Decimal(value) if decimal_fits_type(*value, *decimal_type))
+            }
             Self::List(element_type) => match value {
                 Value::List(values) => values.iter().all(|value| element_type.matches(value)),
                 _ => false,

@@ -6,7 +6,9 @@ mod records;
 use std::fmt::Write as _;
 
 use rust_decimal::Decimal;
-use selene_core::{DbString, JsonValue, PropertyValueType, Value, db_string};
+use selene_core::{
+    DbString, DecimalType, JsonValue, PropertyValueType, Value, db_string, decimal_fits_type,
+};
 use selene_graph::{PropertyDefaultValue, PropertyElementType, RecordFieldTypes};
 
 use crate::{DataExceptionSubclass, ExecutorError, Literal, ProjectExpr, ValueExpr};
@@ -143,43 +145,54 @@ pub(super) fn coerce_property_default_value(
     }
 }
 
+pub(super) struct DefaultValidationContext<'a> {
+    pub(super) property: DbString,
+    pub(super) value_type: PropertyValueType,
+    pub(super) decimal_type: Option<DecimalType>,
+    pub(super) list_element_type: Option<&'a PropertyElementType>,
+    pub(super) record_field_types: Option<&'a RecordFieldTypes>,
+    pub(super) required: bool,
+    pub(super) span: crate::SourceSpan,
+}
+
 pub(super) fn validate_default_value(
-    property: selene_core::DbString,
-    value_type: PropertyValueType,
-    list_element_type: Option<&PropertyElementType>,
-    record_field_types: Option<&RecordFieldTypes>,
-    required: bool,
+    context: &DefaultValidationContext<'_>,
     default: &PropertyDefaultValue,
-    span: crate::SourceSpan,
 ) -> Result<(), ExecutorError> {
     let value = default.to_value().map_err(|err| {
         ExecutorError::data_exception(
             DataExceptionSubclass::DataException,
             format!("DEFAULT value is invalid: {err}"),
-            span,
+            context.span,
         )
     })?;
     if matches!(value, selene_core::Value::Null) {
-        if required {
+        if context.required {
             return Err(default_type_error(
-                property,
-                value_type,
+                context.property.clone(),
+                context.value_type,
                 "Null",
                 "NOT NULL property cannot default to NULL",
-                span,
+                context.span,
             ));
         }
         return Ok(());
     }
-    if default_matches_value(value_type, list_element_type, record_field_types, &value) {
+    if default_matches_value(
+        context.value_type,
+        context.decimal_type,
+        context.list_element_type,
+        context.record_field_types,
+        &value,
+    ) {
         return Ok(());
     }
     Err(default_type_error(
-        property,
-        value_type,
+        context.property.clone(),
+        context.value_type,
         PropertyValueType::observed_name(&value),
         "DEFAULT literal is not assignable to property type",
-        span,
+        context.span,
     ))
 }
 
@@ -236,6 +249,7 @@ pub(in crate::runtime::pipeline::catalog) fn render_property_default_value(
 
 fn default_matches_value(
     value_type: PropertyValueType,
+    decimal_type: Option<DecimalType>,
     list_element_type: Option<&PropertyElementType>,
     record_field_types: Option<&RecordFieldTypes>,
     value: &Value,
@@ -259,6 +273,12 @@ fn default_matches_value(
                 None => true,
             }
         }
+        PropertyValueType::Decimal => match decimal_type {
+            Some(decimal_type) => {
+                matches!(value, Value::Decimal(value) if decimal_fits_type(*value, decimal_type))
+            }
+            None => value_type.matches(value),
+        },
         _ => value_type.matches(value),
     }
 }

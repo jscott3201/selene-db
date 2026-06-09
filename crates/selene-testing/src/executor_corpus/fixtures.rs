@@ -150,6 +150,7 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
         default: None,
         immutable: false,
         unique: false,
+        decimal_type: None,
         record_field_types: None,
     }
 }

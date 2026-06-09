@@ -11,7 +11,7 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::{DbString, PropertyValueType, Record, Value};
+use selene_core::{DbString, DecimalType, PropertyValueType, Record, Value, decimal_fits_type};
 use serde::{Deserialize, Serialize};
 
 use super::MAX_RECORD_TYPE_NESTING;
@@ -103,6 +103,8 @@ pub struct RecordFieldTypeDef {
 pub enum RecordFieldType {
     /// Scalar field type.
     Scalar(PropertyValueType),
+    /// DECIMAL field type with a user-specified precision/scale envelope.
+    Decimal(DecimalType),
     /// `LIST` field type.
     List(#[rkyv(omit_bounds)] Box<RecordFieldType>),
     /// Open/bare nested `RECORD` field type.
@@ -121,6 +123,9 @@ impl RecordFieldType {
             Self::NotNull(inner) => !matches!(value, Value::Null) && inner.matches(value),
             _ if matches!(value, Value::Null) => true,
             Self::Scalar(value_type) => value_type.matches(value),
+            Self::Decimal(decimal_type) => {
+                matches!(value, Value::Decimal(value) if decimal_fits_type(*value, *decimal_type))
+            }
             Self::List(inner) => match value {
                 Value::List(values) => values.iter().all(|value| inner.matches(value)),
                 _ => false,
@@ -236,7 +241,7 @@ fn validate_record_field_type(
                 "property {property_name} on type {type_name} uses an unsupported scalar RECORD field type {value_type}"
             ),
         }),
-        RecordFieldType::Scalar(_) => Ok(()),
+        RecordFieldType::Scalar(_) | RecordFieldType::Decimal(_) => Ok(()),
         RecordFieldType::List(inner) => {
             validate_record_field_type(type_name, property_name, inner, depth + 1)
         }

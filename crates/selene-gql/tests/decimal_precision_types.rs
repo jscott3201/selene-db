@@ -1,13 +1,15 @@
 //! Conformance coverage for user-specified DECIMAL precision/scale type names.
 
 use rust_decimal::Decimal;
-use selene_core::{DbString, GraphId, PropertyValueType, Value, feature_register::FeatureId};
+use selene_core::{
+    DbString, DecimalType, GraphId, PropertyValueType, Value, feature_register::FeatureId,
+};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, ParserError, Session, StatementOutput,
     ast::{format_read_statement, structurally_eq},
     feature_walk, parse,
 };
-use selene_graph::{GraphTypeDef, SharedGraph};
+use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
 
 fn db_string(value: &str) -> DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
@@ -154,12 +156,17 @@ fn decimal_precision_typed_parameters_use_same_envelope() {
 }
 
 #[test]
-fn decimal_precision_lowers_catalog_property_type_to_decimal_storage() {
+fn decimal_precision_persists_catalog_descriptors_and_show_rendering() {
     let graph = empty_closed_graph(13_733);
     let mut session = Session::new(&graph);
     session
         .execute_source(
-            "CREATE NODE TYPE :Metric (amount :: DECIMAL(5, 2), whole :: DEC(3))",
+            "CREATE NODE TYPE :Metric (\
+                amount :: DECIMAL(5, 2), \
+                whole :: DEC(3), \
+                history :: LIST<DECIMAL(4, 1)>, \
+                payload :: RECORD { score :: DECIMAL(6, 3) }\
+            )",
             &EmptyProcedureRegistry,
         )
         .expect("catalog DDL executes");
@@ -167,7 +174,23 @@ fn decimal_precision_lowers_catalog_property_type_to_decimal_storage() {
     let graph_type = graph.graph_type().expect("graph type is bound");
     let properties = &graph_type.node_types[0].properties;
     assert_eq!(properties[0].value_type, PropertyValueType::Decimal);
+    assert_eq!(properties[0].decimal_type, DecimalType::new(5, 2));
     assert_eq!(properties[1].value_type, PropertyValueType::Decimal);
+    assert_eq!(properties[1].decimal_type, DecimalType::new(3, 0));
+    assert_eq!(
+        properties[2].list_element_type,
+        Some(PropertyElementType::Decimal(
+            DecimalType::new(4, 1).expect("valid decimal type")
+        ))
+    );
+    let record_fields = properties[3]
+        .record_field_types
+        .as_ref()
+        .expect("record field descriptor");
+    assert_eq!(
+        record_fields.0[0].field_type,
+        RecordFieldType::Decimal(DecimalType::new(6, 3).expect("valid decimal type"))
+    );
 
     let show = session
         .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
@@ -178,9 +201,92 @@ fn decimal_precision_lowers_catalog_property_type_to_decimal_storage() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(db_string(
-            "CREATE NODE TYPE :Metric (amount :: DECIMAL, whole :: DECIMAL)"
+            "CREATE NODE TYPE :Metric (amount :: DECIMAL(5, 2), whole :: DECIMAL(3), history :: LIST<DECIMAL(4, 1)>, payload :: RECORD { score :: DECIMAL(6, 3) })"
         ))
     );
+}
+
+#[test]
+fn decimal_precision_catalog_rejects_values_outside_descriptor() {
+    let graph = empty_closed_graph(13_734);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Metric (amount :: DECIMAL(5, 2))",
+            &EmptyProcedureRegistry,
+        )
+        .expect("catalog DDL executes");
+    session
+        .execute_source(
+            "INSERT (:Metric { amount: CAST('123.45' AS DECIMAL) }) FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect("valid decimal insert fits descriptor");
+
+    let err = session
+        .execute_source(
+            "INSERT (:Metric { amount: CAST('123.456' AS DECIMAL) }) FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect_err("fractional precision loss violates DECIMAL(5,2)");
+    assert!(
+        err.to_string().contains("amount"),
+        "expected property-specific graph type violation, got {err:?}"
+    );
+}
+
+#[test]
+fn decimal_precision_catalog_rejects_nested_values_outside_descriptor() {
+    let graph = empty_closed_graph(13_736);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Metric (\
+                history :: LIST<DECIMAL(3, 2)>, \
+                payload :: RECORD { amount :: DECIMAL(3, 2) }\
+            )",
+            &EmptyProcedureRegistry,
+        )
+        .expect("catalog DDL executes");
+    session
+        .execute_source(
+            "INSERT (:Metric { \
+                history: [CAST('1.20' AS DECIMAL)], \
+                payload: RECORD{amount: CAST('1.20' AS DECIMAL)}\
+            }) FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect("nested decimal values fit descriptors");
+
+    for source in [
+        "INSERT (:Metric { \
+            history: [CAST('10.00' AS DECIMAL)], \
+            payload: RECORD{amount: CAST('1.20' AS DECIMAL)}\
+        }) FINISH",
+        "INSERT (:Metric { \
+            history: [CAST('1.20' AS DECIMAL)], \
+            payload: RECORD{amount: CAST('10.00' AS DECIMAL)}\
+        }) FINISH",
+    ] {
+        session
+            .execute_source(source, &EmptyProcedureRegistry)
+            .expect_err("nested decimal value outside descriptor should fail");
+    }
+}
+
+#[test]
+fn decimal_precision_catalog_defaults_must_fit_descriptor() {
+    for source in [
+        "CREATE NODE TYPE :Metric (amount :: DECIMAL(3, 2) DEFAULT 10.00)",
+        "CREATE NODE TYPE :Metric (history :: LIST<DECIMAL(3, 2)> DEFAULT [1.20, 10.00])",
+        "CREATE NODE TYPE :Metric (payload :: RECORD { amount :: DECIMAL(3, 2) } DEFAULT RECORD{amount: 10.00})",
+    ] {
+        let graph = empty_closed_graph(13_735);
+        let mut session = Session::new(&graph);
+        session
+            .execute_source(source, &EmptyProcedureRegistry)
+            .expect_err("default outside decimal descriptor should fail");
+    }
 }
 
 #[test]

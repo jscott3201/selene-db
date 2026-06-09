@@ -9,9 +9,8 @@
 //! deliberately stricter than the `CAST` subset/projection rule in
 //! [`crate::runtime::evaluator::cast`].)
 
-use selene_core::{DurationTypeQualifier, Record, Value};
+use selene_core::{DurationTypeQualifier, Record, Value, decimal_fits_type};
 
-use super::decimal_type::decimal_fits_type;
 use crate::{GqlType, RecordType};
 
 /// Return true when `value` structurally conforms to the AST type `ty`.

@@ -511,6 +511,7 @@ fn remove_node_property_rejects_immutable_property() {
                 default: None,
                 immutable: true,
                 unique: false,
+                decimal_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,

@@ -16,7 +16,6 @@ mod builtins;
 mod call_plan_cache;
 mod context;
 mod context_tiers;
-mod decimal_type;
 mod error;
 pub(crate) mod evaluator;
 mod expand;

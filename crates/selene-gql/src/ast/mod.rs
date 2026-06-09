@@ -33,14 +33,12 @@ pub use pattern::{
     EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern,
     PathMode, PathSelector, PatternElement, Quantifier,
 };
+pub use selene_core::{DecimalType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE};
 pub use span::SourceSpan;
 pub use statement::{
     LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
     QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement, TypedBinding,
     UnwindStatement, WithClause,
 };
-pub use types::{
-    ByteStringType, ByteStringTypeForm, DecimalType, GqlType, MAX_DECIMAL_PRECISION,
-    MAX_DECIMAL_SCALE, RecordType,
-};
+pub use types::{ByteStringType, ByteStringTypeForm, GqlType, RecordType};
 pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};
