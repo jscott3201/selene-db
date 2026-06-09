@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod byte_string_type;
 pub mod cancellation;
 pub mod change_kind;
 pub mod changeset;
@@ -41,6 +42,7 @@ pub mod value;
 pub mod vector;
 pub mod vector_index;
 
+pub use byte_string_type::{ByteStringType, byte_string_fits_type};
 pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken};
 pub use change_kind::ChangeKind;
 pub use changeset::{

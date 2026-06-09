@@ -7,7 +7,7 @@ use defaults::{
     DefaultValidationContext, coerce_property_default_value, property_default_value,
     validate_default_value,
 };
-use selene_core::{DecimalType, PropertyValueType};
+use selene_core::{ByteStringType as CoreByteStringType, DecimalType, PropertyValueType};
 use selene_graph::{
     PropertyElementType, PropertyTypeDef, RecordFieldType, RecordFieldTypeDef, RecordFieldTypes,
 };
@@ -32,7 +32,7 @@ fn property_def(
     allow_inline_indexed: bool,
 ) -> Result<PropertyTypeDef, ExecutorError> {
     let (gql_type, required_from_type) = strip_top_level_not_null(&property.gql_type);
-    let (value_type, list_element_type, record_field_types, decimal_type) =
+    let (value_type, list_element_type, record_field_types, decimal_type, byte_string_type) =
         gql_type_to_property_value_type(gql_type, property.span)?;
     let mut required = required_from_type;
     let mut default = None;
@@ -72,6 +72,7 @@ fn property_def(
                 property: property.name.clone(),
                 value_type,
                 decimal_type,
+                byte_string_type,
                 list_element_type: list_element_type.as_ref(),
                 record_field_types: record_field_types.as_ref(),
                 required,
@@ -89,6 +90,7 @@ fn property_def(
         immutable,
         unique,
         decimal_type,
+        byte_string_type,
         record_field_types,
     })
 }
@@ -98,6 +100,7 @@ type LoweredPropertyType = (
     Option<PropertyElementType>,
     Option<RecordFieldTypes>,
     Option<DecimalType>,
+    Option<CoreByteStringType>,
 );
 
 fn gql_type_to_property_value_type(
@@ -107,7 +110,13 @@ fn gql_type_to_property_value_type(
     match gql_type {
         GqlType::List(inner) => {
             let element_type = gql_type_to_property_element_type(inner, 1)?;
-            Ok((PropertyValueType::List, Some(element_type), None, None))
+            Ok((
+                PropertyValueType::List,
+                Some(element_type),
+                None,
+                None,
+                None,
+            ))
         }
         // A top-level `RECORD` declaration lowers to the RecordTyped tag. A closed
         // `RECORD { .. }` carries its field-type descriptor; an open/bare `RECORD` carries
@@ -119,11 +128,15 @@ fn gql_type_to_property_value_type(
                 None,
                 record_field_types,
                 None,
+                None,
             ))
         }
         GqlType::NotNull(inner) => gql_type_to_property_value_type(inner, span),
-        _ => gql_type_to_scalar_property_value_type(gql_type)
-            .map(|(value_type, decimal_type)| (value_type, None, None, decimal_type)),
+        _ => gql_type_to_scalar_property_value_type(gql_type).map(
+            |(value_type, decimal_type, byte_string_type)| {
+                (value_type, None, None, decimal_type, byte_string_type)
+            },
+        ),
     }
 }
 
@@ -193,12 +206,17 @@ fn gql_type_to_record_field_type(
         GqlType::NotNull(inner) => Ok(RecordFieldType::NotNull(Box::new(
             gql_type_to_record_field_type(inner, depth, span)?,
         ))),
-        _ => gql_type_to_scalar_property_value_type(gql_type).map(|(value_type, decimal_type)| {
-            decimal_type.map_or(
-                RecordFieldType::Scalar(value_type),
-                RecordFieldType::Decimal,
-            )
-        }),
+        _ => gql_type_to_scalar_property_value_type(gql_type).map(
+            |(value_type, decimal_type, byte_string_type)| {
+                if let Some(decimal_type) = decimal_type {
+                    return RecordFieldType::Decimal(decimal_type);
+                }
+                if let Some(byte_string_type) = byte_string_type {
+                    return RecordFieldType::ByteString(byte_string_type);
+                }
+                RecordFieldType::Scalar(value_type)
+            },
+        ),
     }
 }
 
@@ -218,18 +236,30 @@ fn gql_type_to_property_element_type(
         GqlType::NotNull(inner) => Ok(PropertyElementType::NotNull(Box::new(
             gql_type_to_property_element_type(inner, depth)?,
         ))),
-        _ => gql_type_to_scalar_property_value_type(gql_type).map(|(value_type, decimal_type)| {
-            decimal_type.map_or(
-                PropertyElementType::Scalar(value_type),
-                PropertyElementType::Decimal,
-            )
-        }),
+        _ => gql_type_to_scalar_property_value_type(gql_type).map(
+            |(value_type, decimal_type, byte_string_type)| {
+                if let Some(decimal_type) = decimal_type {
+                    return PropertyElementType::Decimal(decimal_type);
+                }
+                if let Some(byte_string_type) = byte_string_type {
+                    return PropertyElementType::ByteString(byte_string_type);
+                }
+                PropertyElementType::Scalar(value_type)
+            },
+        ),
     }
 }
 
 fn gql_type_to_scalar_property_value_type(
     gql_type: &GqlType,
-) -> Result<(PropertyValueType, Option<DecimalType>), ExecutorError> {
+) -> Result<
+    (
+        PropertyValueType,
+        Option<DecimalType>,
+        Option<CoreByteStringType>,
+    ),
+    ExecutorError,
+> {
     let value_type = match gql_type {
         GqlType::NotNull(inner) => return gql_type_to_scalar_property_value_type(inner),
         GqlType::String => PropertyValueType::String,
@@ -281,7 +311,11 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::DecimalExact(decimal_type) => Some(*decimal_type),
         _ => None,
     };
-    Ok((value_type, decimal_type))
+    let byte_string_type = match gql_type {
+        GqlType::ByteString(byte_string_type) => Some(core_byte_string_type(byte_string_type)),
+        _ => None,
+    };
+    Ok((value_type, decimal_type, byte_string_type))
 }
 
 pub(super) fn render_property_value_type(
@@ -289,11 +323,17 @@ pub(super) fn render_property_value_type(
     list_element_type: Option<&PropertyElementType>,
     record_field_types: Option<&RecordFieldTypes>,
     decimal_type: Option<DecimalType>,
+    byte_string_type: Option<CoreByteStringType>,
 ) -> String {
     if value_type == PropertyValueType::Decimal
         && let Some(decimal_type) = decimal_type
     {
         return render_decimal_property_type(decimal_type);
+    }
+    if value_type == PropertyValueType::Bytes
+        && let Some(byte_string_type) = byte_string_type
+    {
+        return render_byte_string_property_type(byte_string_type);
     }
     if value_type == PropertyValueType::List
         && let Some(element_type) = list_element_type
@@ -336,6 +376,9 @@ fn render_record_field_type(field_type: &RecordFieldType) -> String {
             scalar_property_value_type_name(*value_type).to_owned()
         }
         RecordFieldType::Decimal(decimal_type) => render_decimal_property_type(*decimal_type),
+        RecordFieldType::ByteString(byte_string_type) => {
+            render_byte_string_property_type(*byte_string_type)
+        }
         RecordFieldType::List(inner) => format!("LIST<{}>", render_record_field_type(inner)),
         RecordFieldType::OpenRecord => "RECORD".to_owned(),
         RecordFieldType::Record(inner) => render_record_field_types(inner),
@@ -350,6 +393,9 @@ fn render_property_element_type(element_type: &PropertyElementType) -> String {
             scalar_property_value_type_name(*value_type).to_owned()
         }
         PropertyElementType::Decimal(decimal_type) => render_decimal_property_type(*decimal_type),
+        PropertyElementType::ByteString(byte_string_type) => {
+            render_byte_string_property_type(*byte_string_type)
+        }
         PropertyElementType::List(inner) => {
             format!("LIST<{}>", render_property_element_type(inner))
         }
@@ -368,6 +414,26 @@ fn render_decimal_property_type(decimal_type: DecimalType) -> String {
             "DECIMAL({}, {})",
             decimal_type.precision, decimal_type.scale
         )
+    }
+}
+
+fn render_byte_string_property_type(byte_string_type: CoreByteStringType) -> String {
+    if byte_string_type.min_len == 0 {
+        format!("BYTES({})", byte_string_type.max_len)
+    } else {
+        format!(
+            "BYTES({}, {})",
+            byte_string_type.min_len, byte_string_type.max_len
+        )
+    }
+}
+
+const fn core_byte_string_type(
+    byte_string_type: &crate::ast::ByteStringType,
+) -> CoreByteStringType {
+    CoreByteStringType {
+        min_len: byte_string_type.min_len,
+        max_len: byte_string_type.max_len,
     }
 }
 

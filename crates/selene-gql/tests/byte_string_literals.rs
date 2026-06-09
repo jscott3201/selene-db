@@ -2,14 +2,16 @@
 
 use std::sync::Arc;
 
-use selene_core::{DbString, GraphId, Value, feature_register::FeatureId};
+use selene_core::{
+    ByteStringType, DbString, GraphId, PropertyValueType, Value, feature_register::FeatureId,
+};
 use selene_gql::{
     AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry, GqlType,
     ImplDefinedCaps, ParserError, PipelineStatement, Session, StatementOutput,
     ast::{format_read_statement, structurally_eq},
     feature_walk, parse,
 };
-use selene_graph::SharedGraph;
+use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
 
 fn first_value(source: &str) -> Value {
     let graph = SharedGraph::new(GraphId::new(14_200));
@@ -88,6 +90,18 @@ fn bytes(values: &[u8]) -> Value {
 
 fn db_string(value: &str) -> DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
+}
+
+fn empty_closed_graph(id: u64) -> SharedGraph {
+    SharedGraph::builder(GraphId::new(id))
+        .bound_to(GraphTypeDef {
+            name: db_string("byte.string.graph"),
+            node_types: Vec::new(),
+            edge_types: Vec::new(),
+        })
+        .unwrap()
+        .build()
+        .unwrap()
 }
 
 fn analyze_one(source: &str) -> AnalyzedStatement {
@@ -510,5 +524,107 @@ fn non_identity_bytes_casts_are_invalid_type_combinations() {
         "RETURN CAST([X'CAFE'] AS LIST<STRING>) AS payload",
     ] {
         assert_eq!(first_status(source), "22G03", "{source}");
+    }
+}
+
+#[test]
+fn bounded_byte_string_catalog_preserves_descriptors_and_show() {
+    let graph = empty_closed_graph(14_207);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Blob (\
+                payload :: BYTES(2, 4) DEFAULT X'CAFE', \
+                fixed :: BINARY(2), \
+                chunks :: LIST<VARBINARY(2)> DEFAULT [X'01', X'0203'], \
+                meta :: RECORD { digest :: BINARY(4), tag :: VARBINARY(1) } \
+                    DEFAULT RECORD{digest: X'01020304', tag: X'AA'}\
+            )",
+            &EmptyProcedureRegistry,
+        )
+        .expect("catalog DDL executes");
+
+    let graph_type = graph.graph_type().expect("graph type is bound");
+    let properties = &graph_type.node_types[0].properties;
+    assert_eq!(properties[0].value_type, PropertyValueType::Bytes);
+    assert_eq!(properties[0].byte_string_type, ByteStringType::new(2, 4));
+    assert_eq!(properties[1].byte_string_type, ByteStringType::new(2, 2));
+    assert_eq!(
+        properties[2].list_element_type,
+        Some(PropertyElementType::ByteString(
+            ByteStringType::new(0, 2).expect("valid byte-string type")
+        ))
+    );
+    let record_fields = properties[3]
+        .record_field_types
+        .as_ref()
+        .expect("record field descriptor");
+    assert_eq!(
+        record_fields.0[0].field_type,
+        RecordFieldType::ByteString(ByteStringType::new(4, 4).expect("valid byte-string type"))
+    );
+    assert_eq!(
+        record_fields.0[1].field_type,
+        RecordFieldType::ByteString(ByteStringType::new(0, 1).expect("valid byte-string type"))
+    );
+
+    let show = session
+        .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
+        .expect("SHOW succeeds");
+    let StatementOutput::Rows(table) = show else {
+        panic!("SHOW returns rows");
+    };
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Blob (payload :: BYTES(2, 4) DEFAULT X'CAFE', fixed :: BYTES(2, 2), chunks :: LIST<BYTES(2)> DEFAULT [X'01', X'0203'], meta :: RECORD { digest :: BYTES(4, 4), tag :: BYTES(1) } DEFAULT RECORD{digest: X'01020304', tag: X'AA'})"
+        ))
+    );
+
+    session
+        .execute_source(
+            "INSERT (:Blob { \
+                payload: X'AABB', \
+                fixed: X'0102', \
+                chunks: [X'01', X'0203'], \
+                meta: RECORD{digest: X'01020304', tag: X'AA'} \
+            }) FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect("valid bounded bytes insert succeeds");
+
+    let err = session
+        .execute_source(
+            "INSERT (:Blob { \
+                payload: X'AA', \
+                fixed: X'0102', \
+                chunks: [X'01'], \
+                meta: RECORD{digest: X'01020304', tag: X'AA'} \
+            }) FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect_err("too-short payload violates BYTES(2,4)");
+    assert!(
+        err.to_string().contains("payload"),
+        "expected property-specific graph type violation, got {err:?}"
+    );
+}
+
+#[test]
+fn bounded_byte_string_catalog_rejects_defaults_outside_descriptor() {
+    for source in [
+        "CREATE NODE TYPE :Blob (payload :: BYTES(2, 4) DEFAULT X'AA')",
+        "CREATE NODE TYPE :Blob (chunks :: LIST<BYTES(2, 4)> DEFAULT [X'AA'])",
+        "CREATE NODE TYPE :Blob (meta :: RECORD { payload :: BYTES(2, 4) } DEFAULT RECORD{payload: X'AA'})",
+    ] {
+        let graph = empty_closed_graph(14_208);
+        let mut session = Session::new(&graph);
+        let err = session
+            .execute_source(source, &EmptyProcedureRegistry)
+            .expect_err("out-of-envelope byte default is rejected");
+        assert!(
+            err.to_string().contains("DEFAULT"),
+            "expected DEFAULT validation error for `{source}`, got {err:?}"
+        );
     }
 }

@@ -10,8 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    CoreError, CoreResult, DbString, DecimalType, ExtensionTypeId, LabelSet, PropertyValueType,
-    RecordTypeId, Value,
+    ByteStringType, CoreError, CoreResult, DbString, DecimalType, ExtensionTypeId, LabelSet,
+    PropertyValueType, RecordTypeId, Value,
 };
 
 /// Graph-type-scoped schema identifier.
@@ -369,6 +369,8 @@ pub enum RecordFieldStructureType {
     Scalar(PropertyValueType),
     /// DECIMAL field type with a user-specified precision/scale envelope.
     Decimal(DecimalType),
+    /// BYTES field type with a user-specified length envelope.
+    ByteString(ByteStringType),
     /// LIST field type.
     List(Box<RecordFieldStructureType>),
     /// Nested RECORD field type.
@@ -445,6 +447,11 @@ pub struct ValueType {
     /// [`PredefinedValueType::Decimal`].
     #[serde(default)]
     pub decimal_type: Option<DecimalType>,
+    /// User-specified byte-string length descriptor.
+    ///
+    /// Only meaningful when [`Self::predefined`] is [`PredefinedValueType::Bytes`].
+    #[serde(default)]
+    pub byte_string_type: Option<ByteStringType>,
     /// Union member types.
     pub union: Option<Vec<ValueType>>,
     /// List element type. When present, this takes precedence over scalar
@@ -465,6 +472,7 @@ impl ValueType {
         Self {
             predefined: Some(predefined),
             decimal_type: None,
+            byte_string_type: None,
             union: None,
             list_of: None,
             record: None,
@@ -479,6 +487,7 @@ impl ValueType {
         Self {
             predefined: None,
             decimal_type: None,
+            byte_string_type: None,
             union: None,
             list_of: Some(Box::new(item)),
             record: None,

@@ -96,12 +96,14 @@ fn check_property_match(
                 parent.list_element_type.as_ref(),
                 parent.record_field_types.as_ref(),
                 parent.decimal_type,
+                parent.byte_string_type,
             ),
             render_property_value_type(
                 child.value_type,
                 child.list_element_type.as_ref(),
                 child.record_field_types.as_ref(),
                 child.decimal_type,
+                child.byte_string_type,
             ),
             span,
         ));
@@ -113,6 +115,16 @@ fn check_property_match(
             "decimal precision/scale",
             render_decimal(parent.decimal_type),
             render_decimal(child.decimal_type),
+            span,
+        ));
+    }
+    if parent.byte_string_type != child.byte_string_type {
+        return Err(property_conflict(
+            parent,
+            child_type,
+            "byte-string length",
+            render_byte_string(parent.byte_string_type),
+            render_byte_string(child.byte_string_type),
             span,
         ));
     }
@@ -177,6 +189,14 @@ fn render_decimal(value: Option<selene_core::DecimalType>) -> String {
     }
 }
 
+fn render_byte_string(value: Option<selene_core::ByteStringType>) -> String {
+    match value {
+        Some(value) if value.min_len == 0 => format!("BYTES({})", value.max_len),
+        Some(value) => format!("BYTES({}, {})", value.min_len, value.max_len),
+        None => "BYTES".to_owned(),
+    }
+}
+
 fn property_conflict(
     parent: &PropertyTypeDef,
     child_type: DbString,
@@ -210,9 +230,12 @@ fn render_list_element(element: Option<&PropertyElementType>) -> String {
     match element {
         None => "none".to_owned(),
         Some(PropertyElementType::Scalar(value_type)) => {
-            render_property_value_type(*value_type, None, None, None)
+            render_property_value_type(*value_type, None, None, None, None)
         }
         Some(PropertyElementType::Decimal(decimal_type)) => render_decimal(Some(*decimal_type)),
+        Some(PropertyElementType::ByteString(byte_string_type)) => {
+            render_byte_string(Some(*byte_string_type))
+        }
         Some(PropertyElementType::List(inner)) => {
             format!("LIST<{}>", render_list_element(Some(inner)))
         }

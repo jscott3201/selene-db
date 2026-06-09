@@ -1,14 +1,16 @@
 //! Closed graph type catalog definitions.
 
 mod property_defaults;
+mod property_element_types;
 mod record_types;
 
 use std::{collections::BTreeSet, fmt};
 
-use selene_core::{DbString, DecimalType, LabelSet, PropertyValueType, Value, decimal_fits_type};
+use selene_core::{ByteStringType, DbString, DecimalType, LabelSet, PropertyValueType};
 use serde::{Deserialize, Serialize};
 
 pub use property_defaults::{PropertyDefaultRecordField, PropertyDefaultValue};
+pub use property_element_types::PropertyElementType;
 use record_types::validate_record_field_types;
 pub use record_types::{RecordFieldType, RecordFieldTypeDef, RecordFieldTypes};
 
@@ -251,6 +253,14 @@ fn validate_property_element_types(
                 ),
             });
         }
+        if property.byte_string_type.is_some() && property.value_type != PropertyValueType::Bytes {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares byte-string length for non-BYTES value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        }
         if property.value_type == PropertyValueType::List {
             let Some(element_type) = property.list_element_type.as_ref() else {
                 // Legacy snapshots written before typed LIST<T> descriptors
@@ -315,7 +325,9 @@ fn validate_property_element_type(
                 element_type.value_type()
             ),
         }),
-        PropertyElementType::Scalar(_) | PropertyElementType::Decimal(_) => Ok(()),
+        PropertyElementType::Scalar(_)
+        | PropertyElementType::Decimal(_)
+        | PropertyElementType::ByteString(_) => Ok(()),
         PropertyElementType::List(inner) => {
             validate_property_element_type(type_name, property_name, inner, depth + 1)
         }
@@ -524,71 +536,13 @@ pub struct PropertyTypeDef {
     /// Declared decimal precision/scale when [`PropertyTypeDef::value_type`] is
     /// `Decimal`.
     pub decimal_type: Option<DecimalType>,
+    /// Declared byte-string length when [`PropertyTypeDef::value_type`] is `Bytes`.
+    pub byte_string_type: Option<ByteStringType>,
     /// Declared field types when [`PropertyTypeDef::value_type`] is `RecordTyped`.
     /// `Some` only for closed/typed `RECORD` declarations; `None` for open `Record`
     /// and every non-record value type (symmetric to
     /// [`PropertyTypeDef::list_element_type`]).
     pub record_field_types: Option<RecordFieldTypes>,
-}
-
-/// Persistable element-type descriptor for `LIST<T>` property declarations.
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Eq,
-    Hash,
-    PartialEq,
-    rkyv::Archive,
-    rkyv::Deserialize,
-    rkyv::Serialize,
-    Serialize,
-)]
-#[rkyv(
-    bytecheck(bounds(__C: rkyv::validation::ArchiveContext)),
-    deserialize_bounds(__D::Error: rkyv::rancor::Source),
-    serialize_bounds(__S: rkyv::ser::Writer)
-)]
-#[non_exhaustive]
-pub enum PropertyElementType {
-    /// Scalar list element type.
-    Scalar(PropertyValueType),
-    /// DECIMAL list element type with a user-specified precision/scale envelope.
-    Decimal(DecimalType),
-    /// Nested list element type.
-    List(#[rkyv(omit_bounds)] Box<PropertyElementType>),
-    /// Explicitly non-null element type.
-    NotNull(#[rkyv(omit_bounds)] Box<PropertyElementType>),
-}
-
-impl PropertyElementType {
-    /// Return the coarse property-value type for this descriptor.
-    #[must_use]
-    pub const fn value_type(&self) -> PropertyValueType {
-        match self {
-            Self::Scalar(value_type) => *value_type,
-            Self::Decimal(_) => PropertyValueType::Decimal,
-            Self::List(_) => PropertyValueType::List,
-            Self::NotNull(inner) => inner.value_type(),
-        }
-    }
-
-    /// Return true when `value` belongs to this element type.
-    #[must_use]
-    pub fn matches(&self, value: &Value) -> bool {
-        match self {
-            Self::NotNull(inner) => !matches!(value, Value::Null) && inner.matches(value),
-            _ if matches!(value, Value::Null) => true,
-            Self::Scalar(value_type) => value_type.matches(value),
-            Self::Decimal(decimal_type) => {
-                matches!(value, Value::Decimal(value) if decimal_fits_type(*value, *decimal_type))
-            }
-            Self::List(element_type) => match value {
-                Value::List(values) => values.iter().all(|value| element_type.matches(value)),
-                _ => false,
-            },
-        }
-    }
 }
 
 /// Closed-graph validation mode.

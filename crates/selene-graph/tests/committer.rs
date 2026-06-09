@@ -61,6 +61,7 @@ fn person_graph_type() -> GraphTypeDef {
                 immutable: false,
                 unique: false,
                 decimal_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
