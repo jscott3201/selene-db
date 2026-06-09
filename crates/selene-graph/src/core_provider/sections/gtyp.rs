@@ -53,7 +53,9 @@ pub(in crate::core_provider) fn decode_graph_types(
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{DecimalType, GraphId, LabelSet, PropertyValueType, db_string};
+    use selene_core::{
+        ByteStringType, DecimalType, GraphId, LabelSet, PropertyValueType, db_string,
+    };
 
     use super::*;
     use crate::SharedGraph;
@@ -167,10 +169,15 @@ mod tests {
         let open_nested = db_string("open_nested").unwrap();
         let flag = db_string("flag").unwrap();
         let amount = db_string("amount").unwrap();
+        let digest = db_string("digest").unwrap();
         let history = db_string("history").unwrap();
+        let payloads = db_string("payloads").unwrap();
         let decimal = DecimalType::new(5, 2).unwrap();
         let history_decimal = DecimalType::new(4, 1).unwrap();
         let nested_decimal = DecimalType::new(6, 3).unwrap();
+        let byte_string = ByteStringType::new(2, 4).unwrap();
+        let history_byte_string = ByteStringType::new(1, 2).unwrap();
+        let nested_byte_string = ByteStringType::new(4, 4).unwrap();
         let record_field_types = RecordFieldTypes(vec![
             RecordFieldTypeDef {
                 name: host,
@@ -180,6 +187,11 @@ mod tests {
             RecordFieldTypeDef {
                 name: amount.clone(),
                 field_type: RecordFieldType::Decimal(nested_decimal),
+                required: false,
+            },
+            RecordFieldTypeDef {
+                name: digest.clone(),
+                field_type: RecordFieldType::ByteString(nested_byte_string),
                 required: false,
             },
             RecordFieldTypeDef {
@@ -221,6 +233,7 @@ mod tests {
                         immutable: false,
                         unique: false,
                         decimal_type: None,
+                        byte_string_type: None,
                         record_field_types: Some(record_field_types.clone()),
                     },
                     PropertyTypeDef {
@@ -232,6 +245,19 @@ mod tests {
                         immutable: false,
                         unique: false,
                         decimal_type: Some(decimal),
+                        byte_string_type: None,
+                        record_field_types: None,
+                    },
+                    PropertyTypeDef {
+                        name: digest,
+                        value_type: PropertyValueType::Bytes,
+                        list_element_type: None,
+                        required: false,
+                        default: None,
+                        immutable: false,
+                        unique: false,
+                        decimal_type: None,
+                        byte_string_type: Some(byte_string),
                         record_field_types: None,
                     },
                     PropertyTypeDef {
@@ -245,6 +271,23 @@ mod tests {
                         immutable: false,
                         unique: false,
                         decimal_type: None,
+                        byte_string_type: None,
+                        record_field_types: None,
+                    },
+                    PropertyTypeDef {
+                        name: payloads,
+                        value_type: PropertyValueType::List,
+                        list_element_type: Some(
+                            crate::graph_types::PropertyElementType::ByteString(
+                                history_byte_string,
+                            ),
+                        ),
+                        required: false,
+                        default: None,
+                        immutable: false,
+                        unique: false,
+                        decimal_type: None,
+                        byte_string_type: None,
                         record_field_types: None,
                     },
                 ],
@@ -275,10 +318,20 @@ mod tests {
         assert_eq!(property.value_type, PropertyValueType::Decimal);
         assert_eq!(property.decimal_type, Some(decimal));
         let property = &decoded_graph_type.node_types[0].properties[2];
+        assert_eq!(property.value_type, PropertyValueType::Bytes);
+        assert_eq!(property.byte_string_type, Some(byte_string));
+        let property = &decoded_graph_type.node_types[0].properties[3];
         assert_eq!(
             property.list_element_type,
             Some(crate::graph_types::PropertyElementType::Decimal(
                 history_decimal
+            ))
+        );
+        let property = &decoded_graph_type.node_types[0].properties[4];
+        assert_eq!(
+            property.list_element_type,
+            Some(crate::graph_types::PropertyElementType::ByteString(
+                history_byte_string
             ))
         );
     }

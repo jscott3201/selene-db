@@ -7,7 +7,8 @@ use std::fmt::Write as _;
 
 use rust_decimal::Decimal;
 use selene_core::{
-    DbString, DecimalType, JsonValue, PropertyValueType, Value, db_string, decimal_fits_type,
+    ByteStringType, DbString, DecimalType, JsonValue, PropertyValueType, Value,
+    byte_string_fits_type, db_string, decimal_fits_type,
 };
 use selene_graph::{PropertyDefaultValue, PropertyElementType, RecordFieldTypes};
 
@@ -149,6 +150,7 @@ pub(super) struct DefaultValidationContext<'a> {
     pub(super) property: DbString,
     pub(super) value_type: PropertyValueType,
     pub(super) decimal_type: Option<DecimalType>,
+    pub(super) byte_string_type: Option<ByteStringType>,
     pub(super) list_element_type: Option<&'a PropertyElementType>,
     pub(super) record_field_types: Option<&'a RecordFieldTypes>,
     pub(super) required: bool,
@@ -181,6 +183,7 @@ pub(super) fn validate_default_value(
     if default_matches_value(
         context.value_type,
         context.decimal_type,
+        context.byte_string_type,
         context.list_element_type,
         context.record_field_types,
         &value,
@@ -250,6 +253,7 @@ pub(in crate::runtime::pipeline::catalog) fn render_property_default_value(
 fn default_matches_value(
     value_type: PropertyValueType,
     decimal_type: Option<DecimalType>,
+    byte_string_type: Option<ByteStringType>,
     list_element_type: Option<&PropertyElementType>,
     record_field_types: Option<&RecordFieldTypes>,
     value: &Value,
@@ -276,6 +280,12 @@ fn default_matches_value(
         PropertyValueType::Decimal => match decimal_type {
             Some(decimal_type) => {
                 matches!(value, Value::Decimal(value) if decimal_fits_type(*value, decimal_type))
+            }
+            None => value_type.matches(value),
+        },
+        PropertyValueType::Bytes => match byte_string_type {
+            Some(byte_string_type) => {
+                matches!(value, Value::Bytes(value) if byte_string_fits_type(value, byte_string_type))
             }
             None => value_type.matches(value),
         },
