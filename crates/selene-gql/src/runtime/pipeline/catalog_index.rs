@@ -177,9 +177,13 @@ fn gql_type_to_index_kind(
         | GqlType::Int64
         | GqlType::SmallInt
         | GqlType::BigInt => Ok(TypedIndexKind::I64),
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            Ok(TypedIndexKind::U64)
-        }
+        GqlType::Uint8
+        | GqlType::Uint16
+        | GqlType::Uint32
+        | GqlType::Uint64
+        | GqlType::USmallInt
+        | GqlType::Uint
+        | GqlType::UBigInt => Ok(TypedIndexKind::U64),
         GqlType::Int128 => Ok(TypedIndexKind::I128),
         GqlType::Uint128 => Ok(TypedIndexKind::U128),
         GqlType::Decimal => Ok(TypedIndexKind::Decimal),

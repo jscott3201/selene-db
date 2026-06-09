@@ -198,9 +198,13 @@ fn gql_type_to_scalar_property_value_type(
         | GqlType::Int64
         | GqlType::SmallInt
         | GqlType::BigInt => PropertyValueType::Int,
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            PropertyValueType::Uint
-        }
+        GqlType::Uint8
+        | GqlType::Uint16
+        | GqlType::Uint32
+        | GqlType::Uint64
+        | GqlType::USmallInt
+        | GqlType::Uint
+        | GqlType::UBigInt => PropertyValueType::Uint,
         GqlType::Int128 => PropertyValueType::Int128,
         GqlType::Uint128 => PropertyValueType::Uint128,
         GqlType::Float | GqlType::Float64 | GqlType::Double => PropertyValueType::Float,

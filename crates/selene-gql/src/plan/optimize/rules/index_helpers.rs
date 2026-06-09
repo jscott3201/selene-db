@@ -236,7 +236,8 @@ pub(super) fn equality_candidates<'a>(
 ///   `INT128` (`Value::Int128`), the unsigned family (`Value::Uint{,128}`), and
 ///   `DECIMAL` are NOT `Value::Int` — reject.
 /// - `IndexKind::UnsignedInteger` keys are `Value::Uint` (u64), which maps to
-///   the fixed-width unsigned family up to `UINT64`.
+///   the fixed-width unsigned family up to `UINT64` plus the regular/small/big
+///   unsigned category names.
 /// - `IndexKind::Integer128`, `UnsignedInteger128`, and `Decimal` keys are
 ///   `Value::Int128`, `Value::Uint128`, and `Value::Decimal` respectively.
 ///   They intentionally admit only their exact typed parameter declarations.
@@ -264,7 +265,13 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         IndexKind::UnsignedInteger => {
             matches!(
                 ty,
-                GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64
+                GqlType::Uint8
+                    | GqlType::Uint16
+                    | GqlType::Uint32
+                    | GqlType::Uint64
+                    | GqlType::USmallInt
+                    | GqlType::Uint
+                    | GqlType::UBigInt
             )
         }
         IndexKind::Integer128 => matches!(ty, GqlType::Int128),

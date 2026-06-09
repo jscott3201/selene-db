@@ -156,9 +156,15 @@ pub(super) fn eval_cast(
         GqlType::Int32 => cast_to_signed_integer(value, SignedIntegerTarget::I32, span),
         GqlType::Int128 => cast_to_int128(value, span),
         GqlType::Uint8 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U8, span),
-        GqlType::Uint16 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U16, span),
-        GqlType::Uint32 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U32, span),
-        GqlType::Uint64 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U64, span),
+        GqlType::Uint16 | GqlType::USmallInt => {
+            cast_to_unsigned_integer(value, UnsignedIntegerTarget::U16, span)
+        }
+        GqlType::Uint32 | GqlType::Uint => {
+            cast_to_unsigned_integer(value, UnsignedIntegerTarget::U32, span)
+        }
+        GqlType::Uint64 | GqlType::UBigInt => {
+            cast_to_unsigned_integer(value, UnsignedIntegerTarget::U64, span)
+        }
         GqlType::Uint128 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U128, span),
         GqlType::Float | GqlType::Float64 | GqlType::Double => {
             cast_to_float(value, FloatTarget::F64, span)
