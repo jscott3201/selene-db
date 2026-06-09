@@ -1,5 +1,6 @@
 //! Typed mutation funnel per spec 03 section 4.3.
 
+mod assignment;
 mod catalog;
 mod composite_property_index;
 mod delete;
@@ -44,6 +45,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// the v1 row-index range (max 2^32 rows).
     pub fn create_node(&mut self, labels: LabelSet, mut props: PropertyMap) -> GraphResult<NodeId> {
         fill_node_defaults(self.txn.read(), &labels, &mut props)?;
+        assignment::coerce_node_properties(self.txn.read(), &labels, &mut props)?;
         let id = self.txn.allocator.allocate_node();
         {
             let graph = self.txn.guard_mut();
@@ -113,6 +115,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.require_live_node(source)?;
         self.require_live_node(target)?;
         fill_edge_defaults(self.txn.read(), label.clone(), source, target, &mut props)?;
+        assignment::coerce_edge_properties(
+            self.txn.read(),
+            label.clone(),
+            source,
+            target,
+            &mut props,
+        )?;
         let id = self.txn.allocator.allocate_edge();
         {
             let graph = self.txn.guard_mut();
@@ -169,7 +178,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         &mut self,
         id: NodeId,
         labels_diff: LabelDiff,
-        props_diff: PropertyDiff,
+        mut props_diff: PropertyDiff,
     ) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
 
@@ -191,6 +200,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         }
         reject_immutable_node_update(self.txn.read(), id, &old_labels, &props_diff)?;
         reject_immutable_node_update(self.txn.read(), id, &labels, &props_diff)?;
+        assignment::coerce_node_property_diff(self.txn.read(), &labels, &mut props_diff)?;
 
         // Apply the property diff up front; if it errors we leave the working
         // graph (including idx_label) untouched so the transaction can still
@@ -268,9 +278,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// Edge labels are immutable, so property updates do not touch
     /// `idx_edge_label`.
-    pub fn update_edge(&mut self, id: EdgeId, props_diff: PropertyDiff) -> GraphResult<()> {
+    pub fn update_edge(&mut self, id: EdgeId, mut props_diff: PropertyDiff) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
         reject_immutable_edge_update(self.txn.read(), id, &props_diff)?;
+        assignment::coerce_edge_property_diff(self.txn.read(), id, &mut props_diff)?;
         let mut props = self
             .txn
             .read()

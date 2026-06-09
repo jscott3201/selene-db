@@ -207,7 +207,7 @@ fn decimal_precision_persists_catalog_descriptors_and_show_rendering() {
 }
 
 #[test]
-fn decimal_precision_catalog_rejects_values_outside_descriptor() {
+fn decimal_precision_store_assignment_rounds_and_rejects_overflow() {
     let graph = empty_closed_graph(13_734);
     let mut session = Session::new(&graph);
     session
@@ -222,17 +222,42 @@ fn decimal_precision_catalog_rejects_values_outside_descriptor() {
             &EmptyProcedureRegistry,
         )
         .expect("valid decimal insert fits descriptor");
+    assert_eq!(
+        first_value_in(
+            &mut session,
+            "MATCH (m:Metric) RETURN m.amount AS amount ORDER BY amount"
+        ),
+        dec("123.45")
+    );
 
-    let err = session
+    session
         .execute_source(
             "INSERT (:Metric { amount: CAST('123.456' AS DECIMAL) }) FINISH",
             &EmptyProcedureRegistry,
         )
-        .expect_err("fractional precision loss violates DECIMAL(5,2)");
-    assert!(
-        err.to_string().contains("amount"),
-        "expected property-specific graph type violation, got {err:?}"
+        .expect("store assignment rounds fractional scale when representable");
+    assert_eq!(
+        first_value_in(
+            &mut session,
+            "MATCH (m:Metric) RETURN m.amount AS amount ORDER BY amount DESC"
+        ),
+        dec("123.46")
     );
+
+    session
+        .execute_source(
+            "INSERT (:Metric { amount: 123 }) FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect("integer source is store-assignable to DECIMAL");
+
+    let err = session
+        .execute_source(
+            "INSERT (:Metric { amount: CAST('1234.56' AS DECIMAL) }) FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect_err("leading digit loss is not representable");
+    assert_eq!(err.gqlstatus().as_str(), "22003");
 }
 
 #[test]

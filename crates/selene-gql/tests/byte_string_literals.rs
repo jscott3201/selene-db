@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use selene_core::{
-    ByteStringType, DbString, GraphId, PropertyValueType, Value, feature_register::FeatureId,
+    ByteStringType, DbString, GraphId, PropertyValueType, Record, Value,
+    feature_register::FeatureId,
 };
 use selene_gql::{
     AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry, GqlType,
@@ -12,6 +13,7 @@ use selene_gql::{
     feature_walk, parse,
 };
 use selene_graph::{GraphTypeDef, PropertyElementType, RecordFieldType, SharedGraph};
+use smallvec::smallvec;
 
 fn first_value(source: &str) -> Value {
     let graph = SharedGraph::new(GraphId::new(14_200));
@@ -596,17 +598,69 @@ fn bounded_byte_string_catalog_preserves_descriptors_and_show() {
     let err = session
         .execute_source(
             "INSERT (:Blob { \
-                payload: X'AA', \
+                payload: X'AABBCCDDEE', \
                 fixed: X'0102', \
                 chunks: [X'01'], \
                 meta: RECORD{digest: X'01020304', tag: X'AA'} \
             }) FINISH",
             &EmptyProcedureRegistry,
         )
-        .expect_err("too-short payload violates BYTES(2,4)");
+        .expect_err("non-zero overflow violates BYTES(2,4)");
+    assert_eq!(err.gqlstatus().as_str(), "22001");
     assert!(
         err.to_string().contains("payload"),
-        "expected property-specific graph type violation, got {err:?}"
+        "expected property-specific store-assignment error, got {err:?}"
+    );
+}
+
+#[test]
+fn bounded_byte_string_store_assignment_pads_and_truncates_zeroes() {
+    let graph = empty_closed_graph(14_209);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Blob (\
+                payload :: BYTES(2, 4), \
+                fixed :: BINARY(2), \
+                chunks :: LIST<VARBINARY(2)>, \
+                meta :: RECORD { digest :: BINARY(4), tag :: VARBINARY(1) }\
+            )",
+            &EmptyProcedureRegistry,
+        )
+        .expect("catalog DDL executes");
+    session
+        .execute_source(
+            "INSERT (:Blob { \
+                payload: X'AA', \
+                fixed: X'01', \
+                chunks: [X'0A', X'0B0000'], \
+                meta: RECORD{digest: X'0102', tag: X'AA00'} \
+            }) FINISH",
+            &EmptyProcedureRegistry,
+        )
+        .expect("store assignment pads and truncates only zero bytes");
+
+    let output = session
+        .execute_source(
+            "MATCH (b:Blob) RETURN b.payload AS payload, b.fixed AS fixed, \
+             b.chunks AS chunks, b.meta AS meta",
+            &EmptyProcedureRegistry,
+        )
+        .expect("match succeeds");
+    let StatementOutput::Rows(table) = output else {
+        panic!("MATCH returns rows");
+    };
+    assert_eq!(
+        table.rows()[0].values(),
+        &[
+            bytes(&[0xAA, 0x00]),
+            bytes(&[0x01, 0x00]),
+            Value::List(vec![bytes(&[0x0A]), bytes(&[0x0B, 0x00])]),
+            Value::Record(Box::new(Record::Open(smallvec![
+                (db_string("digest"), bytes(&[0x01, 0x02, 0x00, 0x00])),
+                (db_string("tag"), bytes(&[0xAA])),
+            ]))),
+        ]
     );
 }
 

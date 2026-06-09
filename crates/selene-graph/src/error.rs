@@ -11,6 +11,40 @@ use crate::typed_index::TypedIndexKind;
 /// Result alias for graph operations.
 pub type GraphResult<T> = Result<T, GraphError>;
 
+/// Store-assignment data-exception family.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum StoreAssignmentException {
+    /// String or byte-string assignment would truncate non-padding data.
+    StringDataRightTruncation,
+    /// Numeric assignment cannot be represented by the target type.
+    NumericValueOutOfRange,
+}
+
+impl StoreAssignmentException {
+    /// Map this store-assignment exception to its ISO GQLSTATUS code.
+    #[must_use]
+    pub const fn gqlstatus(self) -> &'static str {
+        match self {
+            Self::StringDataRightTruncation => "22001",
+            Self::NumericValueOutOfRange => "22003",
+        }
+    }
+}
+
+/// Error raised while applying ISO store-assignment conversion rules.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[error("store assignment to property {property} failed: {reason}")]
+#[diagnostic(code(SLENE_G_027))]
+pub struct StoreAssignmentError {
+    /// Property being assigned.
+    pub property: DbString,
+    /// Data-exception family.
+    pub exception: StoreAssignmentException,
+    /// Human-readable reason.
+    pub reason: String,
+}
+
 /// Error type for graph storage and mutation operations.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
@@ -198,6 +232,11 @@ pub enum GraphError {
     #[diagnostic(transparent)]
     TypeViolation(#[from] TypeViolation),
 
+    /// A store assignment failed before the graph mutation was applied.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    StoreAssignment(Box<StoreAssignmentError>),
+
     /// A commit-critical durable provider rejected or failed a write.
     #[error("durable provider failed: {reason}")]
     #[diagnostic(code(SLENE_G_015))]
@@ -252,6 +291,7 @@ impl GraphError {
             | Self::VectorIndexValueRejected { .. }
             | Self::TextIndexAlreadyExists { .. } => "22G03",
             Self::TypeViolation(_) => "G2000",
+            Self::StoreAssignment(source) => source.exception.gqlstatus(),
             Self::Core(source) => source.gqlstatus(),
             Self::Durable { .. } => "5GQL0",
             Self::Cancelled => "5GQL2",
@@ -349,6 +389,14 @@ mod tests {
             label: db_string("err.edge.label").unwrap(),
         }),
         "G2000"
+    )]
+    #[case(
+        GraphError::StoreAssignment(Box::new(StoreAssignmentError {
+            property: db_string("err.assignment.property").unwrap(),
+            exception: StoreAssignmentException::StringDataRightTruncation,
+            reason: "right truncation".to_owned(),
+        })),
+        "22001"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "0G003")]
     #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
@@ -454,6 +502,11 @@ mod tests {
                 label: lbl.clone(),
                 property: prop.clone(),
             },
+            GraphError::StoreAssignment(Box::new(StoreAssignmentError {
+                property: prop.clone(),
+                exception: StoreAssignmentException::StringDataRightTruncation,
+                reason: "right truncation".to_owned(),
+            })),
             GraphError::Durable {
                 reason: "x".to_owned(),
             },
