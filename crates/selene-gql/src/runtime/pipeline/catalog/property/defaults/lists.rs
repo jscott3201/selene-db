@@ -25,6 +25,16 @@ fn list_element_default_value(
     span: crate::SourceSpan,
 ) -> Result<PropertyDefaultValue, ExecutorError> {
     match element_type {
+        PropertyElementType::NotNull(inner) => {
+            let value = list_element_default_value(expr, inner, span)?;
+            if matches!(value, PropertyDefaultValue::Null) {
+                return Err(list_default_invalid_type(
+                    "LIST DEFAULT element cannot be NULL for a NOT NULL element type",
+                    span,
+                ));
+            }
+            Ok(value)
+        }
         PropertyElementType::Scalar(PropertyValueType::Vector) => {
             let ValueExpr::ListLiteral { items, .. } = expr else {
                 return Err(list_default_invalid_type(
@@ -80,7 +90,7 @@ fn scalar_element_default(
             span,
         )
     })?;
-    if value_type.matches(&value) {
+    if matches!(value, selene_core::Value::Null) || value_type.matches(&value) {
         return Ok(default);
     }
     Err(list_default_invalid_type(

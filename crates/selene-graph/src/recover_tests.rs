@@ -282,9 +282,9 @@ fn recover_closed_wal_only_preserves_typed_list_property() {
         .unwrap();
     let sensor = db_string("ListSensor").unwrap();
     let readings = db_string("readings").unwrap();
-    let element_type = PropertyElementType::List(Box::new(PropertyElementType::Scalar(
-        selene_core::PropertyValueType::Int,
-    )));
+    let element_type = PropertyElementType::List(Box::new(PropertyElementType::NotNull(Box::new(
+        PropertyElementType::Scalar(selene_core::PropertyValueType::Int),
+    ))));
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()

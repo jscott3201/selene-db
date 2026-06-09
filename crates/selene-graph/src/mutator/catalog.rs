@@ -476,6 +476,11 @@ fn core_element_value_type(
             inner,
             depth + 1,
         )?)),
+        PropertyElementType::NotNull(inner) => {
+            let mut value_type = core_element_value_type(inner, depth)?;
+            value_type.not_null = true;
+            Ok(value_type)
+        }
     }
 }
 
@@ -585,6 +590,9 @@ fn core_record_field_structure_type(
         RecordFieldType::Record(inner) => selene_core::RecordFieldStructureType::Record(Box::new(
             core_record_field_structure(inner, depth + 1)?,
         )),
+        RecordFieldType::NotNull(inner) => selene_core::RecordFieldStructureType::NotNull(
+            Box::new(core_record_field_structure_type(inner, depth)?),
+        ),
     })
 }
 

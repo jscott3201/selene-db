@@ -296,6 +296,9 @@ fn validate_property_element_type(
         });
     }
     match element_type {
+        PropertyElementType::NotNull(inner) => {
+            validate_property_element_type(type_name, property_name, inner, depth)
+        }
         PropertyElementType::Scalar(
             PropertyValueType::List | PropertyValueType::Record | PropertyValueType::RecordTyped,
         ) => Err(GraphError::Inconsistent {
@@ -541,6 +544,8 @@ pub enum PropertyElementType {
     Scalar(PropertyValueType),
     /// Nested list element type.
     List(#[rkyv(omit_bounds)] Box<PropertyElementType>),
+    /// Explicitly non-null element type.
+    NotNull(#[rkyv(omit_bounds)] Box<PropertyElementType>),
 }
 
 impl PropertyElementType {
@@ -550,24 +555,16 @@ impl PropertyElementType {
         match self {
             Self::Scalar(value_type) => *value_type,
             Self::List(_) => PropertyValueType::List,
+            Self::NotNull(inner) => inner.value_type(),
         }
     }
 
     /// Return true when `value` belongs to this element type.
-    ///
-    /// **Element nullability is not representable (GV90 NOT_SUPPORTED).** A
-    /// `LIST<T>` descriptor matches a list element strictly by type, so a
-    /// `Value::Null` element only conforms to a `LIST<NULL>` descriptor — never
-    /// to a `LIST<Int>`. The engine has no way to spell *either* `LIST<T NULL>`
-    /// (element may be null) or `LIST<T NOT NULL>` (element must be non-null):
-    /// per-element nullability is governed by ISO 39075:2024 GV90 (Explicit value
-    /// type nullability), which selene-db does NOT offer. The single strict
-    /// "element matches T" rule below is therefore internally consistent — the
-    /// honest "not offered" path, not a partial implementation. See the pin test
-    /// `list_element_null_is_rejected_strictly` in `graph_types_tests.rs`.
     #[must_use]
     pub fn matches(&self, value: &Value) -> bool {
         match self {
+            Self::NotNull(inner) => !matches!(value, Value::Null) && inner.matches(value),
+            _ if matches!(value, Value::Null) => true,
             Self::Scalar(value_type) => value_type.matches(value),
             Self::List(element_type) => match value {
                 Value::List(values) => values.iter().all(|value| element_type.matches(value)),

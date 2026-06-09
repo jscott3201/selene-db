@@ -109,6 +109,8 @@ pub enum RecordFieldType {
     OpenRecord,
     /// Closed/typed nested `RECORD` field type.
     Record(#[rkyv(omit_bounds)] Box<RecordFieldTypes>),
+    /// Explicitly non-null field or nested element type.
+    NotNull(#[rkyv(omit_bounds)] Box<RecordFieldType>),
 }
 
 impl RecordFieldType {
@@ -116,6 +118,8 @@ impl RecordFieldType {
     #[must_use]
     pub fn matches(&self, value: &Value) -> bool {
         match self {
+            Self::NotNull(inner) => !matches!(value, Value::Null) && inner.matches(value),
+            _ if matches!(value, Value::Null) => true,
             Self::Scalar(value_type) => value_type.matches(value),
             Self::List(inner) => match value {
                 Value::List(values) => values.iter().all(|value| inner.matches(value)),
@@ -136,9 +140,9 @@ impl RecordFieldTypes {
     /// same cardinality, because it carries no inline names. Per ISO 39075:2024 §4.15.4 a
     /// closed record value must have the same field-name set as the descriptor.
     ///
-    /// An explicit `Value::Null` for a field conforms iff that field is optional —
-    /// consistent with how an absent (or positional `None`) optional field is treated, so
-    /// the present-null and absent cases agree.
+    /// An explicit `Value::Null` for a field conforms unless that field is declared
+    /// `NOT NULL`. Missing open-record fields never conform because a closed record
+    /// value must have the same field-name set as the descriptor.
     #[must_use]
     pub fn matches(&self, value: &Value) -> bool {
         match value {
@@ -148,19 +152,18 @@ impl RecordFieldTypes {
                         .0
                         .iter()
                         .zip(record.values.iter())
-                        .all(|(field, slot)| match slot {
-                            Some(Value::Null) | None => !field.required,
-                            Some(value) => field.field_type.matches(value),
+                        .all(|(field, slot)| {
+                            field_matches(field, slot.as_ref().unwrap_or(&Value::Null))
                         })
             }
             Value::Record(record) => match record.as_ref() {
                 Record::Open(fields) => {
-                    // Every declared field present-or-optional and type-matched ...
+                    // Every declared field present and type-matched ...
                     self.0.iter().all(|field| {
-                        match fields.iter().find(|(name, _)| *name == field.name) {
-                            Some((_, Value::Null)) | None => !field.required,
-                            Some((_, value)) => field.field_type.matches(value),
-                        }
+                        fields
+                            .iter()
+                            .find(|(name, _)| *name == field.name)
+                            .is_some_and(|(_, value)| field_matches(field, value))
                     })
                     // ... and no undeclared extra field (ISO §4.15.4 set equality).
                         && fields
@@ -172,6 +175,13 @@ impl RecordFieldTypes {
             _ => false,
         }
     }
+}
+
+fn field_matches(field: &RecordFieldTypeDef, value: &Value) -> bool {
+    if field.required && matches!(value, Value::Null) {
+        return false;
+    }
+    field.field_type.matches(value)
 }
 
 /// Validate the shape of a typed-`RECORD` field-type list at catalog time:
@@ -233,6 +243,9 @@ fn validate_record_field_type(
         RecordFieldType::OpenRecord => Ok(()),
         RecordFieldType::Record(inner) => {
             validate_record_field_types(type_name, property_name, inner, depth + 1)
+        }
+        RecordFieldType::NotNull(inner) => {
+            validate_record_field_type(type_name, property_name, inner, depth)
         }
     }
 }

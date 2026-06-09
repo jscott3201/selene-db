@@ -481,8 +481,9 @@ fn record_fields_none_open_closed_postcard_round_trip() {
 #[test]
 fn nested_record_field_structure_postcard_round_trip() {
     // CORE-11: GV48 nested record types — a closed RECORD whose fields are
-    // themselves a LIST<RECORD{..}> and a nested closed RECORD. Exercises the
-    // recursive RecordFieldStructureType { Scalar, List, Record } codec.
+    // themselves a LIST<RECORD{..} NOT NULL> and a nested closed RECORD.
+    // Exercises the recursive RecordFieldStructureType { Scalar, List, Record,
+    // NotNull } codec.
     let inner_closed = RecordFieldStructure::Closed(vec![RecordFieldStructureDef {
         name: dbs("core-11.nested.inner"),
         field_type: RecordFieldStructureType::Scalar(PropertyValueType::Bool),
@@ -492,9 +493,11 @@ fn nested_record_field_structure_postcard_round_trip() {
     let structure = RecordFieldStructure::Closed(vec![
         RecordFieldStructureDef {
             name: dbs("core-11.nested.list-of-records"),
-            field_type: RecordFieldStructureType::List(Box::new(RecordFieldStructureType::Record(
-                Box::new(inner_closed.clone()),
-            ))),
+            field_type: RecordFieldStructureType::List(Box::new(
+                RecordFieldStructureType::NotNull(Box::new(RecordFieldStructureType::Record(
+                    Box::new(inner_closed.clone()),
+                ))),
+            )),
             required: true,
         },
         RecordFieldStructureDef {
