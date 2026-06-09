@@ -1,11 +1,12 @@
 //! Character-string type descriptor coverage for `STRING`, `CHAR`, and `VARCHAR`.
 
-use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_core::{GraphId, Record, Value, feature_register::FeatureId};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ExecutorError, ImplDefinedCaps, Session,
     StatementOutput, analyze, execute_statement, feature_walk, parse, plan,
 };
 use selene_graph::{GraphTypeDef, SharedGraph};
+use smallvec::smallvec;
 
 fn db_string(value: &str) -> selene_core::DbString {
     selene_core::db_string(value).expect("test string fits DB string cap")
@@ -165,6 +166,60 @@ fn character_string_catalog_round_trips_through_show_and_validates_writes() {
         &mut session,
     )
     .expect_err("overlength title violates STRING(4)");
+}
+
+#[test]
+fn character_string_store_assignment_pads_and_truncates_whitespace() {
+    let graph = empty_closed_graph(16_204);
+    let mut session = Session::new(&graph).with_impl_defined_caps(ImplDefinedCaps::DEFAULT);
+
+    execute(
+        "CREATE NODE TYPE :Doc (\
+            title :: CHAR(3), \
+            tags :: LIST<STRING(2, 3)>, \
+            meta :: RECORD { code :: CHAR(2) }\
+        )",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute(
+        "INSERT (:Doc {title: 'a', tags: ['x', 'yz  '], meta: RECORD{code: 'q'}}) FINISH",
+        &mut session,
+    )
+    .expect("store assignment pads and truncates whitespace");
+
+    let table = rows(
+        execute(
+            "MATCH (n:Doc) RETURN n.title AS title, n.tags AS tags, n.meta AS meta",
+            &mut session,
+        )
+        .expect("match succeeds"),
+    );
+    assert_eq!(
+        table.rows()[0].values(),
+        &[
+            Value::String(db_string("a  ")),
+            Value::List(vec![
+                Value::String(db_string("x ")),
+                Value::String(db_string("yz ")),
+            ]),
+            Value::Record(Box::new(Record::Open(smallvec![(
+                db_string("code"),
+                Value::String(db_string("q ")),
+            )]))),
+        ]
+    );
+
+    execute("MATCH (n:Doc) SET n.title = 'xy' FINISH", &mut session)
+        .expect("SET applies store assignment");
+    let table = rows(
+        execute("MATCH (n:Doc) RETURN n.title AS title", &mut session).expect("match succeeds"),
+    );
+    assert_eq!(table.rows()[0].values(), &[Value::String(db_string("xy "))]);
+
+    let err = execute("MATCH (n:Doc) SET n.title = 'toolong' FINISH", &mut session)
+        .expect_err("non-whitespace truncation errors");
+    assert_eq!(err.gqlstatus().as_str(), "22001");
 }
 
 #[test]
