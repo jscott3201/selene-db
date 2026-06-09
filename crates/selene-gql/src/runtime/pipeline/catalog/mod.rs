@@ -551,6 +551,12 @@ fn render_gql_type(ty: &GqlType) -> String {
         GqlType::SmallInt => "SMALLINT".to_owned(),
         GqlType::BigInt => "BIGINT".to_owned(),
         GqlType::Decimal => "DECIMAL".to_owned(),
+        GqlType::DecimalExact(decimal) if decimal.scale == 0 => {
+            format!("DECIMAL({})", decimal.precision)
+        }
+        GqlType::DecimalExact(decimal) => {
+            format!("DECIMAL({}, {})", decimal.precision, decimal.scale)
+        }
         GqlType::Float32 => "FLOAT32".to_owned(),
         GqlType::Float64 => "FLOAT64".to_owned(),
         GqlType::Real => "REAL".to_owned(),

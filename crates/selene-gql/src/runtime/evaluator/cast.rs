@@ -182,6 +182,9 @@ pub(super) fn eval_cast(
         }
         GqlType::Float32 | GqlType::Real => cast_to_float(value, FloatTarget::F32, span),
         GqlType::Decimal => decimal::numeric_to_decimal(value, span),
+        GqlType::DecimalExact(decimal_type) => {
+            decimal::numeric_to_decimal_exact(value, *decimal_type, span)
+        }
         GqlType::Boolean => cast_to_boolean(value, span),
         GqlType::String => cast_to_string(value, span),
         GqlType::Bytes => cast_to_bytes(value, None, span),
@@ -482,6 +485,7 @@ fn format_float(f: f64) -> String {
 
 fn cast_to_type_feature(target: &GqlType) -> &'static str {
     match target {
+        GqlType::DecimalExact(_) => "CAST to DECIMAL",
         GqlType::Bytes | GqlType::ByteString(_) => "CAST to BYTES",
         GqlType::ZonedDateTime => "CAST to ZONED DATETIME",
         GqlType::LocalDateTime => "CAST to LOCAL DATETIME",

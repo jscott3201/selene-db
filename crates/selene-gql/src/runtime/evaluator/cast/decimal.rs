@@ -30,6 +30,7 @@ use selene_core::Value;
 
 use crate::{
     SourceSpan,
+    ast::DecimalType,
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
@@ -37,6 +38,7 @@ use super::{
     non_iso_static_source_for_target,
     numeric_text::{NumericText, classify_signed_numeric_text},
 };
+use crate::runtime::decimal_type::round_decimal_to_type;
 
 /// Out-of-target-range overflow (`22003` numeric value out of range).
 fn out_of_range(message: &'static str, span: SourceSpan) -> ExecutorError {
@@ -105,6 +107,25 @@ pub(super) fn numeric_to_decimal(value: Value, span: SourceSpan) -> Result<Value
         }
     };
     Ok(Value::Decimal(dec))
+}
+
+/// CAST any numeric / string source to a user-specified `DECIMAL(p[,s])`.
+pub(super) fn numeric_to_decimal_exact(
+    value: Value,
+    decimal_type: DecimalType,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Value::Decimal(decimal) = numeric_to_decimal(value, span)? else {
+        unreachable!("numeric_to_decimal returns Value::Decimal on success")
+    };
+    round_decimal_to_type(decimal, decimal_type)
+        .map(Value::Decimal)
+        .ok_or_else(|| {
+            out_of_range(
+                "DECIMAL value exceeds target precision after scale conversion",
+                span,
+            )
+        })
 }
 
 fn float_to_decimal(f: f64, span: SourceSpan) -> Result<Decimal, ExecutorError> {

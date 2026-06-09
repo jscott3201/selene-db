@@ -736,6 +736,7 @@ type_name_base = {
   | float_precision_type
   | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
   | ^"FLOAT" | ^"REAL"
+  | decimal_precision_type
   | ^"DECIMAL" | ^"DEC"
   | ^"STRING" | ^"VARCHAR"
   | ^"UUID"
@@ -761,6 +762,7 @@ unsigned_integer_precision_type = {
     (^"UNSIGNED" ~ ^"INTEGER" | ^"UINT") ~ "(" ~ numeric_type_precision ~ ")"
 }
 float_precision_type = { ^"FLOAT" ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
+decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
 numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 duration_type = { ^"DURATION" ~ ("(" ~ temporal_duration_qualifier ~ ")")? }

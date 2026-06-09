@@ -4,6 +4,14 @@ use std::hash::{Hash, Hasher};
 
 use selene_core::DbString;
 
+/// Maximum decimal precision currently representable by selene-db's
+/// `rust_decimal`-backed [`selene_core::Value::Decimal`] storage.
+pub const MAX_DECIMAL_PRECISION: u16 = 29;
+
+/// Maximum decimal scale currently representable by selene-db's
+/// `rust_decimal`-backed [`selene_core::Value::Decimal`] storage.
+pub const MAX_DECIMAL_SCALE: u16 = rust_decimal::Decimal::MAX_SCALE as u16;
+
 /// Parsed GQL type.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
@@ -52,6 +60,8 @@ pub enum GqlType {
     BigInt,
     /// `DECIMAL`.
     Decimal,
+    /// `DECIMAL(p)` or `DECIMAL(p, s)`.
+    DecimalExact(DecimalType),
     /// `FLOAT32`.
     Float32,
     /// `FLOAT64`.
@@ -114,6 +124,31 @@ pub enum GqlType {
     Null,
     /// `NOTHING`.
     Nothing,
+}
+
+/// Parsed user-specified decimal exact numeric type metadata.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct DecimalType {
+    /// Decimal precision in digits.
+    pub precision: u16,
+    /// Decimal scale in digits.
+    pub scale: u16,
+}
+
+impl DecimalType {
+    /// Construct a decimal type when precision and scale fit the current
+    /// implementation-defined decimal value envelope.
+    #[must_use]
+    pub const fn new(precision: u16, scale: u16) -> Option<Self> {
+        if precision == 0
+            || precision > MAX_DECIMAL_PRECISION
+            || scale > precision
+            || scale > MAX_DECIMAL_SCALE
+        {
+            return None;
+        }
+        Some(Self { precision, scale })
+    }
 }
 
 /// Parsed bounded byte-string type metadata.

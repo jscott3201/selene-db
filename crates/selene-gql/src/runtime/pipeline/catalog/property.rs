@@ -229,7 +229,7 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::Uint128 => PropertyValueType::Uint128,
         GqlType::Float | GqlType::Float64 | GqlType::Double => PropertyValueType::Float,
         GqlType::Float32 | GqlType::Real => PropertyValueType::Float32,
-        GqlType::Decimal => PropertyValueType::Decimal,
+        GqlType::Decimal | GqlType::DecimalExact(_) => PropertyValueType::Decimal,
         GqlType::Bytes | GqlType::ByteString(_) => PropertyValueType::Bytes,
         GqlType::Uuid => PropertyValueType::Uuid,
         GqlType::Json => PropertyValueType::Json,

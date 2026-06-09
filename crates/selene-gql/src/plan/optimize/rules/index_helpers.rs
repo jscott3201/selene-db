@@ -276,7 +276,7 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         }
         IndexKind::Integer128 => matches!(ty, GqlType::Int128),
         IndexKind::UnsignedInteger128 => matches!(ty, GqlType::Uint128),
-        IndexKind::Decimal => matches!(ty, GqlType::Decimal),
+        IndexKind::Decimal => matches!(ty, GqlType::Decimal | GqlType::DecimalExact(_)),
         IndexKind::Float32 => matches!(ty, GqlType::Float32 | GqlType::Real),
         // BRIEF-154 PR #175 F2 (Codex P2): admit only concrete f64 type names for
         // `IndexKind::Float`. `GqlType::Float` is width-generic per

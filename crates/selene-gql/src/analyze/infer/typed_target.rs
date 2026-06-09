@@ -25,6 +25,7 @@ pub(super) fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::SmallInt
         | GqlType::BigInt
         | GqlType::Decimal
+        | GqlType::DecimalExact(_)
         | GqlType::Float32
         | GqlType::Float64
         | GqlType::Real

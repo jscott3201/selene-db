@@ -186,7 +186,7 @@ fn gql_type_to_index_kind(
         | GqlType::UBigInt => Ok(TypedIndexKind::U64),
         GqlType::Int128 => Ok(TypedIndexKind::I128),
         GqlType::Uint128 => Ok(TypedIndexKind::U128),
-        GqlType::Decimal => Ok(TypedIndexKind::Decimal),
+        GqlType::Decimal | GqlType::DecimalExact(_) => Ok(TypedIndexKind::Decimal),
         GqlType::Float32 | GqlType::Real => Ok(TypedIndexKind::F32),
         GqlType::Float64 | GqlType::Double => Ok(TypedIndexKind::F64),
         GqlType::Date => Ok(TypedIndexKind::Date),

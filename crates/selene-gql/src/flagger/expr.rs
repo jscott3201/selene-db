@@ -394,7 +394,7 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
             record_feature(uses, FeatureId::GV14, span);
             record_feature(uses, FeatureId::GV09, span);
         }
-        GqlType::Decimal => record_feature(uses, FeatureId::GV17, span),
+        GqlType::Decimal | GqlType::DecimalExact(_) => record_feature(uses, FeatureId::GV17, span),
         GqlType::Float32 => {
             record_feature(uses, FeatureId::GV21, span);
             record_feature(uses, FeatureId::GV22, span);

@@ -5,8 +5,9 @@ use selene_core::feature_register::FeatureId;
 
 use crate::{
     ast::{
-        BinaryOp, ByteStringType, ByteStringTypeForm, GqlType, IsCheckKind, NormalForm, RecordType,
-        SourceSpan, TruthValue, ValueExpr,
+        BinaryOp, ByteStringType, ByteStringTypeForm, DecimalType, GqlType, IsCheckKind,
+        MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, NormalForm, RecordType, SourceSpan, TruthValue,
+        ValueExpr,
     },
     error::ParserError,
     parser::MAX_NESTING_DEPTH,
@@ -259,6 +260,13 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         .find(|child| child.as_rule() == Rule::float_precision_type)
     {
         return build_float_precision_type_name(float_precision, source_span);
+    }
+    if let Some(decimal_precision) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::decimal_precision_type)
+    {
+        return build_decimal_precision_type_name(decimal_precision, source_span);
     }
     if keyword_tokens_eq(text, &["FLOAT16"]) {
         return Err(ParserError::UnsupportedFeature {
@@ -525,6 +533,52 @@ fn build_float_precision_type_name(
         ));
     }
     float_precision_type(precision, scale, source_span)
+}
+
+fn build_decimal_precision_type_name(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<GqlType, ParserError> {
+    let mut children = pair.clone().into_inner();
+    let precision_pair = children
+        .find(|child| child.as_rule() == Rule::numeric_type_precision)
+        .ok_or_else(|| {
+            ParserError::syntax("DECIMAL type is missing precision", source_span, None)
+        })?;
+    let precision = parse_numeric_type_precision(precision_pair.as_str(), span(&precision_pair))?;
+    let scale = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::numeric_type_scale)
+        .map(|scale_pair| parse_numeric_type_scale(scale_pair.as_str(), span(&scale_pair)))
+        .transpose()?
+        .unwrap_or(0);
+    if scale > precision {
+        return Err(ParserError::syntax(
+            "numeric type scale must be less than or equal to precision",
+            source_span,
+            None,
+        ));
+    }
+    decimal_precision_type(precision, scale, source_span)
+}
+
+fn decimal_precision_type(
+    precision: u16,
+    scale: u16,
+    span: SourceSpan,
+) -> Result<GqlType, ParserError> {
+    DecimalType::new(precision, scale)
+        .map(GqlType::DecimalExact)
+        .ok_or_else(|| {
+            ParserError::syntax(
+                "DECIMAL precision or scale exceeds the implementation-defined maximum",
+                span,
+                Some(format!(
+                    "selene-db currently supports DECIMAL precision up to {MAX_DECIMAL_PRECISION} digits and scale up to {MAX_DECIMAL_SCALE}"
+                )),
+            )
+        })
 }
 
 fn float_precision_type(
