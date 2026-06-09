@@ -1,4 +1,0 @@
-// corpus: negative
-// feature: GV22
-// expects: parse-rejected(syntax)
-RETURN n IS TYPED FLOAT(10)

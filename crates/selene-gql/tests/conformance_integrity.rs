@@ -136,6 +136,23 @@ fn numeric_literal_features_are_claimed_supported() {
 }
 
 #[test]
+fn approximate_numeric_type_features_are_claimed_supported() {
+    for feature in [
+        FeatureId::GV21,
+        FeatureId::GV22,
+        FeatureId::GV23,
+        FeatureId::GV24,
+    ] {
+        assert!(SUPPORTED_FEATURES.contains(&feature));
+        assert!(
+            !NOT_SUPPORTED_RATIONALE
+                .iter()
+                .any(|(unsupported, _)| *unsupported == feature)
+        );
+    }
+}
+
+#[test]
 fn match_mode_features_are_claimed_supported() {
     // ISO 39075:2024 §16.4 CR1/CR2: G002 (DIFFERENT EDGES) and G003 (REPEATABLE
     // ELEMENTS) are claimed. They must be in SUPPORTED_FEATURES and must NOT

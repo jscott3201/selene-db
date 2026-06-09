@@ -348,6 +348,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV18,
     FeatureId::GV19,
     FeatureId::GV21,
+    FeatureId::GV22,
     FeatureId::GV23,
     FeatureId::GV24,
     FeatureId::GV35,
@@ -492,10 +493,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
         "256-bit signed integers are not represented in Value v1",
     ),
     (FeatureId::GV20, "FLOAT16 remains deferred"),
-    (
-        FeatureId::GV22,
-        "specified floating precision syntax is deferred",
-    ),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),
     (
