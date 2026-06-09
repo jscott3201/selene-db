@@ -665,17 +665,75 @@ fn bounded_byte_string_store_assignment_pads_and_truncates_zeroes() {
 }
 
 #[test]
-fn bounded_byte_string_catalog_rejects_defaults_outside_descriptor() {
+fn bounded_byte_string_defaults_are_store_assigned() {
+    let graph = empty_closed_graph(14_208);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Blob (\
+                payload :: BYTES(2, 4) DEFAULT X'AA', \
+                fixed :: BINARY(2) DEFAULT X'01', \
+                chunks :: LIST<BINARY(2)> DEFAULT [X'0A', X'0B0000'], \
+                meta :: RECORD { digest :: BINARY(4), tag :: VARBINARY(1) } \
+                    DEFAULT RECORD{digest: X'0102', tag: X'AA00'}\
+            )",
+            &EmptyProcedureRegistry,
+        )
+        .expect("DEFAULT descriptor coercion succeeds");
+
+    let show = session
+        .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
+        .expect("SHOW succeeds");
+    let StatementOutput::Rows(table) = show else {
+        panic!("SHOW returns rows");
+    };
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Blob (payload :: BYTES(2, 4) DEFAULT X'AA00', fixed :: BYTES(2, 2) DEFAULT X'0100', chunks :: LIST<BYTES(2, 2)> DEFAULT [X'0A00', X'0B00'], meta :: RECORD { digest :: BYTES(4, 4), tag :: BYTES(1) } DEFAULT RECORD{digest: X'01020000', tag: X'AA'})"
+        ))
+    );
+
+    session
+        .execute_source("INSERT (:Blob) FINISH", &EmptyProcedureRegistry)
+        .expect("insert materializes coerced defaults");
+    let output = session
+        .execute_source(
+            "MATCH (b:Blob) RETURN b.payload AS payload, b.fixed AS fixed, \
+             b.chunks AS chunks, b.meta AS meta",
+            &EmptyProcedureRegistry,
+        )
+        .expect("match succeeds");
+    let StatementOutput::Rows(table) = output else {
+        panic!("MATCH returns rows");
+    };
+    assert_eq!(
+        table.rows()[0].values(),
+        &[
+            bytes(&[0xAA, 0x00]),
+            bytes(&[0x01, 0x00]),
+            Value::List(vec![bytes(&[0x0A, 0x00]), bytes(&[0x0B, 0x00])]),
+            Value::Record(Box::new(Record::Open(smallvec![
+                (db_string("digest"), bytes(&[0x01, 0x02, 0x00, 0x00])),
+                (db_string("tag"), bytes(&[0xAA])),
+            ]))),
+        ]
+    );
+}
+
+#[test]
+fn bounded_byte_string_defaults_reject_non_zero_truncation() {
     for source in [
-        "CREATE NODE TYPE :Blob (payload :: BYTES(2, 4) DEFAULT X'AA')",
-        "CREATE NODE TYPE :Blob (chunks :: LIST<BYTES(2, 4)> DEFAULT [X'AA'])",
-        "CREATE NODE TYPE :Blob (meta :: RECORD { payload :: BYTES(2, 4) } DEFAULT RECORD{payload: X'AA'})",
+        "CREATE NODE TYPE :Blob (payload :: BYTES(2, 4) DEFAULT X'AABBCCDDEE')",
+        "CREATE NODE TYPE :Blob (chunks :: LIST<BYTES(2, 4)> DEFAULT [X'AABBCCDDEE'])",
+        "CREATE NODE TYPE :Blob (meta :: RECORD { payload :: BYTES(2, 4) } DEFAULT RECORD{payload: X'AABBCCDDEE'})",
     ] {
-        let graph = empty_closed_graph(14_208);
+        let graph = empty_closed_graph(14_210);
         let mut session = Session::new(&graph);
         let err = session
             .execute_source(source, &EmptyProcedureRegistry)
-            .expect_err("out-of-envelope byte default is rejected");
+            .expect_err("non-zero DEFAULT overflow is rejected");
+        assert_eq!(err.gqlstatus().as_str(), "22001");
         assert!(
             err.to_string().contains("DEFAULT"),
             "expected DEFAULT validation error for `{source}`, got {err:?}"

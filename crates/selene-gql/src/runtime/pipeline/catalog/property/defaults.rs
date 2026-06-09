@@ -1,5 +1,6 @@
 //! Property default lowering, coercion, validation, and rendering.
 
+mod descriptor;
 mod lists;
 mod records;
 
@@ -16,6 +17,8 @@ use crate::{DataExceptionSubclass, ExecutorError, Literal, ProjectExpr, ValueExp
 
 use lists::{list_default_value, render_list_literal, render_vector_literal, vector_default_value};
 use records::{record_default_value, render_record_literal};
+
+pub(super) use descriptor::coerce_property_descriptor_default;
 
 pub(super) fn property_default_value(
     project: &ProjectExpr,

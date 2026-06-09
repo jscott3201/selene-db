@@ -300,17 +300,56 @@ fn decimal_precision_catalog_rejects_nested_values_outside_descriptor() {
 }
 
 #[test]
-fn decimal_precision_catalog_defaults_must_fit_descriptor() {
+fn decimal_precision_defaults_are_store_assigned() {
+    let graph = empty_closed_graph(13_735);
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(
+            "CREATE NODE TYPE :Metric (\
+                amount :: DECIMAL(5, 2) DEFAULT 123.456, \
+                history :: LIST<DECIMAL(3, 2)> DEFAULT [1.234, 0.1], \
+                payload :: RECORD { amount :: DECIMAL(3, 2) } \
+                    DEFAULT RECORD{amount: 1.235}\
+            )",
+            &EmptyProcedureRegistry,
+        )
+        .expect("DEFAULT descriptor coercion succeeds");
+
+    let show = session
+        .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
+        .expect("SHOW succeeds");
+    let StatementOutput::Rows(table) = show else {
+        panic!("SHOW returns rows");
+    };
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Metric (amount :: DECIMAL(5, 2) DEFAULT '123.46', history :: LIST<DECIMAL(3, 2)> DEFAULT ['1.23', '0.1'], payload :: RECORD { amount :: DECIMAL(3, 2) } DEFAULT RECORD{amount: '1.24'})"
+        ))
+    );
+
+    session
+        .execute_source("INSERT (:Metric) FINISH", &EmptyProcedureRegistry)
+        .expect("insert materializes coerced defaults");
+    assert_eq!(
+        first_value_in(&mut session, "MATCH (m:Metric) RETURN m.amount AS amount"),
+        dec("123.46")
+    );
+}
+
+#[test]
+fn decimal_precision_defaults_reject_leading_digit_loss() {
     for source in [
         "CREATE NODE TYPE :Metric (amount :: DECIMAL(3, 2) DEFAULT 10.00)",
         "CREATE NODE TYPE :Metric (history :: LIST<DECIMAL(3, 2)> DEFAULT [1.20, 10.00])",
         "CREATE NODE TYPE :Metric (payload :: RECORD { amount :: DECIMAL(3, 2) } DEFAULT RECORD{amount: 10.00})",
     ] {
-        let graph = empty_closed_graph(13_735);
+        let graph = empty_closed_graph(13_736);
         let mut session = Session::new(&graph);
-        session
+        let err = session
             .execute_source(source, &EmptyProcedureRegistry)
-            .expect_err("default outside decimal descriptor should fail");
+            .expect_err("leading digit loss is not representable");
+        assert_eq!(err.gqlstatus().as_str(), "22003");
     }
 }
 

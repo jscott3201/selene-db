@@ -223,15 +223,63 @@ fn character_string_store_assignment_pads_and_truncates_whitespace() {
 }
 
 #[test]
-fn character_string_defaults_validate_top_level_list_and_record_bounds() {
+fn character_string_defaults_are_store_assigned() {
+    let graph = empty_closed_graph(16_203);
+    let mut session = Session::new(&graph).with_impl_defined_caps(ImplDefinedCaps::DEFAULT);
+
+    execute(
+        "CREATE NODE TYPE :Doc (\
+            title :: CHAR(3) DEFAULT 'a', \
+            tags :: LIST<STRING(2, 3)> DEFAULT ['x', 'yz  '], \
+            meta :: RECORD { code :: CHAR(2) } DEFAULT RECORD{code: 'q'}\
+        )",
+        &mut session,
+    )
+    .expect("DEFAULT descriptor coercion succeeds");
+
+    let table = rows(execute("SHOW NODE TYPES", &mut session).expect("SHOW succeeds"));
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Doc (title :: STRING(3, 3) DEFAULT 'a  ', tags :: LIST<STRING(2, 3)> DEFAULT ['x ', 'yz '], meta :: RECORD { code :: STRING(2, 2) } DEFAULT RECORD{code: 'q '})"
+        ))
+    );
+
+    execute("INSERT (:Doc) FINISH", &mut session).expect("insert materializes defaults");
+    let table = rows(
+        execute(
+            "MATCH (n:Doc) RETURN n.title AS title, n.tags AS tags, n.meta AS meta",
+            &mut session,
+        )
+        .expect("match succeeds"),
+    );
+    assert_eq!(
+        table.rows()[0].values(),
+        &[
+            Value::String(db_string("a  ")),
+            Value::List(vec![
+                Value::String(db_string("x ")),
+                Value::String(db_string("yz ")),
+            ]),
+            Value::Record(Box::new(Record::Open(smallvec![(
+                db_string("code"),
+                Value::String(db_string("q ")),
+            )]))),
+        ]
+    );
+}
+
+#[test]
+fn character_string_defaults_reject_non_space_truncation() {
     for source in [
-        "CREATE NODE TYPE :Doc (title :: STRING(2, 4) DEFAULT 'a')",
-        "CREATE NODE TYPE :Doc (tags :: LIST<STRING(2, 4)> DEFAULT ['a'])",
-        "CREATE NODE TYPE :Doc (meta :: RECORD { title :: STRING(2, 4) } DEFAULT RECORD{title: 'a'})",
+        "CREATE NODE TYPE :Doc (title :: STRING(2, 4) DEFAULT 'abcde')",
+        "CREATE NODE TYPE :Doc (tags :: LIST<STRING(2, 4)> DEFAULT ['abcde'])",
+        "CREATE NODE TYPE :Doc (meta :: RECORD { title :: STRING(2, 4) } DEFAULT RECORD{title: 'abcde'})",
     ] {
-        let graph = empty_closed_graph(16_203);
+        let graph = empty_closed_graph(16_205);
         let mut session = Session::new(&graph);
-        let err = execute(source, &mut session).expect_err("DEFAULT violates string bounds");
+        let err = execute(source, &mut session).expect_err("DEFAULT truncates non-space data");
+        assert_eq!(err.gqlstatus().as_str(), "22001");
         assert!(
             err.to_string().contains("DEFAULT"),
             "expected DEFAULT validation error for `{source}`, got {err:?}"
