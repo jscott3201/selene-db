@@ -24,8 +24,8 @@ edition = "2024"
 rust-version = "1.95.0"
 authors = ["selene-db contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/jscott3201/selene-db"
-homepage = "https://github.com/jscott3201/selene-db"
+repository = "https://github.com/Aionforge-Labs/selene-db"
+homepage = "https://github.com/Aionforge-Labs/selene-db"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -95,7 +95,11 @@ mimalloc = { version = "0.1", default-features = false }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 rstest = "0.26"
 insta = "1.47"
-postcard = { version = "1.1", features = ["alloc"] }
+# default-features = false drops postcard's default heapless-cas feature, the
+# only path pulling heapless 0.7 -> atomic-polyfill (unmaintained,
+# RUSTSEC-2023-0089) + spin. Crates that call to_stdvec declare use-std on
+# their own dependency line instead of riding feature unification.
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
 tempfile = "3.27"
 pollster = "0.4"
 wgpu = { version = "29.0.3", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }

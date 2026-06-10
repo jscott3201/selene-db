@@ -153,7 +153,7 @@ impl OpenRouterClient {
             api_key,
             batch_size,
             referer: referer
-                .unwrap_or_else(|| "https://github.com/jscott3201/selene-db".to_owned()),
+                .unwrap_or_else(|| "https://github.com/Aionforge-Labs/selene-db".to_owned()),
             title: title.unwrap_or_else(|| "selene-db local benchmarks".to_owned()),
         }
     }
