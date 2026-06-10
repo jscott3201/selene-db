@@ -83,7 +83,7 @@ projection.iter_nodes();                // impl Iterator<NodeId> in ASC order
 use selene_algorithms::ProjectionCatalog;
 
 let catalog = ProjectionCatalog::new();
-catalog.project(&graph.read(), &config, None)?;
+catalog.project(&graph.read(), &config)?;
 // ... later, in another request handler ...
 catalog.ensure_fresh(&graph.read(), "person_graph")?;
 let projection_ref = catalog.get("person_graph").expect("registered above");
@@ -96,7 +96,7 @@ let result = selene_algorithms::pagerank(
 `ensure_fresh` compares the projection's stored `generation` against the snapshot's `meta.generation`:
 
 - **Equal** — no-op; the cached projection is current.
-- **Different** — rebuild from the stored `ProjectionConfig`. The scope argument is **not** retained; if you used a scope at first build, you must re-`project` rather than relying on `ensure_fresh`.
+- **Different** — rebuild from the stored `ProjectionConfig`. Catalog projections are always **unscoped**: `project` takes no scope bitmap, so the stored config is the complete rebuild recipe and the rebuild reproduces exactly what was registered. If you need a scoped view, build it directly with `GraphProjection::build` outside the catalog.
 - **Not registered** — returns `AlgorithmsError::NoSuchProjection`. The catalog is a cache, not a factory.
 
 `ProjectionRef` holds a read guard for its lifetime. Drop the ref before calling `project`, `drop_projection`, or a rebuilding `ensure_fresh` on the same catalog — otherwise the writer blocks on your read lock.
@@ -586,7 +586,7 @@ projection.generation() != snapshot.meta.generation  → stale, rebuild
 You generally do **not** need to call `drop_projection` manually. `ensure_fresh` rebuilds from the stored config when the generation advances. Manual invalidation is needed only when:
 
 - The original `ProjectionConfig` no longer reflects what you want to query (new label filter, new weight property).
-- You used a `scope: Option<&RoaringBitmap>` at build time; `ensure_fresh` does not retain the scope. Re-call `project` with the updated scope.
+- You need a scoped view (`scope: Option<&RoaringBitmap>`). The catalog never holds scoped projections — `project` does not accept a scope, because the stored config could not retain it across rebuilds. Build the scoped projection directly with `GraphProjection::build` and rebuild it yourself when the generation advances.
 - You want to free the memory eagerly (a 100k-node projection holds two CSR adjacency arrays plus a `RoaringBitmap`; large graphs benefit from explicit drop).
 
 ### 9.3 Cost shapes
