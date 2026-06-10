@@ -581,9 +581,19 @@ Bench bins: `write_txn_lifecycle`, `provider_fanout`, `bound_type_validation`,
 `write_txn_lifecycle` create/delete rows below show the **batch axis at the 100k
 fixture** (the headline scale); `empty_commit` shows the scale axis.
 
+The `graph_clone` / `begin_rollback` rows are commit-floor attribution
+instruments: the committer handoff has no direct row (`seal` is
+crate-private), so derive it as `empty_commit − graph_clone −
+begin_rollback`. At their measurement commit the same-run `empty_commit`
+medians were 11.97 / 38.70 / 51.99 µs, giving a derived handoff of ~10.9 /
+~28.4 / ~28.4 µs — the handoff, not the snapshot clone, dominates the
+post-COW floor at ≥50k.
+
 | Bench | Variant | Median | Notes |
 |---|---|---:|---|
 | `write_txn_lifecycle/empty_commit` | 10k / 50k / 100k | 211 / 139 / 270 µs | Empty-transaction commit floor. |
+| `write_txn_lifecycle/graph_clone` | 10k / 50k / 100k | 1.09 / 10.33 / 23.62 µs | One full `SeleneGraph` clone + drop — the snapshot fork `seal`'s first `guard_mut` pays. Measured post-COW (e05f6314). |
+| `write_txn_lifecycle/begin_rollback` | 10k / 50k / 100k | 13.9 ns (flat) | Write-lock + allocator + `WriteTxn` build, no snapshot fork, no handoff. Measured post-COW (e05f6314). |
 | `write_txn_lifecycle/create_only` @100k | batch 1 / 10 / 100 / 1000 | 342 µs / 360 µs / 469 µs / 1.18 ms | Isolated node create + commit. |
 | `write_txn_lifecycle/delete_only` @100k | batch 1 / 10 / 100 / 1000 | 224 / 232 / 312 / 745 µs | Fixture seed excluded from timed body. |
 | `provider_fanout/core_only` | providers=core | 258.7 µs | Commit-notification baseline. |
