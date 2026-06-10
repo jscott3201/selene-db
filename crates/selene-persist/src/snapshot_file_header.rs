@@ -29,7 +29,14 @@ pub const SNAPSHOT_VERSION_MAJOR: u16 = 1;
 /// optional IVF construction parameters beside HNSW construction parameters.
 /// The exact-match gate rejects older vector-index schema rows rather than
 /// decoding them against the wrong rkyv shape.
-pub const SNAPSHOT_VERSION_MINOR: u16 = 3;
+///
+/// Bumped `3 -> 4` by the typed-descriptor stream: the rkyv `PropertyTypeDef`
+/// rows archived inside `CORE/GTYP` gained mid-struct `decimal_type` /
+/// `character_string_type` / `byte_string_type` descriptor fields, and the
+/// `PropertyElementType` / `RecordFieldType` enums gained descriptor variants
+/// ahead of existing ones. The exact-match gate rejects pre-descriptor
+/// snapshots rather than decoding them against the wrong archived shape.
+pub const SNAPSHOT_VERSION_MINOR: u16 = 4;
 /// Fixed snapshot file-header length.
 pub const SNAPSHOT_FILE_HEADER_LEN: usize = 32;
 /// Whole-body compression flag, reserved in v1.0.
@@ -218,11 +225,11 @@ mod tests {
             .write_to(&mut bytes)
             .unwrap();
         bytes[4..6].copy_from_slice(&2_u16.to_le_bytes());
-        // `new()` writes the current minor (3 after the IVF config bump); patching
+        // `new()` writes the current minor (4 after the descriptor bump); patching
         // only the major byte leaves minor at its written value.
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 3 })
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 4 })
         ));
     }
 
@@ -242,6 +249,24 @@ mod tests {
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
             Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
+        ));
+    }
+
+    #[test]
+    fn pre_descriptor_minor_three_is_rejected() {
+        // Typed-descriptor clean break: a snapshot written at the previous minor
+        // version (3) carries `CORE/GTYP` `PropertyTypeDef` archives WITHOUT the
+        // descriptor fields, so it must fail the exact-match gate with a clean
+        // UnsupportedVersion rather than mis-decoding the shifted rkyv layout.
+        let mut bytes = Vec::new();
+        SnapshotFileHeader::new(0, 0, [0; 16])
+            .unwrap()
+            .write_to(&mut bytes)
+            .unwrap();
+        bytes[6..8].copy_from_slice(&3_u16.to_le_bytes());
+        assert!(matches!(
+            SnapshotFileHeader::read_from(&mut bytes.as_slice()),
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 3 })
         ));
     }
 

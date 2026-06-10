@@ -7,10 +7,16 @@ use crate::graph_types::GraphTypeDef;
 /// Single version per the 2026-05-30 clean-break directive (greenfield, no consumers): the
 /// legacy multi-magic V1/V2/V3 decoder is removed and the on-disk layout IS the live
 /// [`GraphTypeDef`] rkyv archive.
+///
+/// Bumped `1 -> 2` by the typed-descriptor stream: the archived `PropertyTypeDef`
+/// gained mid-struct `decimal_type` / `character_string_type` / `byte_string_type`
+/// fields, and `PropertyElementType` / `RecordFieldType` gained descriptor
+/// variants ahead of existing ones, so a version-1 archive must be rejected
+/// rather than bytechecked against the wrong shape.
 // Why: D14 (rkyv snapshot archive) / D19 (GG02 catalog persistence). The GTYP version byte
 // is internal to the `b"GTYP"` section payload and is independent of the SLSN container's
-// `SNAPSHOT_VERSION_MINOR`.
-const GTYP_VERSION: u8 = 1;
+// `SNAPSHOT_VERSION_MINOR` (which bumped 3 -> 4 for the same descriptor break).
+const GTYP_VERSION: u8 = 2;
 
 pub(in crate::core_provider) fn encode_graph_types(
     graph: &SeleneGraph,
@@ -426,6 +432,41 @@ mod tests {
         assert!(matches!(
             decode_graph_types(&[]),
             Err(crate::ProviderError::InvalidPayload { .. })
+        ));
+    }
+
+    #[test]
+    fn decode_rejects_pre_descriptor_version_one() {
+        // Typed-descriptor clean break: a version-1 GTYP payload archives
+        // `PropertyTypeDef` WITHOUT the decimal/character-string/byte-string
+        // descriptor fields, so the version gate must reject it with a clean
+        // versioned error instead of bytechecking the body against the wrong
+        // archived shape.
+        let person = db_string("PreDescriptorPerson").unwrap();
+        let graph_type = GraphTypeDef {
+            name: db_string("pre.descriptor.graph").unwrap(),
+            node_types: vec![NodeTypeDef {
+                name: person.clone(),
+                key_labels: LabelSet::single(person),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            }],
+            edge_types: Vec::new(),
+        };
+        let graph = SharedGraph::builder(GraphId::new(215))
+            .bound_to(graph_type)
+            .unwrap()
+            .build()
+            .unwrap()
+            .read()
+            .as_ref()
+            .clone();
+        let mut bytes = encode_graph_types(&graph).unwrap();
+        bytes[0] = 1; // pre-descriptor GTYP version
+        assert!(matches!(
+            decode_graph_types(&bytes),
+            Err(crate::ProviderError::InvalidPayload { reason })
+                if reason.contains("version 1 is unsupported")
         ));
     }
 }

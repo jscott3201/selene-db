@@ -17,6 +17,12 @@
 //! (deferred to 4c per the D14 amendment).
 //! `CORE/VIDX` later added optional IVF construction config beside HNSW config,
 //! which bumped `SNAPSHOT_VERSION_MINOR` 2 -> 3 for the same clean-break reason.
+//! The typed-descriptor stream then added `decimal_type` /
+//! `character_string_type` / `byte_string_type` fields to the `CORE/GTYP`
+//! `PropertyTypeDef` archive (plus descriptor variants on
+//! `PropertyElementType` / `RecordFieldType`), which bumped
+//! `SNAPSHOT_VERSION_MINOR` 3 -> 4 and the section-internal `GTYP_VERSION`
+//! 1 -> 2.
 //!
 //! `CORE/SCMA` schema rows are stored in memory in `(label, property)` order
 //! via [`SchemaKey`]'s derived `Ord`, which is lexicographic through [`DbString`].
