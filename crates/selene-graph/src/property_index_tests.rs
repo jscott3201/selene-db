@@ -284,7 +284,7 @@ fn build_property_index_is_strict_for_existing_data() {
         age.clone(),
         Value::String(db_string("wrong").unwrap()),
     )]));
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
 
     let err =
         build_property_index(&graph, label.clone(), age.clone(), TypedIndexKind::I64).unwrap_err();
@@ -625,7 +625,7 @@ fn build_property_index_admits_existing_string_rows() {
             name.clone(),
             Value::String(content.clone()),
         )]));
-        graph.node_store.alive.insert(row as u32);
+        graph.node_store.alive_mut().insert(row as u32);
     }
 
     let index = build_property_index(&graph, label, name, TypedIndexKind::String).expect("admits");
@@ -681,7 +681,7 @@ fn rebuild_property_indexes_is_lenient_on_kind_drift() {
         .node_store
         .properties
         .push(property_map([(age.clone(), Value::Int(30))]));
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
     // Row 1: mismatched kind (String) — should be skipped, not abort.
     graph
         .node_store
@@ -691,7 +691,7 @@ fn rebuild_property_indexes_is_lenient_on_kind_drift() {
         age.clone(),
         Value::String(db_string("pi.rebuild.wrong").unwrap()),
     )]));
-    graph.node_store.alive.insert(1);
+    graph.node_store.alive_mut().insert(1);
     // Pre-register the index (will be cleared and rebuilt by
     // rebuild_property_indexes).
     graph

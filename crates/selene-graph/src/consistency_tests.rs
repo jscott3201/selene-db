@@ -218,7 +218,7 @@ fn empty_adjacency_entry_is_caught() {
 #[test]
 fn out_of_range_alive_node_is_caught() {
     let mut graph = consistent_graph();
-    graph.node_store.alive.insert(500);
+    graph.node_store.alive_mut().insert(500);
     let err = graph.assert_indexes_consistent().unwrap_err();
     assert!(err.contains("out-of-range"), "got: {err}");
 }

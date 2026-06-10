@@ -49,7 +49,7 @@ fn non_identity_graph() -> SeleneGraph {
         g.node_store.properties.push(PropertyMap::new());
         g.node_store.row_to_id.push(id);
         if alive {
-            g.node_store.alive.insert(row);
+            g.node_store.alive_mut().insert(row);
         }
     };
     push_node(&mut g, NodeId::new(5), true);
@@ -73,7 +73,7 @@ fn non_identity_graph() -> SeleneGraph {
             g.edge_store.properties.push(PropertyMap::new());
             g.edge_store.row_to_id.push(id);
             if alive {
-                g.edge_store.alive.insert(row);
+                g.edge_store.alive_mut().insert(row);
             }
         };
     push_edge(&mut g, EdgeId::new(3), NodeId::new(5), NodeId::new(8), true);
@@ -188,7 +188,7 @@ fn descending_first_graph() -> SeleneGraph {
         g.node_store.labels.push(LabelSet::single(nlabel.clone()));
         g.node_store.properties.push(PropertyMap::new());
         g.node_store.row_to_id.push(NodeId::new(id));
-        g.node_store.alive.insert(row);
+        g.node_store.alive_mut().insert(row);
     }
     g.meta.next_node_id = 11;
     g

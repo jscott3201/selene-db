@@ -90,8 +90,11 @@ pub(super) fn insert_edge_row(
     Ok(())
 }
 
-fn set_alive(bitmap: &mut roaring::RoaringBitmap, row_index: usize, alive: bool) {
+fn set_alive(bitmap: &mut std::sync::Arc<roaring::RoaringBitmap>, row_index: usize, alive: bool) {
     let row = u32::try_from(row_index).expect("row index was validated before liveness update");
+    // B1 COW: recovery materialization owns a freshly built graph, so the Arc
+    // is unique and `make_mut` never clones here.
+    let bitmap = std::sync::Arc::make_mut(bitmap);
     if alive {
         bitmap.insert(row);
     } else {

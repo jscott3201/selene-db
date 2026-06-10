@@ -2,9 +2,11 @@
 //!
 //! Values are grouped into 2048-element chunks. Frozen chunks live as
 //! `Arc<[T]>` and share cheaply across snapshots; the currently-filling chunk
-//! is held as a mutable `Vec<T>` (the tail) so that `push` is amortized O(1).
-//! Overwrites on frozen chunks use `Arc::make_mut`, cloning only the affected
-//! chunk when a snapshot still holds it.
+//! (the tail) is held as an `Arc<Vec<T>>` so that cloning the column shares
+//! the tail by refcount bump instead of deep-copying its elements. Mutations
+//! use `Arc::make_mut` throughout: a write clones only the affected frozen
+//! chunk or the tail, and only when a snapshot still holds it, so a clone
+//! taken before a mutation never observes the mutation (B1 tail COW).
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -16,7 +18,7 @@ pub const CHUNK_SIZE: usize = 2048;
 #[derive(Clone, Debug)]
 pub struct ChunkedVec<T> {
     chunks: Vec<Arc<[T]>>,
-    tail: Vec<T>,
+    tail: Arc<Vec<T>>,
     len: usize,
     _marker: PhantomData<T>,
 }
@@ -27,7 +29,7 @@ impl<T: Clone> ChunkedVec<T> {
     pub fn new() -> Self {
         Self {
             chunks: Vec::new(),
-            tail: Vec::new(),
+            tail: Arc::new(Vec::new()),
             len: 0,
             _marker: PhantomData,
         }
@@ -38,7 +40,7 @@ impl<T: Clone> ChunkedVec<T> {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             chunks: Vec::with_capacity(capacity.div_ceil(CHUNK_SIZE)),
-            tail: Vec::new(),
+            tail: Arc::new(Vec::new()),
             len: 0,
             _marker: PhantomData,
         }
@@ -72,18 +74,22 @@ impl<T: Clone> ChunkedVec<T> {
 
     /// Append `value` to the column in amortized O(1) time.
     ///
-    /// Pushes go into a mutable tail buffer with no Arc cloning. When the tail
-    /// reaches `CHUNK_SIZE` it freezes into an `Arc<[T]>` immediately and a
-    /// fresh tail starts on the next push. Cloning the column shares frozen
-    /// chunks via Arc; the tail is duplicated cheaply (≤ `CHUNK_SIZE` elements).
+    /// Pushes go into the tail buffer through `Arc::make_mut`: while the tail
+    /// Arc is unique this is a plain `Vec::push`; the first push after a clone
+    /// pays one tail clone (≤ `CHUNK_SIZE - 1` elements) and subsequent pushes
+    /// reuse the now-unique buffer. When the tail reaches `CHUNK_SIZE` it
+    /// freezes into an `Arc<[T]>` immediately and a fresh tail starts on the
+    /// next push. Cloning the column shares frozen chunks *and* the tail via
+    /// Arc refcount bumps — no element is copied at clone time.
     pub fn push(&mut self, value: T) {
-        if self.tail.capacity() == 0 {
-            self.tail.reserve(CHUNK_SIZE);
+        let tail = Arc::make_mut(&mut self.tail);
+        if tail.capacity() == 0 {
+            tail.reserve(CHUNK_SIZE);
         }
-        self.tail.push(value);
+        tail.push(value);
         self.len += 1;
-        if self.tail.len() == CHUNK_SIZE {
-            let frozen = std::mem::take(&mut self.tail);
+        if tail.len() == CHUNK_SIZE {
+            let frozen = std::mem::take(tail);
             self.chunks.push(Arc::from(frozen));
         }
     }
@@ -104,7 +110,7 @@ impl<T: Clone> ChunkedVec<T> {
             let chunk = Arc::make_mut(&mut self.chunks[chunk_index]);
             chunk[offset] = value;
         } else {
-            self.tail[offset] = value;
+            Arc::make_mut(&mut self.tail)[offset] = value;
         }
     }
 
@@ -131,7 +137,7 @@ impl<T: Clone> ChunkedVec<T> {
         if index < self.chunks.len() {
             Arc::clone(&self.chunks[index])
         } else {
-            Arc::from(self.tail.clone())
+            Arc::from(self.tail.as_slice())
         }
     }
 
@@ -289,6 +295,109 @@ mod tests {
         vec.set(1, 2);
     }
 
+    #[test]
+    fn clone_shares_tail_without_copying() {
+        // B1: cloning the column must share the tail allocation by refcount
+        // bump — read-only clones never duplicate tail elements.
+        let mut original = ChunkedVec::new();
+        for value in 0..100 {
+            original.push(value);
+        }
+        let cloned = original.clone();
+        assert!(Arc::ptr_eq(&original.tail, &cloned.tail));
+        assert_eq!(Arc::strong_count(&original.tail), 2);
+        assert!(original.slow_equals(&cloned));
+    }
+
+    #[test]
+    fn clone_then_push_isolates_original_snapshot() {
+        // B1: a push on the clone must COW the tail; the original (the
+        // "snapshot") keeps its pre-mutation contents and its own tail Arc.
+        let mut original = ChunkedVec::new();
+        for value in 0..10 {
+            original.push(value);
+        }
+        let snapshot_tail = Arc::clone(&original.tail);
+        let mut cloned = original.clone();
+        cloned.push(999);
+        // Original snapshot unchanged.
+        assert_eq!(original.len(), 10);
+        assert_eq!(original.get(10), None);
+        for value in 0..10 {
+            assert_eq!(original.get(value), Some(&value));
+        }
+        // Clone diverged onto its own tail allocation.
+        assert_eq!(cloned.get(10), Some(&999));
+        assert!(!Arc::ptr_eq(&original.tail, &cloned.tail));
+        // snapshot_tail + original.tail — the clone no longer shares it.
+        assert_eq!(Arc::strong_count(&snapshot_tail), 2);
+    }
+
+    #[test]
+    fn clone_then_set_in_tail_isolates_original_snapshot() {
+        let mut original = ChunkedVec::new();
+        for value in 0..10 {
+            original.push(value);
+        }
+        let mut cloned = original.clone();
+        cloned.set(3, 777);
+        assert_eq!(original.get(3), Some(&3));
+        assert_eq!(cloned.get(3), Some(&777));
+        assert!(!Arc::ptr_eq(&original.tail, &cloned.tail));
+    }
+
+    #[test]
+    fn first_write_makes_tail_unique_then_reuses_buffer() {
+        // The first push after a clone pays the one tail COW; subsequent
+        // pushes mutate the now-unique buffer in place (no further clones).
+        let mut original = ChunkedVec::new();
+        for value in 0..10 {
+            original.push(value);
+        }
+        let mut cloned = original.clone();
+        cloned.push(100);
+        // Compare raw Arc allocation pointers — holding a probe Arc clone
+        // would itself force `make_mut` to clone on the next write.
+        let unique_tail_ptr = Arc::as_ptr(&cloned.tail);
+        cloned.push(101);
+        cloned.set(0, 42);
+        // Still the same (unique) allocation: no further COW clones happened.
+        assert_eq!(Arc::as_ptr(&cloned.tail), unique_tail_ptr);
+        assert_eq!(Arc::strong_count(&cloned.tail), 1);
+        assert_eq!(cloned.get(0), Some(&42));
+        assert_eq!(original.get(0), Some(&0));
+    }
+
+    #[test]
+    fn freeze_under_share_preserves_both_columns() {
+        // Fill a clone up to the CHUNK_SIZE freeze boundary while the original
+        // still holds the pre-freeze tail Arc. The freeze must COW first, so
+        // the original keeps its short tail and the clone freezes correctly.
+        let mut original = ChunkedVec::new();
+        for value in 0..CHUNK_SIZE - 1 {
+            original.push(value);
+        }
+        let mut cloned = original.clone();
+        cloned.push(CHUNK_SIZE - 1); // triggers freeze in the clone
+        for value in CHUNK_SIZE..CHUNK_SIZE + 5 {
+            cloned.push(value);
+        }
+        // Original: one (unfrozen) tail of CHUNK_SIZE - 1 entries.
+        assert_eq!(original.len(), CHUNK_SIZE - 1);
+        assert_eq!(original.chunks.len(), 0);
+        assert_eq!(original.tail.len(), CHUNK_SIZE - 1);
+        for value in 0..CHUNK_SIZE - 1 {
+            assert_eq!(original.get(value), Some(&value));
+        }
+        // Clone: one frozen chunk plus a 5-entry fresh tail.
+        assert_eq!(cloned.len(), CHUNK_SIZE + 5);
+        assert_eq!(cloned.chunks.len(), 1);
+        assert_eq!(cloned.tail.len(), 5);
+        for value in 0..CHUNK_SIZE + 5 {
+            assert_eq!(cloned.get(value), Some(&value));
+        }
+    }
+
     proptest! {
         #[test]
         fn random_push_set_sequence_preserves_latest_values(ops in proptest::collection::vec((any::<bool>(), 0_usize..128, any::<u16>()), 1..256)) {
@@ -307,6 +416,51 @@ mod tests {
                 for (idx, expected_value) in expected.iter().enumerate() {
                     prop_assert_eq!(vec.get(idx), Some(expected_value));
                 }
+            }
+        }
+
+        #[test]
+        fn clone_then_mutate_never_disturbs_snapshot(
+            seed_ops in proptest::collection::vec((any::<bool>(), 0_usize..4096, any::<u16>()), 1..512),
+            post_ops in proptest::collection::vec((any::<bool>(), 0_usize..4096, any::<u16>()), 1..512),
+        ) {
+            // B1 snapshot isolation: a clone taken at an arbitrary fill point
+            // (including straddling chunk freezes) must never observe pushes
+            // or sets applied to the live column afterwards.
+            let mut live = ChunkedVec::new();
+            let mut model = Vec::new();
+            for (set_existing, index, value) in seed_ops {
+                if set_existing && !model.is_empty() {
+                    let idx = index % model.len();
+                    live.set(idx, value);
+                    model[idx] = value;
+                } else {
+                    live.push(value);
+                    model.push(value);
+                }
+            }
+            let snapshot = live.clone();
+            let snapshot_model = model.clone();
+            for (set_existing, index, value) in post_ops {
+                if set_existing && !model.is_empty() {
+                    let idx = index % model.len();
+                    live.set(idx, value);
+                    model[idx] = value;
+                } else {
+                    live.push(value);
+                    model.push(value);
+                }
+            }
+            // Snapshot still matches the pre-clone model exactly.
+            prop_assert_eq!(snapshot.len(), snapshot_model.len());
+            for (idx, expected_value) in snapshot_model.iter().enumerate() {
+                prop_assert_eq!(snapshot.get(idx), Some(expected_value));
+            }
+            prop_assert_eq!(snapshot.get(snapshot_model.len()), None);
+            // Live column matches the post-mutation model.
+            prop_assert_eq!(live.len(), model.len());
+            for (idx, expected_value) in model.iter().enumerate() {
+                prop_assert_eq!(live.get(idx), Some(expected_value));
             }
         }
     }

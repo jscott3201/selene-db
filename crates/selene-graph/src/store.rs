@@ -1,5 +1,7 @@
 //! Structure-of-arrays node and edge stores per spec 03 section 3.1.
 
+use std::sync::Arc;
+
 use roaring::RoaringBitmap;
 
 use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
@@ -52,8 +54,11 @@ pub struct NodeStore {
     /// id is read here, never synthesized as `row + 1`, so compaction can
     /// renumber rows under stable ids.
     pub row_to_id: ChunkedVec<NodeId>,
-    /// Alive row indexes.
-    pub alive: RoaringBitmap,
+    /// Alive row indexes, shared copy-on-write across snapshots (B1): cloning
+    /// the store bumps a refcount; mutate only through
+    /// [`alive_mut`](Self::alive_mut) so a pre-clone snapshot never observes
+    /// the change.
+    pub alive: Arc<RoaringBitmap>,
 }
 
 impl NodeStore {
@@ -64,8 +69,15 @@ impl NodeStore {
             labels: ChunkedVec::new(),
             properties: ChunkedVec::new(),
             row_to_id: ChunkedVec::new(),
-            alive: RoaringBitmap::new(),
+            alive: Arc::new(RoaringBitmap::new()),
         }
+    }
+
+    /// Mutable access to the alive bitmap via `Arc::make_mut` (B1 COW): the
+    /// first mutation after a snapshot clone pays one bitmap clone; while the
+    /// Arc is unique this is a plain `&mut` borrow.
+    pub fn alive_mut(&mut self) -> &mut RoaringBitmap {
+        Arc::make_mut(&mut self.alive)
     }
 
     /// Number of allocated node rows, including dead holes.
@@ -112,8 +124,11 @@ pub struct EdgeStore {
     /// [`EdgeId::TOMBSTONE`]. Parallel with [`label`](Self::label): the stable id
     /// is read here, never synthesized as `row + 1`.
     pub row_to_id: ChunkedVec<EdgeId>,
-    /// Alive row indexes.
-    pub alive: RoaringBitmap,
+    /// Alive row indexes, shared copy-on-write across snapshots (B1): cloning
+    /// the store bumps a refcount; mutate only through
+    /// [`alive_mut`](Self::alive_mut) so a pre-clone snapshot never observes
+    /// the change.
+    pub alive: Arc<RoaringBitmap>,
 }
 
 impl EdgeStore {
@@ -126,8 +141,15 @@ impl EdgeStore {
             target: ChunkedVec::new(),
             properties: ChunkedVec::new(),
             row_to_id: ChunkedVec::new(),
-            alive: RoaringBitmap::new(),
+            alive: Arc::new(RoaringBitmap::new()),
         }
+    }
+
+    /// Mutable access to the alive bitmap via `Arc::make_mut` (B1 COW): the
+    /// first mutation after a snapshot clone pays one bitmap clone; while the
+    /// Arc is unique this is a plain `&mut` borrow.
+    pub fn alive_mut(&mut self) -> &mut RoaringBitmap {
+        Arc::make_mut(&mut self.alive)
     }
 
     /// Number of allocated edge rows, including dead holes.
@@ -165,6 +187,8 @@ impl Default for EdgeStore {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use selene_core::db_string;
 
@@ -189,8 +213,84 @@ mod tests {
             .labels
             .push(LabelSet::single(db_string("store.node").unwrap()));
         store.properties.push(PropertyMap::new());
-        store.alive.insert(0);
+        store.alive_mut().insert(0);
         assert!(store.is_alive(0));
         assert!(!store.is_alive(1));
+    }
+
+    #[test]
+    fn clone_shares_alive_bitmap_until_mutation() {
+        // B1: a read-only store clone shares the alive bitmap by refcount.
+        let mut store = NodeStore::new();
+        store.alive_mut().insert(0);
+        store.alive_mut().insert(7);
+        let cloned = store.clone();
+        assert!(Arc::ptr_eq(&store.alive, &cloned.alive));
+        assert_eq!(Arc::strong_count(&store.alive), 2);
+    }
+
+    #[test]
+    fn alive_mutation_on_clone_isolates_snapshot() {
+        // B1: delete (remove) and create (insert) on a clone must COW the
+        // bitmap; the original snapshot keeps its pre-mutation liveness.
+        let mut store = EdgeStore::new();
+        store.alive_mut().insert(0);
+        store.alive_mut().insert(1);
+        let mut cloned = store.clone();
+        cloned.alive_mut().remove(1);
+        cloned.alive_mut().insert(9);
+        assert!(store.is_alive(0));
+        assert!(store.is_alive(1));
+        assert!(!store.is_alive(9));
+        assert!(cloned.is_alive(0));
+        assert!(!cloned.is_alive(1));
+        assert!(cloned.is_alive(9));
+        assert!(!Arc::ptr_eq(&store.alive, &cloned.alive));
+    }
+
+    proptest! {
+        #[test]
+        fn alive_clone_isolation_across_create_delete_compact(
+            seed_rows in proptest::collection::btree_set(0_u32..4096, 0..256),
+            post_ops in proptest::collection::vec((any::<bool>(), 0_u32..4096), 1..256),
+            compact in any::<bool>(),
+        ) {
+            // B1 (c): a snapshot clone of the alive bitmap is never disturbed
+            // by later creates (insert), deletes (remove), or a
+            // compaction-style dense rebuild on the live store.
+            let mut live = NodeStore::new();
+            for row in &seed_rows {
+                live.alive_mut().insert(*row);
+            }
+            let snapshot = live.clone();
+            let mut model: std::collections::BTreeSet<u32> = seed_rows.clone();
+            for (insert, row) in post_ops {
+                if insert {
+                    live.alive_mut().insert(row);
+                    model.insert(row);
+                } else {
+                    live.alive_mut().remove(row);
+                    model.remove(&row);
+                }
+            }
+            if compact {
+                // compact_core-shaped rebuild: renumber survivors dense from a
+                // fresh store, then overwrite the live store wholesale.
+                let mut dense = NodeStore::new();
+                for new_row in 0..model.len() as u32 {
+                    dense.alive_mut().insert(new_row);
+                }
+                live = dense;
+                model = (0..model.len() as u32).collect();
+            }
+            prop_assert_eq!(
+                snapshot.alive.iter().collect::<Vec<_>>(),
+                seed_rows.iter().copied().collect::<Vec<_>>()
+            );
+            prop_assert_eq!(
+                live.alive.iter().collect::<Vec<_>>(),
+                model.iter().copied().collect::<Vec<_>>()
+            );
+        }
     }
 }
