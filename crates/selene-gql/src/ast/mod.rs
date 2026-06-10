@@ -33,7 +33,10 @@ pub use pattern::{
     EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern,
     PathMode, PathSelector, PatternElement, Quantifier,
 };
-pub use selene_core::{DecimalType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE};
+pub use selene_core::{
+    DecimalType, MAX_BYTE_STRING_TYPE_LENGTH, MAX_CHARACTER_STRING_TYPE_LENGTH,
+    MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE,
+};
 pub use span::SourceSpan;
 pub use statement::{
     LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,

@@ -43,13 +43,15 @@ pub mod value;
 pub mod vector;
 pub mod vector_index;
 
-pub use byte_string_type::{ByteStringType, byte_string_fits_type};
+pub use byte_string_type::{ByteStringType, MAX_BYTE_STRING_TYPE_LENGTH, byte_string_fits_type};
 pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken};
 pub use change_kind::ChangeKind;
 pub use changeset::{
     Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
 };
-pub use character_string_type::{CharacterStringType, character_string_fits_type};
+pub use character_string_type::{
+    CharacterStringType, MAX_CHARACTER_STRING_TYPE_LENGTH, character_string_fits_type,
+};
 pub use db_string::{DbString, db_string};
 pub use decimal_type::{
     DecimalType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, decimal_fits_type, round_decimal_to_type,
