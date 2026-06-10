@@ -218,41 +218,40 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
         // BRIEF-153 fix-cycle C2: run property-index admission BEFORE
         // mutating row state so a cap-exhaustion error rolls back cleanly
-        // with no half-written row.
-        let new_labels = labels.clone();
-        let new_props = props.clone();
+        // with no half-written row. The index updates borrow `labels`/`props`;
+        // both move into the row stores only after every fallible step.
         {
             let graph = self.txn.guard_mut();
             crate::property_index::apply_node_update(
                 &mut graph.property_index,
                 &old_labels,
                 &old_props,
-                &new_labels,
-                &new_props,
+                &labels,
+                &props,
                 row as u32,
             )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
                 &old_labels,
                 &old_props,
-                &new_labels,
-                &new_props,
+                &labels,
+                &props,
                 row as u32,
             )?;
             crate::vector_index::apply_node_update(
                 &mut graph.vector_index,
                 &old_labels,
                 &old_props,
-                &new_labels,
-                &new_props,
+                &labels,
+                &props,
                 row as u32,
             )?;
             crate::text_index::apply_node_update(
                 &mut graph.text_index,
                 &old_labels,
                 &old_props,
-                &new_labels,
-                &new_props,
+                &labels,
+                &props,
                 row as u32,
                 id,
             );

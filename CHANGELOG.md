@@ -580,6 +580,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Performance
 
+- **Write transactions share the frozen provider registry.** `SharedGraph`
+  freezes its fixed index-provider registry into one shared allocation at
+  construction; `begin_write` now hands it to each transaction with a
+  refcount bump instead of cloning a `Vec` per transaction, and
+  `update_node` no longer clones the new label set and property map a third
+  time for index admission. In-memory mixed-workload update rows improved
+  −1.4 % to −4 % at 50k/100k (`graph_mixed_workload/*update_r60w40`,
+  full profile); durable-WAL rows are unchanged. New
+  `write_txn_lifecycle/graph_clone` and `begin_rollback` attribution rows
+  decompose the empty-commit floor (see `BENCHMARKS.md` §3a).
 - **`DbString` clones share storage.** `DbString` — the engine string type
   behind GQL string values, graph labels, property keys, aliases, and
   procedure-name segments — now backs its content with `Arc<str>`, so cloning

@@ -44,7 +44,10 @@ pub struct SharedGraph {
     snapshot: Arc<ArcSwap<SeleneGraph>>,
     schema_version: Arc<AtomicU64>,
     allocator: Arc<Mutex<IdAllocator>>,
-    providers: Vec<Arc<dyn IndexProvider>>,
+    /// Fixed provider registry, frozen at construction. Shared as one
+    /// allocation so `begin_write` hands the registry to each transaction
+    /// with a single refcount bump instead of a per-transaction `Vec` clone.
+    providers: Arc<[Arc<dyn IndexProvider>]>,
     durable_providers: Vec<Arc<dyn DurableProvider>>,
     /// The single per-graph committer thread; sole publisher of `snapshot`.
     /// Dropped last via [`SharedGraph`]'s implicit drop order, which joins the
@@ -214,6 +217,9 @@ impl SharedGraph {
         batching: CommitBatching,
     ) -> GraphResult<Self> {
         validate_unique_provider_tags(&providers)?;
+        // Freeze the registry into one shared allocation: the committer and
+        // every `begin_write` transaction clone the `Arc`, not the `Vec`.
+        let providers: Arc<[Arc<dyn IndexProvider>]> = providers.into();
         let mut graph = graph;
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
@@ -257,7 +263,7 @@ impl SharedGraph {
             crate::committer::CommitterThread::spawn(crate::committer::CommitterHandles {
                 snapshot: Arc::clone(&snapshot),
                 schema_version: Arc::clone(&schema_version),
-                providers: providers.clone(),
+                providers: Arc::clone(&providers),
                 durable_providers: durable_providers.clone(),
                 batching,
             });
@@ -719,7 +725,7 @@ impl SharedGraph {
             self.shared.write(),
             self.committer.handle(),
             self.allocator.lock(),
-            self.providers.clone(),
+            Arc::clone(&self.providers),
         )
     }
 

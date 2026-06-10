@@ -153,8 +153,9 @@ pub(crate) struct CommitterHandles {
     pub(crate) snapshot: Arc<ArcSwap<SeleneGraph>>,
     /// Plan-cache schema epoch, bumped strictly after `snapshot.store`.
     pub(crate) schema_version: Arc<AtomicU64>,
-    /// Fan-out (no-op in production) providers.
-    pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
+    /// Fan-out (no-op in production) providers. Shares the construction-time
+    /// frozen registry allocation with [`crate::SharedGraph`].
+    pub(crate) providers: Arc<[Arc<dyn IndexProvider>]>,
     /// Commit-critical durable providers (WAL). The committer is their sole
     /// `write_commit`/`flush` caller, which is what makes the BRIEF 2
     /// `OnFlushOnly` toggle committer-exclusive.
