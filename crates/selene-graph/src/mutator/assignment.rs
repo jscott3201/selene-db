@@ -5,8 +5,9 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use selene_core::{
-    ByteStringType, CharacterStringType, DbString, DecimalType, LabelSet, NodeId, PropertyDiff,
-    PropertyMap, PropertyValueType, Value, db_string, round_decimal_to_type,
+    ByteStringType, CharacterStringCoercionError, CharacterStringType, DbString, DecimalType,
+    LabelSet, NodeId, PropertyDiff, PropertyMap, PropertyValueType, Value,
+    coerce_character_string_to_type, db_string, round_decimal_to_type,
 };
 
 use crate::error::{GraphError, GraphResult, StoreAssignmentError, StoreAssignmentException};
@@ -270,41 +271,30 @@ fn coerce_character_string(
     let Value::String(value) = value else {
         return Ok(value);
     };
-    let mut chars = value.as_str().chars().collect::<Vec<_>>();
-    let len = u64::try_from(chars.len()).map_err(|_| {
+    // The shared core coercion keeps store assignment on the same IV023
+    // space-only truncation policy as character CAST and DEFAULT descriptor
+    // coercion.
+    let coerced = coerce_character_string_to_type(value.as_str(), target).map_err(|err| {
+        let detail = match err {
+            CharacterStringCoercionError::SourceLengthOverflow => {
+                "character string source length exceeds supported range"
+            }
+            CharacterStringCoercionError::TargetMinOverflow => {
+                "character string target minimum length exceeds supported range"
+            }
+            CharacterStringCoercionError::TargetMaxOverflow => {
+                "character string target maximum length exceeds supported range"
+            }
+            CharacterStringCoercionError::NonSpaceTruncation => {
+                "character string assignment would truncate non-space trailing characters"
+            }
+        };
         assignment_error(
-            property.clone(),
+            property,
             StoreAssignmentException::StringDataRightTruncation,
-            "character string source length exceeds supported range",
+            detail,
         )
     })?;
-    if len > target.max_len {
-        let max_len = usize::try_from(target.max_len).map_err(|_| {
-            assignment_error(
-                property.clone(),
-                StoreAssignmentException::StringDataRightTruncation,
-                "character string target maximum length exceeds supported range",
-            )
-        })?;
-        if chars[max_len..].iter().any(|ch| *ch != ' ') {
-            return Err(assignment_error(
-                property,
-                StoreAssignmentException::StringDataRightTruncation,
-                "character string assignment would truncate non-space trailing characters",
-            ));
-        }
-        chars.truncate(max_len);
-    } else if len < target.min_len {
-        let min_len = usize::try_from(target.min_len).map_err(|_| {
-            assignment_error(
-                property.clone(),
-                StoreAssignmentException::StringDataRightTruncation,
-                "character string target minimum length exceeds supported range",
-            )
-        })?;
-        chars.resize(min_len, ' ');
-    }
-    let coerced = chars.into_iter().collect::<String>();
     db_string(&coerced)
         .map(Value::String)
         .map_err(GraphError::Core)

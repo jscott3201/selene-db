@@ -270,12 +270,15 @@ fn folded_string_concat(lhs: &str, rhs: &str, caps: &ImplDefinedCaps) -> Option<
     if char_count <= max_chars {
         return Some(value);
     }
+    // Mirror of the runtime concatenation overflow rule: only the shared
+    // IV023 truncating whitespace subset (U+0020) may fold away; anything
+    // else stays unfolded so the runtime raises 22001.
     let overflow_chars = char_count - max_chars;
     value
         .chars()
         .rev()
         .take(overflow_chars)
-        .all(char::is_whitespace)
+        .all(selene_core::is_truncating_whitespace)
         .then(|| value.chars().take(max_chars).collect())
 }
 

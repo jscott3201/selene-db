@@ -113,6 +113,40 @@ fn string_byte_concat_folding_respects_length_caps() {
     ));
 }
 
+/// Folding mirrors the runtime IV023 `<truncating whitespace>` subset: an
+/// overflow tail folds away only when every discarded character is U+0020.
+/// Anything else must stay an unfolded `Concat` so the runtime raises 22001
+/// instead of the optimizer changing the statement's outcome.
+#[test]
+fn string_concat_folding_truncating_whitespace_is_space_only() {
+    let caps = ImplDefinedCaps::default().with_max_string_length(3);
+
+    let plan = optimized_one_with_caps("RETURN 'ab' || 'c ' AS x", &caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "abc"
+    ));
+
+    for source in [
+        r"RETURN 'ab' || 'c\t' AS x",
+        r"RETURN 'ab' || 'c\n' AS x",
+        r"RETURN 'ab' || 'c\u00A0' AS x",
+        r"RETURN 'ab' || 'c \t' AS x",
+    ] {
+        let plan = optimized_one_with_caps(source, &caps);
+        assert!(
+            matches!(
+                project_expr(&plan),
+                ValueExpr::BinaryOp {
+                    op: BinaryOp::Concat,
+                    ..
+                }
+            ),
+            "data-bearing overflow must not fold: {source}"
+        );
+    }
+}
+
 #[test]
 fn folds_temporal_literal_comparisons() {
     let plan = optimized_one("RETURN DATE '2026-05-07' < DATE '2026-05-08' AS x");

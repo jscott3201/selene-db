@@ -25,9 +25,10 @@
 //!   currently implemented explicit-cast scope (NODE / EDGE / PATH source or
 //!   any cast whose target is `NULL` / `NOTHING`).
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
-use selene_core::{DbString, JsonValue, Value};
+use selene_core::{CharacterStringCoercionError, DbString, JsonValue, Value};
 
 use crate::{
     GqlType, SourceSpan,
@@ -305,51 +306,45 @@ fn coerce_string_to_type(
     let Some(target_type) = target_type else {
         return Ok(value);
     };
-    let len = value.chars().count();
-    let len_u64 = u64::try_from(len).map_err(|_| {
-        ExecutorError::data_exception(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "character string source length exceeds supported range",
-            span,
-        )
-    })?;
-    if len_u64 >= target_type.min_len && len_u64 <= target_type.max_len {
-        return Ok(value);
-    }
-    if len_u64 < target_type.min_len {
-        let target_len = usize::try_from(target_type.min_len).map_err(|_| {
-            ExecutorError::data_exception(
+    // Parser-validated bounds (`1 <= min_len <= max_len`) satisfy the core
+    // envelope invariants by construction. The shared core coercion keeps the
+    // CAST funnel on the same IV023 space-only truncation policy as store
+    // assignment and DEFAULT descriptor coercion.
+    let target = selene_core::CharacterStringType {
+        min_len: target_type.min_len,
+        max_len: target_type.max_len,
+    };
+    let coerced = selene_core::coerce_character_string_to_type(&value, target).map_err(|err| {
+        let (subclass, detail) = match err {
+            CharacterStringCoercionError::SourceLengthOverflow => (
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "character string source length exceeds supported range",
+            ),
+            CharacterStringCoercionError::TargetMinOverflow => (
                 DataExceptionSubclass::NumericValueOutOfRange,
                 "character string target minimum length exceeds supported range",
-                span,
-            )
-        })?;
-        value.extend(std::iter::repeat_n(' ', target_len - len));
-        return Ok(value);
-    }
-
-    let max_len = usize::try_from(target_type.max_len).map_err(|_| {
-        ExecutorError::data_exception(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "character string target maximum length exceeds supported range",
-            span,
-        )
+            ),
+            CharacterStringCoercionError::TargetMaxOverflow => (
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "character string target maximum length exceeds supported range",
+            ),
+            CharacterStringCoercionError::NonSpaceTruncation => (
+                DataExceptionSubclass::StringDataRightTruncation,
+                "character string cast would truncate non-space trailing characters",
+            ),
+        };
+        ExecutorError::data_exception(subclass, detail, span)
     })?;
-    let truncate_at = value
-        .char_indices()
-        .nth(max_len)
-        .map(|(offset, _)| offset)
-        .unwrap_or(value.len());
-    let trailing = &value[truncate_at..];
-    if trailing.chars().any(|character| !character.is_whitespace()) {
-        return Err(ExecutorError::data_exception(
-            DataExceptionSubclass::StringDataRightTruncation,
-            "character string cast would truncate non-whitespace trailing characters",
-            span,
-        ));
+    match coerced {
+        Cow::Owned(coerced) => Ok(coerced),
+        Cow::Borrowed(coerced) => {
+            // A borrowed result is the whole value or a truncated prefix of
+            // it, so the rendered buffer is reused in place.
+            let keep = coerced.len();
+            value.truncate(keep);
+            Ok(value)
+        }
     }
-    value.truncate(truncate_at);
-    Ok(value)
 }
 
 fn cast_to_json(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
