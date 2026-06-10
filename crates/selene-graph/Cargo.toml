@@ -23,7 +23,10 @@ rayon.workspace = true
 smallvec.workspace = true
 triomphe.workspace = true
 serde.workspace = true
-postcard.workspace = true
+# use-std declared here (not inherited via unification with selene-persist)
+# because candidate_state.rs and core_provider/sections/codec.rs call
+# postcard::to_stdvec; a standalone `cargo check -p selene-graph` must build.
+postcard = { workspace = true, features = ["use-std"] }
 rkyv.workspace = true
 rust_decimal.workspace = true
 thiserror.workspace = true
