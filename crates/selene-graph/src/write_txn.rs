@@ -124,9 +124,10 @@ pub struct WriteTxn<'g> {
     pub(crate) pre_txn: Option<Arc<SeleneGraph>>,
     pub(crate) allocator: MutexGuard<'g, IdAllocator>,
     /// Index-provider registry, retained so `Mutator::index_provider_by_tag`
-    /// can resolve a provider during execution. The committer holds its own
-    /// clone for fan-out; this is the execution-time lookup copy.
-    pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
+    /// can resolve a provider during execution. Shares the one frozen
+    /// registry allocation with `SharedGraph` and the committer — handing it
+    /// to a transaction is a refcount bump, not a `Vec` clone.
+    pub(crate) providers: Arc<[Arc<dyn IndexProvider>]>,
     pub(crate) changes: Vec<Change>,
     /// Per-truncate per-row tombstone expansions, keyed by the index of the
     /// declarative truncate change in [`Self::changes`] that produced them.
@@ -148,7 +149,7 @@ impl<'g> WriteTxn<'g> {
         guard: RwLockWriteGuard<'g, Arc<SeleneGraph>>,
         committer: Committer,
         allocator: MutexGuard<'g, IdAllocator>,
-        providers: Vec<Arc<dyn IndexProvider>>,
+        providers: Arc<[Arc<dyn IndexProvider>]>,
     ) -> Self {
         let pre_txn = Some(Arc::clone(&*guard));
         Self {
