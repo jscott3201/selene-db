@@ -107,5 +107,9 @@ harness = false
 name = "correlated_subquery"
 harness = false
 
+[[bench]]
+name = "read_pipeline"
+harness = false
+
 [lints]
 workspace = true
