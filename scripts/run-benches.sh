@@ -90,6 +90,7 @@ selene-gql|write_e2e|1
 selene-gql|expression_eval|0
 selene-gql|procedure_call_repeat|0
 selene-gql|correlated_subquery|0
+selene-gql|read_pipeline|0
 selene-algorithms|algo_bench|0
 selene-algorithms|projection|0
 selene-algorithms|vector_graph_retrieval|0
