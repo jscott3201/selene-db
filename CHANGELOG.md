@@ -11,9 +11,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Current-datetime keyword forms (ISO §20.27).** The parser now accepts bare
   `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCAL_TIMESTAMP`, and
   `LOCAL_TIME` value functions, plus the ISO optional `LOCAL_TIME()` spelling.
-  These forms lower into the same niladic temporal evaluators as the existing
-  call spellings, preserving request-stable timestamps and session time-zone
-  semantics. The constructor call forms `DATE([string])`,
+  These forms lower into the shared niladic temporal evaluators, preserving
+  request-stable timestamps and session time-zone semantics. (The non-ISO
+  compact `localtimestamp()` / `localtime()` call aliases are removed later
+  in this cycle — see **Removed**.) The constructor call forms `DATE([string])`,
   `ZONED_TIME([string])`, `ZONED_DATETIME([string])`, `LOCAL_TIME([string])`,
   and `LOCAL_DATETIME([string])` also execute for niladic/current values and
   string-parameter temporal parsing. They now also accept record-constructor
@@ -109,6 +110,224 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shape that returns `42N01` `FEATURE_NOT_SUPPORTED`; it and full multi-label key
   label sets are deferred to v1.3. `GG21` re-enters `SUPPORTED_FEATURES`; it
   implies `GG02` (§24.7), which stays claimed.
+- **Temporal instant duration arithmetic (ISO §20.26) and `DURATION_BETWEEN`
+  qualifiers (ISO §20.28).** `<temporal> + <duration>`, `<duration> +
+  <temporal>`, and `<temporal> - <duration>` now analyze and execute for the
+  `ZONED DATETIME`, `LOCAL DATETIME`, `DATE`, `ZONED TIME`, and `LOCAL TIME`
+  instant families: the result keeps the temporal operand's type, zoned
+  results preserve their offset, `NULL` propagates, and out-of-range results
+  report `22003`. `DURATION_BETWEEN(<temporal>, <temporal>)` now also accepts
+  the explicit `YEAR TO MONTH` and `DAY TO SECOND` temporal duration
+  qualifiers; an omitted qualifier still defaults to `DAY TO SECOND`,
+  `YEAR TO MONTH` executes for date and datetime instant pairs and returns
+  year-month durations, and non-comparable instant operands report `22G03`.
+- **Qualified duration types (ISO §18.9).** `DURATION (YEAR TO MONTH)` and
+  `DURATION (DAY TO SECOND)` are now first-class duration type names wherever
+  value types appear: typed parameters, `CAST` targets, `IS TYPED`, property
+  declarations, `LIST` element types, `RECORD` field types, and property
+  defaults. The qualified property value types are durable schema metadata:
+  `SHOW NODE TYPES` renders them and they survive catalog WAL replay and
+  snapshot recovery. Value-family conformance is enforced end to end — a
+  qualified type admits only durations whose non-zero fields stay in its
+  year/month or day/time unit group (the zero duration conforms to both),
+  `CAST` to a qualified duration target validates the family, mismatched
+  property writes are rejected at commit, mismatched `DEFAULT` literals
+  report `22G03`, and typed parameters reject the wrong family.
+- **Nested open `RECORD` fields (ISO §18.9).** Closed `RECORD { ... }`
+  property types may now declare nested open/bare `RECORD` fields and
+  `LIST<RECORD>` field element types instead of rejecting them as
+  unsupported. The open marker is preserved through the whole default-value
+  contract: `SHOW NODE TYPES` renders the field as `RECORD` and the rendered
+  DDL round-trips through the parser, `DEFAULT` record literals for open
+  nested fields validate recursively while preserving source field names,
+  graph type validation rejects non-record values for open nested fields at
+  commit (`G2000`), and the field descriptors persist through GTYP snapshot
+  sections and WAL replay.
+- **`LABELS` value function.** `LABELS(<element>)` now parses as a keyword
+  value function and executes for graph element references: a node reference
+  returns its canonical sorted label list, an edge reference returns its
+  singleton edge-label list, `NULL` propagates, a stale element reference
+  returns an empty list, and non-element arguments report `22G03`.
+- **Path value construction and concatenation (GE06, ISO §20.14 / §20.13).**
+  The `PATH[...]` value constructor now parses as a dedicated expression,
+  analyzes to `PATH`, and constructs native path values from alternating
+  node, edge, node, ... element references: each step must identify a live
+  forward or reverse traversal of the named edge, and null, stale,
+  non-adjacent, or mis-alternating elements report malformed path (`22G0Z`,
+  newly mapped per ISO §23.1 Table 8) while statically known non-reference
+  elements reject with `22G03`. `GE06` "Path value construction" enters
+  `SUPPORTED_FEATURES`. Path concatenation `<path> || <path>` analyzes to
+  `PATH` and merges connected paths: the left path's end node must be the
+  right path's start node in the same graph (`22G0Z` otherwise), `NULL`
+  propagates, single-node paths concatenate, and results longer than
+  `ImplDefinedCaps::max_path_length` report the spec path-data
+  right-truncation status (`22G10`). Concatenation operands are also
+  statically typed now: `||` rejects statically known operands that are not
+  strings, byte strings, lists, or paths during analysis.
+- **Implementation-defined result-size caps enforced (ISO Annex B
+  IL013/IL015, §20.23/§20.24).** Companion to the CAPS-IL surface above: the
+  `ImplDefinedCaps` limit set gains `max_string_length` /
+  `max_byte_string_length` (IL013, both defaulting to `2^32 − 1`) and
+  `max_list_length` (IL015, defaulting to 1,000,000 elements), each with a
+  `with_max_*` builder and settable through the same
+  `Session::with_impl_defined_caps(caps)` route. The caps are now enforced at
+  the runtime result producers:
+  - **List literals and list `||` concatenation** whose result exceeds
+    `max_list_length` raise the newly mapped GQLSTATUS `22G0B` *list data,
+    right truncation* (§23.1 Table 8). The 1,000,000-element default is a new
+    bound — list construction was previously unbounded — so an over-cap list
+    now rejects unless the embedder raises the cap.
+  - **Character-string and byte-string `||`** results exceeding their caps
+    raise the newly mapped `22001` *string data, right truncation*, with the
+    ISO padding-only escape: an overflow consisting entirely of trailing
+    U+0020 SPACE (character strings) or `0x00` bytes (byte strings) is silently
+    truncated to the cap instead of raising. Character concat results are also
+    NFC-normalized when both operands are NFC, matching the `UPPER`/`LOWER`
+    fold-normalization rule, and an over-long produced string now reports the
+    precise `22001` instead of the former generic invalid-value-type data
+    exception.
+  - **Produced string-function results** — `NORMALIZE`, `UPPER`, and `LOWER`
+    (§20.24) — honor `max_string_length` with the same `22001` boundary.
+  - **Constant folding respects the caps**: a literal concat whose result
+    would exceed a cap is folded only when the overflow is padding-only (the
+    fold emits the truncated literal); otherwise it is left unfolded so the
+    runtime raises the cap error rather than the optimizer changing outcomes.
+  End-to-end tests pin the `Session::with_impl_defined_caps` route into the
+  character-string, byte-string, list, and path runtime producers, and the
+  Annex B IL013/IL015 register entries now document the session-configurable
+  result caps and their defaults alongside the stored-value bounds.
+- **`TIME` / `DATETIME` value function names (GV39/GV40, ISO §20.27).**
+  `TIME([string|record])` and `DATETIME([string|record])` now construct local
+  time and local datetime values through the same evaluators as
+  `LOCAL_TIME(...)` and `LOCAL_DATETIME(...)`, including niladic current
+  values on the shared request timestamp, string-parameter parsing, and
+  record-constructor parameters. The conformance flagger now records the
+  temporal-type features for the whole datetime value function family:
+  date/local-time/local-datetime constructor names stamp `GV39`, and zoned
+  time/zoned datetime names (plus `CURRENT_TIME` / `CURRENT_TIMESTAMP`) stamp
+  `GV40`.
+- **INSERT label conjunctions and label-cardinality statuses (ISO §23.1
+  Table 8 / IL001).** Runtime `INSERT` now accepts node label conjunctions
+  such as `INSERT (:Person&Customer)`, creating one node that carries every
+  conjoined label in both stored labels and the emitted change set.
+  Disjunction, negation, and wildcard node label forms, richer edge
+  label-expression forms, and undirected edge `INSERT` stay on their existing
+  unsupported/error paths. Edge-label cardinality violations now report the
+  spec's own statuses under the `IL001` exactly-one-edge-label capability: an
+  unlabeled `INSERT ()-[]->()` reports `22G0Q` (below supported minimum) and
+  a conjunction such as `INSERT ()-[:A&B]->()` reports `22G0R` (exceeds
+  supported maximum), replacing the previous internal-error and generic
+  `42N01` paths. The full Table 8 label-cardinality family
+  `22G0N`/`22G0P`/`22G0Q`/`22G0R` is now defined in the GQLSTATUS table.
+- **Exact-numeric list TRIM counts and JSON array indexes (ISO §20.16 /
+  implementation-defined JSON).** Count and array-index argument positions
+  now accept the full exact-numeric family. `TRIM(<list>, <count>)` accepts
+  integral `DECIMAL` counts; fractional decimal counts report `22G03` and
+  negative or over-cardinality integral decimal counts report `22G0C`,
+  exactly like the integer forms. The JSON variadic selector functions
+  (`json_get`, `json_get_text`, `json_get_scalar`, `json_get_path`,
+  `json_get_path_text`, `json_get_path_scalar`, and `json_has_path`) accept
+  `INT128`, `UINT128`, and integral `DECIMAL` array indexes, including
+  negative indexes counting from the end; fractional decimal indexes report
+  `22G03`, and out-of-range indexes behave as absent paths (SQL `NULL`
+  selections, `false` existence) instead of erroring. JSON path-document
+  selector arrays remain JSON-number driven and are intentionally unchanged.
+- **Typed property-index coverage grows from 6 to 16 value kinds.** Durable
+  `(label, property)` typed property indexes — including composite indexes,
+  catalog index DDL, inline `INDEXED` declarations, and procedure-created
+  indexes — now cover `BOOLEAN`, unsigned integers
+  (`UINT8`/`UINT16`/`UINT32`/`UINT64`), wide exact numerics (`INT128`,
+  `UINT128`, `DECIMAL`), `FLOAT32`, the directly ordered temporal time types
+  (`ZONED DATETIME`, `LOCAL TIME`, `ZONED TIME`), and durations (`DURATION`,
+  `DURATION (YEAR TO MONTH)`, `DURATION (DAY TO SECOND)`), joining the
+  existing string, signed-integer, float, date, local-datetime, and UUID
+  families. Each new family participates in optimizer/runtime typed
+  equality and range probes (including decimal literal probes and strict
+  `FLOAT32` typed-parameter probes), deep verify, and WAL/snapshot recovery,
+  with shared duration ordering for duration keys. Generic `FLOAT` typed
+  parameters intentionally remain linear-scan fallbacks because they can bind
+  either `FLOAT` or `FLOAT32` values.
+- **Aggregate set quantifiers — percentile `DISTINCT` and explicit `ALL`
+  (ISO §20.9).** `PERCENTILE_CONT(DISTINCT x, p)` and
+  `PERCENTILE_DISC(DISTINCT x, p)` now parse and execute, de-duplicating the
+  dependent value expression before the percentile computation; wide exact
+  dependent values (`UINT64`, `INT128`, `UINT128`, `DECIMAL`) are accepted
+  through percentile-specific numeric conversion, with `22003` for a
+  `DECIMAL` outside the float range. The explicit `ALL` set quantifier now
+  parses on both general and binary aggregates — `SUM(ALL x)`,
+  `COUNT(ALL x)`, `COLLECT_LIST(ALL x)`, `PERCENTILE_CONT(ALL x, p)` —
+  executing as the explicit no-deduplication form, while `COUNT(ALL *)` and
+  `COUNT(DISTINCT *)` remain syntax errors.
+- **Value-type descriptors — numeric precision/scale, bounded strings, and
+  nullability (ISO §18.9 `<value type>`).** The value-type surface now
+  accepts the ISO descriptor and synonym forms uniformly across the
+  parser/formatter, `IS [NOT] TYPED`, typed parameters, explicit `CAST`,
+  conformance flagging, and property declarations:
+  - **Floating-point synonyms (GV23).** `REAL`, `DOUBLE`, and
+    `DOUBLE PRECISION` resolve to the `FLOAT32`/`FLOAT64` value model while
+    preserving the original spelling through formatting and flagging.
+  - **Verbose exact-numeric names.** `INTEGER8`…`INTEGER128`,
+    `SIGNED INTEGER8`…`SIGNED INTEGER128`, `SMALL INTEGER`, `BIG INTEGER`,
+    `UNSIGNED INTEGER8`…`UNSIGNED INTEGER128`, `USMALLINT`, `UBIGINT`, and
+    `UINT` now parse and stamp the matching GV01–GV14 exact-number features;
+    256-bit spellings still reject as the deferred GV15/GV16 features.
+  - **Specified integer precision (GV09).** `INT(p)`, `INTEGER(p)`,
+    `SIGNED INTEGER(p)`, `UINT(p)`, and `UNSIGNED INTEGER(p)` normalize to
+    the narrowest supported width (`INT8`…`INT128` / `UINT8`…`UINT128`);
+    precisions that would need `INT256`/`UINT256` reject as deferred.
+  - **Specified float precision and scale (GV22).** `FLOAT(p)` and
+    `FLOAT(p, s)` normalize to `FLOAT32` (precision ≤ 23, scale ≤ 7) or
+    `FLOAT64` (precision ≤ 52, scale ≤ 10); wider requests reject as the
+    deferred `FLOAT128`/`FLOAT256` features (GV25/GV26).
+  - **Decimal precision and scale (GV17).** `DECIMAL(p)`, `DECIMAL(p, s)`,
+    and the `DEC` spelling, with precision capped at 29 digits and
+    scale ≤ precision; a value that cannot be represented in the declared
+    envelope after scale conversion raises `22003`.
+  - **Bounded byte strings (GV36/GV37/GV38).** `BYTES(max)`,
+    `BYTES(min, max)`, `BINARY(n)`, and `VARBINARY(n)`. Casts pad short
+    values with zero bytes up to a declared minimum and truncate only zero
+    trailing bytes down to the maximum, raising `22001` when non-zero bytes
+    would be discarded.
+  - **Character-string length types (GV30/GV31/GV32).** `STRING(max)`,
+    `STRING(min, max)`, `CHAR[(n)]`, and `VARCHAR[(n)]`. Casts pad under-min
+    strings with spaces and truncate only trailing pad spaces, raising
+    `22001` otherwise; character length is Unicode scalar-value count, and
+    `DbString` keeps the existing storage cap.
+  - **Explicit value-type nullability (GV90).** `<value type> NOT NULL` on
+    `IS TYPED` targets, typed parameters (`$p :: STRING NOT NULL`), `CAST`
+    targets (a `NULL` result is rejected), `LIMIT`/`OFFSET` parameters, and
+    property declarations, including nested `LIST<T NOT NULL>` elements and
+    `RECORD { f :: T NOT NULL }` fields.
+- **Durable typed-descriptor property schemas (ISO §18.7/§18.9).** The new
+  descriptor families are durable graph-schema state, not parse-time sugar:
+  `DECIMAL(p, s)`, bounded `BYTES`/`BINARY`/`VARBINARY`, character-string
+  lengths, and nested `NOT NULL` nullability persist on top-level
+  properties, `LIST` element types, and `RECORD` field types through catalog
+  DDL, `DEFAULT` validation, type-validator enforcement on writes (a
+  `NOT NULL` list element or record field rejects `NULL` while a nullable
+  one accepts it), WAL replay, GTYP snapshot sections, core serde
+  round-trips, and `SHOW NODE TYPES` rendering. `EXTENDS` descriptor
+  equality compares the full descriptor, so a child type redeclaring a
+  property with a different length or precision envelope is rejected. WAL
+  decoding validates that descriptor metadata matches the declared property
+  type, and schemas carrying these descriptors survive snapshot + WAL
+  recovery round-trips.
+- **Store-assignment and `DEFAULT` descriptor coercion (ISO §22.10).**
+  `INSERT` and `SET` now route node and edge property values through a
+  store-assignment coercion funnel in the graph mutator before storing:
+  character strings pad with spaces up to a declared minimum and truncate
+  only trailing pad spaces (the implementation-defined IV023 space-only
+  truncating-whitespace subset), byte strings pad with zero bytes and
+  truncate only zero trailing bytes, and decimals convert to the declared
+  scale when the value remains representable, rounding fractional digits.
+  An assignment that would discard non-space characters or non-zero bytes
+  raises `22001` (string data, right truncation) and a decimal outside the
+  declared precision raises `22003` (numeric value out of range), each
+  naming the offending property. Schema `DEFAULT` clauses pass through the
+  same coercion at DDL time: top-level, list-element, and record-field
+  defaults are canonicalized to the declared descriptor
+  (`DECIMAL(5, 2) DEFAULT 123.456` stores `123.46`) or rejected with a
+  `DEFAULT`-specific validation error, so `SHOW` renders the coerced value.
 
 ### Changed
 
@@ -117,8 +336,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CARDINALITY(<list>)`. `CARDINALITY(...)` remains the broader cardinality
   expression for binding tables, paths, lists, and records.
 - **ISO §20.27 current-datetime request timestamp.** `current_timestamp()`,
-  `current_time()`, `current_date()`, `localtimestamp()`, and `localtime()` now
-  share one request timestamp captured on the statement `TxContext` instead of
+  `current_time()`, `current_date()`, and the local datetime/time
+  current-value evaluators now share one request timestamp captured on the
+  statement `TxContext` instead of
   re-reading the wall clock on each scalar-function call. Temporal casts that
   need the current session date use the same captured request timestamp.
 - **Conformance-honesty: feature-ID corrections (CONFORMANCE-00).** Three
@@ -157,6 +377,93 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     (`.github/scripts/check-no-version-locked-feature-error.sh`) forbids the old
     variant name and version-locked "not supported in vX" message strings from
     returning.
+- **`ELEMENT_ID` operand boundary (G100, ISO §20.10).** The single-argument
+  `ELEMENT_ID(...)` form now requires a singleton node or edge element
+  variable reference and is typed during analysis: conforming calls infer
+  `STRING`, while `NULL` literals, non-element values, property references,
+  and list-valued arguments are rejected at analysis time as invalid
+  references (`42002`) instead of deferring to runtime. This is stricter
+  than before — `ELEMENT_ID(NULL)` previously returned `NULL` and
+  non-element arguments previously failed at runtime with `22G03`; per the
+  ISO `<element_id function>` operand rule both are now analysis errors.
+  Wrong arity still follows the scalar-function arity path.
+- **Exact and approximate numeric literals (GL04-GL10, ISO §21.2).** Numeric
+  literals now follow the ISO exact/approximate source-form split. **This is a
+  breaking change to literal typing:** unsuffixed common-notation literals
+  such as `1.25` now produce exact `DECIMAL` values instead of approximate
+  `FLOAT` (`1.25 IS TYPED DECIMAL` is true); spell the literal with an
+  `F`/`D` suffix or scientific notation to keep an approximate `FLOAT`. Newly
+  accepted spellings: leading/trailing-dot common notation (`.25`, `1.`), the
+  exact-number suffix `M`/`m` on integer, common, and scientific forms (`1M`,
+  `1.25m`, `1e2M` — all `DECIMAL`), integer-mantissa scientific notation
+  (`1e2`), suffixed decimal integers (`1F`, `1D`), and uppercase `F`/`D`
+  suffixes per the ISO suffix case rule. Unsuffixed scientific notation stays
+  approximate `FLOAT`, and an `F`/`D` suffix forces an approximate literal
+  across integer, common, and scientific source forms. Each literal's source
+  spelling class is carried through the AST so the conformance flagger stamps
+  the matching Annex feature, and `GL04`-`GL10` enter `SUPPORTED_FEATURES`.
+- **TRIM default trim characters and explicit-form strictness (ISO §20.24 /
+  §20.25, GF07).** One-argument `TRIM(<string>)` now trims only the space
+  character (`U+0020`) by default, matching the ISO `TRIM(BOTH ' ' FROM src)`
+  equivalence; tabs, newlines, and other whitespace are preserved unless
+  explicitly listed as trim characters. One-argument `TRIM(<bytes>)` now
+  defaults the trim byte to `X'20'` instead of rejecting byte strings, and
+  statically byte-shaped calls record `GF07`. The explicit form
+  `TRIM(FROM src)` with neither a trim specification nor a trim character is
+  now a syntax error per the ISO syntax rule — `TRIM(BOTH FROM src)` and
+  `TRIM(ch FROM src)` remain valid — and formatted output serializes
+  default-character trims as parseable `TRIM(BOTH FROM src)`.
+- **COALESCE arity (ISO §20.7).** `COALESCE(...)` now requires at least two
+  value expressions, per the ISO `<case abbreviation>` syntax; a one-argument
+  call rejects with the scalar arity status `22G03`. Two-or-more-argument
+  `COALESCE` and `NULLIF` behavior is unchanged.
+- **Numeric value function result types — `POWER` and `MOD` (ISO §20.22).**
+  `POWER` now consistently returns the implementation-defined approximate
+  numeric result: the former exact integer-by-integer fast path is removed,
+  so `power(2, 3)` returns the `FLOAT` `8.0` rather than the exact integer
+  `8`, static type inference resolves `POWER` to `FLOAT`, and the existing
+  invalid-power and overflow statuses are unchanged. The `MOD` scalar
+  function now projects its remainder into the divisor's numeric family
+  (signed and unsigned 64-/128-bit integers, `FLOAT`, `FLOAT32`, `DECIMAL`),
+  preserving `NULL` propagation and the division-by-zero,
+  non-numeric-operand, and negative-remainder-into-unsigned status
+  boundaries.
+- **`ProjectionCatalog::project` no longer takes a scope (breaking embedder
+  API).** The native algorithms catalog registration signature drops its
+  `scope: Option<&RoaringBitmap>` parameter — `project(snapshot, config,
+  scope)` becomes `project(snapshot, config)` — and catalog projections are
+  now unscoped by construction. The stored `ProjectionConfig` is the complete
+  rebuild recipe and carries no scope bitmap, so a scope accepted at
+  registration was a silent-widening trap: the first stale `ensure_fresh`
+  rebuild reproduced the recipe unscoped and quietly widened the projection.
+  Embedders that need a scoped, point-in-time view build it directly via
+  `GraphProjection::build(snapshot, config, scope)` outside the catalog and
+  manage its lifetime themselves. The GQL projection procedure surface is
+  unchanged (it always registered unscoped projections), and
+  `docs/graph-algorithms.md` now documents the unscoped catalog contract.
+- **Persistence format re-pin for the typed-descriptor stream (breaking).**
+  The typed-descriptor work added mid-struct `decimal_type` /
+  `character_string_type` / `byte_string_type` fields to persisted
+  property-type definitions — the rkyv `PropertyTypeDef` rows archived inside
+  snapshot `CORE/GTYP` and the postcard-encoded `ValueType` inside WAL
+  `SchemaChange::NodeTypeAddedV2` / `EdgeTypeAddedV2` payloads — plus
+  descriptor variants ahead of existing ones in the
+  `PropertyElementType` / `RecordFieldType` / `RecordFieldStructureType`
+  enums. Postcard decodes positionally (`#[serde(default)]` is a no-op) and
+  rkyv bytecheck would validate the body against the wrong archived shape, so
+  the format identity is re-pinned as a clean greenfield break:
+  `SNAPSHOT_VERSION_MINOR` 3 -> 4, `WAL_VERSION_MINOR` 1 -> 2, and the
+  section-internal `GTYP_VERSION` 1 -> 2. Pre-descriptor snapshots, WALs, and
+  GTYP payloads are rejected with a clean `UnsupportedVersion` / versioned
+  invalid-payload error instead of being mis-decoded as shifted fields or
+  variant discriminants. There is no dual decoder or migration: stores
+  written before the descriptor stream must be re-created from source data
+  under the new format.
+- **Repository home moved to Aionforge-Labs.** Workspace `repository` /
+  `homepage` Cargo metadata, the getting-started clone URL, the local-oMLX
+  client's default referer header, and the changelog compare/release links
+  now point at `https://github.com/Aionforge-Labs/selene-db` instead of the
+  personal `jscott3201` namespace.
 
 ### Removed
 
@@ -164,6 +471,170 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   no longer accepts `round(...)`; ISO §20.22 numeric value functions cover
   `ABS`, `MOD`, trigonometric/logarithmic functions, `EXP`, `POWER`, `SQRT`,
   `FLOOR`, `CEIL`, and `CEILING`, but not `ROUND`.
+- **Non-ISO aggregate aliases `AVERAGE` and `COLLECT`.** Breaking: the
+  aggregate grammar and runtime no longer accept `average(...)` or
+  `collect(...)`; the supported ISO spellings are `AVG(...)` and
+  `COLLECT_LIST(...)`. The removed names are no longer reserved keywords, so
+  they parse as ordinary function calls and reject as unsupported functions
+  with `22G03`, and they stay unattributed for the `GF10` aggregate feature.
+- **Non-ISO compact current-datetime aliases `localtimestamp()` and
+  `localtime()` (ISO §20.27).** Breaking: the compact call spellings are
+  removed from the scalar-function runtime and the feature flagger and now
+  report `22G03` unknown function. The ISO surfaces keep working:
+  `LOCAL_TIMESTAMP` lowers to the `local_datetime` current-value path,
+  `LOCAL_TIME` / `LOCAL_TIME()` lower to the `local_time` path, and the
+  constructor spellings `LOCAL_DATETIME(...)`, `DATETIME(...)`,
+  `LOCAL_TIME(...)`, and `TIME(...)` are unchanged.
+
+### Fixed
+
+- **Numeric value function result types and statuses (ISO §20.22).**
+  `ABS(<DECIMAL>)` now returns `DECIMAL` and `ABS(<FLOAT32>)` returns `FLOAT32`
+  instead of widening to approximate `FLOAT`, and `FLOOR`, `CEIL`, and
+  `CEILING` now return integral `DECIMAL` for `DECIMAL` inputs (integer inputs
+  stay exact). Because ISO §20.22 defines `SQRT(x)` as equivalent to
+  `POWER(x, 0.5)`, `SQRT` now evaluates through the shared power path: a
+  negative square-root argument reports invalid argument for power function
+  (`2201F`) instead of generic numeric value out of range (`22003`).
+- **Contextual keyword quoting in formatted identifiers.** Formatted GQL
+  output now double-quotes identifier slots (aliases, binding names, property
+  keys) whose spelling matches a contextual grammar token — `EXPLAIN`,
+  `INDEXES`, `NORMALIZE`, `PERCENTILE_CONT`, `PERCENTILE_DISC`, `PROCEDURES`,
+  `TRANSACTIONS`, and `VALUE`. These tokens are not globally reserved, so a
+  bare identifier with the same spelling still parses, but emitting it bare
+  hid the identifier role and left future grammar additions room to break
+  formatter round trips. `PERCENTILE_CONT` / `PERCENTILE_DISC` also join the
+  aggregate-operator set in call-name position, where the aggregate grammar
+  requires the bare keyword spelling.
+- **Exact-numeric substring lengths (ISO §20.24 / §20.25).** `LEFT` and
+  `RIGHT` now accept nonnegative `INT128`, `UINT128`, and integral `DECIMAL`
+  `<string length>` expressions for both character strings and byte strings,
+  instead of rejecting every exact-numeric family beyond 64-bit integers.
+  Negative lengths still report the substring error `22011`, lengths too
+  large to represent report `22003`, and fractional `DECIMAL` lengths remain
+  rejected.
+- **GQLSTATUS name-registry coverage for emitted statuses (ISO §23.1 Table
+  8).** `selene_core::gqlstatus_name(..)` now names every status the parser
+  and runtime actually emit. Ten emitted statuses were missing from the
+  symbolic registry: `22004` null-value-not-allowed, `22007`
+  invalid-datetime-format, `22009` invalid-time-zone-displacement-value,
+  `22G0F` invalid-number-of-paths-or-groups, `22G0H` invalid-duration-format,
+  `22G0Z` malformed-path, `22G10` path-data-right-truncation, `22G14`
+  incompatible-temporal-instant-unit-groups, `25000`
+  invalid-transaction-state, and `2DN01` session-closed. A cross-crate test
+  now fails if a public `GqlStatus` constant lacks a registry name, and the
+  Table 8 regression suite pins the folded code remap for every runtime
+  `DataExceptionSubclass` variant (including `22G0F`), so the name registry
+  cannot drift behind newly emitted statuses again.
+- **LIMIT/OFFSET parameter data exceptions and exact-numeric values (ISO
+  §23.1 Table 8).** Dynamic `LIMIT`/`OFFSET` parameters now follow the ISO
+  non-negative-integer rules instead of folding every bad value into a
+  generic invalid-parameter error: a `NULL` parameter reports `22004`
+  (null-value-not-allowed), a negative exact integer reports `22G02`
+  (negative-limit-value), a fractional or non-exact-numeric value reports
+  `22G03`, and an exact value outside the supported runtime range reports
+  `22003` (numeric-value-out-of-range). The accepted parameter family also
+  widens to the full exact-numeric set: dynamic `INT128`, `UINT128`, and
+  integral `DECIMAL` values now execute, including the typed parameter forms
+  `LIMIT $count :: INT128` / `:: UINT128` / `:: DECIMAL`.
+- **Nested aggregate rejection (ISO §20.9).** The analyzer now rejects an
+  aggregate function contained in another aggregate's arguments —
+  `SUM(COUNT(x))`, `SUM(ABS(COUNT(x)))`, an aggregate nested in a
+  percentile's independent argument, and `HAVING`-side nested aggregates —
+  with syntax error `42001` at analysis time, per the ISO §20.9 nesting rule.
+  This is a behavioral break: these forms previously escaped the analyzer's
+  aggregate rules. Subquery bodies intentionally keep a separate aggregate
+  scope, so an aggregate inside a subquery under an outer aggregate remains
+  legal.
+- **Honest `since_version` procedure metadata.** The `since_version` carried
+  on every built-in procedure signature and surfaced through
+  `SHOW PROCEDURES` now names the first release tag that actually shipped the
+  procedure, not the cycle its registration entry was authored in —
+  downstream consumers gate on this claim. The 40 `selene.*` built-ins that
+  ship first in v1.2.0 (vector/text/JSON search and scoring, candidate-state,
+  typed/text/vector index management, compaction, rebuilds) flip from the
+  stale `1.1.0` claim to `1.2.0`. `selene.health`, `selene.create_index`,
+  `selene.drop_index`, and the 19 `algo.*` procedures stay `1.0.0`;
+  `selene.feature_status` and `selene.verify` stay `1.1.0`. The full
+  partition is pinned by a release-history test grounded in tag evidence
+  (per-name assertions plus exact bucket counts), so adding or re-versioning
+  a procedure must consciously extend the pin.
+- **One IV023 `<truncating whitespace>` policy across funnels (ISO §21.3
+  SR 7 / §22.10).** Character CAST, INSERT/SET store assignment, `DEFAULT`
+  descriptor coercion, length-capped concatenation, and the optimizer's
+  constant-folding mirror now share a single engine-wide truncation
+  predicate: a character discarded by length-bound truncation may only be
+  U+0020 SPACE. Previously the funnels forked the policy — character CAST and
+  the concatenation cap silently discarded any trailing Unicode whitespace
+  (tabs, newlines, NBSP) while store assignment and `DEFAULT` coercion
+  accepted spaces only — so `CAST('ab\t' AS VARCHAR(2))` succeeded while
+  `SET n.p = 'ab\t'` raised `22001` for the same value. All funnels now make
+  identical accept/reject decisions: space-only tails truncate, and any other
+  discarded character raises `22001` "string data, right truncation"
+  (previously-accepted CAST/concatenation inputs with data-bearing whitespace
+  tails now reject, and the optimizer no longer folds them away). Padding
+  below `min_len` still right-pads with U+0020, and in-envelope values are
+  untouched. The shared predicate and coercion ship from `selene-core` as
+  `is_truncating_whitespace`, `coerce_character_string_to_type`, and
+  `CharacterStringCoercionError`; cross-funnel tests pin the parity.
+
+### Performance
+
+- **`DbString` clones share storage.** `DbString` — the engine string type
+  behind GQL string values, graph labels, property keys, aliases, and
+  procedure-name segments — now backs its content with `Arc<str>`, so cloning
+  shares one allocation instead of copying string bytes. Construction
+  semantics are unchanged: strings are still built owned and non-interned (no
+  process-global pool, no interning table, no small-string specialization)
+  and still guarded by the `IL013` per-string byte cap (`22G03` when
+  exceeded). Quick local A/B rows: `core_value_clone/vec_mixed_1024`
+  4.63 µs → 4.41 µs, `core_value_clone/property_map_5` 55.2 ns → 45.5 ns,
+  and `core_value_clone/property_map_from_pairs_256_reverse`
+  3.45 µs → 2.68 µs.
+- **Delta-scoped `UNIQUE` validation for normal write commits.** Commit-time
+  validation of `UNIQUE` type-property constraints now checks only the
+  commit's changed candidate values against existing unique-property state
+  for non-schema write commits; schema-changing commits keep full graph-state
+  revalidation. A write batch that leaves unique properties untouched stays
+  on the cheap delta gate: the quick 1k
+  `bound_type_validation/bound_commit_unique` row (a 100-write batch updating
+  a non-unique property under a unique declaration) improved from 349.53 µs
+  to 108.11 µs, and the new `bound_commit_unique_value_update` row validates
+  100 unique string-property updates through delta-scoped candidate conflict
+  checks in 320.91 µs instead of rebuilding all unique-property state.
+
+### Security
+
+- **Declared-length caps for bounded character and byte string types.**
+  Bounded string type names (`STRING(n)` / `STRING(min, max)` / `CHAR(n)` /
+  `VARCHAR(n)` and `BYTES(n)` / `BYTES(min, max)` / `BINARY(n)` /
+  `VARBINARY(n)`) now cap the declared length at the implementation-defined
+  maximum 2^20 (1,048,576) characters/bytes, exported from `selene-core` as
+  `MAX_CHARACTER_STRING_TYPE_LENGTH` / `MAX_BYTE_STRING_TYPE_LENGTH` — the
+  same implementation-defined-cap posture as `MAX_DECIMAL_PRECISION` and the
+  IL013 per-string byte cap. Fixed-length coercion pads values up to
+  `min_len`, so an unbounded declared length was an allocation primitive
+  reachable from read-only statements: `CAST('a' AS CHAR(<huge>))` or an
+  `IS TYPED` predicate could drive multi-gigabyte padded allocations. Over-cap
+  lengths are now rejected at parse time as a syntax error naming the
+  maximum, and the `selene-core` type constructors enforce the same bound on
+  durable schema metadata, so no downstream funnel (CAST, store assignment,
+  `DEFAULT` descriptors) can see an over-cap envelope. The worst-case
+  zero-padded byte-string allocation is bounded to 1 MiB (a few MiB for
+  character padding). Lengths at or below the cap behave exactly as before,
+  and the cap values are pinned by tests so changing them is a deliberate
+  decision.
+- **RUSTSEC-2023-0089 closed: postcard default features dropped.** The
+  workspace `postcard` dependency now sets `default-features = false`
+  (keeping `alloc`), dropping postcard's default `heapless-cas` feature — the
+  only path that pulled `heapless` 0.7 and the unmaintained
+  `atomic-polyfill` (RUSTSEC-2023-0089) plus `spin` into the dependency
+  tree. `heapless`, `hash32`, `atomic-polyfill`, `critical-section`, and
+  `spin` leave `Cargo.lock`, and `THIRDPARTY.md` attribution is regenerated
+  to match. `selene-graph` declares postcard's `use-std` feature on its own
+  dependency line (it calls `postcard::to_stdvec`) so a standalone
+  `cargo check -p selene-graph` still builds instead of riding feature
+  unification.
 
 ## [1.1.0] — 2026-05-31
 
