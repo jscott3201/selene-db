@@ -6,6 +6,16 @@
 //! so [`ProjectionCatalog::ensure_fresh`] can rebuild from the stored recipe
 //! when the underlying graph generation advances.
 //!
+//! ## Catalog projections are always unscoped
+//!
+//! The stored [`ProjectionConfig`] is the *complete* rebuild recipe, and it
+//! carries no scope bitmap. Accepting a scope at registration would silently
+//! widen the projection on the first stale rebuild, so the catalog refuses
+//! the parameter entirely: [`ProjectionCatalog::project`] always builds
+//! unscoped (spec 16 §3 E06). Callers needing a scoped, point-in-time view
+//! build one directly via [`GraphProjection::build`] and manage its lifetime
+//! themselves.
+//!
 //! ## Concurrency
 //!
 //! The catalog is `Send + Sync`. Reads (`get`, `len`, `is_empty`, `contains`,
@@ -18,7 +28,6 @@
 use std::collections::HashMap;
 
 use parking_lot::{RwLock, RwLockReadGuard};
-use roaring::RoaringBitmap;
 use selene_graph::SeleneGraph;
 
 use crate::error::AlgorithmsError;
@@ -65,13 +74,17 @@ impl ProjectionCatalog {
     /// Returns `(node_count, edge_count)`. Overwrites any existing projection
     /// of the same name — equivalent to `drop_projection(&config.name)` then
     /// build, but in one atomic write-lock acquisition.
+    ///
+    /// The projection is always **unscoped**: `config` is the complete recipe
+    /// that [`Self::ensure_fresh`] rebuilds from, and it cannot retain a scope
+    /// bitmap across rebuilds (spec 16 §3 E06). Scoped views go through
+    /// [`GraphProjection::build`] directly, outside the catalog.
     pub fn project(
         &self,
         snapshot: &SeleneGraph,
         config: &ProjectionConfig,
-        scope: Option<&RoaringBitmap>,
     ) -> Result<(usize, usize), AlgorithmsError> {
-        let projection = GraphProjection::build(snapshot, config, scope)?;
+        let projection = GraphProjection::build(snapshot, config, None)?;
         let node_count = projection.node_count();
         let edge_count = projection.edge_count();
         self.entries.write().insert(
@@ -88,9 +101,10 @@ impl ProjectionCatalog {
     ///
     /// - If absent: returns [`AlgorithmsError::NoSuchProjection`].
     /// - If present and generation matches `snapshot.meta.generation`: no-op.
-    /// - If present and generation differs: rebuild from the stored config
-    ///   (with `scope: None` — the catalog does not retain scope; see spec
-    ///   16 §3 E06).
+    /// - If present and generation differs: rebuild from the stored config.
+    ///   Because catalog projections are unscoped by construction (spec 16
+    ///   §3 E06), the rebuild reproduces exactly what [`Self::project`]
+    ///   registered, evaluated against the fresh snapshot.
     pub fn ensure_fresh(&self, snapshot: &SeleneGraph, name: &str) -> Result<(), AlgorithmsError> {
         let current_gen = snapshot.meta.generation;
 

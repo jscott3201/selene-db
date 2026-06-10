@@ -2,7 +2,7 @@
 
 use std::thread;
 
-use selene_algorithms::{AlgorithmsError, ProjectionCatalog, ProjectionConfig};
+use selene_algorithms::{AlgorithmsError, GraphProjection, ProjectionCatalog, ProjectionConfig};
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
@@ -51,7 +51,7 @@ fn catalog_project_and_get() {
     let (shared, _) = fixture_small();
     let snapshot = shared.read();
     let catalog = ProjectionCatalog::new();
-    let (n, e) = catalog.project(&snapshot, &social_config(), None).unwrap();
+    let (n, e) = catalog.project(&snapshot, &social_config()).unwrap();
     assert_eq!(n, 3);
     assert_eq!(e, 1);
     assert!(catalog.contains("social"));
@@ -68,7 +68,7 @@ fn ensure_fresh_no_op_when_generation_matches() {
     let (shared, _) = fixture_small();
     let snapshot = shared.read();
     let catalog = ProjectionCatalog::new();
-    catalog.project(&snapshot, &social_config(), None).unwrap();
+    catalog.project(&snapshot, &social_config()).unwrap();
 
     let gen_before = catalog.get("social").unwrap().generation();
     catalog
@@ -85,9 +85,7 @@ fn ensure_fresh_rebuilds_on_stale_generation() {
     let (shared, _) = fixture_small();
     let snapshot_v1 = shared.read();
     let catalog = ProjectionCatalog::new();
-    catalog
-        .project(&snapshot_v1, &social_config(), None)
-        .unwrap();
+    catalog.project(&snapshot_v1, &social_config()).unwrap();
     let gen_v1 = catalog.get("social").unwrap().generation();
     drop(snapshot_v1);
 
@@ -154,7 +152,7 @@ fn drop_projection_removes_entry() {
     let (shared, _) = fixture_small();
     let snapshot = shared.read();
     let catalog = ProjectionCatalog::new();
-    catalog.project(&snapshot, &social_config(), None).unwrap();
+    catalog.project(&snapshot, &social_config()).unwrap();
     assert!(catalog.contains("social"));
 
     assert!(catalog.drop_projection("social"));
@@ -178,7 +176,7 @@ fn project_overwrites_existing_name() {
     let catalog = ProjectionCatalog::new();
 
     // First projection: all nodes + all edges.
-    catalog.project(&snapshot, &social_config(), None).unwrap();
+    catalog.project(&snapshot, &social_config()).unwrap();
     assert_eq!(catalog.get("social").unwrap().node_count(), 3);
 
     // Same name, different shape: only Person-labelled nodes.
@@ -188,7 +186,7 @@ fn project_overwrites_existing_name() {
         edge_labels: vec![],
         weight_property: None,
     };
-    let (n, _) = catalog.project(&snapshot, &person_only, None).unwrap();
+    let (n, _) = catalog.project(&snapshot, &person_only).unwrap();
     assert_eq!(n, 2, "Person-filter yields 2 nodes");
     assert_eq!(catalog.get("social").unwrap().node_count(), 2);
     assert_eq!(catalog.len(), 1, "overwrite does not grow the catalog");
@@ -196,6 +194,85 @@ fn project_overwrites_existing_name() {
     // Sanity: names() reflects the single registered projection.
     let names = catalog.names();
     assert_eq!(names, vec!["social".to_string()]);
+}
+
+#[test]
+fn catalog_projection_matches_direct_unscoped_build() {
+    // Pins the unscoped-by-construction contract (spec 16 §3 E06): a catalog
+    // registration is exactly the direct unscoped `GraphProjection::build` of
+    // its config — the catalog has no scope channel to diverge through.
+    let (shared, _) = fixture_small();
+    let snapshot = shared.read();
+    let catalog = ProjectionCatalog::new();
+    let config = social_config();
+    catalog.project(&snapshot, &config).unwrap();
+
+    let direct = GraphProjection::build(&snapshot, &config, None).unwrap();
+    let entry = catalog.get("social").unwrap();
+    assert_eq!(entry.generation(), direct.generation());
+    assert_eq!(
+        entry.iter_nodes().collect::<Vec<_>>(),
+        direct.iter_nodes().collect::<Vec<_>>(),
+        "catalog registration equals the direct unscoped build of its config"
+    );
+    assert_eq!(entry.edge_count(), direct.edge_count());
+}
+
+#[test]
+fn stale_rebuild_reproduces_registration_recipe() {
+    // The stored `ProjectionConfig` is the complete rebuild recipe: a stale
+    // `ensure_fresh` rebuild must reproduce exactly what `project` registered,
+    // evaluated against the fresh snapshot. The old scoped `project` violated
+    // this — a `Some(scope)` registration silently widened to the unscoped
+    // node set on the first rebuild.
+    let (shared, _) = fixture_small();
+    let person_only = ProjectionConfig {
+        name: "people".to_string(),
+        node_labels: vec![db_string("Person")],
+        edge_labels: vec![],
+        weight_property: None,
+    };
+    let snapshot_v1 = shared.read();
+    let catalog = ProjectionCatalog::new();
+    catalog.project(&snapshot_v1, &person_only).unwrap();
+    assert_eq!(catalog.get("people").unwrap().node_count(), 2);
+    drop(snapshot_v1);
+
+    // Advance the generation with one node inside the label filter and one
+    // outside it, so a rebuild that drifts from the recipe in either
+    // direction (widening or narrowing) is observable.
+    let mut txn = shared.begin_write();
+    let new_person = txn
+        .mutator()
+        .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
+        .unwrap();
+    txn.mutator()
+        .create_node(LabelSet::single(db_string("Company")), PropertyMap::new())
+        .unwrap();
+    txn.commit().unwrap();
+
+    let snapshot_v2 = shared.read();
+    catalog
+        .ensure_fresh(&snapshot_v2, "people")
+        .expect("stale entry rebuilds from the stored config");
+
+    let direct = GraphProjection::build(&snapshot_v2, &person_only, None).unwrap();
+    let entry = catalog.get("people").unwrap();
+    assert_eq!(entry.generation(), snapshot_v2.meta.generation);
+    assert_eq!(
+        entry.iter_nodes().collect::<Vec<_>>(),
+        direct.iter_nodes().collect::<Vec<_>>(),
+        "rebuild equals the stored recipe evaluated at the fresh snapshot"
+    );
+    assert_eq!(
+        entry.node_count(),
+        3,
+        "new Person admitted, both Companies excluded"
+    );
+    assert!(
+        entry.contains(new_person),
+        "label-matching node created after registration is admitted on rebuild"
+    );
 }
 
 #[test]
@@ -208,9 +285,7 @@ fn concurrent_ensure_fresh_rebuild_is_race_free() {
     let (shared, _) = fixture_small();
     let snapshot_v1 = shared.read();
     let catalog = ProjectionCatalog::new();
-    catalog
-        .project(&snapshot_v1, &social_config(), None)
-        .unwrap();
+    catalog.project(&snapshot_v1, &social_config()).unwrap();
     let gen_v1 = catalog.get("social").unwrap().generation();
     drop(snapshot_v1);
 
@@ -269,7 +344,7 @@ fn concurrent_ensure_fresh_project_drop_interleave() {
     // threads by cloning the Arc.
     let snapshot = shared.read();
     let catalog = std::sync::Arc::new(ProjectionCatalog::new());
-    catalog.project(&snapshot, &social_config(), None).unwrap();
+    catalog.project(&snapshot, &social_config()).unwrap();
 
     const ITERATIONS: usize = 200;
     let mut handles = Vec::new();
@@ -295,7 +370,7 @@ fn concurrent_ensure_fresh_project_drop_interleave() {
         handles.push(thread::spawn(move || {
             for _ in 0..ITERATIONS {
                 catalog
-                    .project(&snapshot, &social_config(), None)
+                    .project(&snapshot, &social_config())
                     .expect("project always rebuilds the entry");
             }
         }));
@@ -327,11 +402,79 @@ fn concurrent_ensure_fresh_project_drop_interleave() {
 }
 
 #[test]
+fn racing_project_and_ensure_fresh_converge_on_recipe() {
+    // 16 threads race re-registration (`project`) against stale refresh
+    // (`ensure_fresh`) on one name. Because catalog projections are unscoped
+    // by construction, both operations build the same recipe and every
+    // interleave converges on a single answer: the config evaluated at the
+    // fresh snapshot. Under the old scoped API a `Some(scope)` re-registration
+    // racing an unscoped rebuild left the surviving node set dependent on
+    // write-lock ordering — this test pins that bistability out.
+    let (shared, _) = fixture_small();
+    let config = social_config();
+    let snapshot_v1 = shared.read();
+    let catalog = ProjectionCatalog::new();
+    catalog.project(&snapshot_v1, &config).unwrap();
+    drop(snapshot_v1);
+
+    // Advance the generation so ensure_fresh racers take the rebuild path.
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
+        .unwrap();
+    txn.commit().unwrap();
+
+    let snapshot_v2 = shared.read();
+    let gen_v2 = snapshot_v2.meta.generation;
+
+    const THREADS: usize = 16;
+    thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|i| {
+                let snapshot_ref = &snapshot_v2;
+                let catalog_ref = &catalog;
+                let config_ref = &config;
+                scope.spawn(move || {
+                    if i % 2 == 0 {
+                        catalog_ref
+                            .ensure_fresh(snapshot_ref, "social")
+                            .expect("ensure_fresh racer must succeed");
+                    } else {
+                        catalog_ref
+                            .project(snapshot_ref, config_ref)
+                            .expect("project racer must succeed");
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("racer thread panicked");
+        }
+    });
+
+    let direct = GraphProjection::build(&snapshot_v2, &config, None).unwrap();
+    let entry = catalog.get("social").unwrap();
+    assert_eq!(
+        entry.generation(),
+        gen_v2,
+        "every racer converges on gen_v2"
+    );
+    assert_eq!(
+        entry.iter_nodes().collect::<Vec<_>>(),
+        direct.iter_nodes().collect::<Vec<_>>(),
+        "surviving entry equals the recipe evaluated at the fresh snapshot, \
+         regardless of which racer wrote last"
+    );
+    assert_eq!(entry.node_count(), 4, "rebuilt entry sees the new node");
+    assert_eq!(catalog.len(), 1, "the catalog still holds a single entry");
+}
+
+#[test]
 fn concurrent_reads_share_projection() {
     let (shared, _) = fixture_small();
     let snapshot = shared.read();
     let catalog = ProjectionCatalog::new();
-    catalog.project(&snapshot, &social_config(), None).unwrap();
+    catalog.project(&snapshot, &social_config()).unwrap();
 
     const READER_COUNT: usize = 8;
     const ITERATIONS: usize = 64;

@@ -79,7 +79,7 @@ pub(super) fn build(
     };
     catalogs.with_catalog(snapshot.graph_id(), |catalog| {
         catalog
-            .project(snapshot, &config, None)
+            .project(snapshot, &config)
             .map_err(algorithm_error)?;
         Ok(unit_result())
     })

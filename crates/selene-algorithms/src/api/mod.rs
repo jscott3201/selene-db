@@ -121,7 +121,9 @@ impl ProjectionInfo {
 ///
 /// Returns `(node_count, edge_count)`. Overwrites any existing projection of
 /// the same name in one atomic write-lock acquisition (see
-/// [`ProjectionCatalog::project`]).
+/// [`ProjectionCatalog::project`]). Catalog projections are always unscoped:
+/// `config` is the complete recipe a stale-rebuild reproduces (spec 16 §3
+/// E06); scoped views go through [`GraphProjection::build`] directly.
 ///
 /// # Errors
 ///
@@ -131,7 +133,7 @@ pub fn projection_build(
     snapshot: &SeleneGraph,
     config: &ProjectionConfig,
 ) -> Result<(usize, usize), AlgorithmsError> {
-    catalog.project(snapshot, config, None)
+    catalog.project(snapshot, config)
 }
 
 /// Resolve and refresh a single named projection, returning its
