@@ -1130,6 +1130,6 @@ The following items are intentionally deferred and tracked for future
 - OPQ rotation inner-allocation tightening.
 - Fresh extension crates beyond `selene-vector` and `selene-algorithms`.
 
-[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.1.0
-[1.0.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.0.0
+[Unreleased]: https://github.com/Aionforge-Labs/selene-db/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/Aionforge-Labs/selene-db/releases/tag/v1.1.0
+[1.0.0]: https://github.com/Aionforge-Labs/selene-db/releases/tag/v1.0.0
