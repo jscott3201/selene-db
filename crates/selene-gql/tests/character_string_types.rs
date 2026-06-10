@@ -218,7 +218,7 @@ fn character_string_store_assignment_pads_and_truncates_whitespace() {
     assert_eq!(table.rows()[0].values(), &[Value::String(db_string("xy "))]);
 
     let err = execute("MATCH (n:Doc) SET n.title = 'toolong' FINISH", &mut session)
-        .expect_err("non-whitespace truncation errors");
+        .expect_err("non-space truncation errors");
     assert_eq!(err.gqlstatus().as_str(), "22001");
 }
 
@@ -267,6 +267,113 @@ fn character_string_defaults_are_store_assigned() {
             )]))),
         ]
     );
+}
+
+/// Cross-funnel IV023 pin: a discarded trailing character is `<truncating
+/// whitespace>` only when it is U+0020. Character CAST, INSERT/SET store
+/// assignment, and DEFAULT descriptor coercion must produce identical
+/// accept/reject decisions for the same source value; a divergence here is a
+/// per-funnel policy fork (`CAST('ab\t' AS VARCHAR(2))` succeeding while
+/// `SET n.p = 'ab\t'` raises 22001), not a tolerable difference.
+#[test]
+fn truncating_whitespace_policy_is_identical_across_funnels() {
+    // GQL escape-text suffixes appended to 'ab' against a length-2 envelope.
+    let cases: [(&str, bool); 6] = [
+        (" ", true),
+        ("  ", true),
+        (r"\t", false),
+        (r"\n", false),
+        (r"\u00A0", false),
+        // A mixed tail is rejected by its single data-bearing character even
+        // though it also contains discardable spaces.
+        (r" \t ", false),
+    ];
+
+    for (suffix, accepted) in cases {
+        // (a) Character CAST.
+        for target in ["VARCHAR(2)", "CHAR(2)"] {
+            let source = format!("RETURN CAST('ab{suffix}' AS {target}) AS value");
+            if accepted {
+                assert_eq!(
+                    first_value(&source),
+                    Value::String(db_string("ab")),
+                    "CAST AS {target} accepts space-only tail {suffix:?}"
+                );
+            } else {
+                assert_eq!(
+                    first_status(&source),
+                    "22001",
+                    "CAST AS {target} rejects data-bearing tail {suffix:?}"
+                );
+            }
+        }
+
+        // (b) INSERT and SET store assignment on a closed graph.
+        let graph = empty_closed_graph(16_206);
+        let mut session = Session::new(&graph).with_impl_defined_caps(ImplDefinedCaps::DEFAULT);
+        execute("CREATE NODE TYPE :Doc (p :: VARCHAR(2))", &mut session).expect("catalog succeeds");
+        execute("INSERT (:Doc {p: 'ok'}) FINISH", &mut session).expect("seed row inserts");
+
+        let insert = format!("INSERT (:Doc {{p: 'ab{suffix}'}}) FINISH");
+        let set = format!("MATCH (n:Doc) SET n.p = 'ab{suffix}' FINISH");
+        if accepted {
+            execute(&insert, &mut session).unwrap_or_else(|err| {
+                panic!("INSERT discards space-only tail {suffix:?}: {err:?}")
+            });
+            execute(&set, &mut session)
+                .unwrap_or_else(|err| panic!("SET discards space-only tail {suffix:?}: {err:?}"));
+            let table = rows(
+                execute("MATCH (n:Doc) RETURN n.p AS p", &mut session).expect("match succeeds"),
+            );
+            assert_eq!(table.row_count(), 2);
+            for row in table.rows() {
+                assert_eq!(
+                    row.values(),
+                    &[Value::String(db_string("ab"))],
+                    "store assignment truncates {suffix:?} to the envelope"
+                );
+            }
+        } else {
+            for source in [insert.as_str(), set.as_str()] {
+                let err = execute(source, &mut session)
+                    .expect_err("store assignment rejects data-bearing tail");
+                assert_eq!(err.gqlstatus().as_str(), "22001", "for {source}");
+            }
+            // Failed writes must not leak partial state: the seed row is
+            // unchanged and the rejected INSERT produced no row.
+            let table = rows(
+                execute("MATCH (n:Doc) RETURN n.p AS p", &mut session).expect("match succeeds"),
+            );
+            assert_eq!(table.row_count(), 1);
+            assert_eq!(table.rows()[0].values(), &[Value::String(db_string("ok"))]);
+        }
+
+        // (c) DEFAULT descriptor coercion.
+        for target in ["VARCHAR(2)", "CHAR(2)"] {
+            let graph = empty_closed_graph(16_207);
+            let mut session = Session::new(&graph).with_impl_defined_caps(ImplDefinedCaps::DEFAULT);
+            let ddl = format!("CREATE NODE TYPE :Spec (p :: {target} DEFAULT 'ab{suffix}')");
+            if accepted {
+                execute(&ddl, &mut session).unwrap_or_else(|err| {
+                    panic!("DEFAULT discards space-only tail {suffix:?}: {err:?}")
+                });
+                execute("INSERT (:Spec) FINISH", &mut session).expect("default materializes");
+                let table = rows(
+                    execute("MATCH (n:Spec) RETURN n.p AS p", &mut session)
+                        .expect("match succeeds"),
+                );
+                assert_eq!(
+                    table.rows()[0].values(),
+                    &[Value::String(db_string("ab"))],
+                    "{target} DEFAULT truncates {suffix:?} to the envelope"
+                );
+            } else {
+                let err =
+                    execute(&ddl, &mut session).expect_err("DEFAULT rejects data-bearing tail");
+                assert_eq!(err.gqlstatus().as_str(), "22001", "for {ddl}");
+            }
+        }
+    }
 }
 
 #[test]

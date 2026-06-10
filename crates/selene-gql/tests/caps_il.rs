@@ -136,6 +136,41 @@ fn session_max_string_length_cap_flows_to_runtime() {
     );
 }
 
+/// The runtime concatenation overflow rule shares the engine-wide IV023
+/// `<truncating whitespace>` subset: only U+0020 may be discarded beyond the
+/// configured cap; tab, newline, and NBSP overflow raises 22001. The CAST
+/// operand keeps the expression out of constant folding so this pins the
+/// runtime producer, not the optimizer mirror.
+#[test]
+fn session_string_cap_truncation_discards_spaces_only() {
+    let caps = ImplDefinedCaps::DEFAULT.with_max_string_length(2);
+
+    let graph = graph(9_817);
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
+    let output = session
+        .execute_source(
+            "RETURN CAST('a' AS STRING) || 'b ' AS value",
+            &EmptyProcedureRegistry,
+        )
+        .expect("space-only overflow truncates to the cap");
+    match output {
+        StatementOutput::Rows(table) => match &table.rows()[0].values()[0] {
+            selene_core::Value::String(value) => assert_eq!(value.as_str(), "ab"),
+            other => panic!("expected a string value, got {other:?}"),
+        },
+        other => panic!("expected row output, got {other:?}"),
+    }
+
+    for tail in [r"b\t", r"b\n", r"b\u00A0", r"b \t"] {
+        let source = format!("RETURN CAST('a' AS STRING) || '{tail}' AS value");
+        assert_eq!(
+            status_with_caps(&source, caps, 9_818),
+            "22001",
+            "data-bearing overflow {tail:?} must reject"
+        );
+    }
+}
+
 /// The configured byte-string cap reaches the runtime concatenation producer.
 /// This pins the session-surface half of IL013 for byte strings.
 #[test]

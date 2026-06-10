@@ -105,12 +105,14 @@ fn concat_strings(
     if char_count <= max_chars {
         return string_concat_value(&value, span);
     }
+    // Overflow beyond the cap discards only the shared IV023 truncating
+    // whitespace subset (U+0020), matching CAST/assignment/DEFAULT coercion.
     let overflow_chars = char_count - max_chars;
     if !value
         .chars()
         .rev()
         .take(overflow_chars)
-        .all(char::is_whitespace)
+        .all(selene_core::is_truncating_whitespace)
     {
         return string_truncation(
             "character-string concatenation exceeds the configured maximum length",

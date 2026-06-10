@@ -1,8 +1,8 @@
 //! Descriptor coercion for persisted property defaults.
 
 use selene_core::{
-    ByteStringType, CharacterStringType, DecimalType, PropertyValueType, Value, db_string,
-    round_decimal_to_type,
+    ByteStringType, CharacterStringCoercionError, CharacterStringType, DecimalType,
+    PropertyValueType, Value, coerce_character_string_to_type, db_string, round_decimal_to_type,
 };
 use selene_graph::{
     PropertyDefaultRecordField, PropertyDefaultValue, PropertyElementType, RecordFieldType,
@@ -166,42 +166,31 @@ fn coerce_character_string_default(
     let PropertyDefaultValue::String(value) = default else {
         return Ok(default);
     };
-    let mut chars = value.as_str().chars().collect::<Vec<_>>();
-    let len = u64::try_from(chars.len()).map_err(|_| {
+    // The shared core coercion keeps DEFAULT descriptor coercion on the same
+    // IV023 space-only truncation policy as character CAST and store
+    // assignment.
+    let coerced = coerce_character_string_to_type(value.as_str(), target).map_err(|err| {
+        let detail = match err {
+            CharacterStringCoercionError::SourceLengthOverflow => {
+                "STRING DEFAULT source length exceeds supported range"
+            }
+            CharacterStringCoercionError::TargetMinOverflow => {
+                "STRING DEFAULT target minimum length exceeds supported range"
+            }
+            CharacterStringCoercionError::TargetMaxOverflow => {
+                "STRING DEFAULT target maximum length exceeds supported range"
+            }
+            CharacterStringCoercionError::NonSpaceTruncation => {
+                "STRING DEFAULT would truncate non-space trailing characters"
+            }
+        };
         ExecutorError::data_exception(
             DataExceptionSubclass::StringDataRightTruncation,
-            "STRING DEFAULT source length exceeds supported range",
+            detail,
             span,
         )
     })?;
-    if len > target.max_len {
-        let max_len = usize::try_from(target.max_len).map_err(|_| {
-            ExecutorError::data_exception(
-                DataExceptionSubclass::StringDataRightTruncation,
-                "STRING DEFAULT target maximum length exceeds supported range",
-                span,
-            )
-        })?;
-        if chars[max_len..].iter().any(|character| *character != ' ') {
-            return Err(ExecutorError::data_exception(
-                DataExceptionSubclass::StringDataRightTruncation,
-                "STRING DEFAULT would truncate non-space trailing characters",
-                span,
-            ));
-        }
-        chars.truncate(max_len);
-    } else if len < target.min_len {
-        let min_len = usize::try_from(target.min_len).map_err(|_| {
-            ExecutorError::data_exception(
-                DataExceptionSubclass::StringDataRightTruncation,
-                "STRING DEFAULT target minimum length exceeds supported range",
-                span,
-            )
-        })?;
-        chars.resize(min_len, ' ');
-    }
-    let value = chars.into_iter().collect::<String>();
-    db_string(&value)
+    db_string(&coerced)
         .map(PropertyDefaultValue::String)
         .map_err(|err| {
             ExecutorError::data_exception(

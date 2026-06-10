@@ -50,7 +50,8 @@ pub use changeset::{
     Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
 };
 pub use character_string_type::{
-    CharacterStringType, MAX_CHARACTER_STRING_TYPE_LENGTH, character_string_fits_type,
+    CharacterStringCoercionError, CharacterStringType, MAX_CHARACTER_STRING_TYPE_LENGTH,
+    character_string_fits_type, coerce_character_string_to_type, is_truncating_whitespace,
 };
 pub use db_string::{DbString, db_string};
 pub use decimal_type::{
