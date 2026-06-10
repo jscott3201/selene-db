@@ -299,6 +299,8 @@ impl SeleneGraph {
     /// to seed the "all alive nodes" baseline of a `GraphProjection`.
     #[must_use]
     pub fn live_nodes(&self) -> &RoaringBitmap {
+        // B1: alive is Arc-shared COW state; expose the bitmap, not the Arc,
+        // so the crate boundary (selene-algorithms) is unchanged.
         &self.node_store.alive
     }
 
@@ -328,6 +330,7 @@ impl SeleneGraph {
     /// miss.
     #[must_use]
     pub fn live_edges(&self) -> &RoaringBitmap {
+        // B1: see `live_nodes` — deref the COW Arc at the boundary.
         &self.edge_store.alive
     }
 
@@ -751,7 +754,7 @@ mod tests {
         graph
             .node_id_to_row
             .insert(NodeId::new(1), RowIndex::new(0));
-        graph.node_store.alive.insert(0);
+        graph.node_store.alive_mut().insert(0);
         assert_eq!(
             graph
                 .node_labels(NodeId::new(1))

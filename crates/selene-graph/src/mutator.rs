@@ -88,7 +88,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             graph.node_store.labels.push(labels.clone());
             graph.node_store.properties.push(props.clone());
             graph.node_store.row_to_id.push(id);
-            graph.node_store.alive.insert(row);
+            graph.node_store.alive_mut().insert(row);
             // BRIEF-Item-4a: bind the external id to its row in both directions.
             // The live commit path never re-runs `rebuild_id_maps`, so the
             // `id -> row` map must be populated here. The row is remappable once
@@ -139,7 +139,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             graph.edge_store.target.push(target);
             graph.edge_store.properties.push(props.clone());
             graph.edge_store.row_to_id.push(id);
-            graph.edge_store.alive.insert(row);
+            graph.edge_store.alive_mut().insert(row);
             // BRIEF-Item-4a: bind the external edge id to its row (live path).
             graph.edge_id_to_row.insert(id, RowIndex::new(row));
             insert_index_row(&mut graph.idx_edge_label, label.clone(), row);

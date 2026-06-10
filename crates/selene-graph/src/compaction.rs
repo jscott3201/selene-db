@@ -207,8 +207,10 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         live_nodes.insert(id);
     }
     let node_len = nodes.labels.len() as u32;
+    // B1: `alive_mut` is free here — the store is freshly built, so its Arc is
+    // unique and `make_mut` never clones.
     for new_row in 0..node_len {
-        nodes.alive.insert(new_row);
+        nodes.alive_mut().insert(new_row);
     }
 
     let mut edges = EdgeStore::new();
@@ -266,8 +268,9 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         edges.row_to_id.push(id);
     }
     let edge_len = edges.label.len() as u32;
+    // B1: free `make_mut` on a freshly built store (see node loop above).
     for new_row in 0..edge_len {
-        edges.alive.insert(new_row);
+        edges.alive_mut().insert(new_row);
     }
 
     let stats = CompactionStats::from_graph(graph);

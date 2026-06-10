@@ -213,7 +213,7 @@ pub(super) fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
         }
     }
 
-    for row in &snapshot.edge_store.alive {
+    for row in snapshot.edge_store.alive.iter() {
         live_edges += 1;
         let Some(edge_id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
             issues += 1;
@@ -273,7 +273,7 @@ pub(super) fn check_edge_endpoint_liveness(snapshot: &SeleneGraph) -> CheckResul
     let mut issues = 0_usize;
     let mut checked = 0_usize;
 
-    for row in &snapshot.edge_store.alive {
+    for row in snapshot.edge_store.alive.iter() {
         checked += 1;
         let Some(edge_id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
             issues += 1;

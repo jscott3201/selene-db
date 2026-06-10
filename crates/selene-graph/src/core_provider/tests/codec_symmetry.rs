@@ -37,8 +37,8 @@ fn decode_nodes_rejects_duplicate_committed_id() {
         graph.node_store.properties.push(PropertyMap::new());
         graph.node_store.row_to_id.push(NodeId::new(5)); // DUPLICATE id
     }
-    graph.node_store.alive.insert(0);
-    graph.node_store.alive.insert(1);
+    graph.node_store.alive_mut().insert(0);
+    graph.node_store.alive_mut().insert(1);
 
     let bytes = encode_nodes(&graph).unwrap();
     let err = decode_nodes(&bytes)
@@ -63,8 +63,8 @@ fn decode_edges_rejects_duplicate_committed_id() {
         graph.edge_store.properties.push(PropertyMap::new());
         graph.edge_store.row_to_id.push(EdgeId::new(5)); // DUPLICATE id
     }
-    graph.edge_store.alive.insert(0);
-    graph.edge_store.alive.insert(1);
+    graph.edge_store.alive_mut().insert(0);
+    graph.edge_store.alive_mut().insert(1);
 
     let bytes = encode_edges(&graph).unwrap();
     let err = decode_edges(&bytes)

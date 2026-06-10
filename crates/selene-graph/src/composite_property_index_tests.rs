@@ -407,7 +407,7 @@ fn rebuild_composite_property_indexes_is_lenient_on_kind_drift() {
         (ts.clone(), Value::Int(1)),
         (location.clone(), Value::String(db_string("north").unwrap())),
     ]));
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
     graph
         .node_store
         .labels
@@ -416,7 +416,7 @@ fn rebuild_composite_property_indexes_is_lenient_on_kind_drift() {
         (ts.clone(), Value::String(db_string("wrong").unwrap())),
         (location.clone(), Value::String(db_string("south").unwrap())),
     ]));
-    graph.node_store.alive.insert(1);
+    graph.node_store.alive_mut().insert(1);
     graph.composite_property_index.insert(
         (
             label.clone(),

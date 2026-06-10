@@ -83,7 +83,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             );
             graph.node_store.labels.set(row, LabelSet::new());
             graph.node_store.properties.set(row, PropertyMap::new());
-            graph.node_store.alive.remove(row as u32);
+            graph.node_store.alive_mut().remove(row as u32);
             // BRIEF-Item-4a: KEEP the real external id in row_to_id for the now
             // dead row (and keep the id -> row map entry). A deleted id stays
             // resolvable -> its dead row -> NodeNotAlive, identically across the
@@ -251,7 +251,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .get(row)
             .ok_or(GraphError::EdgeNotFound { id })?;
         let graph = self.txn.guard_mut();
-        graph.edge_store.alive.remove(row as u32);
+        graph.edge_store.alive_mut().remove(row as u32);
         // BRIEF-Item-4a: keep the real id in row_to_id for the dead row (see
         // remove_node_row); only never-committed holes carry EdgeId::TOMBSTONE.
         remove_index_row(&mut graph.idx_edge_label, &label, row as u32);

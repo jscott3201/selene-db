@@ -512,7 +512,7 @@ fn graph_with_one_live_node() -> SeleneGraph {
         .push(LabelSet::single(db_string("cmp.live").unwrap()));
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.row_to_id.push(NodeId::new(1));
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
     graph
         .node_id_to_row
         .insert(NodeId::new(1), RowIndex::new(0));
@@ -548,7 +548,7 @@ fn compaction_rejects_edge_with_dead_endpoint() {
     graph.edge_store.target.push(NodeId::new(99)); // dead endpoint
     graph.edge_store.properties.push(PropertyMap::new());
     graph.edge_store.row_to_id.push(EdgeId::new(1));
-    graph.edge_store.alive.insert(0);
+    graph.edge_store.alive_mut().insert(0);
     graph
         .edge_id_to_row
         .insert(EdgeId::new(1), RowIndex::new(0));
@@ -574,7 +574,7 @@ fn compaction_rejects_alive_node_row_with_no_external_id() {
         .push(LabelSet::single(db_string("cmp.noid").unwrap()));
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.row_to_id.push(NodeId::TOMBSTONE); // alive but no id
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
 
     let GraphError::Inconsistent { reason } = expect_compact_inconsistent(&graph) else {
         unreachable!("helper returns only Inconsistent");
@@ -599,7 +599,7 @@ fn compaction_rejects_alive_edge_row_with_no_external_id() {
     graph.edge_store.target.push(NodeId::new(1));
     graph.edge_store.properties.push(PropertyMap::new());
     graph.edge_store.row_to_id.push(EdgeId::TOMBSTONE); // alive but no id
-    graph.edge_store.alive.insert(0);
+    graph.edge_store.alive_mut().insert(0);
 
     let GraphError::Inconsistent { reason } = expect_compact_inconsistent(&graph) else {
         unreachable!("helper returns only Inconsistent");

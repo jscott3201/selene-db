@@ -150,15 +150,15 @@ fn non_identity_map_read_paths_resolve_by_map() {
         .push(LabelSet::single(label.clone()));
     built.node_store.properties.push(PropertyMap::new());
     built.node_store.row_to_id.push(NodeId::new(8));
-    built.node_store.alive.insert(0);
-    built.node_store.alive.insert(1);
+    built.node_store.alive_mut().insert(0);
+    built.node_store.alive_mut().insert(1);
     // Row 0 -> EdgeId(3): NodeId(5) -> NodeId(8).
     built.edge_store.label.push(elabel.clone());
     built.edge_store.source.push(NodeId::new(5));
     built.edge_store.target.push(NodeId::new(8));
     built.edge_store.properties.push(PropertyMap::new());
     built.edge_store.row_to_id.push(EdgeId::new(3));
-    built.edge_store.alive.insert(0);
+    built.edge_store.alive_mut().insert(0);
     built.meta.next_node_id = 9;
     built.meta.next_edge_id = 4;
 
