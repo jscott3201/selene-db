@@ -2,7 +2,9 @@
 
 use std::hash::{Hash, Hasher};
 
-use selene_core::{DbString, DecimalType};
+use selene_core::{
+    DbString, DecimalType, MAX_BYTE_STRING_TYPE_LENGTH, MAX_CHARACTER_STRING_TYPE_LENGTH,
+};
 
 /// Parsed GQL type.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -145,10 +147,13 @@ pub enum CharacterStringTypeForm {
 }
 
 impl CharacterStringType {
-    /// Construct a character-string type when the length bounds are valid.
+    /// Construct a character-string type when the length bounds are valid
+    /// and within [`MAX_CHARACTER_STRING_TYPE_LENGTH`]. Fixed-length coercion
+    /// pads up to `min_len`, so the declared-length cap is the allocation
+    /// bound for every downstream CAST/assignment/default funnel.
     #[must_use]
     pub const fn new(min_len: u64, max_len: u64, form: CharacterStringTypeForm) -> Option<Self> {
-        if max_len == 0 || min_len > max_len {
+        if max_len == 0 || min_len > max_len || max_len > MAX_CHARACTER_STRING_TYPE_LENGTH {
             return None;
         }
         Some(Self {
@@ -205,10 +210,13 @@ pub enum ByteStringTypeForm {
 }
 
 impl ByteStringType {
-    /// Construct a byte-string type when the length bounds are valid.
+    /// Construct a byte-string type when the length bounds are valid and
+    /// within [`MAX_BYTE_STRING_TYPE_LENGTH`]. Fixed-length coercion pads up
+    /// to `min_len`, so the declared-length cap is the allocation bound for
+    /// every downstream CAST/assignment/default funnel.
     #[must_use]
     pub const fn new(min_len: u64, max_len: u64, form: ByteStringTypeForm) -> Option<Self> {
-        if max_len == 0 || min_len > max_len {
+        if max_len == 0 || min_len > max_len || max_len > MAX_BYTE_STRING_TYPE_LENGTH {
             return None;
         }
         Some(Self {

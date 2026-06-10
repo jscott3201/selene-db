@@ -6,7 +6,8 @@ use selene_core::feature_register::FeatureId;
 use crate::{
     ast::{
         ByteStringType, ByteStringTypeForm, CharacterStringType, CharacterStringTypeForm,
-        DecimalType, GqlType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, RecordType, SourceSpan,
+        DecimalType, GqlType, MAX_BYTE_STRING_TYPE_LENGTH, MAX_CHARACTER_STRING_TYPE_LENGTH,
+        MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, RecordType, SourceSpan,
     },
     error::ParserError,
     parser::MAX_NESTING_DEPTH,
@@ -577,6 +578,18 @@ fn character_string_type(
     form: CharacterStringTypeForm,
     span: SourceSpan,
 ) -> Result<GqlType, ParserError> {
+    // Fixed-length coercion pads values up to `min_len`, so an unbounded
+    // declared length is an allocation primitive in read-only statements.
+    // Checking `max_len` alone is sufficient: `new` rejects min > max.
+    if max_len > MAX_CHARACTER_STRING_TYPE_LENGTH {
+        return Err(ParserError::syntax(
+            "character string length exceeds the implementation-defined maximum",
+            span,
+            Some(format!(
+                "selene-db currently supports declared character string lengths up to {MAX_CHARACTER_STRING_TYPE_LENGTH} characters"
+            )),
+        ));
+    }
     CharacterStringType::new(min_len, max_len, form)
         .map(GqlType::CharacterString)
         .ok_or_else(|| {
@@ -594,6 +607,18 @@ fn byte_string_type(
     form: ByteStringTypeForm,
     span: SourceSpan,
 ) -> Result<GqlType, ParserError> {
+    // Fixed-length coercion zero-pads values up to `min_len`, so an unbounded
+    // declared length is an allocation primitive in read-only statements.
+    // Checking `max_len` alone is sufficient: `new` rejects min > max.
+    if max_len > MAX_BYTE_STRING_TYPE_LENGTH {
+        return Err(ParserError::syntax(
+            "byte string length exceeds the implementation-defined maximum",
+            span,
+            Some(format!(
+                "selene-db currently supports declared byte string lengths up to {MAX_BYTE_STRING_TYPE_LENGTH} bytes"
+            )),
+        ));
+    }
     ByteStringType::new(min_len, max_len, form)
         .map(GqlType::ByteString)
         .ok_or_else(|| {
