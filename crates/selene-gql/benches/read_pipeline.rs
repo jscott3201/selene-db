@@ -69,8 +69,8 @@ fn bench_read_pipeline(c: &mut Criterion) {
         // Fixture build happens once per scale, outside every timed routine.
         let state = common::gql_write_state_in_memory(scale);
         for (name, source) in WARM_ROWS {
-            let mut session = Session::new(&state.graph)
-                .with_plan_cache(NonZeroUsize::new(64).expect("nonzero"));
+            let mut session =
+                Session::new(&state.graph).with_plan_cache(NonZeroUsize::new(64).expect("nonzero"));
             // Seat the plan cache so the timed body is a pure cache-hit
             // execute (no parse/analyze/plan/optimize). Also asserts the row
             // is non-degenerate where the fixture guarantees output.
@@ -79,7 +79,10 @@ fn bench_read_pipeline(c: &mut Criterion) {
                 name,
                 "match_expand_hashjoin" | "group_by_highcard" | "distinct_dedup"
             ) {
-                assert!(primed > 0, "{name} produced no rows — fixture topology mismatch");
+                assert!(
+                    primed > 0,
+                    "{name} produced no rows — fixture topology mismatch"
+                );
             }
             group.throughput(Throughput::Elements(scale as u64));
             group.bench_function(BenchmarkId::new(name, scale), |b| {

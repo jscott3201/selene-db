@@ -869,8 +869,8 @@ rebuild). Self-validating: asserts node/edge counts survive the roundtrip once
 ## §5 selene-gql — parse / plan / execute
 
 Bench bins: `parse`, `analyze`, `plan_optimize`, `expression_eval`,
-`procedure_call_repeat`, `correlated_subquery`, `write_e2e`. The first four are
-scale-independent (single-query CPU).
+`procedure_call_repeat`, `correlated_subquery`, `read_pipeline`, `write_e2e`.
+The first four are scale-independent (single-query CPU).
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -992,6 +992,37 @@ PR-local quick JSON mixed row:
 | Bench | Median | Notes |
 |---|---:|---|
 | `write_e2e/gql_cached_json_read_patch_r60w40/1000` | 4.486 ms (quick) | One warm-plan-cache in-memory cycle over property-backed JSON payloads: 60 indexed `bench_id` point reads extracting nested JSON metadata and 40 indexed point updates applying an idempotent three-op `json_patch` over `payload`. Payload seeding runs outside the timed body. |
+
+### §5c `read_pipeline` — read-query pipeline execution
+
+Read-execution coverage for the declared 60%-read workload: label scan +
+indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
+GROUP BY, DISTINCT dedup, and bare `LIMIT 10`. Six warm-plan-cache rows over
+`BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
+pure execution + index access — not parse/plan/optimize, not durability. One
+`/cold` companion on the cheapest row re-plans per iteration with an uncached
+session. The join targets `Person→Sensor→Device` deliberately: every fixture
+`KNOWS` offset is ≡1 mod 3, so a `Person→Person` join would be empty.
+
+_Measured 2026-06-10 on development post-#701 (profile `full`, mimalloc), so
+these run ahead of the `3a864ac` header until the next clean re-sweep._
+
+Two baseline signals worth reading directly from the table: warm
+`match_limit10` is **scale-linear** (765 µs → 12.50 ms for ten output rows) —
+the scan does not short-circuit on LIMIT, which is the B19 baseline this row
+exists to expose; and `match_limit10/cold` ≈ warm at these scales because the
+~30–45 µs fixed compile cost (clearly visible at the 1k quick scale: 111 µs
+cold vs 81 µs warm) amortizes under the linear scan.
+
+| Bench | 10k | 50k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `read_pipeline/match_filter_project` | 634 µs | 3.41 ms | 9.01 ms | Warm label scan + `n.age >= 40` filter + projection (age-indexed range path). |
+| `read_pipeline/match_expand_hashjoin` | 14.75 ms | 96.91 ms | 205.5 ms | Two-leg `(:Person)-[:KNOWS]->(s:Sensor), (s)-[:KNOWS]->(d:Device)`; hash-join build/probe. |
+| `read_pipeline/order_by_topk` | 1.35 ms | 7.72 ms | 15.67 ms | Full Person scan → `ORDER BY n.score DESC LIMIT 10` top-K (`score` non-indexed). |
+| `read_pipeline/group_by_highcard` | 1.09 ms | 5.24 ms | 10.33 ms | `GROUP BY n.score` + `count(*)`, ~1024 groups; hash-aggregate build (B20 target). |
+| `read_pipeline/distinct_dedup` | 864 µs | 5.68 ms | 12.81 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
+| `read_pipeline/match_limit10` | 765 µs | 5.44 ms | 12.50 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
+| `read_pipeline/match_limit10/cold` | 809 µs | 5.58 ms | 12.59 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
 
 ## §6 selene-algorithms
 
