@@ -4,8 +4,8 @@ use super::*;
 const TURBO_QUANT_BATCH_PARALLEL_CHUNK_ENTRIES: usize = 256;
 #[cfg(test)]
 const TURBO_QUANT_BATCH_PARALLEL_CHUNK_ENTRIES: usize = 4;
-// The safe scalar fused path helps 128d batches but loses Rayon task fanout at
-// 768d/1536d. Revisit this threshold with a FastScan/SIMD scorer.
+// The fused path handles small-dimension batches; larger batches keep per-query
+// Rayon fanout until a high-dimensional batch FastScan row earns promotion.
 const TURBO_QUANT_FUSED_BATCH_MAX_DIMENSION: usize = 256;
 
 struct PreparedTurboQuantQuery {
@@ -32,14 +32,22 @@ impl TurboQuantVectorIndex {
                 .map(|query| self.candidates(query, k, search_width))
                 .collect();
         }
-        let prepared = queries
-            .iter()
-            .map(|query| self.prepare_query(query))
-            .collect::<Vec<_>>();
         let candidate_limit = search_width.max(k).min(self.live_entries);
         let candidates = if self.should_scan_by_slot_order() {
-            self.slot_order_candidates_batch(&prepared, candidate_limit)
+            if let Some(prepared) = self.prepare_fast_scan_queries(queries) {
+                self.slot_order_candidates_fast_scan_batch(&prepared, candidate_limit)
+            } else {
+                let prepared = queries
+                    .iter()
+                    .map(|query| self.prepare_query(query))
+                    .collect::<Vec<_>>();
+                self.slot_order_candidates_batch(&prepared, candidate_limit)
+            }
         } else {
+            let prepared = queries
+                .iter()
+                .map(|query| self.prepare_query(query))
+                .collect::<Vec<_>>();
             self.live_map_candidates_batch(&prepared, candidate_limit)
         };
 
