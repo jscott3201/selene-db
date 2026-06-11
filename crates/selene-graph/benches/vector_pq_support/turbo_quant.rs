@@ -16,7 +16,7 @@ pub(crate) struct TurboQuantIndex {
     variant: TurboQuantVariant,
     bytes_per_vector: usize,
     codebook: Vec<f32>,
-    lengths: Vec<f32>,
+    scales: Vec<f32>,
     codes: Vec<u8>,
 }
 
@@ -26,14 +26,15 @@ impl TurboQuantIndex {
         assert!(DIMENSION.is_power_of_two());
         let bytes_per_vector = DIMENSION * variant.bit_width / u8::BITS as usize;
         let codebook = spherical_codebook(variant.bit_width);
-        let mut lengths = Vec::with_capacity(vectors.len());
+        let mut scales = Vec::with_capacity(vectors.len());
         let mut codes = vec![0; vectors.len() * bytes_per_vector];
         let mut rotated = vec![0.0; DIMENSION];
         for (row, vector) in vectors.iter().enumerate() {
-            let length = rotate_unit_vector(vector, &mut rotated);
-            lengths.push(length);
+            rotate_unit_vector(vector, &mut rotated);
+            let mut reconstructed_inner = 0.0;
             for (dim, value) in rotated.iter().enumerate() {
                 let code = nearest_code(*value, &codebook);
+                reconstructed_inner += f64::from(*value) * f64::from(codebook[code]);
                 write_code(
                     &mut codes,
                     row,
@@ -43,12 +44,13 @@ impl TurboQuantIndex {
                     code,
                 );
             }
+            scales.push((1.0 / reconstructed_inner.max(1e-10)) as f32);
         }
         Self {
             variant,
             bytes_per_vector,
             codebook,
-            lengths,
+            scales,
             codes,
         }
     }
@@ -92,7 +94,7 @@ impl TurboQuantIndex {
 
     pub(crate) fn estimated_bytes(&self) -> usize {
         self.codes.len().saturating_add(
-            self.lengths
+            self.scales
                 .len()
                 .saturating_add(self.codebook.len())
                 .saturating_mul(size_of::<f32>()),
@@ -111,7 +113,7 @@ impl TurboQuantIndex {
             );
             dot += f64::from(*query_component) * f64::from(self.codebook[code]);
         }
-        -dot
+        -(dot * f64::from(self.scales[row]))
     }
 }
 
