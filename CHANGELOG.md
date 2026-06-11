@@ -610,6 +610,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Performance
 
+- **TurboQuant production scans follow packed-code slot order.** Production
+  `VectorIndexKind::TurboQuantCosine` search now scans the contiguous packed-code
+  slots instead of iterating the row-to-slot hash map, preserving stale-entry
+  handling and exact cosine rerank semantics while matching the physical code
+  layout. New production dimension-projection rows over 10k graph nodes keep
+  full recall at 128/768/1536 dimensions with quick-profile medians of
+  `3.8215 ms`, `20.675 ms`, and `41.981 ms`.
 - **Write transactions share the frozen provider registry.** `SharedGraph`
   freezes its fixed index-provider registry into one shared allocation at
   construction; `begin_write` now hands it to each transaction with a

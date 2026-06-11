@@ -626,6 +626,14 @@ PR-local TurboQuant dimension-projection spot-check:
 | `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d768_n10k_k10_recallbp10000_m3795-full30000` | 21.382 ms (quick) | Block-Hadamard rotation handles the common 768-dim, non-power-of-two shape without dense rotation dependencies. Storage remains about 7.9x smaller than full vectors, but scan latency scales with dimension. |
 | `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d1536_n10k_k10_recallbp10000_m7551-full60000` | 42.732 ms (quick) | 1536-dim storage is ~7.37 MiB compressed versus ~58.6 MiB full vectors at 10k rows. Quality stays full on the clustered fixture; the open problem is still candidate gating and scorer throughput, not storage ratio. |
 
+PR-local production TurboQuant dimension-projection spot-check:
+
+| Bench | 10k | Notes |
+|---|---:|---|
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128_n10k_k10_recallbp10000_m1298-full5000` | 3.8215 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` row over a `SharedGraph` fixture. Slot-order scanning preserves full recall on the 128-dim clustered corpus while measuring graph/index dispatch, stale-entry checks, and exact rerank together. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4431-full30000` | 20.675 ms (quick) | 768-dim production scan stays in the same latency envelope as the benchmark-only byte-LUT projection row while accounting for the production index heap layout. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m8190-full60000` | 41.981 ms (quick) | 1536-dim production row keeps full recall with ~8.0 MiB TurboQuant index heap versus ~58.6 MiB full-vector components; candidate gating remains the next latency lever. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |
