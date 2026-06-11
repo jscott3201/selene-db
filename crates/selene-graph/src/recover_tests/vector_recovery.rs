@@ -161,6 +161,50 @@ fn recover_snapshot_preserves_ivf_vector_index_registration() {
 }
 
 #[test]
+fn recover_snapshot_preserves_turbo_quant_vector_index_registration() {
+    let dir = temp_dir("snapshot-turbo-quant-vector-index");
+    let label = db_string("recover.turbo.vector.index.node").unwrap();
+    let property = db_string("recover.turbo.vector.index.embedding").unwrap();
+    let shared = SharedGraph::builder(GraphId::new(44)).build().unwrap();
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        for components in [[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.0, 1.0, 0.0]] {
+            mutator
+                .create_node(
+                    LabelSet::single(label.clone()),
+                    prop(
+                        "recover.turbo.vector.index.embedding",
+                        Value::Vector(VectorValue::new(components.to_vec()).unwrap()),
+                    ),
+                )
+                .unwrap();
+        }
+        txn.commit().unwrap();
+    }
+    shared
+        .create_vector_index(
+            label.clone(),
+            property.clone(),
+            VectorIndexKind::TurboQuantCosine,
+            3,
+        )
+        .unwrap();
+    write_snapshot(&dir, &shared, 1);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(44)).unwrap();
+    let snapshot = recovered.read();
+    let index = snapshot.vector_index_for(&label, &property).unwrap();
+    assert_eq!(index.kind(), VectorIndexKind::TurboQuantCosine);
+    assert_eq!(index.dimension(), 3);
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0, 1, 2]);
+    assert_eq!(index.memory_usage().turbo_quant_entries, 3);
+    assert_eq!(index.memory_usage().turbo_quant_live_entries, 3);
+    assert!(index.memory_usage().turbo_quant_code_bytes > 0);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn recover_wal_only_replays_vector_property() {
     let dir = temp_dir("wal-vector");
     append_wal(

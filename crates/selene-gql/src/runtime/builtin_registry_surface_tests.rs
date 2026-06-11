@@ -316,7 +316,10 @@ fn vector_search_candidate_state_expanded_ann_signature_exposes_state_and_ann_ar
     assert!(parameters[9].default.is_some());
     assert_eq!(parameters[10].name.as_str(), "ef_search");
     assert_eq!(parameters[10].ty, crate::GqlType::Integer);
-    assert_eq!(parameters[10].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+    assert_eq!(
+        parameters[10].default_doc,
+        Some("NULL (HNSW 64, IVF 2, TurboQuant 1024)")
+    );
     assert!(parameters[10].nullable);
     assert!(parameters[10].default.is_some());
 
@@ -368,7 +371,10 @@ fn vector_search_expanded_candidates_ann_batch_signature_exposes_root_and_final_
     assert!(parameters[7].default.is_some());
     assert_eq!(parameters[8].name.as_str(), "ef_search");
     assert_eq!(parameters[8].ty, crate::GqlType::Integer);
-    assert_eq!(parameters[8].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+    assert_eq!(
+        parameters[8].default_doc,
+        Some("NULL (HNSW 64, IVF 2, TurboQuant 1024)")
+    );
     assert!(parameters[8].nullable);
     assert!(parameters[8].default.is_some());
 

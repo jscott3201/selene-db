@@ -84,6 +84,35 @@ fn packed_codes_validate_shape_and_bounds() {
 }
 
 #[test]
+fn packed_codes_resize_rows_preserves_existing_codes() {
+    let bit_width = TurboQuantBitWidth::new(4).unwrap();
+    let mut codes = TurboQuantPackedCodes::new(bit_width, 3, 1).unwrap();
+    codes.write(0, 0, 3).unwrap();
+    codes.write(0, 1, 7).unwrap();
+    codes.write(0, 2, 15).unwrap();
+
+    codes.resize_rows(3).unwrap();
+    assert_eq!(codes.rows(), 3);
+    assert_eq!(codes.read(0, 0).unwrap(), 3);
+    assert_eq!(codes.read(0, 1).unwrap(), 7);
+    assert_eq!(codes.read(0, 2).unwrap(), 15);
+    for row in 1..3 {
+        for dimension in 0..3 {
+            assert_eq!(codes.read(row, dimension).unwrap(), 0);
+        }
+    }
+
+    codes.write(2, 1, 11).unwrap();
+    codes.resize_rows(1).unwrap();
+    assert_eq!(codes.rows(), 1);
+    assert!(matches!(
+        codes.read(2, 1),
+        Err(TurboQuantCodecError::RowOutOfBounds { row: 2, rows: 1 })
+    ));
+    assert_eq!(codes.read(0, 2).unwrap(), 15);
+}
+
+#[test]
 fn codebooks_are_sorted_and_dimension_scaled() {
     let bit_width = TurboQuantBitWidth::new(4).unwrap();
     let clipped = TurboQuantCodebook::clipped_uniform(bit_width, 128).unwrap();

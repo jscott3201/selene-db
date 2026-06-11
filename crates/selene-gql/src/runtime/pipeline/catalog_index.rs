@@ -341,6 +341,7 @@ pub(super) fn render_vector_index_kind(
         VectorIndexKind::IvfNegativeInnerProduct => {
             render_ivf_kind("vector_ivf_negative_inner_product", dimension, ivf_config)
         }
+        VectorIndexKind::TurboQuantCosine => format!("vector_turbo_quant_cosine({dimension})"),
     }
 }
 

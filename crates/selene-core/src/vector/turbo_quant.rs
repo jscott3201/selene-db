@@ -424,6 +424,23 @@ impl TurboQuantPackedCodes {
         self.bytes.len()
     }
 
+    /// Resize the row count while preserving existing packed rows.
+    ///
+    /// Newly added rows are zero-filled. Shrinking drops trailing rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the computed byte size overflows `usize`.
+    pub fn resize_rows(&mut self, rows: usize) -> TurboQuantCodecResult<()> {
+        let byte_len = self
+            .bytes_per_row
+            .checked_mul(rows)
+            .ok_or(TurboQuantCodecError::SizeOverflow)?;
+        self.bytes.resize(byte_len, 0);
+        self.rows = rows;
+        Ok(())
+    }
+
     /// Read one packed coordinate code.
     ///
     /// # Errors

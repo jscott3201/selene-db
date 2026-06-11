@@ -1,0 +1,460 @@
+//! TurboQuant compressed candidate index with exact cosine rerank.
+//!
+//! Durable state remains the vector-index registration plus primary graph
+//! `VECTOR` properties. This derived index packs rotated unit-vector coordinates
+//! into 4-bit codes, uses a byte LUT for candidate preselection, and reranks the
+//! returned candidates against primary vectors with exact cosine distance.
+
+use std::mem::size_of;
+
+use rustc_hash::FxHashMap;
+use selene_core::{
+    CoreResult, MAX_VECTOR_DIMENSION, TurboQuantBitWidth, TurboQuantCodebook,
+    TurboQuantCodebookKind, TurboQuantPackedCodes, VectorMetric, VectorTopK, VectorValue,
+};
+
+use crate::error::{GraphError, GraphResult};
+
+const TURBO_QUANT_BITS: u8 = 4;
+const MIN_RECONSTRUCTED_INNER: f64 = 1e-10;
+const QUANTILE_LOW_Z: f32 = -1.644_853_6;
+
+/// One approximate vector-search hit over a graph row.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TurboQuantVectorHit {
+    pub(crate) row: u32,
+    pub(crate) distance: f64,
+}
+
+/// Estimated TurboQuant resident memory and structural counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct TurboQuantMemoryUsage {
+    pub(crate) entries: usize,
+    pub(crate) live_entries: usize,
+    pub(crate) deleted_entries: usize,
+    pub(crate) code_bytes: usize,
+    pub(crate) codebook_bytes: usize,
+    pub(crate) calibration_bytes: usize,
+    pub(crate) estimated_heap_bytes: usize,
+    pub(crate) referenced_vector_bytes: usize,
+}
+
+/// Derived TurboQuant index for one cosine vector-index registration.
+#[derive(Clone, Debug)]
+pub(crate) struct TurboQuantVectorIndex {
+    dimension: usize,
+    bytes_per_row: usize,
+    codebook: TurboQuantCodebook,
+    codes: TurboQuantPackedCodes,
+    row_scales: Vec<f32>,
+    shift: Vec<f32>,
+    scale: Vec<f32>,
+    inv_scale: Vec<f32>,
+    entries: Vec<TurboQuantEntry>,
+    row_to_entry: FxHashMap<u32, usize>,
+    live_entries: usize,
+}
+
+impl TurboQuantVectorIndex {
+    /// Construct an empty TurboQuant index for `dimension`.
+    pub(crate) fn new(dimension: u32) -> GraphResult<Self> {
+        let dimension = valid_dimension(dimension)?;
+        let bit_width = TurboQuantBitWidth::new(TURBO_QUANT_BITS)
+            .expect("production TurboQuant bit width is valid");
+        let codebook =
+            TurboQuantCodebook::new(TurboQuantCodebookKind::NormalLloydMax, bit_width, dimension)
+                .map_err(codec_invariant)?;
+        let codes = TurboQuantPackedCodes::new(bit_width, dimension, 0).map_err(codec_invariant)?;
+        Ok(Self {
+            dimension,
+            bytes_per_row: codes.bytes_per_row(),
+            codebook,
+            codes,
+            row_scales: Vec::new(),
+            shift: Vec::new(),
+            scale: Vec::new(),
+            inv_scale: Vec::new(),
+            entries: Vec::new(),
+            row_to_entry: FxHashMap::default(),
+            live_entries: 0,
+        })
+    }
+
+    /// Insert or replace the current vector for a graph row.
+    pub(crate) fn insert(&mut self, row: u32, vector: VectorValue) -> GraphResult<()> {
+        self.remove(row);
+        let slot = self.entries.len();
+        self.codes.resize_rows(slot + 1).map_err(codec_invariant)?;
+        self.row_scales.push(1.0);
+        let rotated = rotated_unit_vector(&vector, self.dimension);
+        self.entries.push(TurboQuantEntry {
+            row,
+            vector,
+            deleted: false,
+        });
+        self.row_to_entry.insert(row, slot);
+        self.live_entries += 1;
+        self.encode_slot(slot, &rotated)?;
+        Ok(())
+    }
+
+    /// Mark the current vector for `row` stale, if present.
+    pub(crate) fn remove(&mut self, row: u32) {
+        let Some(slot) = self.row_to_entry.remove(&row) else {
+            return;
+        };
+        if let Some(entry) = self.entries.get_mut(slot)
+            && !entry.deleted
+        {
+            entry.deleted = true;
+            self.live_entries = self.live_entries.saturating_sub(1);
+        }
+    }
+
+    /// Recompute quantile calibration and packed codes after a bulk load.
+    pub(crate) fn finish_bulk_load(&mut self) -> GraphResult<()> {
+        if self.live_entries == 0 {
+            self.shift.clear();
+            self.scale.clear();
+            self.inv_scale.clear();
+            return Ok(());
+        }
+        let live_slots = self.live_entry_slots();
+        let rotated = self.rotated_live_vectors(&live_slots);
+        let (shift, scale) = quantile_calibration(&rotated, self.dimension);
+        self.inv_scale = scale.iter().map(|value| value.recip()).collect();
+        self.shift = shift;
+        self.scale = scale;
+        for slot in live_slots {
+            let rotated = rotated_unit_vector(&self.entries[slot].vector, self.dimension);
+            self.encode_slot(slot, &rotated)?;
+        }
+        Ok(())
+    }
+
+    /// Approximate top-k search over current row versions with exact cosine rerank.
+    pub(crate) fn search(
+        &self,
+        query: &VectorValue,
+        k: usize,
+        search_width: usize,
+    ) -> CoreResult<Vec<TurboQuantVectorHit>> {
+        if k == 0 || self.live_entries == 0 {
+            return Ok(Vec::new());
+        }
+        let rotated_query = rotated_unit_vector(query, self.dimension);
+        let query_bias = query_bias(&rotated_query, &self.shift);
+        let byte_lut = self.byte_lut(&rotated_query);
+        let mut candidates = VectorTopK::new(search_width.max(k).min(self.live_entries));
+        for (&row, &slot) in &self.row_to_entry {
+            let distance = self.approx_distance_lut(slot, &byte_lut, query_bias);
+            candidates.push_distance((slot, row), distance);
+        }
+
+        let scorer = VectorMetric::Cosine.bind_query(query)?;
+        let mut exact = VectorTopK::new(k);
+        for candidate in candidates.into_hits() {
+            let (slot, row) = candidate.key;
+            let entry = &self.entries[slot];
+            if entry.deleted || entry.row != row {
+                continue;
+            }
+            exact.push_distance(row, scorer.distance(&entry.vector)?);
+        }
+        Ok(exact
+            .into_hits()
+            .into_iter()
+            .map(|hit| TurboQuantVectorHit {
+                row: hit.key,
+                distance: hit.distance,
+            })
+            .collect())
+    }
+
+    /// Return estimated TurboQuant memory usage.
+    pub(crate) fn memory_usage(&self) -> TurboQuantMemoryUsage {
+        let entries = self.entries.len();
+        let deleted_entries = self.entries.iter().filter(|entry| entry.deleted).count();
+        let code_bytes = self.codes.estimated_bytes();
+        let codebook_bytes = self.codebook.estimated_bytes();
+        let calibration_bytes = self
+            .shift
+            .capacity()
+            .saturating_add(self.scale.capacity())
+            .saturating_add(self.inv_scale.capacity())
+            .saturating_mul(size_of::<f32>());
+        let referenced_vector_bytes = self
+            .entries
+            .iter()
+            .map(|entry| entry.vector.dimension().saturating_mul(size_of::<f32>()))
+            .sum();
+        let estimated_heap_bytes = self
+            .entries
+            .capacity()
+            .saturating_mul(size_of::<TurboQuantEntry>())
+            .saturating_add(
+                self.row_to_entry
+                    .capacity()
+                    .saturating_mul(size_of::<(u32, usize)>()),
+            )
+            .saturating_add(self.row_scales.capacity().saturating_mul(size_of::<f32>()))
+            .saturating_add(code_bytes)
+            .saturating_add(codebook_bytes)
+            .saturating_add(calibration_bytes);
+        TurboQuantMemoryUsage {
+            entries,
+            live_entries: self.live_entries,
+            deleted_entries,
+            code_bytes,
+            codebook_bytes,
+            calibration_bytes,
+            estimated_heap_bytes,
+            referenced_vector_bytes,
+        }
+    }
+
+    fn encode_slot(&mut self, slot: usize, rotated: &[f32]) -> GraphResult<()> {
+        let mut reconstructed_inner = 0.0;
+        for (dimension, value) in rotated.iter().copied().enumerate() {
+            let calibrated = calibrate_value(value, dimension, &self.shift, &self.scale);
+            let code = self
+                .codebook
+                .encode_scalar(calibrated)
+                .map_err(codec_invariant)?;
+            let reconstructed = reconstruct_value(
+                usize::from(code),
+                dimension,
+                self.codebook.centroids(),
+                &self.shift,
+                &self.inv_scale,
+            );
+            reconstructed_inner += f64::from(value) * f64::from(reconstructed);
+            self.codes
+                .write(slot, dimension, code)
+                .map_err(codec_invariant)?;
+        }
+        self.row_scales[slot] = (1.0 / reconstructed_inner.max(MIN_RECONSTRUCTED_INNER)) as f32;
+        Ok(())
+    }
+
+    fn approx_distance_lut(&self, slot: usize, byte_lut: &[f64], query_bias: f64) -> f64 {
+        let mut dot = query_bias;
+        let offset = slot * self.bytes_per_row;
+        for byte in 0..self.bytes_per_row {
+            let packed = usize::from(self.codes.as_bytes()[offset + byte]);
+            dot += byte_lut[byte * 256 + packed];
+        }
+        -(dot * f64::from(self.row_scales[slot]))
+    }
+
+    fn byte_lut(&self, rotated_query: &[f32]) -> Vec<f64> {
+        let mut table = vec![0.0; self.bytes_per_row * 256];
+        for byte in 0..self.bytes_per_row {
+            let first_dim = byte * 2;
+            let second_dim = first_dim + 1;
+            for packed in 0..256 {
+                let first = (first_dim < self.dimension).then(|| {
+                    let query = query_component_for_score(
+                        rotated_query[first_dim],
+                        first_dim,
+                        &self.inv_scale,
+                    );
+                    f64::from(query) * f64::from(self.codebook.centroids()[packed & 0x0f])
+                });
+                let second = (second_dim < self.dimension).then(|| {
+                    let query = query_component_for_score(
+                        rotated_query[second_dim],
+                        second_dim,
+                        &self.inv_scale,
+                    );
+                    f64::from(query) * f64::from(self.codebook.centroids()[(packed >> 4) & 0x0f])
+                });
+                table[byte * 256 + packed] = first.unwrap_or_default() + second.unwrap_or_default();
+            }
+        }
+        table
+    }
+
+    fn live_entry_slots(&self) -> Vec<usize> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, entry)| {
+                (!entry.deleted && self.row_to_entry.get(&entry.row) == Some(&slot)).then_some(slot)
+            })
+            .collect()
+    }
+
+    fn rotated_live_vectors(&self, live_slots: &[usize]) -> Vec<f32> {
+        let mut rotated = Vec::with_capacity(live_slots.len() * self.dimension);
+        for &slot in live_slots {
+            rotated.extend(rotated_unit_vector(
+                &self.entries[slot].vector,
+                self.dimension,
+            ));
+        }
+        rotated
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TurboQuantEntry {
+    row: u32,
+    vector: VectorValue,
+    deleted: bool,
+}
+
+fn valid_dimension(dimension: u32) -> GraphResult<usize> {
+    let dimension_usize = usize::try_from(dimension)
+        .map_err(|_| GraphError::VectorIndexInvalidDimension { dimension })?;
+    if dimension_usize == 0 || dimension_usize > MAX_VECTOR_DIMENSION {
+        Err(GraphError::VectorIndexInvalidDimension { dimension })
+    } else {
+        Ok(dimension_usize)
+    }
+}
+
+fn codec_invariant(err: selene_core::TurboQuantCodecError) -> GraphError {
+    GraphError::Inconsistent {
+        reason: format!("TurboQuant index invariant failed: {err}"),
+    }
+}
+
+fn quantile_calibration(rotated: &[f32], dimension: usize) -> (Vec<f32>, Vec<f32>) {
+    let rows = rotated.len() / dimension;
+    let target_low = QUANTILE_LOW_Z / (dimension as f32).sqrt();
+    let target_high = -target_low;
+    let target_span = target_high - target_low;
+    let low_index = ((rows as f64) * 0.05) as usize;
+    let high_index = (((rows as f64) * 0.95) as usize).min(rows.saturating_sub(1));
+    let mut shift = vec![0.0; dimension];
+    let mut scale = vec![1.0; dimension];
+    let mut coordinate = vec![0.0; rows];
+
+    for dim in 0..dimension {
+        for row in 0..rows {
+            coordinate[row] = rotated[row * dimension + dim];
+        }
+        coordinate.sort_unstable_by(f32::total_cmp);
+        let source_low = coordinate[low_index];
+        let source_high = coordinate[high_index];
+        let source_span = source_high - source_low;
+        if source_span > 1e-6 {
+            scale[dim] = target_span / source_span;
+            shift[dim] = target_low / scale[dim] - source_low;
+        }
+    }
+    (shift, scale)
+}
+
+fn calibrate_value(value: f32, dim: usize, shift: &[f32], scale: &[f32]) -> f32 {
+    if shift.is_empty() {
+        value
+    } else {
+        (value + shift[dim]) * scale[dim]
+    }
+}
+
+fn reconstruct_value(
+    code: usize,
+    dim: usize,
+    centroids: &[f32],
+    shift: &[f32],
+    inv: &[f32],
+) -> f32 {
+    if shift.is_empty() {
+        centroids[code]
+    } else {
+        centroids[code] * inv[dim] - shift[dim]
+    }
+}
+
+fn query_component_for_score(value: f32, dim: usize, inv_scale: &[f32]) -> f32 {
+    if inv_scale.is_empty() {
+        value
+    } else {
+        value * inv_scale[dim]
+    }
+}
+
+fn query_bias(rotated_query: &[f32], shift: &[f32]) -> f64 {
+    if shift.is_empty() {
+        return 0.0;
+    }
+    -rotated_query
+        .iter()
+        .zip(shift)
+        .map(|(query, shift)| f64::from(*query) * f64::from(*shift))
+        .sum::<f64>()
+}
+
+fn rotated_unit_vector(vector: &VectorValue, dimension: usize) -> Vec<f32> {
+    debug_assert_eq!(vector.dimension(), dimension);
+    let mut output = vec![0.0; dimension];
+    let length_squared = vector
+        .as_slice()
+        .iter()
+        .map(|value| *value * *value)
+        .sum::<f32>();
+    if length_squared == 0.0 {
+        return output;
+    }
+    let inverse_length = length_squared.sqrt().recip();
+    for (dim, value) in vector.as_slice().iter().enumerate() {
+        output[dim] = *value * inverse_length * random_sign(dim);
+    }
+    block_hadamard_transform(&mut output);
+    output
+}
+
+fn block_hadamard_transform(values: &mut [f32]) {
+    let mut offset = 0;
+    while offset < values.len() {
+        let block_len = largest_power_of_two_at_most(values.len() - offset);
+        let block = &mut values[offset..offset + block_len];
+        hadamard_transform(block);
+        let scale = (block_len as f32).sqrt().recip();
+        for value in block {
+            *value *= scale;
+        }
+        offset += block_len;
+    }
+}
+
+fn largest_power_of_two_at_most(value: usize) -> usize {
+    1_usize << (usize::BITS - 1 - value.leading_zeros())
+}
+
+fn hadamard_transform(values: &mut [f32]) {
+    let mut span = 1;
+    while span < values.len() {
+        for block in (0..values.len()).step_by(span * 2) {
+            for dim in block..block + span {
+                let left = values[dim];
+                let right = values[dim + span];
+                values[dim] = left + right;
+                values[dim + span] = left - right;
+            }
+        }
+        span *= 2;
+    }
+}
+
+fn random_sign(dim: usize) -> f32 {
+    if splitmix64(dim as u64 ^ 0x9e37_79b9_7f4a_7c15) & 1 == 0 {
+        1.0
+    } else {
+        -1.0
+    }
+}
+
+fn splitmix64(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+#[cfg(test)]
+#[path = "turbo_quant/tests.rs"]
+mod tests;

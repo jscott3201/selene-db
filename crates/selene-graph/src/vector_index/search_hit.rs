@@ -2,6 +2,7 @@
 
 use super::hnsw::HnswVectorHit;
 use super::ivf::IvfVectorHit;
+use super::turbo_quant::TurboQuantVectorHit;
 
 /// A row-level hit returned by a derived ANN vector index.
 #[derive(Clone, Debug, PartialEq)]
@@ -20,6 +21,15 @@ pub(crate) fn hnsw_hits(hits: Vec<HnswVectorHit>) -> Vec<VectorIndexSearchHit> {
 }
 
 pub(crate) fn ivf_hits(hits: Vec<IvfVectorHit>) -> Vec<VectorIndexSearchHit> {
+    hits.into_iter()
+        .map(|hit| VectorIndexSearchHit {
+            row: hit.row,
+            distance: hit.distance,
+        })
+        .collect()
+}
+
+pub(crate) fn turbo_quant_hits(hits: Vec<TurboQuantVectorHit>) -> Vec<VectorIndexSearchHit> {
     hits.into_iter()
         .map(|hit| VectorIndexSearchHit {
             row: hit.row,

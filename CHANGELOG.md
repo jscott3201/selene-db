@@ -8,6 +8,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **TurboQuant cosine vector index.** `selene.create_vector_index(...,
+  'turbo_quant')` now registers a production compressed candidate index over
+  primary `VECTOR` properties. The index packs rotated/calibrated 4-bit
+  TurboQuant coordinate codes, uses a byte-LUT scorer for candidate
+  preselection, and reranks final hits with exact cosine distance against the
+  canonical graph vectors. Registrations are durable schema state while the
+  compressed codes remain rebuildable derived state; update/delete/rebuild and
+  WAL/snapshot recovery follow the existing vector-index maintenance model.
+  `selene.vector_index_stats()` now exposes TurboQuant entry, codebook,
+  calibration, and referenced-vector counters.
 - **Current-datetime keyword forms (ISO §20.27).** The parser now accepts bare
   `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCAL_TIMESTAMP`, and
   `LOCAL_TIME` value functions, plus the ISO optional `LOCAL_TIME()` spelling.

@@ -384,6 +384,15 @@ fn schema_change_postcard_round_trip() {
             hnsw_config: None,
             ivf_config: Some(crate::IvfIndexConfig::new(128)),
         },
+        SchemaChange::VectorIndexCreated {
+            label: node_label.clone(),
+            property: dbs("serde.schema.turbo.embedding"),
+            kind: SchemaVectorIndexKind::TurboQuantCosine,
+            dimension: 3,
+            name: Some(dbs("serde.schema.vector.turbo.index.name")),
+            hnsw_config: None,
+            ivf_config: None,
+        },
         SchemaChange::VectorIndexDropped {
             label: node_label.clone(),
             property: dbs("serde.schema.embedding"),

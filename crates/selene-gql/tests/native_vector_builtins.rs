@@ -170,6 +170,95 @@ fn create_vector_index_can_register_hnsw_metric_kind() {
 }
 
 #[test]
+fn create_vector_index_can_register_turbo_quant_kind() {
+    let graph = graph(330_061);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = db_string("VectorDoc");
+    let embedding = db_string("embedding");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for components in [[1.0, 0.0, 0.0], [0.9, 0.1, 0.0], [0.0, 1.0, 0.0]] {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&components))),
+                )
+                .expect("vector node inserts");
+        }
+        txn.commit().expect("seed commits");
+    }
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'turbo_quant')",
+            &registry,
+        )
+        .expect("turbo_quant vector index creation executes");
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    assert_eq!(
+        string_column(&table, "kind"),
+        vec!["vector_turbo_quant_cosine(3)"]
+    );
+
+    session.bind_parameter(db_string("query"), Value::Vector(vector(&[1.0, 0.0, 0.0])));
+    let hits = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 2, 'cosine', 3) \
+         YIELD node_id, distance",
+        &registry,
+    );
+    assert_eq!(
+        node_column(&hits, "node_id"),
+        vec![NodeId::new(1), NodeId::new(2)]
+    );
+    assert_eq!(float_column(&hits, "distance")[0], 0.0);
+
+    let stats = execute_rows(
+        &mut session,
+        "CALL selene.vector_index_stats() \
+         YIELD kind, indexed_rows, turbo_quant_entries, turbo_quant_live_entries, \
+               turbo_quant_deleted_entries, turbo_quant_code_bytes, \
+               turbo_quant_referenced_vector_bytes, turbo_quant_calibration_bytes",
+        &registry,
+    );
+    assert_eq!(
+        string_column(&stats, "kind"),
+        vec!["vector_turbo_quant_cosine(3)"]
+    );
+    assert_eq!(uint_column(&stats, "indexed_rows"), vec![3]);
+    assert_eq!(uint_column(&stats, "turbo_quant_entries"), vec![3]);
+    assert_eq!(uint_column(&stats, "turbo_quant_live_entries"), vec![3]);
+    assert_eq!(uint_column(&stats, "turbo_quant_deleted_entries"), vec![0]);
+    assert!(uint_column(&stats, "turbo_quant_code_bytes")[0] > 0);
+    assert!(uint_column(&stats, "turbo_quant_referenced_vector_bytes")[0] > 0);
+    assert!(uint_column(&stats, "turbo_quant_calibration_bytes")[0] > 0);
+}
+
+#[test]
+fn create_vector_index_rejects_non_cosine_turbo_quant_metric() {
+    let graph = graph(330_062);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let err = session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'turbo_quant', NULL, 'squared_euclidean')",
+            &registry,
+        )
+        .expect_err("non-cosine turbo_quant metric must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("turbo_quant vector indexes support cosine metric only")
+    ));
+}
+
+#[test]
 fn vector_index_stats_reports_hnsw_memory_and_cardinality() {
     let graph = graph(330_016);
     let registry = BuiltinProcedureRegistry::new();

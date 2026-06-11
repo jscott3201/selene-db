@@ -176,7 +176,7 @@ Vectors are first-class values:
 - supported metrics are `squared_euclidean`, `cosine`, and
   `negative_inner_product`;
 - exact scoring is the correctness oracle;
-- HNSW and IVF indexes provide in-memory ANN paths;
+- HNSW, IVF, and TurboQuant indexes provide in-memory ANN paths;
 - graph-expanded and maintained-state scorers compose topology with vectors;
 - rebuild and stats procedures make derived index state observable.
 
@@ -188,6 +188,10 @@ RETURN CAST([0.12, 0.34, 0.56] AS VECTOR) AS query_embedding
 
 ```gql
 CALL selene.create_vector_index('Document', 'embedding', 1536, 'hnsw', NULL, 'cosine')
+```
+
+```gql
+CALL selene.create_vector_index('Document', 'embedding', 1536, 'turbo_quant')
 ```
 
 ```gql

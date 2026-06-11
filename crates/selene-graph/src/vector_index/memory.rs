@@ -74,6 +74,22 @@ pub struct VectorIndexMemoryUsage {
     pub ivf_assigned_entries: usize,
     /// Live IVF entries whose current vector was inserted or replaced after centroid training.
     pub ivf_pending_retrain_entries: usize,
+    /// Estimated heap bytes owned by the TurboQuant derived index, excluding vector components.
+    pub turbo_quant_index_bytes: usize,
+    /// Component bytes reachable through TurboQuant exact-rerank vector handles.
+    pub turbo_quant_referenced_vector_bytes: usize,
+    /// Total TurboQuant entries, including stale deleted row versions.
+    pub turbo_quant_entries: usize,
+    /// Live TurboQuant row entries.
+    pub turbo_quant_live_entries: usize,
+    /// Stale TurboQuant entries retained until the derived index is rebuilt.
+    pub turbo_quant_deleted_entries: usize,
+    /// Packed TurboQuant coordinate-code bytes.
+    pub turbo_quant_code_bytes: usize,
+    /// TurboQuant scalar codebook bytes.
+    pub turbo_quant_codebook_bytes: usize,
+    /// TurboQuant per-dimension calibration bytes.
+    pub turbo_quant_calibration_bytes: usize,
     /// Estimated bytes for index-owned structures, excluding referenced vector components.
     pub estimated_index_bytes: usize,
     /// Estimated upper-bound bytes reachable from the index including ANN vector components.

@@ -9,8 +9,10 @@ use crate::procedure_registry::ProcedureError;
 pub(super) const DEFAULT_HNSW_SEARCH_WIDTH: usize = 64;
 /// Default IVF probe/list width for omitted ANN procedure arguments.
 pub(super) const DEFAULT_IVF_SEARCH_WIDTH: usize = 2;
+/// Default TurboQuant compressed candidate width for omitted ANN arguments.
+pub(super) const DEFAULT_TURBO_QUANT_SEARCH_WIDTH: usize = 1024;
 /// Planner-visible documentation for the executable `NULL` default.
-pub(super) const SEARCH_WIDTH_DEFAULT_DOC: &str = "NULL (HNSW 64, IVF 2)";
+pub(super) const SEARCH_WIDTH_DEFAULT_DOC: &str = "NULL (HNSW 64, IVF 2, TurboQuant 1024)";
 
 /// Parse an optional ANN search-width value.
 pub(super) fn optional_search_width_arg(
@@ -50,6 +52,8 @@ pub(super) fn default_search_width(
     };
     if index.ann_metric() == Some(metric) && index.is_ivf() {
         DEFAULT_IVF_SEARCH_WIDTH
+    } else if index.ann_metric() == Some(metric) && index.is_turbo_quant() {
+        DEFAULT_TURBO_QUANT_SEARCH_WIDTH
     } else {
         DEFAULT_HNSW_SEARCH_WIDTH
     }
@@ -66,7 +70,10 @@ mod tests {
     use selene_core::{GraphId, VectorMetric, db_string};
     use selene_graph::{SharedGraph, VectorIndexKind};
 
-    use super::{DEFAULT_HNSW_SEARCH_WIDTH, DEFAULT_IVF_SEARCH_WIDTH, default_search_width};
+    use super::{
+        DEFAULT_HNSW_SEARCH_WIDTH, DEFAULT_IVF_SEARCH_WIDTH, DEFAULT_TURBO_QUANT_SEARCH_WIDTH,
+        default_search_width,
+    };
 
     fn graph_with_index(kind: VectorIndexKind) -> SharedGraph {
         let graph = SharedGraph::new(GraphId::new(431_001));
@@ -138,6 +145,19 @@ mod tests {
                 VectorMetric::SquaredEuclidean
             ),
             DEFAULT_HNSW_SEARCH_WIDTH
+        );
+    }
+
+    #[test]
+    fn default_search_width_selects_turbo_quant_width_for_matching_index() {
+        let graph = graph_with_index(VectorIndexKind::TurboQuantCosine);
+        let label = db_string("VectorDoc").expect("label fits DB string cap");
+        let property = db_string("embedding").expect("property fits DB string cap");
+        let snapshot = graph.read();
+
+        assert_eq!(
+            default_search_width(&snapshot, &label, &property, 2, VectorMetric::Cosine),
+            DEFAULT_TURBO_QUANT_SEARCH_WIDTH
         );
     }
 }
