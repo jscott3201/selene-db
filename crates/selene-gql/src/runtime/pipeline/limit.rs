@@ -13,11 +13,15 @@ pub(super) fn execute(
 ) -> Result<BindingTable, ExecutorError> {
     let offset = resolve_amount(offset, ctx)?;
     let count = resolve_amount(count, ctx)?;
-    let (schema, rows) = table.into_parts();
+    let (schema, mut rows) = table.into_parts();
     ctx.check_cancellation()?;
     let start = u64_to_bounded_usize(offset, rows.len());
     let end = start.saturating_add(u64_to_bounded_usize(count, rows.len() - start));
-    Ok(BindingTable::new(schema, rows[start..end].to_vec()))
+    rows.truncate(end);
+    if start == 0 {
+        return Ok(BindingTable::new(schema, rows));
+    }
+    Ok(BindingTable::new(schema, rows.split_off(start)))
 }
 
 pub(super) fn resolve_amount(
