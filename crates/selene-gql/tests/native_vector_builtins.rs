@@ -233,7 +233,10 @@ fn create_vector_index_can_register_turbo_quant_kind() {
     assert_eq!(uint_column(&stats, "turbo_quant_live_entries"), vec![3]);
     assert_eq!(uint_column(&stats, "turbo_quant_deleted_entries"), vec![0]);
     assert!(uint_column(&stats, "turbo_quant_code_bytes")[0] > 0);
-    assert!(uint_column(&stats, "turbo_quant_referenced_vector_bytes")[0] > 0);
+    assert_eq!(
+        uint_column(&stats, "turbo_quant_referenced_vector_bytes"),
+        vec![0]
+    );
     assert!(uint_column(&stats, "turbo_quant_calibration_bytes")[0] > 0);
 }
 

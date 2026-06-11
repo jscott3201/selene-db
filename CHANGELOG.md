@@ -12,12 +12,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   'turbo_quant')` now registers a production compressed candidate index over
   primary `VECTOR` properties. The index packs rotated/calibrated 4-bit
   TurboQuant coordinate codes, uses a byte-LUT scorer for candidate
-  preselection, and reranks final hits with exact cosine distance against the
-  canonical graph vectors. Registrations are durable schema state while the
-  compressed codes remain rebuildable derived state; update/delete/rebuild and
-  WAL/snapshot recovery follow the existing vector-index maintenance model.
+  preselection, and graph search reranks final hits with exact cosine distance
+  against the canonical graph vectors. Registrations are durable schema state
+  while the compressed codes remain rebuildable derived state;
+  update/delete/rebuild and WAL/snapshot recovery follow the existing
+  vector-index maintenance model.
   `selene.vector_index_stats()` now exposes TurboQuant entry, codebook,
-  calibration, and referenced-vector counters.
+  calibration, and referenced-vector counters; the referenced-vector counter is
+  zero after bulk calibration because TurboQuant no longer shadows full vector
+  payloads for rerank.
 - **Current-datetime keyword forms (ISO §20.27).** The parser now accepts bare
   `CURRENT_DATE`, `CURRENT_TIME`, `CURRENT_TIMESTAMP`, `LOCAL_TIMESTAMP`, and
   `LOCAL_TIME` value functions, plus the ISO optional `LOCAL_TIME()` spelling.
@@ -610,6 +613,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Performance
 
+- **TurboQuant exact rerank now reads primary graph vectors.**
+  `VectorIndexKind::TurboQuantCosine` no longer keeps duplicate full
+  `VectorValue` handles inside the compressed derived index. TurboQuant now
+  returns compressed row candidates, and the graph search layer exact-reranks
+  those rows against the primary node properties, so
+  `turbo_quant_referenced_vector_bytes` is zero after calibration while
+  `estimated_reachable_bytes` excludes duplicate full-vector components. The
+  10k production dimension-projection quick rows keep full recall with medians
+  of `4.1261 ms` at 128 dimensions, `9.2501 ms` at 768 dimensions, and
+  `15.689 ms` at 1536 dimensions.
 - **TurboQuant candidate preselection parallelizes large clean scans.** Large
   `VectorIndexKind::TurboQuantCosine` slot-order candidate scans now use Rayon
   chunk-local top-k reducers once the index is large enough to amortize fan-out.

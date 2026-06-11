@@ -1,9 +1,10 @@
-//! TurboQuant compressed candidate index with exact cosine rerank.
+//! TurboQuant compressed candidate index for graph-side exact rerank.
 //!
 //! Durable state remains the vector-index registration plus primary graph
 //! `VECTOR` properties. This derived index packs rotated unit-vector coordinates
-//! into 4-bit codes, uses a byte LUT for candidate preselection, and reranks the
-//! returned candidates against primary vectors with exact cosine distance.
+//! into 4-bit codes and uses a byte LUT for candidate preselection. The graph
+//! search layer reranks returned candidates against primary vectors with exact
+//! cosine distance so the compressed index does not shadow full vector payloads.
 
 use std::mem::size_of;
 
@@ -11,7 +12,7 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use selene_core::{
     CoreResult, MAX_VECTOR_DIMENSION, TurboQuantBitWidth, TurboQuantCodebook,
-    TurboQuantCodebookKind, TurboQuantPackedCodes, VectorMetric, VectorTopK, VectorValue,
+    TurboQuantCodebookKind, TurboQuantPackedCodes, VectorTopK, VectorValue,
 };
 
 use crate::error::{GraphError, GraphResult};
@@ -31,7 +32,7 @@ const TURBO_QUANT_PARALLEL_CHUNK_ENTRIES: usize = 4;
 const MIN_RECONSTRUCTED_INNER: f64 = 1e-10;
 const QUANTILE_LOW_Z: f32 = -1.644_853_6;
 
-/// One approximate vector-search hit over a graph row.
+/// One approximate TurboQuant candidate over a graph row.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TurboQuantVectorHit {
     pub(crate) row: u32,
@@ -65,6 +66,8 @@ pub(crate) struct TurboQuantVectorIndex {
     entries: Vec<TurboQuantEntry>,
     row_to_entry: FxHashMap<u32, usize>,
     live_entries: usize,
+    collecting_bulk: bool,
+    bulk_rotated: Vec<f32>,
 }
 
 impl TurboQuantVectorIndex {
@@ -89,19 +92,23 @@ impl TurboQuantVectorIndex {
             entries: Vec::new(),
             row_to_entry: FxHashMap::default(),
             live_entries: 0,
+            collecting_bulk: true,
+            bulk_rotated: Vec::new(),
         })
     }
 
     /// Insert or replace the current vector for a graph row.
-    pub(crate) fn insert(&mut self, row: u32, vector: VectorValue) -> GraphResult<()> {
+    pub(crate) fn insert(&mut self, row: u32, vector: &VectorValue) -> GraphResult<()> {
         self.remove(row);
         let slot = self.entries.len();
         self.codes.resize_rows(slot + 1).map_err(codec_invariant)?;
         self.row_scales.push(1.0);
-        let rotated = rotated_unit_vector(&vector, self.dimension);
+        let rotated = rotated_unit_vector(vector, self.dimension);
+        if self.collecting_bulk {
+            self.bulk_rotated.extend_from_slice(&rotated);
+        }
         self.entries.push(TurboQuantEntry {
             row,
-            vector,
             deleted: false,
         });
         self.row_to_entry.insert(row, slot);
@@ -125,27 +132,35 @@ impl TurboQuantVectorIndex {
 
     /// Recompute quantile calibration and packed codes after a bulk load.
     pub(crate) fn finish_bulk_load(&mut self) -> GraphResult<()> {
+        if !self.collecting_bulk {
+            return Ok(());
+        }
         if self.live_entries == 0 {
             self.shift.clear();
             self.scale.clear();
             self.inv_scale.clear();
+            self.bulk_rotated = Vec::new();
+            self.collecting_bulk = false;
             return Ok(());
         }
         let live_slots = self.live_entry_slots();
-        let rotated = self.rotated_live_vectors(&live_slots);
+        let rotated = self.rotated_live_vectors(&live_slots)?;
         let (shift, scale) = quantile_calibration(&rotated, self.dimension);
         self.inv_scale = scale.iter().map(|value| value.recip()).collect();
         self.shift = shift;
         self.scale = scale;
-        for slot in live_slots {
-            let rotated = rotated_unit_vector(&self.entries[slot].vector, self.dimension);
-            self.encode_slot(slot, &rotated)?;
+        for (offset, slot) in live_slots.iter().copied().enumerate() {
+            let start = offset * self.dimension;
+            let end = start + self.dimension;
+            self.encode_slot(slot, &rotated[start..end])?;
         }
+        self.bulk_rotated = Vec::new();
+        self.collecting_bulk = false;
         Ok(())
     }
 
-    /// Approximate top-k search over current row versions with exact cosine rerank.
-    pub(crate) fn search(
+    /// Approximate candidate search over current row versions.
+    pub(crate) fn candidates(
         &self,
         query: &VectorValue,
         k: usize,
@@ -164,21 +179,11 @@ impl TurboQuantVectorIndex {
             self.live_map_candidates(&byte_lut, query_bias, candidate_limit)
         };
 
-        let scorer = VectorMetric::Cosine.bind_query(query)?;
-        let mut exact = VectorTopK::new(k);
-        for candidate in candidates.into_hits() {
-            let (slot, row) = candidate.key;
-            let entry = &self.entries[slot];
-            if entry.deleted || entry.row != row {
-                continue;
-            }
-            exact.push_distance(row, scorer.distance(&entry.vector)?);
-        }
-        Ok(exact
+        Ok(candidates
             .into_hits()
             .into_iter()
             .map(|hit| TurboQuantVectorHit {
-                row: hit.key,
+                row: hit.key.1,
                 distance: hit.distance,
             })
             .collect())
@@ -287,11 +292,10 @@ impl TurboQuantVectorIndex {
             .saturating_add(self.scale.capacity())
             .saturating_add(self.inv_scale.capacity())
             .saturating_mul(size_of::<f32>());
-        let referenced_vector_bytes = self
-            .entries
-            .iter()
-            .map(|entry| entry.vector.dimension().saturating_mul(size_of::<f32>()))
-            .sum();
+        let bulk_rotated_bytes = self
+            .bulk_rotated
+            .capacity()
+            .saturating_mul(size_of::<f32>());
         let estimated_heap_bytes = self
             .entries
             .capacity()
@@ -304,7 +308,8 @@ impl TurboQuantVectorIndex {
             .saturating_add(self.row_scales.capacity().saturating_mul(size_of::<f32>()))
             .saturating_add(code_bytes)
             .saturating_add(codebook_bytes)
-            .saturating_add(calibration_bytes);
+            .saturating_add(calibration_bytes)
+            .saturating_add(bulk_rotated_bytes);
         TurboQuantMemoryUsage {
             entries,
             live_entries: self.live_entries,
@@ -313,7 +318,7 @@ impl TurboQuantVectorIndex {
             codebook_bytes,
             calibration_bytes,
             estimated_heap_bytes,
-            referenced_vector_bytes,
+            referenced_vector_bytes: 0,
         }
     }
 
@@ -389,22 +394,25 @@ impl TurboQuantVectorIndex {
             .collect()
     }
 
-    fn rotated_live_vectors(&self, live_slots: &[usize]) -> Vec<f32> {
+    fn rotated_live_vectors(&self, live_slots: &[usize]) -> GraphResult<Vec<f32>> {
         let mut rotated = Vec::with_capacity(live_slots.len() * self.dimension);
         for &slot in live_slots {
-            rotated.extend(rotated_unit_vector(
-                &self.entries[slot].vector,
-                self.dimension,
-            ));
+            let start = slot * self.dimension;
+            let end = start + self.dimension;
+            let Some(pending) = self.bulk_rotated.get(start..end) else {
+                return Err(GraphError::Inconsistent {
+                    reason: format!("TurboQuant live slot {slot} is missing bulk calibration data"),
+                });
+            };
+            rotated.extend_from_slice(pending);
         }
-        rotated
+        Ok(rotated)
     }
 }
 
 #[derive(Clone, Debug)]
 struct TurboQuantEntry {
     row: u32,
-    vector: VectorValue,
     deleted: bool,
 }
 

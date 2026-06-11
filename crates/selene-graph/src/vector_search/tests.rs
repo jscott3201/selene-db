@@ -16,6 +16,9 @@ fn props(key: &DbString, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
+#[path = "tests/turbo_quant.rs"]
+mod turbo_quant;
+
 #[test]
 fn exact_vector_search_ranks_labelled_vector_nodes() {
     let shared = SharedGraph::new(GraphId::new(91));

@@ -237,6 +237,21 @@ impl SeleneGraph {
                 requested: options.metric,
             });
         }
+        if index.is_turbo_quant() {
+            let row_hits = index
+                .turbo_quant_candidates(query, options.k, options.ef_search)
+                .ok_or(VectorSearchError::ApproximateIndexMissing)?
+                .map_err(GraphError::from)?;
+            return rerank_ann_row_candidates(
+                self,
+                property,
+                query,
+                options.metric,
+                options.k,
+                row_hits,
+                &checker,
+            );
+        }
         let row_hits = index
             .ann_search(query, options.k, options.ef_search)
             .ok_or(VectorSearchError::ApproximateIndexMissing)?
@@ -281,6 +296,32 @@ impl SeleneGraph {
                 indexed: indexed_metric,
                 requested: options.metric,
             });
+        }
+
+        if index.is_turbo_quant() {
+            let mut batch_hits = Vec::with_capacity(queries.len());
+            for query in queries {
+                checker.check()?;
+                let dimension = u32::try_from(query.dimension())
+                    .map_err(|_| VectorSearchError::ApproximateIndexMissing)?;
+                if dimension != query_dimension {
+                    return Err(VectorSearchError::ApproximateIndexMissing);
+                }
+                let row_hits = index
+                    .turbo_quant_candidates(query, options.k, options.ef_search)
+                    .ok_or(VectorSearchError::ApproximateIndexMissing)?
+                    .map_err(GraphError::from)?;
+                batch_hits.push(rerank_ann_row_candidates(
+                    self,
+                    property,
+                    query,
+                    options.metric,
+                    options.k,
+                    row_hits,
+                    &checker,
+                )?);
+            }
+            return Ok(batch_hits);
         }
 
         let mut scratch = HnswSearchScratch::default();
@@ -456,6 +497,44 @@ fn ann_row_hits_to_node_hits(
         hits.sort_by(compare_node_search_hit);
     }
     Ok(hits)
+}
+
+fn rerank_ann_row_candidates(
+    graph: &SeleneGraph,
+    property: &DbString,
+    query: &VectorValue,
+    metric: VectorMetric,
+    k: usize,
+    row_hits: Vec<VectorIndexSearchHit>,
+    checker: &CancellationChecker<'_>,
+) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+    let scorer = metric.bind_query(query).map_err(GraphError::from)?;
+    let mut top_k = VectorTopK::new(k);
+    for hit in row_hits {
+        checker.check()?;
+        if !graph.node_store.is_alive(hit.row) {
+            continue;
+        }
+        let row = RowIndex::new(hit.row);
+        let node_id = graph
+            .node_id_for_row(row)
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!("ANN vector candidate row {} has no node id", hit.row),
+            })?;
+        let properties = graph
+            .node_store
+            .properties
+            .get(hit.row as usize)
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!("ANN vector candidate row {} has no property row", hit.row),
+            })?;
+        let Some(Value::Vector(vector)) = properties.get(property) else {
+            continue;
+        };
+        let distance = scorer.distance(vector).map_err(GraphError::from)?;
+        top_k.push_distance(node_id, distance);
+    }
+    Ok(vector_node_hits(top_k))
 }
 
 fn compare_node_search_hit(lhs: &VectorNodeSearchHit, rhs: &VectorNodeSearchHit) -> Ordering {
