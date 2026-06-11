@@ -72,7 +72,7 @@ pub(crate) struct TurboQuantVectorIndex {
     scale: Vec<f32>,
     inv_scale: Vec<f32>,
     entries: Vec<TurboQuantEntry>,
-    row_to_entry: FxHashMap<u32, usize>,
+    row_to_entry: FxHashMap<u32, u32>,
     live_entries: usize,
     collecting_bulk: bool,
     bulk_rotated: Vec<f32>,
@@ -110,6 +110,7 @@ impl TurboQuantVectorIndex {
     pub(crate) fn insert(&mut self, row: u32, vector: &VectorValue) -> GraphResult<()> {
         self.remove(row);
         let slot = self.entries.len();
+        let slot_key = slot_key(slot)?;
         self.codes.resize_rows(slot + 1).map_err(codec_invariant)?;
         self.row_scales.push(1.0);
         let rotated = rotated_unit_vector(vector, self.dimension);
@@ -120,7 +121,7 @@ impl TurboQuantVectorIndex {
             row,
             deleted: false,
         });
-        self.row_to_entry.insert(row, slot);
+        self.row_to_entry.insert(row, slot_key);
         self.live_entries += 1;
         self.encode_slot(slot, &rotated)?;
         Ok(())
@@ -128,7 +129,7 @@ impl TurboQuantVectorIndex {
 
     /// Mark the current vector for `row` stale, if present.
     pub(crate) fn remove(&mut self, row: u32) {
-        let Some(slot) = self.row_to_entry.remove(&row) else {
+        let Some(slot) = self.row_to_entry.remove(&row).map(slot_index) else {
             return;
         };
         if let Some(entry) = self.entries.get_mut(slot)
@@ -289,7 +290,7 @@ impl TurboQuantVectorIndex {
                     if entry.deleted {
                         continue;
                     }
-                    debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
+                    debug_assert!(self.row_points_to_slot(entry.row, slot));
                     let distance = -(dot * f64::from(self.row_scales[slot]));
                     candidates.push_distance((slot, entry.row), distance);
                 }
@@ -305,7 +306,8 @@ impl TurboQuantVectorIndex {
         candidate_limit: usize,
     ) -> VectorTopK<(usize, u32)> {
         let mut candidates = VectorTopK::new(candidate_limit);
-        for (&row, &slot) in &self.row_to_entry {
+        for (&row, &slot_key) in &self.row_to_entry {
+            let slot = slot_index(slot_key);
             let Some(entry) = self.entries.get(slot) else {
                 continue;
             };
@@ -341,7 +343,7 @@ impl TurboQuantVectorIndex {
             .saturating_add(
                 self.row_to_entry
                     .capacity()
-                    .saturating_mul(size_of::<(u32, usize)>()),
+                    .saturating_mul(size_of::<(u32, u32)>()),
             )
             .saturating_add(self.row_scales.capacity().saturating_mul(size_of::<f32>()))
             .saturating_add(code_bytes)
@@ -430,9 +432,17 @@ impl TurboQuantVectorIndex {
             .iter()
             .enumerate()
             .filter_map(|(slot, entry)| {
-                (!entry.deleted && self.row_to_entry.get(&entry.row) == Some(&slot)).then_some(slot)
+                (!entry.deleted && self.row_points_to_slot(entry.row, slot)).then_some(slot)
             })
             .collect()
+    }
+
+    fn row_points_to_slot(&self, row: u32, slot: usize) -> bool {
+        self.row_to_entry.get(&row).copied().map(slot_index) == Some(slot)
+    }
+
+    fn slot_for_row(&self, row: u32) -> Option<usize> {
+        self.row_to_entry.get(&row).copied().map(slot_index)
     }
 
     fn rotated_live_vectors(&self, live_slots: &[usize]) -> GraphResult<Vec<f32>> {
@@ -481,6 +491,16 @@ fn codec_invariant(err: selene_core::TurboQuantCodecError) -> GraphError {
     GraphError::Inconsistent {
         reason: format!("TurboQuant index invariant failed: {err}"),
     }
+}
+
+fn slot_key(slot: usize) -> GraphResult<u32> {
+    u32::try_from(slot).map_err(|_| GraphError::Inconsistent {
+        reason: "TurboQuant slot index exceeds u32::MAX".to_owned(),
+    })
+}
+
+fn slot_index(slot: u32) -> usize {
+    usize::try_from(slot).expect("TurboQuant slot key always fits usize")
 }
 
 fn quantile_calibration(rotated: &[f32], dimension: usize) -> (Vec<f32>, Vec<f32>) {

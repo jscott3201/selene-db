@@ -690,6 +690,16 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d768_q8_cand4243_k10_recallbp10000_m4181-full30000` | 3.9310 ms (quick) | The 768-dim row keeps candidate-set isolation per query but fuses compressed scoring over shared blocks, preserving full recall with lower latency than the single-query filtered path. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d1536_q8_cand4243_k10_recallbp10000_m7946-full60000` | 6.0436 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and keeps full recall, giving the current production path a fast primitive for multi-query graph-filtered workloads. |
 
+PR-local TurboQuant slot-map storage spot-check:
+
+Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`.
+
+| Bench | Index storage | Notes |
+|---|---:|---|
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128_n10k_k10_recallbp10000_m931-full5000` | 931 KiB / 10k rows | TurboQuant row-to-slot metadata uses `u32` slot keys while preserving full-recall candidate search and exact primary-vector rerank. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4069-full30000` | 4,069 KiB / 10k rows | The metadata compaction is dimension-independent, so the higher-dimensional rows retain the same compressed-code layout and calibration arrays. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m7834-full60000` | 7,834 KiB / 10k rows | The current resident estimate excludes primary `VECTOR` components, which remain graph-owned source-of-truth values for exact rerank. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |

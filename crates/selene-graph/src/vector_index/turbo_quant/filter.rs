@@ -131,7 +131,7 @@ impl TurboQuantVectorIndex {
         if entry.deleted || !allowed_rows.contains(entry.row) {
             return None;
         }
-        debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
+        debug_assert!(self.row_points_to_slot(entry.row, slot));
         Some(entry.row)
     }
 
@@ -286,7 +286,7 @@ impl TurboQuantVectorIndex {
     ) -> VectorTopK<(usize, u32)> {
         let mut candidates = VectorTopK::new(candidate_limit);
         for row in allowed_rows.iter() {
-            let Some(&slot) = self.row_to_entry.get(&row) else {
+            let Some(slot) = self.slot_for_row(row) else {
                 continue;
             };
             let Some(entry) = self.entries.get(slot) else {
