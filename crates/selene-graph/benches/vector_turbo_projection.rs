@@ -91,6 +91,33 @@ fn bench_production_turbo_quant_dimension_projection(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_production_turbo_quant_batch_dimension_projection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_turbo_quant_production_batch_dimension_projection");
+    for dimension in DIMENSIONS {
+        let fixture = ProductionDimensionFixture::build(dimension);
+        group.throughput(Throughput::Elements(
+            (fixture.rows() * fixture.query_count()) as u64,
+        ));
+        group.bench_function(
+            BenchmarkId::new(
+                "cluster_cos",
+                format!(
+                    "tqcos_batch_c1024_d{dimension}_q{QUERY_COUNT}_n{}_k{K}_recallbp{}_{}",
+                    compact_count(fixture.rows()),
+                    fixture.batch_recall_basis_points(),
+                    fixture.memory_suffix()
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    std::hint::black_box(fixture.total_batch_overlap());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 #[derive(Debug)]
 struct DimensionFixture {
     dimension: usize,
@@ -188,6 +215,10 @@ impl ProductionDimensionFixture {
         self.total_overlap() * 10_000 / (self.queries.len() * K)
     }
 
+    fn batch_recall_basis_points(&self) -> usize {
+        self.total_batch_overlap() * 10_000 / (self.queries.len() * K)
+    }
+
     fn memory_suffix(&self) -> String {
         let usage = self
             .graph
@@ -218,6 +249,39 @@ impl ProductionDimensionFixture {
                     .node_to_ordinal
                     .get(&hit.node_id)
                     .expect("search hit node was inserted by this fixture")
+            })
+            .collect()
+    }
+
+    fn total_batch_overlap(&self) -> usize {
+        self.production_batch_ids()
+            .iter()
+            .zip(&self.exact)
+            .map(|(approx, exact)| exact.iter().filter(|id| approx.contains(id)).count())
+            .sum()
+    }
+
+    fn production_batch_ids(&self) -> Vec<Vec<usize>> {
+        self.graph
+            .read()
+            .approximate_vector_search_nodes_batch_checked(
+                &self.label,
+                &self.property,
+                &self.queries,
+                ApproximateVectorSearchOptions::new(VectorMetric::Cosine, K, VARIANT.candidates),
+                CancellationChecker::disabled(),
+            )
+            .expect("production TurboQuant batch search succeeds")
+            .into_iter()
+            .map(|hits| {
+                hits.into_iter()
+                    .map(|hit| {
+                        *self
+                            .node_to_ordinal
+                            .get(&hit.node_id)
+                            .expect("search hit node was inserted by this fixture")
+                    })
+                    .collect()
             })
             .collect()
     }
@@ -321,6 +385,7 @@ criterion_group! {
     name = vector_turbo_projection;
     config = common::criterion_config();
     targets = bench_turbo_quant_dimension_projection,
-        bench_production_turbo_quant_dimension_projection
+        bench_production_turbo_quant_dimension_projection,
+        bench_production_turbo_quant_batch_dimension_projection
 }
 criterion_main!(vector_turbo_projection);

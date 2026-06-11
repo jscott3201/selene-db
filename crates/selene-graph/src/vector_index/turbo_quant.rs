@@ -18,6 +18,9 @@ use selene_core::{
 use crate::error::{GraphError, GraphResult};
 use crate::parallel_scan::should_parallelize_scan;
 
+#[path = "turbo_quant/batch.rs"]
+mod batch;
+
 const TURBO_QUANT_BITS: u8 = 4;
 const SLOT_ORDER_SCAN_STALE_RATIO: usize = 2;
 const MIN_SLOT_ORDER_SCAN_ENTRIES: usize = 64;
