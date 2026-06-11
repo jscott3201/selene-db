@@ -560,6 +560,8 @@ pub enum SchemaVectorIndexKind {
     IvfCosine,
     /// Approximate IVF index using negative inner product distance.
     IvfNegativeInnerProduct,
+    /// Compressed TurboQuant candidate index using cosine distance.
+    TurboQuantCosine,
 }
 
 /// Schema-level property index value kind.

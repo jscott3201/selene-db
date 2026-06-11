@@ -13,7 +13,7 @@ use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, Pr
 
 const PROC_NAME: &str = "selene.vector_index_stats";
 
-static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 35] = [
+static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 43] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -81,6 +81,22 @@ static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 35] = [
         .with_description("Estimated index-owned bytes."),
     StaticOutputColumn::new("estimated_reachable_bytes", GqlType::Uint64)
         .with_description("Estimated bytes reachable from the index."),
+    StaticOutputColumn::new("turbo_quant_index_bytes", GqlType::Uint64)
+        .with_description("Estimated TurboQuant-owned heap bytes."),
+    StaticOutputColumn::new("turbo_quant_referenced_vector_bytes", GqlType::Uint64)
+        .with_description("Vector component bytes reachable through TurboQuant entries."),
+    StaticOutputColumn::new("turbo_quant_entries", GqlType::Uint64)
+        .with_description("Total TurboQuant entries including stale entries."),
+    StaticOutputColumn::new("turbo_quant_live_entries", GqlType::Uint64)
+        .with_description("Live TurboQuant row entries."),
+    StaticOutputColumn::new("turbo_quant_deleted_entries", GqlType::Uint64)
+        .with_description("Stale deleted TurboQuant entries."),
+    StaticOutputColumn::new("turbo_quant_code_bytes", GqlType::Uint64)
+        .with_description("Packed TurboQuant coordinate-code bytes."),
+    StaticOutputColumn::new("turbo_quant_codebook_bytes", GqlType::Uint64)
+        .with_description("TurboQuant scalar codebook bytes."),
+    StaticOutputColumn::new("turbo_quant_calibration_bytes", GqlType::Uint64)
+        .with_description("TurboQuant per-dimension calibration bytes."),
 ];
 
 pub(super) fn signature() -> Vec<ProcedureParameter> {
@@ -217,6 +233,22 @@ impl StatsRow {
             Value::Uint(usize_to_u64_saturating(
                 self.usage.estimated_reachable_bytes,
             )),
+            Value::Uint(usize_to_u64_saturating(self.usage.turbo_quant_index_bytes)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.turbo_quant_referenced_vector_bytes,
+            )),
+            Value::Uint(usize_to_u64_saturating(self.usage.turbo_quant_entries)),
+            Value::Uint(usize_to_u64_saturating(self.usage.turbo_quant_live_entries)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.turbo_quant_deleted_entries,
+            )),
+            Value::Uint(usize_to_u64_saturating(self.usage.turbo_quant_code_bytes)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.turbo_quant_codebook_bytes,
+            )),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.turbo_quant_calibration_bytes,
+            )),
         ])
     }
 }
@@ -265,6 +297,7 @@ fn render_vector_index_kind(
         VectorIndexKind::IvfNegativeInnerProduct => {
             render_ivf_kind("vector_ivf_negative_inner_product", dimension, ivf_config)
         }
+        VectorIndexKind::TurboQuantCosine => format!("vector_turbo_quant_cosine({dimension})"),
     }
 }
 

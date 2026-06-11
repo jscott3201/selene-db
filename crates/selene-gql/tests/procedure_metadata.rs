@@ -682,7 +682,10 @@ fn vector_search_candidate_state_expanded_ann_metadata_has_state_and_ann_args() 
     assert_eq!(parameters[10].name.as_str(), "ef_search");
     assert_eq!(parameters[10].ty, GqlType::Integer);
     assert!(parameters[10].nullable);
-    assert_eq!(parameters[10].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+    assert_eq!(
+        parameters[10].default_doc,
+        Some("NULL (HNSW 64, IVF 2, TurboQuant 1024)")
+    );
     assert!(parameters[10].default.is_some());
 
     let columns = &metadata.output_schema.columns;

@@ -97,7 +97,7 @@ pub(super) fn execute(
             "vector index for ({label}, {property}) already exists"
         ))),
         Err(GraphError::VectorIndexInvalidDimension { .. }) => Err(invalid_arg(
-            "vector index dimension must be greater than zero",
+            "vector index dimension must be between 1 and the engine vector dimension cap",
         )),
         Err(GraphError::VectorIndexInvalidHnswConfig { reason, .. }) => Err(invalid_arg(format!(
             "invalid HNSW vector index config: {reason}"
@@ -170,8 +170,14 @@ fn kind_arg(
             VectorMetric::Cosine => VectorIndexKind::IvfCosine,
             VectorMetric::NegativeInnerProduct => VectorIndexKind::IvfNegativeInnerProduct,
         }),
+        "turbo_quant" | "turboquant" => match metric.unwrap_or(VectorMetric::Cosine) {
+            VectorMetric::Cosine => Ok(VectorIndexKind::TurboQuantCosine),
+            other => Err(invalid_arg(format!(
+                "turbo_quant vector indexes support cosine metric only, got {other:?}"
+            ))),
+        },
         other => Err(invalid_arg(format!(
-            "unknown vector index kind '{other}'; expected flat, hnsw, or ivf"
+            "unknown vector index kind '{other}'; expected flat, hnsw, ivf, or turbo_quant"
         ))),
     }
 }

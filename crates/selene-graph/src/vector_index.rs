@@ -27,6 +27,8 @@ mod memory;
 mod rebuild;
 #[path = "vector_index/search_hit.rs"]
 mod search_hit;
+#[path = "vector_index/turbo_quant.rs"]
+mod turbo_quant;
 
 use selene_core::{
     DbString, HnswIndexConfig, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorMetric,
@@ -53,7 +55,8 @@ pub use rebuild::{
     VectorIndexMaintenancePolicy, VectorIndexRebuildEntry, VectorIndexRebuildReport,
 };
 pub(crate) use search_hit::VectorIndexSearchHit;
-use search_hit::{hnsw_hits, ivf_hits};
+use search_hit::{hnsw_hits, ivf_hits, turbo_quant_hits};
+use turbo_quant::TurboQuantVectorIndex;
 
 type VectorIndexMap = FxHashMap<(DbString, DbString), VectorIndexEntry>;
 
@@ -86,6 +89,8 @@ pub enum VectorIndexKind {
     IvfCosine,
     /// Approximate IVF index using negative inner product distance.
     IvfNegativeInnerProduct,
+    /// Compressed TurboQuant candidate index using cosine distance and exact rerank.
+    TurboQuantCosine,
 }
 
 /// Optional ANN construction config for one vector-index registration.
@@ -132,7 +137,10 @@ impl VectorIndexKind {
             Self::HnswSquaredEuclidean => Some(VectorMetric::SquaredEuclidean),
             Self::HnswCosine => Some(VectorMetric::Cosine),
             Self::HnswNegativeInnerProduct => Some(VectorMetric::NegativeInnerProduct),
-            Self::IvfSquaredEuclidean | Self::IvfCosine | Self::IvfNegativeInnerProduct => None,
+            Self::IvfSquaredEuclidean
+            | Self::IvfCosine
+            | Self::IvfNegativeInnerProduct
+            | Self::TurboQuantCosine => None,
         }
     }
 
@@ -143,7 +151,8 @@ impl VectorIndexKind {
             Self::Flat
             | Self::HnswSquaredEuclidean
             | Self::HnswCosine
-            | Self::HnswNegativeInnerProduct => None,
+            | Self::HnswNegativeInnerProduct
+            | Self::TurboQuantCosine => None,
             Self::IvfSquaredEuclidean => Some(VectorMetric::SquaredEuclidean),
             Self::IvfCosine => Some(VectorMetric::Cosine),
             Self::IvfNegativeInnerProduct => Some(VectorMetric::NegativeInnerProduct),
@@ -162,6 +171,7 @@ impl VectorIndexKind {
             Self::HnswNegativeInnerProduct | Self::IvfNegativeInnerProduct => {
                 Some(VectorMetric::NegativeInnerProduct)
             }
+            Self::TurboQuantCosine => Some(VectorMetric::Cosine),
         }
     }
 }
@@ -176,6 +186,7 @@ pub struct VectorIndex {
     rows: RoaringBitmap,
     hnsw: Option<HnswVectorIndex>,
     ivf: Option<IvfVectorIndex>,
+    turbo_quant: Option<TurboQuantVectorIndex>,
 }
 
 impl VectorIndex {
@@ -228,6 +239,10 @@ impl VectorIndex {
         let ivf = kind
             .ivf_metric()
             .map(|metric| IvfVectorIndex::with_config(metric, ivf_config));
+        let turbo_quant = match kind {
+            VectorIndexKind::TurboQuantCosine => Some(TurboQuantVectorIndex::new(dimension)?),
+            _ => None,
+        };
         Ok(Self {
             kind,
             dimension,
@@ -236,6 +251,7 @@ impl VectorIndex {
             rows: RoaringBitmap::new(),
             hnsw,
             ivf,
+            turbo_quant,
         })
     }
 
@@ -287,6 +303,12 @@ impl VectorIndex {
         self.kind.ivf_metric().is_some()
     }
 
+    /// Return true when this index has a TurboQuant compressed accelerator.
+    #[must_use]
+    pub const fn is_turbo_quant(&self) -> bool {
+        matches!(self.kind, VectorIndexKind::TurboQuantCosine)
+    }
+
     /// Return the HNSW metric, if this is an HNSW index.
     #[must_use]
     pub const fn hnsw_metric(&self) -> Option<VectorMetric> {
@@ -314,10 +336,16 @@ impl VectorIndex {
             .as_ref()
             .map(IvfVectorIndex::memory_usage)
             .unwrap_or_default();
+        let turbo_quant = self
+            .turbo_quant
+            .as_ref()
+            .map(TurboQuantVectorIndex::memory_usage)
+            .unwrap_or_default();
         let estimated_index_bytes = size_of::<Self>()
             .saturating_add(row_bitmap_bytes)
             .saturating_add(hnsw.estimated_heap_bytes)
-            .saturating_add(ivf.estimated_heap_bytes);
+            .saturating_add(ivf.estimated_heap_bytes)
+            .saturating_add(turbo_quant.estimated_heap_bytes);
         VectorIndexMemoryUsage {
             indexed_rows: self.cardinality(),
             row_bitmap_bytes,
@@ -345,10 +373,19 @@ impl VectorIndex {
             ivf_average_list_len_basis_points: ivf.average_list_len_basis_points,
             ivf_assigned_entries: ivf.assigned_entries,
             ivf_pending_retrain_entries: ivf.pending_retrain_entries,
+            turbo_quant_index_bytes: turbo_quant.estimated_heap_bytes,
+            turbo_quant_referenced_vector_bytes: turbo_quant.referenced_vector_bytes,
+            turbo_quant_entries: turbo_quant.entries,
+            turbo_quant_live_entries: turbo_quant.live_entries,
+            turbo_quant_deleted_entries: turbo_quant.deleted_entries,
+            turbo_quant_code_bytes: turbo_quant.code_bytes,
+            turbo_quant_codebook_bytes: turbo_quant.codebook_bytes,
+            turbo_quant_calibration_bytes: turbo_quant.calibration_bytes,
             estimated_index_bytes,
             estimated_reachable_bytes: estimated_index_bytes
                 .saturating_add(hnsw.referenced_vector_bytes)
-                .saturating_add(ivf.referenced_vector_bytes),
+                .saturating_add(ivf.referenced_vector_bytes)
+                .saturating_add(turbo_quant.referenced_vector_bytes),
         }
     }
 
@@ -370,6 +407,9 @@ impl VectorIndex {
         if let Some(ivf) = &mut self.ivf {
             ivf.insert(row, vector.clone())?;
         }
+        if let Some(turbo_quant) = &mut self.turbo_quant {
+            turbo_quant.insert(row, vector.clone())?;
+        }
         Ok(())
     }
 
@@ -379,6 +419,9 @@ impl VectorIndex {
         }
         if let Some(ivf) = &mut self.ivf {
             ivf.finish_bulk_load()?;
+        }
+        if let Some(turbo_quant) = &mut self.turbo_quant {
+            turbo_quant.finish_bulk_load()?;
         }
         Ok(())
     }
@@ -390,6 +433,9 @@ impl VectorIndex {
         }
         if let Some(ivf) = &mut self.ivf {
             ivf.remove(row);
+        }
+        if let Some(turbo_quant) = &mut self.turbo_quant {
+            turbo_quant.remove(row);
         }
     }
 
@@ -410,9 +456,14 @@ impl VectorIndex {
         if let Some(hnsw) = &self.hnsw {
             return Some(hnsw.search(query, k, search_width).map(hnsw_hits));
         }
-        self.ivf
-            .as_ref()
-            .map(|ivf| ivf.search(query, k, search_width).map(ivf_hits))
+        if let Some(ivf) = &self.ivf {
+            return Some(ivf.search(query, k, search_width).map(ivf_hits));
+        }
+        self.turbo_quant.as_ref().map(|turbo_quant| {
+            turbo_quant
+                .search(query, k, search_width)
+                .map(turbo_quant_hits)
+        })
     }
 
     pub(crate) fn ann_search_with_scratch(
@@ -428,9 +479,14 @@ impl VectorIndex {
                     .map(hnsw_hits),
             );
         }
-        self.ivf
-            .as_ref()
-            .map(|ivf| ivf.search(query, k, search_width).map(ivf_hits))
+        if let Some(ivf) = &self.ivf {
+            return Some(ivf.search(query, k, search_width).map(ivf_hits));
+        }
+        self.turbo_quant.as_ref().map(|turbo_quant| {
+            turbo_quant
+                .search(query, k, search_width)
+                .map(turbo_quant_hits)
+        })
     }
 }
 
@@ -667,7 +723,7 @@ fn admit(
 }
 
 fn ensure_dimension(dimension: u32) -> GraphResult<()> {
-    if dimension == 0 {
+    if dimension == 0 || dimension as usize > selene_core::MAX_VECTOR_DIMENSION {
         Err(GraphError::VectorIndexInvalidDimension { dimension })
     } else {
         Ok(())

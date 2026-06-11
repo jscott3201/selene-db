@@ -136,11 +136,12 @@ Native vector indexes are graph indexes over `(label, property)`:
 - `Flat`
 - `HnswSquaredEuclidean`, `HnswCosine`, `HnswNegativeInnerProduct`
 - `IvfSquaredEuclidean`, `IvfCosine`, `IvfNegativeInnerProduct`
+- `TurboQuantCosine`
 
-Index registrations are durable schema state. HNSW/IVF accelerators are derived
-in-memory state and must be rebuildable from primary graph values. Delete,
-update, rebuild, WAL/snapshot recovery, and stale-index visibility are required
-correctness concerns for vector-index changes.
+Index registrations are durable schema state. HNSW/IVF/TurboQuant accelerators
+are derived in-memory state and must be rebuildable from primary graph values.
+Delete, update, rebuild, WAL/snapshot recovery, and stale-index visibility are
+required correctness concerns for vector-index changes.
 
 Current production vector primitives include:
 
@@ -164,9 +165,11 @@ Current production vector primitives include:
   precision;
 - vector index stats, create/drop, rebuild, and recommended rebuild.
 
-Keep compression and alternative ANN ideas out of production until evidence
-earns a design. PQ, IVF+PQ, binary quantization, OPQ, ScaNN, DiskANN, and
-TurboQuant-style work belong in research/benchmark code first.
+Keep new compression and alternative ANN ideas out of production until evidence
+earns a design. TurboQuant cosine is the first production compressed candidate
+index and must preserve exact `VECTOR` values with exact final rerank. PQ,
+IVF+PQ, binary quantization, OPQ, ScaNN, and DiskANN remain research/benchmark
+code first.
 
 ## Graph Algorithms And Retrieval
 

@@ -141,6 +141,7 @@ const fn schema_kind_from(kind: VectorIndexKind) -> SchemaVectorIndexKind {
         VectorIndexKind::IvfSquaredEuclidean => SchemaVectorIndexKind::IvfSquaredEuclidean,
         VectorIndexKind::IvfCosine => SchemaVectorIndexKind::IvfCosine,
         VectorIndexKind::IvfNegativeInnerProduct => SchemaVectorIndexKind::IvfNegativeInnerProduct,
+        VectorIndexKind::TurboQuantCosine => SchemaVectorIndexKind::TurboQuantCosine,
     }
 }
 

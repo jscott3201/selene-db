@@ -441,7 +441,10 @@ mod tests {
         assert_eq!(parameters[5].name.as_str(), "ef_search");
         assert_eq!(parameters[5].ty, crate::GqlType::Integer);
         assert!(parameters[5].nullable);
-        assert_eq!(parameters[5].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+        assert_eq!(
+            parameters[5].default_doc,
+            Some("NULL (HNSW 64, IVF 2, TurboQuant 1024)")
+        );
         assert_eq!(
             parameters[5].default,
             Some(crate::ProcedureDefaultValue::Null)
@@ -552,7 +555,10 @@ mod tests {
         assert_eq!(parameters[5].name.as_str(), "ef_search");
         assert_eq!(parameters[5].ty, crate::GqlType::Integer);
         assert!(parameters[5].nullable);
-        assert_eq!(parameters[5].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+        assert_eq!(
+            parameters[5].default_doc,
+            Some("NULL (HNSW 64, IVF 2, TurboQuant 1024)")
+        );
         assert_eq!(
             parameters[5].default,
             Some(crate::ProcedureDefaultValue::Null)
@@ -580,7 +586,7 @@ mod tests {
         assert_eq!(metadata.tier, ProcedureTier::Graph);
         assert_eq!(metadata.mutability, ProcedureMutability::Read);
         let columns = &metadata.output_schema.columns;
-        assert_eq!(columns.len(), 35);
+        assert_eq!(columns.len(), 43);
         assert_eq!(columns[0].name.as_str(), "name");
         assert_eq!(columns[0].ty, crate::GqlType::String);
         assert_eq!(columns[4].name.as_str(), "dimension");
@@ -607,6 +613,10 @@ mod tests {
         assert_eq!(columns[32].ty, crate::GqlType::Boolean);
         assert_eq!(columns[34].name.as_str(), "estimated_reachable_bytes");
         assert_eq!(columns[34].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[35].name.as_str(), "turbo_quant_index_bytes");
+        assert_eq!(columns[35].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[42].name.as_str(), "turbo_quant_calibration_bytes");
+        assert_eq!(columns[42].ty, crate::GqlType::Uint64);
     }
 
     #[test]

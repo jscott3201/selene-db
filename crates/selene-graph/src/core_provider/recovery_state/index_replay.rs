@@ -397,5 +397,6 @@ pub(super) const fn vector_kind_from(kind: SchemaVectorIndexKind) -> VectorIndex
         SchemaVectorIndexKind::IvfSquaredEuclidean => VectorIndexKind::IvfSquaredEuclidean,
         SchemaVectorIndexKind::IvfCosine => VectorIndexKind::IvfCosine,
         SchemaVectorIndexKind::IvfNegativeInnerProduct => VectorIndexKind::IvfNegativeInnerProduct,
+        SchemaVectorIndexKind::TurboQuantCosine => VectorIndexKind::TurboQuantCosine,
     }
 }
