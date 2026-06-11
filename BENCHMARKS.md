@@ -896,6 +896,27 @@ Bench bins: `wal`, `snapshot`, plus `graph_snapshot_roundtrip` (lives in the
 | `persist_wal_append_batch_1000` | 6.49 ms | 9.57 ms | 12.58 ms | 1000-change entries — **50× faster than per-entry at 100k**. |
 | `persist_wal_append_batch_1000_no_fsync` | 2.04 ms | 5.04 ms | 8.28 ms | Batched, no flush in timed body. |
 | `persist_wal_replay` | 4.23 ms | 18.67 ms | 32.27 ms | Fixed-layout header + xxh3 + BufReader. |
+| `persist_wal_open_scan` | 161.75 µs | 760.79 µs | 1.5317 ms | Writer reopen validation scan after B16 buffered open-scan. |
+
+#### `persist_wal_open_scan` — writer reopen validation (B16)
+
+Measures `WalWriter::open` over an existing WAL with `scale` single-change
+entries. The timed body covers file open/lock, file header read, entry-header
+scan, payload checksum validation, and final committed-offset positioning; the
+WAL fixture is created outside the timed body.
+
+Commands:
+
+```bash
+scripts/run-benches.sh --profile full --bench wal --filter persist_wal_open_scan --save-baseline b16_pre
+scripts/run-benches.sh --profile full --bench wal --filter persist_wal_open_scan --baseline b16_pre
+```
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `persist_wal_open_scan/10000` | 7.9089 ms | 161.75 µs | Buffered sequential scan avoids per-entry seek and reuses the payload buffer; Criterion reported −97.533%. |
+| `persist_wal_open_scan/50000` | 43.344 ms | 760.79 µs | Criterion reported −98.083%. |
+| `persist_wal_open_scan/100000` | 87.278 ms | 1.5317 ms | Criterion reported −98.083%. |
 
 #### `persist_wal_body_size_no_fsync` — entry-body packing (PERSIST-04)
 

@@ -1,7 +1,7 @@
 //! Append-only WAL writer.
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -451,6 +451,9 @@ fn scan_existing(file: &mut File) -> PersistResult<Scan> {
     let mut offset = WAL_FILE_HEADER_LEN as u64;
     let mut previous = 0_u64;
     let mut last_valid_offset = offset;
+    let mut payload = Vec::new();
+    file.seek(SeekFrom::Start(offset))?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
 
     loop {
         if offset == file_len {
@@ -466,8 +469,7 @@ fn scan_existing(file: &mut File) -> PersistResult<Scan> {
             });
         }
 
-        file.seek(SeekFrom::Start(offset))?;
-        let (header, bytes_consumed) = match read_entry_header(&mut *file, offset) {
+        let (header, bytes_consumed) = match read_entry_header(&mut reader, offset) {
             Ok(header) => header,
             // Treat oversized decoded headers as torn-tail too: with the
             // fixed-layout v2 format, garbage bytes can decode as a valid
@@ -508,8 +510,8 @@ fn scan_existing(file: &mut File) -> PersistResult<Scan> {
                 truncate_to: last_valid_offset,
             });
         }
-        let mut payload = vec![0_u8; payload_len];
-        file.read_exact(&mut payload)?;
+        payload.resize(payload_len, 0);
+        reader.read_exact(&mut payload)?;
         if verify_checksum(&header, &payload).is_err() {
             return Ok(Scan {
                 last_sequence: previous,
