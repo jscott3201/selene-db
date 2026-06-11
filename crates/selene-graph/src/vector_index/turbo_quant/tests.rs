@@ -158,6 +158,45 @@ fn turbo_quant_slot_scan_matches_live_map_reference() {
 }
 
 #[test]
+fn turbo_quant_fast_scan_slot_order_matches_lut_reference() {
+    let mut index = TurboQuantVectorIndex::new(3).unwrap();
+    index.insert(10, &vector(&[1.0, 0.0, 0.0])).unwrap();
+    index.insert(11, &vector(&[0.95, 0.1, 0.0])).unwrap();
+    index.insert(12, &vector(&[0.7, 0.6, 0.0])).unwrap();
+    index.insert(13, &vector(&[0.0, 1.0, 0.0])).unwrap();
+    index.insert(14, &vector(&[-1.0, 0.0, 0.0])).unwrap();
+    index.finish_bulk_load().unwrap();
+    index.remove(14);
+
+    let query = vector(&[1.0, 0.0, 0.0]);
+    let rotated_query = rotated_unit_vector(&query, index.dimension);
+    let query_bias = query_bias(&rotated_query, &index.shift);
+    let byte_lut = index.byte_lut(&rotated_query);
+
+    let fast_scan = index
+        .slot_order_candidates_fast_scan(&rotated_query, query_bias, 4)
+        .expect("3-dimensional TurboQuant scan supports FastScan")
+        .into_hits();
+    let reference = index
+        .slot_order_candidates(&byte_lut, query_bias, 4)
+        .into_hits();
+
+    assert_eq!(
+        fast_scan.iter().map(|hit| hit.key.1).collect::<Vec<_>>(),
+        reference.iter().map(|hit| hit.key.1).collect::<Vec<_>>()
+    );
+    assert!(fast_scan.iter().all(|hit| hit.distance.is_finite()));
+}
+
+#[test]
+fn turbo_quant_fast_scan_lut_rejects_oversized_accumulators() {
+    let index = TurboQuantVectorIndex::new((u16::MAX as u32 / 2) + 1).unwrap();
+    let rotated_query = vec![0.0; index.dimension];
+
+    assert!(index.fast_scan_lut(&rotated_query).is_none());
+}
+
+#[test]
 fn turbo_quant_batch_candidates_match_single_queries() {
     let mut index = TurboQuantVectorIndex::new(4).unwrap();
     for row in 0..32 {

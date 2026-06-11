@@ -21,6 +21,8 @@ use crate::parallel_scan::should_parallelize_scan;
 
 #[path = "turbo_quant/batch.rs"]
 mod batch;
+#[path = "turbo_quant/fast_scan.rs"]
+mod fast_scan;
 
 const TURBO_QUANT_BITS: u8 = 4;
 const SLOT_ORDER_SCAN_STALE_RATIO: usize = 2;
@@ -176,11 +178,15 @@ impl TurboQuantVectorIndex {
         }
         let rotated_query = rotated_unit_vector(query, self.dimension);
         let query_bias = query_bias(&rotated_query, &self.shift);
-        let byte_lut = self.byte_lut(&rotated_query);
         let candidate_limit = search_width.max(k).min(self.live_entries);
         let candidates = if self.should_scan_by_slot_order() {
-            self.slot_order_candidates(&byte_lut, query_bias, candidate_limit)
+            self.slot_order_candidates_fast_scan(&rotated_query, query_bias, candidate_limit)
+                .unwrap_or_else(|| {
+                    let byte_lut = self.byte_lut(&rotated_query);
+                    self.slot_order_candidates(&byte_lut, query_bias, candidate_limit)
+                })
         } else {
+            let byte_lut = self.byte_lut(&rotated_query);
             self.live_map_candidates(&byte_lut, query_bias, candidate_limit)
         };
 
