@@ -1,7 +1,9 @@
 use std::mem::size_of;
 
 use selene_core::{
-    TurboQuantBitWidth as CoreTurboQuantBitWidth, TurboQuantCodebook as CoreTurboQuantCodebook,
+    TURBO_QUANT_BLOCK_ROWS, TurboQuantBitWidth as CoreTurboQuantBitWidth,
+    TurboQuantBlockedCodes as CoreTurboQuantBlockedCodes,
+    TurboQuantCodebook as CoreTurboQuantCodebook,
     TurboQuantPackedCodes as CoreTurboQuantPackedCodes, VectorMetric, VectorTopK, VectorValue,
     exact_vector_top_k,
 };
@@ -45,7 +47,7 @@ pub(crate) struct TurboQuantIndex {
     inv_scale: Vec<f32>,
     scales: Vec<f32>,
     codes: CoreTurboQuantPackedCodes,
-    blocked_codes: Option<BlockedTurboQuantCodes>,
+    blocked_codes: Option<CoreTurboQuantBlockedCodes>,
 }
 
 impl TurboQuantIndex {
@@ -101,8 +103,10 @@ impl TurboQuantIndex {
             }
             scales.push((1.0 / reconstructed_inner.max(1e-10)) as f32);
         }
-        let blocked_codes = matches!(variant.scorer, TurboQuantScorer::BlockedByteLut)
-            .then(|| BlockedTurboQuantCodes::from_row_major(&codes, vectors.len()));
+        let blocked_codes = matches!(variant.scorer, TurboQuantScorer::BlockedByteLut).then(|| {
+            CoreTurboQuantBlockedCodes::from_row_major(&codes)
+                .expect("TurboQuant benchmark row-major codes repack into blocks")
+        });
         Self {
             variant,
             dimension,
@@ -168,7 +172,7 @@ impl TurboQuantIndex {
         // benchmark still keeps row-major codes around for construction parity.
         let code_bytes = self.blocked_codes.as_ref().map_or_else(
             || self.codes.estimated_bytes(),
-            BlockedTurboQuantCodes::estimated_bytes,
+            CoreTurboQuantBlockedCodes::estimated_bytes,
         );
         code_bytes.saturating_add(
             self.scales
@@ -207,7 +211,7 @@ impl TurboQuantIndex {
             .blocked_codes
             .as_ref()
             .expect("blocked scorer builds blocked code storage");
-        let mut dots = [0.0; BLOCKED_TURBO_QUANT_ROWS];
+        let mut dots = [0.0; TURBO_QUANT_BLOCK_ROWS];
         for block in 0..blocked.block_count() {
             let block_len = blocked.block_len(block);
             dots[..block_len].fill(query_bias);
@@ -218,7 +222,7 @@ impl TurboQuantIndex {
                     dots[lane] += byte_lut[lut_base + usize::from(codes[lane])];
                 }
             }
-            let base_row = block * BLOCKED_TURBO_QUANT_ROWS;
+            let base_row = block * TURBO_QUANT_BLOCK_ROWS;
             for (lane, dot) in dots[..block_len].iter().copied().enumerate() {
                 let row = base_row + lane;
                 candidates.push_distance(row, -(dot * f64::from(self.scales[row])));
@@ -285,59 +289,6 @@ impl TurboQuantIndex {
             }
         }
         table
-    }
-}
-
-const BLOCKED_TURBO_QUANT_ROWS: usize = 32;
-
-#[derive(Debug)]
-struct BlockedTurboQuantCodes {
-    bytes: Vec<u8>,
-    rows: usize,
-    bytes_per_vector: usize,
-}
-
-impl BlockedTurboQuantCodes {
-    fn from_row_major(codes: &CoreTurboQuantPackedCodes, rows: usize) -> Self {
-        let bytes_per_vector = codes.bytes_per_row();
-        let block_count = rows.div_ceil(BLOCKED_TURBO_QUANT_ROWS);
-        let mut bytes = vec![0; block_count * bytes_per_vector * BLOCKED_TURBO_QUANT_ROWS];
-        let row_major = codes.as_bytes();
-        for block in 0..block_count {
-            let base_row = block * BLOCKED_TURBO_QUANT_ROWS;
-            for byte in 0..bytes_per_vector {
-                let blocked_offset = (block * bytes_per_vector + byte) * BLOCKED_TURBO_QUANT_ROWS;
-                for lane in 0..BLOCKED_TURBO_QUANT_ROWS {
-                    let row = base_row + lane;
-                    if row < rows {
-                        bytes[blocked_offset + lane] = row_major[row * bytes_per_vector + byte];
-                    }
-                }
-            }
-        }
-        Self {
-            bytes,
-            rows,
-            bytes_per_vector,
-        }
-    }
-
-    fn estimated_bytes(&self) -> usize {
-        self.bytes.capacity()
-    }
-
-    fn block_count(&self) -> usize {
-        self.rows.div_ceil(BLOCKED_TURBO_QUANT_ROWS)
-    }
-
-    fn block_len(&self, block: usize) -> usize {
-        let remaining = self.rows - block * BLOCKED_TURBO_QUANT_ROWS;
-        remaining.min(BLOCKED_TURBO_QUANT_ROWS)
-    }
-
-    fn block_byte(&self, block: usize, byte: usize) -> &[u8] {
-        let offset = (block * self.bytes_per_vector + byte) * BLOCKED_TURBO_QUANT_ROWS;
-        &self.bytes[offset..offset + BLOCKED_TURBO_QUANT_ROWS]
     }
 }
 

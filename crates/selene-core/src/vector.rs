@@ -19,8 +19,8 @@ use kernels::{
     squared_euclidean, validate_precomputed_squared_norm,
 };
 pub use turbo_quant::{
-    TurboQuantBitWidth, TurboQuantCodebook, TurboQuantCodebookKind, TurboQuantCodecError,
-    TurboQuantCodecResult, TurboQuantPackedCodes,
+    TURBO_QUANT_BLOCK_ROWS, TurboQuantBitWidth, TurboQuantBlockedCodes, TurboQuantCodebook,
+    TurboQuantCodebookKind, TurboQuantCodecError, TurboQuantCodecResult, TurboQuantPackedCodes,
 };
 
 /// Distance metric for native dense vectors.
