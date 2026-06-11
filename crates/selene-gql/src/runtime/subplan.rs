@@ -21,10 +21,11 @@ pub(crate) fn execute(
     };
     let sub_ctx = ctx.with_plan(&plan.expr_ids, &plan.subqueries);
     let table = pattern::execute_pattern_with_seed(pattern_plan, seed, &sub_ctx)?;
+    let projection = pattern::resolve_projection(table.schema(), schema);
     Ok(table
         .rows()
         .iter()
-        .map(|row| pattern::project_row_to_schema(row, table.schema(), schema, seed))
+        .map(|row| pattern::project_row_with_projection(row, schema, &projection, seed))
         .collect())
 }
 

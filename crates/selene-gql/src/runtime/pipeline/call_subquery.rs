@@ -77,7 +77,7 @@ fn target_schema(
             columns: Vec::new(),
         });
     for outer in &call.outer_binding_refs {
-        if pattern::column_index(&schema, outer.name.clone()).is_some() {
+        if pattern::column_index(&schema, &outer.name).is_some() {
             continue;
         }
         let source_index = source_index(source_schema, outer.name.clone())?;
@@ -101,7 +101,7 @@ fn seed_binding(
     for outer in &call.outer_binding_refs {
         let source_index = source_index(source_schema, outer.name.clone())?;
         let value = row.get(source_index).cloned().unwrap_or(Value::Null);
-        let target_index = pattern::column_index(target_schema, outer.name.clone()).ok_or(
+        let target_index = pattern::column_index(target_schema, &outer.name).ok_or(
             ExecutorError::ImplementationDefined {
                 detail: "CALL subquery outer binding missing from target row",
             },
@@ -169,7 +169,7 @@ fn source_index(
     schema: &BindingTableSchema,
     name: selene_core::DbString,
 ) -> Result<usize, ExecutorError> {
-    pattern::column_index(schema, name).ok_or(ExecutorError::ImplementationDefined {
+    pattern::column_index(schema, &name).ok_or(ExecutorError::ImplementationDefined {
         detail: "CALL subquery binding missing from source row",
     })
 }

@@ -1003,6 +1003,22 @@ post-B3 residual lookup cost without changing user-keyed label/property maps._
 | `gql_correlated_subquery/exists/10000` | 2.5415 ms | 2.1501 ms | −15.3% median. |
 | `gql_correlated_subquery/count/10000` | 2.6529 ms | 2.2669 ms | −14.5% median. |
 
+_Refreshed again 2026-06-11 for B18/B20 (development post-#707 vs the feature
+branch, same M5, profile `full`, mimalloc). B18 resolves scan, expand/repeat,
+join-key, subplan-projection, and evaluator variable names without per-row
+`DbString` clones where the runtime operator can safely hoist the column
+indexes. B20 makes per-group aggregate slots borrow the immutable plan
+`Aggregate` descriptor instead of cloning it for every group._
+
+| Bench | Development post-B5 | B18/B20 | Notes |
+|---|---:|---:|---|
+| `gql_correlated_subquery/exists/2500` | 574.04 µs | 545.43 µs | −4.8% median; remaining correlated runtime binding/index resolution. |
+| `gql_correlated_subquery/count/2500` | 609.85 µs | 583.21 µs | −4.7% median. |
+| `gql_correlated_subquery/exists/5000` | 1.0773 ms | 1.0052 ms | −5.3% median. |
+| `gql_correlated_subquery/count/5000` | 1.1229 ms | 1.0571 ms | −5.9% median. |
+| `gql_correlated_subquery/exists/10000` | 2.1321 ms | 2.0191 ms | −5.5% median. |
+| `gql_correlated_subquery/count/10000` | 2.2679 ms | 2.1505 ms | −5.2% median. |
+
 ### §5b `write_e2e` — GQL write end-to-end
 
 Two families. The **in-memory CPU** family runs on a no-WAL `SharedGraph` to
@@ -1027,6 +1043,18 @@ fixture and so scale with N; the single-node arms are flat.
 | `write_e2e/gql_insert_single_node_preplanned_with_flush` | 4.22 ms | 4.27 ms | 3.95 ms | Durable: preplanned insert + WAL flush. |
 | `write_e2e/direct_insert_single_node_with_wal_flush` | 4.20 ms | 4.30 ms | 4.17 ms | Direct mutation + one WAL flush. |
 | `write_e2e/direct_insert_single_node_with_wal_flush_every10` | 30.5 ms | 32.2 ms | 32.4 ms | Ten direct inserts over one flush. |
+
+PR-local B18/B20 write-control guard (`scripts/run-benches.sh --profile full
+--bench write_e2e`, followed by an isolated rerun of the noisy direct-WAL 50k
+row):
+
+| Bench | Development post-B5 | B18/B20 | Notes |
+|---|---:|---:|---|
+| `write_e2e/gql_cached_point_read_set_r60w40/100000` | 5.0627 ms | 5.0207 ms | No statistically significant change; mixed indexed reads + writes guard. |
+| `write_e2e/gql_cached_json_read_patch_r60w40/100000` | 5.3239 ms | 5.2953 ms | No statistically significant change; JSON read/patch guard. |
+| `write_e2e/gql_match_set_preplanned/100000` | 11.020 ms | 10.500 ms | −4.7% median; scan/set row benefits from runtime binding-index hoisting. |
+| `write_e2e/gql_match_delete_preplanned/100000` | 12.167 ms | 11.566 ms | −4.9% median. |
+| `write_e2e/direct_insert_single_node_with_wal_flush/50000` | 4.2367 ms | 4.1545 ms | Isolated rerun after one transient 14.791 ms sample; no reproducible direct-WAL regression. |
 
 PR-local quick JSON mixed row:
 
@@ -1078,6 +1106,20 @@ cold vs 81 µs warm) amortizes under the linear scan.
 | `read_pipeline/distinct_dedup` | 877 µs | 5.93 ms | 13.61 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
 | `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
 | `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
+
+PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
+--bench read_pipeline`) against development post-#707:
+
+| Bench | Scale | Development post-B5 | B18/B20 | Notes |
+|---|---:|---:|---:|---|
+| `read_pipeline/match_filter_project` | 10k | 596.73 µs | 554.25 µs | −6.9% median. |
+| `read_pipeline/match_filter_project` | 100k | 8.1311 ms | 7.6072 ms | −6.4% median; 50k row was neutral (`p = 0.19`). |
+| `read_pipeline/match_expand_hashjoin` | 10k | 13.180 ms | 12.240 ms | −7.1% median; resolved hash-join keys + expand slots. |
+| `read_pipeline/match_expand_hashjoin` | 100k | 180.94 ms | 169.10 ms | −6.5% median. |
+| `read_pipeline/group_by_highcard` | 10k | 1.0024 ms | 935.37 µs | −7.7% median; aggregate slots borrow plan descriptors. |
+| `read_pipeline/group_by_highcard` | 100k | 10.251 ms | 9.6415 ms | −5.9% median. |
+| `read_pipeline/match_limit10` | 50k | 5.0124 ms | 4.5696 ms | −11.7% median; still scale-linear, B19 remains. |
+| `read_pipeline/match_limit10/cold` | 50k | 5.2420 ms | 4.7762 ms | −8.3% median. |
 
 ## §6 selene-algorithms
 
@@ -2056,6 +2098,7 @@ confirm the win and guard the surrounding rows against regression.
 | GQLRT-05 ✓ | Memoize correlated-subquery target schema (per statement, by expr id) | `gql_correlated_subquery/{exists,count}` | **−2 to −7%** — memo elides the per-row `schema_for_pattern` walk |
 | B3 ✓ | Short-circuit scans already bound by the correlated outer row | `gql_correlated_subquery/{exists,count}` + `read_pipeline` guard | **~339x EXISTS / ~349x COUNT @10k**; ordinary read-pipeline rows remain noise-scale |
 | B5 ✓ | Use `FxBuildHasher` for immutable maps keyed only by engine-assigned ids | `graph_node_fetch` + `gql_correlated_subquery/{exists,count}` + `bulk_mutation` guard | **graph_node_fetch −22.7% @1k quick; post-B3 correlated residual −11.8..15.3%**; update-batch writes remain noisy/no claimed win |
+| B18/B20 ✓ | Hoist runtime column resolution and borrow aggregate descriptors | `read_pipeline` + `gql_correlated_subquery/{exists,count}` + `write_e2e` guard | **read_pipeline −3.8..11.7% on significant rows; correlated residual −4.7..5.9%**; mixed write guards neutral, isolated WAL spike not reproduced |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
 | D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 69 ms / dec 216 ms @100k |
 

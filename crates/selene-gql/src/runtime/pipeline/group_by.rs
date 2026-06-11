@@ -22,7 +22,7 @@ pub(super) fn execute(
     // equality matches the prior `key_values_equal` exactly (Null/Null⇒equal,
     // Null/non-null⇒distinct, else `equal_non_null`), so grouping semantics are
     // unchanged; DISTINCT/set-ops already use the same key.
-    let mut groups = Vec::<Group>::new();
+    let mut groups = Vec::<Group<'_>>::new();
     let mut group_index = FxHashMap::<RuntimeEqKey, usize>::default();
     let group_cap = ctx.tx.impl_defined_caps().group_by_key_cap();
     let mut rows_since_check = 0;
@@ -74,13 +74,13 @@ fn group_by_key_cap_exceeded() -> ExecutorError {
     }
 }
 
-struct Group {
+struct Group<'plan> {
     representative: Binding,
-    aggregates: Vec<AggregateSlot>,
+    aggregates: Vec<AggregateSlot<'plan>>,
 }
 
-impl Group {
-    fn new(representative: Binding, aggregates: &[Aggregate]) -> Result<Self, ExecutorError> {
+impl<'plan> Group<'plan> {
+    fn new(representative: Binding, aggregates: &'plan [Aggregate]) -> Result<Self, ExecutorError> {
         let aggregates = aggregates
             .iter()
             .map(AggregateSlot::new)

@@ -16,7 +16,7 @@ use super::scan_resolve::{
     IndexKeyOutcome, ResolvedBounds, range_satisfiable_runtime, resolve_bitmap_union_key_values,
     resolve_bounds, resolve_index_key,
 };
-use super::{EvalCtx, evaluator, pattern, scan_seed, value_compare};
+use super::{EvalCtx, evaluator, scan_bind, scan_seed, value_compare};
 
 /// Execute one `JoinTree::Scan` against the transaction snapshot.
 pub(crate) fn scan_pattern(
@@ -39,9 +39,10 @@ pub(crate) fn scan_entities(
     seed: Option<&Binding>,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+    let slots = scan_bind::ScanSlots::resolve(scan, pattern, schema)?;
     match seed {
-        Some(seed) => scan_entities_with_seed(scan, pattern, schema, seed, ctx),
-        None => collect_scan_entities(scan, pattern, schema, None, ctx),
+        Some(seed) => scan_entities_with_seed(scan, pattern, schema, seed, slots, ctx),
+        None => collect_scan_entities(scan, pattern, schema, None, slots, ctx),
     }
 }
 
@@ -50,12 +51,13 @@ fn scan_entities_with_seed(
     pattern: &PatternPlan,
     schema: &BindingTableSchema,
     seed: &Binding,
+    slots: scan_bind::ScanSlots,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<(Value, Binding)>, ExecutorError> {
-    if let Some(rows) = scan_seed::try_seeded_scan(scan, pattern, schema, seed, ctx)? {
+    if let Some(rows) = scan_seed::try_seeded_scan(scan, pattern, schema, seed, slots, ctx)? {
         return Ok(rows);
     }
-    collect_scan_entities(scan, pattern, schema, Some(seed), ctx)
+    collect_scan_entities(scan, pattern, schema, Some(seed), slots, ctx)
 }
 
 fn collect_scan_entities(
@@ -63,6 +65,7 @@ fn collect_scan_entities(
     pattern: &PatternPlan,
     schema: &BindingTableSchema,
     seed: Option<&Binding>,
+    slots: scan_bind::ScanSlots,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<(Value, Binding)>, ExecutorError> {
     let mut rows = Vec::new();
@@ -73,7 +76,7 @@ fn collect_scan_entities(
         let Some(entity) = entity_value(scan.kind, row, ctx) else {
             continue;
         };
-        let Some(binding) = binding_for_scan(scan, pattern, schema, seed, entity.clone())? else {
+        let Some(binding) = scan_bind::binding_for_scan(schema, seed, entity.clone(), slots) else {
             continue;
         };
         if predicates_pass(scan, pattern, &binding, schema, &entity, ctx)? {
@@ -81,30 +84,6 @@ fn collect_scan_entities(
         }
     }
     Ok(rows)
-}
-
-#[inline]
-pub(super) fn binding_for_scan(
-    scan: &NodeOrEdgeScan,
-    pattern: &PatternPlan,
-    schema: &BindingTableSchema,
-    seed: Option<&Binding>,
-    entity: Value,
-) -> Result<Option<Binding>, ExecutorError> {
-    let mut values = if let Some(row) = seed {
-        let mut values = row.values().to_vec();
-        values.resize(schema.columns.len(), Value::Null);
-        values
-    } else {
-        vec![Value::Null; schema.columns.len()]
-    };
-    if !pattern::set_binding_value(&mut values, pattern, schema, scan.binding, entity.clone())? {
-        return Ok(None);
-    }
-    if !pattern::set_hidden_value(&mut values, schema, scan.hidden_binding, entity)? {
-        return Ok(None);
-    }
-    Ok(Some(Binding::new(values)))
 }
 
 fn candidate_rows(
