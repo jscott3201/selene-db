@@ -3,8 +3,8 @@
 use selene_core::{CancellationChecker, DbString, VectorMetric, VectorValue};
 
 use super::{
-    ApproximateVectorExpansionOptions, ApproximateVectorSearchOptions, VectorNodeSearchHit,
-    VectorSearchError,
+    ApproximateVectorExpansionOptions, ApproximateVectorSearchOptions, VectorCandidateSet,
+    VectorNodeSearchHit, VectorSearchError,
 };
 use crate::error::GraphResult;
 use crate::shared::SharedGraph;
@@ -86,6 +86,21 @@ impl SharedGraph {
     ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
         self.read().approximate_vector_search_nodes_batch_checked(
             label, property, queries, options, checker,
+        )
+    }
+
+    /// Lock-free read snapshot wrapper for approximate search within candidates.
+    pub fn approximate_vector_search_candidate_set_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        query: &VectorValue,
+        candidates: &VectorCandidateSet,
+        options: ApproximateVectorSearchOptions,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        self.read().approximate_vector_search_candidate_set_checked(
+            label, property, query, candidates, options, checker,
         )
     }
 

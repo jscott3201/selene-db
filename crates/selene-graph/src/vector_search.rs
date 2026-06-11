@@ -263,6 +263,69 @@ impl SeleneGraph {
         ann_row_hits_to_node_hits(self, label, row_hits, &checker)
     }
 
+    /// Approximately rank a canonical node candidate set through a TurboQuant index.
+    ///
+    /// This is the approximate counterpart to
+    /// [`Self::score_vector_candidate_set_checked`]: callers supply the
+    /// candidate set explicitly, TurboQuant preselects up to `ef_search`
+    /// candidates within that set, and the graph layer exact-reranks the
+    /// returned rows against primary `VECTOR` values. Missing nodes, nodes
+    /// outside the registered `(label, property)` vector index, and nodes
+    /// without a vector value are skipped under the normal snapshot visibility
+    /// rules.
+    pub fn approximate_vector_search_candidate_set_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        query: &VectorValue,
+        candidates: &VectorCandidateSet,
+        options: ApproximateVectorSearchOptions,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        checker.check()?;
+        if options.k == 0 || candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let query_dimension = u32::try_from(query.dimension())
+            .map_err(|_| VectorSearchError::ApproximateIndexMissing)?;
+        let Some(index) = self
+            .vector_index_for(label, property)
+            .filter(|index| index.dimension() == query_dimension)
+        else {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        };
+        let Some(indexed_metric) = index.ann_metric() else {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        };
+        if indexed_metric != options.metric {
+            return Err(VectorSearchError::ApproximateMetricMismatch {
+                indexed: indexed_metric,
+                requested: options.metric,
+            });
+        }
+        if !index.is_turbo_quant() {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        }
+
+        let allowed_rows = self.vector_candidate_rows(candidates, index.rows(), &checker)?;
+        if allowed_rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        let row_hits = index
+            .turbo_quant_candidates_in_rows(query, options.k, options.ef_search, &allowed_rows)
+            .ok_or(VectorSearchError::ApproximateIndexMissing)?
+            .map_err(GraphError::from)?;
+        rerank_ann_row_candidates(
+            self,
+            property,
+            query,
+            options.metric,
+            options.k,
+            row_hits,
+            &checker,
+        )
+    }
+
     /// Run approximate ANN vector search for a batch of queries.
     ///
     /// The result at each output position corresponds to the query at the same
@@ -458,6 +521,26 @@ impl SeleneGraph {
             ),
             checker,
         )
+    }
+
+    fn vector_candidate_rows(
+        &self,
+        candidates: &VectorCandidateSet,
+        index_rows: &RoaringBitmap,
+        checker: &CancellationChecker<'_>,
+    ) -> Result<RoaringBitmap, VectorSearchError> {
+        let mut rows = RoaringBitmap::new();
+        for node_id in candidates.as_nodes().iter().copied() {
+            checker.check()?;
+            let Some(row) = self.row_for_node_id(node_id) else {
+                continue;
+            };
+            let raw_row = row.get();
+            if self.node_store.is_alive(raw_row) && index_rows.contains(raw_row) {
+                rows.insert(raw_row);
+            }
+        }
+        Ok(rows)
     }
 }
 
