@@ -17,9 +17,9 @@
 //! vector-search, vector-index stats, vector-index procedures, maintained
 //! text-index stats/procedures, BM25 text-search, candidate BM25 scoring,
 //! batched candidate BM25 scoring, maintained-state graph-expanded BM25 batch
-//! scoring, JSON containment node search, JSON path search, and candidate-scoped
-//! JSON search are new native engine functionality on the same concrete
-//! built-in dispatch path.
+//! scoring, Reciprocal Rank Fusion over ranked node lists, JSON containment
+//! node search, JSON path search, and candidate-scoped JSON search are new
+//! native engine functionality on the same concrete built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify`, and
@@ -48,7 +48,8 @@
 //!   `selene.compaction_stats`,
 //!   `selene.text_search_nodes`, `selene.text_score_nodes`,
 //!   `selene.text_score_nodes_batch`, and
-//!   `selene.text_score_candidate_state_expanded_batch` are read-only
+//!   `selene.text_score_candidate_state_expanded_batch`,
+//!   `selene.reciprocal_rank_fusion` are read-only
 //!   graph-tier ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]);
 //!   they never mutate and never re-enter `begin_write`.
 //! - `selene.create_index`, `selene.drop_index`, `selene.create_vector_index`,
@@ -87,6 +88,7 @@ mod json_path_exists_nodes;
 mod json_path_value_nodes;
 mod meta;
 mod rebuild_vector_indexes;
+mod reciprocal_rank_fusion;
 mod text_index_stats;
 mod text_search;
 mod vector_candidate_state_common;

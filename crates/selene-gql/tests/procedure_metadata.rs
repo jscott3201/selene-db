@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_64_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_65_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 64);
+    assert_eq!(procedures.len(), 65);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_signature_outputs_and_descriptions() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 64);
+    assert_eq!(table.row_count(), 65);
 
     let names = column_strings(&table, "name");
     let signatures = column_strings(&table, "signature");

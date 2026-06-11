@@ -7,7 +7,7 @@
 //!
 //! - `git ls-tree v1.1.0 --name-only -r crates/selene-gql/src/runtime/builtins/`
 //!   shows only `health`, `feature_status`, `verify`, `create_index`, and
-//!   `drop_index` existed at the v1.1.0 tag; the remaining 40 `selene.*`
+//!   `drop_index` existed at the v1.1.0 tag; the remaining 41 `selene.*`
 //!   built-ins ship first in v1.2.0.
 //! - `git show v1.0.0:crates/selene-algorithms-pack/src/registry.rs`
 //!   registered all 19 `algo.*` procedures, so that surface has been
@@ -95,12 +95,12 @@ fn registry_since_version_matches_release_history() {
     }
 
     // 19 `algo.*` plus `health`/`create_index`/`drop_index` shipped in
-    // v1.0.0; `feature_status`/`verify` shipped in v1.1.0; the remaining 40
+    // v1.0.0; `feature_status`/`verify` shipped in v1.1.0; the remaining 41
     // built-ins ship first in v1.2.0. A new or re-versioned procedure must
     // extend this partition explicitly.
     assert_eq!(algo, 19);
-    assert_eq!(selene, 45);
-    assert_eq!(buckets, [22, 2, 40]);
+    assert_eq!(selene, 46);
+    assert_eq!(buckets, [22, 2, 41]);
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn show_procedures_since_version_column_matches_release_history() {
             .execute_source("SHOW PROCEDURES", &registry)
             .expect("SHOW PROCEDURES executes"),
     );
-    assert_eq!(table.row_count(), 64);
+    assert_eq!(table.row_count(), 65);
 
     // The planner-rendered column must agree with the registry claim per
     // row; divergence here means the SHOW plumbing dropped or rewrote the
