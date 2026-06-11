@@ -7,6 +7,7 @@
 
 use std::mem::size_of;
 
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use selene_core::{
     CoreResult, MAX_VECTOR_DIMENSION, TurboQuantBitWidth, TurboQuantCodebook,
@@ -14,10 +15,19 @@ use selene_core::{
 };
 
 use crate::error::{GraphError, GraphResult};
+use crate::parallel_scan::should_parallelize_scan;
 
 const TURBO_QUANT_BITS: u8 = 4;
 const SLOT_ORDER_SCAN_STALE_RATIO: usize = 2;
 const MIN_SLOT_ORDER_SCAN_ENTRIES: usize = 64;
+#[cfg(not(test))]
+const TURBO_QUANT_PARALLEL_MIN_ENTRIES: u64 = 4096;
+#[cfg(test)]
+const TURBO_QUANT_PARALLEL_MIN_ENTRIES: u64 = 8;
+#[cfg(not(test))]
+const TURBO_QUANT_PARALLEL_CHUNK_ENTRIES: usize = 1024;
+#[cfg(test)]
+const TURBO_QUANT_PARALLEL_CHUNK_ENTRIES: usize = 4;
 const MIN_RECONSTRUCTED_INNER: f64 = 1e-10;
 const QUANTILE_LOW_Z: f32 = -1.644_853_6;
 
@@ -147,28 +157,12 @@ impl TurboQuantVectorIndex {
         let rotated_query = rotated_unit_vector(query, self.dimension);
         let query_bias = query_bias(&rotated_query, &self.shift);
         let byte_lut = self.byte_lut(&rotated_query);
-        let mut candidates = VectorTopK::new(search_width.max(k).min(self.live_entries));
-        if self.should_scan_by_slot_order() {
-            for (slot, entry) in self.entries.iter().enumerate() {
-                if entry.deleted {
-                    continue;
-                }
-                debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
-                let distance = self.approx_distance_lut(slot, &byte_lut, query_bias);
-                candidates.push_distance((slot, entry.row), distance);
-            }
+        let candidate_limit = search_width.max(k).min(self.live_entries);
+        let candidates = if self.should_scan_by_slot_order() {
+            self.slot_order_candidates(&byte_lut, query_bias, candidate_limit)
         } else {
-            for (&row, &slot) in &self.row_to_entry {
-                let Some(entry) = self.entries.get(slot) else {
-                    continue;
-                };
-                if entry.deleted || entry.row != row {
-                    continue;
-                }
-                let distance = self.approx_distance_lut(slot, &byte_lut, query_bias);
-                candidates.push_distance((slot, row), distance);
-            }
-        }
+            self.live_map_candidates(&byte_lut, query_bias, candidate_limit)
+        };
 
         let scorer = VectorMetric::Cosine.bind_query(query)?;
         let mut exact = VectorTopK::new(k);
@@ -196,6 +190,89 @@ impl TurboQuantVectorIndex {
                 <= self
                     .live_entries
                     .saturating_mul(SLOT_ORDER_SCAN_STALE_RATIO)
+    }
+
+    fn should_parallelize_slot_scan(&self, candidate_limit: usize) -> bool {
+        should_parallelize_scan(
+            self.entries.len() as u64,
+            candidate_limit,
+            TURBO_QUANT_PARALLEL_MIN_ENTRIES,
+        )
+    }
+
+    fn slot_order_candidates(
+        &self,
+        byte_lut: &[f64],
+        query_bias: f64,
+        candidate_limit: usize,
+    ) -> VectorTopK<(usize, u32)> {
+        if self.should_parallelize_slot_scan(candidate_limit) {
+            return self.slot_order_candidates_parallel(byte_lut, query_bias, candidate_limit);
+        }
+        self.slot_order_candidates_chunk(0, &self.entries, byte_lut, query_bias, candidate_limit)
+    }
+
+    fn slot_order_candidates_parallel(
+        &self,
+        byte_lut: &[f64],
+        query_bias: f64,
+        candidate_limit: usize,
+    ) -> VectorTopK<(usize, u32)> {
+        self.entries
+            .par_chunks(TURBO_QUANT_PARALLEL_CHUNK_ENTRIES)
+            .enumerate()
+            .map(|(chunk_index, chunk)| {
+                let base_slot = chunk_index * TURBO_QUANT_PARALLEL_CHUNK_ENTRIES;
+                self.slot_order_candidates_chunk(
+                    base_slot,
+                    chunk,
+                    byte_lut,
+                    query_bias,
+                    candidate_limit,
+                )
+            })
+            .reduce(|| VectorTopK::new(candidate_limit), merge_candidate_top_k)
+    }
+
+    fn slot_order_candidates_chunk(
+        &self,
+        base_slot: usize,
+        entries: &[TurboQuantEntry],
+        byte_lut: &[f64],
+        query_bias: f64,
+        candidate_limit: usize,
+    ) -> VectorTopK<(usize, u32)> {
+        let mut candidates = VectorTopK::new(candidate_limit);
+        for (offset, entry) in entries.iter().enumerate() {
+            if entry.deleted {
+                continue;
+            }
+            let slot = base_slot + offset;
+            debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
+            let distance = self.approx_distance_lut(slot, byte_lut, query_bias);
+            candidates.push_distance((slot, entry.row), distance);
+        }
+        candidates
+    }
+
+    fn live_map_candidates(
+        &self,
+        byte_lut: &[f64],
+        query_bias: f64,
+        candidate_limit: usize,
+    ) -> VectorTopK<(usize, u32)> {
+        let mut candidates = VectorTopK::new(candidate_limit);
+        for (&row, &slot) in &self.row_to_entry {
+            let Some(entry) = self.entries.get(slot) else {
+                continue;
+            };
+            if entry.deleted || entry.row != row {
+                continue;
+            }
+            let distance = self.approx_distance_lut(slot, byte_lut, query_bias);
+            candidates.push_distance((slot, row), distance);
+        }
+        candidates
     }
 
     /// Return estimated TurboQuant memory usage.
@@ -329,6 +406,16 @@ struct TurboQuantEntry {
     row: u32,
     vector: VectorValue,
     deleted: bool,
+}
+
+fn merge_candidate_top_k(
+    mut lhs: VectorTopK<(usize, u32)>,
+    rhs: VectorTopK<(usize, u32)>,
+) -> VectorTopK<(usize, u32)> {
+    for hit in rhs.into_hits() {
+        lhs.push_distance(hit.key, hit.distance);
+    }
+    lhs
 }
 
 fn valid_dimension(dimension: u32) -> GraphResult<usize> {
