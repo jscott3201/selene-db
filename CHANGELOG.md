@@ -631,6 +631,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   runtime column resolution trim the post-seed residual another
   `4.7%` to `15.3%` depending on row, and aggregate slots now borrow plan
   descriptors instead of cloning them per group.
+- **LIMIT/OFFSET windows move binding rows instead of cloning them.** The
+  runtime now consumes the input `BindingTable` row vector with
+  `truncate`/`split_off` for the B19 limit-window path, so bare `LIMIT` keeps
+  the original allocation and `OFFSET` windows move the retained rows instead
+  of cloning every `Binding`.
 - **Deadline-bearing exact retrieval stays parallel.** JSON scans, exact
   vector scans, vector candidate-set scoring, exact BM25 scans, and batched
   exact-vector scans now use a shared cancellation-aware chunk reducer instead
