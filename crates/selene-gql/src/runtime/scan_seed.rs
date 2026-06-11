@@ -8,7 +8,7 @@ use crate::{
 };
 
 use super::{
-    pattern, scan,
+    scan, scan_bind,
     scan_resolve::{range_satisfiable_runtime, resolve_bitmap_union_key_values, resolve_bounds},
 };
 
@@ -17,12 +17,10 @@ pub(super) fn try_seeded_scan(
     pattern: &PatternPlan,
     schema: &BindingTableSchema,
     seed: &Binding,
+    slots: scan_bind::ScanSlots,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Option<Vec<(Value, Binding)>>, ExecutorError> {
-    let Some(binding_id) = scan.binding else {
-        return Ok(None);
-    };
-    let Some(index) = pattern::binding_index(pattern, schema, binding_id) else {
+    let Some(index) = slots.binding_index() else {
         return Ok(None);
     };
     let Some(seed_value) = seed.get(index) else {
@@ -37,7 +35,7 @@ pub(super) fn try_seeded_scan(
     if !scan::label_matches_scan(scan, row, ctx) || !value_constraint_passes(scan, row, ctx)? {
         return Ok(Some(Vec::new()));
     }
-    let Some(binding) = scan::binding_for_scan(scan, pattern, schema, Some(seed), entity.clone())?
+    let Some(binding) = scan_bind::binding_for_scan(schema, Some(seed), entity.clone(), slots)
     else {
         return Ok(Some(Vec::new()));
     };

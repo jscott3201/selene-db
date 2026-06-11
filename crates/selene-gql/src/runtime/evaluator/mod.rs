@@ -59,7 +59,7 @@ pub fn evaluate(
 ) -> Result<Value, ExecutorError> {
     match expr {
         ValueExpr::Literal(literal) => Ok(literal_value(literal)),
-        ValueExpr::Variable { name, span } => lookup_variable(name.clone(), *span, binding, schema),
+        ValueExpr::Variable { name, span } => lookup_variable(name, *span, binding, schema),
         ValueExpr::PropertyAccess { target, key, span } => {
             let target = evaluate(target, binding, schema, ctx)?;
             property_access(&target, key.clone(), *span, ctx)
@@ -253,7 +253,7 @@ pub fn evaluate_for_test(
 }
 
 fn lookup_variable(
-    name: selene_core::DbString,
+    name: &selene_core::DbString,
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
@@ -261,7 +261,7 @@ fn lookup_variable(
     let Some(index) = schema
         .columns
         .iter()
-        .position(|column| column.name == Some(name.clone()))
+        .position(|column| column.name.as_ref() == Some(name))
     else {
         // GA07 binder keeps pre-projection bindings visible after RETURN.
         // OrderBy evaluates against the projected schema when the TopK

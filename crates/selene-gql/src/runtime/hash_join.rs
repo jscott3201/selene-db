@@ -36,10 +36,11 @@ fn execute_ordered(
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
     build_is_left: bool,
 ) -> Result<Vec<Binding>, ExecutorError> {
+    let key_indexes = pattern::resolve_key(env.schema, key)?;
     let build_rows = pattern::walk_join_tree(build_tree, env)?;
     let mut build_entries = FxHashMap::default();
     for row in build_rows {
-        if let Some(key_values) = pattern::key_values(&row, env.schema, key)? {
+        if let Some(key_values) = pattern::key_values_at(&row, &key_indexes) {
             insert_build_row(&mut build_entries, key_values, row);
         }
     }
@@ -47,7 +48,7 @@ fn execute_ordered(
     let probe_rows = pattern::walk_join_tree(probe_tree, env)?;
     let mut rows = Vec::new();
     for probe in probe_rows {
-        let Some(probe_key) = pattern::key_values(&probe, env.schema, key)? else {
+        let Some(probe_key) = pattern::key_values_at(&probe, &key_indexes) else {
             continue;
         };
         if let Some(matching_builds) = matching_builds(&build_entries, probe_key) {

@@ -10,16 +10,16 @@ use crate::{
     },
 };
 
-pub(super) struct AggregateSlot {
-    aggregate: Aggregate,
+pub(super) struct AggregateSlot<'plan> {
+    aggregate: &'plan Aggregate,
     state: AggregateState,
     seen: FxHashSet<RuntimeEqKey>,
 }
 
-impl AggregateSlot {
-    pub(super) fn new(aggregate: &Aggregate) -> Result<Self, ExecutorError> {
+impl<'plan> AggregateSlot<'plan> {
+    pub(super) fn new(aggregate: &'plan Aggregate) -> Result<Self, ExecutorError> {
         Ok(Self {
-            aggregate: aggregate.clone(),
+            aggregate,
             state: AggregateState::new(classify(aggregate)?),
             seen: FxHashSet::default(),
         })

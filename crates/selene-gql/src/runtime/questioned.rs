@@ -17,17 +17,52 @@ pub(crate) fn execute(
     direction: EdgeDirection,
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
+    let source_index = pattern::source_index(
+        env.pattern,
+        env.schema,
+        edge.left_binding,
+        edge.left_hidden_binding,
+        "questioned source binding column missing",
+    )?;
     let child_rows = pattern::walk_join_tree(child, env)?;
     let mut rows = Vec::new();
     let mut state = QuestionedState {
         edge,
         pattern_plan: env.pattern,
         schema: env.schema,
+        source_index,
+        edge_slot: pattern::ColumnSlot::binding(
+            env.pattern,
+            env.schema,
+            edge.binding,
+            "questioned edge binding column missing",
+        )?,
+        edge_hidden_slot: pattern::ColumnSlot::hidden(
+            env.schema,
+            edge.hidden_binding,
+            "questioned edge hidden binding column missing",
+        )?,
+        right_slot: pattern::ColumnSlot::binding(
+            env.pattern,
+            env.schema,
+            edge.right_binding,
+            "questioned right binding column missing",
+        )?,
+        right_hidden_slot: pattern::ColumnSlot::hidden(
+            env.schema,
+            edge.right_hidden_binding,
+            "questioned right hidden binding column missing",
+        )?,
         ctx: env.ctx,
         output: &mut rows,
     };
     for row in child_rows {
-        let Some(source) = source_node(edge, env.pattern, env.schema, &row)? else {
+        let Some(source) = pattern::node_at_index(
+            &row,
+            state.source_index,
+            "questioned source binding is not a node",
+        )?
+        else {
             continue;
         };
         maybe_emit_skipped(source, &row, &mut state)?;
@@ -40,6 +75,11 @@ struct QuestionedState<'a, 'eval, 'ctx, 'g, 'plan, 'out> {
     edge: &'a EdgeMatch,
     pattern_plan: &'a PatternPlan,
     schema: &'a BindingTableSchema,
+    source_index: usize,
+    edge_slot: pattern::ColumnSlot,
+    edge_hidden_slot: pattern::ColumnSlot,
+    right_slot: pattern::ColumnSlot,
+    right_hidden_slot: pattern::ColumnSlot,
     ctx: &'a EvalCtx<'eval, 'ctx, 'g, 'plan>,
     output: &'out mut Vec<Binding>,
 }
@@ -54,38 +94,19 @@ fn maybe_emit_skipped(
     }
     let mut values = row.values().to_vec();
     values.resize(state.schema.columns.len(), Value::Null);
-    if !pattern::set_binding_value(
-        &mut values,
-        state.pattern_plan,
-        state.schema,
-        state.edge.binding,
-        Value::Null,
-    )? {
+    if !state.edge_slot.set(&mut values, Value::Null) {
         return Ok(());
     }
-    if !pattern::set_hidden_value(
-        &mut values,
-        state.schema,
-        state.edge.hidden_binding,
-        Value::Null,
-    )? {
+    if !state.edge_hidden_slot.set(&mut values, Value::Null) {
         return Ok(());
     }
-    if !pattern::set_binding_value(
-        &mut values,
-        state.pattern_plan,
-        state.schema,
-        state.edge.right_binding,
-        Value::NodeRef(source),
-    )? {
+    if !state.right_slot.set(&mut values, Value::NodeRef(source)) {
         return Ok(());
     }
-    if !pattern::set_hidden_value(
-        &mut values,
-        state.schema,
-        state.edge.right_hidden_binding,
-        Value::NodeRef(source),
-    )? {
+    if !state
+        .right_hidden_slot
+        .set(&mut values, Value::NodeRef(source))
+    {
         return Ok(());
     }
     let candidate = Binding::new(values);
@@ -159,38 +180,25 @@ fn maybe_emit_taken(
 
     let mut values = row.values().to_vec();
     values.resize(state.schema.columns.len(), Value::Null);
-    if !pattern::set_binding_value(
-        &mut values,
-        state.pattern_plan,
-        state.schema,
-        state.edge.binding,
-        Value::EdgeRef(edge_id),
-    )? {
+    if !state.edge_slot.set(&mut values, Value::EdgeRef(edge_id)) {
         return Ok(());
     }
-    if !pattern::set_hidden_value(
-        &mut values,
-        state.schema,
-        state.edge.hidden_binding,
-        Value::EdgeRef(edge_id),
-    )? {
+    if !state
+        .edge_hidden_slot
+        .set(&mut values, Value::EdgeRef(edge_id))
+    {
         return Ok(());
     }
-    if !pattern::set_binding_value(
-        &mut values,
-        state.pattern_plan,
-        state.schema,
-        state.edge.right_binding,
-        Value::NodeRef(right_node),
-    )? {
+    if !state
+        .right_slot
+        .set(&mut values, Value::NodeRef(right_node))
+    {
         return Ok(());
     }
-    if !pattern::set_hidden_value(
-        &mut values,
-        state.schema,
-        state.edge.right_hidden_binding,
-        Value::NodeRef(right_node),
-    )? {
+    if !state
+        .right_hidden_slot
+        .set(&mut values, Value::NodeRef(right_node))
+    {
         return Ok(());
     }
     let candidate = Binding::new(values);
@@ -213,33 +221,6 @@ fn maybe_emit_taken(
     }
     state.output.push(candidate);
     Ok(())
-}
-
-fn source_node(
-    edge: &EdgeMatch,
-    pattern_plan: &PatternPlan,
-    schema: &BindingTableSchema,
-    row: &Binding,
-) -> Result<Option<NodeId>, ExecutorError> {
-    let index = if let Some(binding) = edge.left_binding {
-        pattern::binding_index(pattern_plan, schema, binding)
-    } else if let Some(hidden) = edge.left_hidden_binding {
-        pattern::hidden_index(schema, hidden)
-    } else {
-        None
-    };
-    let Some(index) = index else {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "questioned source binding column missing",
-        });
-    };
-    match row.get(index).cloned().unwrap_or(Value::Null) {
-        Value::NodeRef(id) => Ok(Some(id)),
-        Value::Null => Ok(None),
-        _ => Err(ExecutorError::ImplementationDefined {
-            detail: "questioned source binding is not a node",
-        }),
-    }
 }
 
 fn edge_label_matches(edge: &EdgeMatch, edge_id: EdgeId, ctx: &EvalCtx<'_, '_, '_, '_>) -> bool {
