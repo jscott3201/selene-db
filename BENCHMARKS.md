@@ -354,6 +354,22 @@ and
 | `graph_vector_candidate_set/score_candidate_set_cosine_c1024_d1024/1024` | 203.18 µs | 203.45 µs | Below threshold. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c4096_d1024/4096` | 277.33 µs | 281.40 µs | At the parallel threshold, deadline checking now stays on the chunked Rayon scorer. |
 
+PR-local B14/B12 full BM25 exact-scan A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_exact --save-baseline b14_pre`
+on the pre-change serial branch, then
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_exact`
+on the B14/B12 branch. The comparison run with `--baseline b14_pre` was
+stopped only because the branch adds the new `topic_query_checked_with_deadline`
+row, which has no saved pre-change baseline.
+
+| Bench | Before | After | Deadline checker | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n10000_k10` | 3.0836 ms | 2.4305 ms | 2.4387 ms | Borrowed tokenizer removes per-token document allocations and the 10k fixture remains under the parallel threshold. |
+| `graph_text_bm25_exact/topic_query/n50000_k10` | 15.844 ms | 3.5758 ms | 3.3681 ms | Exact BM25 scan now uses the shared cancellation-aware Rayon chunk reducer; corpus document-frequency merge remains element-wise. |
+| `graph_text_bm25_exact/topic_query/n100000_k10` | 33.959 ms | 6.6143 ms | 6.5797 ms | Large exact BM25 scans keep the parallel path under a deadline checker instead of falling back to serial session behavior. |
+
 PR-local quick vector candidate-set scoring Rayon A/B:
 
 Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set`

@@ -102,6 +102,81 @@ fn exact_text_search_tokenizes_case_and_punctuation() {
 }
 
 #[test]
+fn tokenizer_borrows_lowercase_and_handles_multichar_lowercase() {
+    assert!(matches!(
+        tokenize_borrowed("graph").next(),
+        Some(std::borrow::Cow::Borrowed("graph"))
+    ));
+    assert_eq!(
+        tokenize_borrowed("İstanbul IĞDIR graph")
+            .map(std::borrow::Cow::into_owned)
+            .collect::<Vec<_>>(),
+        vec!["i\u{307}stanbul", "iğdir", "graph"]
+    );
+}
+
+#[test]
+fn exact_text_search_parallel_matches_serial_and_index_ordering() {
+    let graph = SharedGraph::new(GraphId::new(431_007));
+    let doc = db_string("TextParallelDoc");
+    let body = db_string("body");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for idx in 0..24 {
+            let topic = match idx % 4 {
+                0 => "gql",
+                1 => "vector",
+                2 => "memory",
+                _ => "planner",
+            };
+            let state = if idx % 2 == 0 { "current" } else { "stale" };
+            let text = format!("{topic} {state} retrieval evidence fact{}", idx % 5);
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&body, Value::String(db_string(&text))),
+                )
+                .unwrap();
+        }
+        txn.commit().unwrap();
+    }
+
+    let token = CancellationToken::new();
+    let serial_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .expect("single-thread rayon pool builds");
+    let serial = serial_pool
+        .install(|| {
+            graph.exact_text_search_nodes_checked(
+                &doc,
+                &body,
+                "gql current retrieval",
+                8,
+                CancellationChecker::new(Some(&token), None),
+            )
+        })
+        .unwrap();
+    let checked = graph
+        .exact_text_search_nodes_checked(
+            &doc,
+            &body,
+            "gql current retrieval",
+            8,
+            CancellationChecker::new(Some(&token), None),
+        )
+        .unwrap();
+    let indexed = graph
+        .build_text_index(&doc, &body)
+        .unwrap()
+        .search("gql current retrieval", 8);
+
+    assert_eq!(checked, serial);
+    assert_eq!(checked, indexed);
+}
+
+#[test]
 fn exact_text_search_tracks_update_and_delete_visibility() {
     let graph = SharedGraph::new(GraphId::new(431_003));
     let doc = db_string("TextMutableDoc");
