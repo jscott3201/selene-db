@@ -146,9 +146,12 @@ impl TurboQuantVectorIndex {
         let query_bias = query_bias(&rotated_query, &self.shift);
         let byte_lut = self.byte_lut(&rotated_query);
         let mut candidates = VectorTopK::new(search_width.max(k).min(self.live_entries));
-        for (&row, &slot) in &self.row_to_entry {
+        for (slot, entry) in self.entries.iter().enumerate() {
+            if entry.deleted || self.row_to_entry.get(&entry.row) != Some(&slot) {
+                continue;
+            }
             let distance = self.approx_distance_lut(slot, &byte_lut, query_bias);
-            candidates.push_distance((slot, row), distance);
+            candidates.push_distance((slot, entry.row), distance);
         }
 
         let scorer = VectorMetric::Cosine.bind_query(query)?;
