@@ -392,8 +392,9 @@ impl<'a> Iterator for Tokenizer<'a> {
         let mut end = self.text.len();
         let mut owned = None::<String>;
 
-        for (relative_index, ch) in self.text[self.offset..].char_indices() {
-            let index = self.offset + relative_index;
+        let base = self.offset;
+        for (relative_index, ch) in self.text[base..].char_indices() {
+            let index = base + relative_index;
             if !ch.is_alphanumeric() {
                 if start.is_some() {
                     end = index;

@@ -81,6 +81,42 @@ fn text_index_matches_exact_bm25_ranking() {
 }
 
 #[test]
+fn text_index_preserves_lowercase_terms_after_punctuation_skip_run() {
+    let graph = SharedGraph::new(GraphId::new(433_900));
+    let doc = db_string("TextIndexedPunctuationDoc");
+    let body = db_string("body");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("alpha, graph beta"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let snapshot = graph.read();
+    let index = snapshot.build_text_index(&doc, &body).unwrap();
+    assert_eq!(
+        index
+            .search("graph", 10)
+            .iter()
+            .map(|hit| hit.node_id)
+            .collect::<Vec<_>>(),
+        vec![NodeId::new(1)]
+    );
+    assert_eq!(
+        index
+            .search("beta", 10)
+            .iter()
+            .map(|hit| hit.node_id)
+            .collect::<Vec<_>>(),
+        vec![NodeId::new(1)]
+    );
+}
+
+#[test]
 fn text_index_rebuild_observes_update_and_delete_visibility() {
     let graph = SharedGraph::new(GraphId::new(433_002));
     let doc = db_string("TextIndexedMutableDoc");

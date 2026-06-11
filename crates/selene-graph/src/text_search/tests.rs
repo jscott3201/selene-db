@@ -116,6 +116,30 @@ fn tokenizer_borrows_lowercase_and_handles_multichar_lowercase() {
 }
 
 #[test]
+fn tokenizer_anchors_offsets_after_skipped_separators() {
+    assert_eq!(
+        tokenize_borrowed("alpha, graph beta")
+            .map(std::borrow::Cow::into_owned)
+            .collect::<Vec<_>>(),
+        vec!["alpha", "graph", "beta"]
+    );
+    assert_eq!(
+        tokenize_borrowed("Distilled summary covering Aionforge, Alice, NYC, Rust.")
+            .map(std::borrow::Cow::into_owned)
+            .collect::<Vec<_>>(),
+        vec![
+            "distilled",
+            "summary",
+            "covering",
+            "aionforge",
+            "alice",
+            "nyc",
+            "rust"
+        ]
+    );
+}
+
+#[test]
 fn exact_text_search_parallel_matches_serial_and_index_ordering() {
     let graph = SharedGraph::new(GraphId::new(431_007));
     let doc = db_string("TextParallelDoc");
