@@ -332,11 +332,12 @@ impl TextIndex {
         };
         for term in terms {
             let remove_term = if let Some(postings) = self.postings.get_mut(&term) {
-                let before = postings.len();
-                postings.retain(|posting| posting.node_id != node_id);
-                self.posting_count = self
-                    .posting_count
-                    .saturating_sub(before.saturating_sub(postings.len()));
+                if let Ok(index) =
+                    postings.binary_search_by_key(&node_id, |posting| posting.node_id)
+                {
+                    postings.remove(index);
+                    self.posting_count = self.posting_count.saturating_sub(1);
+                }
                 postings.is_empty()
             } else {
                 false

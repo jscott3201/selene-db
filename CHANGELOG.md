@@ -636,6 +636,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `truncate`/`split_off` for the B19 limit-window path, so bare `LIMIT` keeps
   the original allocation and `OFFSET` windows move the retained rows instead
   of cloning every `Binding`.
+- **Maintained text-index removals use sorted postings lookup.** `TextIndex`
+  delete/update maintenance now locates a node's term posting with binary
+  search over the existing `NodeId`-sorted postings vector instead of scanning
+  the whole term list with `retain`, preserving the same posting counters and
+  empty-term cleanup while reducing removal-side work.
 - **Deadline-bearing exact retrieval stays parallel.** JSON scans, exact
   vector scans, vector candidate-set scoring, exact BM25 scans, and batched
   exact-vector scans now use a shared cancellation-aware chunk reducer instead
