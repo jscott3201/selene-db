@@ -455,6 +455,27 @@ Command: `scripts/run-benches.sh --profile full --bench single_graph --filter gr
 | `graph_json_path_value_scan/nested_score_path_k10/100000` | 2.2521 ms | 1.9638 ms | -12.5% | 100k unchecked row still improves, though less dramatically than 50k on this run. |
 | `graph_json_path_value_scan/nested_score_path_k10_checked_with_deadline/100000` | 2.5734 ms | 1.9746 ms | -29.3% | 100k deadline row drops back near the unchecked row once selected-value clones move behind top-k admission. |
 
+PR-local B24 batch exact-vector scan Rayon A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench single_graph --filter graph_exact_vector_batch_scan --save-baseline b24_serial_batch`
+on the pre-change serial branch, then
+`scripts/run-benches.sh --profile full --bench single_graph --filter graph_exact_vector_batch_scan --baseline b24_serial_batch`
+on the B24-par branch.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_exact_vector_batch_scan/unindexed_squared_euclidean_q8_dim128_k10/10000` | 1.6124 ms | 1.5897 ms | Below the 16,384-row parallel threshold; remains effectively serial and unchanged. |
+| `graph_exact_vector_batch_scan/unindexed_squared_euclidean_q8_dim128_k10_checked_with_deadline/10000` | 1.5764 ms | 1.5975 ms | Deadline checker overhead stays noise-scale below the threshold. |
+| `graph_exact_vector_batch_scan/unindexed_squared_euclidean_q8_dim128_k10/50000` | 20.809 ms | 1.8056 ms | Batch exact scan now uses the shared chunked Rayon reducer above the row threshold. |
+| `graph_exact_vector_batch_scan/unindexed_squared_euclidean_q8_dim128_k10_checked_with_deadline/50000` | 20.511 ms | 1.8283 ms | Deadline-bearing batch calls keep the parallel path instead of reverting to serial. |
+| `graph_exact_vector_batch_scan/unindexed_squared_euclidean_q8_dim128_k10/100000` | 15.673 ms | 3.6915 ms | Large unindexed q8 scan improves about 4.2x on this branch run. |
+| `graph_exact_vector_batch_scan/unindexed_squared_euclidean_q8_dim128_k10_checked_with_deadline/100000` | 15.811 ms | 3.7289 ms | Deadline row tracks the unchecked large-row path. |
+| `graph_exact_vector_batch_scan/flat_index_squared_euclidean_q8_dim128_k10/50000` | 19.617 ms | 1.8456 ms | Flat-index row-set scans share the same batch chunk reducer once the index row bitmap is broad. |
+| `graph_exact_vector_batch_scan/flat_index_squared_euclidean_q8_dim128_k10_checked_with_deadline/50000` | 8.6977 ms | 1.9225 ms | Baseline flat/deadline row was noisy but still improves materially after parallelization. |
+| `graph_exact_vector_batch_scan/flat_index_squared_euclidean_q8_dim128_k10/100000` | 41.284 ms | 3.7879 ms | Broad flat-index batch scan improves about 10.9x on this branch run. |
+| `graph_exact_vector_batch_scan/flat_index_squared_euclidean_q8_dim128_k10_checked_with_deadline/100000` | 38.925 ms | 3.7937 ms | Deadline flat-index row remains on the parallel path. |
+
 PR-local quick vector baseline:
 
 | Bench | 1k | Notes |

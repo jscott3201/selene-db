@@ -8,6 +8,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod common;
 mod single_graph_ann_recall;
 mod single_graph_candidate_set;
+mod single_graph_vector_batch;
 
 use std::time::{Duration, Instant};
 
@@ -738,6 +739,7 @@ criterion_group! {
     config = common::criterion_config();
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
         bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
+        single_graph_vector_batch::bench_exact_vector_batch_scan,
         bench_exact_json_contains_scan, bench_exact_json_path_exists_scan,
         bench_exact_json_path_contains_scan, bench_exact_json_path_value_scan,
         single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall
