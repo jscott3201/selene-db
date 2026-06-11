@@ -626,6 +626,14 @@ PR-local TurboQuant dimension-projection spot-check:
 | `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d768_n10k_k10_recallbp10000_m3795-full30000` | 21.382 ms (quick) | Block-Hadamard rotation handles the common 768-dim, non-power-of-two shape without dense rotation dependencies. Storage remains about 7.9x smaller than full vectors, but scan latency scales with dimension. |
 | `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d1536_n10k_k10_recallbp10000_m7551-full60000` | 42.732 ms (quick) | 1536-dim storage is ~7.37 MiB compressed versus ~58.6 MiB full vectors at 10k rows. Quality stays full on the clustered fixture; the open problem is still candidate gating and scorer throughput, not storage ratio. |
 
+PR-local blocked TurboQuant dimension-projection spot-check:
+
+| Bench | 10k | Notes |
+|---|---:|---|
+| `graph_turbo_quant_blocked_dimension_projection/cluster_cos/tqplus4blocked_c1024_d128_n10k_k10_recallbp10000_m666-full5000` | 2.7354 ms (quick) | Benchmark-only FastScan-shaped 32-row blocked layout over the same calibrated 4-bit byte-LUT scorer. The blocked scan preserves full recall and cuts the same-run row-major 128-dim row from 3.6788 ms to 2.7354 ms without changing the approximate candidate count. |
+| `graph_turbo_quant_blocked_dimension_projection/cluster_cos/tqplus4blocked_c1024_d768_n10k_k10_recallbp10000_m3801-full30000` | 16.150 ms (quick) | Blocking scans one byte position across 32 rows at a time, improving the same-run row-major 768-dim row from 20.516 ms while keeping storage in the same ~3.7 MiB compressed range. This is the clearest production-layout candidate after the current row-major TurboQuant index. |
+| `graph_turbo_quant_blocked_dimension_projection/cluster_cos/tqplus4blocked_c1024_d1536_n10k_k10_recallbp10000_m7563-full60000` | 32.324 ms (quick) | The 1536-dim blocked scorer improves the same-run row-major row from 41.516 ms with full recall. The remaining gap to production parallel scans points to combining block-major storage with Rayon and later safe-SIMD or FastScan-style in-register accumulation. |
+
 PR-local production TurboQuant dimension-projection spot-check:
 
 | Bench | 10k | Notes |
