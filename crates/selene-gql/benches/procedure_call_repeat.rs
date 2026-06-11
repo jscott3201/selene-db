@@ -6,6 +6,8 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
+#[path = "procedure_call_repeat/rank_fusion.rs"]
+mod rank_fusion;
 #[path = "procedure_call_repeat/vector_ann_expanded.rs"]
 mod vector_ann_expanded;
 #[path = "procedure_call_repeat/vector_candidate_state.rs"]
@@ -626,6 +628,7 @@ criterion_group! {
     name = procedure_call_repeat_group;
     config = common::criterion_config();
     targets = bench_procedure_call_repeat, bench_vector_search_procedure,
+        rank_fusion::bench_rank_fusion_procedure,
         vector_ann_expanded::bench_vector_ann_expanded_procedure,
         vector_candidate_state::bench_vector_candidate_state_procedure,
         vector_expanded::bench_vector_expanded_procedure,

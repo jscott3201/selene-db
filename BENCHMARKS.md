@@ -976,6 +976,20 @@ JSON scalar work, not JSON text parsing during `json(...)`.
 | `gql_expression_eval/json/merge_patch_metadata` | 351.87 ns (quick) | Applies an RFC 7396 merge patch to a prebound metadata document. |
 | `gql_expression_eval/json/patch_metadata` | 472.89 ns (quick) | Applies a three-operation RFC 6902 JSON Patch to a prebound metadata document. |
 
+PR-local quick Reciprocal Rank Fusion procedure baseline:
+
+| Bench | Median | Notes |
+|---|---:|---|
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x64_k10` | 5.066 µs (quick) | Cached `CALL selene.reciprocal_rank_fusion` over two ranked node lists of width 64 with 50% neighboring-list overlap. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x256_k10` | 18.87 µs (quick) | Same RRF procedure row over two ranked node lists of width 256. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x1024_k10` | 87.81 µs (quick) | Same RRF procedure row over two ranked node lists of width 1,024. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x64_k10` | 9.192 µs (quick) | Cached RRF over four ranked node lists of width 64. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x256_k10` | 38.26 µs (quick) | Cached RRF over four ranked node lists of width 256. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x1024_k10` | 201.1 µs (quick) | Cached RRF over four ranked node lists of width 1,024. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x64_k10` | 17.99 µs (quick) | Cached RRF over eight ranked node lists of width 64. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x256_k10` | 81.46 µs (quick) | Cached RRF over eight ranked node lists of width 256. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x1024_k10` | 473.3 µs (quick) | Cached RRF over eight ranked node lists of width 1,024. |
+
 PR-local quick vector procedure baseline:
 
 | Bench | Median | Notes |
