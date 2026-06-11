@@ -7,6 +7,7 @@ use selene_core::{VectorMetric, VectorTopK, VectorValue, exact_vector_top_k};
 use selene_testing::BenchProfile;
 
 mod binary;
+pub(crate) mod ivf;
 mod scalar;
 pub(crate) mod turbo_quant;
 

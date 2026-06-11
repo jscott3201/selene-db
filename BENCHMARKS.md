@@ -615,6 +615,14 @@ PR-local TurboQuant-style compression spot-check:
 | `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c256_d128_k10_recallbp9000_m6641-full50000` | 43.38 ms (quick) | The LUT scorer keeps the useful 9000 bp medium-width row and makes calibrated TurboQuant much closer to the existing scalar-code rows. |
 | `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c1024_d128_k10_recallbp10000_m6641-full50000` | 48.35 ms (quick) | First full-recall TurboQuant-style row with a fused safe lookup scorer. It is still slower than standalone PQ full-recall rows and far slower than packed binary, but the remaining gap is now scorer/layout engineering rather than raw scalar decode cost. |
 
+PR-local IVF+TurboQuant layering spot-check:
+
+| Bench | 100k | Notes |
+|---|---:|---|
+| `graph_ivf_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c256_p1_d128_k10_recallbp9000_rows25008_m7454-full50000` | 1.4692 ms (quick) | Synthetic IVF probes one list per query, then scores calibrated 4-bit TurboQuant byte-LUT codes before exact cosine rerank. It scans ~25k rows across 16 queries and preserves the standalone c256 row's 9000 bp recall while cutting latency from ~43 ms to ~1.47 ms. |
+| `graph_ivf_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c1024_p1_d128_k10_recallbp10000_rows25008_m7454-full50000` | 2.2484 ms (quick) | One-list IVF preserves the calibrated c1024 full-recall suffix while cutting standalone full-code latency from ~48 ms to ~2.25 ms, but it is still slower than IVF+PQ and IVF+binary full-recall rows. |
+| `graph_ivf_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c1024_p4_d128_k10_recallbp10000_rows100015_m7454-full50000` | 4.5898 ms (quick) | Four-list probe keeps full recall but scans ~100k rows across the query batch, useful mainly as a guardrail for less separable fixtures. |
+
 PR-local IVF+PQ layering spot-check:
 
 | Bench | 100k | Notes |
