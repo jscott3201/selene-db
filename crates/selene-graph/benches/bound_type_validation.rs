@@ -37,6 +37,11 @@ fn bench_bound_type_validation(c: &mut Criterion) {
 
         bench_update_case(&mut group, "unbound_commit", scale, unbound_graph);
         bench_update_case(&mut group, "bound_commit_simple", scale, simple_graph);
+        bench_incident_property_update_case(
+            &mut group,
+            scale,
+            incident_graph_snapshot(scale, simple_graph_type()),
+        );
         bench_update_case(
             &mut group,
             "bound_commit_unique",
@@ -142,6 +147,43 @@ fn update_batch(shared: &SharedGraph) -> usize {
     txn.commit().expect("commit succeeds").changes.len()
 }
 
+fn bench_incident_property_update_case(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    scale: usize,
+    graph: SeleneGraph,
+) {
+    group.throughput(Throughput::Elements(1));
+    group.bench_function(
+        BenchmarkId::new("bound_commit_incident_property_update", scale),
+        |b| {
+            b.iter_batched(
+                || SharedGraph::from_graph(graph.clone()),
+                |shared| {
+                    let changes = update_hub_property(&shared);
+                    std::hint::black_box((shared, changes))
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
+}
+
+fn update_hub_property(shared: &SharedGraph) -> usize {
+    let score = label("score");
+    let diff = PropertyDiff::new([(score, Value::Int(42))], []).expect("property diff is valid");
+    let mut txn = shared.begin_write();
+    {
+        txn.mutator()
+            .update_node(
+                selene_core::NodeId::new(1),
+                LabelDiff::new([], []).expect("label diff is valid"),
+                diff,
+            )
+            .expect("hub property update succeeds");
+    }
+    txn.commit().expect("commit succeeds").changes.len()
+}
+
 fn update_unique_batch(shared: &SharedGraph) -> usize {
     let name = label("name");
     let mut txn = shared.begin_write();
@@ -193,6 +235,34 @@ fn graph_snapshot(
                 mutator
                     .create_node(LabelSet::single(label), properties(idx, property_count))
                     .expect("fixture node inserts");
+            }
+        }
+        txn.commit().expect("fixture commit succeeds");
+    }
+    shared.read().as_ref().clone()
+}
+
+fn incident_graph_snapshot(scale: usize, type_def: GraphTypeDef) -> SeleneGraph {
+    let shared = SharedGraph::builder(GraphId::new(1))
+        .bound_to(type_def)
+        .expect("graph type is valid")
+        .build()
+        .expect("typed graph builds");
+    let node_count = scale.max(2);
+    {
+        let mut txn = shared.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            let hub = mutator
+                .create_node(LabelSet::single(label("SimpleNode")), properties(0, 3))
+                .expect("hub inserts");
+            for idx in 1..node_count {
+                let leaf = mutator
+                    .create_node(LabelSet::single(label("SimpleNode")), properties(idx, 3))
+                    .expect("leaf inserts");
+                mutator
+                    .create_edge(label("SIMPLE_EDGE"), hub, leaf, properties(idx, 3))
+                    .expect("edge inserts");
             }
         }
         txn.commit().expect("fixture commit succeeds");

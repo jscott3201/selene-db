@@ -183,8 +183,8 @@ pub fn validate_change(
         }
         Change::NodeUpdated {
             id,
+            labels_diff,
             properties_diff,
-            ..
         } => {
             if !graph.is_node_alive(*id) {
                 return Ok(Vec::new());
@@ -197,12 +197,13 @@ pub fn validate_change(
                 &node_type.properties,
                 properties_diff,
             )?;
-            // A label change can invalidate every incident edge's
-            // (label, source_type, target_type) constraint without the
-            // edge itself producing a Change. Re-validate every alive
-            // incident edge so closed-graph commits cannot publish a
-            // graph that violates the edge-type rules.
-            warnings.extend(revalidate_incident_edges(*id, graph, type_def)?);
+            if !labels_diff.is_empty() {
+                // A label change can invalidate every incident edge's
+                // (label, source_type, target_type) constraint without the
+                // edge itself producing a Change. Property-only updates cannot
+                // change endpoint type, so keep those commits O(1) in degree.
+                warnings.extend(revalidate_incident_edges(*id, graph, type_def)?);
+            }
             Ok(warnings)
         }
         Change::EdgeCreated { id, .. } => {
