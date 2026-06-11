@@ -4,6 +4,8 @@ use super::*;
 const TURBO_QUANT_BATCH_PARALLEL_CHUNK_ENTRIES: usize = 256;
 #[cfg(test)]
 const TURBO_QUANT_BATCH_PARALLEL_CHUNK_ENTRIES: usize = 4;
+// The safe scalar fused path helps 128d batches but loses Rayon task fanout at
+// 768d/1536d. Revisit this threshold with a FastScan/SIMD scorer.
 const TURBO_QUANT_FUSED_BATCH_MAX_DIMENSION: usize = 256;
 
 struct PreparedTurboQuantQuery {
