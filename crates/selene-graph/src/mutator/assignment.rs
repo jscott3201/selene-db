@@ -1,6 +1,6 @@
 //! Store-assignment conversion for closed graph property writes.
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
@@ -99,10 +99,13 @@ fn coerce_property_map(
     props: &mut PropertyMap,
 ) -> GraphResult<()> {
     for declaration in declarations {
-        let Some(value) = props.get(&declaration.name).cloned() else {
+        if !declaration_may_coerce(declaration) {
+            continue;
+        }
+        let Some(mut value) = props.remove(&declaration.name) else {
             continue;
         };
-        let value = coerce_property_value(declaration, value)?;
+        coerce_property_value(declaration, &mut value)?;
         props.set(declaration.name.clone(), value)?;
     }
     Ok(())
@@ -116,14 +119,29 @@ fn coerce_property_diff(
         let Some(declaration) = declarations.iter().find(|decl| decl.name == *key) else {
             continue;
         };
-        *value = coerce_property_value(declaration, value.clone())?;
+        if declaration_may_coerce(declaration) {
+            coerce_property_value(declaration, value)?;
+        }
     }
     Ok(())
 }
 
-fn coerce_property_value(declaration: &PropertyTypeDef, value: Value) -> GraphResult<Value> {
+fn declaration_may_coerce(declaration: &PropertyTypeDef) -> bool {
+    match declaration.value_type {
+        PropertyValueType::Decimal => true,
+        PropertyValueType::String => declaration.character_string_type.is_some(),
+        PropertyValueType::Bytes => declaration.byte_string_type.is_some(),
+        PropertyValueType::List => declaration.list_element_type.is_some(),
+        PropertyValueType::Record | PropertyValueType::RecordTyped => {
+            declaration.record_field_types.is_some()
+        }
+        _ => false,
+    }
+}
+
+fn coerce_property_value(declaration: &PropertyTypeDef, value: &mut Value) -> GraphResult<()> {
     if matches!(value, Value::Null) {
-        return Ok(value);
+        return Ok(());
     }
     match declaration.value_type {
         PropertyValueType::Decimal => {
@@ -131,46 +149,47 @@ fn coerce_property_value(declaration: &PropertyTypeDef, value: Value) -> GraphRe
         }
         PropertyValueType::String => match declaration.character_string_type {
             Some(target) => coerce_character_string(value, target, declaration.name.clone()),
-            None => Ok(value),
+            None => Ok(()),
         },
         PropertyValueType::Bytes => match declaration.byte_string_type {
             Some(target) => coerce_byte_string(value, target, declaration.name.clone()),
-            None => Ok(value),
+            None => Ok(()),
         },
         PropertyValueType::List => match (&declaration.list_element_type, value) {
-            (Some(element_type), Value::List(values)) => values
-                .into_iter()
-                .map(|value| coerce_element_value(element_type, value, &declaration.name))
-                .collect::<GraphResult<Vec<_>>>()
-                .map(Value::List),
-            (_, value) => Ok(value),
+            (Some(element_type), Value::List(values)) => {
+                for value in values {
+                    coerce_element_value(element_type, value, &declaration.name)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         },
         PropertyValueType::Record | PropertyValueType::RecordTyped => {
-            match (&declaration.record_field_types, value) {
-                (Some(fields), value @ (Value::Record(_) | Value::RecordTyped(_))) => {
+            match &declaration.record_field_types {
+                Some(fields) if matches!(value, Value::Record(_) | Value::RecordTyped(_)) => {
                     coerce_record_value(fields, value, &declaration.name)
                 }
-                (_, value) => Ok(value),
+                _ => Ok(()),
             }
         }
-        _ => Ok(value),
+        _ => Ok(()),
     }
 }
 
 fn coerce_element_value(
     element_type: &PropertyElementType,
-    value: Value,
+    value: &mut Value,
     property: &DbString,
-) -> GraphResult<Value> {
+) -> GraphResult<()> {
     if matches!(value, Value::Null) {
-        return Ok(value);
+        return Ok(());
     }
     match element_type {
         PropertyElementType::NotNull(inner) => coerce_element_value(inner, value, property),
         PropertyElementType::Scalar(PropertyValueType::Decimal) => {
             coerce_decimal_property(value, None, property.clone())
         }
-        PropertyElementType::Scalar(_) => Ok(value),
+        PropertyElementType::Scalar(_) => Ok(()),
         PropertyElementType::CharacterString(target) => {
             coerce_character_string(value, *target, property.clone())
         }
@@ -181,30 +200,31 @@ fn coerce_element_value(
             coerce_byte_string(value, *target, property.clone())
         }
         PropertyElementType::List(inner) => match value {
-            Value::List(values) => values
-                .into_iter()
-                .map(|value| coerce_element_value(inner, value, property))
-                .collect::<GraphResult<Vec<_>>>()
-                .map(Value::List),
-            value => Ok(value),
+            Value::List(values) => {
+                for value in values {
+                    coerce_element_value(inner, value, property)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         },
     }
 }
 
 fn coerce_record_field_value(
     field_type: &RecordFieldType,
-    value: Value,
+    value: &mut Value,
     property: &DbString,
-) -> GraphResult<Value> {
+) -> GraphResult<()> {
     if matches!(value, Value::Null) {
-        return Ok(value);
+        return Ok(());
     }
     match field_type {
         RecordFieldType::NotNull(inner) => coerce_record_field_value(inner, value, property),
         RecordFieldType::Scalar(PropertyValueType::Decimal) => {
             coerce_decimal_property(value, None, property.clone())
         }
-        RecordFieldType::Scalar(_) | RecordFieldType::OpenRecord => Ok(value),
+        RecordFieldType::Scalar(_) | RecordFieldType::OpenRecord => Ok(()),
         RecordFieldType::CharacterString(target) => {
             coerce_character_string(value, *target, property.clone())
         }
@@ -213,12 +233,13 @@ fn coerce_record_field_value(
         }
         RecordFieldType::ByteString(target) => coerce_byte_string(value, *target, property.clone()),
         RecordFieldType::List(inner) => match value {
-            Value::List(values) => values
-                .into_iter()
-                .map(|value| coerce_record_field_value(inner, value, property))
-                .collect::<GraphResult<Vec<_>>>()
-                .map(Value::List),
-            value => Ok(value),
+            Value::List(values) => {
+                for value in values {
+                    coerce_record_field_value(inner, value, property)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
         },
         RecordFieldType::Record(fields) => coerce_record_value(fields, value, property),
     }
@@ -226,50 +247,42 @@ fn coerce_record_field_value(
 
 fn coerce_record_value(
     fields: &RecordFieldTypes,
-    value: Value,
+    value: &mut Value,
     property: &DbString,
-) -> GraphResult<Value> {
+) -> GraphResult<()> {
     match value {
-        Value::Record(record) => match *record {
-            selene_core::Record::Open(mut values) => {
-                for (name, field_value) in &mut values {
+        Value::Record(record) => match record.as_mut() {
+            selene_core::Record::Open(values) => {
+                for (name, field_value) in values {
                     let Some(field) = fields.0.iter().find(|field| field.name == *name) else {
                         continue;
                     };
-                    *field_value = coerce_record_field_value(
-                        &field.field_type,
-                        field_value.clone(),
-                        property,
-                    )?;
+                    coerce_record_field_value(&field.field_type, field_value, property)?;
                 }
-                Ok(Value::Record(Box::new(selene_core::Record::Open(values))))
+                Ok(())
             }
-            other => Ok(Value::Record(Box::new(other))),
+            _ => Ok(()),
         },
-        Value::RecordTyped(mut record) => {
+        Value::RecordTyped(record) => {
             for (field, slot) in fields.0.iter().zip(record.values.iter_mut()) {
-                let Some(value) = slot.take() else {
+                let Some(value) = slot else {
                     continue;
                 };
-                *slot = Some(coerce_record_field_value(
-                    &field.field_type,
-                    value,
-                    property,
-                )?);
+                coerce_record_field_value(&field.field_type, value, property)?;
             }
-            Ok(Value::RecordTyped(record))
+            Ok(())
         }
-        value => Ok(value),
+        _ => Ok(()),
     }
 }
 
 fn coerce_character_string(
-    value: Value,
+    value: &mut Value,
     target: CharacterStringType,
     property: DbString,
-) -> GraphResult<Value> {
+) -> GraphResult<()> {
     let Value::String(value) = value else {
-        return Ok(value);
+        return Ok(());
     };
     // The shared core coercion keeps store assignment on the same IV023
     // space-only truncation policy as character CAST and DEFAULT descriptor
@@ -295,18 +308,26 @@ fn coerce_character_string(
             detail,
         )
     })?;
-    db_string(&coerced)
-        .map(Value::String)
-        .map_err(GraphError::Core)
+    match coerced {
+        Cow::Borrowed(coerced) if coerced == value.as_str() => Ok(()),
+        Cow::Borrowed(coerced) => {
+            *value = db_string(coerced).map_err(GraphError::Core)?;
+            Ok(())
+        }
+        Cow::Owned(coerced) => {
+            *value = DbString::from_string(coerced).map_err(GraphError::Core)?;
+            Ok(())
+        }
+    }
 }
 
 fn coerce_byte_string(
-    value: Value,
+    value: &mut Value,
     target: ByteStringType,
     property: DbString,
-) -> GraphResult<Value> {
+) -> GraphResult<()> {
     let Value::Bytes(value) = value else {
-        return Ok(value);
+        return Ok(());
     };
     let len = u64::try_from(value.len()).map_err(|_| {
         assignment_error(
@@ -315,7 +336,9 @@ fn coerce_byte_string(
             "byte string source length exceeds supported range",
         )
     })?;
-    let mut bytes = value.as_ref().to_vec();
+    if target.matches_len(value.len()) {
+        return Ok(());
+    }
     if len > target.max_len {
         let max_len = usize::try_from(target.max_len).map_err(|_| {
             assignment_error(
@@ -324,14 +347,16 @@ fn coerce_byte_string(
                 "byte string target maximum length exceeds supported range",
             )
         })?;
-        if bytes[max_len..].iter().any(|byte| *byte != 0) {
+        if value[max_len..].iter().any(|byte| *byte != 0) {
             return Err(assignment_error(
                 property,
                 StoreAssignmentException::StringDataRightTruncation,
                 "byte string assignment would truncate non-zero trailing bytes",
             ));
         }
+        let mut bytes = value.as_ref().to_vec();
         bytes.truncate(max_len);
+        *value = Arc::from(bytes);
     } else if len < target.min_len {
         let min_len = usize::try_from(target.min_len).map_err(|_| {
             assignment_error(
@@ -340,64 +365,68 @@ fn coerce_byte_string(
                 "byte string target minimum length exceeds supported range",
             )
         })?;
+        let mut bytes = value.as_ref().to_vec();
         bytes.resize(min_len, 0);
+        *value = Arc::from(bytes);
     }
-    Ok(Value::Bytes(Arc::from(bytes)))
+    Ok(())
 }
 
 fn coerce_decimal_property(
-    value: Value,
+    value: &mut Value,
     target: Option<DecimalType>,
     property: DbString,
-) -> GraphResult<Value> {
+) -> GraphResult<()> {
     let decimal = numeric_to_decimal(value, property.clone())?;
-    let Some(target) = target else {
-        return Ok(Value::Decimal(decimal));
-    };
-    round_decimal_to_type(decimal, target)
-        .map(Value::Decimal)
-        .ok_or_else(|| {
+    let coerced = match target {
+        Some(target) => round_decimal_to_type(decimal, target).ok_or_else(|| {
             assignment_error(
                 property,
                 StoreAssignmentException::NumericValueOutOfRange,
                 "numeric assignment cannot be represented by declared DECIMAL precision/scale",
             )
-        })
+        })?,
+        None => decimal,
+    };
+    if !matches!(value, Value::Decimal(current) if *current == coerced) {
+        *value = Value::Decimal(coerced);
+    }
+    Ok(())
 }
 
-fn numeric_to_decimal(value: Value, property: DbString) -> GraphResult<Decimal> {
+fn numeric_to_decimal(value: &Value, property: DbString) -> GraphResult<Decimal> {
     match value {
-        Value::Int(value) => Ok(Decimal::from(value)),
-        Value::Uint(value) => Ok(Decimal::from(value)),
-        Value::Int128(value) => Decimal::try_from_i128_with_scale(value, 0).map_err(|_| {
+        Value::Int(value) => Ok(Decimal::from(*value)),
+        Value::Uint(value) => Ok(Decimal::from(*value)),
+        Value::Int128(value) => Decimal::try_from_i128_with_scale(*value, 0).map_err(|_| {
             assignment_error(
                 property,
                 StoreAssignmentException::NumericValueOutOfRange,
                 "INT128 assignment exceeds DECIMAL range",
             )
         }),
-        Value::Uint128(value) => Decimal::from_u128(value).ok_or_else(|| {
+        Value::Uint128(value) => Decimal::from_u128(*value).ok_or_else(|| {
             assignment_error(
                 property,
                 StoreAssignmentException::NumericValueOutOfRange,
                 "UINT128 assignment exceeds DECIMAL range",
             )
         }),
-        Value::Float(value) => Decimal::from_f64(value).ok_or_else(|| {
+        Value::Float(value) => Decimal::from_f64(*value).ok_or_else(|| {
             assignment_error(
                 property,
                 StoreAssignmentException::NumericValueOutOfRange,
                 "FLOAT assignment has no DECIMAL image",
             )
         }),
-        Value::Float32(value) => Decimal::from_f32(value).ok_or_else(|| {
+        Value::Float32(value) => Decimal::from_f32(*value).ok_or_else(|| {
             assignment_error(
                 property,
                 StoreAssignmentException::NumericValueOutOfRange,
                 "FLOAT32 assignment has no DECIMAL image",
             )
         }),
-        Value::Decimal(value) => Ok(value),
+        Value::Decimal(value) => Ok(*value),
         value => Err(assignment_error(
             property,
             StoreAssignmentException::NumericValueOutOfRange,
@@ -416,4 +445,115 @@ fn assignment_error(
         exception,
         reason: reason.into(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn declaration(
+        name: DbString,
+        value_type: PropertyValueType,
+        character_string_type: Option<CharacterStringType>,
+        byte_string_type: Option<ByteStringType>,
+    ) -> PropertyTypeDef {
+        PropertyTypeDef {
+            name,
+            value_type,
+            list_element_type: None,
+            required: false,
+            default: None,
+            immutable: false,
+            unique: false,
+            decimal_type: None,
+            character_string_type,
+            byte_string_type,
+            record_field_types: None,
+        }
+    }
+
+    fn descriptor_declarations() -> (DbString, DbString, Vec<PropertyTypeDef>) {
+        let text = db_string("text").expect("test property name is valid");
+        let bytes = db_string("bytes").expect("test property name is valid");
+        let declarations = vec![
+            declaration(
+                text.clone(),
+                PropertyValueType::String,
+                Some(CharacterStringType::new(1, 64).expect("test descriptor is valid")),
+                None,
+            ),
+            declaration(
+                bytes.clone(),
+                PropertyValueType::Bytes,
+                None,
+                Some(ByteStringType::new(1, 64).expect("test descriptor is valid")),
+            ),
+        ];
+        (text, bytes, declarations)
+    }
+
+    #[test]
+    fn property_map_in_bounds_descriptor_values_reuse_storage() {
+        let (text, bytes, declarations) = descriptor_declarations();
+        let original_text = db_string("already-valid").expect("test value is valid");
+        let original_bytes = Arc::<[u8]>::from([1_u8, 2, 3, 4]);
+        let mut props = PropertyMap::compact(
+            [text.clone(), bytes.clone()],
+            [
+                Some(Value::String(original_text.clone())),
+                Some(Value::Bytes(Arc::clone(&original_bytes))),
+            ],
+        )
+        .expect("test property map is valid");
+
+        coerce_property_map(&declarations, &mut props).expect("coercion succeeds");
+
+        let Value::String(stored_text) = props.get(&text).expect("text property remains") else {
+            panic!("text property stays a string");
+        };
+        assert!(std::ptr::eq(stored_text.as_str(), original_text.as_str()));
+        let Value::Bytes(stored_bytes) = props.get(&bytes).expect("bytes property remains") else {
+            panic!("bytes property stays bytes");
+        };
+        assert!(Arc::ptr_eq(stored_bytes, &original_bytes));
+        assert!(matches!(props, PropertyMap::Compact { .. }));
+    }
+
+    #[test]
+    fn property_diff_in_bounds_descriptor_values_reuse_storage() {
+        let (text, bytes, declarations) = descriptor_declarations();
+        let original_text = db_string("already-valid").expect("test value is valid");
+        let original_bytes = Arc::<[u8]>::from([1_u8, 2, 3, 4]);
+        let mut diff = PropertyDiff::new(
+            [
+                (text.clone(), Value::String(original_text.clone())),
+                (bytes.clone(), Value::Bytes(Arc::clone(&original_bytes))),
+            ],
+            [],
+        )
+        .expect("test property diff is valid");
+
+        coerce_property_diff(&declarations, &mut diff).expect("coercion succeeds");
+
+        let Value::String(stored_text) = diff
+            .set
+            .iter()
+            .find(|(key, _)| key == &text)
+            .map(|(_, value)| value)
+            .expect("text property remains")
+        else {
+            panic!("text property stays a string");
+        };
+        assert!(std::ptr::eq(stored_text.as_str(), original_text.as_str()));
+        let Value::Bytes(stored_bytes) = diff
+            .set
+            .iter()
+            .find(|(key, _)| key == &bytes)
+            .map(|(_, value)| value)
+            .expect("bytes property remains")
+        else {
+            panic!("bytes property stays bytes");
+        };
+        assert!(Arc::ptr_eq(stored_bytes, &original_bytes));
+    }
 }
