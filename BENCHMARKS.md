@@ -634,21 +634,31 @@ PR-local blocked TurboQuant dimension-projection spot-check:
 | `graph_turbo_quant_blocked_dimension_projection/cluster_cos/tqplus4blocked_c1024_d768_n10k_k10_recallbp10000_m3801-full30000` | 16.150 ms (quick) | Blocking scans one byte position across 32 rows at a time, improving the same-run row-major 768-dim row from 20.516 ms while keeping storage in the same ~3.7 MiB compressed range. This is the clearest production-layout candidate after the current row-major TurboQuant index. |
 | `graph_turbo_quant_blocked_dimension_projection/cluster_cos/tqplus4blocked_c1024_d1536_n10k_k10_recallbp10000_m7563-full60000` | 32.324 ms (quick) | The 1536-dim blocked scorer improves the same-run row-major row from 41.516 ms with full recall. The remaining gap to production parallel scans points to combining block-major storage with Rayon and later safe-SIMD or FastScan-style in-register accumulation. |
 
+PR-local wide blocked TurboQuant dimension-projection spot-check:
+
+Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_blocked_wide_dimension_projection` after a same-run scalar blocked guard.
+
+| Bench | Scalar blocked | Wide blocked | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_blocked_wide_dimension_projection/cluster_cos/tqplus4blockedwide_c1024_d128_n10k_k10_recallbp10000_m666-full5000` | 2.9893 ms | 2.0547 ms | Safe `wide::f64x4` accumulates four lanes of the 32-row block at a time and preserves the same full-recall exact rerank. |
+| `graph_turbo_quant_blocked_wide_dimension_projection/cluster_cos/tqplus4blockedwide_c1024_d768_n10k_k10_recallbp10000_m3801-full30000` | 16.039 ms | 14.254 ms | The in-register lane accumulator keeps the same block-major bytes and candidate count while reducing the high-dimensional scan cost. |
+| `graph_turbo_quant_blocked_wide_dimension_projection/cluster_cos/tqplus4blockedwide_c1024_d1536_n10k_k10_recallbp10000_m7563-full60000` | 33.277 ms | 28.172 ms | The widest row improves enough to promote the same accumulator shape into the production slot-order TurboQuant scan. |
+
 PR-local production TurboQuant dimension-projection spot-check:
 
 | Bench | 10k | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128_n10k_k10_recallbp10000_m1043-full5000` | 3.8115 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` now stores packed codes in the same 32-row block-major layout as the benchmark FastScan probe. The 128-dim row preserves full recall, improves from 4.1261 ms, and keeps zero TurboQuant referenced-vector bytes; the `m1043` suffix includes small tail-block padding. |
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4181-full30000` | 8.7663 ms (quick) | The block-major slot-order scan still parallelizes the large clean candidate pass while loading each packed byte position across 32 rows. It improves the prior 9.2501 ms row and keeps the compressed index around 4.1 MiB versus ~29.3 MiB primary vector components. |
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m7946-full60000` | 15.170 ms (quick) | 1536-dim production search stays full-recall and improves from 15.689 ms with the derived blocked storage. The remaining latency work is now safe-SIMD or FastScan-style in-register accumulation rather than another row-layout rewrite. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128_n10k_k10_recallbp10000_m1043-full5000` | 3.7065 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` stores packed codes in a 32-row block-major layout and now accumulates slot-order blocks with safe `wide::f64x4`. The 128-dim row preserves full recall and improves from the prior 3.8115 ms blocked-storage row. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4181-full30000` | 8.0683 ms (quick) | The block-major slot-order scan still parallelizes the large clean candidate pass while loading each packed byte position across 32 rows. It improves the prior 8.7663 ms row and keeps the compressed index around 4.1 MiB versus ~29.3 MiB primary vector components. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m7946-full60000` | 13.700 ms (quick) | 1536-dim production search stays full-recall and improves from 15.170 ms with the in-register lane accumulator. The next larger scorer lever is FastScan-style byte-LUT compression rather than another row-layout rewrite. |
 
 PR-local production TurboQuant batch dimension-projection spot-check:
 
 | Bench | 10k x 8 queries | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d128_q8_n10k_k10_recallbp10000_m1043-full5000` | 3.2117 ms (quick) | The low-dimensional fused batch path now shares block-major code loads across eight prepared query LUTs. It improves the prior 3.4167 ms row while preserving full recall and zero TurboQuant referenced-vector bytes. |
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d768_q8_n10k_k10_recallbp10000_m4181-full30000` | 8.8666 ms (quick) | High-dimensional batch search remains on the per-query Rayon candidate path, but that path now scans blocked codes. The row improves the previous 9.0933 ms measurement without changing the exact rerank surface. |
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d1536_q8_n10k_k10_recallbp10000_m7946-full60000` | 15.275 ms (quick) | 1536-dim batch search keeps the established high-dimensional envelope and improves from 15.414 ms. The next batch-specific lever is still SIMD/in-register LUT accumulation, not wider scalar query fusion. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d128_q8_n10k_k10_recallbp10000_m1043-full5000` | 3.2228 ms (quick) | The low-dimensional fused batch path is effectively unchanged by the single-query slot-order accumulator and remains full-recall. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d768_q8_n10k_k10_recallbp10000_m4181-full30000` | 8.1276 ms (quick) | High-dimensional batch search remains on the per-query Rayon candidate path, so it inherits the widened slot-order scorer and improves from the previous 8.8666 ms measurement without changing the exact rerank surface. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d1536_q8_n10k_k10_recallbp10000_m7946-full60000` | 13.616 ms (quick) | 1536-dim batch search keeps the established high-dimensional envelope and improves from 15.275 ms through the per-query TurboQuant candidate path. A batch-specific SIMD accumulator remains a separate benchmark slice. |
 
 PR-local IVF+TurboQuant layering spot-check:
 

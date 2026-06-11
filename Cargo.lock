@@ -1995,6 +1995,7 @@ dependencies = [
  "tracing",
  "triomphe",
  "uuid",
+ "wide",
 ]
 
 [[package]]

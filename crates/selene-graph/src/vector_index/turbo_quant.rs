@@ -14,6 +14,7 @@ use selene_core::{
     CoreResult, MAX_VECTOR_DIMENSION, TURBO_QUANT_BLOCK_ROWS, TurboQuantBitWidth,
     TurboQuantBlockedCodes, TurboQuantCodebook, TurboQuantCodebookKind, VectorTopK, VectorValue,
 };
+use wide::f64x4;
 
 use crate::error::{GraphError, GraphResult};
 use crate::parallel_scan::should_parallelize_scan;
@@ -254,27 +255,36 @@ impl TurboQuantVectorIndex {
         candidate_limit: usize,
     ) -> VectorTopK<(usize, u32)> {
         let mut candidates = VectorTopK::new(candidate_limit);
-        let mut dots = [0.0; TURBO_QUANT_BLOCK_ROWS];
+        let mut dots = [f64x4::ZERO; TURBO_QUANT_BLOCK_ROWS / 4];
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
-            dots[..block_len].fill(query_bias);
+            dots.fill(f64x4::splat(query_bias));
             for byte in 0..self.bytes_per_row {
                 let lut_base = byte * 256;
                 let codes = self.codes.block_byte(block, byte);
-                for lane in 0..block_len {
-                    dots[lane] += byte_lut[lut_base + usize::from(codes[lane])];
+                for lane_base in (0..TURBO_QUANT_BLOCK_ROWS).step_by(4) {
+                    dots[lane_base / 4] += f64x4::from([
+                        byte_lut[lut_base + usize::from(codes[lane_base])],
+                        byte_lut[lut_base + usize::from(codes[lane_base + 1])],
+                        byte_lut[lut_base + usize::from(codes[lane_base + 2])],
+                        byte_lut[lut_base + usize::from(codes[lane_base + 3])],
+                    ]);
                 }
             }
             let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
-            for (lane, dot) in dots[..block_len].iter().copied().enumerate() {
-                let slot = base_slot + lane;
-                let entry = &self.entries[slot];
-                if entry.deleted {
-                    continue;
+            for lane_base in (0..block_len).step_by(4) {
+                let dot_lanes: [f64; 4] = dots[lane_base / 4].into();
+                let active_lanes = (block_len - lane_base).min(4);
+                for (lane_offset, dot) in dot_lanes.into_iter().take(active_lanes).enumerate() {
+                    let slot = base_slot + lane_base + lane_offset;
+                    let entry = &self.entries[slot];
+                    if entry.deleted {
+                        continue;
+                    }
+                    debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
+                    let distance = -(dot * f64::from(self.row_scales[slot]));
+                    candidates.push_distance((slot, entry.row), distance);
                 }
-                debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
-                let distance = -(dot * f64::from(self.row_scales[slot]));
-                candidates.push_distance((slot, entry.row), distance);
             }
         }
         candidates

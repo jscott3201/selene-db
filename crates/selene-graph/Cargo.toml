@@ -33,6 +33,7 @@ thiserror.workspace = true
 miette.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+wide.workspace = true
 
 [features]
 metrics = ["selene-core/metrics"]
