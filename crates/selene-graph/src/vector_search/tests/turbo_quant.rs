@@ -1,6 +1,6 @@
 use selene_core::{CancellationChecker, GraphId, LabelSet, NodeId, Value, VectorMetric, db_string};
 
-use super::super::{ApproximateVectorSearchOptions, VectorCandidateSet};
+use super::super::{ApproximateVectorSearchOptions, VectorCandidateSet, VectorSearchError};
 use super::{props, vector};
 use crate::VectorIndexKind;
 use crate::shared::SharedGraph;
@@ -194,4 +194,106 @@ fn turbo_quant_candidate_set_search_filters_index_rows_and_reranks() {
         vec![doc_ids[1], doc_ids[3]]
     );
     assert!(!hits.iter().any(|hit| hit.node_id == wrong_label));
+}
+
+#[test]
+fn turbo_quant_candidate_set_batch_search_matches_single_queries() {
+    let shared = SharedGraph::new(GraphId::new(976));
+    let doc = db_string("vector.ann.turbo.candidate.batch.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let doc_ids = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let mut doc_ids = Vec::new();
+        for value in 0..32 {
+            let angle = value as f32 * 0.05;
+            doc_ids.push(
+                mutator
+                    .create_node(
+                        LabelSet::single(doc.clone()),
+                        props(
+                            &embedding,
+                            Value::Vector(vector(&[angle.cos(), angle.sin()])),
+                        ),
+                    )
+                    .unwrap(),
+            );
+        }
+        txn.commit().unwrap();
+        doc_ids
+    };
+    shared
+        .create_vector_index(
+            doc.clone(),
+            embedding.clone(),
+            VectorIndexKind::TurboQuantCosine,
+            2,
+        )
+        .unwrap();
+
+    let queries = vec![
+        vector(&[1.0, 0.0]),
+        vector(&[0.8, 0.6]),
+        vector(&[0.25, 1.0]),
+    ];
+    let candidate_sets = vec![
+        VectorCandidateSet::from_nodes(doc_ids[0..16].iter().copied()),
+        VectorCandidateSet::from_nodes(doc_ids[8..24].iter().copied()),
+        VectorCandidateSet::from_nodes(doc_ids[16..32].iter().copied()),
+    ];
+    let options = ApproximateVectorSearchOptions::new(VectorMetric::Cosine, 4, 16);
+
+    let batch = shared
+        .approximate_vector_search_candidate_sets_batch_checked(
+            &doc,
+            &embedding,
+            &queries,
+            &candidate_sets,
+            options,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let singles = queries
+        .iter()
+        .zip(&candidate_sets)
+        .map(|(query, candidates)| {
+            shared
+                .approximate_vector_search_candidate_set_checked(
+                    &doc,
+                    &embedding,
+                    query,
+                    candidates,
+                    options,
+                    CancellationChecker::disabled(),
+                )
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(batch, singles);
+}
+
+#[test]
+fn turbo_quant_candidate_set_batch_rejects_shape_mismatch() {
+    let shared = SharedGraph::new(GraphId::new(977));
+    let doc = db_string("vector.ann.turbo.candidate.batch.err.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let error = shared
+        .approximate_vector_search_candidate_sets_batch_checked(
+            &doc,
+            &embedding,
+            &[vector(&[1.0, 0.0])],
+            &[],
+            ApproximateVectorSearchOptions::new(VectorMetric::Cosine, 4, 16),
+            CancellationChecker::disabled(),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        VectorSearchError::BatchLengthMismatch {
+            queries: 1,
+            candidate_sets: 0
+        }
+    ));
 }

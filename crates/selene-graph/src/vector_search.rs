@@ -326,6 +326,90 @@ impl SeleneGraph {
         )
     }
 
+    /// Approximately rank one canonical node candidate set per query.
+    ///
+    /// Each `queries[i]` is searched only within `candidate_sets[i]` through a
+    /// matching TurboQuant index, then exact-reranked against primary vector
+    /// values. Output positions correspond to input query positions.
+    pub fn approximate_vector_search_candidate_sets_batch_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        queries: &[VectorValue],
+        candidate_sets: &[VectorCandidateSet],
+        options: ApproximateVectorSearchOptions,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        checker.check()?;
+        if queries.len() != candidate_sets.len() {
+            return Err(VectorSearchError::BatchLengthMismatch {
+                queries: queries.len(),
+                candidate_sets: candidate_sets.len(),
+            });
+        }
+        let Some(first_query) = queries.first() else {
+            return Ok(Vec::new());
+        };
+        if options.k == 0 {
+            return Ok(vec![Vec::new(); queries.len()]);
+        }
+        let query_dimension = u32::try_from(first_query.dimension())
+            .map_err(|_| VectorSearchError::ApproximateIndexMissing)?;
+        let Some(index) = self
+            .vector_index_for(label, property)
+            .filter(|index| index.dimension() == query_dimension)
+        else {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        };
+        let Some(indexed_metric) = index.ann_metric() else {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        };
+        if indexed_metric != options.metric {
+            return Err(VectorSearchError::ApproximateMetricMismatch {
+                indexed: indexed_metric,
+                requested: options.metric,
+            });
+        }
+        if !index.is_turbo_quant() {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        }
+        for query in queries {
+            checker.check()?;
+            let dimension = u32::try_from(query.dimension())
+                .map_err(|_| VectorSearchError::ApproximateIndexMissing)?;
+            if dimension != query_dimension {
+                return Err(VectorSearchError::ApproximateIndexMissing);
+            }
+        }
+
+        let allowed_rows = candidate_sets
+            .iter()
+            .map(|candidates| self.vector_candidate_rows(candidates, index.rows(), &checker))
+            .collect::<Result<Vec<_>, _>>()?;
+        let row_batches = index
+            .turbo_quant_candidates_batch_in_rows(
+                queries,
+                options.k,
+                options.ef_search,
+                &allowed_rows,
+            )
+            .ok_or(VectorSearchError::ApproximateIndexMissing)?
+            .map_err(GraphError::from)?;
+        let mut batch_hits = Vec::with_capacity(queries.len());
+        for (query, row_hits) in queries.iter().zip(row_batches) {
+            batch_hits.push(rerank_ann_row_candidates(
+                self,
+                property,
+                query,
+                options.metric,
+                options.k,
+                row_hits,
+                &checker,
+            )?);
+        }
+        Ok(batch_hits)
+    }
+
     /// Run approximate ANN vector search for a batch of queries.
     ///
     /// The result at each output position corresponds to the query at the same

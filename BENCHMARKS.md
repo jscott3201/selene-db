@@ -680,6 +680,16 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c1024_d768_q8_cand4243_k10_recallbp10000_m4181-full30000` | 5.0961 ms (quick) | The filtered FastScan path intersects caller candidates with registered index rows before compressed scoring, avoiding wrong-label/state spillover while preserving exact final distances. This is a useful primitive for graph/state-gated retrieval, not a replacement for batch fusion. |
 | `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c1024_d1536_q8_cand4243_k10_recallbp10000_m7946-full60000` | 7.6167 ms (quick) | At 1536 dimensions, the candidate-filtered path stays below the prior per-query production row while keeping full recall. The next optimization target is filtered batch fusion when multiple query-specific candidate sets are available. |
 
+PR-local production filtered batch TurboQuant candidate-set spot-check:
+
+Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_batch_dimension_projection`.
+
+| Bench | 10k x 8 queries over 4,243 candidates/query | Notes |
+|---|---:|---|
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d128_q8_cand4243_k10_recallbp10000_m1043-full5000` | 2.4093 ms (quick) | Fused filtered-batch FastScan shares slot-order block reads across query-specific candidate sets while preserving exact primary-vector rerank. The low-dimensional row keeps full recall and makes graph/state-gated batch retrieval competitive with full-index batch search. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d768_q8_cand4243_k10_recallbp10000_m4181-full30000` | 3.9310 ms (quick) | The 768-dim row keeps candidate-set isolation per query but fuses compressed scoring over shared blocks, preserving full recall with lower latency than the single-query filtered path. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d1536_q8_cand4243_k10_recallbp10000_m7946-full60000` | 6.0436 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and keeps full recall, giving the current production path a fast primitive for multi-query graph-filtered workloads. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |
