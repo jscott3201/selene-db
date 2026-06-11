@@ -102,7 +102,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 #[test]
-fn create_vector_index_commits_through_the_funnel() {
+fn create_vector_index_defaults_to_turbo_quant_through_the_funnel() {
     let graph = graph(330_013);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -137,7 +137,10 @@ fn create_vector_index_commits_through_the_funnel() {
     let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
     assert_eq!(string_column(&table, "label"), vec!["VectorDoc"]);
     assert_eq!(string_column(&table, "property"), vec!["embedding"]);
-    assert_eq!(string_column(&table, "kind"), vec!["vector_flat(3)"]);
+    assert_eq!(
+        string_column(&table, "kind"),
+        vec!["vector_turbo_quant_cosine(3)"]
+    );
 }
 
 #[test]
@@ -215,6 +218,21 @@ fn create_vector_index_can_register_turbo_quant_kind() {
         vec![NodeId::new(1), NodeId::new(2)]
     );
     assert_eq!(float_column(&hits, "distance")[0], 0.0);
+
+    let omitted_metric_hits = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 2) \
+         YIELD node_id, distance",
+        &registry,
+    );
+    assert_eq!(
+        node_column(&omitted_metric_hits, "node_id"),
+        node_column(&hits, "node_id")
+    );
+    assert_eq!(
+        float_column(&omitted_metric_hits, "distance"),
+        float_column(&hits, "distance")
+    );
 
     let stats = execute_rows(
         &mut session,

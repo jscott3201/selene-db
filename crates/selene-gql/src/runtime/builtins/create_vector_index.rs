@@ -26,8 +26,8 @@ static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 9] = [
         .with_description("Required vector dimensionality."),
     StaticParameter::new("kind", GqlType::String, false)
         .with_description("Vector index algorithm kind.")
-        .with_default_doc("flat")
-        .with_default(ProcedureDefaultValue::String("flat")),
+        .with_default_doc("turbo_quant")
+        .with_default(ProcedureDefaultValue::String("turbo_quant")),
     StaticParameter::new("name", GqlType::String, true)
         .with_description("Optional catalog name.")
         .with_default_doc("NULL")
@@ -148,7 +148,7 @@ fn kind_arg(
     metric: Option<VectorMetric>,
 ) -> Result<VectorIndexKind, ProcedureError> {
     let Some(value) = value else {
-        return Ok(VectorIndexKind::Flat);
+        return Ok(VectorIndexKind::TurboQuantCosine);
     };
     let raw = string_arg(value, "kind")?;
     match raw.as_str().to_ascii_lowercase().as_str() {
@@ -272,5 +272,30 @@ fn parse_metric(value: &DbString) -> Result<VectorMetric, ProcedureError> {
 fn invalid_arg(detail: impl Into<String>) -> ProcedureError {
     ProcedureError::InvalidArgument {
         detail: detail.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_core::db_string;
+
+    use super::*;
+
+    #[test]
+    fn omitted_kind_defaults_to_turbo_quant_cosine() {
+        assert_eq!(
+            kind_arg(None, None).expect("omitted kind resolves"),
+            VectorIndexKind::TurboQuantCosine
+        );
+    }
+
+    #[test]
+    fn explicit_flat_kind_remains_available() {
+        let value = Value::String(db_string("flat").expect("test string fits"));
+
+        assert_eq!(
+            kind_arg(Some(&value), None).expect("flat resolves"),
+            VectorIndexKind::Flat
+        );
     }
 }

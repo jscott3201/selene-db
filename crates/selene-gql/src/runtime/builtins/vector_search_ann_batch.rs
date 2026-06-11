@@ -10,12 +10,12 @@ use selene_graph::ApproximateVectorSearchOptions;
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::vector_common::{
-    BatchMismatch, approximate_vector_search_error, cardinality_arg, invalid_arg, metric_arg,
-    queries_arg, query_index_too_large, string_arg,
+    BatchMismatch, approximate_vector_search_error, cardinality_arg, invalid_arg, queries_arg,
+    query_index_too_large, string_arg,
 };
 use super::vector_search_ann_defaults::{
-    DEFAULT_HNSW_SEARCH_WIDTH, SEARCH_WIDTH_DEFAULT_DOC, default_search_width,
-    optional_search_width_arg,
+    ANN_METRIC_DEFAULT_DOC, DEFAULT_HNSW_SEARCH_WIDTH, SEARCH_WIDTH_DEFAULT_DOC, default_metric,
+    default_search_width, optional_metric_arg, optional_search_width_arg,
 };
 use crate::procedure_registry::ProcedureError;
 use crate::{
@@ -41,10 +41,12 @@ pub(super) fn signature() -> Vec<ProcedureParameter> {
             .with_description("Query vectors."),
         StaticParameter::new("k", GqlType::Integer, false)
             .with_description("Maximum result count per query."),
-        StaticParameter::new("metric", GqlType::String, false)
-            .with_description("Distance metric.")
-            .with_default_doc("squared_euclidean")
-            .with_default(ProcedureDefaultValue::String("squared_euclidean")),
+        StaticParameter::new("metric", GqlType::String, true)
+            .with_description(
+                "Distance metric; NULL uses the matching index metric when available.",
+            )
+            .with_default_doc(ANN_METRIC_DEFAULT_DOC)
+            .with_default(ProcedureDefaultValue::Null),
         StaticParameter::new("ef_search", GqlType::Integer, true)
             .with_description("ANN search-width hint; NULL uses the index-kind default.")
             .with_default_doc(SEARCH_WIDTH_DEFAULT_DOC)
@@ -77,9 +79,16 @@ pub(super) fn execute(
     let k = cardinality_arg(PROC_NAME, &args[3], "k")?;
     let metric = args
         .get(4)
-        .map(|arg| metric_arg(PROC_NAME, arg))
+        .map(|arg| optional_metric_arg(PROC_NAME, arg))
         .transpose()?
-        .unwrap_or(VectorMetric::SquaredEuclidean);
+        .flatten()
+        .unwrap_or_else(|| {
+            queries
+                .first()
+                .map_or(VectorMetric::SquaredEuclidean, |query| {
+                    default_metric(ctx.snapshot(), &label, &property, query.dimension())
+                })
+        });
     let ef_search = args
         .get(5)
         .map(|value| optional_search_width_arg(PROC_NAME, value))

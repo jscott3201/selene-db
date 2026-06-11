@@ -677,8 +677,11 @@ fn vector_search_candidate_state_expanded_ann_metadata_has_state_and_ann_args() 
     assert!(parameters[8].default.is_some());
     assert_eq!(parameters[9].name.as_str(), "metric");
     assert_eq!(parameters[9].ty, GqlType::String);
-    assert_eq!(parameters[9].default_doc, Some("squared_euclidean"));
-    assert!(parameters[9].default.is_some());
+    assert!(parameters[9].nullable);
+    assert_eq!(
+        parameters[9].default_doc,
+        Some("NULL (matching index metric, otherwise squared_euclidean)")
+    );
     assert_eq!(parameters[10].name.as_str(), "ef_search");
     assert_eq!(parameters[10].ty, GqlType::Integer);
     assert!(parameters[10].nullable);
