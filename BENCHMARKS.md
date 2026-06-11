@@ -719,6 +719,19 @@ already mostly Arc-backed and does not dominate the commit floor.
 | `bound_type_validation/bound_commit_unique_value_update` | 1k quick | 320.91 µs | 100 unique string property updates validated through delta-scoped candidate conflict checks instead of rebuilding all unique-property state. Command: `scripts/run-benches.sh --profile quick --bench bound_type_validation --filter bound_commit_unique_value_update`. |
 | `bound_type_validation/bound_commit_rich` | 10k / 50k / 100k | 1.01 / 1.14 / 1.67 ms | Wider type-graph validation delta. |
 | `bound_type_validation/bound_schema_change` | 10k / 50k / 100k | 2.92 / 18.6 / 39.3 ms | Full graph-state revalidation; scales with N. |
+
+PR-local B7 incident-edge revalidation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench bound_type_validation --filter bound_commit_incident_property_update --save-baseline b7_pre`
+and
+`scripts/run-benches.sh --profile full --bench bound_type_validation --filter bound_commit_incident_property_update --baseline b7_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `bound_type_validation/bound_commit_incident_property_update/10000` | 1.8135 ms | 75.443 µs | Property-only `NodeUpdated` no longer revalidates every typed incident edge. |
+| `bound_type_validation/bound_commit_incident_property_update/50000` | 11.704 ms | 127.82 µs | Degree-sized fan-out collapses to the typed node-update floor. |
+| `bound_type_validation/bound_commit_incident_property_update/100000` | 24.775 ms | 245.09 µs | Post row was noisy but still significant: Criterion reported −99.011% median time. |
 | `graph_mixed_workload/point_read_update_r60w40` | 10k / 50k / 100k | 9.207 / 11.045 / 16.699 ms | One scalar cycle: 60 snapshot point reads interleaved with 40 non-indexed property-update commits. Fixture clone/setup excluded; no vector index or WAL. |
 | `graph_mixed_workload/point_read_indexed_update_r60w40` | 10k / 50k / 100k | 9.261 / 11.129 / 16.842 ms | Same scalar cycle, but the 40 writes update `Person.age`, a registered typed property index. The close delta to the non-indexed row keeps property-index maintenance below the dominant sequential commit cost at these scales. |
 | `graph_mixed_workload/candidate_state_edge_update_r60w40` | 10k / 50k / 100k | 3.196 / 5.310 / 11.826 ms | One maintained candidate-state cycle: 60 generation-checked `current` set reads plus 20 `SUPERSEDED_BY` edge deletes and 20 creates. Exercises provider reactivation and invalidation without WAL. |
