@@ -118,6 +118,46 @@ fn turbo_quant_parallel_slot_scan_matches_single_thread_hits() {
 }
 
 #[test]
+fn turbo_quant_slot_scan_matches_live_map_reference() {
+    let mut index = TurboQuantVectorIndex::new(8).unwrap();
+    for row in 0..70 {
+        index
+            .insert(
+                row,
+                &vector(&[
+                    1.0 + row as f32 * 0.001,
+                    (row % 3) as f32 * 0.2,
+                    (row % 5) as f32 * 0.1,
+                    (row % 7) as f32 * 0.05,
+                    0.4,
+                    0.3,
+                    0.2,
+                    0.1,
+                ]),
+            )
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    index.remove(3);
+    index.remove(33);
+    index.remove(69);
+
+    let query = vector(&[1.02, 0.2, 0.1, 0.05, 0.4, 0.3, 0.2, 0.1]);
+    let rotated_query = rotated_unit_vector(&query, index.dimension);
+    let query_bias = query_bias(&rotated_query, &index.shift);
+    let byte_lut = index.byte_lut(&rotated_query);
+
+    let slot_order = index
+        .slot_order_candidates(&byte_lut, query_bias, 16)
+        .into_hits();
+    let live_map = index
+        .live_map_candidates(&byte_lut, query_bias, 16)
+        .into_hits();
+
+    assert_eq!(slot_order, live_map);
+}
+
+#[test]
 fn turbo_quant_batch_candidates_match_single_queries() {
     let mut index = TurboQuantVectorIndex::new(4).unwrap();
     for row in 0..32 {
