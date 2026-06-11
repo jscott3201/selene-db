@@ -12,10 +12,15 @@ use serde::{Deserialize, Serialize};
 use crate::{CoreError, CoreResult, VectorValue};
 
 mod kernels;
+mod turbo_quant;
 
 use kernels::{
     cosine_distance, cosine_distance_with_lhs_norm, cosine_distance_with_norms, dot,
     squared_euclidean, validate_precomputed_squared_norm,
+};
+pub use turbo_quant::{
+    TurboQuantBitWidth, TurboQuantCodebook, TurboQuantCodebookKind, TurboQuantCodecError,
+    TurboQuantCodecResult, TurboQuantPackedCodes,
 };
 
 /// Distance metric for native dense vectors.
