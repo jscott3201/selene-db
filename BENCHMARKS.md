@@ -258,10 +258,13 @@ the next full re-baseline. `graph_node_fetch` returns a column ref (no `Value`
 clone) and is unaffected. `graph_exact_vector_scan/*` is the native graph-level
 exact-vector oracle: label-filtered row scan plus the core vector metric
 kernels, returning stable node ids. Large exact scans use threshold-gated Rayon
-for both unindexed label rows and flat-index row sets when cancellation/deadline
-checking is disabled. `graph_vector_candidate_set/*` measures the Rust
-graph/vector boundary for deriving canonical candidate sets from graph
-adjacency and reranking canonical candidate sets by vector score.
+for both unindexed label rows and flat-index row sets; cancellation/deadline
+aware calls check once per chunk and keep the same parallel path. Large
+`graph_vector_candidate_set/*` reranks use the same chunked cancellation-aware
+Rayon primitive once they reach the 4,096-candidate threshold. The
+candidate-set group also measures the Rust graph/vector boundary for deriving
+canonical candidate sets from graph adjacency and reranking canonical candidate
+sets by vector score.
 `graph_vector_index_rebuild/*` times the
 maintenance rebuild that reclaims stale ANN entries after vector update/delete
 churn; `graph_vector_index_recommended_rebuild/*` compares recommended-only
@@ -276,9 +279,9 @@ the reported Criterion duration. `graph_json_contains_scan/*`,
 `graph_json_path_exists_scan/*`, `graph_json_path_contains_scan/*`, and
 `graph_json_path_value_scan/*` are exact JSON metadata oracles over JSON-valued
 node properties before maintained JSON/path indexes exist. Global JSON scans use
-threshold-gated Rayon only when cancellation/deadline checking is disabled and
-the label row set has at least 16,384 rows; candidate-scoped JSON scans remain
-sequential because they sort/dedup and can stop once `k` matches are found.
+threshold-gated Rayon when the label row set has at least 16,384 rows, including
+deadline-bearing checked calls; candidate-scoped JSON scans remain sequential
+because they sort/dedup and can stop once `k` matches are found.
 `graph_snapshot_read_loops/*` amortizes thread setup over many
 `SharedGraph::read()` calls so the ArcSwap snapshot hot path is visible; the
 older `graph_concurrent_reads` row remains a legacy spawn/join smoke row.
@@ -324,9 +327,32 @@ Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter g
 | Bench | Before | After | Notes |
 |---|---:|---:|---|
 | `graph_exact_vector_scan/unindexed_squared_euclidean_dim128_k10_noidx/50000` | 1.2285 ms | 558.91 µs | Unindexed label-row exact scan now uses the existing row-chunked Rayon path above the 16,384-row threshold. |
-| `graph_exact_vector_scan/unindexed_cosine_dim128_k10_noidx/50000` | 1.7016 ms | 592.95 µs | Same threshold-gated path for cosine; cancellable checked calls remain sequential. |
+| `graph_exact_vector_scan/unindexed_cosine_dim128_k10_noidx/50000` | 1.7016 ms | 592.95 µs | Same threshold-gated path for cosine; B10 later moved checked calls onto the same chunked cancellation-aware path. |
 | `graph_exact_vector_scan/flat_index_squared_euclidean_dim128_k10_m64-64_n50k_flat/50000` | 581.30 µs | 568.49 µs | Existing flat-index parallel path remains stable. |
 | `graph_exact_vector_scan/flat_index_cosine_dim128_k10_m64-64_n50k_flat/50000` | 616.20 µs | 591.44 µs | Existing flat-index parallel path remains stable. |
+
+PR-local B10 cancellation-aware deadline quick A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_exact_vector_scan`,
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json`,
+and
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set`.
+
+| Bench | Disabled checker | Deadline checker | Notes |
+|---|---:|---:|---|
+| `graph_exact_vector_scan/unindexed_squared_euclidean_dim128_k10_noidx/1000` | 23.240 µs | 23.309 µs | Checked deadline row now stays on the exact-scan parallel gate; delta is noise-scale at the quick 1k fixture. |
+| `graph_exact_vector_scan/flat_index_squared_euclidean_dim128_k10_m4-4_n1k_flat/1000` | 23.155 µs | 23.131 µs | Flat-index row-set scan keeps the same chunked path under a deadline checker. |
+| `graph_exact_vector_scan/unindexed_cosine_dim128_k10_noidx/1000` | 33.500 µs | 33.620 µs | Cosine checked row remains effectively tied to the disabled-checker row. |
+| `graph_exact_vector_scan/flat_index_cosine_dim128_k10_m4-4_n1k_flat/1000` | 33.723 µs | 33.667 µs | Flat cosine deadline row is also within noise. |
+| `graph_json_contains_scan/nested_metadata_k10/1000` | 22.097 µs | 22.275 µs | JSON containment checked-with-deadline row exercises the shared chunked scan helper. |
+| `graph_json_path_exists_scan/nested_score_path_k10/1000` | 17.732 µs | 17.931 µs | Path-exists checked row stays parallel instead of falling back to serial deadline behavior. |
+| `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.796 µs | 19.632 µs | Path-containment checked row is within same-run quick noise. |
+| `graph_json_path_value_scan/nested_score_path_k10/1000` | 23.718 µs | 23.653 µs | Path-value checked row keeps the same parallel gate; B21 still targets residual JSON-value clone cost. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c64_d1024/64` | 12.870 µs | 12.878 µs | Below the 4,096-candidate threshold; both rows are sequential but checked overhead is noise-scale. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c256_d1024/256` | 50.759 µs | 50.828 µs | Below threshold. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c1024_d1024/1024` | 203.18 µs | 203.45 µs | Below threshold. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c4096_d1024/4096` | 277.33 µs | 281.40 µs | At the parallel threshold, deadline checking now stays on the chunked Rayon scorer. |
 
 PR-local quick vector candidate-set scoring Rayon A/B:
 
@@ -337,7 +363,7 @@ Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter g
 | `graph_vector_candidate_set/score_candidate_set_cosine_c64_d1024/64` | 13.717 µs | 13.700 µs | Below the 4,096-candidate threshold; stays sequential and statistically unchanged. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c256_d1024/256` | 54.786 µs | 54.653 µs | Below the threshold; stays sequential and statistically unchanged. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c1024_d1024/1024` | 223.55 µs | 222.59 µs | Below the threshold; stays sequential and change remains noise-scale. |
-| `graph_vector_candidate_set/score_candidate_set_cosine_c4096_d1024/4096` | 891.37 µs | 308.32 µs | Candidate-set rerank now uses chunked Rayon scoring when cancellation/deadline checks are disabled and the set has at least 4,096 nodes. |
+| `graph_vector_candidate_set/score_candidate_set_cosine_c4096_d1024/4096` | 891.37 µs | 308.32 µs | Candidate-set rerank now uses chunked Rayon scoring once the set has at least 4,096 nodes; B10 later made that path cancellation/deadline aware. |
 
 PR-local B5 id-map hasher A/B:
 

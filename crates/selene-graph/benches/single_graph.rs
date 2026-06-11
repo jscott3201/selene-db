@@ -9,10 +9,12 @@ mod common;
 mod single_graph_ann_recall;
 mod single_graph_candidate_set;
 
+use std::time::{Duration, Instant};
+
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    DbString, GraphId, JsonPathSelector, JsonValue, LabelSet, PropertyMap, Value, VectorMetric,
-    VectorValue, db_string,
+    CancellationChecker, DbString, GraphId, JsonPathSelector, JsonValue, LabelSet, PropertyMap,
+    Value, VectorMetric, VectorValue, db_string,
 };
 use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind, VectorIndexMemoryUsage};
 use selene_testing::BenchProfile;
@@ -171,6 +173,32 @@ fn bench_exact_vector_scan(c: &mut Criterion) {
                         });
                     },
                 );
+                group.bench_with_input(
+                    BenchmarkId::new(
+                        format!(
+                            "{index_name}_{metric_name}_dim128_k10_checked_with_deadline_{memory_suffix}"
+                        ),
+                        fixture.scale(),
+                    ),
+                    &fixture,
+                    |b, fixture| {
+                        let checker = deadline_checker();
+                        b.iter(|| {
+                            let hits = fixture
+                                .graph()
+                                .exact_vector_search_nodes_checked(
+                                    &fixture.label(),
+                                    &fixture.embedding_key(),
+                                    fixture.query(),
+                                    metric,
+                                    10,
+                                    checker,
+                                )
+                                .expect("fixture vectors have matching dimensions");
+                            std::hint::black_box(hits.len());
+                        });
+                    },
+                );
             }
         }
     }
@@ -200,6 +228,26 @@ fn bench_exact_json_contains_scan(c: &mut Criterion) {
                 });
             },
         );
+        group.bench_with_input(
+            BenchmarkId::new("nested_metadata_k10_checked_with_deadline", fixture.scale()),
+            &fixture,
+            |b, fixture| {
+                let checker = deadline_checker();
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_contains_nodes_checked(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.candidate(),
+                            10,
+                            checker,
+                        )
+                        .expect("JSON containment scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -221,6 +269,29 @@ fn bench_exact_json_path_exists_scan(c: &mut Criterion) {
                             fixture.payload_key(),
                             fixture.path(),
                             10,
+                        )
+                        .expect("JSON path-existence scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "nested_score_path_k10_checked_with_deadline",
+                fixture.scale(),
+            ),
+            &fixture,
+            |b, fixture| {
+                let checker = deadline_checker();
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_path_exists_nodes_checked(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.path(),
+                            10,
+                            checker,
                         )
                         .expect("JSON path-existence scan succeeds");
                     std::hint::black_box(hits.len());
@@ -255,6 +326,30 @@ fn bench_exact_json_path_contains_scan(c: &mut Criterion) {
                 });
             },
         );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "nested_memory_path_k10_checked_with_deadline",
+                fixture.scale(),
+            ),
+            &fixture,
+            |b, fixture| {
+                let checker = deadline_checker();
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_path_contains_nodes_checked(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.contains_path(),
+                            fixture.path_candidate(),
+                            10,
+                            checker,
+                        )
+                        .expect("JSON path-containment scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -276,6 +371,29 @@ fn bench_exact_json_path_value_scan(c: &mut Criterion) {
                             fixture.payload_key(),
                             fixture.path(),
                             10,
+                        )
+                        .expect("JSON path-value scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "nested_score_path_k10_checked_with_deadline",
+                fixture.scale(),
+            ),
+            &fixture,
+            |b, fixture| {
+                let checker = deadline_checker();
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_path_value_nodes_checked(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.path(),
+                            10,
+                            checker,
                         )
                         .expect("JSON path-value scan succeeds");
                     std::hint::black_box(hits.len());
@@ -358,6 +476,10 @@ fn vector_scan_scales() -> Vec<usize> {
             (!scales.is_empty()).then_some(scales)
         })
         .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
+}
+
+fn deadline_checker() -> CancellationChecker<'static> {
+    CancellationChecker::new(None, Some(Instant::now() + Duration::from_secs(3600)))
 }
 
 #[derive(Clone, Debug)]

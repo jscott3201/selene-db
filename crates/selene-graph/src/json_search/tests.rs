@@ -289,7 +289,7 @@ fn exact_json_path_exists_nodes_observes_zero_k_and_cancellation() {
 }
 
 #[test]
-fn exact_json_global_parallel_matches_sequential_scan_ordering() {
+fn exact_json_checked_matches_disabled_scan_ordering() {
     let doc = label("DocParallel");
     let payload = label("payload");
     let graph = SharedGraph::new(GraphId::new(11));
@@ -340,46 +340,46 @@ fn exact_json_global_parallel_matches_sequential_scan_ordering() {
     let path_candidate =
         JsonValue::new(serde_json::json!({"kind": "episodic"})).expect("candidate JSON parses");
     let token = CancellationToken::new();
-    let sequential_checker = CancellationChecker::new(Some(&token), None);
+    let checked_checker = CancellationChecker::new(Some(&token), None);
 
-    let contains_parallel = graph
+    let contains_disabled = graph
         .exact_json_contains_nodes(&doc, &payload, &candidate, 11)
-        .expect("parallel containment scan succeeds");
-    let contains_sequential = graph
-        .exact_json_contains_nodes_checked(&doc, &payload, &candidate, 11, sequential_checker)
-        .expect("sequential containment scan succeeds");
-    assert_eq!(contains_parallel, contains_sequential);
+        .expect("disabled containment scan succeeds");
+    let contains_checked = graph
+        .exact_json_contains_nodes_checked(&doc, &payload, &candidate, 11, checked_checker)
+        .expect("checked containment scan succeeds");
+    assert_eq!(contains_disabled, contains_checked);
 
-    let exists_parallel = graph
+    let exists_disabled = graph
         .exact_json_path_exists_nodes(&doc, &payload, &path, 11)
-        .expect("parallel path-exists scan succeeds");
-    let exists_sequential = graph
-        .exact_json_path_exists_nodes_checked(&doc, &payload, &path, 11, sequential_checker)
-        .expect("sequential path-exists scan succeeds");
-    assert_eq!(exists_parallel, exists_sequential);
+        .expect("disabled path-exists scan succeeds");
+    let exists_checked = graph
+        .exact_json_path_exists_nodes_checked(&doc, &payload, &path, 11, checked_checker)
+        .expect("checked path-exists scan succeeds");
+    assert_eq!(exists_disabled, exists_checked);
 
-    let path_contains_parallel = graph
+    let path_contains_disabled = graph
         .exact_json_path_contains_nodes(&doc, &payload, &contains_path, &path_candidate, 11)
-        .expect("parallel path-containment scan succeeds");
-    let path_contains_sequential = graph
+        .expect("disabled path-containment scan succeeds");
+    let path_contains_checked = graph
         .exact_json_path_contains_nodes_checked(
             &doc,
             &payload,
             &contains_path,
             &path_candidate,
             11,
-            sequential_checker,
+            checked_checker,
         )
-        .expect("sequential path-containment scan succeeds");
-    assert_eq!(path_contains_parallel, path_contains_sequential);
+        .expect("checked path-containment scan succeeds");
+    assert_eq!(path_contains_disabled, path_contains_checked);
 
-    let values_parallel = graph
+    let values_disabled = graph
         .exact_json_path_value_nodes(&doc, &payload, &path, 11)
-        .expect("parallel path-value scan succeeds");
-    let values_sequential = graph
-        .exact_json_path_value_nodes_checked(&doc, &payload, &path, 11, sequential_checker)
-        .expect("sequential path-value scan succeeds");
-    assert_eq!(values_parallel, values_sequential);
+        .expect("disabled path-value scan succeeds");
+    let values_checked = graph
+        .exact_json_path_value_nodes_checked(&doc, &payload, &path, 11, checked_checker)
+        .expect("checked path-value scan succeeds");
+    assert_eq!(values_disabled, values_checked);
 }
 
 #[test]

@@ -3,10 +3,9 @@ use selene_core::{
     VectorTopK, VectorValue,
 };
 
-use rayon::prelude::*;
-
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
+use crate::parallel_scan::{should_parallelize_scan, try_reduce_chunks};
 
 use super::{
     VECTOR_SEARCH_CANCEL_STRIDE, VectorCandidateSet, VectorNeighborDirection,
@@ -136,8 +135,9 @@ impl SeleneGraph {
         checker.check()?;
 
         let scorer = metric.bind_query(query).map_err(GraphError::from)?;
-        if should_parallelize_candidate_scoring(candidates.len(), k, checker) {
-            return self.score_vector_candidate_set_parallel(property, scorer, candidates, k);
+        if should_parallelize_candidate_scoring(candidates.len(), k) {
+            return self
+                .score_vector_candidate_set_parallel(property, scorer, candidates, k, checker);
         }
 
         let mut top_k = VectorTopK::new(k);
@@ -164,12 +164,16 @@ impl SeleneGraph {
         scorer: VectorMetricQuery<'_>,
         candidates: &VectorCandidateSet,
         k: usize,
+        checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
-        let top_k = candidates
-            .as_nodes()
-            .par_chunks(VECTOR_CANDIDATE_SCORE_PARALLEL_CHUNK_NODES)
-            .map(|chunk| self.score_vector_candidate_set_chunk(property, scorer, chunk, k))
-            .try_reduce(|| VectorTopK::new(k), merge_top_k)?;
+        let top_k = try_reduce_chunks(
+            candidates.as_nodes(),
+            VECTOR_CANDIDATE_SCORE_PARALLEL_CHUNK_NODES,
+            checker,
+            || VectorTopK::new(k),
+            |chunk| self.score_vector_candidate_set_chunk(property, scorer, chunk, k),
+            merge_top_k,
+        )?;
 
         Ok(vector_node_hits(top_k))
     }
@@ -574,12 +578,12 @@ impl SeleneGraph {
     }
 }
 
-fn should_parallelize_candidate_scoring(
-    candidate_count: usize,
-    k: usize,
-    checker: CancellationChecker<'_>,
-) -> bool {
-    checker.is_disabled() && k != 0 && candidate_count >= VECTOR_CANDIDATE_SCORE_PARALLEL_MIN_NODES
+fn should_parallelize_candidate_scoring(candidate_count: usize, k: usize) -> bool {
+    should_parallelize_scan(
+        candidate_count as u64,
+        k,
+        VECTOR_CANDIDATE_SCORE_PARALLEL_MIN_NODES as u64,
+    )
 }
 
 fn validate_batch_inputs(

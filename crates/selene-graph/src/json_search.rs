@@ -130,8 +130,9 @@ impl SeleneGraph {
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
-        if parallel::should_parallelize_json_scan(label_rows, k, checker) {
-            return parallel::contains_nodes(self, label, property, candidate, k, label_rows);
+        if parallel::should_parallelize_json_scan(label_rows, k) {
+            let scan = parallel::JsonScan::new(self, label, property);
+            return parallel::contains_nodes(scan, candidate, k, label_rows, checker);
         }
 
         let mut top_k = JsonContainmentTopK::new(k);
@@ -208,8 +209,9 @@ impl SeleneGraph {
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
-        if parallel::should_parallelize_json_scan(label_rows, k, checker) {
-            return parallel::path_exists_nodes(self, label, property, path, k, label_rows);
+        if parallel::should_parallelize_json_scan(label_rows, k) {
+            let scan = parallel::JsonScan::new(self, label, property);
+            return parallel::path_exists_nodes(scan, path, k, label_rows, checker);
         }
 
         let mut top_k = JsonContainmentTopK::new(k);
@@ -290,10 +292,9 @@ impl SeleneGraph {
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
-        if parallel::should_parallelize_json_scan(label_rows, k, checker) {
-            return parallel::path_contains_nodes(
-                self, label, property, path, candidate, k, label_rows,
-            );
+        if parallel::should_parallelize_json_scan(label_rows, k) {
+            let scan = parallel::JsonScan::new(self, label, property);
+            return parallel::path_contains_nodes(scan, path, candidate, k, label_rows, checker);
         }
 
         let mut top_k = JsonContainmentTopK::new(k);
@@ -370,8 +371,9 @@ impl SeleneGraph {
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
-        if parallel::should_parallelize_json_scan(label_rows, k, checker) {
-            return parallel::path_value_nodes(self, label, property, path, k, label_rows);
+        if parallel::should_parallelize_json_scan(label_rows, k) {
+            let scan = parallel::JsonScan::new(self, label, property);
+            return parallel::path_value_nodes(scan, path, k, label_rows, checker);
         }
 
         let mut top_k = JsonPathValueTopK::new(k);
