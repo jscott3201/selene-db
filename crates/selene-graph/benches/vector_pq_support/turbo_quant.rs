@@ -11,11 +11,18 @@ pub(crate) enum TurboQuantCodebook {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) enum TurboQuantCalibration {
+    None,
+    Quantile,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct TurboQuantVariant {
     pub(crate) name: &'static str,
     pub(crate) bit_width: usize,
     pub(crate) candidates: usize,
     pub(crate) codebook: TurboQuantCodebook,
+    pub(crate) calibration: TurboQuantCalibration,
 }
 
 #[derive(Debug)]
@@ -23,6 +30,8 @@ pub(crate) struct TurboQuantIndex {
     variant: TurboQuantVariant,
     bytes_per_vector: usize,
     codebook: Vec<f32>,
+    shift: Vec<f32>,
+    inv_scale: Vec<f32>,
     scales: Vec<f32>,
     codes: Vec<u8>,
 }
@@ -36,15 +45,21 @@ impl TurboQuantIndex {
             TurboQuantCodebook::ClippedUniform => clipped_uniform_codebook(variant.bit_width),
             TurboQuantCodebook::NormalLloydMax => normal_lloyd_codebook(variant.bit_width),
         };
+        let rotated_vectors = rotated_vectors(vectors);
+        let (shift, scale) = match variant.calibration {
+            TurboQuantCalibration::None => (Vec::new(), Vec::new()),
+            TurboQuantCalibration::Quantile => quantile_calibration(&rotated_vectors),
+        };
+        let inv_scale = scale.iter().map(|value| value.recip()).collect::<Vec<_>>();
         let mut scales = Vec::with_capacity(vectors.len());
         let mut codes = vec![0; vectors.len() * bytes_per_vector];
-        let mut rotated = vec![0.0; DIMENSION];
-        for (row, vector) in vectors.iter().enumerate() {
-            rotate_unit_vector(vector, &mut rotated);
+        for (row, rotated) in rotated_vectors.chunks_exact(DIMENSION).enumerate() {
             let mut reconstructed_inner = 0.0;
             for (dim, value) in rotated.iter().enumerate() {
-                let code = nearest_code(*value, &codebook);
-                reconstructed_inner += f64::from(*value) * f64::from(codebook[code]);
+                let calibrated = calibrate_value(*value, dim, &shift, &scale);
+                let code = nearest_code(calibrated, &codebook);
+                let reconstructed = reconstruct_value(code, dim, &codebook, &shift, &inv_scale);
+                reconstructed_inner += f64::from(*value) * f64::from(reconstructed);
                 write_code(
                     &mut codes,
                     row,
@@ -60,6 +75,8 @@ impl TurboQuantIndex {
             variant,
             bytes_per_vector,
             codebook,
+            shift,
+            inv_scale,
             scales,
             codes,
         }
@@ -83,9 +100,10 @@ impl TurboQuantIndex {
     ) -> Vec<usize> {
         let mut rotated_query = vec![0.0; DIMENSION];
         let _query_length = rotate_unit_vector(query, &mut rotated_query);
+        let query_bias = query_bias(&rotated_query, &self.shift);
         let mut candidates = VectorTopK::new(self.variant.candidates.max(k));
         for row in rows {
-            candidates.push_distance(row, self.approx_distance(row, &rotated_query));
+            candidates.push_distance(row, self.approx_distance(row, &rotated_query, query_bias));
         }
         let candidate_ids = candidates
             .into_hits()
@@ -107,12 +125,14 @@ impl TurboQuantIndex {
             self.scales
                 .len()
                 .saturating_add(self.codebook.len())
+                .saturating_add(self.shift.len())
+                .saturating_add(self.inv_scale.len())
                 .saturating_mul(size_of::<f32>()),
         )
     }
 
-    fn approx_distance(&self, row: usize, rotated_query: &[f32]) -> f64 {
-        let mut dot = 0.0;
+    fn approx_distance(&self, row: usize, rotated_query: &[f32], query_bias: f64) -> f64 {
+        let mut dot = query_bias;
         for (dim, query_component) in rotated_query.iter().enumerate() {
             let code = read_code(
                 &self.codes,
@@ -121,10 +141,91 @@ impl TurboQuantIndex {
                 self.variant.bit_width,
                 dim,
             );
-            dot += f64::from(*query_component) * f64::from(self.codebook[code]);
+            let component = query_component_for_score(*query_component, dim, &self.inv_scale);
+            dot += f64::from(component) * f64::from(self.codebook[code]);
         }
         -(dot * f64::from(self.scales[row]))
     }
+}
+
+fn rotated_vectors(vectors: &[VectorValue]) -> Vec<f32> {
+    let mut rotated_vectors = vec![0.0; vectors.len() * DIMENSION];
+    for (row, vector) in vectors.iter().enumerate() {
+        rotate_unit_vector(
+            vector,
+            &mut rotated_vectors[row * DIMENSION..(row + 1) * DIMENSION],
+        );
+    }
+    rotated_vectors
+}
+
+fn quantile_calibration(rotated_vectors: &[f32]) -> (Vec<f32>, Vec<f32>) {
+    let rows = rotated_vectors.len() / DIMENSION;
+    let target_low = -1.644_853_6_f32 / (DIMENSION as f32).sqrt();
+    let target_high = -target_low;
+    let target_span = target_high - target_low;
+    let low_index = ((rows as f64) * 0.05) as usize;
+    let high_index = (((rows as f64) * 0.95) as usize).min(rows.saturating_sub(1));
+    let mut shift = vec![0.0; DIMENSION];
+    let mut scale = vec![1.0; DIMENSION];
+    let mut coordinate = vec![0.0; rows];
+
+    for dim in 0..DIMENSION {
+        for row in 0..rows {
+            coordinate[row] = rotated_vectors[row * DIMENSION + dim];
+        }
+        coordinate.sort_unstable_by(f32::total_cmp);
+        let source_low = coordinate[low_index];
+        let source_high = coordinate[high_index];
+        let source_span = source_high - source_low;
+        if source_span > 1e-6 {
+            scale[dim] = target_span / source_span;
+            shift[dim] = target_low / scale[dim] - source_low;
+        }
+    }
+
+    (shift, scale)
+}
+
+fn calibrate_value(value: f32, dim: usize, shift: &[f32], scale: &[f32]) -> f32 {
+    if shift.is_empty() {
+        value
+    } else {
+        (value + shift[dim]) * scale[dim]
+    }
+}
+
+fn reconstruct_value(
+    code: usize,
+    dim: usize,
+    codebook: &[f32],
+    shift: &[f32],
+    inv_scale: &[f32],
+) -> f32 {
+    if shift.is_empty() {
+        codebook[code]
+    } else {
+        codebook[code] * inv_scale[dim] - shift[dim]
+    }
+}
+
+fn query_component_for_score(value: f32, dim: usize, inv_scale: &[f32]) -> f32 {
+    if inv_scale.is_empty() {
+        value
+    } else {
+        value * inv_scale[dim]
+    }
+}
+
+fn query_bias(rotated_query: &[f32], shift: &[f32]) -> f64 {
+    if shift.is_empty() {
+        return 0.0;
+    }
+    -rotated_query
+        .iter()
+        .zip(shift)
+        .map(|(query, shift)| f64::from(*query) * f64::from(*shift))
+        .sum::<f64>()
 }
 
 fn clipped_uniform_codebook(bit_width: usize) -> Vec<f32> {
