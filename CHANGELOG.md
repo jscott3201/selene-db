@@ -610,6 +610,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Performance
 
+- **TurboQuant candidate preselection parallelizes large clean scans.** Large
+  `VectorIndexKind::TurboQuantCosine` slot-order candidate scans now use Rayon
+  chunk-local top-k reducers once the index is large enough to amortize fan-out.
+  Exact cosine rerank and stale-heavy live-map fallback semantics are unchanged.
+  On the 10k production dimension-projection rows, quick-profile medians are
+  now `3.9282 ms` at 128 dimensions, `8.8802 ms` at 768 dimensions, and
+  `15.181 ms` at 1536 dimensions.
 - **TurboQuant production scans follow packed-code slot order.** Production
   `VectorIndexKind::TurboQuantCosine` search now scans contiguous packed-code
   slots for normal rebuilt indexes instead of iterating the row-to-slot hash
