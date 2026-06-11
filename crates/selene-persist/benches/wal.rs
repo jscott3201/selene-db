@@ -530,6 +530,30 @@ fn bench_wal_replay(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_wal_open_scan(c: &mut Criterion) {
+    let mut group = c.benchmark_group("persist_wal_open_scan");
+    for &scale in common::scales() {
+        group.throughput(Throughput::Elements(scale as u64));
+        group.bench_function(BenchmarkId::from_parameter(scale), |b| {
+            let dir = common::TempDir::new("wal-open-scan");
+            common::write_wal(dir.path(), scale, 1, 0);
+            let path = dir.path().join(DEFAULT_WAL_FILE_NAME);
+            b.iter(|| {
+                let writer = WalWriter::open(
+                    &path,
+                    WalConfig {
+                        sync_policy: SyncPolicy::OnFlushOnly,
+                        snapshot_seq: 0,
+                    },
+                )
+                .expect("wal opens");
+                std::hint::black_box((writer.last_sequence(), writer.committed_offset()));
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = wal_group;
     config = common::criterion_config();
@@ -540,6 +564,6 @@ criterion_group! {
         wal_compression::bench_wal_payload_compression_policy_no_fsync,
         wal_compression::bench_wal_payload_compression_policy_flush,
         wal_compression::bench_wal_payload_compression_policy_replay,
-        bench_wal_payload_shape_replay, bench_wal_replay
+        bench_wal_payload_shape_replay, bench_wal_replay, bench_wal_open_scan
 }
 criterion_main!(wal_group);

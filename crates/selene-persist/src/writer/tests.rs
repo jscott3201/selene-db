@@ -174,6 +174,44 @@ fn oversized_principal_len_in_tail_truncates_on_open() {
 }
 
 #[test]
+fn checksum_corrupt_tail_is_truncated_on_open() {
+    let path = temp_path("tail-checksum-corrupt");
+    let valid_len = {
+        let mut writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+        writer
+            .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
+            .unwrap();
+        let valid_len = writer.committed_offset();
+        writer
+            .append(HlcTimestamp::new(2, 0), Origin::Local, None, &changes())
+            .unwrap();
+        writer.flush().unwrap();
+        valid_len
+    };
+    {
+        let corrupt_offset = valid_len + crate::entry_header::FIXED_ENTRY_HEADER_BYTES as u64;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        file.seek(SeekFrom::Start(corrupt_offset)).unwrap();
+        let mut byte = [0_u8; 1];
+        file.read_exact(&mut byte).unwrap();
+        byte[0] ^= 0xFF;
+        file.seek(SeekFrom::Start(corrupt_offset)).unwrap();
+        file.write_all(&byte).unwrap();
+        file.sync_data().unwrap();
+    }
+
+    let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+    assert_eq!(writer.last_sequence(), 1);
+    assert_eq!(writer.committed_offset(), valid_len);
+    assert_eq!(fs::metadata(&path).unwrap().len(), valid_len);
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn group_commit_defers_fsync_until_threshold() {
     let path = temp_path("group");
     let mut writer = WalWriter::open(
