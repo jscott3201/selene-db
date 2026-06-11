@@ -1423,6 +1423,18 @@ resolved the dense index per edge (pagerank/louvain/apsp/triangle); even raw
 | `algo/projection_build` | 1.338 ms | 16.10 ms | 41.50 ms | Full `GraphProjection::build`; +4–7% (the `dense:u32` write). |
 | `algo/projection_neighbor_iter` | 20.7 µs | 128.0 µs | 291.9 µs | Sweep every node's out-neighbor slice. |
 
+PR-local B13 projection-build transpose A/B:
+
+Command:
+`scripts/run-benches.sh --profile full --bench projection --filter projection_build --save-baseline b13_pre`;
+rerun with `--baseline b13_pre` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/projection_build/10k` | 933.19 µs | 611.61 µs | Incoming CSR is derived by transposing the outgoing CSR, avoiding the second graph-adjacency scan and improving 32.9%. |
+| `algo/projection_build/50k` | 11.057 ms | 4.5021 ms | Larger projections benefit most from removing the second count/fill pass and per-edge membership probes; this row improves 59.1%. |
+| `algo/projection_build/100k` | 29.202 ms | 14.412 ms | 100k projection build improves 50.6% while preserving the out/in CSR transpose invariant. |
+
 ### §6c Graph-Augmented Vector Retrieval Research
 
 Quick rows below are local research fixtures, not production API claims. The

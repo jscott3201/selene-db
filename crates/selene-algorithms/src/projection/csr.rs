@@ -91,48 +91,6 @@ pub(crate) fn build_csr_out(
     edge_labels: &[DbString],
     weight_property: Option<&DbString>,
 ) -> ProjCsr {
-    build_csr(
-        snapshot,
-        nodes,
-        row_index,
-        edge_labels,
-        weight_property,
-        Direction::Out,
-    )
-}
-
-/// Build the incoming-direction CSR for a projection.
-pub(crate) fn build_csr_in(
-    snapshot: &SeleneGraph,
-    nodes: &RoaringBitmap,
-    row_index: &RowIndex,
-    edge_labels: &[DbString],
-    weight_property: Option<&DbString>,
-) -> ProjCsr {
-    build_csr(
-        snapshot,
-        nodes,
-        row_index,
-        edge_labels,
-        weight_property,
-        Direction::In,
-    )
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Direction {
-    Out,
-    In,
-}
-
-fn build_csr(
-    snapshot: &SeleneGraph,
-    nodes: &RoaringBitmap,
-    row_index: &RowIndex,
-    edge_labels: &[DbString],
-    weight_property: Option<&DbString>,
-    direction: Direction,
-) -> ProjCsr {
     // Invariant: `row_index` is built from exactly this `nodes` bitmap (see
     // `GraphProjection::build`), so every row enumerated below has a dense
     // index. Size offsets to dense (live-node) count + 1 so
@@ -158,10 +116,7 @@ fn build_csr(
             .dense_of(row_u32)
             .expect("projection row has a dense index") as usize;
         let nid = row_index.node_id_of(dense as u32);
-        let Some(entry) = (match direction {
-            Direction::Out => snapshot.outgoing_edges(nid),
-            Direction::In => snapshot.incoming_edges(nid),
-        }) else {
+        let Some(entry) = snapshot.outgoing_edges(nid) else {
             continue;
         };
         for adj in entry.iter() {
@@ -207,10 +162,7 @@ fn build_csr(
             .dense_of(row_u32)
             .expect("projection row has a dense index") as usize;
         let nid = row_index.node_id_of(dense as u32);
-        let Some(entry) = (match direction {
-            Direction::Out => snapshot.outgoing_edges(nid),
-            Direction::In => snapshot.incoming_edges(nid),
-        }) else {
+        let Some(entry) = snapshot.outgoing_edges(nid) else {
             continue;
         };
         for adj in entry.iter() {
@@ -240,6 +192,69 @@ fn build_csr(
     // by edge_labels the per-row order is not pure ASC-by-neighbor, so we
     // re-sort explicitly to guarantee deterministic algorithm tie-breaks and
     // snapshot-harness goldens.
+    for d in 0..dense_n {
+        let start = offsets[d] as usize;
+        let end = offsets[d + 1] as usize;
+        if end > start {
+            neighbors[start..end].sort_by_key(|n| n.node_id);
+        }
+    }
+
+    ProjCsr { offsets, neighbors }
+}
+
+/// Build the incoming-direction CSR by transposing an already-filtered out CSR.
+pub(crate) fn transpose_csr_in(out_csr: &ProjCsr, row_index: &RowIndex) -> ProjCsr {
+    let dense_n = row_index.len();
+    debug_assert_eq!(
+        out_csr.offsets.len(),
+        dense_n + 1,
+        "out CSR offsets must match the projection row index"
+    );
+    let mut offsets = vec![0u32; dense_n + 1];
+
+    for source_dense in 0..dense_n {
+        let source_dense = u32::try_from(source_dense).expect("projection dense index fits u32");
+        for neighbor in out_csr.neighbors_of_dense(source_dense) {
+            offsets[neighbor.dense as usize] += 1;
+        }
+    }
+
+    let mut cumulative: u32 = 0;
+    for slot in &mut offsets {
+        let count = *slot;
+        *slot = cumulative;
+        cumulative = cumulative.saturating_add(count);
+    }
+
+    let total = cumulative as usize;
+    let mut neighbors: Vec<ProjNeighbor> = vec![
+        ProjNeighbor {
+            edge_id: EdgeId::new(0),
+            node_id: NodeId::new(0),
+            weight: 0.0,
+            dense: 0,
+        };
+        total
+    ];
+    let mut cursor = offsets.clone();
+
+    for source_dense in 0..dense_n {
+        let source_dense = u32::try_from(source_dense).expect("projection dense index fits u32");
+        let source = row_index.node_id_of(source_dense);
+        for neighbor in out_csr.neighbors_of_dense(source_dense) {
+            let target_dense = neighbor.dense as usize;
+            let pos = cursor[target_dense] as usize;
+            neighbors[pos] = ProjNeighbor {
+                edge_id: neighbor.edge_id,
+                node_id: source,
+                weight: neighbor.weight,
+                dense: source_dense,
+            };
+            cursor[target_dense] += 1;
+        }
+    }
+
     for d in 0..dense_n {
         let start = offsets[d] as usize;
         let end = offsets[d + 1] as usize;

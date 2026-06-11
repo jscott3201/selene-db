@@ -21,7 +21,7 @@ use selene_core::{DbString, NodeId};
 use selene_graph::SeleneGraph;
 
 pub use csr::ProjNeighbor;
-use csr::{ProjCsr, build_csr_in, build_csr_out};
+use csr::{ProjCsr, build_csr_out, transpose_csr_in};
 pub(crate) use row_index::RowIndex;
 
 use crate::error::AlgorithmsError;
@@ -119,13 +119,7 @@ impl GraphProjection {
             &config.edge_labels,
             config.weight_property.as_ref(),
         );
-        let in_csr = build_csr_in(
-            snapshot,
-            &nodes,
-            &row_index,
-            &config.edge_labels,
-            config.weight_property.as_ref(),
-        );
+        let in_csr = transpose_csr_in(&out_csr, &row_index);
         #[cfg(debug_assertions)]
         assert_csr_transpose(&nodes, &row_index, &out_csr, &in_csr);
 
@@ -310,7 +304,7 @@ fn assert_csr_transpose(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::{GraphId, LabelSet, PropertyMap};
+    use selene_core::{GraphId, LabelSet, PropertyMap, Value};
     use selene_graph::SharedGraph;
 
     fn db_string(name: &str) -> DbString {
@@ -467,6 +461,73 @@ mod tests {
             assert_eq!(hi_proj.out_neighbors(nid).len(), 1);
             assert_eq!(hi_proj.in_neighbors(nid).len(), 1);
         }
+    }
+
+    #[test]
+    fn incoming_csr_transpose_preserves_sources_dense_indices_and_weights() {
+        let shared = SharedGraph::new(GraphId::new(7_703));
+        let label = db_string("T");
+        let link = db_string("link");
+        let weight = db_string("weight");
+        let (a, b, c) = {
+            let mut txn = shared.begin_write();
+            let a = txn
+                .mutator()
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+                .unwrap();
+            let b = txn
+                .mutator()
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+                .unwrap();
+            let c = txn
+                .mutator()
+                .create_node(LabelSet::single(label), PropertyMap::new())
+                .unwrap();
+            txn.mutator()
+                .create_edge(
+                    link.clone(),
+                    c,
+                    b,
+                    PropertyMap::from_pairs([(weight.clone(), Value::Float(3.0))]).unwrap(),
+                )
+                .unwrap();
+            txn.mutator()
+                .create_edge(
+                    link,
+                    a,
+                    b,
+                    PropertyMap::from_pairs([(weight.clone(), Value::Float(1.0))]).unwrap(),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+            (a, b, c)
+        };
+
+        let snapshot = shared.read();
+        let cfg = ProjectionConfig {
+            name: "weighted".to_string(),
+            node_labels: vec![db_string("T")],
+            edge_labels: vec![db_string("link")],
+            weight_property: Some(weight),
+        };
+        let proj = GraphProjection::build(&snapshot, &cfg, None).unwrap();
+        let incoming = proj.in_neighbors(b);
+
+        assert_eq!(
+            incoming.iter().map(|n| n.node_id).collect::<Vec<_>>(),
+            vec![a, c]
+        );
+        assert_eq!(
+            incoming.iter().map(|n| n.dense).collect::<Vec<_>>(),
+            vec![
+                proj.row_index().dense_of_node(a).unwrap(),
+                proj.row_index().dense_of_node(c).unwrap()
+            ]
+        );
+        assert_eq!(
+            incoming.iter().map(|n| n.weight).collect::<Vec<_>>(),
+            vec![1.0, 3.0]
+        );
     }
 
     /// Empty projection: cached row_index is empty and offsets are [0].
