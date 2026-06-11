@@ -9,6 +9,9 @@ use selene_core::{
 };
 use wide::f64x4;
 
+#[path = "turbo_quant/fast_scan.rs"]
+mod fast_scan;
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum TurboQuantCodebook {
     ClippedUniform,
@@ -27,6 +30,7 @@ pub(crate) enum TurboQuantScorer {
     ByteLut,
     BlockedByteLut,
     BlockedWideByteLut,
+    BlockedFastScanLut,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -107,7 +111,9 @@ impl TurboQuantIndex {
         }
         let blocked_codes = matches!(
             variant.scorer,
-            TurboQuantScorer::BlockedByteLut | TurboQuantScorer::BlockedWideByteLut
+            TurboQuantScorer::BlockedByteLut
+                | TurboQuantScorer::BlockedWideByteLut
+                | TurboQuantScorer::BlockedFastScanLut
         )
         .then(|| {
             CoreTurboQuantBlockedCodes::from_row_major(&codes)
@@ -137,6 +143,9 @@ impl TurboQuantIndex {
         }
         if self.uses_blocked_wide_lut() {
             return self.search_all_blocked_wide(vectors, query, k);
+        }
+        if self.uses_blocked_fast_scan_lut() {
+            return self.search_all_blocked_fast_scan(vectors, query, k);
         }
         self.search_rows(vectors, query, 0..vectors.len(), k)
     }
@@ -206,6 +215,10 @@ impl TurboQuantIndex {
 
     fn uses_blocked_wide_lut(&self) -> bool {
         matches!(self.variant.scorer, TurboQuantScorer::BlockedWideByteLut)
+    }
+
+    fn uses_blocked_fast_scan_lut(&self) -> bool {
+        matches!(self.variant.scorer, TurboQuantScorer::BlockedFastScanLut)
     }
 
     fn search_all_blocked(

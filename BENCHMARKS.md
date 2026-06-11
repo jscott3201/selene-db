@@ -644,6 +644,16 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_blocked_wide_dimension_projection/cluster_cos/tqplus4blockedwide_c1024_d768_n10k_k10_recallbp10000_m3801-full30000` | 16.039 ms | 14.254 ms | The in-register lane accumulator keeps the same block-major bytes and candidate count while reducing the high-dimensional scan cost. |
 | `graph_turbo_quant_blocked_wide_dimension_projection/cluster_cos/tqplus4blockedwide_c1024_d1536_n10k_k10_recallbp10000_m7563-full60000` | 33.277 ms | 28.172 ms | The widest row improves enough to promote the same accumulator shape into the production slot-order TurboQuant scan. |
 
+PR-local FastScan-shaped TurboQuant dimension-projection spot-check:
+
+Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_blocked_fast_scan_dimension_projection` with a same-run blocked-wide comparison.
+
+| Bench | FastScan-shaped | Same-run wide blocked | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_blocked_fast_scan_dimension_projection/cluster_cos/tqplus4fastscan_c1024_d128_n10k_k10_recallbp10000_m666-full5000` | 1.7350 ms | 2.0683 ms | Benchmark-only safe `wide` byte-swizzle scorer uses 4-bit code nibbles, bounded `u16` accumulation, and exact cosine rerank. Full recall is preserved on the clustered fixture. |
+| `graph_turbo_quant_blocked_fast_scan_dimension_projection/cluster_cos/tqplus4fastscan_c1024_d768_n10k_k10_recallbp10000_m3801-full30000` | 5.8985 ms | 14.158 ms | Quantized per-query LUTs remove the f64 byte-table load from the inner block scan; this is the first strong benchmark signal for a FastScan-style production scorer. |
+| `graph_turbo_quant_blocked_fast_scan_dimension_projection/cluster_cos/tqplus4fastscan_c1024_d1536_n10k_k10_recallbp10000_m7563-full60000` | 11.176 ms | 27.882 ms | The high-dimensional row keeps full recall while cutting the same-run blocked-wide latency by roughly 2.5x. Production promotion still needs correctness tests around quantized-LUT bounds and candidate ordering. |
+
 PR-local production TurboQuant dimension-projection spot-check:
 
 | Bench | 10k | Notes |
