@@ -339,6 +339,21 @@ Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter g
 | `graph_vector_candidate_set/score_candidate_set_cosine_c1024_d1024/1024` | 223.55 µs | 222.59 µs | Below the threshold; stays sequential and change remains noise-scale. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c4096_d1024/4096` | 891.37 µs | 308.32 µs | Candidate-set rerank now uses chunked Rayon scoring when cancellation/deadline checks are disabled and the set has at least 4,096 nodes. |
 
+PR-local B5 id-map hasher A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_node_fetch`
+and
+`scripts/run-benches.sh --profile full --bench bulk_mutation --filter commit_batch`.
+
+| Bench | Development | B5 | Notes |
+|---|---:|---:|---|
+| `graph_node_fetch/1000` | 9.177 ns | 7.125 ns | Engine-assigned id lookup now uses `FxBuildHasher` in the immutable id map; Criterion reported −22.7% median time. |
+| `graph_mutation_commit_batch/n10000/10` | 87.211 µs | 85.462 µs | Existing-node update path, mostly lookup-bound; noise-scale/slight win. |
+| `graph_mutation_commit_batch/n50000/10` | 114.94 µs | 107.65 µs | Same update path; warmed branch row was modestly faster. |
+| `graph_mutation_commit_batch/n10000/1000` | 521.91 µs | 492.71 µs | Larger update batch stayed modestly faster in the warmed branch matrix. |
+| `graph_mutation_commit_batch/n50000/100` | 171.50 µs | 199.07 µs | Noisy guard row: the first branch pass was 195.72 µs, an isolated rerun was 164.37 µs, and the warmed matrix returned 199.07 µs. Do not claim a write-side win from B5. |
+
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
 | `graph_node_fetch` | 8.22 ns | 8.79 ns | 9.02 ns | Near-flat O(1) columnar fetch. |
@@ -972,6 +987,21 @@ COUNT._
 |---|---:|---:|---:|---|
 | `gql_correlated_subquery/exists` | 654 µs | 1.251 ms | 2.752 ms | `FILTER EXISTS { (p)-[:KNOWS]->(:Person) }`; B3 seeded inner scan. |
 | `gql_correlated_subquery/count` | 698 µs | 1.318 ms | 2.676 ms | `COUNT { (p)-[:KNOWS]->(:Person) }`; B3 seeded inner scan. |
+
+_Refreshed again 2026-06-11 for B5 (development post-#706 vs the feature
+branch on this M5, profile `full`, mimalloc). Moving the four immutable maps
+keyed by engine-assigned `NodeId`/`EdgeId` values to `FxBuildHasher`
+(`node_id_to_row`, `edge_id_to_row`, `adjacency_out`, `adjacency_in`) trimmed the
+post-B3 residual lookup cost without changing user-keyed label/property maps._
+
+| Bench | Development post-B3 | B5 | Notes |
+|---|---:|---:|---|
+| `gql_correlated_subquery/exists/2500` | 654.05 µs | 572.31 µs | −12.3% median; seeded source + outgoing adjacency lookup. |
+| `gql_correlated_subquery/count/2500` | 688.13 µs | 605.21 µs | −11.8% median. |
+| `gql_correlated_subquery/exists/5000` | 1.2261 ms | 1.0636 ms | −13.1% median. |
+| `gql_correlated_subquery/count/5000` | 1.3050 ms | 1.1513 ms | −12.7% median. |
+| `gql_correlated_subquery/exists/10000` | 2.5415 ms | 2.1501 ms | −15.3% median. |
+| `gql_correlated_subquery/count/10000` | 2.6529 ms | 2.2669 ms | −14.5% median. |
 
 ### §5b `write_e2e` — GQL write end-to-end
 
@@ -2025,6 +2055,7 @@ confirm the win and guard the surrounding rows against regression.
 | ALGO-01/02/05 ✓ | CSR dense-`u32` cache on `ProjNeighbor` | `algo/projection_build` + `…_neighbor_iter` + algo medians | **pagerank −15..31% · louvain −23..26% · apsp −9..52% · triangle −6..11% · iter −4..6%**; build +4–7% one-time (24→32 B/neighbor) |
 | GQLRT-05 ✓ | Memoize correlated-subquery target schema (per statement, by expr id) | `gql_correlated_subquery/{exists,count}` | **−2 to −7%** — memo elides the per-row `schema_for_pattern` walk |
 | B3 ✓ | Short-circuit scans already bound by the correlated outer row | `gql_correlated_subquery/{exists,count}` + `read_pipeline` guard | **~339x EXISTS / ~349x COUNT @10k**; ordinary read-pipeline rows remain noise-scale |
+| B5 ✓ | Use `FxBuildHasher` for immutable maps keyed only by engine-assigned ids | `graph_node_fetch` + `gql_correlated_subquery/{exists,count}` + `bulk_mutation` guard | **graph_node_fetch −22.7% @1k quick; post-B3 correlated residual −11.8..15.3%**; update-batch writes remain noisy/no claimed win |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
 | D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 69 ms / dec 216 ms @100k |
 

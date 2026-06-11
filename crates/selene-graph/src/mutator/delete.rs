@@ -5,6 +5,7 @@ use selene_core::{Change, DbString, EdgeId, LabelSet, NodeId, PropertyMap, db_st
 use super::{Mutator, remove_index_row, remove_node_labels};
 use crate::adjacency::AdjacencyEntry;
 use crate::error::{GraphError, GraphResult};
+use crate::id_map::EngineIdMap;
 use crate::store::RowIndex;
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
@@ -279,7 +280,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 /// dropped. The empty-key removal preserves the "no present-but-empty entry"
 /// invariant asserted by the consistency checks.
 fn remove_edge_from_adjacency(
-    map: &mut imbl::HashMap<NodeId, AdjacencyEntry>,
+    map: &mut EngineIdMap<NodeId, AdjacencyEntry>,
     node: NodeId,
     edge_id: EdgeId,
 ) {
