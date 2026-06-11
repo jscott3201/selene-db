@@ -401,13 +401,17 @@ fn remove_index_row(
     label: &DbString,
     row: u32,
 ) {
-    if let Some(mut bitmap) = index.get(label).cloned() {
-        bitmap.remove(row);
-        if bitmap.is_empty() {
-            index.remove(label);
-        } else {
-            index.insert(label.clone(), bitmap);
+    // Mirror `insert_index_row`: mutate the bitmap behind the imbl entry
+    // instead of cloning the whole RoaringBitmap for every row removed.
+    let now_empty = match index.get_mut(label) {
+        Some(bitmap) => {
+            bitmap.remove(row);
+            bitmap.is_empty()
         }
+        None => false,
+    };
+    if now_empty {
+        index.remove(label);
     }
 }
 
