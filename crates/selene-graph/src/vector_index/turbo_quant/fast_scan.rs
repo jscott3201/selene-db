@@ -205,7 +205,7 @@ impl TurboQuantVectorIndex {
                 if entry.deleted {
                     continue;
                 }
-                debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
+                debug_assert!(self.row_points_to_slot(entry.row, slot));
                 for ((candidate, query), lanes) in candidates
                     .iter_mut()
                     .zip(queries)
@@ -351,7 +351,7 @@ impl TurboQuantVectorIndex {
                 if entry.deleted {
                     continue;
                 }
-                debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
+                debug_assert!(self.row_points_to_slot(entry.row, slot));
                 let centered = i32::from(lanes[lane / 16][lane % 16]) - lut.zero_sum;
                 let dot = query_bias + f64::from(centered) * lut.dequant;
                 let distance = -(dot * f64::from(self.row_scales[slot]));

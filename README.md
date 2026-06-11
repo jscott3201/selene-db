@@ -230,22 +230,25 @@ scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 
 | Path | Dimension | Candidate scope | Workload latency | Recall | Index storage |
 |---|---:|---:|---:|---:|---:|
-| TurboQuant cosine | 128 | 10k rows | 3.2961 ms | 10000 bp | 1.0 MiB index / 4.9 MiB vectors |
-| TurboQuant cosine | 768 | 10k rows | 5.3861 ms | 10000 bp | 4.1 MiB index / 29.3 MiB vectors |
-| TurboQuant cosine | 1536 | 10k rows | 7.8667 ms | 10000 bp | 7.8 MiB index / 58.6 MiB vectors |
-| Fused batch TurboQuant | 128 | 10k rows x 8 queries | 2.3379 ms | 10000 bp | 1.0 MiB index / 4.9 MiB vectors |
-| Fused batch TurboQuant | 768 | 10k rows x 8 queries | 4.5446 ms | 10000 bp | 4.1 MiB index / 29.3 MiB vectors |
-| Fused batch TurboQuant | 1536 | 10k rows x 8 queries | 7.1180 ms | 10000 bp | 7.8 MiB index / 58.6 MiB vectors |
-| Filtered TurboQuant | 128 | 4,243 candidates/query | 3.0005 ms | 10000 bp | 1.0 MiB index / 4.9 MiB vectors |
-| Filtered TurboQuant | 768 | 4,243 candidates/query | 5.0961 ms | 10000 bp | 4.1 MiB index / 29.3 MiB vectors |
-| Filtered TurboQuant | 1536 | 4,243 candidates/query | 7.6167 ms | 10000 bp | 7.8 MiB index / 58.6 MiB vectors |
+| TurboQuant cosine | 128 | 10k rows | 3.2961 ms | 10000 bp | 0.9 MiB index / 4.9 MiB vectors |
+| TurboQuant cosine | 768 | 10k rows | 5.3861 ms | 10000 bp | 4.0 MiB index / 29.3 MiB vectors |
+| TurboQuant cosine | 1536 | 10k rows | 7.8667 ms | 10000 bp | 7.7 MiB index / 58.6 MiB vectors |
+| Fused batch TurboQuant | 128 | 10k rows x 8 queries | 2.3379 ms | 10000 bp | 0.9 MiB index / 4.9 MiB vectors |
+| Fused batch TurboQuant | 768 | 10k rows x 8 queries | 4.5446 ms | 10000 bp | 4.0 MiB index / 29.3 MiB vectors |
+| Fused batch TurboQuant | 1536 | 10k rows x 8 queries | 7.1180 ms | 10000 bp | 7.7 MiB index / 58.6 MiB vectors |
+| Filtered TurboQuant | 128 | 4,243 candidates/query | 3.0005 ms | 10000 bp | 0.9 MiB index / 4.9 MiB vectors |
+| Filtered TurboQuant | 768 | 4,243 candidates/query | 5.0961 ms | 10000 bp | 4.0 MiB index / 29.3 MiB vectors |
+| Filtered TurboQuant | 1536 | 4,243 candidates/query | 7.6167 ms | 10000 bp | 7.7 MiB index / 58.6 MiB vectors |
+| Filtered batch TurboQuant | 128 | 4,243 candidates/query x 8 queries | 2.4093 ms | 10000 bp | 0.9 MiB index / 4.9 MiB vectors |
+| Filtered batch TurboQuant | 768 | 4,243 candidates/query x 8 queries | 3.9310 ms | 10000 bp | 4.0 MiB index / 29.3 MiB vectors |
+| Filtered batch TurboQuant | 1536 | 4,243 candidates/query x 8 queries | 6.0436 ms | 10000 bp | 7.7 MiB index / 58.6 MiB vectors |
 
 These are quick-profile Criterion anchors, not fixed latency guarantees. The
 compressed index is derived state: primary vectors remain the source of truth,
 and approximate candidate paths exact-rerank against those primary values before
 returning distances. Filtered TurboQuant is intended for graph/state-gated
-candidate windows; fused batch search remains the preferred path when several
-queries can scan the same full index together.
+candidate windows; filtered batch search handles multi-query workloads with one
+candidate window per query.
 
 ### BM25 Text
 

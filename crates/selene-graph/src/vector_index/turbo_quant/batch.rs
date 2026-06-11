@@ -142,7 +142,7 @@ impl TurboQuantVectorIndex {
                 if entry.deleted {
                     continue;
                 }
-                debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
+                debug_assert!(self.row_points_to_slot(entry.row, slot));
                 push_batch_block_distances(&mut candidates, &dots, lane, slot, entry.row, self);
             }
         }
@@ -156,7 +156,8 @@ impl TurboQuantVectorIndex {
     ) -> Vec<VectorTopK<(usize, u32)>> {
         let mut candidates = candidate_top_k_batch(queries.len(), candidate_limit);
         let mut distances = vec![0.0; queries.len()];
-        for (&row, &slot) in &self.row_to_entry {
+        for (&row, &slot_key) in &self.row_to_entry {
+            let slot = super::slot_index(slot_key);
             let Some(entry) = self.entries.get(slot) else {
                 continue;
             };
