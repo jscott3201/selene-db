@@ -7,6 +7,7 @@ use selene_core::{
     TurboQuantPackedCodes as CoreTurboQuantPackedCodes, VectorMetric, VectorTopK, VectorValue,
     exact_vector_top_k,
 };
+use wide::f64x4;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum TurboQuantCodebook {
@@ -25,6 +26,7 @@ pub(crate) enum TurboQuantScorer {
     Scalar,
     ByteLut,
     BlockedByteLut,
+    BlockedWideByteLut,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -103,7 +105,11 @@ impl TurboQuantIndex {
             }
             scales.push((1.0 / reconstructed_inner.max(1e-10)) as f32);
         }
-        let blocked_codes = matches!(variant.scorer, TurboQuantScorer::BlockedByteLut).then(|| {
+        let blocked_codes = matches!(
+            variant.scorer,
+            TurboQuantScorer::BlockedByteLut | TurboQuantScorer::BlockedWideByteLut
+        )
+        .then(|| {
             CoreTurboQuantBlockedCodes::from_row_major(&codes)
                 .expect("TurboQuant benchmark row-major codes repack into blocks")
         });
@@ -128,6 +134,9 @@ impl TurboQuantIndex {
     ) -> Vec<usize> {
         if self.uses_blocked_lut() {
             return self.search_all_blocked(vectors, query, k);
+        }
+        if self.uses_blocked_wide_lut() {
+            return self.search_all_blocked_wide(vectors, query, k);
         }
         self.search_rows(vectors, query, 0..vectors.len(), k)
     }
@@ -195,6 +204,10 @@ impl TurboQuantIndex {
         matches!(self.variant.scorer, TurboQuantScorer::BlockedByteLut)
     }
 
+    fn uses_blocked_wide_lut(&self) -> bool {
+        matches!(self.variant.scorer, TurboQuantScorer::BlockedWideByteLut)
+    }
+
     fn search_all_blocked(
         &self,
         vectors: &[VectorValue],
@@ -226,6 +239,63 @@ impl TurboQuantIndex {
             for (lane, dot) in dots[..block_len].iter().copied().enumerate() {
                 let row = base_row + lane;
                 candidates.push_distance(row, -(dot * f64::from(self.scales[row])));
+            }
+        }
+        let candidate_ids = candidates
+            .into_hits()
+            .into_iter()
+            .map(|hit| hit.key)
+            .collect::<Vec<_>>();
+        let hits = exact_vector_top_k(
+            VectorMetric::Cosine,
+            query,
+            candidate_ids.iter().map(|&row| (row, &vectors[row])),
+            k,
+        )
+        .expect("TurboQuant benchmark vectors have matching dimensions");
+        hits.into_iter().map(|hit| hit.key).collect()
+    }
+
+    fn search_all_blocked_wide(
+        &self,
+        vectors: &[VectorValue],
+        query: &VectorValue,
+        k: usize,
+    ) -> Vec<usize> {
+        assert_eq!(query.dimension(), self.dimension);
+        let mut rotated_query = vec![0.0; self.dimension];
+        let _query_length = rotate_unit_vector(query, &mut rotated_query);
+        let query_bias = query_bias(&rotated_query, &self.shift);
+        let byte_lut = self.byte_lut(&rotated_query);
+        let mut candidates = VectorTopK::new(self.variant.candidates.max(k));
+        let blocked = self
+            .blocked_codes
+            .as_ref()
+            .expect("blocked wide scorer builds blocked code storage");
+        let mut dots = [f64x4::ZERO; TURBO_QUANT_BLOCK_ROWS / 4];
+        for block in 0..blocked.block_count() {
+            let block_len = blocked.block_len(block);
+            dots.fill(f64x4::splat(query_bias));
+            for byte in 0..self.bytes_per_vector {
+                let lut_base = byte * 256;
+                let codes = blocked.block_byte(block, byte);
+                for lane_base in (0..TURBO_QUANT_BLOCK_ROWS).step_by(4) {
+                    dots[lane_base / 4] += f64x4::from([
+                        byte_lut[lut_base + usize::from(codes[lane_base])],
+                        byte_lut[lut_base + usize::from(codes[lane_base + 1])],
+                        byte_lut[lut_base + usize::from(codes[lane_base + 2])],
+                        byte_lut[lut_base + usize::from(codes[lane_base + 3])],
+                    ]);
+                }
+            }
+            let base_row = block * TURBO_QUANT_BLOCK_ROWS;
+            for lane_base in (0..block_len).step_by(4) {
+                let dot_lanes: [f64; 4] = dots[lane_base / 4].into();
+                let active_lanes = (block_len - lane_base).min(4);
+                for (lane_offset, dot) in dot_lanes.into_iter().take(active_lanes).enumerate() {
+                    let row = base_row + lane_base + lane_offset;
+                    candidates.push_distance(row, -(dot * f64::from(self.scales[row])));
+                }
             }
         }
         let candidate_ids = candidates
