@@ -1,6 +1,10 @@
 use std::mem::size_of;
 
-use selene_core::{VectorMetric, VectorTopK, VectorValue, exact_vector_top_k};
+use selene_core::{
+    TurboQuantBitWidth as CoreTurboQuantBitWidth, TurboQuantCodebook as CoreTurboQuantCodebook,
+    TurboQuantPackedCodes as CoreTurboQuantPackedCodes, VectorMetric, VectorTopK, VectorValue,
+    exact_vector_top_k,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum TurboQuantCodebook {
@@ -35,16 +39,18 @@ pub(crate) struct TurboQuantIndex {
     variant: TurboQuantVariant,
     dimension: usize,
     bytes_per_vector: usize,
-    codebook: Vec<f32>,
+    codebook: CoreTurboQuantCodebook,
     shift: Vec<f32>,
     inv_scale: Vec<f32>,
     scales: Vec<f32>,
-    codes: Vec<u8>,
+    codes: CoreTurboQuantPackedCodes,
 }
 
 impl TurboQuantIndex {
     pub(crate) fn build(vectors: &[VectorValue], variant: TurboQuantVariant) -> Self {
         assert!(matches!(variant.bit_width, 2..=4));
+        let bit_width = CoreTurboQuantBitWidth::new(variant.bit_width as u8)
+            .expect("TurboQuant benchmark variants use supported bit widths");
         let dimension = vectors
             .first()
             .map(VectorValue::dimension)
@@ -54,12 +60,14 @@ impl TurboQuantIndex {
         let bytes_per_vector = dimension * variant.bit_width / u8::BITS as usize;
         let codebook = match variant.codebook {
             TurboQuantCodebook::ClippedUniform => {
-                clipped_uniform_codebook(variant.bit_width, dimension)
+                CoreTurboQuantCodebook::clipped_uniform(bit_width, dimension)
             }
             TurboQuantCodebook::NormalLloydMax => {
-                normal_lloyd_codebook(variant.bit_width, dimension)
+                CoreTurboQuantCodebook::normal_lloyd_max(bit_width, dimension)
             }
         };
+        let codebook =
+            codebook.expect("TurboQuant benchmark vectors use valid non-zero dimensions");
         let rotated_vectors = rotated_vectors(vectors, dimension);
         let (shift, scale) = match variant.calibration {
             TurboQuantCalibration::None => (Vec::new(), Vec::new()),
@@ -67,22 +75,27 @@ impl TurboQuantIndex {
         };
         let inv_scale = scale.iter().map(|value| value.recip()).collect::<Vec<_>>();
         let mut scales = Vec::with_capacity(vectors.len());
-        let mut codes = vec![0; vectors.len() * bytes_per_vector];
+        let mut codes = CoreTurboQuantPackedCodes::new(bit_width, dimension, vectors.len())
+            .expect("TurboQuant benchmark vectors use packable dimensions");
+        assert_eq!(bytes_per_vector, codes.bytes_per_row());
         for (row, rotated) in rotated_vectors.chunks_exact(dimension).enumerate() {
             let mut reconstructed_inner = 0.0;
             for (dim, value) in rotated.iter().enumerate() {
                 let calibrated = calibrate_value(*value, dim, &shift, &scale);
-                let code = nearest_code(calibrated, &codebook);
-                let reconstructed = reconstruct_value(code, dim, &codebook, &shift, &inv_scale);
-                reconstructed_inner += f64::from(*value) * f64::from(reconstructed);
-                write_code(
-                    &mut codes,
-                    row,
-                    bytes_per_vector,
-                    variant.bit_width,
+                let code = codebook
+                    .encode_scalar(calibrated)
+                    .expect("rotated benchmark vectors are finite");
+                let reconstructed = reconstruct_value(
+                    usize::from(code),
                     dim,
-                    code,
+                    codebook.centroids(),
+                    &shift,
+                    &inv_scale,
                 );
+                reconstructed_inner += f64::from(*value) * f64::from(reconstructed);
+                codes
+                    .write(row, dim, code)
+                    .expect("TurboQuant benchmark writes in-bounds codes");
             }
             scales.push((1.0 / reconstructed_inner.max(1e-10)) as f32);
         }
@@ -143,10 +156,10 @@ impl TurboQuantIndex {
     }
 
     pub(crate) fn estimated_bytes(&self) -> usize {
-        self.codes.len().saturating_add(
+        self.codes.estimated_bytes().saturating_add(
             self.scales
                 .len()
-                .saturating_add(self.codebook.len())
+                .saturating_add(self.codebook.centroids().len())
                 .saturating_add(self.shift.len())
                 .saturating_add(self.inv_scale.len())
                 .saturating_mul(size_of::<f32>()),
@@ -160,24 +173,23 @@ impl TurboQuantIndex {
     fn approx_distance_scalar(&self, row: usize, rotated_query: &[f32], query_bias: f64) -> f64 {
         let mut dot = query_bias;
         for (dim, query_component) in rotated_query.iter().enumerate() {
-            let code = read_code(
-                &self.codes,
-                row,
-                self.bytes_per_vector,
-                self.variant.bit_width,
-                dim,
+            let code = usize::from(
+                self.codes
+                    .read(row, dim)
+                    .expect("TurboQuant benchmark reads in-bounds codes"),
             );
             let component = query_component_for_score(*query_component, dim, &self.inv_scale);
-            dot += f64::from(component) * f64::from(self.codebook[code]);
+            dot += f64::from(component) * f64::from(self.codebook.centroids()[code]);
         }
         -(dot * f64::from(self.scales[row]))
     }
 
     fn approx_distance_lut(&self, row: usize, byte_lut: &[f64], query_bias: f64) -> f64 {
         let code_offset = row * self.bytes_per_vector;
+        let codes = self.codes.as_bytes();
         let mut dot = query_bias;
         for byte in 0..self.bytes_per_vector {
-            let packed = usize::from(self.codes[code_offset + byte]);
+            let packed = usize::from(codes[code_offset + byte]);
             dot += byte_lut[byte * 256 + packed];
         }
         -(dot * f64::from(self.scales[row]))
@@ -199,8 +211,8 @@ impl TurboQuantIndex {
                 let first_code = packed & 0x0f;
                 let second_code = (packed >> 4) & 0x0f;
                 table[byte * 256 + packed] = f64::from(first_query)
-                    * f64::from(self.codebook[first_code])
-                    + f64::from(second_query) * f64::from(self.codebook[second_code]);
+                    * f64::from(self.codebook.centroids()[first_code])
+                    + f64::from(second_query) * f64::from(self.codebook.centroids()[second_code]);
             }
         }
         table
@@ -287,120 +299,6 @@ fn query_bias(rotated_query: &[f32], shift: &[f32]) -> f64 {
         .sum::<f64>()
 }
 
-fn clipped_uniform_codebook(bit_width: usize, dimension: usize) -> Vec<f32> {
-    let levels = 1_usize << bit_width;
-    let sigma = (dimension as f32).sqrt().recip();
-    let clip = 3.0 * sigma;
-    (0..levels)
-        .map(|code| {
-            let midpoint = (code as f32 + 0.5) / levels as f32;
-            midpoint.mul_add(2.0 * clip, -clip)
-        })
-        .collect()
-}
-
-fn normal_lloyd_codebook(bit_width: usize, dimension: usize) -> Vec<f32> {
-    let levels = 1_usize << bit_width;
-    let sigma = (dimension as f64).sqrt().recip();
-    let spread = 3.0 * sigma;
-    let mut centroids = (0..levels)
-        .map(|code| -spread + 2.0 * spread * code as f64 / (levels - 1) as f64)
-        .collect::<Vec<_>>();
-
-    for _ in 0..64 {
-        let boundaries = centroid_boundaries(&centroids);
-        let mut max_change = 0.0f64;
-        for code in 0..levels {
-            let low = if code == 0 {
-                f64::NEG_INFINITY
-            } else {
-                boundaries[code - 1]
-            };
-            let high = if code + 1 == levels {
-                f64::INFINITY
-            } else {
-                boundaries[code]
-            };
-            let next = normal_interval_mean(low, high, sigma);
-            max_change = max_change.max((centroids[code] - next).abs());
-            centroids[code] = next;
-        }
-        if max_change < 1e-12 {
-            break;
-        }
-    }
-
-    centroids
-        .into_iter()
-        .map(|centroid| centroid as f32)
-        .collect()
-}
-
-fn centroid_boundaries(centroids: &[f64]) -> Vec<f64> {
-    centroids
-        .windows(2)
-        .map(|pair| (pair[0] + pair[1]) * 0.5)
-        .collect()
-}
-
-fn normal_interval_mean(low: f64, high: f64, sigma: f64) -> f64 {
-    let low_z = low / sigma;
-    let high_z = high / sigma;
-    let probability = standard_normal_cdf(high_z) - standard_normal_cdf(low_z);
-    if probability <= 1e-15 {
-        return (low + high) * 0.5;
-    }
-    sigma * (standard_normal_pdf(low_z) - standard_normal_pdf(high_z)) / probability
-}
-
-fn standard_normal_pdf(value: f64) -> f64 {
-    const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
-    if value.is_infinite() {
-        0.0
-    } else {
-        INV_SQRT_2_PI * (-0.5 * value * value).exp()
-    }
-}
-
-fn standard_normal_cdf(value: f64) -> f64 {
-    if value == f64::NEG_INFINITY {
-        0.0
-    } else if value == f64::INFINITY {
-        1.0
-    } else {
-        0.5 * (1.0 + erf_approx(value / f64::sqrt(2.0)))
-    }
-}
-
-fn erf_approx(value: f64) -> f64 {
-    let sign = if value < 0.0 { -1.0 } else { 1.0 };
-    let x = value.abs();
-    let t = 1.0 / (1.0 + 0.327_591_1 * x);
-    let polynomial =
-        (((((1.061_405_429 * t - 1.453_152_027) * t + 1.421_413_741) * t - 0.284_496_736) * t
-            + 0.254_829_592)
-            * t)
-            * (-x * x).exp();
-    sign * (1.0 - polynomial)
-}
-
-fn nearest_code(value: f32, codebook: &[f32]) -> usize {
-    let mut best = 0;
-    let mut best_distance = f32::INFINITY;
-    for (code, centroid) in codebook.iter().enumerate() {
-        let distance = (*centroid - value).abs();
-        if distance
-            .total_cmp(&best_distance)
-            .then_with(|| code.cmp(&best))
-            .is_lt()
-        {
-            best = code;
-            best_distance = distance;
-        }
-    }
-    best
-}
-
 fn rotate_unit_vector(vector: &VectorValue, output: &mut [f32]) -> f32 {
     assert_eq!(vector.dimension(), output.len());
     let length_squared = vector
@@ -467,45 +365,4 @@ fn splitmix64(mut value: u64) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
-}
-
-fn write_code(
-    codes: &mut [u8],
-    row: usize,
-    bytes_per_vector: usize,
-    bit_width: usize,
-    dim: usize,
-    code: usize,
-) {
-    let bit_offset = row * bytes_per_vector * u8::BITS as usize + dim * bit_width;
-    let byte = bit_offset / u8::BITS as usize;
-    let shift = bit_offset % u8::BITS as usize;
-    let mask = ((1_u16 << bit_width) - 1) << shift;
-    let mut word = u16::from(codes[byte]);
-    if byte + 1 < codes.len() {
-        word |= u16::from(codes[byte + 1]) << u8::BITS;
-    }
-    word = (word & !mask) | ((code as u16) << shift);
-    codes[byte] = (word & 0xff) as u8;
-    if shift + bit_width > u8::BITS as usize {
-        codes[byte + 1] = (word >> u8::BITS) as u8;
-    }
-}
-
-fn read_code(
-    codes: &[u8],
-    row: usize,
-    bytes_per_vector: usize,
-    bit_width: usize,
-    dim: usize,
-) -> usize {
-    let bit_offset = row * bytes_per_vector * u8::BITS as usize + dim * bit_width;
-    let byte = bit_offset / u8::BITS as usize;
-    let shift = bit_offset % u8::BITS as usize;
-    let mut word = u16::from(codes[byte]);
-    if byte + 1 < codes.len() {
-        word |= u16::from(codes[byte + 1]) << u8::BITS;
-    }
-    let mask = (1_u16 << bit_width) - 1;
-    usize::from((word >> shift) & mask)
 }
