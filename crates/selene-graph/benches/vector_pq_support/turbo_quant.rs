@@ -17,12 +17,19 @@ pub(crate) enum TurboQuantCalibration {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) enum TurboQuantScorer {
+    Scalar,
+    ByteLut,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct TurboQuantVariant {
     pub(crate) name: &'static str,
     pub(crate) bit_width: usize,
     pub(crate) candidates: usize,
     pub(crate) codebook: TurboQuantCodebook,
     pub(crate) calibration: TurboQuantCalibration,
+    pub(crate) scorer: TurboQuantScorer,
 }
 
 #[derive(Debug)]
@@ -101,9 +108,14 @@ impl TurboQuantIndex {
         let mut rotated_query = vec![0.0; DIMENSION];
         let _query_length = rotate_unit_vector(query, &mut rotated_query);
         let query_bias = query_bias(&rotated_query, &self.shift);
+        let byte_lut = self.uses_byte_lut().then(|| self.byte_lut(&rotated_query));
         let mut candidates = VectorTopK::new(self.variant.candidates.max(k));
         for row in rows {
-            candidates.push_distance(row, self.approx_distance(row, &rotated_query, query_bias));
+            let distance = match byte_lut.as_deref() {
+                Some(lut) => self.approx_distance_lut(row, lut, query_bias),
+                None => self.approx_distance_scalar(row, &rotated_query, query_bias),
+            };
+            candidates.push_distance(row, distance);
         }
         let candidate_ids = candidates
             .into_hits()
@@ -131,7 +143,11 @@ impl TurboQuantIndex {
         )
     }
 
-    fn approx_distance(&self, row: usize, rotated_query: &[f32], query_bias: f64) -> f64 {
+    fn uses_byte_lut(&self) -> bool {
+        matches!(self.variant.scorer, TurboQuantScorer::ByteLut)
+    }
+
+    fn approx_distance_scalar(&self, row: usize, rotated_query: &[f32], query_bias: f64) -> f64 {
         let mut dot = query_bias;
         for (dim, query_component) in rotated_query.iter().enumerate() {
             let code = read_code(
@@ -145,6 +161,39 @@ impl TurboQuantIndex {
             dot += f64::from(component) * f64::from(self.codebook[code]);
         }
         -(dot * f64::from(self.scales[row]))
+    }
+
+    fn approx_distance_lut(&self, row: usize, byte_lut: &[f64], query_bias: f64) -> f64 {
+        let code_offset = row * self.bytes_per_vector;
+        let mut dot = query_bias;
+        for byte in 0..self.bytes_per_vector {
+            let packed = usize::from(self.codes[code_offset + byte]);
+            dot += byte_lut[byte * 256 + packed];
+        }
+        -(dot * f64::from(self.scales[row]))
+    }
+
+    fn byte_lut(&self, rotated_query: &[f32]) -> Vec<f64> {
+        assert_eq!(self.variant.bit_width, 4);
+        let mut table = vec![0.0; self.bytes_per_vector * 256];
+        for byte in 0..self.bytes_per_vector {
+            let first_dim = byte * 2;
+            let first_query =
+                query_component_for_score(rotated_query[first_dim], first_dim, &self.inv_scale);
+            let second_query = query_component_for_score(
+                rotated_query[first_dim + 1],
+                first_dim + 1,
+                &self.inv_scale,
+            );
+            for packed in 0..256 {
+                let first_code = packed & 0x0f;
+                let second_code = (packed >> 4) & 0x0f;
+                table[byte * 256 + packed] = f64::from(first_query)
+                    * f64::from(self.codebook[first_code])
+                    + f64::from(second_query) * f64::from(self.codebook[second_code]);
+            }
+        }
+        table
     }
 }
 

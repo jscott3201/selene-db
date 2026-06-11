@@ -10,7 +10,7 @@ mod vector_pq_support;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use vector_pq_support::turbo_quant::{
-    TurboQuantCalibration, TurboQuantCodebook, TurboQuantIndex, TurboQuantVariant,
+    TurboQuantCalibration, TurboQuantCodebook, TurboQuantIndex, TurboQuantScorer, TurboQuantVariant,
 };
 use vector_pq_support::{
     BinaryQuantIndex, BinaryQuantVariant, DIMENSION, K, PqCorpus, PqIndex, PqVariant,
@@ -105,13 +105,14 @@ const BINARY_VARIANTS: [BinaryQuantVariant; 4] = [
     },
 ];
 
-const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
+const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 20] = [
     TurboQuantVariant {
         name: "tq2_c256",
         bit_width: 2,
         candidates: 256,
         codebook: TurboQuantCodebook::ClippedUniform,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tq2_c1024",
@@ -119,6 +120,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 1024,
         codebook: TurboQuantCodebook::ClippedUniform,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tq3_c256",
@@ -126,6 +128,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 256,
         codebook: TurboQuantCodebook::ClippedUniform,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tq3_c1024",
@@ -133,6 +136,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 1024,
         codebook: TurboQuantCodebook::ClippedUniform,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tq4_c64",
@@ -140,6 +144,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 64,
         codebook: TurboQuantCodebook::ClippedUniform,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tq4_c256",
@@ -147,6 +152,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 256,
         codebook: TurboQuantCodebook::ClippedUniform,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tq4_c1024",
@@ -154,6 +160,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 1024,
         codebook: TurboQuantCodebook::ClippedUniform,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqlm2_c256",
@@ -161,6 +168,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 256,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqlm2_c1024",
@@ -168,6 +176,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 1024,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqlm3_c256",
@@ -175,6 +184,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 256,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqlm3_c1024",
@@ -182,6 +192,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 1024,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqlm4_c64",
@@ -189,6 +200,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 64,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqlm4_c256",
@@ -196,6 +208,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 256,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqlm4_c1024",
@@ -203,6 +216,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 1024,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::None,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqplus4_c64",
@@ -210,6 +224,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 64,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::Quantile,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqplus4_c256",
@@ -217,6 +232,7 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 256,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::Quantile,
+        scorer: TurboQuantScorer::Scalar,
     },
     TurboQuantVariant {
         name: "tqplus4_c1024",
@@ -224,6 +240,31 @@ const TURBO_QUANT_VARIANTS: [TurboQuantVariant; 17] = [
         candidates: 1024,
         codebook: TurboQuantCodebook::NormalLloydMax,
         calibration: TurboQuantCalibration::Quantile,
+        scorer: TurboQuantScorer::Scalar,
+    },
+    TurboQuantVariant {
+        name: "tqplus4lut_c64",
+        bit_width: 4,
+        candidates: 64,
+        codebook: TurboQuantCodebook::NormalLloydMax,
+        calibration: TurboQuantCalibration::Quantile,
+        scorer: TurboQuantScorer::ByteLut,
+    },
+    TurboQuantVariant {
+        name: "tqplus4lut_c256",
+        bit_width: 4,
+        candidates: 256,
+        codebook: TurboQuantCodebook::NormalLloydMax,
+        calibration: TurboQuantCalibration::Quantile,
+        scorer: TurboQuantScorer::ByteLut,
+    },
+    TurboQuantVariant {
+        name: "tqplus4lut_c1024",
+        bit_width: 4,
+        candidates: 1024,
+        codebook: TurboQuantCodebook::NormalLloydMax,
+        calibration: TurboQuantCalibration::Quantile,
+        scorer: TurboQuantScorer::ByteLut,
     },
 ];
 

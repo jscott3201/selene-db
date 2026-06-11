@@ -611,6 +611,9 @@ PR-local TurboQuant-style compression spot-check:
 | `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4_c64_d128_k10_recallbp4375_m6641-full50000` | 157.94 ms (quick) | Quantile-calibrated TQ+ over the Lloyd-Max 4-bit codebook adds per-coordinate shift/scale state. It hurts the narrow row versus uncalibrated Lloyd-Max, so calibration is not a blanket win. |
 | `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4_c256_d128_k10_recallbp9000_m6641-full50000` | 161.85 ms (quick) | TQ+ improves the medium row from 8500 bp to 9000 bp, with the memory suffix increasing by only ~1 KiB for calibration metadata. |
 | `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4_c1024_d128_k10_recallbp10000_m6641-full50000` | 164.27 ms (quick) | TQ+ restores full recall for the Lloyd-Max 4-bit high-candidate row, matching clipped-uniform recall with a more TurboVec-shaped codec. The scalar scorer remains too slow for production promotion; the next blocker is fused LUT/block scoring. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c64_d128_k10_recallbp4375_m6641-full50000` | 41.89 ms (quick) | Byte-LUT scoring preserves the calibrated 4-bit c64 recall while cutting scalar scorer latency by about 3.8x. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c256_d128_k10_recallbp9000_m6641-full50000` | 43.38 ms (quick) | The LUT scorer keeps the useful 9000 bp medium-width row and makes calibrated TurboQuant much closer to the existing scalar-code rows. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c1024_d128_k10_recallbp10000_m6641-full50000` | 48.35 ms (quick) | First full-recall TurboQuant-style row with a fused safe lookup scorer. It is still slower than standalone PQ full-recall rows and far slower than packed binary, but the remaining gap is now scorer/layout engineering rather than raw scalar decode cost. |
 
 PR-local IVF+PQ layering spot-check:
 
