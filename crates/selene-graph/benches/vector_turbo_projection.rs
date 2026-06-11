@@ -51,6 +51,14 @@ const BLOCKED_WIDE_VARIANT: TurboQuantVariant = TurboQuantVariant {
     calibration: TurboQuantCalibration::Quantile,
     scorer: TurboQuantScorer::BlockedWideByteLut,
 };
+const BLOCKED_FAST_SCAN_VARIANT: TurboQuantVariant = TurboQuantVariant {
+    name: "tqplus4fastscan_c1024",
+    bit_width: 4,
+    candidates: 1024,
+    codebook: TurboQuantCodebook::NormalLloydMax,
+    calibration: TurboQuantCalibration::Quantile,
+    scorer: TurboQuantScorer::BlockedFastScanLut,
+};
 
 fn bench_turbo_quant_dimension_projection(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_turbo_quant_dimension_projection");
@@ -121,6 +129,34 @@ fn bench_blocked_wide_turbo_quant_dimension_projection(c: &mut Criterion) {
                 format!(
                     "{}_d{dimension}_n{}_k{K}_recallbp{}_{}",
                     BLOCKED_WIDE_VARIANT.name,
+                    compact_count(fixture.rows()),
+                    fixture.recall_basis_points(),
+                    fixture.memory_suffix()
+                ),
+            ),
+            |b| {
+                b.iter(|| {
+                    std::hint::black_box(fixture.total_overlap());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_blocked_fast_scan_turbo_quant_dimension_projection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_turbo_quant_blocked_fast_scan_dimension_projection");
+    for dimension in DIMENSIONS {
+        let fixture = DimensionFixture::build(dimension, BLOCKED_FAST_SCAN_VARIANT);
+        group.throughput(Throughput::Elements(
+            (fixture.rows() * fixture.query_count()) as u64,
+        ));
+        group.bench_function(
+            BenchmarkId::new(
+                "cluster_cos",
+                format!(
+                    "{}_d{dimension}_n{}_k{K}_recallbp{}_{}",
+                    BLOCKED_FAST_SCAN_VARIANT.name,
                     compact_count(fixture.rows()),
                     fixture.recall_basis_points(),
                     fixture.memory_suffix()
@@ -459,6 +495,7 @@ criterion_group! {
     targets = bench_turbo_quant_dimension_projection,
         bench_blocked_turbo_quant_dimension_projection,
         bench_blocked_wide_turbo_quant_dimension_projection,
+        bench_blocked_fast_scan_turbo_quant_dimension_projection,
         bench_production_turbo_quant_dimension_projection,
         bench_production_turbo_quant_batch_dimension_projection
 }
