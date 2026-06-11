@@ -173,11 +173,11 @@ production accelerator API.
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
 | `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
 | `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |
-| `core_vector_distance/squared_euclidean/128/768/1536` | 18.8 ns / 113.9 ns / 249.1 ns (quick) | Exact lower-is-better L2-squared metric, safe `f64x4` accumulation; previous `f64x2` row was 22.3 ns / 203 ns / 447 ns. |
-| `core_vector_distance/cosine/128/768/1536` | 32.0 ns / 179.9 ns / 358.2 ns (quick) | Exact cosine distance with zero-norm checks and clamped similarity; previous `f64x2` row was 36.5 ns / 255 ns / 506 ns. |
-| `core_vector_distance/negative_inner_product/128/768/1536` | 15.7 ns / 114.0 ns / 240.6 ns (quick) | Max-inner-product adapter (`-dot`) with lower-is-better ordering; previous `f64x2` row was 21.1 ns / 194 ns / 421 ns. |
-| `core_vector_exact_top_k/squared_euclidean_2048x128_k10` | ~42.0 µs (quick) | Exhaustive exact-search oracle over 2,048 candidates using a bounded max-heap (`O(n log k)`); previous `f64x2` row was 49.4 µs. |
-| `core_vector_exact_top_k/cosine_2048x128_k10` | 54.8 µs (quick) | Bound-query cosine exact top-k over 2,048 candidates; the unbound comparison row is 65.2 µs. |
+| `core_vector_distance/squared_euclidean/128/768/1536` | 19.0 ns / 116.3 ns / 224.2 ns (full B9) | Exact lower-is-better L2-squared metric, safe `f64x4` accumulation; B9 keeps the 128-dim single-chain path and improves the widest row. |
+| `core_vector_distance/cosine/128/768/1536` | 31.0 ns / 179.7 ns / 358.6 ns (full B9) | Exact cosine distance with zero-norm checks and clamped similarity; B9 keeps one-off cosine mostly noise-flat while accelerating bound-query ANN paths. |
+| `core_vector_distance/negative_inner_product/128/768/1536` | 15.6 ns / 90.0 ns / 179.7 ns (full B9) | Max-inner-product adapter (`-dot`) with lower-is-better ordering; B9 uses four independent dot accumulators for wider vectors. |
+| `core_vector_exact_top_k/squared_euclidean_2048x128_k10` | 39.7 µs (full B9) | Exhaustive exact-search oracle over 2,048 candidates using a bounded max-heap (`O(n log k)`); B9 is noise-flat at this 128-dim width. |
+| `core_vector_exact_top_k/cosine_2048x128_k10` | 53.0 µs (full B9) | Bound-query cosine exact top-k over 2,048 candidates; the unbound comparison row is 65.2 µs. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x1024_k10` | 12.2 µs / 47.6 µs / 188.3 µs / 750.7 µs (quick) | Product-shaped cosine rerank envelope for the 1024-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x2560_k10` | 29.6 µs / 116.6 µs / 465.1 µs / 1.856 ms (quick) | Product-shaped cosine rerank envelope for the 2560-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x4096_k10` | 47.0 µs / 185.5 µs / 739.3 µs / 2.959 ms (quick) | Product-shaped cosine rerank envelope for the 4096-dim local embedding model. |
@@ -319,6 +319,27 @@ Stale-query IDs use
 where `h` is HNSW and `v` is IVF.
 IVF pressure IDs use
 `lists{centroids}ne{non_empty}max{max_list_len}avg{avg_list_len}avgq{avg_candidates_per_query}maxq{worst_case_candidates_per_query}_m{index KiB}-{reachable KiB}`.
+
+PR-local B9 vector-kernel unroll A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench value_clone --filter core_vector_distance --save-baseline b9_pre`;
+`scripts/run-benches.sh --profile full --bench value_clone --filter core_vector_exact_top_k --save-baseline b9_pre`;
+`scripts/run-benches.sh --profile full --bench single_graph --filter graph_ann_recall_validation/cluster_cos_hnsw --vector-scales 10000 --save-baseline b9_pre`;
+rerun each with `--baseline b9_pre` after the implementation. The required
+`graph_exact_vector_scan` guard was also run, but concurrent desktop load made
+the small 128-dim exact-scan rows noisy enough that they are not rebaselined
+here.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `core_vector_distance/squared_euclidean/1536` | 249.26 ns | 224.21 ns | Four independent `f64x4` accumulators cut the wide L2-squared row by 10.2%; 128 dims remains on the single-chain path and was noise-flat. |
+| `core_vector_distance/negative_inner_product/768` | 114.01 ns | 89.96 ns | Four-accumulator dot product improves the 768-dim MIPS adapter by 21.1%. |
+| `core_vector_distance/negative_inner_product/1536` | 241.10 ns | 179.71 ns | Same dot-product path improves the 1536-dim row by 25.4%. |
+| `core_vector_exact_top_k/cosine_2048x128_k10` | 54.46 µs | 52.97 µs | Bound-query cosine top-k improves 2.6%; most local-embedding rerank rows stayed within noise, with one 4096x2560 row showing a small local regression. |
+| `graph_ann_recall_validation/cluster_cos_hnsw_d128_k10_ef10...` | 63.20 µs | 57.89 µs | HNSW cosine search improves 8.3% on the 10k clustered fixture. |
+| `graph_ann_recall_validation/cluster_cos_hnsw_d128_k10_ef64...` | 159.03 µs | 149.27 µs | Larger default-HNSW `ef_search` improves 5.1%. |
+| `graph_ann_recall_validation/cluster_cos_hnsw_m24ef64_d128_k10_ef64...` | 193.12 µs | 178.96 µs | Tuned-HNSW high-ef guard improves 4.3%, so ANN traversal benefits despite the conservative one-off cosine thresholds. |
 
 PR-local quick vector exact-scan Rayon A/B:
 
