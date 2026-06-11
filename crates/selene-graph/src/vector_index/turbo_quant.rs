@@ -16,6 +16,8 @@ use selene_core::{
 use crate::error::{GraphError, GraphResult};
 
 const TURBO_QUANT_BITS: u8 = 4;
+const SLOT_ORDER_SCAN_STALE_RATIO: usize = 2;
+const MIN_SLOT_ORDER_SCAN_ENTRIES: usize = 64;
 const MIN_RECONSTRUCTED_INNER: f64 = 1e-10;
 const QUANTILE_LOW_Z: f32 = -1.644_853_6;
 
@@ -146,12 +148,26 @@ impl TurboQuantVectorIndex {
         let query_bias = query_bias(&rotated_query, &self.shift);
         let byte_lut = self.byte_lut(&rotated_query);
         let mut candidates = VectorTopK::new(search_width.max(k).min(self.live_entries));
-        for (slot, entry) in self.entries.iter().enumerate() {
-            if entry.deleted || self.row_to_entry.get(&entry.row) != Some(&slot) {
-                continue;
+        if self.should_scan_by_slot_order() {
+            for (slot, entry) in self.entries.iter().enumerate() {
+                if entry.deleted {
+                    continue;
+                }
+                debug_assert_eq!(self.row_to_entry.get(&entry.row), Some(&slot));
+                let distance = self.approx_distance_lut(slot, &byte_lut, query_bias);
+                candidates.push_distance((slot, entry.row), distance);
             }
-            let distance = self.approx_distance_lut(slot, &byte_lut, query_bias);
-            candidates.push_distance((slot, entry.row), distance);
+        } else {
+            for (&row, &slot) in &self.row_to_entry {
+                let Some(entry) = self.entries.get(slot) else {
+                    continue;
+                };
+                if entry.deleted || entry.row != row {
+                    continue;
+                }
+                let distance = self.approx_distance_lut(slot, &byte_lut, query_bias);
+                candidates.push_distance((slot, row), distance);
+            }
         }
 
         let scorer = VectorMetric::Cosine.bind_query(query)?;
@@ -172,6 +188,14 @@ impl TurboQuantVectorIndex {
                 distance: hit.distance,
             })
             .collect())
+    }
+
+    fn should_scan_by_slot_order(&self) -> bool {
+        self.entries.len() <= MIN_SLOT_ORDER_SCAN_ENTRIES
+            || self.entries.len()
+                <= self
+                    .live_entries
+                    .saturating_mul(SLOT_ORDER_SCAN_STALE_RATIO)
     }
 
     /// Return estimated TurboQuant memory usage.
