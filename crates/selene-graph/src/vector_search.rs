@@ -2,7 +2,6 @@
 
 use std::cmp::Ordering;
 
-use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{
     CancellationChecker, CoreError, DbString, NodeId, Value, VectorMetric, VectorMetricQuery,
@@ -11,6 +10,7 @@ use selene_core::{
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
+use crate::parallel_scan::{should_parallelize_scan, try_reduce_bitmap_chunks};
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
 use crate::vector_index::{HnswSearchScratch, VectorIndexSearchHit};
@@ -89,8 +89,8 @@ impl SeleneGraph {
             .as_ref()
             .map_or(label_rows, |index| index.rows());
         let scorer = metric.bind_query(query).map_err(GraphError::from)?;
-        if should_parallelize_exact_scan(rows, k, checker) {
-            return self.exact_vector_search_parallel(label, property, scorer, k, rows);
+        if should_parallelize_exact_scan(rows, k) {
+            return self.exact_vector_search_parallel(label, property, scorer, k, rows, checker);
         }
 
         let mut top_k = VectorTopK::new(k);
@@ -239,12 +239,16 @@ impl SeleneGraph {
         scorer: VectorMetricQuery<'_>,
         k: usize,
         rows: &RoaringBitmap,
+        checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
-        let raw_rows: Vec<u32> = rows.iter().collect();
-        let top_k = raw_rows
-            .par_chunks(VECTOR_SEARCH_PARALLEL_CHUNK_ROWS)
-            .map(|chunk| self.exact_vector_search_chunk(label, property, scorer, k, chunk))
-            .try_reduce(|| VectorTopK::new(k), merge_top_k)?;
+        let top_k = try_reduce_bitmap_chunks(
+            rows,
+            VECTOR_SEARCH_PARALLEL_CHUNK_ROWS,
+            checker,
+            || VectorTopK::new(k),
+            |chunk| self.exact_vector_search_chunk(label, property, scorer, k, chunk),
+            merge_top_k,
+        )?;
 
         Ok(vector_node_hits(top_k))
     }
@@ -481,12 +485,8 @@ impl SeleneGraph {
     }
 }
 
-fn should_parallelize_exact_scan(
-    rows: &RoaringBitmap,
-    k: usize,
-    checker: CancellationChecker<'_>,
-) -> bool {
-    checker.is_disabled() && k != 0 && rows.len() >= VECTOR_SEARCH_PARALLEL_MIN_ROWS
+fn should_parallelize_exact_scan(rows: &RoaringBitmap, k: usize) -> bool {
+    should_parallelize_scan(rows.len(), k, VECTOR_SEARCH_PARALLEL_MIN_ROWS)
 }
 
 fn merge_top_k(

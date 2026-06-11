@@ -228,7 +228,7 @@ fn score_vector_candidate_set_matches_explicit_node_scoring() {
 }
 
 #[test]
-fn score_vector_candidate_set_parallel_matches_sequential() {
+fn score_vector_candidate_set_checked_matches_disabled_ordering() {
     let shared = SharedGraph::new(GraphId::new(989));
     let label = db_string("vector.score.parallel_candidate_set.doc").unwrap();
     let embedding = db_string("embedding").unwrap();
@@ -256,7 +256,7 @@ fn score_vector_candidate_set_parallel_matches_sequential() {
     let candidates = VectorCandidateSet::from_nodes(ids.iter().rev().copied());
     let token = CancellationToken::new();
 
-    let sequential = shared
+    let checked = shared
         .score_vector_candidate_set_checked(
             &embedding,
             &query,
@@ -266,7 +266,7 @@ fn score_vector_candidate_set_parallel_matches_sequential() {
             CancellationChecker::new(Some(&token), None),
         )
         .unwrap();
-    let parallel = shared
+    let disabled = shared
         .score_vector_candidate_set_checked(
             &embedding,
             &query,
@@ -277,7 +277,7 @@ fn score_vector_candidate_set_parallel_matches_sequential() {
         )
         .unwrap();
 
-    assert_eq!(parallel, sequential);
+    assert_eq!(disabled, checked);
 }
 
 #[test]

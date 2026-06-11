@@ -1,9 +1,10 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput};
 use selene_core::{
-    DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorMetric, VectorValue,
-    db_string,
+    CancellationChecker, DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value,
+    VectorMetric, VectorValue, db_string,
 };
 use selene_graph::{
     AdjacencyEdge, AdjacencyEntry, CandidateStateSpec, IndexProvider,
@@ -93,6 +94,29 @@ fn bench_candidate_set_scoring(
                             fixture.candidate_set(),
                             VectorMetric::Cosine,
                             10,
+                        )
+                        .expect("bench candidate scoring succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                fixture.bench_id("score_candidate_set_cosine_checked_with_deadline"),
+                fixture.candidate_count(),
+            ),
+            |b| {
+                let checker = deadline_checker();
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .score_vector_candidate_set_checked(
+                            fixture.embedding_key(),
+                            fixture.query(),
+                            fixture.candidate_set(),
+                            VectorMetric::Cosine,
+                            10,
+                            checker,
                         )
                         .expect("bench candidate scoring succeeds");
                     std::hint::black_box(hits.len());
@@ -268,6 +292,10 @@ fn adjacency_edge(label: DbString, edge_id: u64) -> AdjacencyEdge {
         neighbor: NodeId::new(10_000 + edge_id),
         edge_id: EdgeId::new(edge_id),
     }
+}
+
+fn deadline_checker() -> CancellationChecker<'static> {
+    CancellationChecker::new(None, Some(Instant::now() + Duration::from_secs(3600)))
 }
 
 struct MaintainedCandidateStateFixture {

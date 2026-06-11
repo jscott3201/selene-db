@@ -33,6 +33,7 @@ pub mod json_search;
 mod json_search_candidates;
 pub mod mutator;
 pub(crate) mod panic_payload;
+pub(crate) mod parallel_scan;
 pub(crate) mod property_index;
 pub(crate) mod provider_fanout;
 mod recover;
