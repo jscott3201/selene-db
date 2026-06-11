@@ -26,6 +26,7 @@ use selene_core::{DbString, EdgeId, NodeId};
 
 use crate::adjacency::AdjacencyEdge;
 use crate::graph::SeleneGraph;
+use crate::id_map::{EngineIdMap, engine_id_map};
 use crate::vector_index::VectorIndexConfig;
 
 impl SeleneGraph {
@@ -255,8 +256,8 @@ impl SeleneGraph {
 
     /// Family (7): in/out adjacency.
     fn check_adjacency(&self) -> Result<(), String> {
-        let mut out_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();
-        let mut in_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();
+        let mut out_reference: EngineIdMap<NodeId, Vec<AdjacencyEdge>> = engine_id_map();
+        let mut in_reference: EngineIdMap<NodeId, Vec<AdjacencyEdge>> = engine_id_map();
         for row in self.edge_store.alive.iter() {
             let Some(edge_id) = self.edge_id_for_row(crate::store::RowIndex::new(row)) else {
                 return Err(format!("alive edge row {row} has no mapped external id"));
@@ -335,8 +336,8 @@ fn compare_bitmap_index(
 /// match before comparison so parallel edges and ordering are both checked.
 fn compare_adjacency(
     direction: &str,
-    maintained: &imbl::HashMap<NodeId, crate::adjacency::AdjacencyEntry>,
-    reference: &imbl::HashMap<NodeId, Vec<AdjacencyEdge>>,
+    maintained: &EngineIdMap<NodeId, crate::adjacency::AdjacencyEntry>,
+    reference: &EngineIdMap<NodeId, Vec<AdjacencyEdge>>,
 ) -> Result<(), String> {
     for (node, entry) in maintained {
         if entry.is_empty() {

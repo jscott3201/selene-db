@@ -18,6 +18,7 @@ use selene_core::{
 use crate::adjacency::AdjacencyEntry;
 use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
+use crate::id_map::{EngineIdMap, engine_id_map};
 use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::text_index::{TextIndex, TextIndexMemoryUsage, TextIndexStats};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
@@ -226,9 +227,9 @@ pub struct SeleneGraph {
     /// Edge storage.
     pub edge_store: EdgeStore,
     /// Outgoing adjacency keyed by source node.
-    pub adjacency_out: HashMap<NodeId, AdjacencyEntry>,
+    pub adjacency_out: EngineIdMap<NodeId, AdjacencyEntry>,
     /// Incoming adjacency keyed by target node.
-    pub adjacency_in: HashMap<NodeId, AdjacencyEntry>,
+    pub adjacency_in: EngineIdMap<NodeId, AdjacencyEntry>,
     /// Bitmap of node rows carrying each label.
     pub idx_label: HashMap<DbString, RoaringBitmap>,
     /// Bitmap of edge rows carrying each edge label.
@@ -246,9 +247,9 @@ pub struct SeleneGraph {
     /// [`NodeStore::row_to_id`]). Replaces the `id.get() - 1` arithmetic so the
     /// external id can stay stable while the row is remapped by compaction
     /// (D22 / BRIEF-Item-4a). `imbl` for cheap copy-on-write snapshot clones.
-    pub node_id_to_row: HashMap<NodeId, RowIndex>,
+    pub node_id_to_row: EngineIdMap<NodeId, RowIndex>,
     /// External `EdgeId -> RowIndex` lookup (inverse of [`EdgeStore::row_to_id`]).
-    pub edge_id_to_row: HashMap<EdgeId, RowIndex>,
+    pub edge_id_to_row: EngineIdMap<EdgeId, RowIndex>,
 }
 
 impl SeleneGraph {
@@ -265,16 +266,16 @@ impl SeleneGraph {
             },
             node_store: NodeStore::new(),
             edge_store: EdgeStore::new(),
-            adjacency_out: HashMap::new(),
-            adjacency_in: HashMap::new(),
+            adjacency_out: engine_id_map(),
+            adjacency_in: engine_id_map(),
             idx_label: HashMap::new(),
             idx_edge_label: HashMap::new(),
             property_index: FxHashMap::default(),
             composite_property_index: FxHashMap::default(),
             vector_index: FxHashMap::default(),
             text_index: FxHashMap::default(),
-            node_id_to_row: HashMap::new(),
-            edge_id_to_row: HashMap::new(),
+            node_id_to_row: engine_id_map(),
+            edge_id_to_row: engine_id_map(),
         }
     }
 

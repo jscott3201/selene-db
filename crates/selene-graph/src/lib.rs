@@ -27,6 +27,7 @@ pub mod error;
 pub mod graph;
 pub mod graph_types;
 pub mod id_allocator;
+pub(crate) mod id_map;
 pub mod index_provider;
 pub mod json_search;
 mod json_search_candidates;
