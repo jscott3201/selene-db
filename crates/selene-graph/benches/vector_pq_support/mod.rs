@@ -60,6 +60,10 @@ impl PqCorpus {
         Self::build_profile_metric(scale, profile, VectorMetric::SquaredEuclidean)
     }
 
+    pub(crate) fn build_profile_cosine(scale: usize, profile: CorpusProfile) -> Self {
+        Self::build_profile_metric(scale, profile, VectorMetric::Cosine)
+    }
+
     fn build_profile_metric(scale: usize, profile: CorpusProfile, metric: VectorMetric) -> Self {
         let scale = scale.max(K);
         let vectors = (0..scale)

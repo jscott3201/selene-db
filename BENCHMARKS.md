@@ -661,6 +661,8 @@ PR-local IVF overlap-corpus compression spot-check:
 | `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c256_p4_d128_k10_recallbp10000_rows100005_m2375-full50000` | 711.7 µs (quick) | Four-list probing restores full recall and remains about 3.4x faster than the IVF+PQ full-recall p4 row at similar compressed/coarse memory. |
 | `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c1024_p1_d128_k10_recallbp5000_rows24996_m2375-full50000` | 1.013 ms (quick) | Wider exact rerank cannot recover missing coarse lists; recall remains 5000 bp. |
 | `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c1024_p4_d128_k10_recallbp10000_rows100005_m2375-full50000` | 1.821 ms (quick) | Wider binary rerank has no recall upside over c256 after p4 and is slower, confirming c256 remains the overlap-profile knee. |
+| `graph_ivf_overlap_candidate_recall/turbo_overlap_cos/tqplus4lut_c1024_p1_d128_k10_recallbp5125_rows24996_m7454-full50000` | 2.2772 ms (quick) | Cosine-oracle TurboQuant overlap row has the same one-list coarse miss pattern as the L2 PQ/binary rows: wider compressed rerank cannot recover hits absent from the probed lists. |
+| `graph_ivf_overlap_candidate_recall/turbo_overlap_cos/tqplus4lut_c1024_p4_d128_k10_recallbp10000_rows100005_m7454-full50000` | 5.2229 ms (quick) | Four-list probing restores full recall, but calibrated 4-bit byte-LUT scoring is slower than IVF+PQ p4 and far slower than binary p4 on this overlap fixture. |
 
 PR-local production IVF candidate-pressure spot-check:
 

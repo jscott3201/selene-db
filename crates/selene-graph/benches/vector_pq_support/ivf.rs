@@ -2,7 +2,15 @@ use std::mem::size_of;
 
 use selene_core::{VectorTopK, VectorValue};
 
-use super::{DIMENSION, PqCorpus, cluster_count, squared_l2};
+use super::turbo_quant::{TurboQuantIndex, TurboQuantVariant};
+use super::{CorpusProfile, DIMENSION, K, PqCorpus, cluster_count, memory_suffix, squared_l2};
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IvfTurboQuantVariant {
+    pub(crate) name: &'static str,
+    pub(crate) turbo: TurboQuantVariant,
+    pub(crate) probes: usize,
+}
 
 #[derive(Debug)]
 pub(crate) struct CoarsePartition {
@@ -61,6 +69,72 @@ impl CoarsePartition {
         squared_l2(
             query.as_slice(),
             &self.centroids[offset..offset + DIMENSION],
+        )
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct IvfTurboQuantFixture {
+    variant: IvfTurboQuantVariant,
+    corpus: PqCorpus,
+    turbo: TurboQuantIndex,
+    coarse: CoarsePartition,
+}
+
+impl IvfTurboQuantFixture {
+    pub(crate) fn build(scale: usize, variant: IvfTurboQuantVariant) -> Self {
+        Self::build_with_profile(scale, variant, CorpusProfile::Clustered)
+    }
+
+    pub(crate) fn build_with_profile(
+        scale: usize,
+        variant: IvfTurboQuantVariant,
+        profile: CorpusProfile,
+    ) -> Self {
+        let corpus = PqCorpus::build_profile_cosine(scale, profile);
+        let turbo = TurboQuantIndex::build(&corpus.vectors, variant.turbo);
+        let coarse = CoarsePartition::build(&corpus);
+        Self {
+            variant,
+            corpus,
+            turbo,
+            coarse,
+        }
+    }
+
+    pub(crate) fn total_overlap(&self) -> usize {
+        let mut rows = Vec::new();
+        self.corpus.total_overlap(|query| {
+            self.coarse
+                .candidate_rows(query, self.variant.probes, &mut rows);
+            self.turbo
+                .search_rows(&self.corpus.vectors, query, rows.iter().copied(), K)
+        })
+    }
+
+    pub(crate) fn recall_basis_points(&self) -> usize {
+        self.corpus.recall_basis_points(self.total_overlap())
+    }
+
+    pub(crate) fn searched_rows(&self) -> usize {
+        let mut rows = Vec::new();
+        self.corpus
+            .queries
+            .iter()
+            .map(|query| {
+                self.coarse
+                    .candidate_rows(query, self.variant.probes, &mut rows);
+                rows.len()
+            })
+            .sum()
+    }
+
+    pub(crate) fn memory_suffix(&self) -> String {
+        memory_suffix(
+            self.turbo
+                .estimated_bytes()
+                .saturating_add(self.coarse.estimated_bytes()),
+            self.corpus.full_vector_bytes(),
         )
     }
 }

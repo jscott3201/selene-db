@@ -9,9 +9,9 @@ mod common;
 mod vector_pq_support;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use vector_pq_support::ivf::CoarsePartition;
+use vector_pq_support::ivf::{CoarsePartition, IvfTurboQuantFixture, IvfTurboQuantVariant};
 use vector_pq_support::turbo_quant::{
-    TurboQuantCalibration, TurboQuantCodebook, TurboQuantIndex, TurboQuantScorer, TurboQuantVariant,
+    TurboQuantCalibration, TurboQuantCodebook, TurboQuantScorer, TurboQuantVariant,
 };
 use vector_pq_support::{
     BinaryQuantIndex, BinaryQuantVariant, CorpusProfile, DIMENSION, K, PqCorpus, PqIndex,
@@ -238,6 +238,33 @@ const OVERLAP_BINARY_VARIANTS: [IvfBinaryVariant; 4] = [
     },
 ];
 
+const OVERLAP_TURBO_QUANT_VARIANTS: [IvfTurboQuantVariant; 2] = [
+    IvfTurboQuantVariant {
+        name: "tqplus4lut_c1024_p1",
+        turbo: TurboQuantVariant {
+            name: "tqplus4lut_c1024",
+            bit_width: 4,
+            candidates: 1024,
+            codebook: TurboQuantCodebook::NormalLloydMax,
+            calibration: TurboQuantCalibration::Quantile,
+            scorer: TurboQuantScorer::ByteLut,
+        },
+        probes: 1,
+    },
+    IvfTurboQuantVariant {
+        name: "tqplus4lut_c1024_p4",
+        turbo: TurboQuantVariant {
+            name: "tqplus4lut_c1024",
+            bit_width: 4,
+            candidates: 1024,
+            codebook: TurboQuantCodebook::NormalLloydMax,
+            calibration: TurboQuantCalibration::Quantile,
+            scorer: TurboQuantScorer::ByteLut,
+        },
+        probes: 4,
+    },
+];
+
 #[derive(Clone, Copy, Debug)]
 struct IvfPqVariant {
     name: &'static str,
@@ -256,13 +283,6 @@ struct IvfBinaryVariant {
 struct IvfScalarCodeVariant {
     name: &'static str,
     scalar: ScalarQuantVariant,
-    probes: usize,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct IvfTurboQuantVariant {
-    name: &'static str,
-    turbo: TurboQuantVariant,
     probes: usize,
 }
 
@@ -436,6 +456,30 @@ fn bench_ivf_overlap_candidate_recall(c: &mut Criterion) {
                 },
             );
         }
+        for variant in OVERLAP_TURBO_QUANT_VARIANTS {
+            let fixture =
+                IvfTurboQuantFixture::build_with_profile(scale, variant, CorpusProfile::Overlap);
+            group.throughput(Throughput::Elements(
+                u64::try_from(fixture.searched_rows()).unwrap_or(u64::MAX),
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    "turbo_overlap_cos",
+                    format!(
+                        "{}_d{DIMENSION}_k{K}_recallbp{}_rows{}_{}",
+                        variant.name,
+                        fixture.recall_basis_points(),
+                        compact_count(fixture.searched_rows()),
+                        fixture.memory_suffix()
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(fixture.total_overlap());
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -570,64 +614,6 @@ struct IvfScalarCodeFixture {
     corpus: PqCorpus,
     scalar: ScalarQuantIndex,
     coarse: CoarsePartition,
-}
-
-#[derive(Debug)]
-struct IvfTurboQuantFixture {
-    variant: IvfTurboQuantVariant,
-    corpus: PqCorpus,
-    turbo: TurboQuantIndex,
-    coarse: CoarsePartition,
-}
-
-impl IvfTurboQuantFixture {
-    fn build(scale: usize, variant: IvfTurboQuantVariant) -> Self {
-        let corpus = PqCorpus::build_cosine(scale);
-        let turbo = TurboQuantIndex::build(&corpus.vectors, variant.turbo);
-        let coarse = CoarsePartition::build(&corpus);
-        Self {
-            variant,
-            corpus,
-            turbo,
-            coarse,
-        }
-    }
-
-    fn total_overlap(&self) -> usize {
-        let mut rows = Vec::new();
-        self.corpus.total_overlap(|query| {
-            self.coarse
-                .candidate_rows(query, self.variant.probes, &mut rows);
-            self.turbo
-                .search_rows(&self.corpus.vectors, query, rows.iter().copied(), K)
-        })
-    }
-
-    fn recall_basis_points(&self) -> usize {
-        self.corpus.recall_basis_points(self.total_overlap())
-    }
-
-    fn searched_rows(&self) -> usize {
-        let mut rows = Vec::new();
-        self.corpus
-            .queries
-            .iter()
-            .map(|query| {
-                self.coarse
-                    .candidate_rows(query, self.variant.probes, &mut rows);
-                rows.len()
-            })
-            .sum()
-    }
-
-    fn memory_suffix(&self) -> String {
-        memory_suffix(
-            self.turbo
-                .estimated_bytes()
-                .saturating_add(self.coarse.estimated_bytes()),
-            self.corpus.full_vector_bytes(),
-        )
-    }
 }
 
 impl IvfScalarCodeFixture {
