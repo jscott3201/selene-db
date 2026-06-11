@@ -89,7 +89,7 @@ pub enum VectorIndexKind {
     IvfCosine,
     /// Approximate IVF index using negative inner product distance.
     IvfNegativeInnerProduct,
-    /// Compressed TurboQuant candidate index using cosine distance and exact rerank.
+    /// Compressed TurboQuant candidate index using cosine distance.
     TurboQuantCosine,
 }
 
@@ -408,7 +408,7 @@ impl VectorIndex {
             ivf.insert(row, vector.clone())?;
         }
         if let Some(turbo_quant) = &mut self.turbo_quant {
-            turbo_quant.insert(row, vector.clone())?;
+            turbo_quant.insert(row, vector)?;
         }
         Ok(())
     }
@@ -459,11 +459,7 @@ impl VectorIndex {
         if let Some(ivf) = &self.ivf {
             return Some(ivf.search(query, k, search_width).map(ivf_hits));
         }
-        self.turbo_quant.as_ref().map(|turbo_quant| {
-            turbo_quant
-                .search(query, k, search_width)
-                .map(turbo_quant_hits)
-        })
+        None
     }
 
     pub(crate) fn ann_search_with_scratch(
@@ -482,9 +478,18 @@ impl VectorIndex {
         if let Some(ivf) = &self.ivf {
             return Some(ivf.search(query, k, search_width).map(ivf_hits));
         }
+        None
+    }
+
+    pub(crate) fn turbo_quant_candidates(
+        &self,
+        query: &VectorValue,
+        k: usize,
+        search_width: usize,
+    ) -> Option<selene_core::CoreResult<Vec<VectorIndexSearchHit>>> {
         self.turbo_quant.as_ref().map(|turbo_quant| {
             turbo_quant
-                .search(query, k, search_width)
+                .candidates(query, k, search_width)
                 .map(turbo_quant_hits)
         })
     }

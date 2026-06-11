@@ -76,7 +76,7 @@ pub struct VectorIndexMemoryUsage {
     pub ivf_pending_retrain_entries: usize,
     /// Estimated heap bytes owned by the TurboQuant derived index, excluding vector components.
     pub turbo_quant_index_bytes: usize,
-    /// Component bytes reachable through TurboQuant exact-rerank vector handles.
+    /// Component bytes reachable through TurboQuant-owned full-vector handles.
     pub turbo_quant_referenced_vector_bytes: usize,
     /// Total TurboQuant entries, including stale deleted row versions.
     pub turbo_quant_entries: usize,

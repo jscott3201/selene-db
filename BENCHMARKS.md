@@ -630,9 +630,9 @@ PR-local production TurboQuant dimension-projection spot-check:
 
 | Bench | 10k | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128_n10k_k10_recallbp10000_m1298-full5000` | 3.9282 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` row over a `SharedGraph` fixture. The Rayon threshold keeps the 128-dim row in the same latency envelope as the scalar slot-order scan while preserving full recall. |
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4431-full30000` | 8.8802 ms (quick) | 768-dim production scan now parallelizes the large clean slot-order candidate pass, cutting the quick median from the scalar `21.093 ms` row while accounting for the production index heap layout. |
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m8190-full60000` | 15.181 ms (quick) | 1536-dim production row keeps full recall with ~8.0 MiB TurboQuant index heap versus ~58.6 MiB full-vector components; Rayon chunking cuts the scalar `42.259 ms` row, and SIMD/block LUT scoring remains the next latency lever. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128_n10k_k10_recallbp10000_m1042-full5000` | 4.1261 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` row over a `SharedGraph` fixture after exact rerank moved to primary graph `VECTOR` values. The compressed index keeps no duplicate full-vector handles, and the 128-dim row preserves full recall with ~1.02 MiB TurboQuant heap versus ~4.88 MiB primary vector components. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4175-full30000` | 9.2501 ms (quick) | 768-dim production scan still parallelizes the large clean slot-order candidate pass; graph-side exact rerank adds a small primary-store lookup cost while keeping full recall and zero TurboQuant referenced-vector bytes. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m7934-full60000` | 15.689 ms (quick) | 1536-dim production row keeps full recall with ~7.75 MiB TurboQuant index heap versus ~58.6 MiB primary vector components; Rayon chunking remains the current throughput lever, and SIMD/block LUT scoring remains the next latency lever. |
 
 PR-local IVF+TurboQuant layering spot-check:
 

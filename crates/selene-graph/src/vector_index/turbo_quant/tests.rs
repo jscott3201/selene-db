@@ -5,34 +5,33 @@ fn vector(values: &[f32]) -> VectorValue {
 }
 
 #[test]
-fn turbo_quant_search_exact_reranks_compressed_candidates() {
+fn turbo_quant_candidates_rank_compressed_rows() {
     let mut index = TurboQuantVectorIndex::new(3).unwrap();
-    index.insert(10, vector(&[1.0, 0.0, 0.0])).unwrap();
-    index.insert(2, vector(&[0.9, 0.1, 0.0])).unwrap();
-    index.insert(7, vector(&[0.0, 1.0, 0.0])).unwrap();
+    index.insert(10, &vector(&[1.0, 0.0, 0.0])).unwrap();
+    index.insert(2, &vector(&[0.9, 0.1, 0.0])).unwrap();
+    index.insert(7, &vector(&[0.0, 1.0, 0.0])).unwrap();
     index.finish_bulk_load().unwrap();
 
-    let hits = index.search(&vector(&[1.0, 0.0, 0.0]), 2, 3).unwrap();
+    let hits = index.candidates(&vector(&[1.0, 0.0, 0.0]), 2, 2).unwrap();
 
     assert_eq!(
         hits.iter().map(|hit| hit.row).collect::<Vec<_>>(),
         vec![10, 2]
     );
-    assert_eq!(hits[0].distance, 0.0);
-    assert!(hits[1].distance > hits[0].distance);
+    assert!(hits[0].distance <= hits[1].distance);
 }
 
 #[test]
 fn turbo_quant_update_delete_and_memory_usage_track_stale_entries() {
     let mut index = TurboQuantVectorIndex::new(2).unwrap();
-    index.insert(1, vector(&[1.0, 0.0])).unwrap();
-    index.insert(2, vector(&[0.0, 1.0])).unwrap();
+    index.insert(1, &vector(&[1.0, 0.0])).unwrap();
+    index.insert(2, &vector(&[0.0, 1.0])).unwrap();
     index.finish_bulk_load().unwrap();
 
     index.remove(1);
-    index.insert(2, vector(&[1.0, 0.0])).unwrap();
+    index.insert(2, &vector(&[1.0, 0.0])).unwrap();
 
-    let hits = index.search(&vector(&[1.0, 0.0]), 5, 5).unwrap();
+    let hits = index.candidates(&vector(&[1.0, 0.0]), 5, 5).unwrap();
     assert_eq!(hits.iter().map(|hit| hit.row).collect::<Vec<_>>(), vec![2]);
 
     let usage = index.memory_usage();
@@ -43,7 +42,7 @@ fn turbo_quant_update_delete_and_memory_usage_track_stale_entries() {
     assert!(usage.codebook_bytes > 0);
     assert!(usage.calibration_bytes > 0);
     assert!(usage.estimated_heap_bytes >= usage.code_bytes);
-    assert!(usage.referenced_vector_bytes >= 3 * 2 * size_of::<f32>());
+    assert_eq!(usage.referenced_vector_bytes, 0);
 }
 
 #[test]
@@ -51,7 +50,7 @@ fn turbo_quant_search_uses_live_map_when_stale_slots_dominate() {
     let mut index = TurboQuantVectorIndex::new(2).unwrap();
     for row in 0..80 {
         index
-            .insert(row, vector(&[1.0 + row as f32 * 0.001, 0.0]))
+            .insert(row, &vector(&[1.0 + row as f32 * 0.001, 0.0]))
             .unwrap();
     }
     index.finish_bulk_load().unwrap();
@@ -61,7 +60,7 @@ fn turbo_quant_search_uses_live_map_when_stale_slots_dominate() {
 
     assert!(!index.should_scan_by_slot_order());
 
-    let hits = index.search(&vector(&[1.0, 0.0]), 5, 5).unwrap();
+    let hits = index.candidates(&vector(&[1.0, 0.0]), 5, 5).unwrap();
     assert_eq!(hits.iter().map(|hit| hit.row).collect::<Vec<_>>(), vec![79]);
 }
 
@@ -72,7 +71,7 @@ fn turbo_quant_parallel_slot_scan_matches_single_thread_hits() {
         index
             .insert(
                 row,
-                vector(&[
+                &vector(&[
                     1.0 + row as f32 * 0.01,
                     (row % 5) as f32 * 0.1,
                     (row % 7) as f32 * 0.05,
@@ -95,11 +94,11 @@ fn turbo_quant_parallel_slot_scan_matches_single_thread_hits() {
 
     let sequential = single_thread.install(|| {
         assert!(!index.should_parallelize_slot_scan(8));
-        index.search(&query, 4, 8).unwrap()
+        index.candidates(&query, 4, 8).unwrap()
     });
     let parallel = two_threads.install(|| {
         assert!(index.should_parallelize_slot_scan(8));
-        index.search(&query, 4, 8).unwrap()
+        index.candidates(&query, 4, 8).unwrap()
     });
 
     assert_eq!(parallel, sequential);
