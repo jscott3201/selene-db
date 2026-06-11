@@ -299,7 +299,6 @@ impl SeleneGraph {
         }
 
         if index.is_turbo_quant() {
-            let mut batch_hits = Vec::with_capacity(queries.len());
             for query in queries {
                 checker.check()?;
                 let dimension = u32::try_from(query.dimension())
@@ -307,10 +306,33 @@ impl SeleneGraph {
                 if dimension != query_dimension {
                     return Err(VectorSearchError::ApproximateIndexMissing);
                 }
-                let row_hits = index
-                    .turbo_quant_candidates(query, options.k, options.ef_search)
-                    .ok_or(VectorSearchError::ApproximateIndexMissing)?
-                    .map_err(GraphError::from)?;
+            }
+            if !index.turbo_quant_prefers_fused_batch(queries.len()) {
+                let mut batch_hits = Vec::with_capacity(queries.len());
+                for query in queries {
+                    checker.check()?;
+                    let row_hits = index
+                        .turbo_quant_candidates(query, options.k, options.ef_search)
+                        .ok_or(VectorSearchError::ApproximateIndexMissing)?
+                        .map_err(GraphError::from)?;
+                    batch_hits.push(rerank_ann_row_candidates(
+                        self,
+                        property,
+                        query,
+                        options.metric,
+                        options.k,
+                        row_hits,
+                        &checker,
+                    )?);
+                }
+                return Ok(batch_hits);
+            }
+            let row_batches = index
+                .turbo_quant_candidates_batch(queries, options.k, options.ef_search)
+                .ok_or(VectorSearchError::ApproximateIndexMissing)?
+                .map_err(GraphError::from)?;
+            let mut batch_hits = Vec::with_capacity(queries.len());
+            for (query, row_hits) in queries.iter().zip(row_batches) {
                 batch_hits.push(rerank_ann_row_candidates(
                     self,
                     property,

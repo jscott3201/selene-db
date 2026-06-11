@@ -29,6 +29,8 @@ mod rebuild;
 mod search_hit;
 #[path = "vector_index/turbo_quant.rs"]
 mod turbo_quant;
+#[path = "vector_index/turbo_quant_adapter.rs"]
+mod turbo_quant_adapter;
 
 use selene_core::{
     DbString, HnswIndexConfig, IvfIndexConfig, LabelSet, PropertyMap, Value, VectorMetric,
@@ -55,7 +57,7 @@ pub use rebuild::{
     VectorIndexMaintenancePolicy, VectorIndexRebuildEntry, VectorIndexRebuildReport,
 };
 pub(crate) use search_hit::VectorIndexSearchHit;
-use search_hit::{hnsw_hits, ivf_hits, turbo_quant_hits};
+use search_hit::{hnsw_hits, ivf_hits};
 use turbo_quant::TurboQuantVectorIndex;
 
 type VectorIndexMap = FxHashMap<(DbString, DbString), VectorIndexEntry>;
@@ -479,19 +481,6 @@ impl VectorIndex {
             return Some(ivf.search(query, k, search_width).map(ivf_hits));
         }
         None
-    }
-
-    pub(crate) fn turbo_quant_candidates(
-        &self,
-        query: &VectorValue,
-        k: usize,
-        search_width: usize,
-    ) -> Option<selene_core::CoreResult<Vec<VectorIndexSearchHit>>> {
-        self.turbo_quant.as_ref().map(|turbo_quant| {
-            turbo_quant
-                .candidates(query, k, search_width)
-                .map(turbo_quant_hits)
-        })
     }
 }
 

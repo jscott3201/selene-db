@@ -634,6 +634,14 @@ PR-local production TurboQuant dimension-projection spot-check:
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4175-full30000` | 9.2501 ms (quick) | 768-dim production scan still parallelizes the large clean slot-order candidate pass; graph-side exact rerank adds a small primary-store lookup cost while keeping full recall and zero TurboQuant referenced-vector bytes. |
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m7934-full60000` | 15.689 ms (quick) | 1536-dim production row keeps full recall with ~7.75 MiB TurboQuant index heap versus ~58.6 MiB primary vector components; Rayon chunking remains the current throughput lever, and SIMD/block LUT scoring remains the next latency lever. |
 
+PR-local production TurboQuant batch dimension-projection spot-check:
+
+| Bench | 10k x 8 queries | Notes |
+|---|---:|---|
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d128_q8_n10k_k10_recallbp10000_m1042-full5000` | 3.4167 ms (quick) | Batched `VectorIndexKind::TurboQuantCosine` row over the same `SharedGraph` fixture. The 128-dim path fuses compressed candidate scans across eight queries before exact rerank and improves over the current single-query-loop row while preserving full recall and zero TurboQuant referenced-vector bytes. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d768_q8_n10k_k10_recallbp10000_m4175-full30000` | 9.0933 ms (quick) | The batch API keeps the high-dimensional row on the per-query Rayon candidate path because fused scoring reduced task fanout at this dimension. The graph call still resolves the index once, preserves full recall, and avoids a regression versus the current production single-query envelope. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d1536_q8_n10k_k10_recallbp10000_m7934-full60000` | 15.414 ms (quick) | 1536-dim batch search follows the same high-dimensional fallback, keeping latency in the established production range while retaining the compressed storage ratio. The next throughput lever is FastScan/SIMD-style in-register accumulation rather than wider fused scalar batches. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |
