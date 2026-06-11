@@ -33,6 +33,31 @@ pub struct JsonValue {
     value: Arc<SerdeJsonValue>,
 }
 
+/// Borrowed JSON subvalue selected from a validated [`JsonValue`].
+///
+/// This keeps scan paths from cloning selected JSON values until the caller
+/// knows the value must be materialized into an owned result.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JsonValueRef<'a> {
+    value: &'a SerdeJsonValue,
+}
+
+impl<'a> JsonValueRef<'a> {
+    /// Borrow the underlying serde-json value.
+    #[must_use]
+    pub fn as_serde(self) -> &'a SerdeJsonValue {
+        self.value
+    }
+
+    /// Clone this validated subvalue into an owned [`JsonValue`].
+    #[must_use]
+    pub fn to_owned_json_value(self) -> JsonValue {
+        JsonValue {
+            value: Arc::new(self.value.clone()),
+        }
+    }
+}
+
 impl JsonValue {
     /// Build a validated JSON value from an owned serde-json value.
     pub fn new(value: SerdeJsonValue) -> CoreResult<Self> {
@@ -116,9 +141,18 @@ impl JsonValue {
     /// null values from absent paths.
     #[must_use]
     pub fn path_value(&self, path: &[JsonPathSelector]) -> Option<Self> {
-        select_json_path(self.as_serde(), path).map(|value| Self {
-            value: Arc::new(value.clone()),
-        })
+        self.path_value_ref(path)
+            .map(JsonValueRef::to_owned_json_value)
+    }
+
+    /// Borrow the JSON subvalue selected by `path`.
+    ///
+    /// Stored-value shape mismatches return [`None`]. A selected JSON `null`
+    /// still returns `Some(JsonValueRef)`, which lets callers distinguish
+    /// present null values from absent paths without cloning the subvalue.
+    #[must_use]
+    pub fn path_value_ref(&self, path: &[JsonPathSelector]) -> Option<JsonValueRef<'_>> {
+        select_json_path(self.as_serde(), path).map(|value| JsonValueRef { value })
     }
 
     /// Return true when `path` selects a JSON value that contains `candidate`.
@@ -580,6 +614,28 @@ mod tests {
                     JsonPathSelector::Key(db_string("missing").unwrap()),
                 ])
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn path_value_ref_borrows_selected_json_subvalue() {
+        let target = JsonValue::new(serde_json::json!({
+            "memory": {"facts": [{"title": "old"}, {"title": "current"}]}
+        }))
+        .unwrap();
+        let path = [
+            JsonPathSelector::Key(db_string("memory").unwrap()),
+            JsonPathSelector::Key(db_string("facts").unwrap()),
+            JsonPathSelector::Index(-1),
+            JsonPathSelector::Key(db_string("title").unwrap()),
+        ];
+
+        let selected = target.path_value_ref(&path).expect("path selects a value");
+
+        assert_eq!(selected.as_serde(), &serde_json::json!("current"));
+        assert_eq!(
+            selected.to_owned_json_value().as_serde(),
+            &serde_json::json!("current")
         );
     }
 
