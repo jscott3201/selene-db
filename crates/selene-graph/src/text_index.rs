@@ -20,7 +20,7 @@ use crate::graph::{SeleneGraph, TextIndexEntry};
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
 use crate::text_search::{
-    DocumentStats, TextSearchError, TextSearchHit, TextTopK, bm25_score, tokenize,
+    DocumentStats, TextSearchError, TextSearchHit, TextTopK, bm25_score, tokenize_borrowed,
     unique_query_terms,
 };
 
@@ -286,9 +286,9 @@ impl TextIndex {
         self.remove_document(row, node_id);
         let mut counts: FxHashMap<String, u32> = FxHashMap::default();
         let mut len = 0_u32;
-        for token in tokenize(text) {
+        for token in tokenize_borrowed(text) {
             len = len.saturating_add(1);
-            let count = counts.entry(token).or_insert(0);
+            let count = counts.entry(token.into_owned()).or_insert(0);
             *count = count.saturating_add(1);
         }
         if len == 0 {
