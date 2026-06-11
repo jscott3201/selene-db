@@ -738,6 +738,24 @@ linear (10× degree → ~9× time). This sweeps the **degree** axis (not node sc
 |---|---:|---:|---:|---|
 | `graph_hub_delete` | 54.0 µs | 496 µs | 4.54 ms | Linear after GRAPH-05. Was 64.3 µs / 1.62 ms / 132.7 ms (O(D²)) — **30× faster at degree 10k**. |
 
+PR-local B6 label-index removal A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench graph_hub_delete --save-baseline b6_pre`,
+`scripts/run-benches.sh --profile full --bench graph_hub_delete --baseline b6_pre`,
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter write_txn_lifecycle/delete_only --save-baseline b6_pre`,
+and
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --filter write_txn_lifecycle/delete_only --baseline b6_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_hub_delete/100` | 41.654 µs | 40.043 µs | Label and edge-label bitmap removals now mutate through `imbl::HashMap::get_mut` instead of cloning the whole bitmap per row. |
+| `graph_hub_delete/1000` | 323.69 µs | 292.50 µs | Degree-1000 hub delete improves about 9.6% in this same-run full A/B. |
+| `graph_hub_delete/10000` | 4.7949 ms | 3.5108 ms | The broad edge-label bitmap path is the main win: degree-10000 hub delete improves about 26.8%. |
+| `write_txn_lifecycle/delete_only/n10000/1` | 93.417 µs | 93.511 µs | Guard row: single labeled-node delete stays neutral. |
+| `write_txn_lifecycle/delete_only/n50000/100` | 381.39 µs | 342.29 µs | Mid-scale delete-only rows are historically noisy; this branch is modestly faster, not regressed. |
+| `write_txn_lifecycle/delete_only/n100000/1000` | 3.5656 ms | 3.4152 ms | Large batch delete-only guard improves about 4.2% in this run. |
+
 ### §3c `graph_delete_reclamation` — delete payload clearing and compaction
 
 `graph_delete_reclamation/*` isolates the storage side of deletes from vector
