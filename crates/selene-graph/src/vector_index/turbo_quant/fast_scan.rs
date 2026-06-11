@@ -90,6 +90,34 @@ impl TurboQuantVectorIndex {
         )
     }
 
+    pub(super) fn slot_order_candidates_fast_scan_batch_in_rows(
+        &self,
+        queries: &[PreparedFastScanQuery],
+        candidate_limits: &[usize],
+        allowed_rows: &[RoaringBitmap],
+    ) -> Vec<VectorTopK<(usize, u32)>> {
+        debug_assert_eq!(queries.len(), candidate_limits.len());
+        debug_assert_eq!(queries.len(), allowed_rows.len());
+        let max_candidate_limit = candidate_limits.iter().copied().max().unwrap_or_default();
+        if max_candidate_limit == 0 {
+            return fast_scan_candidate_top_k_batch_with_limits(candidate_limits);
+        }
+        if self.should_parallelize_slot_scan(max_candidate_limit) {
+            return self.slot_order_candidates_fast_scan_batch_in_rows_parallel(
+                queries,
+                candidate_limits,
+                allowed_rows,
+            );
+        }
+        self.slot_order_candidates_fast_scan_batch_in_rows_blocks(
+            0,
+            self.codes.block_count(),
+            queries,
+            candidate_limits,
+            allowed_rows,
+        )
+    }
+
     fn slot_order_candidates_fast_scan_batch_parallel(
         &self,
         queries: &[PreparedFastScanQuery],
@@ -112,6 +140,34 @@ impl TurboQuantVectorIndex {
             })
             .reduce(
                 || fast_scan_candidate_top_k_batch(queries.len(), candidate_limit),
+                merge_fast_scan_candidate_top_k_batch,
+            )
+    }
+
+    fn slot_order_candidates_fast_scan_batch_in_rows_parallel(
+        &self,
+        queries: &[PreparedFastScanQuery],
+        candidate_limits: &[usize],
+        allowed_rows: &[RoaringBitmap],
+    ) -> Vec<VectorTopK<(usize, u32)>> {
+        let chunk_blocks =
+            super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
+        (0..self.codes.block_count())
+            .into_par_iter()
+            .chunks(chunk_blocks.max(1))
+            .map(|blocks| {
+                let start = blocks.first().copied().unwrap_or_default();
+                let end = blocks.last().copied().map_or(start, |block| block + 1);
+                self.slot_order_candidates_fast_scan_batch_in_rows_blocks(
+                    start,
+                    end,
+                    queries,
+                    candidate_limits,
+                    allowed_rows,
+                )
+            })
+            .reduce(
+                || fast_scan_candidate_top_k_batch_with_limits(candidate_limits),
                 merge_fast_scan_candidate_top_k_batch,
             )
     }
@@ -159,6 +215,58 @@ impl TurboQuantVectorIndex {
                     let dot = query.query_bias + f64::from(centered) * query.lut.dequant;
                     let distance = -(dot * f64::from(self.row_scales[slot]));
                     candidate.push_distance((slot, entry.row), distance);
+                }
+            }
+        }
+        candidates
+    }
+
+    fn slot_order_candidates_fast_scan_batch_in_rows_blocks(
+        &self,
+        start_block: usize,
+        end_block: usize,
+        queries: &[PreparedFastScanQuery],
+        candidate_limits: &[usize],
+        allowed_rows: &[RoaringBitmap],
+    ) -> Vec<VectorTopK<(usize, u32)>> {
+        let mut candidates = fast_scan_candidate_top_k_batch_with_limits(candidate_limits);
+        let mut accumulators = vec![[u16x16::splat(0), u16x16::splat(0)]; queries.len()];
+        let mut accumulator_lanes = vec![[[0_u16; 16], [0_u16; 16]]; queries.len()];
+        for block in start_block..end_block {
+            let block_len = self.codes.block_len(block);
+            if !self.block_has_any_allowed_rows(block, block_len, allowed_rows) {
+                continue;
+            }
+            accumulators.fill([u16x16::splat(0), u16x16::splat(0)]);
+            for byte in 0..self.bytes_per_row {
+                let codes = self.codes.block_byte(block, byte);
+                let low_lanes = load_lanes(&codes[..16]);
+                let high_lanes = load_lanes(&codes[16..]);
+                for (accumulator, query) in accumulators.iter_mut().zip(queries) {
+                    let byte_lut = &query.lut.bytes[byte];
+                    accumulate_half(&mut accumulator[0], low_lanes, byte_lut);
+                    accumulate_half(&mut accumulator[1], high_lanes, byte_lut);
+                }
+            }
+            for (lanes, accumulator) in accumulator_lanes.iter_mut().zip(&accumulators) {
+                *lanes = [accumulator[0].to_array(), accumulator[1].to_array()];
+            }
+            let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
+            for lane in 0..block_len {
+                let slot = base_slot + lane;
+                for (((candidate, query), lanes), allowed) in candidates
+                    .iter_mut()
+                    .zip(queries)
+                    .zip(accumulator_lanes.iter())
+                    .zip(allowed_rows)
+                {
+                    let Some(row) = self.allowed_live_row_at_slot(slot, allowed) else {
+                        continue;
+                    };
+                    let centered = i32::from(lanes[lane / 16][lane % 16]) - query.lut.zero_sum;
+                    let dot = query.query_bias + f64::from(centered) * query.lut.dequant;
+                    let distance = -(dot * f64::from(self.row_scales[slot]));
+                    candidate.push_distance((slot, row), distance);
                 }
             }
         }
@@ -434,6 +542,16 @@ fn fast_scan_candidate_top_k_batch(
 ) -> Vec<VectorTopK<(usize, u32)>> {
     (0..query_count)
         .map(|_| VectorTopK::new(candidate_limit))
+        .collect()
+}
+
+fn fast_scan_candidate_top_k_batch_with_limits(
+    candidate_limits: &[usize],
+) -> Vec<VectorTopK<(usize, u32)>> {
+    candidate_limits
+        .iter()
+        .copied()
+        .map(VectorTopK::new)
         .collect()
 }
 

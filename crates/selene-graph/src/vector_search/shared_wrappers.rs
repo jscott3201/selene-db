@@ -104,6 +104,27 @@ impl SharedGraph {
         )
     }
 
+    /// Lock-free read snapshot wrapper for approximate batch search within candidates.
+    pub fn approximate_vector_search_candidate_sets_batch_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        queries: &[VectorValue],
+        candidate_sets: &[VectorCandidateSet],
+        options: ApproximateVectorSearchOptions,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        self.read()
+            .approximate_vector_search_candidate_sets_batch_checked(
+                label,
+                property,
+                queries,
+                candidate_sets,
+                options,
+                checker,
+            )
+    }
+
     /// Lock-free read snapshot wrapper for ANN-root graph expansion.
     pub fn approximate_vector_search_expanded_candidates_checked(
         &self,
