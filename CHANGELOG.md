@@ -328,6 +328,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   defaults are canonicalized to the declared descriptor
   (`DECIMAL(5, 2) DEFAULT 123.456` stores `123.46`) or rejected with a
   `DEFAULT`-specific validation error, so `SHOW` renders the coerced value.
+- **Reciprocal Rank Fusion for hybrid retrieval.** `selene-algorithms` now
+  exposes a pure Reciprocal Rank Fusion helper, and `selene-gql` registers the
+  read-only graph-tier
+  `CALL selene.reciprocal_rank_fusion(rankings, k, rank_constant?, weights?)`
+  built-in. The procedure fuses ranked node lists by rank position instead of
+  raw score scale, deduplicates within each source list by first occurrence,
+  supports optional non-negative source weights, and orders final ties by
+  `NodeId`. This gives vector, BM25 text, JSON, graph-state, and algorithm
+  ranking producers a neutral composition primitive without adding a
+  hard-coded hybrid-search policy.
+- **TurboQuant vector-compression primitives and research rows.**
+  `selene-core` now provides safe, documented TurboQuant codec primitives for
+  validated 2/3/4-bit widths, deterministic clipped-uniform and normal
+  Lloyd-Max codebooks, scalar boundary-based quantization, and row-major
+  packed-code storage. The production graph and persistence paths still keep
+  canonical `VectorValue` semantics; the new codec is the substrate for future
+  derived candidate indexes or explicit storage policies. The benchmark suite
+  now includes portable TurboQuant/TurboVec-style compression rows, dimension
+  projection rows for 128/768/1536-dimensional embeddings, and IVF-gated
+  TurboQuant candidate rows, all reranked exactly against canonical vectors.
 
 ### Changed
 
@@ -590,6 +610,68 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   full profile); durable-WAL rows are unchanged. New
   `write_txn_lifecycle/graph_clone` and `begin_rollback` attribution rows
   decompose the empty-commit floor (see `BENCHMARKS.md` §3a).
+- **Graph storage snapshot cloning shares ChunkedVec tails and alive bitmaps.**
+  The in-memory graph store now keeps chunked row storage and live-row bitmaps
+  copy-on-write across snapshots instead of cloning the hot tail on every
+  write transaction. This collapses the empty-commit floor from roughly
+  `211/139/270 us` at the 10k/50k/100k attribution rows to
+  `12/38/51 us`, making compile and execution residuals visible again.
+- **Source plans are shared across short-lived sessions.** The GQL runtime now
+  has a bounded cross-session source-plan cache for non-`CALL` statements,
+  keyed by graph id, schema version, registry version, source text, and
+  parameter shape. Fresh per-request sessions can reuse parameterized read and
+  write plans safely across schema-stable calls; the 1k quick insert row moves
+  from `98.559 us` with per-iteration planning to `53.509 us` with the shared
+  cache, matching the session-local warm-cache path.
+- **Correlated subqueries and read pipeline operators avoid per-row work.**
+  Seed-bound scans now short-circuit an inner scan when the outer row already
+  carries the live node or edge reference for the scan binding, dropping the
+  10k correlated EXISTS row from `932.70 ms` to `2.7520 ms` and COUNT from
+  `933.92 ms` to `2.6758 ms`. Follow-up engine-id `FxHash` maps and hoisted
+  runtime column resolution trim the post-seed residual another
+  `4.7%` to `15.3%` depending on row, and aggregate slots now borrow plan
+  descriptors instead of cloning them per group.
+- **Deadline-bearing exact retrieval stays parallel.** JSON scans, exact
+  vector scans, vector candidate-set scoring, exact BM25 scans, and batched
+  exact-vector scans now use a shared cancellation-aware chunk reducer instead
+  of disabling Rayon when a session has a deadline. Exact BM25 100k full-profile
+  rows moved from `33.959 ms` to `6.6143 ms`, JSON path-value 100k deadline
+  rows from `2.5734 ms` to `1.9746 ms`, and unindexed q8 batch vector scans
+  at 50k from `20.511 ms` to `1.8283 ms`, while preserving the existing
+  checked-call cancellation semantics.
+- **Graph mutation and closed-type validation fast paths.** Label and
+  edge-label index removals now mutate stored bitmaps in place, property-only
+  node updates skip incident-edge revalidation, and descriptor assignments
+  avoid rebuilding already-in-envelope bounded `STRING`/`BYTES` storage. The
+  degree-10k hub-delete row improved from `4.7949 ms` to `3.5108 ms`, and the
+  100k property-only incident-edge update row from `24.775 ms` to `245.09 us`.
+- **Vector exact kernels and HNSW searches reduce per-query overhead.** Core
+  vector metric kernels now use threshold-gated multi-accumulator `f64x4`
+  loops while preserving the documented `f64` score contract, improving the
+  negative-inner-product 1536-dim micro row from `241.10 ns` to `179.71 ns`.
+  HNSW layer walks now use a caller-owned epoch-stamped visited buffer instead
+  of per-search hash sets; the default ef64 row moved from `148.95 us` to
+  `118.12 us` with recall suffixes unchanged.
+- **Graph projection build and catalog lifetime improvements.** Incoming CSR
+  adjacency is now derived by transposing the outgoing CSR instead of doing a
+  second graph-adjacency scan, reducing 100k projection builds from
+  `29.202 ms` to `14.412 ms`. Projection catalog entries now hold
+  `Arc<GraphProjection>` values so a resolved `ProjectionRef` does not keep
+  the catalog-wide read guard held across long algorithm execution.
+- **WAL open-scan recovery buffering.** Existing WAL files are now scanned
+  through a sequential buffered reader that reuses one payload buffer while
+  preserving torn-tail and checksum-corrupt classification. The full-profile
+  `persist_wal_open_scan` row improved from `7.9089 ms` to `161.75 us` at 10k
+  entries, `43.344 ms` to `760.79 us` at 50k, and `87.278 ms` to `1.5317 ms`
+  at 100k.
+- **TurboQuant compression evidence for future vector storage work.** The
+  benchmark-only TurboQuant path now exercises the `selene-core` codec
+  primitives and shows the core trade-off: clustered 1536-dim rows keep full
+  recall with about `7.37 MiB` compressed versus `58.6 MiB` full vector
+  storage at 10k rows, but full-code scans remain dimension-sensitive.
+  IVF-gated TurboQuant preserves the calibrated 4-bit full-recall c1024 row
+  at about `2.25 ms` on the clustered 100k fixture, still slower than the
+  existing IVF+PQ and IVF+binary rows.
 - **`DbString` clones share storage.** `DbString` — the engine string type
   behind GQL string values, graph labels, property keys, aliases, and
   procedure-name segments — now backs its content with `Arc<str>`, so cloning
