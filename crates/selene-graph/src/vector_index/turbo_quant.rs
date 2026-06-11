@@ -71,7 +71,7 @@ pub(crate) struct TurboQuantVectorIndex {
     shift: Vec<f32>,
     scale: Vec<f32>,
     inv_scale: Vec<f32>,
-    entries: Vec<TurboQuantEntry>,
+    rows: Vec<u32>,
     row_to_entry: FxHashMap<u32, u32>,
     live_entries: usize,
     collecting_bulk: bool,
@@ -98,7 +98,7 @@ impl TurboQuantVectorIndex {
             shift: Vec::new(),
             scale: Vec::new(),
             inv_scale: Vec::new(),
-            entries: Vec::new(),
+            rows: Vec::new(),
             row_to_entry: FxHashMap::default(),
             live_entries: 0,
             collecting_bulk: true,
@@ -109,7 +109,7 @@ impl TurboQuantVectorIndex {
     /// Insert or replace the current vector for a graph row.
     pub(crate) fn insert(&mut self, row: u32, vector: &VectorValue) -> GraphResult<()> {
         self.remove(row);
-        let slot = self.entries.len();
+        let slot = self.rows.len();
         let slot_key = slot_key(slot)?;
         self.codes.resize_rows(slot + 1).map_err(codec_invariant)?;
         self.row_scales.push(1.0);
@@ -117,10 +117,7 @@ impl TurboQuantVectorIndex {
         if self.collecting_bulk {
             self.bulk_rotated.extend_from_slice(&rotated);
         }
-        self.entries.push(TurboQuantEntry {
-            row,
-            deleted: false,
-        });
+        self.rows.push(row);
         self.row_to_entry.insert(row, slot_key);
         self.live_entries += 1;
         self.encode_slot(slot, &rotated)?;
@@ -129,15 +126,10 @@ impl TurboQuantVectorIndex {
 
     /// Mark the current vector for `row` stale, if present.
     pub(crate) fn remove(&mut self, row: u32) {
-        let Some(slot) = self.row_to_entry.remove(&row).map(slot_index) else {
+        if self.row_to_entry.remove(&row).is_none() {
             return;
-        };
-        if let Some(entry) = self.entries.get_mut(slot)
-            && !entry.deleted
-        {
-            entry.deleted = true;
-            self.live_entries = self.live_entries.saturating_sub(1);
         }
+        self.live_entries = self.live_entries.saturating_sub(1);
     }
 
     /// Recompute quantile calibration and packed codes after a bulk load.
@@ -204,8 +196,8 @@ impl TurboQuantVectorIndex {
     }
 
     fn should_scan_by_slot_order(&self) -> bool {
-        self.entries.len() <= MIN_SLOT_ORDER_SCAN_ENTRIES
-            || self.entries.len()
+        self.rows.len() <= MIN_SLOT_ORDER_SCAN_ENTRIES
+            || self.rows.len()
                 <= self
                     .live_entries
                     .saturating_mul(SLOT_ORDER_SCAN_STALE_RATIO)
@@ -213,7 +205,7 @@ impl TurboQuantVectorIndex {
 
     fn should_parallelize_slot_scan(&self, candidate_limit: usize) -> bool {
         should_parallelize_scan(
-            self.entries.len() as u64,
+            self.rows.len() as u64,
             candidate_limit,
             TURBO_QUANT_PARALLEL_MIN_ENTRIES,
         )
@@ -286,13 +278,11 @@ impl TurboQuantVectorIndex {
                 let active_lanes = (block_len - lane_base).min(4);
                 for (lane_offset, dot) in dot_lanes.into_iter().take(active_lanes).enumerate() {
                     let slot = base_slot + lane_base + lane_offset;
-                    let entry = &self.entries[slot];
-                    if entry.deleted {
+                    let Some(row) = self.live_row_at_slot(slot) else {
                         continue;
-                    }
-                    debug_assert!(self.row_points_to_slot(entry.row, slot));
+                    };
                     let distance = -(dot * f64::from(self.row_scales[slot]));
-                    candidates.push_distance((slot, entry.row), distance);
+                    candidates.push_distance((slot, row), distance);
                 }
             }
         }
@@ -308,10 +298,10 @@ impl TurboQuantVectorIndex {
         let mut candidates = VectorTopK::new(candidate_limit);
         for (&row, &slot_key) in &self.row_to_entry {
             let slot = slot_index(slot_key);
-            let Some(entry) = self.entries.get(slot) else {
+            let Some(stored_row) = self.rows.get(slot).copied() else {
                 continue;
             };
-            if entry.deleted || entry.row != row {
+            if stored_row != row {
                 continue;
             }
             let distance = self.approx_distance_lut(slot, byte_lut, query_bias);
@@ -322,8 +312,8 @@ impl TurboQuantVectorIndex {
 
     /// Return estimated TurboQuant memory usage.
     pub(crate) fn memory_usage(&self) -> TurboQuantMemoryUsage {
-        let entries = self.entries.len();
-        let deleted_entries = self.entries.iter().filter(|entry| entry.deleted).count();
+        let entries = self.rows.len();
+        let deleted_entries = entries.saturating_sub(self.live_entries);
         let code_bytes = self.codes.estimated_bytes();
         let codebook_bytes = self.codebook.estimated_bytes();
         let calibration_bytes = self
@@ -337,9 +327,9 @@ impl TurboQuantVectorIndex {
             .capacity()
             .saturating_mul(size_of::<f32>());
         let estimated_heap_bytes = self
-            .entries
+            .rows
             .capacity()
-            .saturating_mul(size_of::<TurboQuantEntry>())
+            .saturating_mul(size_of::<u32>())
             .saturating_add(
                 self.row_to_entry
                     .capacity()
@@ -428,13 +418,16 @@ impl TurboQuantVectorIndex {
     }
 
     fn live_entry_slots(&self) -> Vec<usize> {
-        self.entries
+        self.rows
             .iter()
             .enumerate()
-            .filter_map(|(slot, entry)| {
-                (!entry.deleted && self.row_points_to_slot(entry.row, slot)).then_some(slot)
-            })
+            .filter_map(|(slot, &row)| self.row_points_to_slot(row, slot).then_some(slot))
             .collect()
+    }
+
+    fn live_row_at_slot(&self, slot: usize) -> Option<u32> {
+        let row = self.rows.get(slot).copied()?;
+        self.row_points_to_slot(row, slot).then_some(row)
     }
 
     fn row_points_to_slot(&self, row: u32, slot: usize) -> bool {
@@ -459,12 +452,6 @@ impl TurboQuantVectorIndex {
         }
         Ok(rotated)
     }
-}
-
-#[derive(Clone, Debug)]
-struct TurboQuantEntry {
-    row: u32,
-    deleted: bool,
 }
 
 fn merge_candidate_top_k(

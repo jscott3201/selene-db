@@ -127,12 +127,11 @@ impl TurboQuantVectorIndex {
         slot: usize,
         allowed_rows: &RoaringBitmap,
     ) -> Option<u32> {
-        let entry = self.entries.get(slot)?;
-        if entry.deleted || !allowed_rows.contains(entry.row) {
+        let row = self.live_row_at_slot(slot)?;
+        if !allowed_rows.contains(row) {
             return None;
         }
-        debug_assert!(self.row_points_to_slot(entry.row, slot));
-        Some(entry.row)
+        Some(row)
     }
 
     fn filtered_candidate_limit(
@@ -289,10 +288,10 @@ impl TurboQuantVectorIndex {
             let Some(slot) = self.slot_for_row(row) else {
                 continue;
             };
-            let Some(entry) = self.entries.get(slot) else {
+            let Some(stored_row) = self.rows.get(slot).copied() else {
                 continue;
             };
-            if entry.deleted || entry.row != row {
+            if stored_row != row {
                 continue;
             }
             let distance = self.approx_distance_lut(slot, byte_lut, query_bias);
