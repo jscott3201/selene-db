@@ -5,10 +5,17 @@ use selene_core::{VectorMetric, VectorTopK, VectorValue, exact_vector_top_k};
 use super::DIMENSION;
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) enum TurboQuantCodebook {
+    ClippedUniform,
+    NormalLloydMax,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct TurboQuantVariant {
     pub(crate) name: &'static str,
     pub(crate) bit_width: usize,
     pub(crate) candidates: usize,
+    pub(crate) codebook: TurboQuantCodebook,
 }
 
 #[derive(Debug)]
@@ -25,7 +32,10 @@ impl TurboQuantIndex {
         assert!(matches!(variant.bit_width, 2..=4));
         assert!(DIMENSION.is_power_of_two());
         let bytes_per_vector = DIMENSION * variant.bit_width / u8::BITS as usize;
-        let codebook = spherical_codebook(variant.bit_width);
+        let codebook = match variant.codebook {
+            TurboQuantCodebook::ClippedUniform => clipped_uniform_codebook(variant.bit_width),
+            TurboQuantCodebook::NormalLloydMax => normal_lloyd_codebook(variant.bit_width),
+        };
         let mut scales = Vec::with_capacity(vectors.len());
         let mut codes = vec![0; vectors.len() * bytes_per_vector];
         let mut rotated = vec![0.0; DIMENSION];
@@ -117,7 +127,7 @@ impl TurboQuantIndex {
     }
 }
 
-fn spherical_codebook(bit_width: usize) -> Vec<f32> {
+fn clipped_uniform_codebook(bit_width: usize) -> Vec<f32> {
     let levels = 1_usize << bit_width;
     let sigma = (DIMENSION as f32).sqrt().recip();
     let clip = 3.0 * sigma;
@@ -127,6 +137,91 @@ fn spherical_codebook(bit_width: usize) -> Vec<f32> {
             midpoint.mul_add(2.0 * clip, -clip)
         })
         .collect()
+}
+
+fn normal_lloyd_codebook(bit_width: usize) -> Vec<f32> {
+    let levels = 1_usize << bit_width;
+    let sigma = (DIMENSION as f64).sqrt().recip();
+    let spread = 3.0 * sigma;
+    let mut centroids = (0..levels)
+        .map(|code| -spread + 2.0 * spread * code as f64 / (levels - 1) as f64)
+        .collect::<Vec<_>>();
+
+    for _ in 0..64 {
+        let boundaries = centroid_boundaries(&centroids);
+        let mut max_change = 0.0f64;
+        for code in 0..levels {
+            let low = if code == 0 {
+                f64::NEG_INFINITY
+            } else {
+                boundaries[code - 1]
+            };
+            let high = if code + 1 == levels {
+                f64::INFINITY
+            } else {
+                boundaries[code]
+            };
+            let next = normal_interval_mean(low, high, sigma);
+            max_change = max_change.max((centroids[code] - next).abs());
+            centroids[code] = next;
+        }
+        if max_change < 1e-12 {
+            break;
+        }
+    }
+
+    centroids
+        .into_iter()
+        .map(|centroid| centroid as f32)
+        .collect()
+}
+
+fn centroid_boundaries(centroids: &[f64]) -> Vec<f64> {
+    centroids
+        .windows(2)
+        .map(|pair| (pair[0] + pair[1]) * 0.5)
+        .collect()
+}
+
+fn normal_interval_mean(low: f64, high: f64, sigma: f64) -> f64 {
+    let low_z = low / sigma;
+    let high_z = high / sigma;
+    let probability = standard_normal_cdf(high_z) - standard_normal_cdf(low_z);
+    if probability <= 1e-15 {
+        return (low + high) * 0.5;
+    }
+    sigma * (standard_normal_pdf(low_z) - standard_normal_pdf(high_z)) / probability
+}
+
+fn standard_normal_pdf(value: f64) -> f64 {
+    const INV_SQRT_2_PI: f64 = 0.398_942_280_401_432_7;
+    if value.is_infinite() {
+        0.0
+    } else {
+        INV_SQRT_2_PI * (-0.5 * value * value).exp()
+    }
+}
+
+fn standard_normal_cdf(value: f64) -> f64 {
+    if value == f64::NEG_INFINITY {
+        0.0
+    } else if value == f64::INFINITY {
+        1.0
+    } else {
+        0.5 * (1.0 + erf_approx(value / f64::sqrt(2.0)))
+    }
+}
+
+fn erf_approx(value: f64) -> f64 {
+    let sign = if value < 0.0 { -1.0 } else { 1.0 };
+    let x = value.abs();
+    let t = 1.0 / (1.0 + 0.327_591_1 * x);
+    let polynomial =
+        (((((1.061_405_429 * t - 1.453_152_027) * t + 1.421_413_741) * t - 0.284_496_736) * t
+            + 0.254_829_592)
+            * t)
+            * (-x * x).exp();
+    sign * (1.0 - polynomial)
 }
 
 fn nearest_code(value: f32, codebook: &[f32]) -> usize {
