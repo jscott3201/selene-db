@@ -8,6 +8,7 @@ use selene_testing::BenchProfile;
 
 mod binary;
 mod scalar;
+pub(crate) mod turbo_quant;
 
 pub(crate) use binary::{BinaryQuantIndex, BinaryQuantVariant};
 pub(crate) use scalar::{ScalarQuantIndex, ScalarQuantVariant};
@@ -43,10 +44,22 @@ pub(crate) struct PqCorpus {
 
 impl PqCorpus {
     pub(crate) fn build(scale: usize) -> Self {
-        Self::build_profile(scale, CorpusProfile::Clustered)
+        Self::build_profile_metric(
+            scale,
+            CorpusProfile::Clustered,
+            VectorMetric::SquaredEuclidean,
+        )
+    }
+
+    pub(crate) fn build_cosine(scale: usize) -> Self {
+        Self::build_profile_metric(scale, CorpusProfile::Clustered, VectorMetric::Cosine)
     }
 
     pub(crate) fn build_profile(scale: usize, profile: CorpusProfile) -> Self {
+        Self::build_profile_metric(scale, profile, VectorMetric::SquaredEuclidean)
+    }
+
+    fn build_profile_metric(scale: usize, profile: CorpusProfile, metric: VectorMetric) -> Self {
         let scale = scale.max(K);
         let vectors = (0..scale)
             .map(|seed| profile_vector(profile, seed, scale, 0.0))
@@ -61,7 +74,7 @@ impl PqCorpus {
             .collect::<Vec<_>>();
         let exact = queries
             .iter()
-            .map(|query| exact_ids(&vectors, query, K))
+            .map(|query| exact_ids(&vectors, query, K, metric))
             .collect::<Vec<_>>();
         Self {
             scale,
@@ -242,17 +255,17 @@ fn parse_scales(raw: String) -> Option<Vec<usize>> {
     (!scales.is_empty()).then_some(scales)
 }
 
-fn exact_ids(vectors: &[VectorValue], query: &VectorValue, k: usize) -> Vec<usize> {
-    exact_vector_top_k(
-        VectorMetric::SquaredEuclidean,
-        query,
-        vectors.iter().enumerate(),
-        k,
-    )
-    .expect("PQ benchmark vectors have matching dimensions")
-    .into_iter()
-    .map(|hit| hit.key)
-    .collect()
+fn exact_ids(
+    vectors: &[VectorValue],
+    query: &VectorValue,
+    k: usize,
+    metric: VectorMetric,
+) -> Vec<usize> {
+    exact_vector_top_k(metric, query, vectors.iter().enumerate(), k)
+        .expect("PQ benchmark vectors have matching dimensions")
+        .into_iter()
+        .map(|hit| hit.key)
+        .collect()
 }
 
 fn training_sample(len: usize) -> Vec<usize> {

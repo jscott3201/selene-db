@@ -290,8 +290,11 @@ explicit IVF list-count targets on the same rebuild fixture so read-side
 candidate pressure can be compared against write-side retrain/reassignment cost.
 `vector_pq` is a benchmark-only quantized candidate generator for
 compression/recall research: PQ, dequantized scalar u8, scalar u8 code-space
-distance, and packed binary sign codes produce short candidate sets, then
-full-fidelity vectors are exact reranked.
+distance, packed binary sign codes, and a portable TurboQuant-style scorer
+produce short candidate sets, then full-fidelity vectors are exact reranked.
+The TurboQuant-style row is intentionally benchmark-only: it uses safe scalar
+bit-packed codes and deterministic orthogonal mixing to ground storage/recall
+trade-offs before any production TurboVec-derived index or storage policy.
 `vector_ivf_pq` adds a coarse synthetic IVF-style partition ahead of PQ,
 scalar code-space, and binary scorers so future work can compare standalone
 full-code scans against candidate-producer plus compression layering.
@@ -586,6 +589,18 @@ PR-local binary quantization spot-check:
 | `graph_binary_quant_candidate_recall/cluster_l2/sign_c64_d128_k10_recallbp6625_m1562-full50000` | 3.46 ms (quick) | Hamming prefilter plus exact rerank remains fast, but 64 candidates still loses material recall on this clustered L2 fixture. |
 | `graph_binary_quant_candidate_recall/cluster_l2/sign_c256_d128_k10_recallbp10000_m1562-full50000` | 4.10 ms (quick) | First full-recall binary row: same compressed footprint as narrow binary rows, roughly 3x faster than standalone PQ full-recall rows and much smaller/faster than scalar u8. |
 | `graph_binary_quant_candidate_recall/cluster_l2/sign_c1024_d128_k10_recallbp10000_m1562-full50000` | 7.15 ms (quick) | Wider exact rerank has no recall upside on this fixture and doubles latency versus the c256 knee. |
+
+PR-local TurboQuant-style compression spot-check:
+
+| Bench | 100k | Notes |
+|---|---:|---|
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq2_c256_d128_k10_recallbp4875_m3515-full50000` | 139.31 ms (quick) | Benchmark-only portable TurboQuant-style row over 100k 128-dim vectors and 16 cosine queries. It normalizes vectors, applies deterministic safe orthogonal mixing, scans packed 2-bit coordinate codes, then exact-reranks full vectors. Memory is ~3.43 MiB vs ~48.8 MiB full vectors, but 256 candidates recover less than half the exact cosine top-k. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq2_c1024_d128_k10_recallbp7500_m3515-full50000` | 143.59 ms (quick) | Wider exact rerank improves recall to 7500 bp without changing compressed storage, but the scalar packed-code scan is far slower than existing packed binary and PQ rows. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq3_c256_d128_k10_recallbp3125_m5078-full50000` | 143.95 ms (quick) | The 3-bit row uses ~4.96 MiB and is worse than 2-bit at 256 candidates on this synthetic clustered fixture, so bit width alone is not a quality win without a stronger codebook/scoring path. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq3_c1024_d128_k10_recallbp7500_m5078-full50000` | 147.59 ms (quick) | High-candidate 3-bit row ties the 2-bit high-candidate recall while using more memory, which argues for implementing TQ+/Lloyd-Max calibration before considering production promotion. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq4_c64_d128_k10_recallbp625_m6640-full50000` | 138.17 ms (quick) | Narrow 4-bit row is a negative control: more coordinate precision does not help when the simple portable scorer ranks the wrong candidates. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq4_c256_d128_k10_recallbp812_m6640-full50000` | 139.72 ms (quick) | Wider 4-bit rerank remains poor. This highlights the gap between this safe scalar research baseline and TurboVec's full TQ+ calibration plus SIMD/LUT scoring implementation. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq4_c1024_d128_k10_recallbp4375_m6640-full50000` | 143.58 ms (quick) | High-candidate 4-bit row recovers some recall but still trails the 2-bit and 3-bit high-candidate rows. Treat this as evidence that Selene should not move TurboQuant into production storage until the codec/scorer is materially closer to TurboVec. |
 
 PR-local IVF+PQ layering spot-check:
 
