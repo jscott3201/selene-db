@@ -10,6 +10,11 @@ use std::mem::size_of;
 
 use crate::MAX_VECTOR_DIMENSION;
 
+#[path = "turbo_quant/blocked.rs"]
+mod blocked;
+
+pub use blocked::{TURBO_QUANT_BLOCK_ROWS, TurboQuantBlockedCodes};
+
 /// Result type for TurboQuant codec operations.
 pub type TurboQuantCodecResult<T> = Result<T, TurboQuantCodecError>;
 
