@@ -84,8 +84,9 @@ pub use value::{
     EdgeDirection, MAX_VECTOR_DIMENSION, Path, PathSegment, Record, RecordTyped, Value, VectorValue,
 };
 pub use vector::{
-    VectorMetric, VectorMetricQuery, VectorSearchHit, VectorTopK, exact_vector_top_k,
-    vector_squared_norm,
+    TurboQuantBitWidth, TurboQuantCodebook, TurboQuantCodebookKind, TurboQuantCodecError,
+    TurboQuantCodecResult, TurboQuantPackedCodes, VectorMetric, VectorMetricQuery, VectorSearchHit,
+    VectorTopK, exact_vector_top_k, vector_squared_norm,
 };
 pub use vector_index::{HnswIndexConfig, IvfIndexConfig};
 
