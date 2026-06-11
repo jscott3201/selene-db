@@ -250,7 +250,7 @@ production accelerator API.
 ## §2 selene-graph — read hot paths
 
 Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
-`vector_ivf_pq`, `vector_ivf_pressure`, `vector_mixed_workload`,
+`vector_ivf_pq`, `vector_turbo_projection`, `vector_ivf_pressure`, `vector_mixed_workload`,
 `bulk_mutation`, `concurrent_read`, `bfs`, `text_search_bm25`. The medians below predate CORE-06 (measured at the 128 B `Value`
 layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
 (`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten at
@@ -290,11 +290,17 @@ explicit IVF list-count targets on the same rebuild fixture so read-side
 candidate pressure can be compared against write-side retrain/reassignment cost.
 `vector_pq` is a benchmark-only quantized candidate generator for
 compression/recall research: PQ, dequantized scalar u8, scalar u8 code-space
-distance, and packed binary sign codes produce short candidate sets, then
-full-fidelity vectors are exact reranked.
+distance, packed binary sign codes, and a portable TurboQuant-style scorer
+produce short candidate sets, then full-fidelity vectors are exact reranked.
+The TurboQuant-style row is intentionally benchmark-only: it uses safe scalar
+bit-packed codes and deterministic orthogonal mixing to ground storage/recall
+trade-offs before any production TurboVec-derived index or storage policy.
 `vector_ivf_pq` adds a coarse synthetic IVF-style partition ahead of PQ,
 scalar code-space, and binary scorers so future work can compare standalone
 full-code scans against candidate-producer plus compression layering.
+`vector_turbo_projection` sweeps the benchmark-only TurboQuant scorer across
+128/768/1536 dimensions at a fixed 10k-row scale so storage ratio and safe
+block-Hadamard rotation behavior are visible before production codec work.
 `vector_ivf_pressure` uses the
 production graph IVF index and records list-skew plus candidate-pressure
 suffixes so future IVF/PQ layering work is grounded against real index fanout
@@ -587,6 +593,47 @@ PR-local binary quantization spot-check:
 | `graph_binary_quant_candidate_recall/cluster_l2/sign_c256_d128_k10_recallbp10000_m1562-full50000` | 4.10 ms (quick) | First full-recall binary row: same compressed footprint as narrow binary rows, roughly 3x faster than standalone PQ full-recall rows and much smaller/faster than scalar u8. |
 | `graph_binary_quant_candidate_recall/cluster_l2/sign_c1024_d128_k10_recallbp10000_m1562-full50000` | 7.15 ms (quick) | Wider exact rerank has no recall upside on this fixture and doubles latency versus the c256 knee. |
 
+PR-local TurboQuant-style compression spot-check:
+
+| Bench | 100k | Notes |
+|---|---:|---|
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq2_c256_d128_k10_recallbp1875_m3515-full50000` | 142.02 ms (quick) | Benchmark-only portable TurboQuant-style row over 100k 128-dim vectors and 16 cosine queries. It normalizes vectors, applies deterministic safe orthogonal mixing, scans clipped-uniform packed 2-bit coordinate codes with per-vector scale correction, then exact-reranks full vectors. Memory is ~3.43 MiB vs ~48.8 MiB full vectors, but 256 candidates recover too little of the exact cosine top-k. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq2_c1024_d128_k10_recallbp8125_m3515-full50000` | 146.29 ms (quick) | Wider exact rerank improves clipped-uniform 2-bit recall to 8125 bp without changing compressed storage, but the scalar packed-code scan is still far slower than existing packed binary and PQ rows. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq3_c256_d128_k10_recallbp2125_m5078-full50000` | 142.03 ms (quick) | Clipped-uniform 3-bit uses ~4.96 MiB and remains weak at 256 candidates, so bit width alone is not a quality win without a stronger codebook/scoring path. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq3_c1024_d128_k10_recallbp7500_m5078-full50000` | 146.20 ms (quick) | High-candidate clipped-uniform 3-bit trails the 2-bit high-candidate recall while using more memory. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq4_c64_d128_k10_recallbp1875_m6640-full50000` | 140.39 ms (quick) | Narrow clipped-uniform 4-bit is still too narrow for this scorer even after scale correction. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq4_c256_d128_k10_recallbp6250_m6640-full50000` | 141.70 ms (quick) | The per-vector scale correction makes clipped-uniform 4-bit quality respond to wider rerank, but latency remains dominated by scalar packed-code scoring. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tq4_c1024_d128_k10_recallbp10000_m6640-full50000` | 146.15 ms (quick) | High-candidate clipped-uniform 4-bit reaches full recall with ~6.48 MiB compressed storage, giving the first quality-positive TurboQuant-style row. It is still about an order of magnitude slower than standalone PQ full-recall rows and far slower than packed binary. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqlm2_c256_d128_k10_recallbp2875_m3515-full50000` | 141.66 ms (quick) | Normal-limit Lloyd-Max 2-bit improves the 256-candidate clipped-uniform recall, but not enough to become useful. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqlm2_c1024_d128_k10_recallbp7500_m3515-full50000` | 148.87 ms (quick) | The same Lloyd-Max 2-bit codebook trails clipped-uniform at 1024 candidates, so it is not a clear 2-bit win on this fixture. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqlm3_c256_d128_k10_recallbp4375_m5078-full50000` | 142.13 ms (quick) | Normal-limit Lloyd-Max 3-bit roughly doubles the clipped-uniform 256-candidate recall at the same memory. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqlm3_c1024_d128_k10_recallbp8125_m5078-full50000` | 146.23 ms (quick) | Lloyd-Max 3-bit beats clipped-uniform 3-bit at 1024 candidates, but still does not reach the clipped-uniform 4-bit full-recall row. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqlm4_c64_d128_k10_recallbp6875_m6640-full50000` | 140.49 ms (quick) | Normal-limit Lloyd-Max 4-bit makes the narrow 64-candidate row useful where clipped-uniform 4-bit was too weak. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqlm4_c256_d128_k10_recallbp8500_m6640-full50000` | 141.57 ms (quick) | Lloyd-Max 4-bit improves medium-width recall at the same memory and latency envelope. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqlm4_c1024_d128_k10_recallbp9375_m6640-full50000` | 145.99 ms (quick) | Lloyd-Max 4-bit falls short of full recall at 1024 candidates, while clipped-uniform 4-bit reaches 10000 bp; the TQ+ rows below isolate whether calibration closes that quality gap. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4_c64_d128_k10_recallbp4375_m6641-full50000` | 157.94 ms (quick) | Quantile-calibrated TQ+ over the Lloyd-Max 4-bit codebook adds per-coordinate shift/scale state. It hurts the narrow row versus uncalibrated Lloyd-Max, so calibration is not a blanket win. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4_c256_d128_k10_recallbp9000_m6641-full50000` | 161.85 ms (quick) | TQ+ improves the medium row from 8500 bp to 9000 bp, with the memory suffix increasing by only ~1 KiB for calibration metadata. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4_c1024_d128_k10_recallbp10000_m6641-full50000` | 164.27 ms (quick) | TQ+ restores full recall for the Lloyd-Max 4-bit high-candidate row, matching clipped-uniform recall with a more TurboVec-shaped codec. The scalar scorer remains too slow for production promotion; the next blocker is fused LUT/block scoring. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c64_d128_k10_recallbp4375_m6641-full50000` | 41.89 ms (quick) | Byte-LUT scoring preserves the calibrated 4-bit c64 recall while cutting scalar scorer latency by about 3.8x. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c256_d128_k10_recallbp9000_m6641-full50000` | 43.38 ms (quick) | The LUT scorer keeps the useful 9000 bp medium-width row and makes calibrated TurboQuant much closer to the existing scalar-code rows. |
+| `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c1024_d128_k10_recallbp10000_m6641-full50000` | 48.35 ms (quick) | First full-recall TurboQuant-style row with a fused safe lookup scorer. It is still slower than standalone PQ full-recall rows and far slower than packed binary, but the remaining gap is now scorer/layout engineering rather than raw scalar decode cost. |
+
+PR-local TurboQuant dimension-projection spot-check:
+
+| Bench | 10k | Notes |
+|---|---:|---|
+| `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d128_n10k_k10_recallbp10000_m665-full5000` | 3.7606 ms (quick) | Fixed 10k-row dimension sweep using the calibrated 4-bit byte-LUT scorer and exact cosine rerank. The 128-dim row preserves full recall with ~665 KiB compressed storage versus ~4.88 MiB full vectors. |
+| `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d768_n10k_k10_recallbp10000_m3795-full30000` | 21.382 ms (quick) | Block-Hadamard rotation handles the common 768-dim, non-power-of-two shape without dense rotation dependencies. Storage remains about 7.9x smaller than full vectors, but scan latency scales with dimension. |
+| `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d1536_n10k_k10_recallbp10000_m7551-full60000` | 42.732 ms (quick) | 1536-dim storage is ~7.37 MiB compressed versus ~58.6 MiB full vectors at 10k rows. Quality stays full on the clustered fixture; the open problem is still candidate gating and scorer throughput, not storage ratio. |
+
+PR-local IVF+TurboQuant layering spot-check:
+
+| Bench | 100k | Notes |
+|---|---:|---|
+| `graph_ivf_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c256_p1_d128_k10_recallbp9000_rows25008_m7454-full50000` | 1.4692 ms (quick) | Synthetic IVF probes one list per query, then scores calibrated 4-bit TurboQuant byte-LUT codes before exact cosine rerank. It scans ~25k rows across 16 queries and preserves the standalone c256 row's 9000 bp recall while cutting latency from ~43 ms to ~1.47 ms. |
+| `graph_ivf_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c1024_p1_d128_k10_recallbp10000_rows25008_m7454-full50000` | 2.2484 ms (quick) | One-list IVF preserves the calibrated c1024 full-recall suffix while cutting standalone full-code latency from ~48 ms to ~2.25 ms, but it is still slower than IVF+PQ and IVF+binary full-recall rows. |
+| `graph_ivf_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c1024_p4_d128_k10_recallbp10000_rows100015_m7454-full50000` | 4.5898 ms (quick) | Four-list probe keeps full recall but scans ~100k rows across the query batch, useful mainly as a guardrail for less separable fixtures. |
+
 PR-local IVF+PQ layering spot-check:
 
 | Bench | 100k | Notes |
@@ -625,6 +672,8 @@ PR-local IVF overlap-corpus compression spot-check:
 | `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c256_p4_d128_k10_recallbp10000_rows100005_m2375-full50000` | 711.7 µs (quick) | Four-list probing restores full recall and remains about 3.4x faster than the IVF+PQ full-recall p4 row at similar compressed/coarse memory. |
 | `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c1024_p1_d128_k10_recallbp5000_rows24996_m2375-full50000` | 1.013 ms (quick) | Wider exact rerank cannot recover missing coarse lists; recall remains 5000 bp. |
 | `graph_ivf_overlap_candidate_recall/binary_overlap_l2/sign_c1024_p4_d128_k10_recallbp10000_rows100005_m2375-full50000` | 1.821 ms (quick) | Wider binary rerank has no recall upside over c256 after p4 and is slower, confirming c256 remains the overlap-profile knee. |
+| `graph_ivf_overlap_candidate_recall/turbo_overlap_cos/tqplus4lut_c1024_p1_d128_k10_recallbp5125_rows24996_m7454-full50000` | 2.2772 ms (quick) | Cosine-oracle TurboQuant overlap row has the same one-list coarse miss pattern as the L2 PQ/binary rows: wider compressed rerank cannot recover hits absent from the probed lists. |
+| `graph_ivf_overlap_candidate_recall/turbo_overlap_cos/tqplus4lut_c1024_p4_d128_k10_recallbp10000_rows100005_m7454-full50000` | 5.2229 ms (quick) | Four-list probing restores full recall, but calibrated 4-bit byte-LUT scoring is slower than IVF+PQ p4 and far slower than binary p4 on this overlap fixture. |
 
 PR-local production IVF candidate-pressure spot-check:
 
