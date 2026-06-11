@@ -666,9 +666,9 @@ PR-local production TurboQuant batch dimension-projection spot-check:
 
 | Bench | 10k x 8 queries | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d128_q8_n10k_k10_recallbp10000_m1043-full5000` | 2.3107 ms (quick) | The low-dimensional fused batch path now prepares one FastScan LUT per query, loads each block byte once, and updates per-query `u16` accumulators before exact rerank. Full recall is preserved while improving from 3.2228 ms. |
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d768_q8_n10k_k10_recallbp10000_m4181-full30000` | 5.3761 ms (quick) | High-dimensional batch search remains on the per-query Rayon candidate path, so it inherits the production FastScan scorer and improves from the previous 8.1276 ms measurement without changing the exact rerank surface. |
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d1536_q8_n10k_k10_recallbp10000_m7946-full60000` | 7.8625 ms (quick) | 1536-dim batch search keeps the established high-dimensional envelope and improves from 13.616 ms through the per-query TurboQuant candidate path. A high-dimensional fused batch FastScan accumulator remains a separate benchmark slice. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d128_q8_n10k_k10_recallbp10000_m1043-full5000` | 2.3379 ms (quick) | Batch fusion now follows FastScan accumulator support instead of a fixed 256-dim ceiling. The low-dimensional row remains full-recall and effectively ties the previous 2.3107 ms measurement. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d768_q8_n10k_k10_recallbp10000_m4181-full30000` | 4.5446 ms (quick) | The high-dimensional fused FastScan path shares each block-byte load across query accumulators, improving the prior per-query Rayon row from 5.3761 ms while preserving exact rerank and full recall. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d1536_q8_n10k_k10_recallbp10000_m7946-full60000` | 7.1180 ms (quick) | The 1536-dim batch row now uses the fused FastScan accumulator and improves from 7.8625 ms with full recall. Dimensions outside the bounded accumulator envelope still avoid batch fusion. |
 
 PR-local IVF+TurboQuant layering spot-check:
 

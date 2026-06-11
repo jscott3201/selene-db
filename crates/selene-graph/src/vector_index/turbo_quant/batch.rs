@@ -4,9 +4,6 @@ use super::*;
 const TURBO_QUANT_BATCH_PARALLEL_CHUNK_ENTRIES: usize = 256;
 #[cfg(test)]
 const TURBO_QUANT_BATCH_PARALLEL_CHUNK_ENTRIES: usize = 4;
-// The fused path handles small-dimension batches; larger batches keep per-query
-// Rayon fanout until a high-dimensional batch FastScan row earns promotion.
-const TURBO_QUANT_FUSED_BATCH_MAX_DIMENSION: usize = 256;
 
 struct PreparedTurboQuantQuery {
     byte_lut: Vec<f64>,
@@ -67,7 +64,7 @@ impl TurboQuantVectorIndex {
     }
 
     pub(crate) fn should_fuse_batch_scan(&self, query_count: usize) -> bool {
-        query_count > 1 && self.dimension <= TURBO_QUANT_FUSED_BATCH_MAX_DIMENSION
+        query_count > 1 && self.supports_fast_scan_accumulator()
     }
 
     fn prepare_query(&self, query: &VectorValue) -> PreparedTurboQuantQuery {

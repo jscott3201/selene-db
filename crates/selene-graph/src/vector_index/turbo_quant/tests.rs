@@ -244,3 +244,40 @@ fn turbo_quant_batch_candidates_match_single_queries() {
     assert_eq!(sequential, singles);
     assert_eq!(parallel, singles);
 }
+
+#[test]
+fn turbo_quant_high_dimension_batch_candidates_match_single_queries() {
+    let dimension = 300;
+    let mut index = TurboQuantVectorIndex::new(dimension).unwrap();
+    for row in 0..32 {
+        index
+            .insert(row, &generated_vector(row as usize, dimension as usize))
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+
+    let queries = [
+        generated_vector(7, dimension as usize),
+        generated_vector(19, dimension as usize),
+        generated_vector(31, dimension as usize),
+    ];
+    assert!(index.should_fuse_batch_scan(queries.len()));
+
+    let singles = queries
+        .iter()
+        .map(|query| index.candidates(query, 4, 8).unwrap())
+        .collect::<Vec<_>>();
+    let batch = index.candidates_batch(&queries, 4, 8).unwrap();
+
+    assert_eq!(batch, singles);
+}
+
+fn generated_vector(seed: usize, dimension: usize) -> VectorValue {
+    let components = (0..dimension)
+        .map(|dim| {
+            ((((seed + 3) * (dim + 11)) % 97) as f32 - 48.0) / 48.0
+                + (((seed + dim) % 17) as f32 - 8.0) * 0.001
+        })
+        .collect::<Vec<_>>();
+    VectorValue::new(components).unwrap()
+}
