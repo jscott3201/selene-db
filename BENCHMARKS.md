@@ -599,16 +599,26 @@ fixture** (the headline scale); `empty_commit` shows the scale axis.
 The `graph_clone` / `begin_rollback` rows are commit-floor attribution
 instruments: the committer handoff has no direct row (`seal` is
 crate-private), so derive it as `empty_commit − graph_clone −
-begin_rollback`. At their measurement commit the same-run `empty_commit`
-medians were 11.97 / 38.70 / 51.99 µs, giving a derived handoff of ~10.9 /
-~28.4 / ~28.4 µs — the handoff, not the snapshot clone, dominates the
-post-COW floor at ≥50k.
+begin_rollback`. Current B26 attribution was measured with
+`scripts/run-benches.sh --profile full --bench write_txn_lifecycle --save-baseline pre`:
+same-run `empty_commit` medians were 12.10 / 37.99 / 47.53 µs, giving a
+derived handoff of ~11.0 / ~27.5 / ~23.9 µs. A local
+drop-relocation probe (`ArcSwap::swap` old snapshot returned through the commit
+ack) regressed `empty_commit` to 39.50 µs at 50k (+4.0%) and 50.82 µs at 100k
+(+6.9%), so it was rejected rather than landed.
+
+The `indexed_*` rows use a no-edge fixture with a high-cardinality typed key and
+populated composite, flat-vector, and text indexes. They isolate index registry
+clone cost from adjacency/storage clone cost; current results show index data is
+already mostly Arc-backed and does not dominate the commit floor.
 
 | Bench | Variant | Median | Notes |
 |---|---|---:|---|
-| `write_txn_lifecycle/empty_commit` | 10k / 50k / 100k | 211 / 139 / 270 µs | Empty-transaction commit floor. |
-| `write_txn_lifecycle/graph_clone` | 10k / 50k / 100k | 1.09 / 10.33 / 23.62 µs | One full `SeleneGraph` clone + drop — the snapshot fork `seal`'s first `guard_mut` pays. Measured post-COW (e05f6314). |
-| `write_txn_lifecycle/begin_rollback` | 10k / 50k / 100k | 13.9 ns (flat) | Write-lock + allocator + `WriteTxn` build, no snapshot fork, no handoff. Measured post-COW (e05f6314). |
+| `write_txn_lifecycle/empty_commit` | 10k / 50k / 100k | 12.10 / 37.99 / 47.53 µs | Empty-transaction commit floor. |
+| `write_txn_lifecycle/graph_clone` | 10k / 50k / 100k | 1.10 / 10.52 / 23.58 µs | One full `SeleneGraph` clone + drop — the snapshot fork `seal`'s first `guard_mut` pays. |
+| `write_txn_lifecycle/indexed_empty_commit` | 10k / 50k / 100k | 21.86 / 32.71 / 38.91 µs | No-edge typed/composite/vector/text indexed fixture; measured with `--filter write_txn_lifecycle/indexed`. |
+| `write_txn_lifecycle/indexed_graph_clone` | 10k / 50k / 100k | 0.190 / 2.01 / 5.21 µs | Index-rich clone attribution row; populated indexes are Arc-backed enough that registry clone is not the dominant term. |
+| `write_txn_lifecycle/begin_rollback` | 10k / 50k / 100k | 15.8 ns (flat) | Write-lock + allocator + `WriteTxn` build, no snapshot fork, no handoff. |
 | `write_txn_lifecycle/create_only` @100k | batch 1 / 10 / 100 / 1000 | 342 µs / 360 µs / 469 µs / 1.18 ms | Isolated node create + commit. |
 | `write_txn_lifecycle/delete_only` @100k | batch 1 / 10 / 100 / 1000 | 224 / 232 / 312 / 745 µs | Fixture seed excluded from timed body. |
 | `provider_fanout/core_only` | providers=core | 258.7 µs | Commit-notification baseline. |
