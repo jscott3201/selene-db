@@ -1003,6 +1003,16 @@ PR-local quick JSON mixed row:
 |---|---:|---|
 | `write_e2e/gql_cached_json_read_patch_r60w40/1000` | 4.486 ms (quick) | One warm-plan-cache in-memory cycle over property-backed JSON payloads: 60 indexed `bench_id` point reads extracting nested JSON metadata and 40 indexed point updates applying an idempotent three-op `json_patch` over `payload`. Payload seeding runs outside the timed body. |
 
+PR-local quick B2 shared source-plan cache row
+(`scripts/run-benches.sh --profile quick --bench write_e2e --filter gql_insert_single_node`):
+
+| Bench | Median | Notes |
+|---|---:|---|
+| `write_e2e/gql_insert_single_node_per_iter_plan/1000` | 98.559 µs (quick) | Fresh parse/analyze/plan plus execute. |
+| `write_e2e/gql_insert_single_node_cached/1000` | 53.470 µs (quick) | Session-local warm source-plan cache. |
+| `write_e2e/gql_insert_single_node_shared_cache/1000` | 53.509 µs (quick) | Fresh `Session` per request reusing shared non-CALL source-plan cache. |
+| `write_e2e/gql_insert_single_node_cached_with_schema_churn/1000` | 61.537 µs (quick) | Session-local cache under periodic schema-version invalidation. |
+
 ### §5c `read_pipeline` — read-query pipeline execution
 
 Read-execution coverage for the declared 60%-read workload: label scan +

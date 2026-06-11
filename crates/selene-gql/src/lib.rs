@@ -79,9 +79,9 @@ pub use crate::runtime::{
     AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, BuiltinProcedureRegistry,
     CallPlanCache, CallPlanCacheStats, CallPlanKey, DataExceptionSubclass, ExecutorError,
     ExecutorWarning, GraphContext, MaintenanceContext, MutationContext, PlanCache, PlanCacheStats,
-    ProcedureContext, RollbackOutcome, Session, SessionParameterValue, StatementOutput,
-    TransactionOutcome, TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline,
-    execute_statement,
+    ProcedureContext, RollbackOutcome, Session, SessionParameterValue, SharedPlanCache,
+    SharedPlanCacheStats, StatementOutput, TransactionOutcome, TxContext, WarningSink,
+    WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
 };
 pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken};
 

@@ -54,7 +54,7 @@ pub use context_tiers::{GraphContext, MaintenanceContext, MutationContext, Proce
 pub use error::{DataExceptionSubclass, ExecutorError, ExecutorWarning, WarningSink};
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;
-pub use plan_cache::{PlanCache, PlanCacheStats};
+pub use plan_cache::{PlanCache, PlanCacheStats, SharedPlanCache, SharedPlanCacheStats};
 pub(crate) use plan_runner::execute_plan;
 pub use session::{RollbackOutcome, Session, SessionParameterValue, TransactionOutcome};
 #[cfg(any(test, feature = "test-harness"))]

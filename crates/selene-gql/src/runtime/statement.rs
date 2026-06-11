@@ -5,6 +5,7 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 use selene_core::{CancellationToken, Change, metrics};
 use selene_graph::CommitOutcome;
 
+use super::plan_cache::{SharedPlanCacheInsert, SharedPlanCacheLookup};
 use super::session::materialize_parameter_values;
 use crate::{
     ExecutionPlan, GqlStatus, LiveIndexCatalog, OptimizeContext, PipelineOp, ProcedureRegistry,
@@ -124,10 +125,12 @@ impl Session<'_> {
     ///
     /// When the session has a plan cache, source strings whose cached plan was
     /// prepared against the current graph schema version skip parse, analyze,
-    /// and plan. Procedure-call-rooted statements can additionally use the
-    /// opt-in shared CALL plan cache, keyed by graph ID, schema version,
-    /// registry version, and formatter-canonical source. Embedded in-pipeline
-    /// `CALL` remains uncached.
+    /// and plan. Short-lived sessions can additionally use the opt-in shared
+    /// non-CALL source-plan cache, keyed by graph ID, schema version, registry
+    /// version, source text, caps, and optimizer mode. Procedure-call-rooted
+    /// statements use the separate opt-in shared CALL plan cache, keyed by
+    /// graph ID, schema version, registry version, and formatter-canonical
+    /// source. Embedded in-pipeline `CALL` remains uncached.
     /// If an active explicit transaction has uncommitted schema changes, both
     /// caches bypass lookup and insert so analysis sees transaction-local
     /// schema.
@@ -147,6 +150,7 @@ impl Session<'_> {
         }
         let schema_version = self.graph().schema_version();
         let registry_version = registry.registry_version();
+        let top_level_call_candidate = is_top_level_call_candidate(source);
         let active_txn_has_schema_changes = self
             .active_txn
             .as_ref()
@@ -160,14 +164,35 @@ impl Session<'_> {
             return execute_statement(&cached, self, registry);
         }
 
+        let shared_plan_cache = (!active_txn_has_schema_changes)
+            .then(|| self.shared_plan_cache.as_ref().map(Arc::clone))
+            .flatten();
         let call_plan_cache = (!active_txn_has_schema_changes)
             .then(|| self.call_plan_cache.as_ref().map(Arc::clone))
             .flatten();
-        let call_graph_id = call_plan_cache
-            .as_ref()
-            .map(|_| self.graph().read().graph_id());
-        if is_top_level_call_candidate(source)
-            && let (Some(cache), Some(graph_id)) = (call_plan_cache.as_ref(), call_graph_id)
+        let cache_graph_id = if shared_plan_cache.is_some() || call_plan_cache.is_some() {
+            Some(self.graph().read().graph_id())
+        } else {
+            None
+        };
+        if !top_level_call_candidate
+            && let (Some(cache), Some(graph_id)) = (shared_plan_cache.as_ref(), cache_graph_id)
+            && let Some(cached) = cache.get(SharedPlanCacheLookup {
+                graph_id,
+                schema_version,
+                registry_version,
+                source,
+                caps: self.caps,
+                index_selection: self.index_selection,
+            })
+        {
+            if let Some(cache) = self.plan_cache.as_mut() {
+                cache.insert(Arc::from(source), Arc::clone(&cached), schema_version);
+            }
+            return execute_statement(&cached, self, registry);
+        }
+        if top_level_call_candidate
+            && let (Some(cache), Some(graph_id)) = (call_plan_cache.as_ref(), cache_graph_id)
             && let Some(cached) =
                 cache.get_source(graph_id, schema_version, registry_version, source)
         {
@@ -198,7 +223,7 @@ impl Session<'_> {
             });
         }
 
-        let call_plan_key = call_graph_id.and_then(|graph_id| {
+        let call_plan_key = cache_graph_id.and_then(|graph_id| {
             CallPlanKey::for_statement(graph_id, schema_version, registry_version, &statement)
         });
         if let (Some(cache), Some(key)) = (call_plan_cache.as_ref(), call_plan_key.as_ref())
@@ -230,11 +255,25 @@ impl Session<'_> {
         // plans at hit-cost. EXPLAIN renders the optimized inner plan for free
         // because the optimizer recurses into PipelineOp::ExplainPlan { inner }.
         let plan = Arc::new(self.optimize_plan(lowered));
+        let source_arc = Arc::<str>::from(source);
         if !active_txn_has_schema_changes && let Some(cache) = self.plan_cache.as_mut() {
-            cache.insert(Arc::from(source), Arc::clone(&plan), schema_version);
+            cache.insert(Arc::clone(&source_arc), Arc::clone(&plan), schema_version);
+        }
+        if let (Some(cache), Some(graph_id)) = (shared_plan_cache, cache_graph_id) {
+            cache.insert(
+                SharedPlanCacheInsert {
+                    graph_id,
+                    schema_version,
+                    registry_version,
+                    source: Arc::clone(&source_arc),
+                    caps: self.caps,
+                    index_selection: self.index_selection,
+                },
+                Arc::clone(&plan),
+            );
         }
         if let (Some(cache), Some(key)) = (call_plan_cache, call_plan_key) {
-            cache.insert_with_source(key, Arc::from(source), Arc::clone(&plan));
+            cache.insert_with_source(key, source_arc, Arc::clone(&plan));
         }
         execute_statement(&plan, self, registry)
     }

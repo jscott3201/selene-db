@@ -12,7 +12,7 @@ use crate::{
     plan::ImplDefinedCaps,
     runtime::{
         BindingTable, BindingTableRegistry, CallPlanCache, ExecutorError, ExecutorWarning,
-        PlanCache, PlanCacheStats, WarningSink, WriteOutcome,
+        PlanCache, PlanCacheStats, SharedPlanCache, WarningSink, WriteOutcome,
     },
 };
 
@@ -36,6 +36,7 @@ pub struct Session<'g> {
     pub(crate) parameters: BTreeMap<DbString, SessionParameterValue>,
     pub(crate) scalar_parameters: BTreeMap<DbString, Value>,
     pub(crate) plan_cache: Option<PlanCache>,
+    pub(crate) shared_plan_cache: Option<Arc<SharedPlanCache>>,
     pub(crate) call_plan_cache: Option<Arc<CallPlanCache>>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
     pub(crate) aborted: bool,
@@ -150,6 +151,7 @@ impl<'g> Session<'g> {
             parameters: BTreeMap::new(),
             scalar_parameters: BTreeMap::new(),
             plan_cache: None,
+            shared_plan_cache: None,
             call_plan_cache: None,
             active_txn: None,
             aborted: false,
@@ -175,6 +177,7 @@ impl<'g> Session<'g> {
             parameters: BTreeMap::new(),
             scalar_parameters: BTreeMap::new(),
             plan_cache: None,
+            shared_plan_cache: None,
             call_plan_cache: None,
             active_txn: None,
             aborted: false,
@@ -427,6 +430,19 @@ impl<'g> Session<'g> {
     #[must_use]
     pub fn with_plan_cache(mut self, capacity: NonZeroUsize) -> Self {
         self.plan_cache = Some(PlanCache::new(capacity));
+        self
+    }
+
+    /// Enable this session's shared non-CALL source-string plan cache.
+    ///
+    /// Embedders should pass one shared cache per graph so short-lived
+    /// sessions can reuse read and write plans across requests. The cache key
+    /// includes graph ID, schema-version epoch, procedure-registry version,
+    /// source text, implementation-defined caps, and optimizer
+    /// index-selection mode.
+    #[must_use]
+    pub fn with_shared_plan_cache(mut self, cache: Arc<SharedPlanCache>) -> Self {
+        self.shared_plan_cache = Some(cache);
         self
     }
 

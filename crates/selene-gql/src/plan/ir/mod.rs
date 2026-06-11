@@ -636,7 +636,7 @@ pub enum PipelineOp {
 }
 
 /// Planner implementation-defined limits.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub struct ImplDefinedCaps {
     /// Maximum accepted variable-length quantifier upper bound.

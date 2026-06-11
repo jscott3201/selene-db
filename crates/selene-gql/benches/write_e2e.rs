@@ -16,11 +16,11 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
 
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{DbString, JsonValue, LabelDiff, PropertyDiff, Value, db_string};
-use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};
+use selene_gql::{EmptyProcedureRegistry, Session, SharedPlanCache, StatementOutput};
 use selene_graph::{RowIndex, SharedGraph, TypedIndexKind};
 use selene_persist::SyncPolicy;
 use selene_testing::{BenchProfile, WriteCorpus};
@@ -45,6 +45,7 @@ fn bench_write_e2e(c: &mut Criterion) {
             WriteCorpus::insert_single_node(),
         );
         bench_gql_insert_single_node_cached(&mut group, scale);
+        bench_gql_insert_single_node_shared_cache(&mut group, scale);
         bench_gql_insert_single_node_cached_with_schema_churn(&mut group, scale);
         bench_gql_fresh_preplanned_with_flush(
             &mut group,
@@ -96,6 +97,33 @@ fn bench_gql_insert_single_node_cached(
         BenchmarkId::new("gql_insert_single_node_cached", scale),
         |b| {
             b.iter(|| {
+                let rows = execute_cached_source(&mut session, source, &registry);
+                std::hint::black_box(rows)
+            });
+        },
+    );
+    std::hint::black_box(&state);
+}
+
+fn bench_gql_insert_single_node_shared_cache(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    scale: usize,
+) {
+    group.throughput(Throughput::Elements(1));
+    let state = common::gql_write_state_in_memory(scale);
+    let registry = EmptyProcedureRegistry;
+    let source = WriteCorpus::insert_single_node();
+    let cache = Arc::new(SharedPlanCache::new(
+        NonZeroUsize::new(64).expect("nonzero"),
+    ));
+    let mut warmup = Session::new(&state.graph).with_shared_plan_cache(Arc::clone(&cache));
+    execute_cached_source(&mut warmup, source, &registry);
+    group.bench_function(
+        BenchmarkId::new("gql_insert_single_node_shared_cache", scale),
+        |b| {
+            b.iter(|| {
+                let mut session =
+                    Session::new(&state.graph).with_shared_plan_cache(Arc::clone(&cache));
                 let rows = execute_cached_source(&mut session, source, &registry);
                 std::hint::black_box(rows)
             });
