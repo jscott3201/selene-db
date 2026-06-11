@@ -29,11 +29,11 @@
 //!
 //! Each runner calls [`ProjectionCatalog::ensure_fresh`] (which may take the
 //! catalog write lock to rebuild a stale projection) and then
-//! [`ProjectionCatalog::get`] (which holds a read guard for the returned
-//! [`crate::ProjectionRef`]). The algorithm runs while the read guard is held;
-//! the guard is dropped before returning. Callers MUST NOT hold the graph write
-//! lock across these calls, and MUST NOT call a catalog mutation
-//! (`drop_projection`, `project`) while a [`crate::ProjectionRef`] is live.
+//! [`ProjectionCatalog::get`] (which clones an `Arc` for the returned
+//! [`crate::ProjectionRef`]). The catalog guard is released before the
+//! algorithm runs. Callers MUST NOT hold the graph write lock across these
+//! calls, because a stale projection may need to rebuild from the graph
+//! snapshot before execution.
 //!
 //! # Cancellation
 //!
@@ -183,13 +183,12 @@ pub fn projection_list(
         .collect()
 }
 
-/// Run `f` against a fresh, read-locked view of the named projection.
+/// Run `f` against a fresh view of the named projection.
 ///
 /// This mirrors the GQL adapter's `with_algorithm_projection`: `ensure_fresh`
-/// (rebuild-if-stale) then `get` (read-locked [`crate::ProjectionRef`]), running `f`
-/// while the read guard is held and dropping it on return. Keeping it in one
-/// place guarantees every runner observes identical projection-resolution
-/// semantics and lock ordering.
+/// (rebuild-if-stale) then `get` (Arc-backed [`crate::ProjectionRef`]), running `f`
+/// against the resolved projection. Keeping it in one place guarantees every
+/// runner observes identical projection-resolution semantics and lock ordering.
 pub(super) fn with_projection<R>(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,

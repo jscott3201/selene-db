@@ -197,6 +197,44 @@ fn project_overwrites_existing_name() {
 }
 
 #[test]
+fn projection_ref_survives_catalog_mutation_without_blocking_writers() {
+    let (shared, _) = fixture_small();
+    let snapshot = shared.read();
+    let catalog = ProjectionCatalog::new();
+    catalog.project(&snapshot, &social_config()).unwrap();
+
+    let old_ref = catalog.get("social").unwrap();
+    assert_eq!(old_ref.node_count(), 3);
+
+    let person_only = ProjectionConfig {
+        name: "social".to_string(),
+        node_labels: vec![db_string("Person")],
+        edge_labels: vec![],
+        weight_property: None,
+    };
+    catalog.project(&snapshot, &person_only).unwrap();
+
+    assert_eq!(
+        old_ref.node_count(),
+        3,
+        "old ProjectionRef keeps the prior Arc snapshot alive"
+    );
+    assert_eq!(
+        catalog.get("social").unwrap().node_count(),
+        2,
+        "catalog writers are not blocked by a live ProjectionRef"
+    );
+
+    assert!(catalog.drop_projection("social"));
+    assert!(catalog.get("social").is_none());
+    assert_eq!(
+        old_ref.edge_count(),
+        1,
+        "dropping the catalog entry does not invalidate the old Arc-backed ref"
+    );
+}
+
+#[test]
 fn catalog_projection_matches_direct_unscoped_build() {
     // Pins the unscoped-by-construction contract (spec 16 §3 E06): a catalog
     // registration is exactly the direct unscoped `GraphProjection::build` of
