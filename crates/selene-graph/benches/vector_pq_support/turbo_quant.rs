@@ -2,8 +2,6 @@ use std::mem::size_of;
 
 use selene_core::{VectorMetric, VectorTopK, VectorValue, exact_vector_top_k};
 
-use super::DIMENSION;
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum TurboQuantCodebook {
     ClippedUniform,
@@ -35,6 +33,7 @@ pub(crate) struct TurboQuantVariant {
 #[derive(Debug)]
 pub(crate) struct TurboQuantIndex {
     variant: TurboQuantVariant,
+    dimension: usize,
     bytes_per_vector: usize,
     codebook: Vec<f32>,
     shift: Vec<f32>,
@@ -46,21 +45,30 @@ pub(crate) struct TurboQuantIndex {
 impl TurboQuantIndex {
     pub(crate) fn build(vectors: &[VectorValue], variant: TurboQuantVariant) -> Self {
         assert!(matches!(variant.bit_width, 2..=4));
-        assert!(DIMENSION.is_power_of_two());
-        let bytes_per_vector = DIMENSION * variant.bit_width / u8::BITS as usize;
+        let dimension = vectors
+            .first()
+            .map(VectorValue::dimension)
+            .expect("TurboQuant benchmark requires at least one vector");
+        assert_eq!(dimension % u8::BITS as usize, 0);
+        assert!(vectors.iter().all(|vector| vector.dimension() == dimension));
+        let bytes_per_vector = dimension * variant.bit_width / u8::BITS as usize;
         let codebook = match variant.codebook {
-            TurboQuantCodebook::ClippedUniform => clipped_uniform_codebook(variant.bit_width),
-            TurboQuantCodebook::NormalLloydMax => normal_lloyd_codebook(variant.bit_width),
+            TurboQuantCodebook::ClippedUniform => {
+                clipped_uniform_codebook(variant.bit_width, dimension)
+            }
+            TurboQuantCodebook::NormalLloydMax => {
+                normal_lloyd_codebook(variant.bit_width, dimension)
+            }
         };
-        let rotated_vectors = rotated_vectors(vectors);
+        let rotated_vectors = rotated_vectors(vectors, dimension);
         let (shift, scale) = match variant.calibration {
             TurboQuantCalibration::None => (Vec::new(), Vec::new()),
-            TurboQuantCalibration::Quantile => quantile_calibration(&rotated_vectors),
+            TurboQuantCalibration::Quantile => quantile_calibration(&rotated_vectors, dimension),
         };
         let inv_scale = scale.iter().map(|value| value.recip()).collect::<Vec<_>>();
         let mut scales = Vec::with_capacity(vectors.len());
         let mut codes = vec![0; vectors.len() * bytes_per_vector];
-        for (row, rotated) in rotated_vectors.chunks_exact(DIMENSION).enumerate() {
+        for (row, rotated) in rotated_vectors.chunks_exact(dimension).enumerate() {
             let mut reconstructed_inner = 0.0;
             for (dim, value) in rotated.iter().enumerate() {
                 let calibrated = calibrate_value(*value, dim, &shift, &scale);
@@ -80,6 +88,7 @@ impl TurboQuantIndex {
         }
         Self {
             variant,
+            dimension,
             bytes_per_vector,
             codebook,
             shift,
@@ -105,7 +114,8 @@ impl TurboQuantIndex {
         rows: impl IntoIterator<Item = usize>,
         k: usize,
     ) -> Vec<usize> {
-        let mut rotated_query = vec![0.0; DIMENSION];
+        assert_eq!(query.dimension(), self.dimension);
+        let mut rotated_query = vec![0.0; self.dimension];
         let _query_length = rotate_unit_vector(query, &mut rotated_query);
         let query_bias = query_bias(&rotated_query, &self.shift);
         let byte_lut = self.uses_byte_lut().then(|| self.byte_lut(&rotated_query));
@@ -197,31 +207,31 @@ impl TurboQuantIndex {
     }
 }
 
-fn rotated_vectors(vectors: &[VectorValue]) -> Vec<f32> {
-    let mut rotated_vectors = vec![0.0; vectors.len() * DIMENSION];
+fn rotated_vectors(vectors: &[VectorValue], dimension: usize) -> Vec<f32> {
+    let mut rotated_vectors = vec![0.0; vectors.len() * dimension];
     for (row, vector) in vectors.iter().enumerate() {
         rotate_unit_vector(
             vector,
-            &mut rotated_vectors[row * DIMENSION..(row + 1) * DIMENSION],
+            &mut rotated_vectors[row * dimension..(row + 1) * dimension],
         );
     }
     rotated_vectors
 }
 
-fn quantile_calibration(rotated_vectors: &[f32]) -> (Vec<f32>, Vec<f32>) {
-    let rows = rotated_vectors.len() / DIMENSION;
-    let target_low = -1.644_853_6_f32 / (DIMENSION as f32).sqrt();
+fn quantile_calibration(rotated_vectors: &[f32], dimension: usize) -> (Vec<f32>, Vec<f32>) {
+    let rows = rotated_vectors.len() / dimension;
+    let target_low = -1.644_853_6_f32 / (dimension as f32).sqrt();
     let target_high = -target_low;
     let target_span = target_high - target_low;
     let low_index = ((rows as f64) * 0.05) as usize;
     let high_index = (((rows as f64) * 0.95) as usize).min(rows.saturating_sub(1));
-    let mut shift = vec![0.0; DIMENSION];
-    let mut scale = vec![1.0; DIMENSION];
+    let mut shift = vec![0.0; dimension];
+    let mut scale = vec![1.0; dimension];
     let mut coordinate = vec![0.0; rows];
 
-    for dim in 0..DIMENSION {
+    for dim in 0..dimension {
         for row in 0..rows {
-            coordinate[row] = rotated_vectors[row * DIMENSION + dim];
+            coordinate[row] = rotated_vectors[row * dimension + dim];
         }
         coordinate.sort_unstable_by(f32::total_cmp);
         let source_low = coordinate[low_index];
@@ -277,9 +287,9 @@ fn query_bias(rotated_query: &[f32], shift: &[f32]) -> f64 {
         .sum::<f64>()
 }
 
-fn clipped_uniform_codebook(bit_width: usize) -> Vec<f32> {
+fn clipped_uniform_codebook(bit_width: usize, dimension: usize) -> Vec<f32> {
     let levels = 1_usize << bit_width;
-    let sigma = (DIMENSION as f32).sqrt().recip();
+    let sigma = (dimension as f32).sqrt().recip();
     let clip = 3.0 * sigma;
     (0..levels)
         .map(|code| {
@@ -289,9 +299,9 @@ fn clipped_uniform_codebook(bit_width: usize) -> Vec<f32> {
         .collect()
 }
 
-fn normal_lloyd_codebook(bit_width: usize) -> Vec<f32> {
+fn normal_lloyd_codebook(bit_width: usize, dimension: usize) -> Vec<f32> {
     let levels = 1_usize << bit_width;
-    let sigma = (DIMENSION as f64).sqrt().recip();
+    let sigma = (dimension as f64).sqrt().recip();
     let spread = 3.0 * sigma;
     let mut centroids = (0..levels)
         .map(|code| -spread + 2.0 * spread * code as f64 / (levels - 1) as f64)
@@ -392,6 +402,7 @@ fn nearest_code(value: f32, codebook: &[f32]) -> usize {
 }
 
 fn rotate_unit_vector(vector: &VectorValue, output: &mut [f32]) -> f32 {
+    assert_eq!(vector.dimension(), output.len());
     let length_squared = vector
         .as_slice()
         .iter()
@@ -406,12 +417,26 @@ fn rotate_unit_vector(vector: &VectorValue, output: &mut [f32]) -> f32 {
     for (dim, value) in vector.as_slice().iter().enumerate() {
         output[dim] = *value / length * random_sign(dim);
     }
-    hadamard_transform(output);
-    let scale = (DIMENSION as f32).sqrt().recip();
-    for value in output {
-        *value *= scale;
-    }
+    block_hadamard_transform(output);
     length
+}
+
+fn block_hadamard_transform(values: &mut [f32]) {
+    let mut offset = 0;
+    while offset < values.len() {
+        let block_len = largest_power_of_two_at_most(values.len() - offset);
+        let block = &mut values[offset..offset + block_len];
+        hadamard_transform(block);
+        let scale = (block_len as f32).sqrt().recip();
+        for value in block {
+            *value *= scale;
+        }
+        offset += block_len;
+    }
+}
+
+fn largest_power_of_two_at_most(value: usize) -> usize {
+    1_usize << (usize::BITS - 1 - value.leading_zeros())
 }
 
 fn hadamard_transform(values: &mut [f32]) {

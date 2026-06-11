@@ -250,7 +250,7 @@ production accelerator API.
 ## §2 selene-graph — read hot paths
 
 Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
-`vector_ivf_pq`, `vector_ivf_pressure`, `vector_mixed_workload`,
+`vector_ivf_pq`, `vector_turbo_projection`, `vector_ivf_pressure`, `vector_mixed_workload`,
 `bulk_mutation`, `concurrent_read`, `bfs`, `text_search_bm25`. The medians below predate CORE-06 (measured at the 128 B `Value`
 layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
 (`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten at
@@ -298,6 +298,9 @@ trade-offs before any production TurboVec-derived index or storage policy.
 `vector_ivf_pq` adds a coarse synthetic IVF-style partition ahead of PQ,
 scalar code-space, and binary scorers so future work can compare standalone
 full-code scans against candidate-producer plus compression layering.
+`vector_turbo_projection` sweeps the benchmark-only TurboQuant scorer across
+128/768/1536 dimensions at a fixed 10k-row scale so storage ratio and safe
+block-Hadamard rotation behavior are visible before production codec work.
 `vector_ivf_pressure` uses the
 production graph IVF index and records list-skew plus candidate-pressure
 suffixes so future IVF/PQ layering work is grounded against real index fanout
@@ -614,6 +617,14 @@ PR-local TurboQuant-style compression spot-check:
 | `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c64_d128_k10_recallbp4375_m6641-full50000` | 41.89 ms (quick) | Byte-LUT scoring preserves the calibrated 4-bit c64 recall while cutting scalar scorer latency by about 3.8x. |
 | `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c256_d128_k10_recallbp9000_m6641-full50000` | 43.38 ms (quick) | The LUT scorer keeps the useful 9000 bp medium-width row and makes calibrated TurboQuant much closer to the existing scalar-code rows. |
 | `graph_turbo_quant_candidate_recall/cluster_cos/tqplus4lut_c1024_d128_k10_recallbp10000_m6641-full50000` | 48.35 ms (quick) | First full-recall TurboQuant-style row with a fused safe lookup scorer. It is still slower than standalone PQ full-recall rows and far slower than packed binary, but the remaining gap is now scorer/layout engineering rather than raw scalar decode cost. |
+
+PR-local TurboQuant dimension-projection spot-check:
+
+| Bench | 10k | Notes |
+|---|---:|---|
+| `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d128_n10k_k10_recallbp10000_m665-full5000` | 3.7606 ms (quick) | Fixed 10k-row dimension sweep using the calibrated 4-bit byte-LUT scorer and exact cosine rerank. The 128-dim row preserves full recall with ~665 KiB compressed storage versus ~4.88 MiB full vectors. |
+| `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d768_n10k_k10_recallbp10000_m3795-full30000` | 21.382 ms (quick) | Block-Hadamard rotation handles the common 768-dim, non-power-of-two shape without dense rotation dependencies. Storage remains about 7.9x smaller than full vectors, but scan latency scales with dimension. |
+| `graph_turbo_quant_dimension_projection/cluster_cos/tqplus4lut_c1024_d1536_n10k_k10_recallbp10000_m7551-full60000` | 42.732 ms (quick) | 1536-dim storage is ~7.37 MiB compressed versus ~58.6 MiB full vectors at 10k rows. Quality stays full on the clustered fixture; the open problem is still candidate gating and scorer throughput, not storage ratio. |
 
 PR-local IVF+TurboQuant layering spot-check:
 
