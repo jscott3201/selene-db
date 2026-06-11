@@ -21,13 +21,14 @@
 //! The catalog is `Send + Sync`. Reads (`get`, `len`, `is_empty`, `contains`,
 //! `names`) acquire a `parking_lot::RwLock` read guard; mutations (`project`,
 //! `drop_projection`, and the rebuild branch of `ensure_fresh`) acquire the
-//! write guard. The [`ProjectionRef`] returned by `get` holds the read guard
-//! for its lifetime — callers MUST drop the ref before invoking any mutation,
-//! or the mutation will block on the read lock (per spec 16 §3 E07).
+//! write guard. [`ProjectionRef`] owns an `Arc` clone of the selected projection,
+//! so the catalog guard is released before algorithm execution and catalog
+//! mutations are not blocked by long-running readers (spec 16 §3 E07).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use parking_lot::{RwLock, RwLockReadGuard};
+use parking_lot::RwLock;
 use selene_graph::SeleneGraph;
 
 use crate::error::AlgorithmsError;
@@ -39,7 +40,7 @@ use crate::projection::{GraphProjection, ProjectionConfig};
 /// from the original recipe without forcing callers to re-pass it.
 #[derive(Debug)]
 struct CatalogEntry {
-    projection: GraphProjection,
+    projection: Arc<GraphProjection>,
     config: ProjectionConfig,
 }
 
@@ -90,7 +91,7 @@ impl ProjectionCatalog {
         self.entries.write().insert(
             config.name.clone(),
             CatalogEntry {
-                projection,
+                projection: Arc::new(projection),
                 config: config.clone(),
             },
         );
@@ -141,26 +142,25 @@ impl ProjectionCatalog {
         }
         let config = entry.config.clone();
         let projection = GraphProjection::build(snapshot, &config, None)?;
-        guard.insert(name.to_string(), CatalogEntry { projection, config });
+        guard.insert(
+            name.to_string(),
+            CatalogEntry {
+                projection: Arc::new(projection),
+                config,
+            },
+        );
         Ok(())
     }
 
-    /// Read-locked access to a named projection. Returns `None` when absent.
+    /// Access a named projection. Returns `None` when absent.
     ///
-    /// The returned [`ProjectionRef`] holds the catalog's read guard for its
-    /// lifetime; callers MUST drop it before invoking any mutation
-    /// (`project`, `drop_projection`, or a rebuilding `ensure_fresh`).
-    /// Mutations block on the write lock and would deadlock otherwise.
-    pub fn get<'a>(&'a self, name: &str) -> Option<ProjectionRef<'a>> {
-        let guard = self.entries.read();
-        if guard.contains_key(name) {
-            Some(ProjectionRef {
-                guard,
-                name: name.to_string(),
-            })
-        } else {
-            None
-        }
+    /// The returned [`ProjectionRef`] owns an `Arc` clone of the projection, so
+    /// the catalog read lock is released before the caller runs an algorithm or
+    /// invokes another catalog operation.
+    pub fn get(&self, name: &str) -> Option<ProjectionRef> {
+        self.entries.read().get(name).map(|entry| ProjectionRef {
+            projection: Arc::clone(&entry.projection),
+        })
     }
 
     /// Remove the named projection. Returns `true` if it existed.
@@ -194,42 +194,28 @@ impl ProjectionCatalog {
     }
 }
 
-/// Read guard providing access to a single projection in a
-/// [`ProjectionCatalog`].
-///
-/// Why: `ProjectionRef` holds the catalog's read guard pinning this entry.
-/// Cloning would break the same-lock invariant that lets us assume the entry
-/// stays alive for the ref's lifetime, so `ProjectionRef` deliberately does
-/// not implement [`Clone`].
-pub struct ProjectionRef<'a> {
-    guard: RwLockReadGuard<'a, HashMap<String, CatalogEntry>>,
-    name: String,
+/// Owned reference to a single projection in a [`ProjectionCatalog`].
+pub struct ProjectionRef {
+    projection: Arc<GraphProjection>,
 }
 
-impl std::fmt::Debug for ProjectionRef<'_> {
+impl std::fmt::Debug for ProjectionRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProjectionRef")
-            .field("name", &self.name)
+            .field("name", &self.projection.name())
             .finish_non_exhaustive()
     }
 }
 
-impl ProjectionRef<'_> {
-    /// Borrow the underlying [`GraphProjection`] from the pinned entry.
+impl ProjectionRef {
+    /// Borrow the underlying [`GraphProjection`].
     #[must_use]
     pub fn projection(&self) -> &GraphProjection {
-        &self
-            .guard
-            .get(&self.name)
-            .expect(
-                "ProjectionRef holds the same read guard that pinned this entry at hand-out time; \
-                 drop_projection and project require the write lock and would block on this read.",
-            )
-            .projection
+        &self.projection
     }
 }
 
-impl std::ops::Deref for ProjectionRef<'_> {
+impl std::ops::Deref for ProjectionRef {
     type Target = GraphProjection;
     fn deref(&self) -> &Self::Target {
         self.projection()
