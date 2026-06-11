@@ -341,6 +341,24 @@ here.
 | `graph_ann_recall_validation/cluster_cos_hnsw_d128_k10_ef64...` | 159.03 µs | 149.27 µs | Larger default-HNSW `ef_search` improves 5.1%. |
 | `graph_ann_recall_validation/cluster_cos_hnsw_m24ef64_d128_k10_ef64...` | 193.12 µs | 178.96 µs | Tuned-HNSW high-ef guard improves 4.3%, so ANN traversal benefits despite the conservative one-off cosine thresholds. |
 
+PR-local B11 HNSW visited-buffer A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench single_graph --filter graph_ann_recall_validation/cluster_cos_hnsw --vector-scales 10000 --save-baseline b11_pre`;
+`scripts/run-benches.sh --profile full --bench vector_index_rebuild --filter graph_vector_index_rebuild/hnsw --vector-scales 10000 --save-baseline b11_pre`;
+rerun each with `--baseline b11_pre` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_ann_recall_validation/cluster_cos_hnsw_d128_k10_ef10...` | 58.13 µs | 54.94 µs | Replacing the per-layer `FxHashSet` with an epoch-marked dense buffer improves default-HNSW ef10 search by 4.6% with the same 9875 bp recall suffix. |
+| `graph_ann_recall_validation/cluster_cos_hnsw_d128_k10_ef64...` | 148.95 µs | 118.12 µs | Higher-width default-HNSW search improves 23.0%, showing the visited buffer matters most when layer walks admit more candidates. |
+| `graph_ann_recall_validation/cluster_cos_hnsw_m24ef64_d128_k10_ef10...` | 70.41 µs | 68.30 µs | Tuned-HNSW ef10 search improves 8.0% with the same 10000 bp recall suffix. |
+| `graph_ann_recall_validation/cluster_cos_hnsw_m24ef64_d128_k10_ef64...` | 176.97 µs | 147.82 µs | Tuned-HNSW ef64 search improves 19.1%; this is the broadest query-side traversal row in the B11 guard set. |
+| `graph_vector_index_rebuild/hnsw_l2_dim128_default` | 1.8897 s | 1.8745 s | Construction-side rebuild is effectively noise-flat; the layer-walk scratch change does not regress the 10k L2 default row. |
+| `graph_vector_index_rebuild/hnsw_l2_dim128_m24ef64` | 3.2868 s | 3.2481 s | Tuned L2 rebuild remains within Criterion's noise threshold. |
+| `graph_vector_index_rebuild/hnsw_cos_dim128_default` | 1.5623 s | 1.5330 s | Default cosine rebuild improves 1.9%, a small but statistically significant construction-side gain. |
+| `graph_vector_index_rebuild/hnsw_cos_dim128_m24ef64` | 2.7218 s | 2.7141 s | Tuned cosine rebuild is noise-flat. |
+
 PR-local quick vector exact-scan Rayon A/B:
 
 Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_exact_vector_scan --vector-scales 50000`

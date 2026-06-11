@@ -479,8 +479,9 @@ impl HnswVectorIndex {
         let ef = ef.max(1);
         let entry_distance = distance(entry)?;
         let search_width = ef.min(self.nodes.len()).saturating_add(1);
-        scratch.reset_layer(search_width);
-        scratch.visited.insert(entry);
+        scratch.reset_layer(self.nodes.len(), search_width);
+        let entry_was_new = scratch.visited.visit(entry);
+        debug_assert!(entry_was_new);
         scratch
             .candidates
             .push(MinCandidate::new(entry, entry_distance));
@@ -494,7 +495,7 @@ impl HnswVectorIndex {
                 break;
             }
             for neighbor in self.links_at(current.id, layer) {
-                if !scratch.visited.insert(*neighbor) {
+                if !scratch.visited.visit(*neighbor) {
                     continue;
                 }
                 let neighbor_distance = distance(*neighbor)?;
