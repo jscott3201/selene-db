@@ -16,7 +16,7 @@ use super::scan_resolve::{
     IndexKeyOutcome, ResolvedBounds, range_satisfiable_runtime, resolve_bitmap_union_key_values,
     resolve_bounds, resolve_index_key,
 };
-use super::{EvalCtx, evaluator, pattern, value_compare};
+use super::{EvalCtx, evaluator, pattern, scan_seed, value_compare};
 
 /// Execute one `JoinTree::Scan` against the transaction snapshot.
 pub(crate) fn scan_pattern(
@@ -33,6 +33,32 @@ pub(crate) fn scan_pattern(
 }
 
 pub(crate) fn scan_entities(
+    scan: &NodeOrEdgeScan,
+    pattern: &PatternPlan,
+    schema: &BindingTableSchema,
+    seed: Option<&Binding>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+    match seed {
+        Some(seed) => scan_entities_with_seed(scan, pattern, schema, seed, ctx),
+        None => collect_scan_entities(scan, pattern, schema, None, ctx),
+    }
+}
+
+fn scan_entities_with_seed(
+    scan: &NodeOrEdgeScan,
+    pattern: &PatternPlan,
+    schema: &BindingTableSchema,
+    seed: &Binding,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+    if let Some(rows) = scan_seed::try_seeded_scan(scan, pattern, schema, seed, ctx)? {
+        return Ok(rows);
+    }
+    collect_scan_entities(scan, pattern, schema, Some(seed), ctx)
+}
+
+fn collect_scan_entities(
     scan: &NodeOrEdgeScan,
     pattern: &PatternPlan,
     schema: &BindingTableSchema,
@@ -57,17 +83,21 @@ pub(crate) fn scan_entities(
     Ok(rows)
 }
 
-fn binding_for_scan(
+#[inline]
+pub(super) fn binding_for_scan(
     scan: &NodeOrEdgeScan,
     pattern: &PatternPlan,
     schema: &BindingTableSchema,
     seed: Option<&Binding>,
     entity: Value,
 ) -> Result<Option<Binding>, ExecutorError> {
-    let mut values = seed
-        .map(|row| row.values().to_vec())
-        .unwrap_or_else(|| vec![Value::Null; schema.columns.len()]);
-    values.resize(schema.columns.len(), Value::Null);
+    let mut values = if let Some(row) = seed {
+        let mut values = row.values().to_vec();
+        values.resize(schema.columns.len(), Value::Null);
+        values
+    } else {
+        vec![Value::Null; schema.columns.len()]
+    };
     if !pattern::set_binding_value(&mut values, pattern, schema, scan.binding, entity.clone())? {
         return Ok(None);
     }
@@ -250,13 +280,7 @@ fn union_property_eq(
         return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(
-                    scan.kind,
-                    *row,
-                    property.clone(),
-                    &resolved_keys,
-                    ctx,
-                )
+                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
             })
             .collect());
     }
@@ -264,13 +288,7 @@ fn union_property_eq(
         return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(
-                    scan.kind,
-                    *row,
-                    property.clone(),
-                    &resolved_keys,
-                    ctx,
-                )
+                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
             })
             .collect());
     };
@@ -292,13 +310,7 @@ fn union_property_eq(
         Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(
-                    scan.kind,
-                    *row,
-                    property.clone(),
-                    &resolved_keys,
-                    ctx,
-                )
+                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
             })
             .collect())
     }
@@ -364,7 +376,7 @@ fn composite_lookup_rows(
 /// Returns `Ok(None)` when any component resolved to `EmptyResult` (e.g. a
 /// NULL parameter binding). Returns `Ok(Some(values))` with `values` aligned
 /// to `properties` order.
-fn resolve_composite_values(
+pub(super) fn resolve_composite_values(
     properties: &[(DbString, IndexKind)],
     keys: &[(DbString, IndexKey)],
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -394,16 +406,24 @@ fn linear_rows_filtered_by_resolved_composite(
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
-        .filter(|row| {
-            properties
-                .iter()
-                .zip(values.iter())
-                .all(|((property, _), expected)| {
-                    property_value(scan.kind, *row, property.clone(), ctx)
-                        .is_some_and(|value| value_eq_non_null(value, expected))
-                })
-        })
+        .filter(|row| row_matches_resolved_composite(scan.kind, *row, properties, values, ctx))
         .collect()
+}
+
+pub(super) fn row_matches_resolved_composite(
+    kind: ScanKind,
+    row: u32,
+    properties: &[(DbString, IndexKind)],
+    values: &[Value],
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> bool {
+    properties
+        .iter()
+        .zip(values.iter())
+        .all(|((property, _), expected)| {
+            property_value(kind, row, property, ctx)
+                .is_some_and(|value| value_eq_non_null(value, expected))
+        })
 }
 
 fn linear_rows_filtered_by_resolved_bounds(
@@ -414,13 +434,22 @@ fn linear_rows_filtered_by_resolved_bounds(
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
-        .filter(|row| {
-            property_value(scan.kind, *row, property.clone(), ctx)
-                .is_some_and(|value| value_matches_resolved_bounds(value, resolved))
-        })
+        .filter(|row| row_matches_resolved_bounds(scan.kind, *row, &property, resolved, ctx))
         .collect()
 }
 
+pub(super) fn row_matches_resolved_bounds(
+    kind: ScanKind,
+    row: u32,
+    property: &DbString,
+    resolved: &ResolvedBounds,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> bool {
+    property_value(kind, row, property, ctx)
+        .is_some_and(|value| value_matches_resolved_bounds(value, resolved))
+}
+
+#[inline]
 pub(crate) fn predicates_pass(
     scan: &NodeOrEdgeScan,
     pattern: &PatternPlan,
@@ -500,7 +529,12 @@ pub(crate) fn value_for_binding(
     binding.get(index).cloned()
 }
 
-fn label_matches_scan(scan: &NodeOrEdgeScan, row: u32, ctx: &EvalCtx<'_, '_, '_, '_>) -> bool {
+#[inline]
+pub(super) fn label_matches_scan(
+    scan: &NodeOrEdgeScan,
+    row: u32,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> bool {
     let Some(label_expr) = &scan.label_predicate else {
         return true;
     };
@@ -556,6 +590,7 @@ fn single_label(label: &Option<LabelExpr>) -> Option<DbString> {
     }
 }
 
+#[inline]
 fn entity_value(kind: ScanKind, row: u32, ctx: &EvalCtx<'_, '_, '_, '_>) -> Option<Value> {
     let snapshot = ctx.tx.snapshot();
     match kind {
@@ -568,10 +603,10 @@ fn entity_value(kind: ScanKind, row: u32, ctx: &EvalCtx<'_, '_, '_, '_>) -> Opti
     }
 }
 
-fn property_matches_any_resolved(
+pub(super) fn property_matches_any_resolved(
     kind: ScanKind,
     row: u32,
-    property: DbString,
+    property: &DbString,
     values: &[Value],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> bool {
@@ -585,7 +620,7 @@ fn property_matches_any_resolved(
 fn property_value<'a>(
     kind: ScanKind,
     row: u32,
-    property: DbString,
+    property: &DbString,
     ctx: &'a EvalCtx<'_, '_, '_, '_>,
 ) -> Option<&'a Value> {
     let snapshot = ctx.tx.snapshot();
@@ -593,11 +628,11 @@ fn property_value<'a>(
         ScanKind::Node => snapshot
             .node_id_for_row(RowIndex::new(row))
             .and_then(|id| snapshot.node_properties(id))
-            .and_then(|properties| properties.get(&property)),
+            .and_then(|properties| properties.get(property)),
         ScanKind::Edge => snapshot
             .edge_id_for_row(RowIndex::new(row))
             .and_then(|id| snapshot.edge_properties(id))
-            .and_then(|properties| properties.get(&property)),
+            .and_then(|properties| properties.get(property)),
     }
 }
 

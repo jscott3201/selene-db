@@ -947,30 +947,31 @@ PR-local quick vector procedure baseline:
 | `procedure_vector_ann_expanded/shared_cache_ann_state_expanded_intersection_2root64_dim128_k10_1000` | 15.20 µs (quick) | Cached `CALL selene.vector_search_candidate_state_expanded_ann` using HNSW roots, graph expansion, maintained-state intersection, and exact rerank. |
 | `procedure_vector_ann_expanded/shared_cache_ann_state_expanded_intersection_repeated_8x2root64_dim128_k10_1000` | 127.98 µs (quick) | Eight separate cached ANN-root graph-expansion calls intersected with maintained state before exact rerank. |
 
-### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05)
+### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
 
 The only read-query **execution** bench in the suite (`expression_eval` is
 scalar-only; `write_e2e` is write-only). A correlated subquery is re-evaluated
 per outer row and its pattern schema is rebuilt per row (`schema_for_pattern`); a
 memoization win (GQLRT-05) would otherwise be invisible. In-memory graph (no WAL)
-so the per-row schema rebuild dominates, not durability. Uses a **small scale
+so the timed body is read execution, not durability. Uses a **small scale
 envelope** (2.5k/5k/10k fixture rows, ~scale/3 `Person` rows) — correlated
-re-evaluation is O(rows × subquery), so the cost grows super-linearly and 50k/100k
-would be a multi-minute single arm.
+re-evaluation is O(rows × subquery), so the cost grows super-linearly when the
+inner scan cannot reuse the already-bound outer entity.
 
-_Refreshed post-GQLRT-05 (an A/B of development HEAD vs the feature branch on this
-M5, profile `full`), so these run ahead of the `3a864ac` header until the next
-clean re-sweep. The per-statement target-schema memo improved every arm: exists
-−1.8 / −6.8 / −4.7 %, count −3.7 / −5.8 / −0.4 % at 2.5k / 5k / 10k. The 2.5k–5k
-arms are clearly significant (p<0.05); the 10k arms are noisier (the 10k/count
-−0.4% is within run-to-run noise). A modest win — the per-row `schema_for_pattern`
-rebuild is a real but minority fraction of subquery cost, dominated by the inner
-MATCH._
+_Refreshed 2026-06-11 for B3 (development post-#705 vs the feature branch on this
+M5, profile `full`, mimalloc), so these run ahead of the `3a864ac` header until
+the next clean re-sweep. Seed-bound scans short-circuit the inner scan when the
+scan binding is already a live `NodeRef`/`EdgeRef` in the outer row, while still
+reapplying liveness, labels, value constraints, binding equality, and residual
+predicates. Development baselines were: exists 58.951 ms / 237.45 ms / 932.70 ms
+and count 59.387 ms / 235.91 ms / 933.92 ms at 2.5k / 5k / 10k. The B3 medians
+below are ~90x / 190x / 339x faster for EXISTS and ~85x / 179x / 349x faster for
+COUNT._
 
 | Bench | 2.5k | 5k | 10k | Notes |
 |---|---:|---:|---:|---|
-| `gql_correlated_subquery/exists` | 62.2 ms | 252.9 ms | 1.008 s | `FILTER EXISTS { (p)-[:KNOWS]->(:Person) }`; schema memo (GQLRT-05). |
-| `gql_correlated_subquery/count` | 62.3 ms | 253.3 ms | 1.005 s | `COUNT { (p)-[:KNOWS]->(:Person) }` projection. |
+| `gql_correlated_subquery/exists` | 654 µs | 1.251 ms | 2.752 ms | `FILTER EXISTS { (p)-[:KNOWS]->(:Person) }`; B3 seeded inner scan. |
+| `gql_correlated_subquery/count` | 698 µs | 1.318 ms | 2.676 ms | `COUNT { (p)-[:KNOWS]->(:Person) }`; B3 seeded inner scan. |
 
 ### §5b `write_e2e` — GQL write end-to-end
 
@@ -1024,11 +1025,15 @@ pure execution + index access — not parse/plan/optimize, not durability. One
 session. The join targets `Person→Sensor→Device` deliberately: every fixture
 `KNOWS` offset is ≡1 mod 3, so a `Person→Person` join would be empty.
 
-_Measured 2026-06-10 on development post-#701 (profile `full`, mimalloc), so
-these run ahead of the `3a864ac` header until the next clean re-sweep._
+_Measured 2026-06-11 on the B3 feature branch (profile `full`, mimalloc), so
+these run ahead of the `3a864ac` header until the next clean re-sweep. The
+same-session development guard stayed within noise for ordinary read rows; the
+50k hashjoin sample printed wide variance (`p = 0.14`, no statistically
+significant change), and the seeded-scan branch does not show a persistent
+no-seed scan tax._
 
 Two baseline signals worth reading directly from the table: warm
-`match_limit10` is **scale-linear** (765 µs → 12.50 ms for ten output rows) —
+`match_limit10` is **scale-linear** (784 µs → 13.39 ms for ten output rows) —
 the scan does not short-circuit on LIMIT, which is the B19 baseline this row
 exists to expose; and `match_limit10/cold` ≈ warm at these scales because the
 ~30–45 µs fixed compile cost (clearly visible at the 1k quick scale: 111 µs
@@ -1036,13 +1041,13 @@ cold vs 81 µs warm) amortizes under the linear scan.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `read_pipeline/match_filter_project` | 634 µs | 3.41 ms | 9.01 ms | Warm label scan + `n.age >= 40` filter + projection (age-indexed range path). |
-| `read_pipeline/match_expand_hashjoin` | 14.75 ms | 96.91 ms | 205.5 ms | Two-leg `(:Person)-[:KNOWS]->(s:Sensor), (s)-[:KNOWS]->(d:Device)`; hash-join build/probe. |
-| `read_pipeline/order_by_topk` | 1.35 ms | 7.72 ms | 15.67 ms | Full Person scan → `ORDER BY n.score DESC LIMIT 10` top-K (`score` non-indexed). |
-| `read_pipeline/group_by_highcard` | 1.09 ms | 5.24 ms | 10.33 ms | `GROUP BY n.score` + `count(*)`, ~1024 groups; hash-aggregate build (B20 target). |
-| `read_pipeline/distinct_dedup` | 864 µs | 5.68 ms | 12.81 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
-| `read_pipeline/match_limit10` | 765 µs | 5.44 ms | 12.50 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
-| `read_pipeline/match_limit10/cold` | 809 µs | 5.58 ms | 12.59 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
+| `read_pipeline/match_filter_project` | 646 µs | 3.53 ms | 9.13 ms | Warm label scan + `n.age >= 40` filter + projection (age-indexed range path). |
+| `read_pipeline/match_expand_hashjoin` | 14.90 ms | 105.62 ms | 219.10 ms | Two-leg `(:Person)-[:KNOWS]->(s:Sensor), (s)-[:KNOWS]->(d:Device)`; hash-join build/probe. |
+| `read_pipeline/order_by_topk` | 1.40 ms | 7.82 ms | 16.36 ms | Full Person scan → `ORDER BY n.score DESC LIMIT 10` top-K (`score` non-indexed). |
+| `read_pipeline/group_by_highcard` | 1.04 ms | 5.29 ms | 11.21 ms | `GROUP BY n.score` + `count(*)`, ~1024 groups; hash-aggregate build (B20 target). |
+| `read_pipeline/distinct_dedup` | 877 µs | 5.93 ms | 13.61 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
+| `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
+| `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
 
 ## §6 selene-algorithms
 
@@ -2019,6 +2024,7 @@ confirm the win and guard the surrounding rows against regression.
 | PERSIST-04 rejected | WAL vectored write regressed append on Darwin/macOS | `persist_wal_body_size_no_fsync` (large-body arms) | measured-rejected 2026-06-01; keep contiguous `Vec` + `write_all` |
 | ALGO-01/02/05 ✓ | CSR dense-`u32` cache on `ProjNeighbor` | `algo/projection_build` + `…_neighbor_iter` + algo medians | **pagerank −15..31% · louvain −23..26% · apsp −9..52% · triangle −6..11% · iter −4..6%**; build +4–7% one-time (24→32 B/neighbor) |
 | GQLRT-05 ✓ | Memoize correlated-subquery target schema (per statement, by expr id) | `gql_correlated_subquery/{exists,count}` | **−2 to −7%** — memo elides the per-row `schema_for_pattern` walk |
+| B3 ✓ | Short-circuit scans already bound by the correlated outer row | `gql_correlated_subquery/{exists,count}` + `read_pipeline` guard | **~339x EXISTS / ~349x COUNT @10k**; ordinary read-pipeline rows remain noise-scale |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
 | D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 69 ms / dec 216 ms @100k |
 
