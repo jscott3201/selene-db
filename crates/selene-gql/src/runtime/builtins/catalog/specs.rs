@@ -22,7 +22,7 @@ pub(in crate::runtime) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 45] = [
+pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 46] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -292,5 +292,11 @@ pub(in crate::runtime) const BUILTIN_SPECS: [BuiltinSpec; 45] = [
         description: "Batched BM25 scoring for maintained candidate state composed with graph-expanded roots.",
         since_version: "1.2.0",
         kind: BuiltinKind::TextScoreCandidateStateExpandedBatch,
+    },
+    BuiltinSpec {
+        name: &["selene", "reciprocal_rank_fusion"],
+        description: "Fuse ranked node lists with Reciprocal Rank Fusion.",
+        since_version: "1.2.0",
+        kind: BuiltinKind::ReciprocalRankFusion,
     },
 ];

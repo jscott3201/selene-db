@@ -11,13 +11,13 @@ fn name(segments: &[&str]) -> Vec<DbString> {
 }
 
 #[test]
-fn registers_all_sixty_four_procedures() {
+fn registers_all_sixty_five_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        64,
-        "expected 19 algo procedures + 45 platform built-ins"
+        65,
+        "expected 19 algo procedures + 46 platform built-ins"
     );
 }
 
@@ -88,7 +88,7 @@ fn pagerank_signature_has_optional_orientation_personalization_and_result_filter
 }
 
 #[test]
-fn iter_handles_yields_all_forty_five_platform_builtins() {
+fn iter_handles_yields_all_forty_six_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -144,6 +144,7 @@ fn iter_handles_yields_all_forty_five_platform_builtins() {
         ["selene", "text_score_nodes"],
         ["selene", "text_score_nodes_batch"],
         ["selene", "text_score_candidate_state_expanded_batch"],
+        ["selene", "reciprocal_rank_fusion"],
     ] {
         let expected: Vec<String> = expected.iter().map(|s| (*s).to_owned()).collect();
         assert!(
@@ -151,6 +152,59 @@ fn iter_handles_yields_all_forty_five_platform_builtins() {
             "SHOW PROCEDURES must list {expected:?}"
         );
     }
+}
+
+#[test]
+fn reciprocal_rank_fusion_signature_has_optional_constant_and_weights() {
+    let registry = BuiltinProcedureRegistry::new();
+    let metadata = registry
+        .lookup(&name(&["selene", "reciprocal_rank_fusion"]))
+        .expect("reciprocal_rank_fusion resolves");
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 2);
+    assert_eq!(arity.maximum, 4);
+    assert_eq!(metadata.tier, ProcedureTier::Graph);
+    assert_eq!(metadata.mutability, ProcedureMutability::Read);
+
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters.len(), 4);
+    assert_eq!(parameters[0].name.as_str(), "rankings");
+    assert_eq!(
+        parameters[0].ty,
+        crate::GqlType::List(Box::new(crate::GqlType::List(Box::new(
+            crate::GqlType::NodeRef
+        ))))
+    );
+    assert_eq!(parameters[1].name.as_str(), "k");
+    assert_eq!(parameters[1].ty, crate::GqlType::Integer);
+    assert_eq!(parameters[2].name.as_str(), "rank_constant");
+    assert_eq!(parameters[2].ty, crate::GqlType::Float64);
+    assert_eq!(parameters[2].default_doc, Some("60"));
+    assert_eq!(
+        parameters[2].default,
+        Some(crate::ProcedureDefaultValue::Integer(60))
+    );
+    assert_eq!(parameters[3].name.as_str(), "weights");
+    assert_eq!(
+        parameters[3].ty,
+        crate::GqlType::List(Box::new(crate::GqlType::Float))
+    );
+    assert!(parameters[3].nullable);
+    assert_eq!(
+        parameters[3].default_doc,
+        Some("NULL (all rankings weight 1.0)")
+    );
+    assert_eq!(
+        parameters[3].default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].name.as_str(), "node_id");
+    assert_eq!(columns[0].ty, crate::GqlType::NodeRef);
+    assert_eq!(columns[1].name.as_str(), "score");
+    assert_eq!(columns[1].ty, crate::GqlType::Float64);
 }
 
 #[test]
