@@ -1,4 +1,5 @@
 use super::*;
+use roaring::RoaringBitmap;
 
 fn vector(values: &[f32]) -> VectorValue {
     VectorValue::new(values.to_vec()).unwrap()
@@ -194,6 +195,118 @@ fn turbo_quant_fast_scan_lut_rejects_oversized_accumulators() {
     let rotated_query = vec![0.0; index.dimension];
 
     assert!(index.fast_scan_lut(&rotated_query).is_none());
+}
+
+#[test]
+fn turbo_quant_candidates_in_rows_match_sparse_live_map_reference() {
+    let mut index = TurboQuantVectorIndex::new(4).unwrap();
+    for row in 0..80 {
+        index
+            .insert(
+                row,
+                &vector(&[
+                    1.0 + row as f32 * 0.01,
+                    (row % 5) as f32 * 0.1,
+                    (row % 7) as f32 * 0.05,
+                    0.25,
+                ]),
+            )
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    index.remove(47);
+
+    let allowed = [5, 13, 24, 47, 79, 4_000]
+        .into_iter()
+        .collect::<RoaringBitmap>();
+    let query = vector(&[1.0, 0.2, 0.1, 0.25]);
+    let rotated_query = rotated_unit_vector(&query, index.dimension);
+    let query_bias = query_bias(&rotated_query, &index.shift);
+    let byte_lut = index.byte_lut(&rotated_query);
+
+    let filtered = index
+        .candidates_in_rows(&query, 4, 8, &allowed)
+        .unwrap()
+        .into_iter()
+        .map(|hit| hit.row)
+        .collect::<Vec<_>>();
+    let reference = index
+        .live_map_candidates_in_rows(&byte_lut, query_bias, 4, &allowed)
+        .into_hits()
+        .into_iter()
+        .map(|hit| hit.key.1)
+        .collect::<Vec<_>>();
+
+    assert_eq!(filtered, reference);
+    assert!(!filtered.contains(&47));
+    assert!(filtered.iter().all(|row| allowed.contains(*row)));
+}
+
+#[test]
+fn turbo_quant_filtered_fast_scan_respects_allowed_rows() {
+    let mut index = TurboQuantVectorIndex::new(4).unwrap();
+    for row in 0..80 {
+        index
+            .insert(
+                row,
+                &vector(&[
+                    1.0 + row as f32 * 0.01,
+                    (row % 5) as f32 * 0.1,
+                    (row % 7) as f32 * 0.05,
+                    0.25,
+                ]),
+            )
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    index.remove(3);
+    index.remove(33);
+
+    let allowed = (0..48).collect::<RoaringBitmap>();
+    let query = vector(&[1.0, 0.2, 0.1, 0.25]);
+    let rotated_query = rotated_unit_vector(&query, index.dimension);
+    let query_bias = query_bias(&rotated_query, &index.shift);
+    let byte_lut = index.byte_lut(&rotated_query);
+
+    let fast_scan = index
+        .slot_order_candidates_fast_scan_in_rows(&rotated_query, query_bias, 16, &allowed)
+        .expect("4-dimensional TurboQuant scan supports FastScan")
+        .into_hits();
+    let reference = index
+        .slot_order_candidates_in_rows(&byte_lut, query_bias, 16, &allowed)
+        .into_hits();
+
+    assert_eq!(fast_scan.len(), reference.len());
+    assert_eq!(fast_scan[0].key.1, reference[0].key.1);
+    assert!(fast_scan.iter().all(|hit| hit.distance.is_finite()));
+    assert!(fast_scan.iter().all(|hit| allowed.contains(hit.key.1)));
+}
+
+#[test]
+fn turbo_quant_candidates_in_all_rows_match_unfiltered_candidates() {
+    let mut index = TurboQuantVectorIndex::new(4).unwrap();
+    for row in 0..70 {
+        index
+            .insert(
+                row,
+                &vector(&[
+                    1.0 + row as f32 * 0.01,
+                    (row % 5) as f32 * 0.1,
+                    (row % 7) as f32 * 0.05,
+                    0.25,
+                ]),
+            )
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    index.remove(9);
+
+    let allowed = (0..70).collect::<RoaringBitmap>();
+    let query = vector(&[1.0, 0.2, 0.1, 0.25]);
+    let filtered = index.candidates_in_rows(&query, 4, 8, &allowed).unwrap();
+    let unfiltered = index.candidates(&query, 4, 8).unwrap();
+
+    assert_eq!(filtered, unfiltered);
 }
 
 #[test]

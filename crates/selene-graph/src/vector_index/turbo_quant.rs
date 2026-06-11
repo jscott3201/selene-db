@@ -23,6 +23,8 @@ use crate::parallel_scan::should_parallelize_scan;
 mod batch;
 #[path = "turbo_quant/fast_scan.rs"]
 mod fast_scan;
+#[path = "turbo_quant/filter.rs"]
+mod filter;
 
 const TURBO_QUANT_BITS: u8 = 4;
 const SLOT_ORDER_SCAN_STALE_RATIO: usize = 2;

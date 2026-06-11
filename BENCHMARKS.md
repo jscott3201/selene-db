@@ -670,6 +670,16 @@ PR-local production TurboQuant batch dimension-projection spot-check:
 | `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d768_q8_n10k_k10_recallbp10000_m4181-full30000` | 4.5446 ms (quick) | The high-dimensional fused FastScan path shares each block-byte load across query accumulators, improving the prior per-query Rayon row from 5.3761 ms while preserving exact rerank and full recall. |
 | `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c1024_d1536_q8_n10k_k10_recallbp10000_m7946-full60000` | 7.1180 ms (quick) | The 1536-dim batch row now uses the fused FastScan accumulator and improves from 7.8625 ms with full recall. Dimensions outside the bounded accumulator envelope still avoid batch fusion. |
 
+PR-local production filtered TurboQuant candidate-set spot-check:
+
+Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_dimension_projection`.
+
+| Bench | 10k x 8 queries over 4,243 candidates/query | Notes |
+|---|---:|---|
+| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c1024_d128_q8_cand4243_k10_recallbp10000_m1043-full5000` | 3.0005 ms (quick) | Query-specific candidate sets use the row-filtered TurboQuant path inspired by Turbovec-style allowlist filtering, then exact-rerank primary vectors. The row preserves full recall and modestly improves the same per-query production path, but the fused full-batch path remains faster when all queries can scan the same index together. |
+| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c1024_d768_q8_cand4243_k10_recallbp10000_m4181-full30000` | 5.0961 ms (quick) | The filtered FastScan path intersects caller candidates with registered index rows before compressed scoring, avoiding wrong-label/state spillover while preserving exact final distances. This is a useful primitive for graph/state-gated retrieval, not a replacement for batch fusion. |
+| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c1024_d1536_q8_cand4243_k10_recallbp10000_m7946-full60000` | 7.6167 ms (quick) | At 1536 dimensions, the candidate-filtered path stays below the prior per-query production row while keeping full recall. The next optimization target is filtered batch fusion when multiple query-specific candidate sets are available. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |

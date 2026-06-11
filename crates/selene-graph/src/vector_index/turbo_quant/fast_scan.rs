@@ -1,6 +1,7 @@
 use std::array;
 
 use rayon::prelude::*;
+use roaring::RoaringBitmap;
 use selene_core::{TURBO_QUANT_BLOCK_ROWS, VectorTopK, VectorValue};
 use wide::{i16x8, u8x16, u16x16};
 
@@ -29,6 +30,32 @@ impl TurboQuantVectorIndex {
             &lut,
             query_bias,
             candidate_limit,
+        ))
+    }
+
+    pub(super) fn slot_order_candidates_fast_scan_in_rows(
+        &self,
+        rotated_query: &[f32],
+        query_bias: f64,
+        candidate_limit: usize,
+        allowed_rows: &RoaringBitmap,
+    ) -> Option<VectorTopK<(usize, u32)>> {
+        let lut = self.fast_scan_lut(rotated_query)?;
+        if self.should_parallelize_slot_scan(candidate_limit) {
+            return Some(self.slot_order_candidates_fast_scan_in_rows_parallel(
+                &lut,
+                query_bias,
+                candidate_limit,
+                allowed_rows,
+            ));
+        }
+        Some(self.slot_order_candidates_fast_scan_in_rows_blocks(
+            0,
+            self.codes.block_count(),
+            &lut,
+            query_bias,
+            candidate_limit,
+            allowed_rows,
         ))
     }
 
@@ -163,6 +190,33 @@ impl TurboQuantVectorIndex {
             .reduce(|| VectorTopK::new(candidate_limit), merge_candidate_top_k)
     }
 
+    fn slot_order_candidates_fast_scan_in_rows_parallel(
+        &self,
+        lut: &FastScanQueryLut,
+        query_bias: f64,
+        candidate_limit: usize,
+        allowed_rows: &RoaringBitmap,
+    ) -> VectorTopK<(usize, u32)> {
+        let chunk_blocks =
+            super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
+        (0..self.codes.block_count())
+            .into_par_iter()
+            .chunks(chunk_blocks.max(1))
+            .map(|blocks| {
+                let start = blocks.first().copied().unwrap_or_default();
+                let end = blocks.last().copied().map_or(start, |block| block + 1);
+                self.slot_order_candidates_fast_scan_in_rows_blocks(
+                    start,
+                    end,
+                    lut,
+                    query_bias,
+                    candidate_limit,
+                    allowed_rows,
+                )
+            })
+            .reduce(|| VectorTopK::new(candidate_limit), merge_candidate_top_k)
+    }
+
     fn slot_order_candidates_fast_scan_blocks(
         &self,
         start_block: usize,
@@ -194,6 +248,44 @@ impl TurboQuantVectorIndex {
                 let dot = query_bias + f64::from(centered) * lut.dequant;
                 let distance = -(dot * f64::from(self.row_scales[slot]));
                 candidates.push_distance((slot, entry.row), distance);
+            }
+        }
+        candidates
+    }
+
+    fn slot_order_candidates_fast_scan_in_rows_blocks(
+        &self,
+        start_block: usize,
+        end_block: usize,
+        lut: &FastScanQueryLut,
+        query_bias: f64,
+        candidate_limit: usize,
+        allowed_rows: &RoaringBitmap,
+    ) -> VectorTopK<(usize, u32)> {
+        let mut candidates = VectorTopK::new(candidate_limit);
+        let mut accumulators = [u16x16::splat(0), u16x16::splat(0)];
+        for block in start_block..end_block {
+            let block_len = self.codes.block_len(block);
+            if !self.block_has_allowed_rows(block, block_len, allowed_rows) {
+                continue;
+            }
+            accumulators.fill(u16x16::splat(0));
+            for (byte, byte_lut) in lut.bytes.iter().enumerate() {
+                let codes = self.codes.block_byte(block, byte);
+                accumulate_half(&mut accumulators[0], load_lanes(&codes[..16]), byte_lut);
+                accumulate_half(&mut accumulators[1], load_lanes(&codes[16..]), byte_lut);
+            }
+            let lanes = [accumulators[0].to_array(), accumulators[1].to_array()];
+            let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
+            for lane in 0..block_len {
+                let slot = base_slot + lane;
+                let Some(row) = self.allowed_live_row_at_slot(slot, allowed_rows) else {
+                    continue;
+                };
+                let centered = i32::from(lanes[lane / 16][lane % 16]) - lut.zero_sum;
+                let dot = query_bias + f64::from(centered) * lut.dequant;
+                let distance = -(dot * f64::from(self.row_scales[slot]));
+                candidates.push_distance((slot, row), distance);
             }
         }
         candidates
