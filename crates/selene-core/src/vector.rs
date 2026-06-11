@@ -8,9 +8,15 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use serde::{Deserialize, Serialize};
-use wide::f64x4;
 
 use crate::{CoreError, CoreResult, VectorValue};
+
+mod kernels;
+
+use kernels::{
+    cosine_distance, cosine_distance_with_lhs_norm, cosine_distance_with_norms, dot,
+    squared_euclidean, validate_precomputed_squared_norm,
+};
 
 /// Distance metric for native dense vectors.
 ///
@@ -389,137 +395,6 @@ fn check_same_dimension(lhs: usize, rhs: usize) -> CoreResult<()> {
     }
 }
 
-fn squared_euclidean(lhs: &[f32], rhs: &[f32]) -> f64 {
-    let mut chunks_lhs = lhs.chunks_exact(4);
-    let mut chunks_rhs = rhs.chunks_exact(4);
-    let mut distance = f64x4::ZERO;
-    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x4_from_f32(lhs);
-        let rhs = f64x4_from_f32(rhs);
-        let delta = lhs - rhs;
-        distance += delta * delta;
-    }
-    let mut distance = distance.reduce_add();
-    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
-        let delta = f64::from(lhs) - f64::from(rhs);
-        distance += delta * delta;
-    }
-    distance
-}
-
-fn cosine_distance(lhs: &[f32], rhs: &[f32]) -> CoreResult<f64> {
-    let (lhs_norm, rhs_norm, dot) = cosine_components(lhs, rhs);
-    if lhs_norm == 0.0 {
-        return Err(CoreError::VectorZeroNorm { side: "lhs" });
-    }
-    cosine_distance_with_components(lhs_norm, rhs_norm, dot)
-}
-
-fn cosine_distance_with_lhs_norm(lhs: &[f32], rhs: &[f32], lhs_norm: f64) -> CoreResult<f64> {
-    let (rhs_norm, dot) = norm_and_dot(lhs, rhs);
-    cosine_distance_with_components(lhs_norm, rhs_norm, dot)
-}
-
-fn cosine_distance_with_norms(
-    lhs: &[f32],
-    rhs: &[f32],
-    lhs_norm: f64,
-    rhs_norm: f64,
-) -> CoreResult<f64> {
-    let rhs_norm = validate_precomputed_squared_norm(rhs_norm, "rhs")?;
-    cosine_distance_with_components(lhs_norm, rhs_norm, dot(lhs, rhs))
-}
-
-fn cosine_distance_with_components(lhs_norm: f64, rhs_norm: f64, dot: f64) -> CoreResult<f64> {
-    if rhs_norm == 0.0 {
-        return Err(CoreError::VectorZeroNorm { side: "rhs" });
-    }
-    let similarity = dot / (lhs_norm.sqrt() * rhs_norm.sqrt());
-    Ok(1.0 - similarity.clamp(-1.0, 1.0))
-}
-
-fn validate_precomputed_squared_norm(norm: f64, side: &'static str) -> CoreResult<f64> {
-    if norm > 0.0 && norm.is_finite() {
-        Ok(norm)
-    } else {
-        Err(CoreError::VectorZeroNorm { side })
-    }
-}
-
-fn cosine_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64) {
-    let mut chunks_lhs = lhs.chunks_exact(4);
-    let mut chunks_rhs = rhs.chunks_exact(4);
-    let mut lhs_norm = f64x4::ZERO;
-    let mut rhs_norm = f64x4::ZERO;
-    let mut dot = f64x4::ZERO;
-    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x4_from_f32(lhs);
-        let rhs = f64x4_from_f32(rhs);
-        lhs_norm += lhs * lhs;
-        rhs_norm += rhs * rhs;
-        dot += lhs * rhs;
-    }
-    let mut lhs_norm = lhs_norm.reduce_add();
-    let mut rhs_norm = rhs_norm.reduce_add();
-    let mut dot = dot.reduce_add();
-    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
-        let lhs = f64::from(lhs);
-        let rhs = f64::from(rhs);
-        lhs_norm += lhs * lhs;
-        rhs_norm += rhs * rhs;
-        dot += lhs * rhs;
-    }
-    (lhs_norm, rhs_norm, dot)
-}
-
-fn norm_and_dot(lhs: &[f32], rhs: &[f32]) -> (f64, f64) {
-    let mut chunks_lhs = lhs.chunks_exact(4);
-    let mut chunks_rhs = rhs.chunks_exact(4);
-    let mut rhs_norm = f64x4::ZERO;
-    let mut dot = f64x4::ZERO;
-    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x4_from_f32(lhs);
-        let rhs = f64x4_from_f32(rhs);
-        rhs_norm += rhs * rhs;
-        dot += lhs * rhs;
-    }
-    let mut rhs_norm = rhs_norm.reduce_add();
-    let mut dot = dot.reduce_add();
-    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
-        let lhs = f64::from(lhs);
-        let rhs = f64::from(rhs);
-        rhs_norm += rhs * rhs;
-        dot += lhs * rhs;
-    }
-    (rhs_norm, dot)
-}
-
-fn dot(lhs: &[f32], rhs: &[f32]) -> f64 {
-    let mut chunks_lhs = lhs.chunks_exact(4);
-    let mut chunks_rhs = rhs.chunks_exact(4);
-    let mut product = f64x4::ZERO;
-    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
-        let lhs = f64x4_from_f32(lhs);
-        let rhs = f64x4_from_f32(rhs);
-        product += lhs * rhs;
-    }
-    let mut product = product.reduce_add();
-    for (&lhs, &rhs) in chunks_lhs.remainder().iter().zip(chunks_rhs.remainder()) {
-        product += f64::from(lhs) * f64::from(rhs);
-    }
-    product
-}
-
-#[inline(always)]
-fn f64x4_from_f32(chunk: &[f32]) -> f64x4 {
-    f64x4::from([
-        f64::from(chunk[0]),
-        f64::from(chunk[1]),
-        f64::from(chunk[2]),
-        f64::from(chunk[3]),
-    ])
-}
-
 fn canonical_score(score: f64) -> f64 {
     if score == 0.0 { 0.0 } else { score }
 }
@@ -530,51 +405,6 @@ mod tests {
 
     fn vector(components: &[f32]) -> VectorValue {
         VectorValue::new(components.to_vec()).expect("test vector is valid")
-    }
-
-    fn scalar_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64, f64) {
-        lhs.iter().zip(rhs).fold(
-            (0.0, 0.0, 0.0, 0.0),
-            |(distance, lhs_norm, rhs_norm, product), (&lhs, &rhs)| {
-                let lhs = f64::from(lhs);
-                let rhs = f64::from(rhs);
-                let delta = lhs - rhs;
-                (
-                    distance + delta * delta,
-                    lhs_norm + lhs * lhs,
-                    rhs_norm + rhs * rhs,
-                    product + lhs * rhs,
-                )
-            },
-        )
-    }
-
-    fn assert_close(lhs: f64, rhs: f64) {
-        assert!((lhs - rhs).abs() <= 1e-12, "{lhs} != {rhs}");
-    }
-
-    #[test]
-    fn wide_metric_kernels_match_scalar_reference_for_even_and_odd_dimensions() {
-        let even_lhs = [1.25, -2.0, 3.5, 4.25];
-        let even_rhs = [-0.5, 2.75, 3.0, -1.25];
-        let odd_lhs = [1.0, -3.0, 0.25, 7.5, -2.25];
-        let odd_rhs = [4.0, -1.5, 2.0, -6.0, 0.75];
-
-        for (lhs, rhs) in [(&even_lhs[..], &even_rhs[..]), (&odd_lhs[..], &odd_rhs[..])] {
-            let (distance, lhs_norm, rhs_norm, product) = scalar_components(lhs, rhs);
-
-            assert_close(squared_euclidean(lhs, rhs), distance);
-            assert_close(dot(lhs, rhs), product);
-
-            let (wide_lhs_norm, wide_rhs_norm, wide_product) = cosine_components(lhs, rhs);
-            assert_close(wide_lhs_norm, lhs_norm);
-            assert_close(wide_rhs_norm, rhs_norm);
-            assert_close(wide_product, product);
-
-            let (wide_rhs_norm, wide_product) = norm_and_dot(lhs, rhs);
-            assert_close(wide_rhs_norm, rhs_norm);
-            assert_close(wide_product, product);
-        }
     }
 
     #[test]
