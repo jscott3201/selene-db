@@ -138,12 +138,10 @@ impl TurboQuantVectorIndex {
             let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
             for lane in 0..block_len {
                 let slot = base_slot + lane;
-                let entry = &self.entries[slot];
-                if entry.deleted {
+                let Some(row) = self.live_row_at_slot(slot) else {
                     continue;
-                }
-                debug_assert!(self.row_points_to_slot(entry.row, slot));
-                push_batch_block_distances(&mut candidates, &dots, lane, slot, entry.row, self);
+                };
+                push_batch_block_distances(&mut candidates, &dots, lane, slot, row, self);
             }
         }
         candidates
@@ -158,10 +156,10 @@ impl TurboQuantVectorIndex {
         let mut distances = vec![0.0; queries.len()];
         for (&row, &slot_key) in &self.row_to_entry {
             let slot = super::slot_index(slot_key);
-            let Some(entry) = self.entries.get(slot) else {
+            let Some(stored_row) = self.rows.get(slot).copied() else {
                 continue;
             };
-            if entry.deleted || entry.row != row {
+            if stored_row != row {
                 continue;
             }
             self.approx_distances_lut_batch(slot, queries, &mut distances);

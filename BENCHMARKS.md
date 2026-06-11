@@ -700,6 +700,16 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4069-full30000` | 4,069 KiB / 10k rows | The metadata compaction is dimension-independent, so the higher-dimensional rows retain the same compressed-code layout and calibration arrays. |
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m7834-full60000` | 7,834 KiB / 10k rows | The current resident estimate excludes primary `VECTOR` components, which remain graph-owned source-of-truth values for exact rerank. |
 
+PR-local TurboQuant row-slot storage spot-check:
+
+Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`.
+
+| Bench | Index storage | Notes |
+|---|---:|---|
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128_n10k_k10_recallbp10000_m867-full5000` | 867 KiB / 10k rows | TurboQuant slot metadata now stores row ids in a compact `Vec<u32>` and derives liveness from the row-to-slot map, removing the padded per-slot deleted flag while preserving full-recall candidate search. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4005-full30000` | 4,005 KiB / 10k rows | Higher-dimensional storage remains dominated by packed coordinate codes and calibration arrays; the row-slot compaction reduces the fixed per-row metadata. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m7770-full60000` | 7,770 KiB / 10k rows | The exact primary `VECTOR` values remain graph-owned and are still used for final rerank; the compact TurboQuant index remains derived, rebuildable state. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |
