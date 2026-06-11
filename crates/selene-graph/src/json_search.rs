@@ -8,7 +8,8 @@ use std::collections::BinaryHeap;
 use std::time::Duration;
 
 use selene_core::{
-    CancellationCause, CancellationChecker, DbString, JsonPathSelector, JsonValue, NodeId, Value,
+    CancellationCause, CancellationChecker, DbString, JsonPathSelector, JsonValue, JsonValueRef,
+    NodeId, Value,
 };
 
 use crate::error::{GraphError, GraphResult};
@@ -409,7 +410,7 @@ impl SeleneGraph {
             let Some(Value::Json(value)) = properties.get(property) else {
                 continue;
             };
-            let Some(value) = value.path_value(path) else {
+            let Some(value) = value.path_value_ref(path) else {
                 continue;
             };
             top_k.push(node_id, value);
@@ -615,20 +616,33 @@ impl JsonPathValueTopK {
         }
     }
 
-    fn push(&mut self, node_id: NodeId, value: JsonValue) {
+    fn push(&mut self, node_id: NodeId, value: JsonValueRef<'_>) {
+        self.push_with(node_id, || value.to_owned_json_value());
+    }
+
+    fn push_owned(&mut self, node_id: NodeId, value: JsonValue) {
+        self.push_with(node_id, || value);
+    }
+
+    fn push_with(&mut self, node_id: NodeId, value: impl FnOnce() -> JsonValue) {
         if self.k == 0 {
             return;
         }
-        let candidate = JsonPathValueCandidate { node_id, value };
         if self.nodes.len() < self.k {
-            self.nodes.push(candidate);
+            self.nodes.push(JsonPathValueCandidate {
+                node_id,
+                value: value(),
+            });
             return;
         }
         let Some(mut max_node) = self.nodes.peek_mut() else {
             return;
         };
-        if candidate.node_id < max_node.node_id {
-            *max_node = candidate;
+        if node_id < max_node.node_id {
+            *max_node = JsonPathValueCandidate {
+                node_id,
+                value: value(),
+            };
         }
     }
 

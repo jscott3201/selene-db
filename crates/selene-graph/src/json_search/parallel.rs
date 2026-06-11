@@ -215,7 +215,7 @@ fn path_value_chunk(
         let Some((node_id, value)) = scan.value_for_row(raw_row)? else {
             continue;
         };
-        let Some(selected) = value.path_value(path) else {
+        let Some(selected) = value.path_value_ref(path) else {
             continue;
         };
         top_k.push(node_id, selected);
@@ -238,7 +238,7 @@ fn merge_value_top_k(
     rhs: JsonPathValueTopK,
 ) -> Result<JsonPathValueTopK, JsonSearchError> {
     for hit in rhs.into_hits() {
-        lhs.push(hit.node_id, hit.value);
+        lhs.push_owned(hit.node_id, hit.value);
     }
     Ok(lhs)
 }

@@ -348,7 +348,7 @@ and
 | `graph_json_contains_scan/nested_metadata_k10/1000` | 22.097 µs | 22.275 µs | JSON containment checked-with-deadline row exercises the shared chunked scan helper. |
 | `graph_json_path_exists_scan/nested_score_path_k10/1000` | 17.732 µs | 17.931 µs | Path-exists checked row stays parallel instead of falling back to serial deadline behavior. |
 | `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.796 µs | 19.632 µs | Path-containment checked row is within same-run quick noise. |
-| `graph_json_path_value_scan/nested_score_path_k10/1000` | 23.718 µs | 23.653 µs | Path-value checked row keeps the same parallel gate; B21 still targets residual JSON-value clone cost. |
+| `graph_json_path_value_scan/nested_score_path_k10/1000` | 23.718 µs | 23.653 µs | Path-value checked row keeps the same parallel gate; this pre-B21 row still included residual JSON-value clone cost. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c64_d1024/64` | 12.870 µs | 12.878 µs | Below the 4,096-candidate threshold; both rows are sequential but checked overhead is noise-scale. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c256_d1024/256` | 50.759 µs | 50.828 µs | Below threshold. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c1024_d1024/1024` | 203.18 µs | 203.45 µs | Below threshold. |
@@ -440,7 +440,20 @@ Command: `scripts/run-benches.sh --profile full --bench single_graph --filter gr
 | `graph_json_contains_scan/nested_metadata_k10` | 210.13 µs -> 235.38 µs | 1.7982 ms -> 994.45 µs | 4.6986 ms -> 2.3977 ms | 10k stays below the 16,384-row Rayon threshold; 50k/100k improve about 1.8x/2.0x. |
 | `graph_json_path_exists_scan/nested_score_path_k10` | 189.31 µs -> 203.56 µs | 2.9875 ms -> 949.97 µs | 9.4831 ms -> 2.0903 ms | Large path-existence scans are the strongest win, about 3.1x at 50k and 4.5x at 100k. |
 | `graph_json_path_contains_scan/nested_memory_path_k10` | 185.37 µs -> 181.71 µs | 2.6000 ms -> 952.68 µs | 6.7178 ms -> 2.1109 ms | Path-scoped containment improves about 2.7x at 50k and 3.2x at 100k. |
-| `graph_json_path_value_scan/nested_score_path_k10` | 234.60 µs -> 264.70 µs | 2.3864 ms -> 1.1162 ms | 5.9315 ms -> 2.4776 ms | Path-value scans still clone selected JSON values; Rayon improves large rows about 2.1x/2.4x. |
+| `graph_json_path_value_scan/nested_score_path_k10` | 234.60 µs -> 264.70 µs | 2.3864 ms -> 1.1162 ms | 5.9315 ms -> 2.4776 ms | Pre-B21 path-value scans still cloned selected JSON values before top-k admission; Rayon improved large rows about 2.1x/2.4x. |
+
+PR-local B21 JSON path-value borrowed-selector A/B:
+
+Command: `scripts/run-benches.sh --profile full --bench single_graph --filter graph_json_path_value_scan`
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_json_path_value_scan/nested_score_path_k10/10000` | 214.42 µs | 164.50 µs | -23.5% | Selected JSON values are now borrowed during the scan and cloned only when admitted to the top-k heap. |
+| `graph_json_path_value_scan/nested_score_path_k10_checked_with_deadline/10000` | 211.19 µs | 165.07 µs | -22.2% | Deadline-bearing calls keep the B10 chunked path and avoid rejected-candidate JSON clones. |
+| `graph_json_path_value_scan/nested_score_path_k10/50000` | 1.0821 ms | 821.05 µs | -32.3% | Larger row set shows the clone removal compounding with the existing Rayon scan. |
+| `graph_json_path_value_scan/nested_score_path_k10_checked_with_deadline/50000` | 1.0580 ms | 824.72 µs | -20.1% | Deadline row remains parallel and avoids pre-admission value materialization. |
+| `graph_json_path_value_scan/nested_score_path_k10/100000` | 2.2521 ms | 1.9638 ms | -12.5% | 100k unchecked row still improves, though less dramatically than 50k on this run. |
+| `graph_json_path_value_scan/nested_score_path_k10_checked_with_deadline/100000` | 2.5734 ms | 1.9746 ms | -29.3% | 100k deadline row drops back near the unchecked row once selected-value clones move behind top-k admission. |
 
 PR-local quick vector baseline:
 
