@@ -45,3 +45,22 @@ fn turbo_quant_update_delete_and_memory_usage_track_stale_entries() {
     assert!(usage.estimated_heap_bytes >= usage.code_bytes);
     assert!(usage.referenced_vector_bytes >= 3 * 2 * size_of::<f32>());
 }
+
+#[test]
+fn turbo_quant_search_uses_live_map_when_stale_slots_dominate() {
+    let mut index = TurboQuantVectorIndex::new(2).unwrap();
+    for row in 0..80 {
+        index
+            .insert(row, vector(&[1.0 + row as f32 * 0.001, 0.0]))
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    for row in 0..79 {
+        index.remove(row);
+    }
+
+    assert!(!index.should_scan_by_slot_order());
+
+    let hits = index.search(&vector(&[1.0, 0.0]), 5, 5).unwrap();
+    assert_eq!(hits.iter().map(|hit| hit.row).collect::<Vec<_>>(), vec![79]);
+}
