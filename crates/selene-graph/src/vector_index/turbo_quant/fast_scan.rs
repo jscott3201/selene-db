@@ -200,10 +200,7 @@ impl TurboQuantVectorIndex {
     }
 
     pub(super) fn fast_scan_lut(&self, rotated_query: &[f32]) -> Option<FastScanQueryLut> {
-        let components = self.bytes_per_row.checked_mul(2)?;
-        if components > FAST_SCAN_MAX_COMPONENTS {
-            return None;
-        }
+        let components = self.fast_scan_components()?;
         let quant_limit = ((usize::from(u16::MAX) / components.saturating_mul(2))
             .min(i8::MAX as usize)
             .max(1)) as i16;
@@ -243,6 +240,15 @@ impl TurboQuantVectorIndex {
             zero_sum: (components as i32) * i32::from(quant_limit),
             dequant,
         })
+    }
+
+    pub(super) fn supports_fast_scan_accumulator(&self) -> bool {
+        self.fast_scan_components().is_some()
+    }
+
+    fn fast_scan_components(&self) -> Option<usize> {
+        let components = self.bytes_per_row.checked_mul(2)?;
+        (components <= FAST_SCAN_MAX_COMPONENTS).then_some(components)
     }
 
     fn max_fast_scan_query_contribution(&self, rotated_query: &[f32]) -> f64 {
