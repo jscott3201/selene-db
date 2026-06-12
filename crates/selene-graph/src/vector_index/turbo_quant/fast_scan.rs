@@ -349,25 +349,49 @@ impl TurboQuantVectorIndex {
         let mut candidates = VectorTopK::new(candidate_limit);
         let mut accumulators = [u16x16::splat(0), u16x16::splat(0)];
         let mut lanes = [[0_i32; 16], [0_i32; 16]];
+        let mut lane_rows = [0_u32; TURBO_QUANT_BLOCK_ROWS];
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
-            if !self.block_has_allowed_rows(block, block_len, allowed_rows) {
+            let lane_mask = self.filtered_lane_mask(block, block_len, allowed_rows, &mut lane_rows);
+            if lane_mask == 0 {
                 continue;
             }
             self.accumulate_fast_scan_block(block, lut, &mut accumulators, &mut lanes);
             let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
-            for lane in 0..block_len {
+            let mut mask = lane_mask;
+            while mask != 0 {
+                let lane = mask.trailing_zeros() as usize;
                 let slot = base_slot + lane;
-                let Some(row) = self.allowed_live_row_at_slot(slot, allowed_rows) else {
-                    continue;
-                };
+                let row = lane_rows[lane];
                 let centered = lanes[lane / 16][lane % 16] - lut.zero_sum;
                 let dot = query_bias + f64::from(centered) * lut.dequant;
                 let distance = -(dot * f64::from(self.row_scales[slot]));
                 candidates.push_distance((slot, row), distance);
+                mask &= mask - 1;
             }
         }
         candidates
+    }
+
+    fn filtered_lane_mask(
+        &self,
+        block: usize,
+        block_len: usize,
+        allowed_rows: &RoaringBitmap,
+        lane_rows: &mut [u32; TURBO_QUANT_BLOCK_ROWS],
+    ) -> u32 {
+        let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
+        let mut mask = 0_u32;
+        for (lane, lane_row) in lane_rows.iter_mut().enumerate().take(block_len) {
+            let Some(row) = self.live_row_at_slot(base_slot + lane) else {
+                continue;
+            };
+            if allowed_rows.contains(row) {
+                *lane_row = row;
+                mask |= 1_u32 << lane;
+            }
+        }
+        mask
     }
 
     fn accumulate_fast_scan_block(

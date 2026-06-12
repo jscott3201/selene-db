@@ -719,6 +719,14 @@ Commands:
 | `graph_turbo_quant_production_dimension_projection/...d128` | 3.3535 ms | 3.3232 ms | Compact TurboQuant slots now read `rows[slot]` directly during slot-order scans while keeping row-to-slot hash alignment as a debug assertion. The full-index row improves 1.26% (`p=0.00`), a small but measurable removal of per-slot liveness lookups. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128` | 2.4972 ms | 2.2394 ms | Candidate-set filtered batch search benefits most because each allowed-row check shares the compact slot lookup. The row improves 10.30% (`p=0.00`) while preserving exact primary-vector rerank semantics. |
 
+PR-local TurboQuant filtered FastScan lane-mask spot-check:
+
+Command: `scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c1024_d128 --baseline tq_filter_single_mask_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_filtered_dimension_projection/...d128` | 3.1305 ms | 2.9552 ms | Single-query candidate-set FastScan now builds one per-block allowed-lane mask before compressed scoring, so block filtering and hit emission share the same Roaring membership pass. The row improves 5.28% (`p=0.00`) while preserving exact primary-vector rerank. |
+
 PR-local TurboQuant slot-map storage spot-check:
 
 Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`.
