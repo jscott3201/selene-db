@@ -319,7 +319,8 @@ shared-filtered-batch search.
 shape to a 10k-row production `TurboQuantCosine` index and times approximate
 search over the churned derived state at the current omitted search-width
 default (`512`). It also times `TurboQuantCosine` index creation over the same
-10k-row, 128-dimensional graph shape so online indexing cost stays visible.
+10k-row, 128-dimensional graph shape plus a 2k-row, 1536-dimensional graph
+shape so online indexing cost stays visible for embedding-sized vectors.
 `vector_ivf_pressure` uses the
 production graph IVF index and records list-skew plus candidate-pressure
 suffixes so future IVF/PQ layering work is grounded against real index fanout
@@ -973,6 +974,19 @@ Commands:
 |---|---:|---:|---|
 | `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 27.114 ms | 17.806 ms | TQ+ calibration now selects the 5% and 95% coordinate ranks directly instead of sorting each coordinate vector completely. Criterion reports a 34.33% improvement (`p=0.00`) on top of deferred bulk encoding. |
 | `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 145.77 µs | Existing post-churn query guardrail remains stable after the calibration implementation change. |
+
+PR-local TurboQuant high-dimensional calibration spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter d1536 --save-baseline tq_d1536_build_seq_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter d1536 --baseline tq_d1536_build_seq_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter 'd128|tqcos_update10_delete5'`.
+
+| Bench | Sequential calibration | Parallel calibration | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_churn/tqcos_create_index/d1536_n2k` | 54.989 ms | 50.228 ms | High-dimensional TQ+ calibration now parallelizes coordinate quantile extraction once the build has at least 512 dimensions and 1M rotated values. Criterion reports an 8.66% improvement (`p=0.00`). |
+| `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | n/a | 17.959 ms | Low-dimensional create-index guardrail stays on the sequential calibration path. |
+| `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 148.40 µs | Existing post-churn query guardrail remains stable with the high-dimensional threshold in place. |
 
 PR-local IVF+TurboQuant layering spot-check:
 

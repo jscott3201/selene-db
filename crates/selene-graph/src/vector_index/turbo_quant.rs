@@ -21,10 +21,14 @@ use crate::parallel_scan::should_parallelize_scan;
 
 #[path = "turbo_quant/batch.rs"]
 mod batch;
+#[path = "turbo_quant/calibration.rs"]
+mod calibration;
 #[path = "turbo_quant/fast_scan.rs"]
 mod fast_scan;
 #[path = "turbo_quant/filter.rs"]
 mod filter;
+
+use calibration::quantile_calibration;
 
 const TURBO_QUANT_BITS: u8 = 4;
 const SLOT_ORDER_SCAN_STALE_RATIO: usize = 2;
@@ -47,7 +51,6 @@ const TURBO_QUANT_FULL_LOW_DIM_PARALLEL_CHUNK_ENTRIES: usize = 4096;
 const TURBO_QUANT_FULL_LOW_DIM_PARALLEL_CHUNK_ENTRIES: usize = 4;
 const TURBO_QUANT_LOW_DIM_PARALLEL_MAX_DIMENSION: usize = 128;
 const MIN_RECONSTRUCTED_INNER: f64 = 1e-10;
-const QUANTILE_LOW_Z: f32 = -1.644_853_6;
 
 /// One approximate TurboQuant candidate over a graph row.
 #[derive(Clone, Debug, PartialEq)]
@@ -580,47 +583,6 @@ fn slot_key(slot: usize) -> GraphResult<u32> {
 
 fn slot_index(slot: u32) -> usize {
     usize::try_from(slot).expect("TurboQuant slot key always fits usize")
-}
-
-fn quantile_calibration(rotated: &[f32], dimension: usize) -> (Vec<f32>, Vec<f32>) {
-    let rows = rotated.len() / dimension;
-    let target_low = QUANTILE_LOW_Z / (dimension as f32).sqrt();
-    let target_high = -target_low;
-    let target_span = target_high - target_low;
-    let low_index = ((rows as f64) * 0.05) as usize;
-    let high_index = (((rows as f64) * 0.95) as usize).min(rows.saturating_sub(1));
-    let mut shift = vec![0.0; dimension];
-    let mut scale = vec![1.0; dimension];
-    let mut coordinate = vec![0.0; rows];
-
-    for dim in 0..dimension {
-        for row in 0..rows {
-            coordinate[row] = rotated[row * dimension + dim];
-        }
-        let (source_low, source_high) =
-            coordinate_quantiles(&mut coordinate, low_index, high_index);
-        let source_span = source_high - source_low;
-        if source_span > 1e-6 {
-            scale[dim] = target_span / source_span;
-            shift[dim] = target_low / scale[dim] - source_low;
-        }
-    }
-    (shift, scale)
-}
-
-fn coordinate_quantiles(coordinate: &mut [f32], low_index: usize, high_index: usize) -> (f32, f32) {
-    debug_assert!(!coordinate.is_empty());
-    debug_assert!(low_index <= high_index);
-    debug_assert!(high_index < coordinate.len());
-
-    let (_, low_value, greater) = coordinate.select_nth_unstable_by(low_index, f32::total_cmp);
-    let source_low = *low_value;
-    if low_index == high_index {
-        return (source_low, source_low);
-    }
-    let high_offset = high_index - low_index - 1;
-    let (_, high_value, _) = greater.select_nth_unstable_by(high_offset, f32::total_cmp);
-    (source_low, *high_value)
 }
 
 fn calibrate_value(value: f32, dim: usize, shift: &[f32], scale: &[f32]) -> f32 {

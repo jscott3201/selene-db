@@ -18,6 +18,8 @@ use selene_graph::{
 
 const ROWS: usize = 10_000;
 const DIMENSION: usize = 128;
+const HIGH_DIM_ROWS: usize = 2_000;
+const HIGH_DIMENSION: usize = 1_536;
 const UPDATE_COUNT: usize = ROWS / 10;
 const DELETE_COUNT: usize = ROWS / 20;
 const K: usize = 10;
@@ -33,9 +35,25 @@ fn bench_turbo_quant_churn(c: &mut Criterion) {
         ),
         |b| {
             b.iter_batched(
-                seed_unindexed_graph,
+                || seed_unindexed_graph(ROWS, DIMENSION, 70_000_001),
                 |shared| {
-                    create_turbo_quant_index(&shared);
+                    create_turbo_quant_index(&shared, DIMENSION);
+                    std::hint::black_box(shared);
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
+    group.bench_function(
+        BenchmarkId::new(
+            "tqcos_create_index",
+            format!("d{HIGH_DIMENSION}_n{}", compact_count(HIGH_DIM_ROWS as u64)),
+        ),
+        |b| {
+            b.iter_batched(
+                || seed_unindexed_graph(HIGH_DIM_ROWS, HIGH_DIMENSION, 70_000_002),
+                |shared| {
+                    create_turbo_quant_index(&shared, HIGH_DIMENSION);
                     std::hint::black_box(shared);
                 },
                 BatchSize::SmallInput,
@@ -74,7 +92,7 @@ impl TurboQuantChurnFixture {
             shared,
             label,
             embedding_key,
-            query: vector_value(ROWS - 1),
+            query: vector_value(ROWS - 1, DIMENSION),
         }
     }
 
@@ -97,27 +115,35 @@ fn seed_indexed_nodes(
     label: &DbString,
     embedding_key: &DbString,
 ) -> Vec<NodeId> {
-    let ids = seed_nodes(shared, label, embedding_key);
-    create_turbo_quant_index(shared);
+    let ids = seed_nodes(shared, label, embedding_key, ROWS, DIMENSION);
+    create_turbo_quant_index(shared, DIMENSION);
     ids
 }
 
-fn seed_unindexed_graph() -> SharedGraph {
+fn seed_unindexed_graph(rows: usize, dimension: usize, graph_id: u64) -> SharedGraph {
     let label = db_string("TurboQuantChurnDoc").expect("bench label is valid");
     let embedding_key = db_string("embedding").expect("bench key is valid");
-    let shared = SharedGraph::new(GraphId::new(70_000_001));
-    seed_nodes(&shared, &label, &embedding_key);
+    let shared = SharedGraph::new(GraphId::new(graph_id));
+    seed_nodes(&shared, &label, &embedding_key, rows, dimension);
     shared
 }
 
-fn seed_nodes(shared: &SharedGraph, label: &DbString, embedding_key: &DbString) -> Vec<NodeId> {
+fn seed_nodes(
+    shared: &SharedGraph,
+    label: &DbString,
+    embedding_key: &DbString,
+    rows: usize,
+    dimension: usize,
+) -> Vec<NodeId> {
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();
-    let mut ids = Vec::with_capacity(ROWS);
-    for idx in 0..ROWS {
-        let props =
-            PropertyMap::from_pairs([(embedding_key.clone(), Value::Vector(vector_value(idx)))])
-                .expect("bench vector properties are valid");
+    let mut ids = Vec::with_capacity(rows);
+    for idx in 0..rows {
+        let props = PropertyMap::from_pairs([(
+            embedding_key.clone(),
+            Value::Vector(vector_value(idx, dimension)),
+        )])
+        .expect("bench vector properties are valid");
         ids.push(
             mutator
                 .create_node(LabelSet::single(label.clone()), props)
@@ -128,7 +154,7 @@ fn seed_nodes(shared: &SharedGraph, label: &DbString, embedding_key: &DbString) 
     ids
 }
 
-fn create_turbo_quant_index(shared: &SharedGraph) {
+fn create_turbo_quant_index(shared: &SharedGraph, dimension: usize) {
     let label = db_string("TurboQuantChurnDoc").expect("bench label is valid");
     let embedding_key = db_string("embedding").expect("bench key is valid");
     let mut txn = shared.begin_write();
@@ -138,7 +164,7 @@ fn create_turbo_quant_index(shared: &SharedGraph) {
             label,
             embedding_key,
             VectorIndexKind::TurboQuantCosine,
-            DIMENSION as u32,
+            dimension as u32,
             None,
             VectorIndexConfig::default(),
         )
@@ -157,7 +183,7 @@ fn churn_indexed_nodes(shared: &SharedGraph, embedding_key: &DbString, ids: &[No
                 PropertyDiff::new(
                     [(
                         embedding_key.clone(),
-                        Value::Vector(vector_value(ids.len() + offset)),
+                        Value::Vector(vector_value(ids.len() + offset, DIMENSION)),
                     )],
                     [],
                 )
@@ -181,12 +207,12 @@ fn compact_count(value: u64) -> String {
     }
 }
 
-fn vector_value(seed: usize) -> VectorValue {
-    VectorValue::new(vector_components(seed)).expect("bench vector is valid")
+fn vector_value(seed: usize, dimension: usize) -> VectorValue {
+    VectorValue::new(vector_components(seed, dimension)).expect("bench vector is valid")
 }
 
-fn vector_components(seed: usize) -> Vec<f32> {
-    (0..DIMENSION)
+fn vector_components(seed: usize, dimension: usize) -> Vec<f32> {
+    (0..dimension)
         .map(|dim| {
             let raw = (seed.wrapping_mul(31) + dim.wrapping_mul(17)) % 1_000;
             raw as f32 / 1_000.0
