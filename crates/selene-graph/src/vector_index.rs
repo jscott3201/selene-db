@@ -21,6 +21,8 @@ mod config;
 mod hnsw;
 #[path = "vector_index/ivf.rs"]
 mod ivf;
+#[path = "vector_index/ivf_adapter.rs"]
+mod ivf_adapter;
 #[path = "vector_index/memory.rs"]
 mod memory;
 #[path = "vector_index/rebuild.rs"]
