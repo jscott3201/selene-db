@@ -9,7 +9,7 @@ use selene_core::{
 use selene_graph::{
     AdjacencyEdge, AdjacencyEntry, CandidateStateSpec, IndexProvider,
     MaintainedCandidateStateProvider, SeleneGraph, SharedGraph, VectorCandidateSet,
-    VectorNeighborDirection, VectorNodeSearchHit,
+    VectorNeighborDirection, VectorNeighborSearchOptions, VectorNodeSearchHit,
 };
 
 const VECTOR_CANDIDATE_NEIGHBORS: usize = 64;
@@ -171,6 +171,32 @@ fn bench_candidate_set_scoring(
                                 10,
                             )
                             .expect("bench candidate batch scoring succeeds");
+                        std::hint::black_box(hits.iter().map(Vec::len).sum::<usize>());
+                    });
+                },
+            );
+            let root_sets = vec![VectorCandidateSet::from_nodes([fixture.anchor()]); query_count];
+            group.bench_function(
+                BenchmarkId::new(
+                    fixture.bench_id(&format!("score_expanded_batch_cosine_q{query_count}")),
+                    fixture.candidate_count(),
+                ),
+                |b| {
+                    b.iter(|| {
+                        let hits = fixture
+                            .graph()
+                            .score_vector_expanded_candidate_sets_batch(
+                                fixture.embedding_key(),
+                                &queries,
+                                &root_sets,
+                                VectorNeighborSearchOptions::new(
+                                    fixture.edge_label(),
+                                    VectorNeighborDirection::Outgoing,
+                                    VectorMetric::Cosine,
+                                    10,
+                                ),
+                            )
+                            .expect("bench expanded batch scoring succeeds");
                         std::hint::black_box(hits.iter().map(Vec::len).sum::<usize>());
                     });
                 },
