@@ -175,6 +175,32 @@ fn bench_candidate_set_scoring(
                     });
                 },
             );
+            let anchors = vec![fixture.anchor(); query_count];
+            group.bench_function(
+                BenchmarkId::new(
+                    fixture.bench_id(&format!("score_neighbors_batch_cosine_q{query_count}")),
+                    fixture.candidate_count(),
+                ),
+                |b| {
+                    b.iter(|| {
+                        let hits = fixture
+                            .graph()
+                            .score_vector_neighbors_batch(
+                                fixture.embedding_key(),
+                                &queries,
+                                &anchors,
+                                VectorNeighborSearchOptions::new(
+                                    fixture.edge_label(),
+                                    VectorNeighborDirection::Outgoing,
+                                    VectorMetric::Cosine,
+                                    10,
+                                ),
+                            )
+                            .expect("bench neighbor batch scoring succeeds");
+                        std::hint::black_box(hits.iter().map(Vec::len).sum::<usize>());
+                    });
+                },
+            );
             let root_sets = vec![VectorCandidateSet::from_nodes([fixture.anchor()]); query_count];
             group.bench_function(
                 BenchmarkId::new(

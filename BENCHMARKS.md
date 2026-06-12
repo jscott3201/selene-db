@@ -270,7 +270,10 @@ candidate sets once, then delegates to the same batch scorer. Graph-expanded
 candidate-set batches parallelize root-set expansion only when the batch has at
 least 16 root sets and a sampled estimate projects at least 8,192 expanded
 candidates; smaller expanded batches stay serial to avoid Rayon overhead. The
-candidate-set group also measures the Rust graph/vector boundary for deriving
+neighbor batch scorer reuses one derived candidate set when every query uses the
+same graph anchor, then falls back to sampled thresholded derivation for broad
+distinct-anchor batches before entering canonical candidate-set batch scoring.
+The candidate-set group also measures the Rust graph/vector boundary for deriving
 canonical candidate sets from graph adjacency and reranking canonical candidate
 sets by vector score.
 `graph_vector_index_rebuild/*` times the
@@ -484,6 +487,24 @@ thresholded query-level root-set expansion.
 | `graph_vector_candidate_set/score_expanded_batch_cosine_q64_c1024_d1024/1024` | 2.4806 ms | 2.3041 ms | Wider graph-expanded batches keep the parallel expansion branch. |
 | `graph_vector_candidate_set/score_expanded_batch_cosine_q64_c4096_d1024/4096` | 10.260 ms | 9.3476 ms | Broad expanded batches avoid serially deriving 64 large expanded sets before scoring. |
 
+PR-local quick neighbor batch candidate derivation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench single_graph --filter graph_vector_candidate_set/score_neighbors_batch_cosine_q64 --save-baseline neighbor_batch_serial_q64_pre`
+with the new benchmark row on the pre-change serial neighbor derivation path,
+then the same command with `--baseline neighbor_batch_serial_q64_pre` after
+adding repeated-anchor candidate reuse and thresholded distinct-anchor
+derivation. A threshold-only parallel derivation trial was neutral for
+c64/c256/c1024 and only noise-scale faster for c4096, so the measured win comes
+from avoiding duplicate adjacency walks when every query uses the same anchor.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_vector_candidate_set/score_neighbors_batch_cosine_q64_c64_d1024/64` | 190.73 µs | 181.84 µs | One 64-neighbor candidate set is derived once and reused across the 64-query batch. |
+| `graph_vector_candidate_set/score_neighbors_batch_cosine_q64_c256_d1024/256` | 636.30 µs | 609.77 µs | Repeated-anchor reuse removes duplicate adjacency candidate construction before canonical batch scoring. |
+| `graph_vector_candidate_set/score_neighbors_batch_cosine_q64_c1024_d1024/1024` | 2.3400 ms | 2.3147 ms | Broad reranking dominates; the candidate-derivation win is noise-scale at this width. |
+| `graph_vector_candidate_set/score_neighbors_batch_cosine_q64_c4096_d1024/4096` | 9.5891 ms | 9.4297 ms | The 64-query rerank dominates and Criterion kept the change within the noise threshold. |
+
 PR-local B5 id-map hasher A/B:
 
 Commands:
@@ -593,6 +614,8 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 177.9 µs / 611.3 µs / 2.267 ms / 9.557 ms (quick) | Scores 64 canonical candidate sets against 64 queries. Query-level Rayon is now the production many-query batch path once distributed total candidates reach 4,096. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.3 µs / 402.4 µs / 423.1 µs / 1.500 ms (quick) | Scores 8 explicit node-slice candidate sets through the generic API. It now normalizes to canonical sets and follows the same q8 threshold behavior. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 185.3 µs / 631.1 µs / 2.351 ms / 9.561 ms (quick) | Scores 64 explicit node-slice candidate sets through the generic API. The normalization cost is small relative to the query-level batch win. |
+| `graph_vector_candidate_set/score_neighbors_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.2 µs / 404.3 µs / 435.7 µs / 1.529 ms (quick) | Scores 8 graph-neighbor candidate sets through the neighbor batch API. The repeated-anchor fixture reuses one derived candidate set before canonical batch scoring. |
+| `graph_vector_candidate_set/score_neighbors_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 181.8 µs / 609.8 µs / 2.315 ms / 9.430 ms (quick) | Scores 64 graph-neighbor candidate sets. Repeated-anchor reuse helps c64/c256; wider rows are dominated by reranking. |
 | `graph_vector_candidate_set/score_expanded_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 103.0 µs / 407.5 µs / 437.2 µs / 1.557 ms (quick) | Scores 8 graph-expanded root sets through the expanded batch API. This stays below the 16-set expansion parallel threshold. |
 | `graph_vector_candidate_set/score_expanded_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 189.1 µs / 624.6 µs / 2.304 ms / 9.348 ms (quick) | Scores 64 graph-expanded root sets. The sampled expanded-work gate leaves c64 serial and parallelizes wider expanded batches. |
 | `graph_vector_candidate_state/maintained_active_c512_total1024` | 343.9 ns (quick) | Materializes a provider-maintained 512-node current set from a 1,024-node fixture with stale nodes disqualified by `SUPERSEDED_BY`. |
@@ -1470,7 +1493,7 @@ PR-local quick vector procedure baseline:
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_state_difference_32_dim128_k10_1000` | 3.13 µs (quick) | Cached maintained-state minus graph-expanded candidates, leaving 32 candidates before exact rerank. |
 | `procedure_vector_neighbors/shared_cache_score_neighbors_64_dim128_k10_1000` | 4.60 µs (quick) | Cached `CALL selene.vector_score_neighbors` over one 64-neighbor graph-derived candidate set. |
 | `procedure_vector_neighbors/shared_cache_score_neighbors_repeated_8x64_dim128_k10_1000` | 40.3 µs (quick) | Eight separate cached graph-neighbor score calls, one short-lived session per query. |
-| `procedure_vector_neighbors/shared_cache_score_neighbors_batch_8x64_dim128_k10_1000` | 36.7 µs (quick) | One cached `CALL selene.vector_score_neighbors_batch` over eight anchors; ~9% below repeated neighbor-call latency. |
+| `procedure_vector_neighbors/shared_cache_score_neighbors_batch_8x64_dim128_k10_1000` | 25.3 µs (quick) | One cached `CALL selene.vector_score_neighbors_batch` over eight distinct anchors; the current guard row remains below repeated neighbor-call latency and stayed noise-scale for this PR. |
 | `procedure_vector_expanded/shared_cache_score_expanded_2root64_dim128_k10_1000` | 4.85 µs (quick) | Cached `CALL selene.vector_score_expanded_candidates` where two root nodes expand through `SUPPORTS` to a 64-node canonical candidate set. |
 | `procedure_vector_expanded/shared_cache_score_expanded_repeated_8x2root64_dim128_k10_1000` | 42.81 µs (quick) | Eight separate cached expanded-candidate score calls, one short-lived session per query. |
 | `procedure_vector_expanded/shared_cache_score_expanded_batch_8x2root64_dim128_k10_1000` | 41.31 µs (quick) | One cached `CALL selene.vector_score_expanded_candidates_batch` over eight per-query root sets; ~3.5% below repeated expanded-call latency. |

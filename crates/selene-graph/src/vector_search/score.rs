@@ -460,12 +460,13 @@ impl SeleneGraph {
         if options.k == 0 {
             return Ok(vec![Vec::new(); queries.len()]);
         }
-        let candidate_sets: Vec<_> = anchors
-            .iter()
-            .map(|anchor| {
-                self.vector_neighbor_candidates(*anchor, options.edge_label, options.direction)
-            })
-            .collect();
+        let candidate_sets = self.vector_neighbor_candidate_sets_batch(
+            anchors,
+            options.edge_label,
+            options.direction,
+            options.k,
+            checker,
+        )?;
         self.score_vector_candidate_sets_batch_checked(
             property,
             queries,

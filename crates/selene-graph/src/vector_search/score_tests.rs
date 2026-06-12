@@ -599,6 +599,43 @@ fn score_vector_neighbors_batch_matches_single_anchor_queries() {
         vec![ids[6], ids[7]]
     );
 
+    let repeated_anchor_queries = vec![vector(&[1.2, 0.0]), vector(&[5.1, 0.0])];
+    let repeated_anchor_anchors = vec![anchor_a, anchor_a];
+    let repeated_anchor_batched = shared
+        .score_vector_neighbors_batch_checked(
+            &embedding,
+            &repeated_anchor_queries,
+            &repeated_anchor_anchors,
+            VectorNeighborSearchOptions::new(
+                &link,
+                VectorNeighborDirection::Outgoing,
+                VectorMetric::SquaredEuclidean,
+                2,
+            ),
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let repeated_anchor_singles: Vec<_> = repeated_anchor_queries
+        .iter()
+        .map(|query| {
+            shared
+                .score_vector_neighbors_checked(
+                    &embedding,
+                    query,
+                    anchor_a,
+                    VectorNeighborSearchOptions::new(
+                        &link,
+                        VectorNeighborDirection::Outgoing,
+                        VectorMetric::SquaredEuclidean,
+                        2,
+                    ),
+                    CancellationChecker::disabled(),
+                )
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(repeated_anchor_batched, repeated_anchor_singles);
+
     let err = shared
         .score_vector_neighbors_batch_checked(
             &embedding,
