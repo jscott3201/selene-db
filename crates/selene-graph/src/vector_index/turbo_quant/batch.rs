@@ -55,7 +55,7 @@ impl TurboQuantVectorIndex {
                     .into_hits()
                     .into_iter()
                     .map(|hit| TurboQuantVectorHit {
-                        row: hit.key.1,
+                        row: hit.key,
                         distance: hit.distance,
                     })
                     .collect()
@@ -79,7 +79,7 @@ impl TurboQuantVectorIndex {
         &self,
         queries: &[PreparedTurboQuantQuery],
         candidate_limit: usize,
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         if self.should_parallelize_slot_scan(candidate_limit) {
             return self.slot_order_candidates_batch_parallel(queries, candidate_limit);
         }
@@ -95,7 +95,7 @@ impl TurboQuantVectorIndex {
         &self,
         queries: &[PreparedTurboQuantQuery],
         candidate_limit: usize,
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         let chunk_blocks =
             TURBO_QUANT_BATCH_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
         (0..self.codes.block_count())
@@ -118,7 +118,7 @@ impl TurboQuantVectorIndex {
         end_block: usize,
         queries: &[PreparedTurboQuantQuery],
         candidate_limit: usize,
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         let mut candidates = candidate_top_k_batch(queries.len(), candidate_limit);
         let mut dots = vec![[0.0; TURBO_QUANT_BLOCK_ROWS]; queries.len()];
         for block in start_block..end_block {
@@ -151,7 +151,7 @@ impl TurboQuantVectorIndex {
         &self,
         queries: &[PreparedTurboQuantQuery],
         candidate_limit: usize,
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         let mut candidates = candidate_top_k_batch(queries.len(), candidate_limit);
         let mut distances = vec![0.0; queries.len()];
         for (&row, &slot_key) in &self.row_to_entry {
@@ -163,7 +163,7 @@ impl TurboQuantVectorIndex {
                 continue;
             }
             self.approx_distances_lut_batch(slot, queries, &mut distances);
-            push_batch_distances(&mut candidates, &distances, slot, row);
+            push_batch_distances(&mut candidates, &distances, row);
         }
         candidates
     }
@@ -201,16 +201,16 @@ impl TurboQuantVectorIndex {
 fn candidate_top_k_batch(
     query_count: usize,
     candidate_limit: usize,
-) -> Vec<VectorTopK<(usize, u32)>> {
+) -> Vec<TurboQuantCandidateTopK> {
     (0..query_count)
-        .map(|_| VectorTopK::new(candidate_limit))
+        .map(|_| TurboQuantCandidateTopK::new(candidate_limit))
         .collect()
 }
 
 fn merge_candidate_top_k_batch(
-    mut lhs: Vec<VectorTopK<(usize, u32)>>,
-    rhs: Vec<VectorTopK<(usize, u32)>>,
-) -> Vec<VectorTopK<(usize, u32)>> {
+    mut lhs: Vec<TurboQuantCandidateTopK>,
+    rhs: Vec<TurboQuantCandidateTopK>,
+) -> Vec<TurboQuantCandidateTopK> {
     for (lhs_query, rhs_query) in lhs.iter_mut().zip(rhs) {
         for hit in rhs_query.into_hits() {
             lhs_query.push_distance(hit.key, hit.distance);
@@ -219,19 +219,14 @@ fn merge_candidate_top_k_batch(
     lhs
 }
 
-fn push_batch_distances(
-    candidates: &mut [VectorTopK<(usize, u32)>],
-    distances: &[f64],
-    slot: usize,
-    row: u32,
-) {
+fn push_batch_distances(candidates: &mut [TurboQuantCandidateTopK], distances: &[f64], row: u32) {
     for (candidate, distance) in candidates.iter_mut().zip(distances.iter().copied()) {
-        candidate.push_distance((slot, row), distance);
+        candidate.push_distance(row, distance);
     }
 }
 
 fn push_batch_block_distances(
-    candidates: &mut [VectorTopK<(usize, u32)>],
+    candidates: &mut [TurboQuantCandidateTopK],
     dots: &[[f64; TURBO_QUANT_BLOCK_ROWS]],
     lane: usize,
     slot: usize,
@@ -240,6 +235,6 @@ fn push_batch_block_distances(
 ) {
     let scale = f64::from(index.row_scales[slot]);
     for (candidate, query_dots) in candidates.iter_mut().zip(dots) {
-        candidate.push_distance((slot, row), -(query_dots[lane] * scale));
+        candidate.push_distance(row, -(query_dots[lane] * scale));
     }
 }

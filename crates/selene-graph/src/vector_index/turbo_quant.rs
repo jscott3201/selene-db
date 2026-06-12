@@ -47,6 +47,8 @@ pub(crate) struct TurboQuantVectorHit {
     pub(crate) distance: f64,
 }
 
+type TurboQuantCandidateTopK = VectorTopK<u32>;
+
 /// Estimated TurboQuant resident memory and structural counters.
 ///
 /// Deletes and replacements compact slots immediately, so `deleted_entries`
@@ -195,7 +197,7 @@ impl TurboQuantVectorIndex {
             .into_hits()
             .into_iter()
             .map(|hit| TurboQuantVectorHit {
-                row: hit.key.1,
+                row: hit.key,
                 distance: hit.distance,
             })
             .collect())
@@ -222,7 +224,7 @@ impl TurboQuantVectorIndex {
         byte_lut: &[f64],
         query_bias: f64,
         candidate_limit: usize,
-    ) -> VectorTopK<(usize, u32)> {
+    ) -> TurboQuantCandidateTopK {
         if self.should_parallelize_slot_scan(candidate_limit) {
             return self.slot_order_candidates_parallel(byte_lut, query_bias, candidate_limit);
         }
@@ -240,7 +242,7 @@ impl TurboQuantVectorIndex {
         byte_lut: &[f64],
         query_bias: f64,
         candidate_limit: usize,
-    ) -> VectorTopK<(usize, u32)> {
+    ) -> TurboQuantCandidateTopK {
         let chunk_blocks = TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
         (0..self.codes.block_count())
             .into_par_iter()
@@ -250,7 +252,10 @@ impl TurboQuantVectorIndex {
                 let end = blocks.last().copied().map_or(start, |block| block + 1);
                 self.slot_order_candidates_blocks(start, end, byte_lut, query_bias, candidate_limit)
             })
-            .reduce(|| VectorTopK::new(candidate_limit), merge_candidate_top_k)
+            .reduce(
+                || TurboQuantCandidateTopK::new(candidate_limit),
+                merge_candidate_top_k,
+            )
     }
 
     fn slot_order_candidates_blocks(
@@ -260,8 +265,8 @@ impl TurboQuantVectorIndex {
         byte_lut: &[f64],
         query_bias: f64,
         candidate_limit: usize,
-    ) -> VectorTopK<(usize, u32)> {
-        let mut candidates = VectorTopK::new(candidate_limit);
+    ) -> TurboQuantCandidateTopK {
+        let mut candidates = TurboQuantCandidateTopK::new(candidate_limit);
         let mut dots = [f64x4::ZERO; TURBO_QUANT_BLOCK_ROWS / 4];
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
@@ -288,7 +293,7 @@ impl TurboQuantVectorIndex {
                         continue;
                     };
                     let distance = -(dot * f64::from(self.row_scales[slot]));
-                    candidates.push_distance((slot, row), distance);
+                    candidates.push_distance(row, distance);
                 }
             }
         }
@@ -300,8 +305,8 @@ impl TurboQuantVectorIndex {
         byte_lut: &[f64],
         query_bias: f64,
         candidate_limit: usize,
-    ) -> VectorTopK<(usize, u32)> {
-        let mut candidates = VectorTopK::new(candidate_limit);
+    ) -> TurboQuantCandidateTopK {
+        let mut candidates = TurboQuantCandidateTopK::new(candidate_limit);
         for (&row, &slot_key) in &self.row_to_entry {
             let slot = slot_index(slot_key);
             let Some(stored_row) = self.rows.get(slot).copied() else {
@@ -311,7 +316,7 @@ impl TurboQuantVectorIndex {
                 continue;
             }
             let distance = self.approx_distance_lut(slot, byte_lut, query_bias);
-            candidates.push_distance((slot, row), distance);
+            candidates.push_distance(row, distance);
         }
         candidates
     }
@@ -513,9 +518,9 @@ impl TurboQuantVectorIndex {
 }
 
 fn merge_candidate_top_k(
-    mut lhs: VectorTopK<(usize, u32)>,
-    rhs: VectorTopK<(usize, u32)>,
-) -> VectorTopK<(usize, u32)> {
+    mut lhs: TurboQuantCandidateTopK,
+    rhs: TurboQuantCandidateTopK,
+) -> TurboQuantCandidateTopK {
     for hit in rhs.into_hits() {
         lhs.push_distance(hit.key, hit.distance);
     }
