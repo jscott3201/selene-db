@@ -784,6 +784,22 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d1536_q8_cand4243_k10_recallbp10000_m7770-full60000` | 3.6223 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and gives graph-filtered multi-query workloads the fastest current production path. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d3072_q8_cand4243_k10_recallbp10000_m15300-full120000` | 6.2490 ms (quick) | 3072-dim query-specific filtered batches preserve full recall and keep the fused compressed scan below the single-query filtered high-dimensional path. |
 
+PR-local production sparse/mixed filtered batch TurboQuant A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_sparse_filtered_batch_dimension_projection/cluster_cos/tqcos_sparse_filtered_batch_c512_d1536 --save-baseline tq_sparse_lut_pre`
+with the old sparse byte-LUT builder, then the same command with
+`--baseline tq_sparse_lut_pre` after hoisting per-byte query components.
+Mixed and dense guardrails used the same profile/filter shape against
+`graph_turbo_quant_production_mixed_filtered_batch_dimension_projection/...d1536`
+and `graph_turbo_quant_production_filtered_batch_dimension_projection/...d1536`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_sparse_filtered_batch_dimension_projection/...d1536` | 1.9403 ms | 1.3195 ms | Sparse 64-candidate/query batches use the live-map byte-LUT path. Hoisting query components out of the 256-entry packed-byte loop improves this row by 31.93% (`p=0.00`) while preserving exact primary-vector rerank and full recall. |
+| `graph_turbo_quant_production_mixed_filtered_batch_dimension_projection/...d1536` | 2.5597 ms | 2.5703 ms | Mixed dense+sparse candidate sets stay within Criterion's noise threshold, so the sparse LUT change does not move the existing fused FastScan policy. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...d1536` | documented 3.6223 ms / local noisy guard | 3.7735 ms | Dense 4,243-candidate/query filtered batches remain on the FastScan path; rerun reported no detected performance change after one outlier-heavy sample. |
+
 PR-local production shared-filtered batch TurboQuant candidate-set A/B:
 
 Commands:

@@ -449,21 +449,17 @@ impl TurboQuantVectorIndex {
         for byte in 0..self.bytes_per_row {
             let first_dim = byte * 2;
             let second_dim = first_dim + 1;
+            let first_query = (first_dim < self.dimension).then(|| {
+                query_component_for_score(rotated_query[first_dim], first_dim, &self.inv_scale)
+            });
+            let second_query = (second_dim < self.dimension).then(|| {
+                query_component_for_score(rotated_query[second_dim], second_dim, &self.inv_scale)
+            });
             for packed in 0..256 {
-                let first = (first_dim < self.dimension).then(|| {
-                    let query = query_component_for_score(
-                        rotated_query[first_dim],
-                        first_dim,
-                        &self.inv_scale,
-                    );
+                let first = first_query.map(|query| {
                     f64::from(query) * f64::from(self.codebook.centroids()[packed & 0x0f])
                 });
-                let second = (second_dim < self.dimension).then(|| {
-                    let query = query_component_for_score(
-                        rotated_query[second_dim],
-                        second_dim,
-                        &self.inv_scale,
-                    );
+                let second = second_query.map(|query| {
                     f64::from(query) * f64::from(self.codebook.centroids()[(packed >> 4) & 0x0f])
                 });
                 table[byte * 256 + packed] = first.unwrap_or_default() + second.unwrap_or_default();

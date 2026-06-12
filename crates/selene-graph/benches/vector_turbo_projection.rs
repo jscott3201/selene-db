@@ -7,6 +7,8 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
+#[path = "vector_turbo_projection/mixed_filter.rs"]
+mod mixed_filter;
 #[path = "vector_turbo_projection/shared_filter.rs"]
 mod shared_filter;
 #[path = "vector_pq_support/turbo_quant.rs"]
@@ -689,6 +691,8 @@ criterion_group! {
         bench_production_turbo_quant_batch_dimension_projection,
         bench_production_turbo_quant_filtered_dimension_projection,
         bench_production_turbo_quant_filtered_batch_dimension_projection,
+        mixed_filter::bench_production_turbo_quant_mixed_filtered_batch_dimension_projection,
+        mixed_filter::bench_production_turbo_quant_sparse_filtered_batch_dimension_projection,
         shared_filter::bench_production_turbo_quant_shared_filtered_batch_dimension_projection
 }
 criterion_main!(vector_turbo_projection);
