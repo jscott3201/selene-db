@@ -111,6 +111,51 @@ impl TurboQuantVectorIndex {
             .collect())
     }
 
+    pub(crate) fn candidates_batch_in_shared_rows(
+        &self,
+        queries: &[VectorValue],
+        k: usize,
+        search_width: usize,
+        allowed_rows: &RoaringBitmap,
+    ) -> CoreResult<Vec<Vec<TurboQuantVectorHit>>> {
+        if allowed_rows.is_empty() {
+            return Ok(vec![Vec::new(); queries.len()]);
+        }
+        if !self.should_fuse_shared_filtered_batch_scan(queries.len(), allowed_rows) {
+            return queries
+                .iter()
+                .map(|query| self.candidates_in_rows(query, k, search_width, allowed_rows))
+                .collect();
+        }
+
+        let candidate_limit = self.filtered_candidate_limit(k, search_width, allowed_rows);
+        let Some(prepared) = self.prepare_fast_scan_queries(queries) else {
+            return queries
+                .iter()
+                .map(|query| self.candidates_in_rows(query, k, search_width, allowed_rows))
+                .collect();
+        };
+        let candidates = self.slot_order_candidates_fast_scan_batch_in_shared_rows(
+            &prepared,
+            candidate_limit,
+            allowed_rows,
+        );
+
+        Ok(candidates
+            .into_iter()
+            .map(|query_candidates| {
+                query_candidates
+                    .into_hits()
+                    .into_iter()
+                    .map(|hit| TurboQuantVectorHit {
+                        row: hit.key,
+                        distance: hit.distance,
+                    })
+                    .collect()
+            })
+            .collect())
+    }
+
     pub(super) fn block_has_allowed_rows(
         &self,
         block: usize,
@@ -167,6 +212,16 @@ impl TurboQuantVectorIndex {
             && allowed_rows
                 .iter()
                 .any(|allowed| self.should_scan_filtered_by_slot_order(allowed))
+    }
+
+    fn should_fuse_shared_filtered_batch_scan(
+        &self,
+        query_count: usize,
+        allowed_rows: &RoaringBitmap,
+    ) -> bool {
+        query_count > 1
+            && self.supports_fast_scan_accumulator()
+            && self.should_scan_filtered_by_slot_order(allowed_rows)
     }
 
     pub(super) fn slot_order_candidates_in_rows(

@@ -313,7 +313,8 @@ full-code scans against candidate-producer plus compression layering.
 128/768/1536 dimensions at a fixed 10k-row scale so storage ratio and safe
 block-Hadamard rotation behavior are visible before production codec work. Its
 production `TurboQuantCosine` rows track the current omitted search-width
-default (`512`) across single, batch, filtered, and filtered-batch search.
+default (`512`) across single, batch, filtered, filtered-batch, and
+shared-filtered-batch search.
 `vector_turbo_churn` applies the standard 10% vector update / 5% delete churn
 shape to a 10k-row production `TurboQuantCosine` index and times approximate
 search over the churned derived state at the current omitted search-width
@@ -776,6 +777,21 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d128_q8_cand4243_k10_recallbp10000_m867-full5000` | 1.1935 ms (quick) | Fused filtered-batch FastScan shares slot-order block reads across query-specific candidate sets while preserving exact primary-vector rerank and full recall at the default width. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d768_q8_cand4243_k10_recallbp10000_m4005-full30000` | 2.3456 ms (quick) | The 768-dim row keeps candidate-set isolation per query but fuses compressed scoring over shared blocks, staying well below the single-query filtered path. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d1536_q8_cand4243_k10_recallbp10000_m7770-full60000` | 3.6223 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and gives graph-filtered multi-query workloads the fastest current production path. |
+
+PR-local production shared-filtered batch TurboQuant candidate-set A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_shared_filtered_batch_dimension_projection --save-baseline tq_shared_filter_pre`
+with the new benchmark row on the pre-change filtered batch path, then the same
+command with `--baseline tq_shared_filter_pre` after routing repeated candidate
+sets through one row allowlist and a shared-lane FastScan mask.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_shared_filtered_batch_dimension_projection/...d128` | 1.2165 ms | 773.08 µs | Repeated graph/state candidate sets now convert to index rows once and build one per-block lane mask for all queries. |
+| `graph_turbo_quant_production_shared_filtered_batch_dimension_projection/...d768` | 2.3107 ms | 1.8740 ms | The shared allowlist path avoids duplicate row conversion while preserving full-recall exact primary-vector rerank. |
+| `graph_turbo_quant_production_shared_filtered_batch_dimension_projection/...d1536` | 3.4826 ms | 3.1296 ms | High-dimensional shared-filtered batches keep the same bounded FastScan accumulator and reduce duplicate filter bookkeeping. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128/d768/d1536` | 1.2137 ms / 2.3291 ms / 3.5864 ms | 1.2202 ms / 2.3073 ms / 3.6319 ms | Distinct per-query candidate sets use endpoint-guarded equality detection and stay within Criterion's noise threshold. |
 
 PR-local production FastScan accumulator-flush spot-check:
 
