@@ -305,7 +305,8 @@ production `TurboQuantCosine` rows track the current omitted search-width
 default (`512`) across single, batch, filtered, and filtered-batch search.
 `vector_turbo_churn` applies the standard 10% vector update / 5% delete churn
 shape to a 10k-row production `TurboQuantCosine` index and times approximate
-search over the churned derived state.
+search over the churned derived state at the current omitted search-width
+default (`512`).
 `vector_ivf_pressure` uses the
 production graph IVF index and records list-skew plus candidate-pressure
 suffixes so future IVF/PQ layering work is grounded against real index fanout
@@ -663,17 +664,17 @@ PR-local production TurboQuant dimension-projection spot-check:
 
 | Bench | 10k | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d128_n10k_k10_recallbp10000_m867-full5000` | 2.029 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` uses the current omitted search-width default (`512`) with the safe `wide` FastScan slot-order scorer, bounded `u16` accumulators, and exact primary-vector rerank. |
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d768_n10k_k10_recallbp10000_m4005-full30000` | 3.621 ms (quick) | The 768-dim production row keeps full recall with the default c512 candidate envelope and the same compressed index around 3.9 MiB versus ~29.3 MiB primary vector components. |
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d1536_n10k_k10_recallbp10000_m7770-full60000` | 5.337 ms (quick) | 1536-dim production search stays full-recall at the c512 default width while preserving exact primary-vector rerank. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d128_n10k_k10_recallbp10000_m867-full5000` | 1.7448 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` uses the current omitted search-width default (`512`) with the safe `wide` FastScan slot-order scorer, wider low-dimension Rayon chunks, bounded `u16` accumulators, and exact primary-vector rerank. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d768_n10k_k10_recallbp10000_m4005-full30000` | 3.3273 ms (quick) | The 768-dim production row keeps full recall with the default c512 candidate envelope and the same compressed index around 3.9 MiB versus ~29.3 MiB primary vector components. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d1536_n10k_k10_recallbp10000_m7770-full60000` | 5.3378 ms (quick) | 1536-dim production search stays full-recall at the c512 default width while preserving exact primary-vector rerank. |
 
 PR-local production TurboQuant batch dimension-projection spot-check:
 
 | Bench | 10k x 8 queries | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c512_d128_q8_n10k_k10_recallbp10000_m867-full5000` | 1.1456 ms (quick) | Batch fusion shares each slot-order block scan across eight default-width queries while keeping full recall and exact primary-vector rerank. |
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c512_d768_q8_n10k_k10_recallbp10000_m4005-full30000` | 2.1469 ms (quick) | The common 768-dim batch row stays full-recall and keeps the default c512 fused FastScan path below the old c1024 single-query envelope. |
-| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c512_d1536_q8_n10k_k10_recallbp10000_m7770-full60000` | 3.5023 ms (quick) | The 1536-dim batch row stays inside the bounded FastScan accumulator envelope and remains the preferred path for multiple independent embedding lookups over the same index. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c512_d128_q8_n10k_k10_recallbp10000_m867-full5000` | 1.0523 ms (quick) | Batch fusion shares each slot-order block scan across eight default-width queries while keeping full recall and exact primary-vector rerank. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c512_d768_q8_n10k_k10_recallbp10000_m4005-full30000` | 2.1693 ms (quick) | The common 768-dim batch row stays full-recall and keeps the default c512 fused FastScan path below the old c1024 single-query envelope. |
+| `graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c512_d1536_q8_n10k_k10_recallbp10000_m7770-full60000` | 3.5734 ms (quick) | The 1536-dim batch row stays inside the bounded FastScan accumulator envelope and remains the preferred path for multiple independent embedding lookups over the same index. |
 
 PR-local production filtered TurboQuant candidate-set spot-check:
 
@@ -681,9 +682,9 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 
 | Bench | 10k x 8 queries over 4,243 candidates/query | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c512_d128_q8_cand4243_k10_recallbp10000_m867-full5000` | 2.1182 ms (quick) | Query-specific candidate sets use row-filtered TurboQuant allowlist scoring, then exact-rerank primary vectors. The row preserves full recall under the default c512 width. |
-| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c512_d768_q8_cand4243_k10_recallbp10000_m4005-full30000` | 3.5610 ms (quick) | The filtered FastScan path intersects caller candidates with registered index rows before compressed scoring, avoiding wrong-label/state spillover while preserving exact final distances. |
-| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c512_d1536_q8_cand4243_k10_recallbp10000_m7770-full60000` | 5.3502 ms (quick) | At 1536 dimensions, the candidate-filtered path stays full-recall at the default width and remains the single-query primitive for graph/state-gated retrieval. |
+| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c512_d128_q8_cand4243_k10_recallbp10000_m867-full5000` | 1.9831 ms (quick) | Query-specific candidate sets use row-filtered TurboQuant allowlist scoring, then exact-rerank primary vectors. The row preserves full recall under the default c512 width. |
+| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c512_d768_q8_cand4243_k10_recallbp10000_m4005-full30000` | 3.6674 ms (quick) | The filtered FastScan path intersects caller candidates with registered index rows before compressed scoring, avoiding wrong-label/state spillover while preserving exact final distances. |
+| `graph_turbo_quant_production_filtered_dimension_projection/cluster_cos/tqcos_filtered_c512_d1536_q8_cand4243_k10_recallbp10000_m7770-full60000` | 5.3210 ms (quick) | At 1536 dimensions, the candidate-filtered path stays full-recall at the default width and remains the single-query primitive for graph/state-gated retrieval. |
 
 PR-local production filtered batch TurboQuant candidate-set spot-check:
 
@@ -691,9 +692,9 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 
 | Bench | 10k x 8 queries over 4,243 candidates/query | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d128_q8_cand4243_k10_recallbp10000_m867-full5000` | 1.4378 ms (quick) | Fused filtered-batch FastScan shares slot-order block reads across query-specific candidate sets while preserving exact primary-vector rerank and full recall at the default width. |
-| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d768_q8_cand4243_k10_recallbp10000_m4005-full30000` | 2.4171 ms (quick) | The 768-dim row keeps candidate-set isolation per query but fuses compressed scoring over shared blocks, staying well below the single-query filtered path. |
-| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d1536_q8_cand4243_k10_recallbp10000_m7770-full60000` | 3.6279 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and gives graph-filtered multi-query workloads the fastest current production path. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d128_q8_cand4243_k10_recallbp10000_m867-full5000` | 1.2508 ms (quick) | Fused filtered-batch FastScan shares slot-order block reads across query-specific candidate sets while preserving exact primary-vector rerank and full recall at the default width. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d768_q8_cand4243_k10_recallbp10000_m4005-full30000` | 2.3456 ms (quick) | The 768-dim row keeps candidate-set isolation per query but fuses compressed scoring over shared blocks, staying well below the single-query filtered path. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d1536_q8_cand4243_k10_recallbp10000_m7770-full60000` | 3.6223 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and gives graph-filtered multi-query workloads the fastest current production path. |
 
 PR-local production FastScan accumulator-flush spot-check:
 
@@ -741,11 +742,28 @@ PR-local TurboQuant default search-width spot-check:
 
 Command: `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`.
 
+This is the historical c1024-to-c512 comparison captured before the
+low-dimension chunk tuning below; the current c512 production medians are in
+the tables above.
+
 | Bench | c1024 median | c512 median | Notes |
 |---|---:|---:|---|
 | `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d128` | 2.936 ms | 2.029 ms | The committed production bench now carries the default-width row name. It preserves `recallbp10000` on the 10k clustered cosine fixture while keeping the omitted-width production search envelope about 31% below the prior c1024 row. |
 | `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d768` | 5.243 ms | 3.621 ms | The common 768-dim embedding shape also preserves full recall at c512 and keeps the same roughly 31% improvement versus c1024. |
 | `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d1536` | 7.730 ms | 5.337 ms | The high-dimensional guard row remains full-recall at c512 and now has a first-class benchmark ID, keeping the TurboQuant default-width decision reproducible. |
+
+PR-local TurboQuant low-dimension parallel chunk spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d128 --baseline tq_chunk1024_projection_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d1536 --baseline tq_chunk1024_d1536_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_churn --filter graph_turbo_quant_churn --baseline churn_c512_pre`.
+
+| Bench | 1024-entry chunks | Dimension-aware chunks | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d128` | 2.0273 ms | 1.7387 ms | 128-dim c512 scans use 2,048-entry Rayon chunks, reducing merge overhead while preserving full recall and exact primary-vector rerank. Criterion reports a 14.35% improvement (`p=0.00`). |
+| `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d1536` | 5.3562 ms | 5.4626 ms | The 1536-dim guard stays on the existing 1,024-entry chunk size; Criterion reports the comparison as within the noise threshold, so the threshold avoids the broad 2,048-entry regression seen in discarded experiments. |
+| `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | 227.21 µs | 196.13 µs | The default-width churn fixture also benefits from the 128-dim chunk rule after 10% updates and 5% deletes, improving 13.35% (`p=0.00`). |
 
 PR-local TurboQuant row-key top-k spot-check:
 

@@ -21,7 +21,7 @@ const DIMENSION: usize = 128;
 const UPDATE_COUNT: usize = ROWS / 10;
 const DELETE_COUNT: usize = ROWS / 20;
 const K: usize = 10;
-const SEARCH_WIDTH: usize = 1024;
+const SEARCH_WIDTH: usize = 512;
 
 fn bench_turbo_quant_churn(c: &mut Criterion) {
     let fixture = TurboQuantChurnFixture::build();
@@ -29,7 +29,7 @@ fn bench_turbo_quant_churn(c: &mut Criterion) {
     group.bench_function(
         BenchmarkId::new(
             "tqcos_update10_delete5",
-            format!("n{}", compact_count(ROWS as u64)),
+            format!("c{SEARCH_WIDTH}_n{}", compact_count(ROWS as u64)),
         ),
         |b| {
             b.iter(|| {

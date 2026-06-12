@@ -127,11 +127,10 @@ impl TurboQuantVectorIndex {
         queries: &[PreparedFastScanQuery],
         candidate_limit: usize,
     ) -> Vec<TurboQuantCandidateTopK> {
-        let chunk_blocks =
-            super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
+        let chunk_blocks = self.parallel_chunk_blocks();
         (0..self.codes.block_count())
             .into_par_iter()
-            .chunks(chunk_blocks.max(1))
+            .chunks(chunk_blocks)
             .map(|blocks| {
                 let start = blocks.first().copied().unwrap_or_default();
                 let end = blocks.last().copied().map_or(start, |block| block + 1);
@@ -154,11 +153,10 @@ impl TurboQuantVectorIndex {
         candidate_limits: &[usize],
         allowed_rows: &[RoaringBitmap],
     ) -> Vec<TurboQuantCandidateTopK> {
-        let chunk_blocks =
-            super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
+        let chunk_blocks = self.parallel_chunk_blocks();
         (0..self.codes.block_count())
             .into_par_iter()
-            .chunks(chunk_blocks.max(1))
+            .chunks(chunk_blocks)
             .map(|blocks| {
                 let start = blocks.first().copied().unwrap_or_default();
                 let end = blocks.last().copied().map_or(start, |block| block + 1);
@@ -308,11 +306,10 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
     ) -> TurboQuantCandidateTopK {
-        let chunk_blocks =
-            super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
+        let chunk_blocks = self.parallel_chunk_blocks();
         (0..self.codes.block_count())
             .into_par_iter()
-            .chunks(chunk_blocks.max(1))
+            .chunks(chunk_blocks)
             .map(|blocks| {
                 let start = blocks.first().copied().unwrap_or_default();
                 let end = blocks.last().copied().map_or(start, |block| block + 1);
@@ -337,11 +334,10 @@ impl TurboQuantVectorIndex {
         candidate_limit: usize,
         allowed_rows: &RoaringBitmap,
     ) -> TurboQuantCandidateTopK {
-        let chunk_blocks =
-            super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
+        let chunk_blocks = self.parallel_chunk_blocks();
         (0..self.codes.block_count())
             .into_par_iter()
-            .chunks(chunk_blocks.max(1))
+            .chunks(chunk_blocks)
             .map(|blocks| {
                 let start = blocks.first().copied().unwrap_or_default();
                 let end = blocks.last().copied().map_or(start, |block| block + 1);
