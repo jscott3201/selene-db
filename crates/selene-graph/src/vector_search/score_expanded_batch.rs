@@ -27,6 +27,22 @@ impl SeleneGraph {
         k: usize,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorCandidateSet>, VectorSearchError> {
+        if let Some(first_roots) = root_sets.first()
+            && root_sets
+                .iter()
+                .skip(1)
+                .all(|roots| candidate_sets_match(first_roots, roots))
+        {
+            checker.check()?;
+            let expanded = self.expand_vector_candidate_set_checked(
+                first_roots,
+                edge_label,
+                direction,
+                checker,
+            )?;
+            return Ok(vec![expanded; root_sets.len()]);
+        }
+
         if self.should_parallelize_expanded_candidate_batch(root_sets, edge_label, direction, k) {
             return root_sets
                 .par_iter()
@@ -101,4 +117,10 @@ impl SeleneGraph {
         }
         candidate_count
     }
+}
+
+fn candidate_sets_match(lhs: &VectorCandidateSet, rhs: &VectorCandidateSet) -> bool {
+    let lhs = lhs.as_nodes();
+    let rhs = rhs.as_nodes();
+    lhs.len() == rhs.len() && lhs.first() == rhs.first() && lhs.last() == rhs.last() && lhs == rhs
 }

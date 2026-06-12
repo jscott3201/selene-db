@@ -1504,7 +1504,7 @@ PR-local quick vector procedure baseline:
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_nodes_state_difference_32_dim128_k10_1000` | 3.04 µs (quick) | Cached maintained-state minus explicit-node candidates, leaving 32 candidates before exact rerank. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_64_dim128_k10_1000` | 4.88 µs (quick) | Cached `CALL selene.vector_score_candidate_state_expanded` expanding two graph roots through `SUPPORTS`, intersecting with maintained state, and exact-reranking 64 canonical candidates. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_repeated_8x64_dim128_k10_1000` | 39.69 µs (quick) | Eight separate cached maintained-state + graph-expanded intersection calls, one short-lived session per query. |
-| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64_dim128_k10_1000` | 36.83 µs (quick) | One cached `CALL selene.vector_score_candidate_state_expanded_batch` over eight query/root-set pairs; composes maintained state with graph-expanded roots in one procedure call, ~7% below repeated expanded-state latency. |
+| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64_dim128_k10_1000` | 26.5 µs (quick) | One cached `CALL selene.vector_score_candidate_state_expanded_batch` over eight query/root-set pairs; repeated root sets expand and compose once before batch scoring. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_union_128_dim128_k10_1000` | 8.25 µs (quick) | Cached maintained-state + graph-expanded union producing 128 canonical candidates before exact rerank. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_state_difference_32_dim128_k10_1000` | 3.13 µs (quick) | Cached maintained-state minus graph-expanded candidates, leaving 32 candidates before exact rerank. |
 | `procedure_vector_neighbors/shared_cache_score_neighbors_64_dim128_k10_1000` | 4.60 µs (quick) | Cached `CALL selene.vector_score_neighbors` over one 64-neighbor graph-derived candidate set. |
@@ -1522,6 +1522,17 @@ PR-local quick vector procedure baseline:
 | `procedure_vector_ann_expanded/shared_cache_ann_expanded_batch_8x2root64_dim128_k10_1000` | 119.18 µs (quick) | One cached `CALL selene.vector_search_expanded_candidates_ann_batch` over eight query vectors; ~3.4% below repeated ANN-expanded-call latency. |
 | `procedure_vector_ann_expanded/shared_cache_ann_state_expanded_intersection_2root64_dim128_k10_1000` | 15.20 µs (quick) | Cached `CALL selene.vector_search_candidate_state_expanded_ann` using HNSW roots, graph expansion, maintained-state intersection, and exact rerank. |
 | `procedure_vector_ann_expanded/shared_cache_ann_state_expanded_intersection_repeated_8x2root64_dim128_k10_1000` | 127.98 µs (quick) | Eight separate cached ANN-root graph-expansion calls intersected with maintained state before exact rerank. |
+
+PR-local quick maintained-state expanded batch reuse A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench procedure_call_repeat --filter procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64 --save-baseline state_expanded_batch_pre`
+on the pre-change procedure path, then the same command with `--baseline
+state_expanded_batch_pre` after repeated root sets expand and compose once.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64...` | 30.411 µs | 26.515 µs | The benchmark fixture sends the same two graph roots for all eight queries; the procedure now reuses one expansion/composition and keeps exact candidate-set batch scoring unchanged. |
 
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
 

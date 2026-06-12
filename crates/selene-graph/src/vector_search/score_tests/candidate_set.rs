@@ -601,6 +601,36 @@ fn score_vector_expanded_candidate_sets_batch_matches_manual_expansion() {
     );
     assert!(!composed[0].iter().any(|hit| hit.node_id == far_a));
     assert!(!composed[0].iter().any(|hit| hit.node_id == wrong_label));
+
+    let repeated_roots = vec![
+        VectorCandidateSet::from_nodes([root_a]),
+        VectorCandidateSet::from_nodes([root_a, root_a]),
+    ];
+    let repeated = shared
+        .score_vector_expanded_candidate_sets_batch_checked(
+            &embedding,
+            &queries,
+            &repeated_roots,
+            options,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let repeated_expanded = shared.expand_vector_candidate_set(
+        &repeated_roots[0],
+        options.edge_label,
+        options.direction,
+    );
+    let repeated_manual = shared
+        .score_vector_candidate_sets_batch_checked(
+            &embedding,
+            &queries,
+            &[repeated_expanded.clone(), repeated_expanded],
+            options.metric,
+            options.k,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    assert_eq!(repeated, repeated_manual);
 }
 
 #[test]
