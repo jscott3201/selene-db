@@ -111,7 +111,9 @@ impl TurboQuantVectorIndex {
 
     /// Insert or replace the current vector for a graph row.
     pub(crate) fn insert(&mut self, row: u32, vector: &VectorValue) -> GraphResult<()> {
-        self.remove(row);
+        if let Some(slot_key) = self.row_to_entry.get(&row).copied() {
+            return self.replace_slot(row, slot_index(slot_key), vector);
+        }
         let slot = self.rows.len();
         let slot_key = slot_key(slot)?;
         self.codes.resize_rows(slot + 1).map_err(codec_invariant)?;
@@ -455,6 +457,31 @@ impl TurboQuantVectorIndex {
             rotated.extend_from_slice(pending);
         }
         Ok(rotated)
+    }
+
+    fn replace_slot(&mut self, row: u32, slot: usize, vector: &VectorValue) -> GraphResult<()> {
+        if self.rows.get(slot).copied() != Some(row) {
+            return Err(GraphError::Inconsistent {
+                reason: format!("TurboQuant row {row} points at invalid slot {slot}"),
+            });
+        }
+        let rotated = rotated_unit_vector(vector, self.dimension);
+        if self.collecting_bulk {
+            self.replace_bulk_rotated(slot, &rotated)?;
+        }
+        self.encode_slot(slot, &rotated)
+    }
+
+    fn replace_bulk_rotated(&mut self, slot: usize, rotated: &[f32]) -> GraphResult<()> {
+        let start = slot * self.dimension;
+        let end = start + self.dimension;
+        let Some(pending) = self.bulk_rotated.get_mut(start..end) else {
+            return Err(GraphError::Inconsistent {
+                reason: format!("TurboQuant slot {slot} is missing bulk calibration data"),
+            });
+        };
+        pending.copy_from_slice(rotated);
+        Ok(())
     }
 
     fn swap_remove_slot(&mut self, slot: usize) {
