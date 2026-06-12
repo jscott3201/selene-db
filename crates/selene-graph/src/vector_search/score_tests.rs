@@ -8,6 +8,8 @@ use crate::{
     VectorNeighborSearchOptions, VectorSearchError,
 };
 
+#[path = "score_tests/candidate_batch.rs"]
+mod candidate_batch;
 #[path = "score_tests/candidate_set.rs"]
 mod candidate_set;
 

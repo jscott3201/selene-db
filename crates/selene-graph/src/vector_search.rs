@@ -774,6 +774,8 @@ mod batch_tests;
 mod recall_tests;
 #[path = "vector_search/score.rs"]
 mod score;
+#[path = "vector_search/score_candidate_batch.rs"]
+mod score_candidate_batch;
 #[path = "vector_search/score_expanded_batch.rs"]
 mod score_expanded_batch;
 #[path = "vector_search/score_neighbor_batch.rs"]

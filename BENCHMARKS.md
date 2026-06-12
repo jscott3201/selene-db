@@ -611,7 +611,7 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/adjacency_label_range_l8_k64` | 44.6 ns (quick) | Iterates the sorted label range for 64 matching edges mixed with 8x64 unrelated-label edges. |
 | `graph_vector_candidate_set/adjacency_label_scan_l8_k64` | 374.8 ns (quick) | Benchmark-local old path: scans the same mixed-label adjacency entry and filters by label, showing the range lookup is ~8.4x faster for high-degree mixed-label candidates. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c64/c256/c1024/c4096_d1024` | 13.7 µs / 54.7 µs / 222.6 µs / 308.3 µs (quick) | Scores canonical candidate sets against one 1024-dim cosine query. Widths below 4,096 stay sequential; the 4,096-row uses chunked Rayon and is the production broad-candidate rerank threshold. |
-| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.0 µs / 400.0 µs / 422.9 µs / 1.491 ms (quick) | Scores 8 canonical candidate sets against 8 1024-dim cosine queries. c64/c256 stay under the 4,096 total-candidate batch threshold; c1024/c4096 use query-level Rayon. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 97.5 µs / 400.0 µs / 422.9 µs / 1.491 ms (quick) | Scores 8 canonical candidate sets against 8 1024-dim cosine queries. Repeated c64 sets reuse candidate property lookups below the 4,096 total-candidate batch threshold; c1024/c4096 use query-level Rayon. |
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 177.9 µs / 611.3 µs / 2.267 ms / 9.557 ms (quick) | Scores 64 canonical candidate sets against 64 queries. Query-level Rayon is now the production many-query batch path once distributed total candidates reach 4,096. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.3 µs / 402.4 µs / 423.1 µs / 1.500 ms (quick) | Scores 8 explicit node-slice candidate sets through the generic API. It now normalizes to canonical sets and follows the same q8 threshold behavior. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 185.3 µs / 631.1 µs / 2.351 ms / 9.561 ms (quick) | Scores 64 explicit node-slice candidate sets through the generic API. The normalization cost is small relative to the query-level batch win. |
@@ -1504,7 +1504,7 @@ PR-local quick vector procedure baseline:
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_nodes_state_difference_32_dim128_k10_1000` | 3.04 µs (quick) | Cached maintained-state minus explicit-node candidates, leaving 32 candidates before exact rerank. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_64_dim128_k10_1000` | 4.88 µs (quick) | Cached `CALL selene.vector_score_candidate_state_expanded` expanding two graph roots through `SUPPORTS`, intersecting with maintained state, and exact-reranking 64 canonical candidates. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_repeated_8x64_dim128_k10_1000` | 39.69 µs (quick) | Eight separate cached maintained-state + graph-expanded intersection calls, one short-lived session per query. |
-| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64_dim128_k10_1000` | 26.5 µs (quick) | One cached `CALL selene.vector_score_candidate_state_expanded_batch` over eight query/root-set pairs; repeated root sets expand and compose once before batch scoring. |
+| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64_dim128_k10_1000` | 21.6 µs (quick) | One cached `CALL selene.vector_score_candidate_state_expanded_batch` over eight query/root-set pairs; repeated root sets expand and compose once, then the repeated candidate set is scored with one property-lookup pass. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_union_128_dim128_k10_1000` | 8.25 µs (quick) | Cached maintained-state + graph-expanded union producing 128 canonical candidates before exact rerank. |
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_state_difference_32_dim128_k10_1000` | 3.13 µs (quick) | Cached maintained-state minus graph-expanded candidates, leaving 32 candidates before exact rerank. |
 | `procedure_vector_neighbors/shared_cache_score_neighbors_64_dim128_k10_1000` | 4.60 µs (quick) | Cached `CALL selene.vector_score_neighbors` over one 64-neighbor graph-derived candidate set. |
@@ -1533,6 +1533,21 @@ state_expanded_batch_pre` after repeated root sets expand and compose once.
 | Bench | Before | After | Notes |
 |---|---:|---:|---|
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64...` | 30.411 µs | 26.515 µs | The benchmark fixture sends the same two graph roots for all eight queries; the procedure now reuses one expansion/composition and keeps exact candidate-set batch scoring unchanged. |
+
+PR-local quick repeated candidate-set scoring A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 40 --measurement-time 4 --bench procedure_call_repeat --filter procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64 --save-baseline repeated_candidate_scoring_pre`
+on the pre-change scorer path, then the same command with `--baseline
+repeated_candidate_scoring_pre` after repeated candidate sets score through one
+candidate property-lookup pass. Graph-level guard:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench single_graph --filter graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64 --save-baseline repeated_candidate_graph_pre`,
+then the same command with `--baseline repeated_candidate_graph_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64...` | 26.584 µs | 21.636 µs | The post-root-reuse procedure row now avoids eight repeated property lookup passes over the same 64-node maintained-state intersection before exact scoring. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64_d1024/64` | 102.04 µs | 97.528 µs | The core scorer keeps the existing query-level Rayon path for larger batches, but below threshold flips repeated candidate sets to candidate-major scoring. |
 
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
 

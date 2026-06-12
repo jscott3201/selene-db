@@ -6,11 +6,11 @@ use selene_core::{
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::parallel_scan::{should_parallelize_scan, try_reduce_chunks};
-use rayon::prelude::*;
 
 use super::{
     VECTOR_SEARCH_CANCEL_STRIDE, VectorCandidateSet, VectorNeighborDirection,
     VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError, merge_top_k,
+    score_candidate_batch::{candidate_sets_all_match, should_parallelize_candidate_batch_scoring},
     vector_node_hits,
 };
 
@@ -23,11 +23,6 @@ const VECTOR_CANDIDATE_SCORE_PARALLEL_MIN_NODES: usize = 8;
 const VECTOR_CANDIDATE_SCORE_PARALLEL_CHUNK_NODES: usize = 1024;
 #[cfg(test)]
 const VECTOR_CANDIDATE_SCORE_PARALLEL_CHUNK_NODES: usize = 4;
-
-#[cfg(not(test))]
-const VECTOR_CANDIDATE_BATCH_PARALLEL_MIN_TOTAL_NODES: usize = 4096;
-#[cfg(test)]
-const VECTOR_CANDIDATE_BATCH_PARALLEL_MIN_TOTAL_NODES: usize = 8;
 
 impl SeleneGraph {
     /// Score an explicit node candidate set against one query vector.
@@ -149,7 +144,7 @@ impl SeleneGraph {
         self.score_vector_candidate_set_serial(property, scorer, candidates, k, checker)
     }
 
-    fn score_vector_candidate_set_serial(
+    pub(super) fn score_vector_candidate_set_serial(
         &self,
         property: &DbString,
         scorer: VectorMetricQuery<'_>,
@@ -342,6 +337,16 @@ impl SeleneGraph {
                 checker,
             );
         }
+        if candidate_sets_all_match(candidate_sets) {
+            return self.score_repeated_vector_candidate_set_batch_serial(
+                property,
+                queries,
+                &candidate_sets[0],
+                metric,
+                k,
+                checker,
+            );
+        }
 
         let mut batch_hits = Vec::with_capacity(queries.len());
         for (query, candidates) in queries.iter().zip(candidate_sets) {
@@ -351,26 +356,6 @@ impl SeleneGraph {
             )?);
         }
         Ok(batch_hits)
-    }
-
-    fn score_vector_candidate_sets_batch_parallel(
-        &self,
-        property: &DbString,
-        queries: &[VectorValue],
-        candidate_sets: &[VectorCandidateSet],
-        metric: VectorMetric,
-        k: usize,
-        checker: CancellationChecker<'_>,
-    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
-        queries
-            .par_iter()
-            .zip(candidate_sets.par_iter())
-            .map(|(query, candidates)| {
-                checker.check()?;
-                let scorer = metric.bind_query(query).map_err(GraphError::from)?;
-                self.score_vector_candidate_set_serial(property, scorer, candidates, k, checker)
-            })
-            .collect()
     }
 
     /// Score vector-valued neighbors reached from one anchor through `edge_label`.
@@ -631,32 +616,6 @@ fn should_parallelize_candidate_scoring(candidate_count: usize, k: usize) -> boo
         candidate_count as u64,
         k,
         VECTOR_CANDIDATE_SCORE_PARALLEL_MIN_NODES as u64,
-    )
-}
-
-fn should_parallelize_candidate_batch_scoring(
-    candidate_sets: &[VectorCandidateSet],
-    k: usize,
-) -> bool {
-    if candidate_sets.len() <= 1 {
-        return false;
-    }
-    let mut total_candidates = 0_usize;
-    let mut max_candidates = 0_usize;
-    let mut non_empty_sets = 0_usize;
-    for candidate_count in candidate_sets.iter().map(VectorCandidateSet::len) {
-        total_candidates += candidate_count;
-        max_candidates = max_candidates.max(candidate_count);
-        non_empty_sets += usize::from(candidate_count != 0);
-    }
-    if non_empty_sets <= 1 || max_candidates.saturating_mul(2) > total_candidates {
-        return false;
-    }
-
-    should_parallelize_scan(
-        total_candidates as u64,
-        k,
-        VECTOR_CANDIDATE_BATCH_PARALLEL_MIN_TOTAL_NODES as u64,
     )
 }
 
