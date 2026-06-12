@@ -271,19 +271,21 @@ impl SeleneGraph {
             return Ok(vec![Vec::new(); queries.len()]);
         }
 
-        let mut batch_hits = Vec::with_capacity(queries.len());
-        for (query, candidates) in queries.iter().zip(candidate_sets) {
+        let mut canonical_sets = Vec::with_capacity(candidate_sets.len());
+        for candidates in candidate_sets {
             checker.check()?;
-            batch_hits.push(self.score_vector_nodes_checked(
-                property,
-                query,
-                candidates.as_ref(),
-                metric,
-                k,
-                checker,
-            )?);
+            canonical_sets.push(VectorCandidateSet::from_nodes(
+                candidates.as_ref().iter().copied(),
+            ));
         }
-        Ok(batch_hits)
+        self.score_vector_candidate_sets_batch_checked(
+            property,
+            queries,
+            &canonical_sets,
+            metric,
+            k,
+            checker,
+        )
     }
 
     /// Score one canonical candidate set for each query vector.
