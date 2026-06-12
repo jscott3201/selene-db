@@ -125,6 +125,28 @@ fn turbo_quant_batch_search_matches_single_queries() {
         .collect();
 
     assert_eq!(batched, singles);
+
+    let covered_options = ApproximateVectorSearchOptions::new(VectorMetric::Cosine, 4, 32);
+    let covered = shared
+        .approximate_vector_search_nodes_batch_checked(
+            &doc,
+            &embedding,
+            &queries,
+            covered_options,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let exact = shared
+        .exact_vector_search_nodes_batch_checked(
+            &doc,
+            &embedding,
+            &queries,
+            VectorMetric::Cosine,
+            4,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    assert_eq!(covered, exact);
 }
 
 #[test]
@@ -271,6 +293,18 @@ fn turbo_quant_candidate_set_batch_search_matches_single_queries() {
         .collect::<Vec<_>>();
 
     assert_eq!(batch, singles);
+
+    let exact = shared
+        .score_vector_candidate_sets_batch_checked(
+            &embedding,
+            &queries,
+            &candidate_sets,
+            VectorMetric::Cosine,
+            4,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    assert_eq!(batch, exact);
 }
 
 #[test]
