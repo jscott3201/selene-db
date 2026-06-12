@@ -226,9 +226,16 @@ impl TurboQuantVectorIndex {
         let mut candidates = fast_scan_candidate_top_k_batch_with_limits(candidate_limits);
         let mut accumulators = vec![[u16x16::splat(0), u16x16::splat(0)]; queries.len()];
         let mut accumulator_lanes = vec![[[0_i32; 16], [0_i32; 16]]; queries.len()];
+        let mut lane_scratch = FilteredBatchLaneScratch::new(queries.len());
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
-            if !self.block_has_any_allowed_rows(block, block_len, allowed_rows) {
+            if !self.filtered_batch_lane_masks(
+                block,
+                block_len,
+                candidate_limits,
+                allowed_rows,
+                &mut lane_scratch,
+            ) {
                 continue;
             }
             self.accumulate_fast_scan_batch_block(
@@ -237,26 +244,62 @@ impl TurboQuantVectorIndex {
                 &mut accumulators,
                 &mut accumulator_lanes,
             );
-            let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
-            for lane in 0..block_len {
-                let slot = base_slot + lane;
-                for (((candidate, query), lanes), allowed) in candidates
-                    .iter_mut()
-                    .zip(queries)
-                    .zip(accumulator_lanes.iter())
-                    .zip(allowed_rows)
-                {
-                    let Some(row) = self.allowed_live_row_at_slot(slot, allowed) else {
-                        continue;
-                    };
+            for (((candidate, query), lanes), lane_mask) in candidates
+                .iter_mut()
+                .zip(queries)
+                .zip(accumulator_lanes.iter())
+                .zip(lane_scratch.query_lane_masks.iter().copied())
+            {
+                let mut mask = lane_mask;
+                while mask != 0 {
+                    let lane = mask.trailing_zeros() as usize;
                     let centered = lanes[lane / 16][lane % 16] - query.lut.zero_sum;
                     let dot = query.query_bias + f64::from(centered) * query.lut.dequant;
-                    let distance = -(dot * f64::from(self.row_scales[slot]));
-                    candidate.push_distance(row, distance);
+                    candidate.push_distance(
+                        lane_scratch.lane_rows[lane],
+                        -(dot * lane_scratch.lane_scales[lane]),
+                    );
+                    mask &= mask - 1;
                 }
             }
         }
         candidates
+    }
+
+    fn filtered_batch_lane_masks(
+        &self,
+        block: usize,
+        block_len: usize,
+        candidate_limits: &[usize],
+        allowed_rows: &[RoaringBitmap],
+        scratch: &mut FilteredBatchLaneScratch,
+    ) -> bool {
+        debug_assert_eq!(candidate_limits.len(), allowed_rows.len());
+        debug_assert_eq!(candidate_limits.len(), scratch.query_lane_masks.len());
+        scratch.query_lane_masks.fill(0);
+        let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
+        let mut any_allowed = false;
+        for lane in 0..block_len {
+            let slot = base_slot + lane;
+            let Some(row) = self.live_row_at_slot(slot) else {
+                continue;
+            };
+            scratch.lane_rows[lane] = row;
+            scratch.lane_scales[lane] = f64::from(self.row_scales[slot]);
+            let lane_bit = 1_u32 << lane;
+            for ((mask, allowed), candidate_limit) in scratch
+                .query_lane_masks
+                .iter_mut()
+                .zip(allowed_rows)
+                .zip(candidate_limits.iter().copied())
+            {
+                if candidate_limit != 0 && allowed.contains(row) {
+                    *mask |= lane_bit;
+                    any_allowed = true;
+                }
+            }
+        }
+        any_allowed
     }
 
     fn slot_order_candidates_fast_scan_parallel(
@@ -550,6 +593,22 @@ pub(super) struct FastScanQueryLut {
 pub(super) struct PreparedFastScanQuery {
     lut: FastScanQueryLut,
     query_bias: f64,
+}
+
+struct FilteredBatchLaneScratch {
+    lane_rows: [u32; TURBO_QUANT_BLOCK_ROWS],
+    lane_scales: [f64; TURBO_QUANT_BLOCK_ROWS],
+    query_lane_masks: Vec<u32>,
+}
+
+impl FilteredBatchLaneScratch {
+    fn new(query_count: usize) -> Self {
+        Self {
+            lane_rows: [0; TURBO_QUANT_BLOCK_ROWS],
+            lane_scales: [0.0; TURBO_QUANT_BLOCK_ROWS],
+            query_lane_masks: vec![0; query_count],
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

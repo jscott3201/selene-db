@@ -169,17 +169,6 @@ impl TurboQuantVectorIndex {
                 .any(|allowed| self.should_scan_filtered_by_slot_order(allowed))
     }
 
-    pub(super) fn block_has_any_allowed_rows(
-        &self,
-        block: usize,
-        block_len: usize,
-        allowed_rows: &[RoaringBitmap],
-    ) -> bool {
-        allowed_rows
-            .iter()
-            .any(|allowed| self.block_has_allowed_rows(block, block_len, allowed))
-    }
-
     pub(super) fn slot_order_candidates_in_rows(
         &self,
         byte_lut: &[f64],
