@@ -177,7 +177,7 @@ production accelerator API.
 | `core_vector_distance/cosine/128/768/1536` | 31.0 ns / 179.7 ns / 358.6 ns (full B9) | Exact cosine distance with zero-norm checks and clamped similarity; B9 keeps one-off cosine mostly noise-flat while accelerating bound-query ANN paths. |
 | `core_vector_distance/negative_inner_product/128/768/1536` | 15.6 ns / 90.0 ns / 179.7 ns (full B9) | Max-inner-product adapter (`-dot`) with lower-is-better ordering; B9 uses four independent dot accumulators for wider vectors. |
 | `core_vector_exact_top_k/squared_euclidean_2048x128_k10` | 39.7 µs (full B9) | Exhaustive exact-search oracle over 2,048 candidates using a bounded max-heap (`O(n log k)`); B9 is noise-flat at this 128-dim width. |
-| `core_vector_exact_top_k/cosine_2048x128_k10` | 53.0 µs (full B9) | Bound-query cosine exact top-k over 2,048 candidates; the unbound comparison row is 65.2 µs. |
+| `core_vector_exact_top_k/cosine_2048x128_k10` | 51.958 µs (quick) | Bound-query cosine exact top-k over 2,048 candidates; retained-heap replacement now uses `BinaryHeap::peek_mut`, avoiding a pop+push pair when a candidate beats the current worst retained hit. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x1024_k10` | 12.2 µs / 47.6 µs / 188.3 µs / 750.7 µs (quick) | Product-shaped cosine rerank envelope for the 1024-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x2560_k10` | 29.6 µs / 116.6 µs / 465.1 µs / 1.856 ms (quick) | Product-shaped cosine rerank envelope for the 2560-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x4096_k10` | 47.0 µs / 185.5 µs / 739.3 µs / 2.959 ms (quick) | Product-shaped cosine rerank envelope for the 4096-dim local embedding model. |
@@ -664,7 +664,7 @@ PR-local production TurboQuant dimension-projection spot-check:
 
 | Bench | 10k | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d128_n10k_k10_recallbp10000_m867-full5000` | 1.7448 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` uses the current omitted search-width default (`512`) with the safe `wide` FastScan slot-order scorer, wider low-dimension Rayon chunks, bounded `u16` accumulators, and exact primary-vector rerank. |
+| `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d128_n10k_k10_recallbp10000_m867-full5000` | 1.6700 ms (quick) | Production `VectorIndexKind::TurboQuantCosine` uses the current omitted search-width default (`512`) with the safe `wide` FastScan slot-order scorer, wider low-dimension Rayon chunks, bounded `u16` accumulators, and exact primary-vector rerank. |
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d768_n10k_k10_recallbp10000_m4005-full30000` | 3.3273 ms (quick) | The 768-dim production row keeps full recall with the default c512 candidate envelope and the same compressed index around 3.9 MiB versus ~29.3 MiB primary vector components. |
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d1536_n10k_k10_recallbp10000_m7770-full60000` | 5.3378 ms (quick) | 1536-dim production search stays full-recall at the c512 default width while preserving exact primary-vector rerank. |
 
@@ -692,7 +692,7 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 
 | Bench | 10k x 8 queries over 4,243 candidates/query | Notes |
 |---|---:|---|
-| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d128_q8_cand4243_k10_recallbp10000_m867-full5000` | 1.2508 ms (quick) | Fused filtered-batch FastScan shares slot-order block reads across query-specific candidate sets while preserving exact primary-vector rerank and full recall at the default width. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d128_q8_cand4243_k10_recallbp10000_m867-full5000` | 1.1935 ms (quick) | Fused filtered-batch FastScan shares slot-order block reads across query-specific candidate sets while preserving exact primary-vector rerank and full recall at the default width. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d768_q8_cand4243_k10_recallbp10000_m4005-full30000` | 2.3456 ms (quick) | The 768-dim row keeps candidate-set isolation per query but fuses compressed scoring over shared blocks, staying well below the single-query filtered path. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d1536_q8_cand4243_k10_recallbp10000_m7770-full60000` | 3.6223 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and gives graph-filtered multi-query workloads the fastest current production path. |
 
@@ -785,6 +785,19 @@ Commands:
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128` | 2.0266 ms | 1.9426 ms | `VectorTopK::new` now reserves its retained-hit heap up front. The query-specific filtered batch path builds multiple candidate heaps per scan, so it benefits most; the row improves 4.62% (`p=0.00`). |
 | `graph_turbo_quant_production_dimension_projection/...d128` | 2.9299 ms | 2.8888 ms | Full-index single-query TurboQuant trends 1.36% faster (`p=0.00`) but remains within Criterion's noise threshold. |
 | `core_vector_exact_top_k/cosine_2048x128_k10` | 52.877 us | 52.658 us | Core exact top-k construction also trends lower but remains within the noise threshold; the production filtered-batch row is the keep/drop signal. |
+
+PR-local VectorTopK heap replacement spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench value_clone --filter core_vector_exact_top_k/cosine_2048x128_k10 --baseline topk_peek_mut_core_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d128 --baseline fastscan_first_flush_single_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d128 --baseline fastscan_first_flush_filtered_batch_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `core_vector_exact_top_k/cosine_2048x128_k10` | 53.115 us | 51.958 us | `VectorTopK::push_distance` now replaces the retained worst hit through `BinaryHeap::peek_mut()` instead of `pop()` plus `push()`. The bound-query exact rerank row improves 3.71% (`p=0.00`). |
+| `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d128` | 1.7669 ms | 1.6700 ms | Full-index TurboQuant benefits because approximate candidate selection and exact primary-vector rerank both use bounded top-k heaps. The row improves 5.55% (`p=0.00`) while preserving full recall. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...tqcos_filtered_batch_c512_d128` | 1.2508 ms | 1.1935 ms | Filtered batch search builds one retained heap per query and sees a 4.43% improvement (`p=0.00`) while preserving candidate-set isolation and exact rerank. |
 
 PR-local TurboQuant slot-map storage spot-check:
 
