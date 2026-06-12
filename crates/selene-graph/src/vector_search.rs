@@ -749,6 +749,8 @@ mod batch_tests;
 mod recall_tests;
 #[path = "vector_search/score.rs"]
 mod score;
+#[path = "vector_search/score_expanded_batch.rs"]
+mod score_expanded_batch;
 #[path = "vector_search/score_shared.rs"]
 mod score_shared;
 #[cfg(test)]

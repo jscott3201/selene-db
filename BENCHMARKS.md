@@ -266,7 +266,10 @@ Canonical candidate-set batch scoring uses query-level Rayon once the batch has
 at least 4,096 total candidates spread across multiple sets, keeping each
 per-query scan serial inside that branch so many-query batches do not nest
 chunked reductions. Explicit node batch scoring normalizes to canonical
-candidate sets once, then delegates to the same batch scorer. The
+candidate sets once, then delegates to the same batch scorer. Graph-expanded
+candidate-set batches parallelize root-set expansion only when the batch has at
+least 16 root sets and a sampled estimate projects at least 8,192 expanded
+candidates; smaller expanded batches stay serial to avoid Rayon overhead. The
 candidate-set group also measures the Rust graph/vector boundary for deriving
 canonical candidate sets from graph adjacency and reranking canonical candidate
 sets by vector score.
@@ -466,6 +469,21 @@ explicit-node batches through canonical candidate-set batch scoring.
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c1024_d1024/1024` | 13.027 ms | 2.3506 ms | The generic API now carries the same many-query parallel shape as canonical candidate-set scoring. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c4096_d1024/4096` | 18.304 ms | 9.5613 ms | Broad explicit-node batches avoid repeated single-set chunked reductions after normalization. |
 
+PR-local quick graph-expanded batch expansion A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench single_graph --filter graph_vector_candidate_set/score_expanded_batch_cosine_q64 --save-baseline expanded_batch_serial_q64_pre`
+with the new expanded-batch row on the pre-change serial expansion path, then
+the same command with `--baseline expanded_batch_serial_q64_pre` after enabling
+thresholded query-level root-set expansion.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_vector_candidate_set/score_expanded_batch_cosine_q64_c64_d1024/64` | 191.63 µs | 189.05 µs | The sampled expanded-work gate keeps this small expanded batch on the serial expansion path; change is noise-scale. |
+| `graph_vector_candidate_set/score_expanded_batch_cosine_q64_c256_d1024/256` | 717.83 µs | 624.63 µs | Projected expanded work crosses the threshold, so root-set expansion fans out before shared candidate-set batch scoring. |
+| `graph_vector_candidate_set/score_expanded_batch_cosine_q64_c1024_d1024/1024` | 2.4806 ms | 2.3041 ms | Wider graph-expanded batches keep the parallel expansion branch. |
+| `graph_vector_candidate_set/score_expanded_batch_cosine_q64_c4096_d1024/4096` | 10.260 ms | 9.3476 ms | Broad expanded batches avoid serially deriving 64 large expanded sets before scoring. |
+
 PR-local B5 id-map hasher A/B:
 
 Commands:
@@ -575,6 +593,8 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 177.9 µs / 611.3 µs / 2.267 ms / 9.557 ms (quick) | Scores 64 canonical candidate sets against 64 queries. Query-level Rayon is now the production many-query batch path once distributed total candidates reach 4,096. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.3 µs / 402.4 µs / 423.1 µs / 1.500 ms (quick) | Scores 8 explicit node-slice candidate sets through the generic API. It now normalizes to canonical sets and follows the same q8 threshold behavior. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 185.3 µs / 631.1 µs / 2.351 ms / 9.561 ms (quick) | Scores 64 explicit node-slice candidate sets through the generic API. The normalization cost is small relative to the query-level batch win. |
+| `graph_vector_candidate_set/score_expanded_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 103.0 µs / 407.5 µs / 437.2 µs / 1.557 ms (quick) | Scores 8 graph-expanded root sets through the expanded batch API. This stays below the 16-set expansion parallel threshold. |
+| `graph_vector_candidate_set/score_expanded_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 189.1 µs / 624.6 µs / 2.304 ms / 9.348 ms (quick) | Scores 64 graph-expanded root sets. The sampled expanded-work gate leaves c64 serial and parallelizes wider expanded batches. |
 | `graph_vector_candidate_state/maintained_active_c512_total1024` | 343.9 ns (quick) | Materializes a provider-maintained 512-node current set from a 1,024-node fixture with stale nodes disqualified by `SUPERSEDED_BY`. |
 | `graph_vector_candidate_state/dynamic_active_scan_c512_total1024` | 12.79 µs (quick) | Benchmark-local query-time baseline: scans all 1,024 document nodes and checks outgoing `SUPERSEDED_BY`, showing maintained state is ~37x faster for this currentness slice. |
 | `graph_vector_candidate_set/set_intersection_l256_r256_o128` | 153.2 ns (quick) | Intersects two canonical 256-node sets with 128 overlapping ids using the merge path; this is the balanced graph/ANN/active-set composition primitive. |

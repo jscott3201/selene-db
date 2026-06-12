@@ -517,16 +517,13 @@ impl SeleneGraph {
             return Ok(vec![Vec::new(); queries.len()]);
         }
 
-        let mut expanded_sets = Vec::with_capacity(root_sets.len());
-        for roots in root_sets {
-            checker.check()?;
-            expanded_sets.push(self.expand_vector_candidate_set_checked(
-                roots,
-                options.edge_label,
-                options.direction,
-                checker,
-            )?);
-        }
+        let expanded_sets = self.expand_vector_candidate_sets_batch(
+            root_sets,
+            options.edge_label,
+            options.direction,
+            options.k,
+            checker,
+        )?;
         self.score_vector_candidate_sets_batch_checked(
             property,
             queries,
