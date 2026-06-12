@@ -287,12 +287,11 @@ impl<K: Ord> VectorTopK<K> {
             self.heap.push(entry);
             return;
         }
-        let Some(worst) = self.heap.peek() else {
+        let Some(mut worst) = self.heap.peek_mut() else {
             return;
         };
-        if entry.cmp(worst).is_lt() {
-            self.heap.pop();
-            self.heap.push(entry);
+        if entry.cmp(&*worst).is_lt() {
+            *worst = entry;
         }
     }
 
