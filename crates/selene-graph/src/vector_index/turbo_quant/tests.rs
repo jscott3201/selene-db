@@ -401,6 +401,78 @@ fn turbo_quant_batch_candidates_in_rows_match_single_queries() {
 }
 
 #[test]
+fn turbo_quant_filtered_fast_scan_batch_matches_live_map_reference() {
+    let mut index = TurboQuantVectorIndex::new(4).unwrap();
+    for row in 0..64 {
+        index
+            .insert(
+                row,
+                &vector(&[
+                    1.0 + row as f32 * 0.01,
+                    (row % 5) as f32 * 0.1,
+                    (row % 7) as f32 * 0.05,
+                    0.25,
+                ]),
+            )
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    index.remove(7);
+    index.remove(33);
+
+    let queries = [
+        vector(&[1.0, 0.2, 0.1, 0.25]),
+        vector(&[1.1, 0.0, 0.3, 0.25]),
+        vector(&[0.8, 0.4, 0.2, 0.25]),
+    ];
+    let allowed = [
+        [1, 2, 7, 8, 13, 21, 34, 55]
+            .into_iter()
+            .collect::<RoaringBitmap>(),
+        [3, 5, 11, 17, 23, 29, 33, 47]
+            .into_iter()
+            .collect::<RoaringBitmap>(),
+        [4, 16, 24, 32, 40, 48, 56, 63]
+            .into_iter()
+            .collect::<RoaringBitmap>(),
+    ];
+    let candidate_limits = [4, 4, 4];
+    let prepared = index
+        .prepare_fast_scan_queries(&queries)
+        .expect("4-dimensional TurboQuant scan supports FastScan");
+
+    let fast_scan = index
+        .slot_order_candidates_fast_scan_batch_in_rows(&prepared, &candidate_limits, &allowed)
+        .into_iter()
+        .map(|hits| {
+            hits.into_hits()
+                .into_iter()
+                .map(|hit| hit.key.1)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let reference = queries
+        .iter()
+        .zip(&allowed)
+        .map(|(query, allowed)| {
+            let rotated_query = rotated_unit_vector(query, index.dimension);
+            let query_bias = query_bias(&rotated_query, &index.shift);
+            let byte_lut = index.byte_lut(&rotated_query);
+            index
+                .live_map_candidates_in_rows(&byte_lut, query_bias, 4, allowed)
+                .into_hits()
+                .into_iter()
+                .map(|hit| hit.key.1)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(fast_scan, reference);
+    assert!(fast_scan[0].iter().all(|row| *row != 7));
+    assert!(fast_scan[1].iter().all(|row| *row != 33));
+}
+
+#[test]
 fn turbo_quant_high_dimension_batch_candidates_match_single_queries() {
     let dimension = 300;
     let mut index = TurboQuantVectorIndex::new(dimension).unwrap();
