@@ -265,7 +265,8 @@ Rayon primitive once a single set reaches the 4,096-candidate threshold.
 Canonical candidate-set batch scoring uses query-level Rayon once the batch has
 at least 4,096 total candidates spread across multiple sets, keeping each
 per-query scan serial inside that branch so many-query batches do not nest
-chunked reductions. The
+chunked reductions. Explicit node batch scoring normalizes to canonical
+candidate sets once, then delegates to the same batch scorer. The
 candidate-set group also measures the Rust graph/vector boundary for deriving
 canonical candidate sets from graph adjacency and reranking canonical candidate
 sets by vector score.
@@ -450,6 +451,21 @@ candidate_batch_serial_q64_pre` after enabling query-level batch parallelism.
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c1024_d1024/1024` | 13.001 ms | 2.2670 ms | Per-query scans stay serial inside the batch branch, avoiding nested Rayon reductions while still using all worker threads across queries. |
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c4096_d1024/4096` | 18.015 ms | 9.5569 ms | Broad many-query batches now prefer query-level parallelism instead of repeatedly entering the single-set chunked scorer. |
 
+PR-local quick explicit-node batch delegation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench single_graph --filter graph_vector_candidate_set/score_nodes_batch_cosine_q64 --save-baseline nodes_batch_serial_q64_pre`
+with the new benchmark row on the pre-change generic batch scorer, then the
+same command with `--baseline nodes_batch_serial_q64_pre` after delegating
+explicit-node batches through canonical candidate-set batch scoring.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c64_d1024/64` | 840.41 µs | 185.26 µs | Explicit node slices normalize once to canonical sets, then use the query-level batch scorer. |
+| `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c256_d1024/256` | 3.2679 ms | 631.07 µs | Normalization overhead is small relative to removing the serial 64-query scoring loop. |
+| `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c1024_d1024/1024` | 13.027 ms | 2.3506 ms | The generic API now carries the same many-query parallel shape as canonical candidate-set scoring. |
+| `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c4096_d1024/4096` | 18.304 ms | 9.5613 ms | Broad explicit-node batches avoid repeated single-set chunked reductions after normalization. |
+
 PR-local B5 id-map hasher A/B:
 
 Commands:
@@ -557,6 +573,8 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/score_candidate_set_cosine_c64/c256/c1024/c4096_d1024` | 13.7 µs / 54.7 µs / 222.6 µs / 308.3 µs (quick) | Scores canonical candidate sets against one 1024-dim cosine query. Widths below 4,096 stay sequential; the 4,096-row uses chunked Rayon and is the production broad-candidate rerank threshold. |
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.0 µs / 400.0 µs / 422.9 µs / 1.491 ms (quick) | Scores 8 canonical candidate sets against 8 1024-dim cosine queries. c64/c256 stay under the 4,096 total-candidate batch threshold; c1024/c4096 use query-level Rayon. |
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 177.9 µs / 611.3 µs / 2.267 ms / 9.557 ms (quick) | Scores 64 canonical candidate sets against 64 queries. Query-level Rayon is now the production many-query batch path once distributed total candidates reach 4,096. |
+| `graph_vector_candidate_set/score_nodes_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.3 µs / 402.4 µs / 423.1 µs / 1.500 ms (quick) | Scores 8 explicit node-slice candidate sets through the generic API. It now normalizes to canonical sets and follows the same q8 threshold behavior. |
+| `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 185.3 µs / 631.1 µs / 2.351 ms / 9.561 ms (quick) | Scores 64 explicit node-slice candidate sets through the generic API. The normalization cost is small relative to the query-level batch win. |
 | `graph_vector_candidate_state/maintained_active_c512_total1024` | 343.9 ns (quick) | Materializes a provider-maintained 512-node current set from a 1,024-node fixture with stale nodes disqualified by `SUPERSEDED_BY`. |
 | `graph_vector_candidate_state/dynamic_active_scan_c512_total1024` | 12.79 µs (quick) | Benchmark-local query-time baseline: scans all 1,024 document nodes and checks outgoing `SUPERSEDED_BY`, showing maintained state is ~37x faster for this currentness slice. |
 | `graph_vector_candidate_set/set_intersection_l256_r256_o128` | 153.2 ns (quick) | Intersects two canonical 256-node sets with 128 overlapping ids using the merge path; this is the balanced graph/ANN/active-set composition primitive. |
@@ -2471,7 +2489,7 @@ from the candidate producer:
 | Bench | 9k/10k scale | Notes |
 |---|---:|---|
 | `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_repeated_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.382 ms (quick) | Existing repeated per-query candidate scoring over the broad active set. |
-| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.342 ms (quick) | Generic batch scorer remains a serial loop over explicit candidate slices. |
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 723.9 µs (quick) | Generic explicit-node batch scoring now normalizes once and delegates to the query-level candidate-set batch scorer. |
 | `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_candidate_set_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 734.9 µs (quick) | Query-level candidate-set batch parallelism removes the serial 64-query loop for broad active-set scoring. |
 | `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_candidate_set_algebra_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 579.9 µs (quick) | Sorted intersection with the maintained unresolved-current set plus query-level batch scoring is the fastest broad active-hint row. |
 | `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_repeated_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 432.1 µs (quick) | Existing repeated scoring over recency-window candidates. |

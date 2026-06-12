@@ -128,10 +128,32 @@ fn bench_candidate_set_scoring(
             let queries = (0..query_count)
                 .map(|idx| super::vector_value(idx, VECTOR_CANDIDATE_SCORE_DIMENSION))
                 .collect::<Vec<_>>();
+            let node_sets = vec![fixture.candidate_set().as_nodes().to_vec(); query_count];
             let candidate_sets = vec![fixture.candidate_set().clone(); query_count];
             group.throughput(Throughput::Elements(
                 (query_count * fixture.candidate_count()) as u64,
             ));
+            group.bench_function(
+                BenchmarkId::new(
+                    fixture.bench_id(&format!("score_nodes_batch_cosine_q{query_count}")),
+                    fixture.candidate_count(),
+                ),
+                |b| {
+                    b.iter(|| {
+                        let hits = fixture
+                            .graph()
+                            .score_vector_nodes_batch(
+                                fixture.embedding_key(),
+                                &queries,
+                                &node_sets,
+                                VectorMetric::Cosine,
+                                10,
+                            )
+                            .expect("bench explicit node batch scoring succeeds");
+                        std::hint::black_box(hits.iter().map(Vec::len).sum::<usize>());
+                    });
+                },
+            );
             group.bench_function(
                 BenchmarkId::new(
                     fixture.bench_id(&format!("score_candidate_sets_batch_cosine_q{query_count}")),
