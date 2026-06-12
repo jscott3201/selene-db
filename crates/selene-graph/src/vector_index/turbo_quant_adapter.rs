@@ -64,4 +64,18 @@ impl VectorIndex {
                 .map(|batches| batches.into_iter().map(turbo_quant_hits).collect())
         })
     }
+
+    pub(crate) fn turbo_quant_candidates_batch_in_shared_rows(
+        &self,
+        queries: &[VectorValue],
+        k: usize,
+        search_width: usize,
+        allowed_rows: &RoaringBitmap,
+    ) -> Option<CoreResult<Vec<Vec<VectorIndexSearchHit>>>> {
+        self.turbo_quant.as_ref().map(|turbo_quant| {
+            turbo_quant
+                .candidates_batch_in_shared_rows(queries, k, search_width, allowed_rows)
+                .map(|batches| batches.into_iter().map(turbo_quant_hits).collect())
+        })
+    }
 }

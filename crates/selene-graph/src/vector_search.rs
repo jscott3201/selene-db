@@ -21,6 +21,8 @@ pub use types::{
     ApproximateVectorExpansionOptions, ApproximateVectorSearchOptions, VectorCandidateSet,
     VectorNeighborDirection, VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError,
 };
+#[path = "vector_search/approx_batch.rs"]
+mod approx_batch;
 #[path = "vector_search/exact_batch.rs"]
 mod exact_batch;
 #[path = "vector_search/shared_wrappers.rs"]
@@ -382,6 +384,33 @@ impl SeleneGraph {
             }
         }
 
+        if let Some(first_candidate_set) = candidate_sets.first()
+            && candidate_sets.iter().skip(1).all(|candidate_set| {
+                approx_batch::candidate_sets_match(first_candidate_set, candidate_set)
+            })
+        {
+            let allowed_rows =
+                self.vector_candidate_rows(first_candidate_set, index.rows(), &checker)?;
+            let row_batches = index
+                .turbo_quant_candidates_batch_in_shared_rows(
+                    queries,
+                    options.k,
+                    options.ef_search,
+                    &allowed_rows,
+                )
+                .ok_or(VectorSearchError::ApproximateIndexMissing)?
+                .map_err(GraphError::from)?;
+            return approx_batch::rerank_ann_row_candidate_batches(
+                self,
+                property,
+                queries,
+                options.metric,
+                options.k,
+                row_batches,
+                &checker,
+            );
+        }
+
         let allowed_rows = candidate_sets
             .iter()
             .map(|candidates| self.vector_candidate_rows(candidates, index.rows(), &checker))
@@ -395,19 +424,15 @@ impl SeleneGraph {
             )
             .ok_or(VectorSearchError::ApproximateIndexMissing)?
             .map_err(GraphError::from)?;
-        let mut batch_hits = Vec::with_capacity(queries.len());
-        for (query, row_hits) in queries.iter().zip(row_batches) {
-            batch_hits.push(rerank_ann_row_candidates(
-                self,
-                property,
-                query,
-                options.metric,
-                options.k,
-                row_hits,
-                &checker,
-            )?);
-        }
-        Ok(batch_hits)
+        approx_batch::rerank_ann_row_candidate_batches(
+            self,
+            property,
+            queries,
+            options.metric,
+            options.k,
+            row_batches,
+            &checker,
+        )
     }
 
     /// Run approximate ANN vector search for a batch of queries.

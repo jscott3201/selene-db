@@ -10,6 +10,9 @@ use super::{
     query_component_for_score,
 };
 
+#[path = "fast_scan/shared_filter.rs"]
+mod shared_filter;
+
 const FAST_SCAN_QUANT_LIMIT: i16 = i8::MAX as i16;
 const FAST_SCAN_FLUSH_BYTES: usize = 128;
 

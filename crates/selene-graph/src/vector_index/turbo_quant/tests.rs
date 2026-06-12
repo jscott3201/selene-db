@@ -469,6 +469,17 @@ fn turbo_quant_batch_candidates_in_rows_match_single_queries() {
         .unwrap();
 
     assert_eq!(batch, singles);
+
+    let shared_allowed = [allowed[0].clone(), allowed[0].clone(), allowed[0].clone()];
+    let shared_singles = queries
+        .iter()
+        .map(|query| index.candidates_in_rows(query, 4, 8, &allowed[0]).unwrap())
+        .collect::<Vec<_>>();
+    let shared_batch = index
+        .candidates_batch_in_rows(&queries, 4, 8, &shared_allowed)
+        .unwrap();
+
+    assert_eq!(shared_batch, shared_singles);
 }
 
 #[test]
