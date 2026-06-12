@@ -156,6 +156,28 @@ impl TurboQuantBlockedCodes {
         Ok(())
     }
 
+    /// Remove one row by moving the current last row into its slot.
+    ///
+    /// This preserves the packed row bytes without decoding individual
+    /// coordinate codes. Tail bytes are cleared through [`Self::resize_rows`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounds error when `row` is outside the matrix, or an overflow
+    /// error if shrinking the storage would overflow internal size accounting.
+    pub fn swap_remove_row(&mut self, row: usize) -> TurboQuantCodecResult<()> {
+        self.validate_row(row)?;
+        let last = self.rows - 1;
+        if row != last {
+            for byte in 0..self.bytes_per_row {
+                let source = self.byte_offset_unchecked(last, byte);
+                let destination = self.byte_offset_unchecked(row, byte);
+                self.bytes[destination] = self.bytes[source];
+            }
+        }
+        self.resize_rows(last)
+    }
+
     /// Read one packed coordinate code.
     ///
     /// # Errors
@@ -343,5 +365,36 @@ mod tests {
         blocked.resize_rows(4).unwrap();
 
         assert_eq!(blocked.read(3, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn swap_remove_row_moves_last_row_and_clears_tail() {
+        for bits in 2..=4 {
+            let bit_width = TurboQuantBitWidth::new(bits).unwrap();
+            let mut blocked = TurboQuantBlockedCodes::new(bit_width, 11, 35).unwrap();
+            let last = blocked.rows() - 1;
+            let removed = 7;
+            let max_code = usize::from(bit_width.max_code());
+            let moved_codes = (0..blocked.dimensions())
+                .map(|dim| ((last * 5 + dim * 3) % (max_code + 1)) as u8)
+                .collect::<Vec<_>>();
+            for row in 0..blocked.rows() {
+                for dim in 0..blocked.dimensions() {
+                    let code = ((row * 5 + dim * 3) % (max_code + 1)) as u8;
+                    blocked.write(row, dim, code).unwrap();
+                }
+            }
+
+            blocked.swap_remove_row(removed).unwrap();
+
+            assert_eq!(blocked.rows(), last);
+            for (dim, expected) in moved_codes.into_iter().enumerate() {
+                assert_eq!(blocked.read(removed, dim).unwrap(), expected);
+            }
+            blocked.resize_rows(last + 1).unwrap();
+            for dim in 0..blocked.dimensions() {
+                assert_eq!(blocked.read(last, dim).unwrap(), 0);
+            }
+        }
     }
 }

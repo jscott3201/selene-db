@@ -250,7 +250,7 @@ production accelerator API.
 ## §2 selene-graph — read hot paths
 
 Bench bins: `single_graph`, `vector_index_rebuild`, `vector_pq`,
-`vector_ivf_pq`, `vector_turbo_projection`, `vector_ivf_pressure`, `vector_mixed_workload`,
+`vector_ivf_pq`, `vector_turbo_projection`, `vector_turbo_churn`, `vector_ivf_pressure`, `vector_mixed_workload`,
 `bulk_mutation`, `concurrent_read`, `bfs`, `text_search_bm25`. The medians below predate CORE-06 (measured at the 128 B `Value`
 layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy rows
 (`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten at
@@ -301,6 +301,9 @@ full-code scans against candidate-producer plus compression layering.
 `vector_turbo_projection` sweeps the benchmark-only TurboQuant scorer across
 128/768/1536 dimensions at a fixed 10k-row scale so storage ratio and safe
 block-Hadamard rotation behavior are visible before production codec work.
+`vector_turbo_churn` applies the standard 10% vector update / 5% delete churn
+shape to a 10k-row production `TurboQuantCosine` index and times approximate
+search over the churned derived state.
 `vector_ivf_pressure` uses the
 production graph IVF index and records list-skew plus candidate-pressure
 suffixes so future IVF/PQ layering work is grounded against real index fanout
@@ -724,6 +727,16 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128_n10k_k10_recallbp10000_m867-full5000` | 867 KiB / 10k rows | TurboQuant slot metadata now stores row ids in a compact `Vec<u32>` and derives liveness from the row-to-slot map, removing the padded per-slot deleted flag while preserving full-recall candidate search. |
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d768_n10k_k10_recallbp10000_m4005-full30000` | 4,005 KiB / 10k rows | Higher-dimensional storage remains dominated by packed coordinate codes and calibration arrays; the row-slot compaction reduces the fixed per-row metadata. |
 | `graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d1536_n10k_k10_recallbp10000_m7770-full60000` | 7,770 KiB / 10k rows | The exact primary `VECTOR` values remain graph-owned and are still used for final rerank; the compact TurboQuant index remains derived, rebuildable state. |
+
+PR-local TurboQuant churn compaction spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_churn --filter graph_turbo_quant_churn --save-baseline tq_swap_remove_pre_stable`;
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_churn --filter graph_turbo_quant_churn --baseline tq_swap_remove_pre_stable`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_churn/tqcos_update10_delete5/n10k` | 387.01 µs | 347.14 µs | 10k-row production `TurboQuantCosine` fixture after 10% vector updates and 5% deletes. Immediate slot compaction improves query time by 6.3-9.7% and shrinks resident derived-state counters from `tqe11kl9500d1500_m1022-1022` to `tqe9500l9500d0_m850-850`. |
 
 PR-local IVF+TurboQuant layering spot-check:
 

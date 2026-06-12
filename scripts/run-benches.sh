@@ -24,6 +24,7 @@
 #   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
 #   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_ivf_target_centroid_rebuild --vector-scales 10000
 #   run-benches.sh --bench vector_turbo_projection --filter graph_turbo_quant_dimension_projection
+#   run-benches.sh --bench vector_turbo_churn --filter graph_turbo_quant_churn
 #   run-benches.sh --bench vector_ivf_pressure --filter graph_ivf_target_centroids --vector-scales 10000
 #   run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 #   run-benches.sh --profile quick --bench vector_wgpu --filter core_vector_wgpu_prototype
@@ -67,6 +68,7 @@ selene-graph|vector_index_rebuild|0
 selene-graph|vector_pq|0
 selene-graph|vector_ivf_pq|0
 selene-graph|vector_turbo_projection|0
+selene-graph|vector_turbo_churn|0
 selene-graph|vector_ivf_pressure|0
 selene-graph|vector_ivf_insert_drift|0
 selene-graph|vector_mixed_workload|0

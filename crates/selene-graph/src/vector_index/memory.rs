@@ -78,11 +78,14 @@ pub struct VectorIndexMemoryUsage {
     pub turbo_quant_index_bytes: usize,
     /// Component bytes reachable through TurboQuant-owned full-vector handles.
     pub turbo_quant_referenced_vector_bytes: usize,
-    /// Total TurboQuant entries, including stale deleted row versions.
+    /// Total TurboQuant compressed entries.
     pub turbo_quant_entries: usize,
     /// Live TurboQuant row entries.
     pub turbo_quant_live_entries: usize,
-    /// Stale TurboQuant entries retained until the derived index is rebuilt.
+    /// Stale TurboQuant entries retained by the derived index.
+    ///
+    /// TurboQuant compacts deletes and replacements immediately, so this should
+    /// normally remain zero.
     pub turbo_quant_deleted_entries: usize,
     /// Packed TurboQuant coordinate-code bytes.
     pub turbo_quant_code_bytes: usize,
