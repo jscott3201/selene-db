@@ -962,6 +962,18 @@ Commands:
 | `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 36.570 ms | 25.953 ms | New-index bulk insert now stores rotated calibration input and defers packed-code writes until TQ+ calibration is known, avoiding the discarded pre-calibration encode pass. Criterion reports a 29.03% improvement (`p=0.00`). |
 | `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 146.61 µs | Existing post-churn query guardrail on the same run; finalized search still uses calibrated packed codes plus exact primary-vector rerank. |
 
+PR-local TurboQuant calibration selection spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_churn --filter tqcos_create_index --save-baseline tq_quantile_sort_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_churn --filter tqcos_create_index --baseline tq_quantile_sort_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_churn --filter tqcos_update10_delete5`.
+
+| Bench | Full coordinate sort | Two-quantile selection | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 27.114 ms | 17.806 ms | TQ+ calibration now selects the 5% and 95% coordinate ranks directly instead of sorting each coordinate vector completely. Criterion reports a 34.33% improvement (`p=0.00`) on top of deferred bulk encoding. |
+| `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 145.77 µs | Existing post-churn query guardrail remains stable after the calibration implementation change. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |
