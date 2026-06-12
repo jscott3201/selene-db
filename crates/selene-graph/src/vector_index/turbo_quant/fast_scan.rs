@@ -130,7 +130,7 @@ impl TurboQuantVectorIndex {
         queries: &[PreparedFastScanQuery],
         candidate_limit: usize,
     ) -> Vec<TurboQuantCandidateTopK> {
-        let chunk_blocks = self.parallel_chunk_blocks();
+        let chunk_blocks = self.full_scan_parallel_chunk_blocks();
         (0..self.codes.block_count())
             .into_par_iter()
             .chunks(chunk_blocks)
@@ -309,7 +309,7 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
     ) -> TurboQuantCandidateTopK {
-        let chunk_blocks = self.parallel_chunk_blocks();
+        let chunk_blocks = self.full_scan_parallel_chunk_blocks();
         (0..self.codes.block_count())
             .into_par_iter()
             .chunks(chunk_blocks)

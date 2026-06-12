@@ -862,6 +862,19 @@ Commands:
 | `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d1536` | 5.3562 ms | 5.4626 ms | The 1536-dim guard stays on the existing 1,024-entry chunk size; Criterion reports the comparison as within the noise threshold, so the threshold avoids the broad 2,048-entry regression seen in discarded experiments. |
 | `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | 227.21 µs | 196.13 µs | The default-width churn fixture also benefits from the 128-dim chunk rule after 10% updates and 5% deletes, improving 13.35% (`p=0.00`). |
 
+PR-local TurboQuant full-scan low-dimension chunk spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 40 --measurement-time 4 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c512_d128 --baseline tq_single_chunk2048_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 40 --measurement-time 4 --bench vector_turbo_projection --filter graph_turbo_quant_production_batch_dimension_projection/cluster_cos/tqcos_batch_c512_d128 --baseline tq_batch_chunk2048_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 40 --measurement-time 4 --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d128 --baseline tq_filtered_chunk2048_fresh_pre`.
+
+| Bench | 2048-entry chunks | Full-scan chunks | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d128` | 1.6486 ms | 1.2042 ms | Full-index 128-dim c512 scans use a separate 4,096-entry chunk helper, reducing Rayon split/merge overhead while preserving full recall and exact primary-vector rerank. Criterion reports a 26.83% improvement (`p=0.00`). |
+| `graph_turbo_quant_production_batch_dimension_projection/...tqcos_batch_c512_d128_q8` | 942.85 µs | 872.65 µs | Full-index q8 batch scans use the same full-scan helper and improve 7.84% (`p=0.00`) against the saved 2,048-entry baseline. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...tqcos_filtered_batch_c512_d128` | 1.2157 ms | 1.2045 ms | Filtered candidate-set scans intentionally stay on the existing 2,048-entry helper; Criterion reports the fresh comparison as within the noise threshold. |
+
 PR-local TurboQuant row-key top-k spot-check:
 
 Command: `scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128 --baseline tq_row_key_pre`.
