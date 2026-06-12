@@ -23,7 +23,7 @@ fn turbo_quant_candidates_rank_compressed_rows() {
 }
 
 #[test]
-fn turbo_quant_update_delete_and_memory_usage_track_stale_entries() {
+fn turbo_quant_update_delete_and_memory_usage_compact_slots() {
     let mut index = TurboQuantVectorIndex::new(2).unwrap();
     index.insert(1, &vector(&[1.0, 0.0])).unwrap();
     index.insert(2, &vector(&[0.0, 1.0])).unwrap();
@@ -36,9 +36,9 @@ fn turbo_quant_update_delete_and_memory_usage_track_stale_entries() {
     assert_eq!(hits.iter().map(|hit| hit.row).collect::<Vec<_>>(), vec![2]);
 
     let usage = index.memory_usage();
-    assert_eq!(usage.entries, 3);
+    assert_eq!(usage.entries, 1);
     assert_eq!(usage.live_entries, 1);
-    assert_eq!(usage.deleted_entries, 2);
+    assert_eq!(usage.deleted_entries, 0);
     assert!(usage.code_bytes > 0);
     assert!(usage.codebook_bytes > 0);
     assert!(usage.calibration_bytes > 0);
@@ -47,7 +47,7 @@ fn turbo_quant_update_delete_and_memory_usage_track_stale_entries() {
 }
 
 #[test]
-fn turbo_quant_search_uses_live_map_when_stale_slots_dominate() {
+fn turbo_quant_remove_compacts_moved_slots() {
     let mut index = TurboQuantVectorIndex::new(2).unwrap();
     for row in 0..80 {
         index
@@ -59,7 +59,12 @@ fn turbo_quant_search_uses_live_map_when_stale_slots_dominate() {
         index.remove(row);
     }
 
-    assert!(!index.should_scan_by_slot_order());
+    assert!(index.should_scan_by_slot_order());
+    assert_eq!(index.slot_for_row(79), Some(0));
+    let usage = index.memory_usage();
+    assert_eq!(usage.entries, 1);
+    assert_eq!(usage.live_entries, 1);
+    assert_eq!(usage.deleted_entries, 0);
 
     let hits = index.candidates(&vector(&[1.0, 0.0]), 5, 5).unwrap();
     assert_eq!(hits.iter().map(|hit| hit.row).collect::<Vec<_>>(), vec![79]);
@@ -75,6 +80,26 @@ fn turbo_quant_search_uses_live_map_when_stale_slots_dominate() {
     assert_eq!(
         batch[1].iter().map(|hit| hit.row).collect::<Vec<_>>(),
         vec![79]
+    );
+}
+
+#[test]
+fn turbo_quant_bulk_replacement_preserves_pending_calibration_rows() {
+    let mut index = TurboQuantVectorIndex::new(2).unwrap();
+    index.insert(1, &vector(&[1.0, 0.0])).unwrap();
+    index.insert(2, &vector(&[0.0, 1.0])).unwrap();
+    index.insert(1, &vector(&[0.9, 0.1])).unwrap();
+
+    assert_eq!(index.slot_for_row(2), Some(0));
+    assert_eq!(index.slot_for_row(1), Some(1));
+    assert_eq!(index.bulk_rotated.len(), 2 * index.dimension);
+
+    index.finish_bulk_load().unwrap();
+    let hits = index.candidates(&vector(&[1.0, 0.0]), 2, 2).unwrap();
+
+    assert_eq!(
+        hits.iter().map(|hit| hit.row).collect::<Vec<_>>(),
+        vec![1, 2]
     );
 }
 

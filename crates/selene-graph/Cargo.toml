@@ -67,6 +67,10 @@ name = "vector_turbo_projection"
 harness = false
 
 [[bench]]
+name = "vector_turbo_churn"
+harness = false
+
+[[bench]]
 name = "vector_ivf_pressure"
 harness = false
 

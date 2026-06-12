@@ -48,6 +48,9 @@ pub(crate) struct TurboQuantVectorHit {
 }
 
 /// Estimated TurboQuant resident memory and structural counters.
+///
+/// Deletes and replacements compact slots immediately, so `deleted_entries`
+/// reports invariant drift rather than expected rebuild pressure.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct TurboQuantMemoryUsage {
     pub(crate) entries: usize,
@@ -124,12 +127,13 @@ impl TurboQuantVectorIndex {
         Ok(())
     }
 
-    /// Mark the current vector for `row` stale, if present.
+    /// Remove the current vector for `row`, if present.
     pub(crate) fn remove(&mut self, row: u32) {
-        if self.row_to_entry.remove(&row).is_none() {
+        let Some(slot_key) = self.row_to_entry.remove(&row) else {
             return;
-        }
-        self.live_entries = self.live_entries.saturating_sub(1);
+        };
+        self.swap_remove_slot(slot_index(slot_key));
+        self.live_entries = self.row_to_entry.len();
     }
 
     /// Recompute quantile calibration and packed codes after a bulk load.
@@ -451,6 +455,35 @@ impl TurboQuantVectorIndex {
             rotated.extend_from_slice(pending);
         }
         Ok(rotated)
+    }
+
+    fn swap_remove_slot(&mut self, slot: usize) {
+        let last_slot = self.rows.len() - 1;
+        let moved_row = (slot != last_slot).then(|| self.rows[last_slot]);
+        self.codes
+            .swap_remove_row(slot)
+            .expect("TurboQuant live slot has encoded row bytes");
+        self.rows.swap_remove(slot);
+        self.row_scales.swap_remove(slot);
+        if self.collecting_bulk {
+            self.swap_remove_bulk_rotated(slot, last_slot);
+        }
+        if let Some(row) = moved_row {
+            let slot_key = slot_key(slot).expect("existing TurboQuant slot key remains valid");
+            self.row_to_entry.insert(row, slot_key);
+        }
+    }
+
+    fn swap_remove_bulk_rotated(&mut self, slot: usize, last_slot: usize) {
+        if slot != last_slot {
+            let source_start = last_slot * self.dimension;
+            let destination_start = slot * self.dimension;
+            for offset in 0..self.dimension {
+                self.bulk_rotated[destination_start + offset] =
+                    self.bulk_rotated[source_start + offset];
+            }
+        }
+        self.bulk_rotated.truncate(last_slot * self.dimension);
     }
 }
 
