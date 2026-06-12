@@ -446,23 +446,36 @@ impl TurboQuantVectorIndex {
 
     fn byte_lut(&self, rotated_query: &[f32]) -> Vec<f64> {
         let mut table = vec![0.0; self.bytes_per_row * 256];
+        let centroids: [f64; 16] =
+            std::array::from_fn(|code| f64::from(self.codebook.centroids()[code]));
         for byte in 0..self.bytes_per_row {
             let first_dim = byte * 2;
             let second_dim = first_dim + 1;
-            let first_query = (first_dim < self.dimension).then(|| {
-                query_component_for_score(rotated_query[first_dim], first_dim, &self.inv_scale)
-            });
-            let second_query = (second_dim < self.dimension).then(|| {
-                query_component_for_score(rotated_query[second_dim], second_dim, &self.inv_scale)
-            });
-            for packed in 0..256 {
-                let first = first_query.map(|query| {
-                    f64::from(query) * f64::from(self.codebook.centroids()[packed & 0x0f])
-                });
-                let second = second_query.map(|query| {
-                    f64::from(query) * f64::from(self.codebook.centroids()[(packed >> 4) & 0x0f])
-                });
-                table[byte * 256 + packed] = first.unwrap_or_default() + second.unwrap_or_default();
+            let lut_base = byte * 256;
+            if second_dim < self.dimension {
+                let first_query = f64::from(query_component_for_score(
+                    rotated_query[first_dim],
+                    first_dim,
+                    &self.inv_scale,
+                ));
+                let second_query = f64::from(query_component_for_score(
+                    rotated_query[second_dim],
+                    second_dim,
+                    &self.inv_scale,
+                ));
+                for packed in 0..256 {
+                    table[lut_base + packed] = first_query * centroids[packed & 0x0f]
+                        + second_query * centroids[(packed >> 4) & 0x0f];
+                }
+            } else if first_dim < self.dimension {
+                let first_query = f64::from(query_component_for_score(
+                    rotated_query[first_dim],
+                    first_dim,
+                    &self.inv_scale,
+                ));
+                for packed in 0..256 {
+                    table[lut_base + packed] = first_query * centroids[packed & 0x0f];
+                }
             }
         }
         table

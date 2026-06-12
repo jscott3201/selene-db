@@ -800,6 +800,18 @@ and `graph_turbo_quant_production_filtered_batch_dimension_projection/...d1536`.
 | `graph_turbo_quant_production_mixed_filtered_batch_dimension_projection/...d1536` | 2.5597 ms | 2.5703 ms | Mixed dense+sparse candidate sets stay within Criterion's noise threshold, so the sparse LUT change does not move the existing fused FastScan policy. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/...d1536` | documented 3.6223 ms / local noisy guard | 3.7735 ms | Dense 4,243-candidate/query filtered batches remain on the FastScan path; rerun reported no detected performance change after one outlier-heavy sample. |
 
+Follow-up sparse byte-LUT fill A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_sparse_filtered_batch_dimension_projection/cluster_cos/tqcos_sparse_filtered_batch_c512_d1536 --save-baseline tq_sparse_fill_pre`
+with the post-hoist byte-LUT loop, then the same command with
+`--baseline tq_sparse_fill_pre` after converting the 16 codebook centroids once
+and using explicit full-byte / odd-tail LUT fill branches.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_sparse_filtered_batch_dimension_projection/...d1536` | 1.3196 ms | 1.0617 ms | Branch-free full-byte LUT fill removes per-packed `Option` work and repeated centroid widening, improving the sparse 64-candidate/query row by 19.73% (`p=0.00`) on top of the earlier hoist. |
+
 PR-local production shared-filtered batch TurboQuant candidate-set A/B:
 
 Commands:
