@@ -254,8 +254,8 @@ fn turbo_quant_fast_scan_slot_order_matches_lut_reference() {
         .into_hits();
 
     assert_eq!(
-        fast_scan.iter().map(|hit| hit.key.1).collect::<Vec<_>>(),
-        reference.iter().map(|hit| hit.key.1).collect::<Vec<_>>()
+        fast_scan.iter().map(|hit| hit.key).collect::<Vec<_>>(),
+        reference.iter().map(|hit| hit.key).collect::<Vec<_>>()
     );
     assert!(fast_scan.iter().all(|hit| hit.distance.is_finite()));
 }
@@ -305,7 +305,7 @@ fn turbo_quant_candidates_in_rows_match_sparse_live_map_reference() {
         .live_map_candidates_in_rows(&byte_lut, query_bias, 4, &allowed)
         .into_hits()
         .into_iter()
-        .map(|hit| hit.key.1)
+        .map(|hit| hit.key)
         .collect::<Vec<_>>();
 
     assert_eq!(filtered, reference);
@@ -348,9 +348,9 @@ fn turbo_quant_filtered_fast_scan_respects_allowed_rows() {
         .into_hits();
 
     assert_eq!(fast_scan.len(), reference.len());
-    assert_eq!(fast_scan[0].key.1, reference[0].key.1);
+    assert_eq!(fast_scan[0].key, reference[0].key);
     assert!(fast_scan.iter().all(|hit| hit.distance.is_finite()));
-    assert!(fast_scan.iter().all(|hit| allowed.contains(hit.key.1)));
+    assert!(fast_scan.iter().all(|hit| allowed.contains(hit.key)));
 }
 
 #[test]
@@ -518,7 +518,7 @@ fn turbo_quant_filtered_fast_scan_batch_matches_live_map_reference() {
         .map(|hits| {
             hits.into_hits()
                 .into_iter()
-                .map(|hit| hit.key.1)
+                .map(|hit| hit.key)
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
@@ -533,7 +533,7 @@ fn turbo_quant_filtered_fast_scan_batch_matches_live_map_reference() {
                 .live_map_candidates_in_rows(&byte_lut, query_bias, 4, allowed)
                 .into_hits()
                 .into_iter()
-                .map(|hit| hit.key.1)
+                .map(|hit| hit.key)
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();

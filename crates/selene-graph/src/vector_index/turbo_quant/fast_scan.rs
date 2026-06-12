@@ -2,10 +2,13 @@ use std::array;
 
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
-use selene_core::{TURBO_QUANT_BLOCK_ROWS, VectorTopK, VectorValue};
+use selene_core::{TURBO_QUANT_BLOCK_ROWS, VectorValue};
 use wide::{i16x8, u8x16, u16x16};
 
-use super::{TurboQuantVectorIndex, merge_candidate_top_k, query_component_for_score};
+use super::{
+    TurboQuantCandidateTopK, TurboQuantVectorIndex, merge_candidate_top_k,
+    query_component_for_score,
+};
 
 const FAST_SCAN_QUANT_LIMIT: i16 = i8::MAX as i16;
 const FAST_SCAN_FLUSH_BYTES: usize = 128;
@@ -16,7 +19,7 @@ impl TurboQuantVectorIndex {
         rotated_query: &[f32],
         query_bias: f64,
         candidate_limit: usize,
-    ) -> Option<VectorTopK<(usize, u32)>> {
+    ) -> Option<TurboQuantCandidateTopK> {
         let lut = self.fast_scan_lut(rotated_query)?;
         if self.should_parallelize_slot_scan(candidate_limit) {
             return Some(self.slot_order_candidates_fast_scan_parallel(
@@ -40,7 +43,7 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
         allowed_rows: &RoaringBitmap,
-    ) -> Option<VectorTopK<(usize, u32)>> {
+    ) -> Option<TurboQuantCandidateTopK> {
         let lut = self.fast_scan_lut(rotated_query)?;
         if self.should_parallelize_slot_scan(candidate_limit) {
             return Some(self.slot_order_candidates_fast_scan_in_rows_parallel(
@@ -79,7 +82,7 @@ impl TurboQuantVectorIndex {
         &self,
         queries: &[PreparedFastScanQuery],
         candidate_limit: usize,
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         if self.should_parallelize_slot_scan(candidate_limit) {
             return self.slot_order_candidates_fast_scan_batch_parallel(queries, candidate_limit);
         }
@@ -96,7 +99,7 @@ impl TurboQuantVectorIndex {
         queries: &[PreparedFastScanQuery],
         candidate_limits: &[usize],
         allowed_rows: &[RoaringBitmap],
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         debug_assert_eq!(queries.len(), candidate_limits.len());
         debug_assert_eq!(queries.len(), allowed_rows.len());
         let max_candidate_limit = candidate_limits.iter().copied().max().unwrap_or_default();
@@ -123,7 +126,7 @@ impl TurboQuantVectorIndex {
         &self,
         queries: &[PreparedFastScanQuery],
         candidate_limit: usize,
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         let chunk_blocks =
             super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
         (0..self.codes.block_count())
@@ -150,7 +153,7 @@ impl TurboQuantVectorIndex {
         queries: &[PreparedFastScanQuery],
         candidate_limits: &[usize],
         allowed_rows: &[RoaringBitmap],
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         let chunk_blocks =
             super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
         (0..self.codes.block_count())
@@ -179,7 +182,7 @@ impl TurboQuantVectorIndex {
         end_block: usize,
         queries: &[PreparedFastScanQuery],
         candidate_limit: usize,
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         let mut candidates = fast_scan_candidate_top_k_batch(queries.len(), candidate_limit);
         let mut accumulators = vec![[u16x16::splat(0), u16x16::splat(0)]; queries.len()];
         let mut accumulator_lanes = vec![[[0_i32; 16], [0_i32; 16]]; queries.len()];
@@ -205,7 +208,7 @@ impl TurboQuantVectorIndex {
                     let centered = lanes[lane / 16][lane % 16] - query.lut.zero_sum;
                     let dot = query.query_bias + f64::from(centered) * query.lut.dequant;
                     let distance = -(dot * f64::from(self.row_scales[slot]));
-                    candidate.push_distance((slot, row), distance);
+                    candidate.push_distance(row, distance);
                 }
             }
         }
@@ -219,7 +222,7 @@ impl TurboQuantVectorIndex {
         queries: &[PreparedFastScanQuery],
         candidate_limits: &[usize],
         allowed_rows: &[RoaringBitmap],
-    ) -> Vec<VectorTopK<(usize, u32)>> {
+    ) -> Vec<TurboQuantCandidateTopK> {
         let mut candidates = fast_scan_candidate_top_k_batch_with_limits(candidate_limits);
         let mut accumulators = vec![[u16x16::splat(0), u16x16::splat(0)]; queries.len()];
         let mut accumulator_lanes = vec![[[0_i32; 16], [0_i32; 16]]; queries.len()];
@@ -249,7 +252,7 @@ impl TurboQuantVectorIndex {
                     let centered = lanes[lane / 16][lane % 16] - query.lut.zero_sum;
                     let dot = query.query_bias + f64::from(centered) * query.lut.dequant;
                     let distance = -(dot * f64::from(self.row_scales[slot]));
-                    candidate.push_distance((slot, row), distance);
+                    candidate.push_distance(row, distance);
                 }
             }
         }
@@ -261,7 +264,7 @@ impl TurboQuantVectorIndex {
         lut: &FastScanQueryLut,
         query_bias: f64,
         candidate_limit: usize,
-    ) -> VectorTopK<(usize, u32)> {
+    ) -> TurboQuantCandidateTopK {
         let chunk_blocks =
             super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
         (0..self.codes.block_count())
@@ -278,7 +281,10 @@ impl TurboQuantVectorIndex {
                     candidate_limit,
                 )
             })
-            .reduce(|| VectorTopK::new(candidate_limit), merge_candidate_top_k)
+            .reduce(
+                || TurboQuantCandidateTopK::new(candidate_limit),
+                merge_candidate_top_k,
+            )
     }
 
     fn slot_order_candidates_fast_scan_in_rows_parallel(
@@ -287,7 +293,7 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
         allowed_rows: &RoaringBitmap,
-    ) -> VectorTopK<(usize, u32)> {
+    ) -> TurboQuantCandidateTopK {
         let chunk_blocks =
             super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
         (0..self.codes.block_count())
@@ -305,7 +311,10 @@ impl TurboQuantVectorIndex {
                     allowed_rows,
                 )
             })
-            .reduce(|| VectorTopK::new(candidate_limit), merge_candidate_top_k)
+            .reduce(
+                || TurboQuantCandidateTopK::new(candidate_limit),
+                merge_candidate_top_k,
+            )
     }
 
     fn slot_order_candidates_fast_scan_blocks(
@@ -315,8 +324,8 @@ impl TurboQuantVectorIndex {
         lut: &FastScanQueryLut,
         query_bias: f64,
         candidate_limit: usize,
-    ) -> VectorTopK<(usize, u32)> {
-        let mut candidates = VectorTopK::new(candidate_limit);
+    ) -> TurboQuantCandidateTopK {
+        let mut candidates = TurboQuantCandidateTopK::new(candidate_limit);
         let mut accumulators = [u16x16::splat(0), u16x16::splat(0)];
         let mut lanes = [[0_i32; 16], [0_i32; 16]];
         for block in start_block..end_block {
@@ -331,7 +340,7 @@ impl TurboQuantVectorIndex {
                 let centered = lanes[lane / 16][lane % 16] - lut.zero_sum;
                 let dot = query_bias + f64::from(centered) * lut.dequant;
                 let distance = -(dot * f64::from(self.row_scales[slot]));
-                candidates.push_distance((slot, row), distance);
+                candidates.push_distance(row, distance);
             }
         }
         candidates
@@ -345,8 +354,8 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
         allowed_rows: &RoaringBitmap,
-    ) -> VectorTopK<(usize, u32)> {
-        let mut candidates = VectorTopK::new(candidate_limit);
+    ) -> TurboQuantCandidateTopK {
+        let mut candidates = TurboQuantCandidateTopK::new(candidate_limit);
         let mut accumulators = [u16x16::splat(0), u16x16::splat(0)];
         let mut lanes = [[0_i32; 16], [0_i32; 16]];
         let mut lane_rows = [0_u32; TURBO_QUANT_BLOCK_ROWS];
@@ -366,7 +375,7 @@ impl TurboQuantVectorIndex {
                 let centered = lanes[lane / 16][lane % 16] - lut.zero_sum;
                 let dot = query_bias + f64::from(centered) * lut.dequant;
                 let distance = -(dot * f64::from(self.row_scales[slot]));
-                candidates.push_distance((slot, row), distance);
+                candidates.push_distance(row, distance);
                 mask &= mask - 1;
             }
         }
@@ -594,26 +603,26 @@ fn quantized_contribution(value: f64, quant_scale: f64, quant_limit: i16) -> u8 
 fn fast_scan_candidate_top_k_batch(
     query_count: usize,
     candidate_limit: usize,
-) -> Vec<VectorTopK<(usize, u32)>> {
+) -> Vec<TurboQuantCandidateTopK> {
     (0..query_count)
-        .map(|_| VectorTopK::new(candidate_limit))
+        .map(|_| TurboQuantCandidateTopK::new(candidate_limit))
         .collect()
 }
 
 fn fast_scan_candidate_top_k_batch_with_limits(
     candidate_limits: &[usize],
-) -> Vec<VectorTopK<(usize, u32)>> {
+) -> Vec<TurboQuantCandidateTopK> {
     candidate_limits
         .iter()
         .copied()
-        .map(VectorTopK::new)
+        .map(TurboQuantCandidateTopK::new)
         .collect()
 }
 
 fn merge_fast_scan_candidate_top_k_batch(
-    mut lhs: Vec<VectorTopK<(usize, u32)>>,
-    rhs: Vec<VectorTopK<(usize, u32)>>,
-) -> Vec<VectorTopK<(usize, u32)>> {
+    mut lhs: Vec<TurboQuantCandidateTopK>,
+    rhs: Vec<TurboQuantCandidateTopK>,
+) -> Vec<TurboQuantCandidateTopK> {
     for (lhs_query, rhs_query) in lhs.iter_mut().zip(rhs) {
         for hit in rhs_query.into_hits() {
             lhs_query.push_distance(hit.key, hit.distance);

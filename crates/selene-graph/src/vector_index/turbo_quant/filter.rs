@@ -1,9 +1,11 @@
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
-use selene_core::{CoreResult, TURBO_QUANT_BLOCK_ROWS, VectorTopK, VectorValue};
+use selene_core::{CoreResult, TURBO_QUANT_BLOCK_ROWS, VectorValue};
 use wide::f64x4;
 
-use super::{TurboQuantVectorHit, TurboQuantVectorIndex, merge_candidate_top_k};
+use super::{
+    TurboQuantCandidateTopK, TurboQuantVectorHit, TurboQuantVectorIndex, merge_candidate_top_k,
+};
 
 const FILTERED_SLOT_SCAN_MIN_ALLOWED_RATIO: usize = 4;
 
@@ -49,7 +51,7 @@ impl TurboQuantVectorIndex {
             .into_hits()
             .into_iter()
             .map(|hit| TurboQuantVectorHit {
-                row: hit.key.1,
+                row: hit.key,
                 distance: hit.distance,
             })
             .collect())
@@ -101,7 +103,7 @@ impl TurboQuantVectorIndex {
                     .into_hits()
                     .into_iter()
                     .map(|hit| TurboQuantVectorHit {
-                        row: hit.key.1,
+                        row: hit.key,
                         distance: hit.distance,
                     })
                     .collect()
@@ -184,7 +186,7 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
         allowed_rows: &RoaringBitmap,
-    ) -> VectorTopK<(usize, u32)> {
+    ) -> TurboQuantCandidateTopK {
         if self.should_parallelize_slot_scan(candidate_limit) {
             return self.slot_order_candidates_in_rows_parallel(
                 byte_lut,
@@ -209,7 +211,7 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
         allowed_rows: &RoaringBitmap,
-    ) -> VectorTopK<(usize, u32)> {
+    ) -> TurboQuantCandidateTopK {
         let chunk_blocks =
             super::TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
         (0..self.codes.block_count())
@@ -227,7 +229,10 @@ impl TurboQuantVectorIndex {
                     allowed_rows,
                 )
             })
-            .reduce(|| VectorTopK::new(candidate_limit), merge_candidate_top_k)
+            .reduce(
+                || TurboQuantCandidateTopK::new(candidate_limit),
+                merge_candidate_top_k,
+            )
     }
 
     fn slot_order_candidates_in_rows_blocks(
@@ -238,8 +243,8 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
         allowed_rows: &RoaringBitmap,
-    ) -> VectorTopK<(usize, u32)> {
-        let mut candidates = VectorTopK::new(candidate_limit);
+    ) -> TurboQuantCandidateTopK {
+        let mut candidates = TurboQuantCandidateTopK::new(candidate_limit);
         let mut dots = [f64x4::ZERO; TURBO_QUANT_BLOCK_ROWS / 4];
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
@@ -269,7 +274,7 @@ impl TurboQuantVectorIndex {
                         continue;
                     };
                     let distance = -(dot * f64::from(self.row_scales[slot]));
-                    candidates.push_distance((slot, row), distance);
+                    candidates.push_distance(row, distance);
                 }
             }
         }
@@ -282,8 +287,8 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
         allowed_rows: &RoaringBitmap,
-    ) -> VectorTopK<(usize, u32)> {
-        let mut candidates = VectorTopK::new(candidate_limit);
+    ) -> TurboQuantCandidateTopK {
+        let mut candidates = TurboQuantCandidateTopK::new(candidate_limit);
         for row in allowed_rows.iter() {
             let Some(slot) = self.slot_for_row(row) else {
                 continue;
@@ -295,7 +300,7 @@ impl TurboQuantVectorIndex {
                 continue;
             }
             let distance = self.approx_distance_lut(slot, byte_lut, query_bias);
-            candidates.push_distance((slot, row), distance);
+            candidates.push_distance(row, distance);
         }
         candidates
     }
