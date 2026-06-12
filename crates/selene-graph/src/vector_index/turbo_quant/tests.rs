@@ -104,6 +104,29 @@ fn turbo_quant_bulk_replacement_preserves_pending_calibration_rows() {
 }
 
 #[test]
+fn turbo_quant_bulk_remove_preserves_compacted_calibration_rows() {
+    let mut index = TurboQuantVectorIndex::new(2).unwrap();
+    index.insert(1, &vector(&[1.0, 0.0])).unwrap();
+    index.insert(2, &vector(&[0.0, 1.0])).unwrap();
+    index.insert(3, &vector(&[-1.0, 0.0])).unwrap();
+
+    index.remove(2);
+
+    assert_eq!(index.rows, vec![1, 3]);
+    assert_eq!(index.slot_for_row(1), Some(0));
+    assert_eq!(index.slot_for_row(3), Some(1));
+    assert_eq!(index.bulk_rotated.len(), 2 * index.dimension);
+
+    index.finish_bulk_load().unwrap();
+    let hits = index.candidates(&vector(&[-1.0, 0.0]), 2, 2).unwrap();
+
+    assert_eq!(
+        hits.iter().map(|hit| hit.row).collect::<Vec<_>>(),
+        vec![3, 1]
+    );
+}
+
+#[test]
 fn turbo_quant_replacement_updates_existing_slot_after_calibration() {
     let mut index = TurboQuantVectorIndex::new(2).unwrap();
     index.insert(1, &vector(&[1.0, 0.0])).unwrap();
