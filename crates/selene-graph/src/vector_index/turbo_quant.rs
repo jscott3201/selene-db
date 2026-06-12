@@ -424,16 +424,14 @@ impl TurboQuantVectorIndex {
     }
 
     fn live_entry_slots(&self) -> Vec<usize> {
-        self.rows
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, &row)| self.row_points_to_slot(row, slot).then_some(slot))
-            .collect()
+        debug_assert_eq!(self.rows.len(), self.row_to_entry.len());
+        (0..self.rows.len()).collect()
     }
 
     fn live_row_at_slot(&self, slot: usize) -> Option<u32> {
         let row = self.rows.get(slot).copied()?;
-        self.row_points_to_slot(row, slot).then_some(row)
+        debug_assert!(self.row_points_to_slot(row, slot));
+        Some(row)
     }
 
     fn row_points_to_slot(&self, row: u32, slot: usize) -> bool {

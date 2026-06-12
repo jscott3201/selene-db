@@ -708,6 +708,17 @@ Commands:
 | `graph_turbo_quant_production_batch_dimension_projection/...d128/d768/d1536` | 2.3157 ms / 4.1601 ms / 6.3195 ms (quick) | Fused full-index batch search remains neutral across the same 30-sample comparison, so higher-precision FastScan does not cost the core batch path. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128/d768/d1536` | 2.2700 ms / 3.8392 ms / 5.9899 ms (quick) | Query-specific filtered batch search improves the 128-dim row significantly and trends lower at 768/1536 while preserving full recall and exact primary-vector rerank. |
 
+PR-local TurboQuant compact-slot scan spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128 --baseline tq_slot_live_lookup_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d128 --baseline tq_slot_live_lookup_filtered_batch_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_dimension_projection/...d128` | 3.3535 ms | 3.3232 ms | Compact TurboQuant slots now read `rows[slot]` directly during slot-order scans while keeping row-to-slot hash alignment as a debug assertion. The full-index row improves 1.26% (`p=0.00`), a small but measurable removal of per-slot liveness lookups. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128` | 2.4972 ms | 2.2394 ms | Candidate-set filtered batch search benefits most because each allowed-row check shares the compact slot lookup. The row improves 10.30% (`p=0.00`) while preserving exact primary-vector rerank semantics. |
+
 PR-local TurboQuant slot-map storage spot-check:
 
 Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`.
