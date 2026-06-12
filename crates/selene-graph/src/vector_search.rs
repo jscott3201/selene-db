@@ -14,7 +14,7 @@ use crate::parallel_scan::{should_parallelize_scan, try_reduce_bitmap_chunks};
 #[cfg(test)]
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
-use crate::vector_index::{HnswSearchScratch, VectorIndexSearchHit};
+use crate::vector_index::VectorIndexSearchHit;
 #[path = "vector_search/types.rs"]
 mod types;
 pub use types::{
@@ -521,24 +521,15 @@ impl SeleneGraph {
             return Ok(batch_hits);
         }
 
-        let mut scratch = HnswSearchScratch::default();
-        let mut batch_hits = Vec::with_capacity(queries.len());
-        for query in queries {
-            checker.check()?;
-            let dimension = u32::try_from(query.dimension())
-                .map_err(|_| VectorSearchError::ApproximateIndexMissing)?;
-            if dimension != query_dimension {
-                return Err(VectorSearchError::ApproximateIndexMissing);
-            }
-            let row_hits = index
-                .ann_search_with_scratch(query, options.k, options.ef_search, &mut scratch)
-                .ok_or(VectorSearchError::ApproximateIndexMissing)?
-                .map_err(GraphError::from)?;
-
-            batch_hits.push(ann_row_hits_to_node_hits(self, label, row_hits, &checker)?);
-        }
-
-        Ok(batch_hits)
+        approx_batch::ann_index_batch_search(
+            self,
+            label,
+            &index,
+            queries,
+            options,
+            query_dimension,
+            checker,
+        )
     }
 
     /// Use ANN hits as graph roots, expand them, then exact-rerank candidates.

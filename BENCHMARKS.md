@@ -1130,6 +1130,21 @@ PR-local IVF probe sweep:
 | `graph_ann_recall_validation/cluster_cos_ivf_d128_k10_ef2_idbp10000_dqbp10000` | 194.98 µs (quick) | Two-list IVF probe restores 10000 bp ID-overlap and distance-quality recall while cutting latency ~3.9x versus ef10 and ~22x versus ef64 on this fixture. |
 | `graph_ann_recall_validation/cluster_cos_ivf_d128_k10_ef4_idbp10000_dqbp10000` | 349.02 µs (quick) | Still perfect on this corpus, but extra probes are already dominated by exact rerank work. |
 
+PR-local IVF batch candidate-production spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_ivf_pressure --filter graph_ivf_candidate_pressure/cluster_cos/d128_k10_w2 --save-baseline ivf_batch_parallel_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_ivf_pressure --filter graph_ivf_candidate_pressure/cluster_cos/d128_k10_w2 --baseline ivf_batch_parallel_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_ivf_pressure --filter 'graph_ivf_candidate_pressure/cluster_cos/d128_k10_w1|graph_ivf_candidate_pressure/cluster_cos/d128_k10_w4' --save-baseline ivf_batch_parallel_widths_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_ivf_pressure --filter 'graph_ivf_candidate_pressure/cluster_cos/d128_k10_w1|graph_ivf_candidate_pressure/cluster_cos/d128_k10_w4' --baseline ivf_batch_parallel_widths_pre`.
+
+| Bench | Serial batch | Parallel IVF batch | Notes |
+|---|---:|---:|---|
+| `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w1_idbp9188_dqbp9188` | 50.265 µs | 42.790 µs | IVF now produces independent batch query candidates through a parallel read-only path once query count and estimated probed work clear the threshold. Criterion reports a 14.88% improvement (`p=0.00`). |
+| `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w2_idbp10000_dqbp10000` | 67.843 µs | 50.413 µs | The width-2 high-recall knee improves 25.41% (`p=0.00`) while preserving the existing batch-equals-single API contract. |
+| `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w4_idbp10000_dqbp10000` | 78.518 µs | 52.602 µs | Wider probing benefits more from parallel candidate production, improving 33.75% (`p=0.00`). |
+| `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w16_idbp10000_dqbp10000` | 197.13 µs | 81.009 µs | The same neighbor guard command also matched the `w16` row; high probe width improves 58.74% (`p=0.00`) but remains a guardrail rather than the preferred recall knee. |
+
 PR-local mixed vector read/write spot-check:
 
 | Bench | 1k | 10k | Notes |

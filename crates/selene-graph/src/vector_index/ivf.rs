@@ -16,6 +16,9 @@ use selene_core::{
 
 use super::config::MAX_IVF_TARGET_CENTROIDS;
 
+#[path = "ivf/batch.rs"]
+mod batch;
+
 const MAX_CENTROIDS: usize = MAX_IVF_TARGET_CENTROIDS as usize;
 // Training is sampled above this point, but final list assignment is exhaustive.
 const TRAINING_SAMPLE_MAX_ENTRIES: usize = MAX_CENTROIDS * 128;
