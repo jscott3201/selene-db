@@ -735,6 +735,19 @@ Command: `scripts/run-benches.sh --profile quick --sample-size 50 --measurement-
 |---|---:|---:|---|
 | `graph_turbo_quant_production_dimension_projection/...d128` | 3.3304 ms | 2.9044 ms | TurboQuant approximate candidate heaps now carry row ids directly instead of `(slot, row)` pairs. Scan loops still use slots locally for packed-code and scale lookups, then emit compact row keys for top-k ordering before exact primary-vector rerank. The row improves 13.05% (`p=0.00`). |
 
+PR-local VectorTopK heap preallocation spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d128 --baseline topk_filter_batch_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128 --baseline topk_prealloc_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench value_clone --filter core_vector_exact_top_k/cosine_2048x128_k10 --baseline topk_core_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128` | 2.0266 ms | 1.9426 ms | `VectorTopK::new` now reserves its retained-hit heap up front. The query-specific filtered batch path builds multiple candidate heaps per scan, so it benefits most; the row improves 4.62% (`p=0.00`). |
+| `graph_turbo_quant_production_dimension_projection/...d128` | 2.9299 ms | 2.8888 ms | Full-index single-query TurboQuant trends 1.36% faster (`p=0.00`) but remains within Criterion's noise threshold. |
+| `core_vector_exact_top_k/cosine_2048x128_k10` | 52.877 us | 52.658 us | Core exact top-k construction also trends lower but remains within the noise threshold; the production filtered-batch row is the keep/drop signal. |
+
 PR-local TurboQuant slot-map storage spot-check:
 
 Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`.
