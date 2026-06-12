@@ -261,7 +261,11 @@ kernels, returning stable node ids. Large exact scans use threshold-gated Rayon
 for both unindexed label rows and flat-index row sets; cancellation/deadline
 aware calls check once per chunk and keep the same parallel path. Large
 `graph_vector_candidate_set/*` reranks use the same chunked cancellation-aware
-Rayon primitive once they reach the 4,096-candidate threshold. The
+Rayon primitive once a single set reaches the 4,096-candidate threshold.
+Canonical candidate-set batch scoring uses query-level Rayon once the batch has
+at least 4,096 total candidates spread across multiple sets, keeping each
+per-query scan serial inside that branch so many-query batches do not nest
+chunked reductions. The
 candidate-set group also measures the Rust graph/vector boundary for deriving
 canonical candidate sets from graph adjacency and reranking canonical candidate
 sets by vector score.
@@ -432,6 +436,20 @@ Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter g
 | `graph_vector_candidate_set/score_candidate_set_cosine_c1024_d1024/1024` | 223.55 µs | 222.59 µs | Below the threshold; stays sequential and change remains noise-scale. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c4096_d1024/4096` | 891.37 µs | 308.32 µs | Candidate-set rerank now uses chunked Rayon scoring once the set has at least 4,096 nodes; B10 later made that path cancellation/deadline aware. |
 
+PR-local quick vector candidate-set batch Rayon A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench single_graph --filter graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64 --save-baseline candidate_batch_serial_q64_pre`
+on the serial batch branch, then the same command with `--baseline
+candidate_batch_serial_q64_pre` after enabling query-level batch parallelism.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64_d1024/64` | 836.72 µs | 177.92 µs | 64 queries over 64-candidate canonical sets now cross the 4,096 total-candidate batch threshold and fan out by query. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c256_d1024/256` | 3.2221 ms | 611.32 µs | Query-level Rayon removes the serial per-query loop for medium graph-derived candidate sets. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c1024_d1024/1024` | 13.001 ms | 2.2670 ms | Per-query scans stay serial inside the batch branch, avoiding nested Rayon reductions while still using all worker threads across queries. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c4096_d1024/4096` | 18.015 ms | 9.5569 ms | Broad many-query batches now prefer query-level parallelism instead of repeatedly entering the single-set chunked scorer. |
+
 PR-local B5 id-map hasher A/B:
 
 Commands:
@@ -537,6 +555,8 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/adjacency_label_range_l8_k64` | 44.6 ns (quick) | Iterates the sorted label range for 64 matching edges mixed with 8x64 unrelated-label edges. |
 | `graph_vector_candidate_set/adjacency_label_scan_l8_k64` | 374.8 ns (quick) | Benchmark-local old path: scans the same mixed-label adjacency entry and filters by label, showing the range lookup is ~8.4x faster for high-degree mixed-label candidates. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c64/c256/c1024/c4096_d1024` | 13.7 µs / 54.7 µs / 222.6 µs / 308.3 µs (quick) | Scores canonical candidate sets against one 1024-dim cosine query. Widths below 4,096 stay sequential; the 4,096-row uses chunked Rayon and is the production broad-candidate rerank threshold. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.0 µs / 400.0 µs / 422.9 µs / 1.491 ms (quick) | Scores 8 canonical candidate sets against 8 1024-dim cosine queries. c64/c256 stay under the 4,096 total-candidate batch threshold; c1024/c4096 use query-level Rayon. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 177.9 µs / 611.3 µs / 2.267 ms / 9.557 ms (quick) | Scores 64 canonical candidate sets against 64 queries. Query-level Rayon is now the production many-query batch path once distributed total candidates reach 4,096. |
 | `graph_vector_candidate_state/maintained_active_c512_total1024` | 343.9 ns (quick) | Materializes a provider-maintained 512-node current set from a 1,024-node fixture with stale nodes disqualified by `SUPERSEDED_BY`. |
 | `graph_vector_candidate_state/dynamic_active_scan_c512_total1024` | 12.79 µs (quick) | Benchmark-local query-time baseline: scans all 1,024 document nodes and checks outgoing `SUPERSEDED_BY`, showing maintained state is ~37x faster for this currentness slice. |
 | `graph_vector_candidate_set/set_intersection_l256_r256_o128` | 153.2 ns (quick) | Intersects two canonical 256-node sets with 128 overlapping ids using the merge path; this is the balanced graph/ANN/active-set composition primitive. |
@@ -2264,7 +2284,7 @@ edges, then exact-scores those graph-derived candidates:
 | `graph_vector_query_filter_pressure/label_propagation/...` | 54.86 µs (`c17`, `covbp7661`, `precbp8830`) | 114.3 µs (`c16`, `covbp7578`, `precbp8789`) | Label propagation stays compact and partial-recall when compared with graph-derived scope filtering. |
 | `graph_vector_query_filter_pressure/graph_scope_filter/...covbp10000_curbp10000_precbp10000` | 111.2 µs (`c32`) | 1.142 ms (`c152`) | Graph-derived scope membership matches hard-topic quality with a small traversal overhead. This is the strongest product-shaped primitive so far: graph/query candidate production plus exact vector scoring. |
 | `graph_vector_query_filter_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 104.3 µs (`c32`) | 1.102 ms (`c152`) | Metadata hard-topic filtering remains the lower-bound reference for the same candidate set. |
-| `graph_vector_query_filter_pressure/graph_scope_candidate_set_batch_score/...covbp10000_curbp10000_precbp10000` | 121.8 µs (`c32`) | 1.238 ms (`c152`) | Canonical `VectorCandidateSet` batch scoring over graph-query output preserves quality but adds normalization/batch overhead when no second set is composed. |
+| `graph_vector_query_filter_pressure/graph_scope_candidate_set_batch_score/...covbp10000_curbp10000_precbp10000` | 90.47 µs (`c32`) | 498.1 µs (`c152`) | Canonical `VectorCandidateSet` batch scoring over graph-query output now uses query-level batch parallelism once the batch crosses the distributed-work threshold. |
 | `graph_vector_query_filter_pressure/graph_scope_unresolved_current_algebra_batch_score/...covbp10000_curbp10000_precbp10000` | 80.92 µs (`c18`) | 840.4 µs (`c89`) | Composing graph-scope output with the maintained unresolved-current candidate set cuts exact scoring work while preserving full quality. |
 
 The candidate-set rows show the boundary tradeoff: canonical graph-query output
@@ -2450,20 +2470,20 @@ from the candidate producer:
 
 | Bench | 9k/10k scale | Notes |
 |---|---:|---|
-| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_repeated_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.666 ms (quick) | Existing repeated per-query candidate scoring over the broad active set. |
-| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.659 ms (quick) | Generic batch scorer is effectively neutral for broad candidate sets. |
-| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_candidate_set_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.659 ms (quick) | Canonical candidate-set batch scorer skips the second normalization pass and is modestly faster on broad sets. |
-| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_candidate_set_algebra_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.511 ms (quick) | Sorted intersection of graph-session output with the maintained unresolved-current candidate set; broad-set algebra beats the HashSet-filtered candidate path on this fixture. |
-| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_repeated_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 514.9 µs (quick) | Existing repeated scoring over recency-window candidates. |
-| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 514.9 µs (quick) | Generic batch scorer is effectively neutral for medium candidate sets and preserves full quality. |
-| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_candidate_set_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 512.5 µs (quick) | Canonical candidate-set batch scorer is only slightly faster than generic batch at this candidate width. |
-| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_candidate_set_algebra_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 512.4 µs (quick) | Adaptive sorted intersection is now effectively neutral with the maintained recency candidate path at medium width. |
-| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_repeated_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 74.09 µs (quick) | Existing repeated scoring over direct dependency candidates. |
-| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 73.98 µs (quick) | Generic batch scorer remains effectively neutral for tiny candidate sets. |
-| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_candidate_set_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 74.68 µs (quick) | Canonical candidate-set batch scorer is neutral on tiny dependency sets. |
-| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_candidate_set_algebra_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 74.06 µs (quick) | Adaptive intersection removes the prior large-active-set scan, making tiny dependency algebra neutral instead of the old ~126 µs failure mode. |
-| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_neighbor_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 73.58 µs (quick) | Production neighbor scorer derives dependency candidates from the anchor's `DEPENDS_ON` edges; the direct candidate-set scorer removes the extra normalization pass. |
-| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_neighbor_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 73.25 µs (quick) | Batched production neighbor scorer remains the fastest dependency active-hint row on this fixture, while preserving full quality. |
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_repeated_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.382 ms (quick) | Existing repeated per-query candidate scoring over the broad active set. |
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 1.342 ms (quick) | Generic batch scorer remains a serial loop over explicit candidate slices. |
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_candidate_set_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 734.9 µs (quick) | Query-level candidate-set batch parallelism removes the serial 64-query loop for broad active-set scoring. |
+| `graph_vector_active_hint_batch_pressure/graph_session_materialized_unresolved_current_filter_candidate_set_algebra_batch_score/9k_q64_c228_covbp10000_curbp10000_precbp10000` | 579.9 µs (quick) | Sorted intersection with the maintained unresolved-current set plus query-level batch scoring is the fastest broad active-hint row. |
+| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_repeated_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 432.1 µs (quick) | Existing repeated scoring over recency-window candidates. |
+| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 431.3 µs (quick) | Generic batch scorer is effectively neutral for medium candidate sets and preserves full quality. |
+| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_candidate_set_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 430.6 µs (quick) | This 64-query by 57-candidate row stays just below the 4,096 total-candidate batch threshold and remains neutral. |
+| `graph_vector_active_hint_batch_pressure/graph_session_recent_active_filter_candidate_set_algebra_batch_score/9k_q64_c57_covbp10000_curbp10000_precbp10000` | 430.3 µs (quick) | Adaptive sorted intersection remains effectively neutral with the maintained recency candidate path at medium width. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_repeated_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 62.16 µs (quick) | Existing repeated scoring over direct dependency candidates. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 62.87 µs (quick) | Generic batch scorer remains effectively neutral for tiny candidate sets. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_candidate_set_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 63.44 µs (quick) | Tiny dependency sets remain below the batch parallel threshold at 512 total candidates. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_candidate_set_algebra_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 62.90 µs (quick) | Adaptive intersection stays neutral with the tiny maintained dependency path. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_neighbor_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 60.17 µs (quick) | Production neighbor scorer derives dependency candidates from the anchor's `DEPENDS_ON` edges and remains fastest for tiny active hints. |
+| `graph_vector_active_hint_batch_pressure/graph_session_dependency_active_filter_neighbor_batch_score/9k_q64_c8_covbp10000_curbp10000_precbp10000` | 61.26 µs (quick) | Batched production neighbor scoring remains neutral for tiny dependency sets while preserving full quality. |
 
 ANN rerank rows use the same active-hint fixture, but start from ANN/search-hit
 output. They convert wide ANN hits into `VectorCandidateSet`s, optionally

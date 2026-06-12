@@ -15,6 +15,7 @@ use selene_graph::{
 const VECTOR_CANDIDATE_NEIGHBORS: usize = 64;
 const VECTOR_CANDIDATE_SCORE_DIMENSION: usize = 1024;
 const VECTOR_CANDIDATE_SCORE_WIDTHS: &[usize] = &[64, 256, 1024, 4096];
+const VECTOR_CANDIDATE_SCORE_BATCH_QUERIES: &[usize] = &[8, 64];
 const VECTOR_CANDIDATE_ALGEBRA_SET: usize = 256;
 const VECTOR_CANDIDATE_ALGEBRA_OVERLAP: usize = 128;
 const VECTOR_CANDIDATE_ASYM_SMALL_SET: usize = 8;
@@ -123,6 +124,36 @@ fn bench_candidate_set_scoring(
                 });
             },
         );
+        for &query_count in VECTOR_CANDIDATE_SCORE_BATCH_QUERIES {
+            let queries = (0..query_count)
+                .map(|idx| super::vector_value(idx, VECTOR_CANDIDATE_SCORE_DIMENSION))
+                .collect::<Vec<_>>();
+            let candidate_sets = vec![fixture.candidate_set().clone(); query_count];
+            group.throughput(Throughput::Elements(
+                (query_count * fixture.candidate_count()) as u64,
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    fixture.bench_id(&format!("score_candidate_sets_batch_cosine_q{query_count}")),
+                    fixture.candidate_count(),
+                ),
+                |b| {
+                    b.iter(|| {
+                        let hits = fixture
+                            .graph()
+                            .score_vector_candidate_sets_batch(
+                                fixture.embedding_key(),
+                                &queries,
+                                &candidate_sets,
+                                VectorMetric::Cosine,
+                                10,
+                            )
+                            .expect("bench candidate batch scoring succeeds");
+                        std::hint::black_box(hits.iter().map(Vec::len).sum::<usize>());
+                    });
+                },
+            );
+        }
     }
 }
 
