@@ -2,14 +2,16 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use selene_core::{CancellationChecker, VectorMetric};
 use selene_graph::ApproximateVectorSearchOptions;
 
-use super::{DIMENSIONS, K, PRODUCTION_SEARCH_WIDTH, ProductionDimensionFixture, compact_count};
+use super::{
+    K, PRODUCTION_DIMENSIONS, PRODUCTION_SEARCH_WIDTH, ProductionDimensionFixture, compact_count,
+};
 
 pub(super) fn bench_production_turbo_quant_shared_filtered_batch_dimension_projection(
     c: &mut Criterion,
 ) {
     let mut group = c
         .benchmark_group("graph_turbo_quant_production_shared_filtered_batch_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in PRODUCTION_DIMENSIONS {
         let fixture = ProductionDimensionFixture::build(dimension);
         group.throughput(Throughput::Elements(
             (fixture.filtered_candidate_count() * fixture.query_count()) as u64,

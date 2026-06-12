@@ -32,7 +32,8 @@ const QUERY_COUNT: usize = 8;
 const K: usize = 10;
 const PRODUCTION_SEARCH_WIDTH: usize = 512;
 const FILTERED_CANDIDATE_LEN: usize = 4_096;
-const DIMENSIONS: [usize; 3] = [128, 768, 1536];
+const RESEARCH_DIMENSIONS: [usize; 3] = [128, 768, 1536];
+const PRODUCTION_DIMENSIONS: [usize; 4] = [128, 768, 1536, 3072];
 const VARIANT: TurboQuantVariant = TurboQuantVariant {
     name: "tqplus4lut_c1024",
     bit_width: 4,
@@ -68,7 +69,7 @@ const BLOCKED_FAST_SCAN_VARIANT: TurboQuantVariant = TurboQuantVariant {
 
 fn bench_turbo_quant_dimension_projection(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_turbo_quant_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in RESEARCH_DIMENSIONS {
         let fixture = DimensionFixture::build(dimension, VARIANT);
         group.throughput(Throughput::Elements(
             (fixture.rows() * fixture.query_count()) as u64,
@@ -96,7 +97,7 @@ fn bench_turbo_quant_dimension_projection(c: &mut Criterion) {
 
 fn bench_blocked_turbo_quant_dimension_projection(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_turbo_quant_blocked_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in RESEARCH_DIMENSIONS {
         let fixture = DimensionFixture::build(dimension, BLOCKED_VARIANT);
         group.throughput(Throughput::Elements(
             (fixture.rows() * fixture.query_count()) as u64,
@@ -124,7 +125,7 @@ fn bench_blocked_turbo_quant_dimension_projection(c: &mut Criterion) {
 
 fn bench_blocked_wide_turbo_quant_dimension_projection(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_turbo_quant_blocked_wide_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in RESEARCH_DIMENSIONS {
         let fixture = DimensionFixture::build(dimension, BLOCKED_WIDE_VARIANT);
         group.throughput(Throughput::Elements(
             (fixture.rows() * fixture.query_count()) as u64,
@@ -152,7 +153,7 @@ fn bench_blocked_wide_turbo_quant_dimension_projection(c: &mut Criterion) {
 
 fn bench_blocked_fast_scan_turbo_quant_dimension_projection(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_turbo_quant_blocked_fast_scan_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in RESEARCH_DIMENSIONS {
         let fixture = DimensionFixture::build(dimension, BLOCKED_FAST_SCAN_VARIANT);
         group.throughput(Throughput::Elements(
             (fixture.rows() * fixture.query_count()) as u64,
@@ -180,7 +181,7 @@ fn bench_blocked_fast_scan_turbo_quant_dimension_projection(c: &mut Criterion) {
 
 fn bench_production_turbo_quant_dimension_projection(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_turbo_quant_production_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in PRODUCTION_DIMENSIONS {
         let fixture = ProductionDimensionFixture::build(dimension);
         group.throughput(Throughput::Elements(
             (fixture.rows() * fixture.query_count()) as u64,
@@ -207,7 +208,7 @@ fn bench_production_turbo_quant_dimension_projection(c: &mut Criterion) {
 
 fn bench_production_turbo_quant_batch_dimension_projection(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_turbo_quant_production_batch_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in PRODUCTION_DIMENSIONS {
         let fixture = ProductionDimensionFixture::build(dimension);
         group.throughput(Throughput::Elements(
             (fixture.rows() * fixture.query_count()) as u64,
@@ -234,7 +235,7 @@ fn bench_production_turbo_quant_batch_dimension_projection(c: &mut Criterion) {
 
 fn bench_production_turbo_quant_filtered_dimension_projection(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_turbo_quant_production_filtered_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in PRODUCTION_DIMENSIONS {
         let fixture = ProductionDimensionFixture::build(dimension);
         group.throughput(Throughput::Elements(
             (fixture.filtered_candidate_count() * fixture.query_count()) as u64,
@@ -262,7 +263,7 @@ fn bench_production_turbo_quant_filtered_dimension_projection(c: &mut Criterion)
 fn bench_production_turbo_quant_filtered_batch_dimension_projection(c: &mut Criterion) {
     let mut group =
         c.benchmark_group("graph_turbo_quant_production_filtered_batch_dimension_projection");
-    for dimension in DIMENSIONS {
+    for dimension in PRODUCTION_DIMENSIONS {
         let fixture = ProductionDimensionFixture::build(dimension);
         group.throughput(Throughput::Elements(
             (fixture.filtered_candidate_count() * fixture.query_count()) as u64,
