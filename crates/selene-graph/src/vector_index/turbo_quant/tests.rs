@@ -93,8 +93,10 @@ fn turbo_quant_bulk_replacement_preserves_pending_calibration_rows() {
     assert_eq!(index.slot_for_row(1), Some(0));
     assert_eq!(index.slot_for_row(2), Some(1));
     assert_eq!(index.bulk_rotated.len(), 2 * index.dimension);
+    assert_eq!(index.memory_usage().code_bytes, 0);
 
     index.finish_bulk_load().unwrap();
+    assert!(index.memory_usage().code_bytes > 0);
     let hits = index.candidates(&vector(&[1.0, 0.0]), 2, 2).unwrap();
 
     assert_eq!(

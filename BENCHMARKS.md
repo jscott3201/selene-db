@@ -1001,6 +1001,21 @@ Commands:
 | `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | n/a | 17.900 ms | Low-dimensional create-index guardrail remains stable. |
 | `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 145.87 µs | Existing post-churn query guardrail remains stable. |
 
+PR-local TurboQuant bulk code allocation spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter d1536 --save-baseline tq_bulk_codes_resize_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter d1536 --baseline tq_bulk_codes_resize_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter d128 --save-baseline tq_bulk_codes_resize_d128_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter d128 --baseline tq_bulk_codes_resize_d128_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter 'd128|tqcos_update10_delete5'`.
+
+| Bench | Eager code allocation | Deferred code allocation | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 17.996 ms | 17.290 ms | Bulk insert now leaves the packed-code matrix unallocated until `finish_bulk_load`, avoiding repeated resize/zero-fill work before final TQ+ calibration. Criterion reports a 3.92% improvement (`p=0.00`). |
+| `graph_turbo_quant_churn/tqcos_create_index/d1536_n2k` | 47.763 ms | 47.839 ms | High-dimensional build time is unchanged (`p=0.65`), so the win is limited to row-count-heavy bulk allocation pressure rather than calibration throughput. |
+| `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 148.12 µs | Existing post-churn query guardrail remains stable after finalized indexes allocate and compact packed-code rows normally. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |
