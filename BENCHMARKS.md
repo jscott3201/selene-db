@@ -1699,6 +1699,20 @@ validation used:
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection_batch/mistralai_codestral-embed-2505_code_alias_wide_memory_q16_k4_r2_c8_dim1536` | n/a | 337.70 µs | Code-oriented endpoint keeps current-state vector scoring close to plain expansion while applying the current-state gate. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_provenance_state_intersection_batch/mistralai_codestral-embed-2505_code_alias_wide_memory_q16_k4_r2_c8_dim1536` | n/a | 342.65 µs | Provenance-gated Codestral row stays within a few microseconds of the current-state vector row. |
 
+PR-local quick mixed root-set expansion reuse validation:
+
+Commands:
+`set -a; source .env; set +a; SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=mistralai/codestral-embed-2505 SELENE_EMBEDDING_CORPUS=project_source_chunk_memory SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --sample-size 40 --measurement-time 4 --bench procedure_call_repeat --filter 'query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch' --save-baseline expanded_group_pre`,
+then the same command with `--baseline expanded_group_pre` after grouped root
+expansion moved into the shared graph batch helper and the maintained-state GQL
+batch procedure.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c8_dim1536` | 341.15 µs | 305.78 µs | Repeated per-topic root sets now expand once per distinct group before exact vector batch scoring; Criterion reported a 9.03% improvement (`p=0.00`). |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536` | 343.26 µs | 302.17 µs | Maintained current-state composition now uses the same grouped expansion helper, improving the live source-chunk row by 11.12% (`p=0.00`). |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_provenance_state_intersection_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536` | 338.29 µs | 302.80 µs | Provenance-gated current-state vector scoring preserves the same candidate semantics while avoiding duplicate graph expansion, improving 10.32% (`p=0.00`). |
+
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
 
 The only read-query **execution** bench in the suite (`expression_eval` is

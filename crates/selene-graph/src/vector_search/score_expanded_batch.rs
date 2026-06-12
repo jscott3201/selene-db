@@ -17,6 +17,7 @@ const VECTOR_EXPANDED_BATCH_PARALLEL_MIN_CANDIDATES: usize = 8192;
 const VECTOR_EXPANDED_BATCH_PARALLEL_MIN_CANDIDATES: usize = 8;
 
 const VECTOR_EXPANDED_BATCH_PARALLEL_ESTIMATE_SETS: usize = 4;
+const VECTOR_EXPANDED_BATCH_GROUP_MAX_SETS: usize = 128;
 
 impl SeleneGraph {
     pub(super) fn expand_vector_candidate_sets_batch(
@@ -43,6 +44,13 @@ impl SeleneGraph {
             return Ok(vec![expanded; root_sets.len()]);
         }
 
+        let groups = repeated_root_set_groups(root_sets);
+        if !groups.is_empty() {
+            return self.expand_vector_candidate_sets_batch_grouped(
+                root_sets, edge_label, direction, k, checker, groups,
+            );
+        }
+
         if self.should_parallelize_expanded_candidate_batch(root_sets, edge_label, direction, k) {
             return root_sets
                 .par_iter()
@@ -61,6 +69,78 @@ impl SeleneGraph {
             );
         }
         Ok(expanded_sets)
+    }
+
+    fn expand_vector_candidate_sets_batch_grouped(
+        &self,
+        root_sets: &[VectorCandidateSet],
+        edge_label: &DbString,
+        direction: VectorNeighborDirection,
+        k: usize,
+        checker: CancellationChecker<'_>,
+        groups: Vec<Vec<usize>>,
+    ) -> Result<Vec<VectorCandidateSet>, VectorSearchError> {
+        let mut expanded_sets = vec![None; root_sets.len()];
+        let mut grouped = vec![false; root_sets.len()];
+        for group in groups {
+            checker.check()?;
+            let expanded = self.expand_vector_candidate_set_checked(
+                &root_sets[group[0]],
+                edge_label,
+                direction,
+                checker,
+            )?;
+            for index in group {
+                grouped[index] = true;
+                expanded_sets[index] = Some(expanded.clone());
+            }
+        }
+
+        let ungrouped = grouped
+            .iter()
+            .enumerate()
+            .filter_map(|(index, is_grouped)| (!is_grouped).then_some(index))
+            .collect::<Vec<_>>();
+        let expanded_ungrouped = if self
+            .should_parallelize_expanded_candidate_batch(root_sets, edge_label, direction, k)
+        {
+            ungrouped
+                .par_iter()
+                .map(|&index| {
+                    checker.check()?;
+                    self.expand_vector_candidate_set_checked(
+                        &root_sets[index],
+                        edge_label,
+                        direction,
+                        checker,
+                    )
+                    .map(|expanded| (index, expanded))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            let mut expanded = Vec::with_capacity(ungrouped.len());
+            for index in ungrouped {
+                checker.check()?;
+                expanded.push((
+                    index,
+                    self.expand_vector_candidate_set_checked(
+                        &root_sets[index],
+                        edge_label,
+                        direction,
+                        checker,
+                    )?,
+                ));
+            }
+            expanded
+        };
+        for (index, expanded) in expanded_ungrouped {
+            expanded_sets[index] = Some(expanded);
+        }
+
+        Ok(expanded_sets
+            .into_iter()
+            .map(|expanded| expanded.expect("batched expansion fills every root slot"))
+            .collect())
     }
 
     fn should_parallelize_expanded_candidate_batch(
@@ -123,4 +203,32 @@ fn candidate_sets_match(lhs: &VectorCandidateSet, rhs: &VectorCandidateSet) -> b
     let lhs = lhs.as_nodes();
     let rhs = rhs.as_nodes();
     lhs.len() == rhs.len() && lhs.first() == rhs.first() && lhs.last() == rhs.last() && lhs == rhs
+}
+
+fn repeated_root_set_groups(root_sets: &[VectorCandidateSet]) -> Vec<Vec<usize>> {
+    if root_sets.len() <= 2 || root_sets.len() > VECTOR_EXPANDED_BATCH_GROUP_MAX_SETS {
+        return Vec::new();
+    }
+    let mut assigned = vec![false; root_sets.len()];
+    let mut groups = Vec::new();
+    for index in 0..root_sets.len() {
+        if assigned[index] {
+            continue;
+        }
+        let mut group = Vec::new();
+        for next in index + 1..root_sets.len() {
+            if !assigned[next] && candidate_sets_match(&root_sets[index], &root_sets[next]) {
+                if group.is_empty() {
+                    group.push(index);
+                    assigned[index] = true;
+                }
+                group.push(next);
+                assigned[next] = true;
+            }
+        }
+        if group.len() > 1 {
+            groups.push(group);
+        }
+    }
+    groups
 }
