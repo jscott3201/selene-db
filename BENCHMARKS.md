@@ -1562,6 +1562,23 @@ then the same command with `--baseline repeated_candidate_graph_pre`.
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64...` | 26.584 µs | 21.636 µs | The post-root-reuse procedure row now avoids eight repeated property lookup passes over the same 64-node maintained-state intersection before exact scoring. |
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64_d1024/64` | 102.04 µs | 97.528 µs | The core scorer keeps the existing query-level Rayon path for larger batches, but below threshold flips repeated candidate sets to candidate-major scoring. |
 
+PR-local quick mixed candidate-set reuse validation:
+
+Commands:
+`set -a; source .env; set +a; SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=google/gemini-embedding-2 SELENE_EMBEDDING_CORPUS=code_alias_memory SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter 'query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch'`
+before and after the mixed repeated-candidate grouping path. Code-shaped
+validation used:
+`set -a; source .env; set +a; SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=mistralai/codestral-embed-2505 SELENE_EMBEDDING_CORPUS=code_alias_wide_memory SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter 'query_root_current_state_intersection_batch|query_root_provenance_state_intersection_batch|query_root_expansion_batch'`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/google_gemini-embedding-2_code_alias_memory_q8_k4_r2_c9_dim3072` | 287.57 µs | 279.60 µs | Mixed per-topic root sets now reuse duplicate canonical candidate groups inside the batch scorer; Criterion reported a 2.22% improvement (`p=0.00`). |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection_batch/google_gemini-embedding-2_code_alias_memory_q8_k4_r2_c6_dim3072` | 280.12 µs | 270.47 µs | Same general-purpose 3072-dim endpoint; median moved down but Criterion classified the row as no statistically significant change (`p=0.14`). |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_provenance_state_intersection_batch/google_gemini-embedding-2_code_alias_memory_q8_k4_r2_c6_dim3072` | 282.38 µs | 269.49 µs | Provenance-gated current-state vector row improved 4.45% (`p=0.00`) while preserving the same candidate width. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_expansion_batch/mistralai_codestral-embed-2505_code_alias_wide_memory_q16_k4_r2_c11_dim1536` | n/a | 340.26 µs | Live Codestral code-shaped validation on the wider 16-query corpus; post-change row remains in the documented latency band. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection_batch/mistralai_codestral-embed-2505_code_alias_wide_memory_q16_k4_r2_c8_dim1536` | n/a | 337.70 µs | Code-oriented endpoint keeps current-state vector scoring close to plain expansion while applying the current-state gate. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_provenance_state_intersection_batch/mistralai_codestral-embed-2505_code_alias_wide_memory_q16_k4_r2_c8_dim1536` | n/a | 342.65 µs | Provenance-gated Codestral row stays within a few microseconds of the current-state vector row. |
+
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
 
 The only read-query **execution** bench in the suite (`expression_eval` is
