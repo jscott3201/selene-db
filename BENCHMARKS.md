@@ -690,6 +690,21 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d768_q8_cand4243_k10_recallbp10000_m4181-full30000` | 3.9310 ms (quick) | The 768-dim row keeps candidate-set isolation per query but fuses compressed scoring over shared blocks, preserving full recall with lower latency than the single-query filtered path. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d1536_q8_cand4243_k10_recallbp10000_m7946-full60000` | 6.0436 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and keeps full recall, giving the current production path a fast primitive for multi-query graph-filtered workloads. |
 
+PR-local production FastScan accumulator-flush spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection --baseline tq_fastscan_flush_single_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_batch_dimension_projection --baseline tq_batch_insert_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_batch_dimension_projection --baseline tq_filtered_batch_mask_pre`.
+
+| Bench | 10k rows / q8 where applicable | Notes |
+|---|---:|---|
+| `graph_turbo_quant_production_dimension_projection/...d128` | 3.3467 ms (quick) | FastScan now keeps the full 7-bit query LUT and flushes `u16` accumulators every 128 packed bytes when needed. The 128-dim single-query row is unchanged versus the saved baseline. |
+| `graph_turbo_quant_production_dimension_projection/...d768` | 5.5840 ms (quick) | Single-query 768-dim search stays within Criterion's noise threshold versus the saved pre-flush baseline. |
+| `graph_turbo_quant_production_dimension_projection/...d1536` | 8.1866 ms (quick) | Single-query 1536-dim search trends lower than the saved pre-flush baseline but remains within the noise threshold. |
+| `graph_turbo_quant_production_batch_dimension_projection/...d128/d768/d1536` | 2.3157 ms / 4.1601 ms / 6.3195 ms (quick) | Fused full-index batch search remains neutral across the same 30-sample comparison, so higher-precision FastScan does not cost the core batch path. |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128/d768/d1536` | 2.2700 ms / 3.8392 ms / 5.9899 ms (quick) | Query-specific filtered batch search improves the 128-dim row significantly and trends lower at 768/1536 while preserving full recall and exact primary-vector rerank. |
+
 PR-local TurboQuant slot-map storage spot-check:
 
 Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`.

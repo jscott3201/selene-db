@@ -190,11 +190,11 @@ fn turbo_quant_fast_scan_slot_order_matches_lut_reference() {
 }
 
 #[test]
-fn turbo_quant_fast_scan_lut_rejects_oversized_accumulators() {
+fn turbo_quant_fast_scan_lut_flushes_oversized_accumulators() {
     let index = TurboQuantVectorIndex::new((u16::MAX as u32 / 2) + 1).unwrap();
     let rotated_query = vec![0.0; index.dimension];
 
-    assert!(index.fast_scan_lut(&rotated_query).is_none());
+    assert!(index.fast_scan_lut(&rotated_query).is_some());
 }
 
 #[test]
