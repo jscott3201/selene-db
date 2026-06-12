@@ -318,7 +318,8 @@ shared-filtered-batch search.
 `vector_turbo_churn` applies the standard 10% vector update / 5% delete churn
 shape to a 10k-row production `TurboQuantCosine` index and times approximate
 search over the churned derived state at the current omitted search-width
-default (`512`).
+default (`512`). It also times `TurboQuantCosine` index creation over the same
+10k-row, 128-dimensional graph shape so online indexing cost stays visible.
 `vector_ivf_pressure` uses the
 production graph IVF index and records list-skew plus candidate-pressure
 suffixes so future IVF/PQ layering work is grounded against real index fanout
@@ -948,6 +949,18 @@ Commands:
 | Bench | Before | After | Notes |
 |---|---:|---:|---|
 | `graph_turbo_quant_churn/tqcos_update10_delete5/n10k` | 387.01 µs | 347.14 µs | 10k-row production `TurboQuantCosine` fixture after 10% vector updates and 5% deletes. Immediate slot compaction improves query time by 6.3-9.7% and shrinks resident derived-state counters from `tqe11kl9500d1500_m1022-1022` to `tqe9500l9500d0_m850-850`. |
+
+PR-local TurboQuant bulk indexing spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_churn --filter tqcos_create_index --save-baseline tq_bulk_encode_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_churn --filter tqcos_create_index --baseline tq_bulk_encode_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_churn --filter tqcos_update10_delete5`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 36.570 ms | 25.953 ms | New-index bulk insert now stores rotated calibration input and defers packed-code writes until TQ+ calibration is known, avoiding the discarded pre-calibration encode pass. Criterion reports a 29.03% improvement (`p=0.00`). |
+| `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 146.61 µs | Existing post-churn query guardrail on the same run; finalized search still uses calibrated packed codes plus exact primary-vector rerank. |
 
 PR-local IVF+TurboQuant layering spot-check:
 
