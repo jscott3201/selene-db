@@ -502,6 +502,57 @@ fn turbo_quant_batch_candidates_in_rows_match_single_queries() {
 }
 
 #[test]
+fn turbo_quant_mixed_density_batch_candidates_in_rows_match_single_queries() {
+    let mut index = TurboQuantVectorIndex::new(4).unwrap();
+    for row in 0..64 {
+        index
+            .insert(
+                row,
+                &vector(&[
+                    1.0 + row as f32 * 0.01,
+                    (row % 5) as f32 * 0.1,
+                    (row % 7) as f32 * 0.05,
+                    0.25,
+                ]),
+            )
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    index.remove(7);
+
+    let queries = [
+        vector(&[1.0, 0.2, 0.1, 0.25]),
+        vector(&[1.1, 0.0, 0.3, 0.25]),
+        vector(&[0.8, 0.4, 0.2, 0.25]),
+    ];
+    let allowed = [
+        (0..48).collect::<RoaringBitmap>(),
+        [3, 5, 11, 17].into_iter().collect::<RoaringBitmap>(),
+        (16..64).collect::<RoaringBitmap>(),
+    ];
+
+    let singles = queries
+        .iter()
+        .zip(&allowed)
+        .map(|(query, allowed)| index.candidates_in_rows(query, 4, 8, allowed).unwrap())
+        .collect::<Vec<_>>();
+    let batch = index
+        .candidates_batch_in_rows(&queries, 4, 8, &allowed)
+        .unwrap();
+
+    let batch_rows = batch
+        .iter()
+        .map(|hits| hits.iter().map(|hit| hit.row).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let single_rows = singles
+        .iter()
+        .map(|hits| hits.iter().map(|hit| hit.row).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+
+    assert_eq!(batch_rows, single_rows);
+}
+
+#[test]
 fn turbo_quant_filtered_fast_scan_batch_matches_live_map_reference() {
     let mut index = TurboQuantVectorIndex::new(4).unwrap();
     for row in 0..64 {
