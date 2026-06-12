@@ -597,9 +597,8 @@ fn quantile_calibration(rotated: &[f32], dimension: usize) -> (Vec<f32>, Vec<f32
         for row in 0..rows {
             coordinate[row] = rotated[row * dimension + dim];
         }
-        coordinate.sort_unstable_by(f32::total_cmp);
-        let source_low = coordinate[low_index];
-        let source_high = coordinate[high_index];
+        let (source_low, source_high) =
+            coordinate_quantiles(&mut coordinate, low_index, high_index);
         let source_span = source_high - source_low;
         if source_span > 1e-6 {
             scale[dim] = target_span / source_span;
@@ -607,6 +606,21 @@ fn quantile_calibration(rotated: &[f32], dimension: usize) -> (Vec<f32>, Vec<f32
         }
     }
     (shift, scale)
+}
+
+fn coordinate_quantiles(coordinate: &mut [f32], low_index: usize, high_index: usize) -> (f32, f32) {
+    debug_assert!(!coordinate.is_empty());
+    debug_assert!(low_index <= high_index);
+    debug_assert!(high_index < coordinate.len());
+
+    let (_, low_value, greater) = coordinate.select_nth_unstable_by(low_index, f32::total_cmp);
+    let source_low = *low_value;
+    if low_index == high_index {
+        return (source_low, source_low);
+    }
+    let high_offset = high_index - low_index - 1;
+    let (_, high_value, _) = greater.select_nth_unstable_by(high_offset, f32::total_cmp);
+    (source_low, *high_value)
 }
 
 fn calibrate_value(value: f32, dim: usize, shift: &[f32], scale: &[f32]) -> f32 {
