@@ -520,6 +520,23 @@ impl SeleneGraph {
         )
     }
 
+    /// Expand one canonical root set per query through one graph hop.
+    ///
+    /// This is the reusable batch expansion primitive used by graph-expanded
+    /// vector scorers. It preserves input order, reuses duplicate root-set
+    /// expansion work within bounded batches, and checks cancellation while
+    /// deriving candidates.
+    pub fn expand_vector_candidate_sets_batch_checked(
+        &self,
+        root_sets: &[VectorCandidateSet],
+        edge_label: &DbString,
+        direction: VectorNeighborDirection,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorCandidateSet>, VectorSearchError> {
+        self.expand_vector_candidate_sets_batch(root_sets, edge_label, direction, k, checker)
+    }
+
     /// Return canonical vector-score candidates reached from one graph anchor.
     ///
     /// Candidates are filtered by edge label and direction, sorted by

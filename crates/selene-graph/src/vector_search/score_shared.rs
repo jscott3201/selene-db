@@ -271,4 +271,19 @@ impl SharedGraph {
         self.read()
             .expand_vector_candidate_set_checked(roots, edge_label, direction, checker)
     }
+
+    /// Expand one canonical root set per query through one graph hop in the
+    /// current snapshot.
+    pub fn expand_vector_candidate_sets_batch_checked(
+        &self,
+        root_sets: &[VectorCandidateSet],
+        edge_label: &DbString,
+        direction: VectorNeighborDirection,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorCandidateSet>, VectorSearchError> {
+        self.read().expand_vector_candidate_sets_batch_checked(
+            root_sets, edge_label, direction, k, checker,
+        )
+    }
 }
