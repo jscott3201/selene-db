@@ -687,7 +687,7 @@ fn vector_search_candidate_state_expanded_ann_metadata_has_state_and_ann_args() 
     assert!(parameters[10].nullable);
     assert_eq!(
         parameters[10].default_doc,
-        Some("NULL (HNSW 64, IVF 2, TurboQuant 1024)")
+        Some("NULL (HNSW 64, IVF 2, TurboQuant 512)")
     );
     assert!(parameters[10].default.is_some());
 

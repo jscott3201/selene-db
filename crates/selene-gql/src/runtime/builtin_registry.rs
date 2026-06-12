@@ -450,7 +450,7 @@ mod tests {
         assert!(parameters[5].nullable);
         assert_eq!(
             parameters[5].default_doc,
-            Some("NULL (HNSW 64, IVF 2, TurboQuant 1024)")
+            Some("NULL (HNSW 64, IVF 2, TurboQuant 512)")
         );
         assert_eq!(
             parameters[5].default,
@@ -571,7 +571,7 @@ mod tests {
         assert!(parameters[5].nullable);
         assert_eq!(
             parameters[5].default_doc,
-            Some("NULL (HNSW 64, IVF 2, TurboQuant 1024)")
+            Some("NULL (HNSW 64, IVF 2, TurboQuant 512)")
         );
         assert_eq!(
             parameters[5].default,

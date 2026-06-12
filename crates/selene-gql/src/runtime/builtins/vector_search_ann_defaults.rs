@@ -15,9 +15,9 @@ pub(super) const DEFAULT_HNSW_SEARCH_WIDTH: usize = 64;
 /// Default IVF probe/list width for omitted ANN procedure arguments.
 pub(super) const DEFAULT_IVF_SEARCH_WIDTH: usize = 2;
 /// Default TurboQuant compressed candidate width for omitted ANN arguments.
-pub(super) const DEFAULT_TURBO_QUANT_SEARCH_WIDTH: usize = 1024;
+pub(super) const DEFAULT_TURBO_QUANT_SEARCH_WIDTH: usize = 512;
 /// Planner-visible documentation for the executable `NULL` default.
-pub(super) const SEARCH_WIDTH_DEFAULT_DOC: &str = "NULL (HNSW 64, IVF 2, TurboQuant 1024)";
+pub(super) const SEARCH_WIDTH_DEFAULT_DOC: &str = "NULL (HNSW 64, IVF 2, TurboQuant 512)";
 
 /// Parse an optional ANN search-width value.
 pub(super) fn optional_search_width_arg(
@@ -109,12 +109,16 @@ mod tests {
     };
 
     fn graph_with_index(kind: VectorIndexKind) -> SharedGraph {
+        graph_with_index_dimension(kind, 2)
+    }
+
+    fn graph_with_index_dimension(kind: VectorIndexKind, dimension: u32) -> SharedGraph {
         let graph = SharedGraph::new(GraphId::new(431_001));
         let label = db_string("VectorDoc").expect("label fits DB string cap");
         let property = db_string("embedding").expect("property fits DB string cap");
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_vector_index(label, property, kind, 2)
+            .create_vector_index(label, property, kind, dimension)
             .expect("vector index creates");
         txn.commit().expect("index creation commits");
         graph
@@ -190,6 +194,19 @@ mod tests {
 
         assert_eq!(
             default_search_width(&snapshot, &label, &property, 2, VectorMetric::Cosine),
+            DEFAULT_TURBO_QUANT_SEARCH_WIDTH
+        );
+    }
+
+    #[test]
+    fn default_search_width_selects_turbo_quant_width_for_high_dimensions() {
+        let graph = graph_with_index_dimension(VectorIndexKind::TurboQuantCosine, 1536);
+        let label = db_string("VectorDoc").expect("label fits DB string cap");
+        let property = db_string("embedding").expect("property fits DB string cap");
+        let snapshot = graph.read();
+
+        assert_eq!(
+            default_search_width(&snapshot, &label, &property, 1536, VectorMetric::Cosine),
             DEFAULT_TURBO_QUANT_SEARCH_WIDTH
         );
     }
