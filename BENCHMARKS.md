@@ -300,7 +300,9 @@ scalar code-space, and binary scorers so future work can compare standalone
 full-code scans against candidate-producer plus compression layering.
 `vector_turbo_projection` sweeps the benchmark-only TurboQuant scorer across
 128/768/1536 dimensions at a fixed 10k-row scale so storage ratio and safe
-block-Hadamard rotation behavior are visible before production codec work.
+block-Hadamard rotation behavior are visible before production codec work. Its
+production `TurboQuantCosine` rows track the current omitted search-width
+default (`512`) across single, batch, filtered, and filtered-batch search.
 `vector_turbo_churn` applies the standard 10% vector update / 5% delete churn
 shape to a 10k-row production `TurboQuantCosine` index and times approximate
 search over the churned derived state.
@@ -737,13 +739,13 @@ Command: `scripts/run-benches.sh --profile quick --sample-size 50 --measurement-
 
 PR-local TurboQuant default search-width spot-check:
 
-Commands: `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`; then the same command with a temporary local probe changing the production candidate width and benchmark names from c1024 to c512, restored before commit.
+Command: `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection`.
 
 | Bench | c1024 median | c512 median | Notes |
 |---|---:|---:|---|
-| `graph_turbo_quant_production_dimension_projection/...d128` | 2.936 ms | 2.049 ms | The c512 row preserves `recallbp10000` on the 10k clustered cosine fixture while cutting the omitted-width production search envelope by 30.2%. |
-| `graph_turbo_quant_production_dimension_projection/...d768` | 5.243 ms | 3.611 ms | The common 768-dim embedding shape also preserves full recall at c512 and improves 31.1% versus c1024. |
-| `graph_turbo_quant_production_dimension_projection/...d1536` | 7.730 ms | 5.465 ms | The high-dimensional guard row remains full-recall at c512 and improves 29.3%, so the GQL omitted `ef_search` default can drop from 1024 to 512 for TurboQuant. |
+| `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d128` | 2.936 ms | 2.029 ms | The committed production bench now carries the default-width row name. It preserves `recallbp10000` on the 10k clustered cosine fixture while keeping the omitted-width production search envelope about 31% below the prior c1024 row. |
+| `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d768` | 5.243 ms | 3.621 ms | The common 768-dim embedding shape also preserves full recall at c512 and keeps the same roughly 31% improvement versus c1024. |
+| `graph_turbo_quant_production_dimension_projection/...tqcos_c512_d1536` | 7.730 ms | 5.337 ms | The high-dimensional guard row remains full-recall at c512 and now has a first-class benchmark ID, keeping the TurboQuant default-width decision reproducible. |
 
 PR-local TurboQuant row-key top-k spot-check:
 

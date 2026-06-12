@@ -28,6 +28,7 @@ use turbo_quant::{
 const ROWS: usize = 10_000;
 const QUERY_COUNT: usize = 8;
 const K: usize = 10;
+const PRODUCTION_SEARCH_WIDTH: usize = 512;
 const FILTERED_CANDIDATE_LEN: usize = 4_096;
 const DIMENSIONS: [usize; 3] = [128, 768, 1536];
 const VARIANT: TurboQuantVariant = TurboQuantVariant {
@@ -186,7 +187,7 @@ fn bench_production_turbo_quant_dimension_projection(c: &mut Criterion) {
             BenchmarkId::new(
                 "cluster_cos",
                 format!(
-                    "tqcos_c1024_d{dimension}_n{}_k{K}_recallbp{}_{}",
+                    "tqcos_c{PRODUCTION_SEARCH_WIDTH}_d{dimension}_n{}_k{K}_recallbp{}_{}",
                     compact_count(fixture.rows()),
                     fixture.recall_basis_points(),
                     fixture.memory_suffix()
@@ -213,7 +214,7 @@ fn bench_production_turbo_quant_batch_dimension_projection(c: &mut Criterion) {
             BenchmarkId::new(
                 "cluster_cos",
                 format!(
-                    "tqcos_batch_c1024_d{dimension}_q{QUERY_COUNT}_n{}_k{K}_recallbp{}_{}",
+                    "tqcos_batch_c{PRODUCTION_SEARCH_WIDTH}_d{dimension}_q{QUERY_COUNT}_n{}_k{K}_recallbp{}_{}",
                     compact_count(fixture.rows()),
                     fixture.batch_recall_basis_points(),
                     fixture.memory_suffix()
@@ -240,7 +241,7 @@ fn bench_production_turbo_quant_filtered_dimension_projection(c: &mut Criterion)
             BenchmarkId::new(
                 "cluster_cos",
                 format!(
-                    "tqcos_filtered_c1024_d{dimension}_q{QUERY_COUNT}_cand{}_k{K}_recallbp{}_{}",
+                    "tqcos_filtered_c{PRODUCTION_SEARCH_WIDTH}_d{dimension}_q{QUERY_COUNT}_cand{}_k{K}_recallbp{}_{}",
                     compact_count(fixture.filtered_candidate_count()),
                     fixture.filtered_recall_basis_points(),
                     fixture.memory_suffix()
@@ -268,7 +269,7 @@ fn bench_production_turbo_quant_filtered_batch_dimension_projection(c: &mut Crit
             BenchmarkId::new(
                 "cluster_cos",
                 format!(
-                    "tqcos_filtered_batch_c1024_d{dimension}_q{QUERY_COUNT}_cand{}_k{K}_recallbp{}_{}",
+                    "tqcos_filtered_batch_c{PRODUCTION_SEARCH_WIDTH}_d{dimension}_q{QUERY_COUNT}_cand{}_k{K}_recallbp{}_{}",
                     compact_count(fixture.filtered_candidate_count()),
                     fixture.filtered_batch_recall_basis_points(),
                     fixture.memory_suffix()
@@ -432,7 +433,11 @@ impl ProductionDimensionFixture {
                 &self.label,
                 &self.property,
                 query,
-                ApproximateVectorSearchOptions::new(VectorMetric::Cosine, K, VARIANT.candidates),
+                ApproximateVectorSearchOptions::new(
+                    VectorMetric::Cosine,
+                    K,
+                    PRODUCTION_SEARCH_WIDTH,
+                ),
                 CancellationChecker::disabled(),
             )
             .expect("production TurboQuant search succeeds")
@@ -477,7 +482,11 @@ impl ProductionDimensionFixture {
                 &self.label,
                 &self.property,
                 &self.queries,
-                ApproximateVectorSearchOptions::new(VectorMetric::Cosine, K, VARIANT.candidates),
+                ApproximateVectorSearchOptions::new(
+                    VectorMetric::Cosine,
+                    K,
+                    PRODUCTION_SEARCH_WIDTH,
+                ),
                 CancellationChecker::disabled(),
             )
             .expect("production TurboQuant batch search succeeds")
@@ -509,7 +518,7 @@ impl ProductionDimensionFixture {
                         ApproximateVectorSearchOptions::new(
                             VectorMetric::Cosine,
                             K,
-                            VARIANT.candidates,
+                            PRODUCTION_SEARCH_WIDTH,
                         ),
                         CancellationChecker::disabled(),
                     )
@@ -533,7 +542,11 @@ impl ProductionDimensionFixture {
                 &self.property,
                 &self.queries,
                 &self.filtered_candidates,
-                ApproximateVectorSearchOptions::new(VectorMetric::Cosine, K, VARIANT.candidates),
+                ApproximateVectorSearchOptions::new(
+                    VectorMetric::Cosine,
+                    K,
+                    PRODUCTION_SEARCH_WIDTH,
+                ),
                 CancellationChecker::disabled(),
             )
             .expect("production filtered TurboQuant batch search succeeds")
