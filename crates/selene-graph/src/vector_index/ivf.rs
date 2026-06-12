@@ -20,6 +20,7 @@ const MAX_CENTROIDS: usize = MAX_IVF_TARGET_CENTROIDS as usize;
 // Training is sampled above this point, but final list assignment is exhaustive.
 const TRAINING_SAMPLE_MAX_ENTRIES: usize = MAX_CENTROIDS * 128;
 const TRAINING_ITERATIONS: usize = 2;
+const UNASSIGNED_LIST_ID: u32 = u32::MAX;
 
 #[cfg(not(test))]
 const PARALLEL_ASSIGNMENT_MIN_ENTRIES: usize = 4_096;
@@ -69,6 +70,7 @@ pub(crate) struct IvfVectorIndex {
     config: Option<IvfIndexConfig>,
     entries: Vec<IvfEntry>,
     entry_squared_norms: Vec<f64>,
+    entry_list_ids: Vec<u32>,
     row_to_entry: FxHashMap<u32, u32>,
     centroids: Vec<VectorValue>,
     centroid_squared_norms: Vec<f64>,
@@ -91,6 +93,7 @@ impl IvfVectorIndex {
             config,
             entries: Vec::new(),
             entry_squared_norms: Vec::new(),
+            entry_list_ids: Vec::new(),
             row_to_entry: FxHashMap::default(),
             centroids: Vec::new(),
             centroid_squared_norms: Vec::new(),
@@ -113,6 +116,7 @@ impl IvfVectorIndex {
             deleted: false,
             pending_retrain,
         });
+        self.entry_list_ids.push(UNASSIGNED_LIST_ID);
         self.record_entry_squared_norm(entry_id as usize);
         self.row_to_entry.insert(row, entry_id);
         self.assign_entry(entry_id)?;
@@ -127,11 +131,12 @@ impl IvfVectorIndex {
         let Some(entry_id) = self.row_to_entry.remove(&row) else {
             return;
         };
-        if let Ok(Some(list)) = self.nearest_centroid_for_current_entry(entry_id)
+        if let Some(list) = self.assigned_list_for_entry(entry_id)
             && self.remove_entry_from_list(entry_id, list)
         {
             self.assigned_entry_count = self.assigned_entry_count.saturating_sub(1);
         }
+        self.set_entry_list(entry_id, None);
         if let Some(node) = self.entries.get_mut(entry_id as usize) {
             if node.pending_retrain {
                 self.pending_retrain_entry_count =
@@ -150,6 +155,7 @@ impl IvfVectorIndex {
             self.centroid_squared_norms.clear();
             self.lists.clear();
             self.assigned_entry_count = 0;
+            self.clear_entry_list_ids();
             self.mark_all_entries_trained();
             return Ok(());
         }
@@ -288,6 +294,11 @@ impl IvfVectorIndex {
                     .saturating_mul(size_of::<f64>()),
             )
             .saturating_add(
+                self.entry_list_ids
+                    .capacity()
+                    .saturating_mul(size_of::<u32>()),
+            )
+            .saturating_add(
                 self.row_to_entry
                     .capacity()
                     .saturating_mul(size_of::<(u32, u32)>()),
@@ -326,29 +337,34 @@ impl IvfVectorIndex {
     fn assign_entry(&mut self, entry_id: u32) -> CoreResult<()> {
         if let Some(list) = self.nearest_centroid_for_current_entry(entry_id)? {
             self.lists[list].push(entry_id);
+            self.set_entry_list(entry_id, Some(list));
             self.assigned_entry_count += 1;
         }
         Ok(())
     }
 
     fn replace_entry(&mut self, entry_id: u32, vector: VectorValue) -> CoreResult<()> {
-        let old_list = self.nearest_centroid_for_current_entry(entry_id)?;
+        let old_list = self.assigned_list_for_entry(entry_id);
         let new_list = self.nearest_centroid_for_vector(&vector)?;
         let pending_retrain = self.has_trained_centroids();
-        if let Some(old_list) = old_list
-            && self.remove_entry_from_list(entry_id, old_list)
-        {
-            self.assigned_entry_count = self.assigned_entry_count.saturating_sub(1);
-        }
         let entry = &mut self.entries[entry_id as usize];
         let was_pending_retrain = entry.pending_retrain;
         entry.vector = vector;
         entry.deleted = false;
         entry.pending_retrain = entry.pending_retrain || pending_retrain;
         self.record_entry_squared_norm(entry_id as usize);
-        if let Some(new_list) = new_list {
-            self.lists[new_list].push(entry_id);
-            self.assigned_entry_count += 1;
+        if old_list != new_list {
+            if let Some(old_list) = old_list
+                && self.remove_entry_from_list(entry_id, old_list)
+            {
+                self.assigned_entry_count = self.assigned_entry_count.saturating_sub(1);
+            }
+            self.set_entry_list(entry_id, None);
+            if let Some(new_list) = new_list {
+                self.lists[new_list].push(entry_id);
+                self.set_entry_list(entry_id, Some(new_list));
+                self.assigned_entry_count += 1;
+            }
         }
         if pending_retrain && !was_pending_retrain {
             self.pending_retrain_entry_count += 1;
@@ -407,6 +423,29 @@ impl IvfVectorIndex {
             }
         }
         false
+    }
+
+    fn assigned_list_for_entry(&self, entry_id: u32) -> Option<usize> {
+        self.entry_list_ids
+            .get(entry_id as usize)
+            .copied()
+            .filter(|list| *list != UNASSIGNED_LIST_ID)
+            .and_then(|list| usize::try_from(list).ok())
+    }
+
+    fn set_entry_list(&mut self, entry_id: u32, list_id: Option<usize>) {
+        let value = list_id
+            .map(|list| u32::try_from(list).expect("IVF list count fits u32"))
+            .unwrap_or(UNASSIGNED_LIST_ID);
+        if let Some(stored) = self.entry_list_ids.get_mut(entry_id as usize) {
+            *stored = value;
+        }
+    }
+
+    fn clear_entry_list_ids(&mut self) {
+        for list_id in &mut self.entry_list_ids {
+            *list_id = UNASSIGNED_LIST_ID;
+        }
     }
 
     fn has_stale_entries(&self) -> bool {
@@ -540,8 +579,10 @@ impl IvfVectorIndex {
             list_lengths[list] += 1;
         }
         self.lists = list_lengths.into_iter().map(Vec::with_capacity).collect();
+        self.clear_entry_list_ids();
         for (&entry_id, list) in live_entries.iter().zip(assignments) {
             self.lists[list].push(entry_id);
+            self.set_entry_list(entry_id, Some(list));
         }
         self.assigned_entry_count = live_entries.len();
         Ok(())

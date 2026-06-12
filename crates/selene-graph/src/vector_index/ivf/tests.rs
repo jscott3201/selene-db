@@ -135,15 +135,43 @@ fn ivf_replace_moves_entry_between_lists() {
 }
 
 #[test]
+fn ivf_replace_keeps_same_list_assignment_in_place() {
+    let mut index = IvfVectorIndex::new(VectorMetric::SquaredEuclidean);
+    for row in 0..32 {
+        index.insert(row, vector(&[row as f32, 0.0])).unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    let (entry_id, list_id) = index
+        .lists
+        .iter()
+        .enumerate()
+        .find_map(|(list_id, list)| (list.len() > 1).then_some((list[0], list_id)))
+        .expect("test fixture has at least one multi-entry IVF list");
+    let row = index.entries[entry_id as usize].row;
+    let replacement = index.entries[entry_id as usize].vector.clone();
+    let list_before = index.lists[list_id].clone();
+
+    index.insert(row, replacement).unwrap();
+
+    assert_eq!(index.assigned_list_for_entry(entry_id), Some(list_id));
+    assert_eq!(index.lists[list_id], list_before);
+    let usage = index.memory_usage();
+    assert_eq!(usage.assigned_entries, 32);
+    assert_eq!(usage.pending_retrain_entries, 1);
+}
+
+#[test]
 fn ivf_remove_excludes_row_from_results() {
     let mut index = IvfVectorIndex::new(VectorMetric::SquaredEuclidean);
     index.insert(1, vector(&[1.0, 0.0])).unwrap();
     index.insert(2, vector(&[2.0, 0.0])).unwrap();
     index.finish_bulk_load().unwrap();
+    let removed_entry = index.row_to_entry[&1];
 
     index.remove(1);
 
     assert!(index.has_stale_entries());
+    assert_eq!(index.assigned_list_for_entry(removed_entry), None);
     let hits = index.search(&vector(&[1.0, 0.0]), 2, 16).unwrap();
     assert_eq!(hits[0].row, 2);
     let usage = index.memory_usage();
