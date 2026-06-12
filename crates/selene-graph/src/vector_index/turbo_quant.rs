@@ -167,18 +167,20 @@ impl TurboQuantVectorIndex {
             self.collecting_bulk = false;
             return Ok(());
         }
-        let live_slots = self.live_entry_slots();
-        let rotated = self.rotated_live_vectors(&live_slots)?;
+        self.ensure_bulk_rotated_matches_slots()?;
+        let rotated = std::mem::take(&mut self.bulk_rotated);
         let (shift, scale) = quantile_calibration(&rotated, self.dimension);
         self.inv_scale = scale.iter().map(|value| value.recip()).collect();
         self.shift = shift;
         self.scale = scale;
-        for (offset, slot) in live_slots.iter().copied().enumerate() {
-            let start = offset * self.dimension;
+        for slot in 0..self.rows.len() {
+            let start = slot * self.dimension;
             let end = start + self.dimension;
-            self.encode_slot(slot, &rotated[start..end])?;
+            if let Err(err) = self.encode_slot(slot, &rotated[start..end]) {
+                self.bulk_rotated = rotated;
+                return Err(err);
+            }
         }
-        self.bulk_rotated = Vec::new();
         self.collecting_bulk = false;
         Ok(())
     }
@@ -460,11 +462,6 @@ impl TurboQuantVectorIndex {
         table
     }
 
-    fn live_entry_slots(&self) -> Vec<usize> {
-        debug_assert_eq!(self.rows.len(), self.row_to_entry.len());
-        (0..self.rows.len()).collect()
-    }
-
     fn live_row_at_slot(&self, slot: usize) -> Option<u32> {
         let row = self.rows.get(slot).copied()?;
         debug_assert!(self.row_points_to_slot(row, slot));
@@ -479,19 +476,20 @@ impl TurboQuantVectorIndex {
         self.row_to_entry.get(&row).copied().map(slot_index)
     }
 
-    fn rotated_live_vectors(&self, live_slots: &[usize]) -> GraphResult<Vec<f32>> {
-        let mut rotated = Vec::with_capacity(live_slots.len() * self.dimension);
-        for &slot in live_slots {
-            let start = slot * self.dimension;
-            let end = start + self.dimension;
-            let Some(pending) = self.bulk_rotated.get(start..end) else {
-                return Err(GraphError::Inconsistent {
-                    reason: format!("TurboQuant live slot {slot} is missing bulk calibration data"),
-                });
-            };
-            rotated.extend_from_slice(pending);
+    fn ensure_bulk_rotated_matches_slots(&self) -> GraphResult<()> {
+        let expected_len = self.rows.len().saturating_mul(self.dimension);
+        if self.bulk_rotated.len() == expected_len {
+            Ok(())
+        } else {
+            Err(GraphError::Inconsistent {
+                reason: format!(
+                    "TurboQuant bulk calibration has {} components for {} compact slots of dimension {}",
+                    self.bulk_rotated.len(),
+                    self.rows.len(),
+                    self.dimension
+                ),
+            })
         }
-        Ok(rotated)
     }
 
     fn replace_slot(&mut self, row: u32, slot: usize, vector: &VectorValue) -> GraphResult<()> {
