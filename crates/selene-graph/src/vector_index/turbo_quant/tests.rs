@@ -127,6 +127,23 @@ fn turbo_quant_bulk_remove_preserves_compacted_calibration_rows() {
 }
 
 #[test]
+fn turbo_quant_finish_bulk_load_rejects_mismatched_bulk_buffer() {
+    let mut index = TurboQuantVectorIndex::new(2).unwrap();
+    index.insert(1, &vector(&[1.0, 0.0])).unwrap();
+    index.bulk_rotated.pop();
+
+    let err = index.finish_bulk_load().unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::Inconsistent { reason }
+            if reason.contains("TurboQuant bulk calibration has 1 components")
+    ));
+    assert!(index.collecting_bulk);
+    assert_eq!(index.bulk_rotated.len(), 1);
+}
+
+#[test]
 fn turbo_quant_replacement_updates_existing_slot_after_calibration() {
     let mut index = TurboQuantVectorIndex::new(2).unwrap();
     index.insert(1, &vector(&[1.0, 0.0])).unwrap();

@@ -988,6 +988,19 @@ Commands:
 | `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | n/a | 17.959 ms | Low-dimensional create-index guardrail stays on the sequential calibration path. |
 | `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 148.40 µs | Existing post-churn query guardrail remains stable with the high-dimensional threshold in place. |
 
+PR-local TurboQuant bulk-buffer move spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter d1536 --save-baseline tq_bulk_rotated_copy_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter d1536 --baseline tq_bulk_rotated_copy_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter 'd128|tqcos_update10_delete5'`.
+
+| Bench | Copied bulk buffer | Moved bulk buffer | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_churn/tqcos_create_index/d1536_n2k` | 50.138 ms | 48.049 ms | `finish_bulk_load` now validates the compact-slot bulk buffer length and moves the pending rotated vectors into the final calibration/encoding pass instead of cloning them into a second vector. Criterion reports a 4.17% improvement (`p=0.00`). |
+| `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | n/a | 17.900 ms | Low-dimensional create-index guardrail remains stable. |
+| `graph_turbo_quant_churn/tqcos_update10_delete5/c512_n10k` | n/a | 145.87 µs | Existing post-churn query guardrail remains stable. |
+
 PR-local IVF+TurboQuant layering spot-check:
 
 | Bench | 100k | Notes |
