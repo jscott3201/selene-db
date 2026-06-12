@@ -136,7 +136,9 @@ impl TurboQuantVectorIndex {
         self.rows.push(row);
         self.row_to_entry.insert(row, slot_key);
         self.live_entries += 1;
-        self.encode_slot(slot, &rotated)?;
+        if !self.collecting_bulk {
+            self.encode_slot(slot, &rotated)?;
+        }
         Ok(())
     }
 

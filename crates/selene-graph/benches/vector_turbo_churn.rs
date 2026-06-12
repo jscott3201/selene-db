@@ -7,7 +7,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_core::{
     CancellationChecker, DbString, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
     Value, VectorMetric, VectorValue, db_string,
@@ -26,6 +26,22 @@ const SEARCH_WIDTH: usize = 512;
 fn bench_turbo_quant_churn(c: &mut Criterion) {
     let fixture = TurboQuantChurnFixture::build();
     let mut group = c.benchmark_group("graph_turbo_quant_churn");
+    group.bench_function(
+        BenchmarkId::new(
+            "tqcos_create_index",
+            format!("d{DIMENSION}_n{}", compact_count(ROWS as u64)),
+        ),
+        |b| {
+            b.iter_batched(
+                seed_unindexed_graph,
+                |shared| {
+                    create_turbo_quant_index(&shared);
+                    std::hint::black_box(shared);
+                },
+                BatchSize::SmallInput,
+            );
+        },
+    );
     group.bench_function(
         BenchmarkId::new(
             "tqcos_update10_delete5",
@@ -81,6 +97,20 @@ fn seed_indexed_nodes(
     label: &DbString,
     embedding_key: &DbString,
 ) -> Vec<NodeId> {
+    let ids = seed_nodes(shared, label, embedding_key);
+    create_turbo_quant_index(shared);
+    ids
+}
+
+fn seed_unindexed_graph() -> SharedGraph {
+    let label = db_string("TurboQuantChurnDoc").expect("bench label is valid");
+    let embedding_key = db_string("embedding").expect("bench key is valid");
+    let shared = SharedGraph::new(GraphId::new(70_000_001));
+    seed_nodes(&shared, &label, &embedding_key);
+    shared
+}
+
+fn seed_nodes(shared: &SharedGraph, label: &DbString, embedding_key: &DbString) -> Vec<NodeId> {
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();
     let mut ids = Vec::with_capacity(ROWS);
@@ -94,18 +124,26 @@ fn seed_indexed_nodes(
                 .expect("bench vector node insert succeeds"),
         );
     }
+    txn.commit().expect("bench seed commit succeeds");
+    ids
+}
+
+fn create_turbo_quant_index(shared: &SharedGraph) {
+    let label = db_string("TurboQuantChurnDoc").expect("bench label is valid");
+    let embedding_key = db_string("embedding").expect("bench key is valid");
+    let mut txn = shared.begin_write();
+    let mut mutator = txn.mutator();
     mutator
         .create_vector_index_named_with_configs(
-            label.clone(),
-            embedding_key.clone(),
+            label,
+            embedding_key,
             VectorIndexKind::TurboQuantCosine,
             DIMENSION as u32,
             None,
             VectorIndexConfig::default(),
         )
         .expect("bench TurboQuant index build succeeds");
-    txn.commit().expect("bench seed commit succeeds");
-    ids
+    txn.commit().expect("bench index commit succeeds");
 }
 
 fn churn_indexed_nodes(shared: &SharedGraph, embedding_key: &DbString, ids: &[NodeId]) {
