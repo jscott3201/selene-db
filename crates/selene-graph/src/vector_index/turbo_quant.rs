@@ -130,7 +130,9 @@ impl TurboQuantVectorIndex {
         }
         let slot = self.rows.len();
         let slot_key = slot_key(slot)?;
-        self.codes.resize_rows(slot + 1).map_err(codec_invariant)?;
+        if !self.collecting_bulk {
+            self.codes.resize_rows(slot + 1).map_err(codec_invariant)?;
+        }
         self.row_scales.push(1.0);
         let rotated = rotated_unit_vector(vector, self.dimension);
         if self.collecting_bulk {
@@ -173,6 +175,14 @@ impl TurboQuantVectorIndex {
         self.inv_scale = scale.iter().map(|value| value.recip()).collect();
         self.shift = shift;
         self.scale = scale;
+        if let Err(err) = self
+            .codes
+            .resize_rows(self.rows.len())
+            .map_err(codec_invariant)
+        {
+            self.bulk_rotated = rotated;
+            return Err(err);
+        }
         for slot in 0..self.rows.len() {
             let start = slot * self.dimension;
             let end = start + self.dimension;
@@ -500,7 +510,7 @@ impl TurboQuantVectorIndex {
         }
         let rotated = rotated_unit_vector(vector, self.dimension);
         if self.collecting_bulk {
-            self.replace_bulk_rotated(slot, &rotated)?;
+            return self.replace_bulk_rotated(slot, &rotated);
         }
         self.encode_slot(slot, &rotated)
     }
@@ -520,9 +530,11 @@ impl TurboQuantVectorIndex {
     fn swap_remove_slot(&mut self, slot: usize) {
         let last_slot = self.rows.len() - 1;
         let moved_row = (slot != last_slot).then(|| self.rows[last_slot]);
-        self.codes
-            .swap_remove_row(slot)
-            .expect("TurboQuant live slot has encoded row bytes");
+        if self.codes.rows() > 0 {
+            self.codes
+                .swap_remove_row(slot)
+                .expect("TurboQuant live slot has encoded row bytes");
+        }
         self.rows.swap_remove(slot);
         self.row_scales.swap_remove(slot);
         if self.collecting_bulk {
