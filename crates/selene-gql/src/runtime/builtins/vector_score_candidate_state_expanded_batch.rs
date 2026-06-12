@@ -121,11 +121,15 @@ pub(super) fn execute(
         })?;
 
     let snapshot = ctx.snapshot();
-    let mut candidate_sets = Vec::with_capacity(root_sets.len());
-    for roots in &root_sets {
+    let candidate_sets = if let Some(first_roots) = root_sets.first()
+        && root_sets
+            .iter()
+            .skip(1)
+            .all(|roots| candidate_sets_match(first_roots, roots))
+    {
         let expanded = snapshot
             .expand_vector_candidate_set_checked(
-                roots,
+                first_roots,
                 &edge_label,
                 direction,
                 ctx.cancellation_checker(),
@@ -140,8 +144,31 @@ pub(super) fn execute(
                     "batched maintained candidate-state expanded vector scoring",
                 )
             })?;
-        candidate_sets.push(operation.compose(&state, &expanded));
-    }
+        vec![operation.compose(&state, &expanded); root_sets.len()]
+    } else {
+        let mut candidate_sets = Vec::with_capacity(root_sets.len());
+        for roots in &root_sets {
+            let expanded = snapshot
+                .expand_vector_candidate_set_checked(
+                    roots,
+                    &edge_label,
+                    direction,
+                    ctx.cancellation_checker(),
+                )
+                .map_err(|error| {
+                    vector_search_error(
+                        error,
+                        "batched maintained candidate-state expanded vector scoring",
+                        BatchMismatch::Internal(
+                            "batched maintained candidate-state expansion received batched-only error",
+                        ),
+                        "batched maintained candidate-state expanded vector scoring",
+                    )
+                })?;
+            candidate_sets.push(operation.compose(&state, &expanded));
+        }
+        candidate_sets
+    };
 
     let batch_hits = snapshot
         .score_vector_candidate_sets_batch_checked(
@@ -176,4 +203,13 @@ pub(super) fn execute(
         }
     }
     Ok(ProcedureResult { rows })
+}
+
+fn candidate_sets_match(
+    lhs: &selene_graph::VectorCandidateSet,
+    rhs: &selene_graph::VectorCandidateSet,
+) -> bool {
+    let lhs = lhs.as_nodes();
+    let rhs = rhs.as_nodes();
+    lhs.len() == rhs.len() && lhs.first() == rhs.first() && lhs.last() == rhs.last() && lhs == rhs
 }
