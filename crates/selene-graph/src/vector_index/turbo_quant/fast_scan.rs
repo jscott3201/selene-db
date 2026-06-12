@@ -7,7 +7,8 @@ use wide::{i16x8, u8x16, u16x16};
 
 use super::{TurboQuantVectorIndex, merge_candidate_top_k, query_component_for_score};
 
-const FAST_SCAN_MAX_COMPONENTS: usize = (u16::MAX as usize) / 2;
+const FAST_SCAN_QUANT_LIMIT: i16 = i8::MAX as i16;
+const FAST_SCAN_FLUSH_BYTES: usize = 128;
 
 impl TurboQuantVectorIndex {
     pub(super) fn slot_order_candidates_fast_scan(
@@ -181,23 +182,15 @@ impl TurboQuantVectorIndex {
     ) -> Vec<VectorTopK<(usize, u32)>> {
         let mut candidates = fast_scan_candidate_top_k_batch(queries.len(), candidate_limit);
         let mut accumulators = vec![[u16x16::splat(0), u16x16::splat(0)]; queries.len()];
-        let mut accumulator_lanes = vec![[[0_u16; 16], [0_u16; 16]]; queries.len()];
+        let mut accumulator_lanes = vec![[[0_i32; 16], [0_i32; 16]]; queries.len()];
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
-            accumulators.fill([u16x16::splat(0), u16x16::splat(0)]);
-            for byte in 0..self.bytes_per_row {
-                let codes = self.codes.block_byte(block, byte);
-                let low_lanes = load_lanes(&codes[..16]);
-                let high_lanes = load_lanes(&codes[16..]);
-                for (accumulator, query) in accumulators.iter_mut().zip(queries) {
-                    let byte_lut = &query.lut.bytes[byte];
-                    accumulate_half(&mut accumulator[0], low_lanes, byte_lut);
-                    accumulate_half(&mut accumulator[1], high_lanes, byte_lut);
-                }
-            }
-            for (lanes, accumulator) in accumulator_lanes.iter_mut().zip(&accumulators) {
-                *lanes = [accumulator[0].to_array(), accumulator[1].to_array()];
-            }
+            self.accumulate_fast_scan_batch_block(
+                block,
+                queries,
+                &mut accumulators,
+                &mut accumulator_lanes,
+            );
             let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
             for lane in 0..block_len {
                 let slot = base_slot + lane;
@@ -209,7 +202,7 @@ impl TurboQuantVectorIndex {
                     .zip(queries)
                     .zip(accumulator_lanes.iter())
                 {
-                    let centered = i32::from(lanes[lane / 16][lane % 16]) - query.lut.zero_sum;
+                    let centered = lanes[lane / 16][lane % 16] - query.lut.zero_sum;
                     let dot = query.query_bias + f64::from(centered) * query.lut.dequant;
                     let distance = -(dot * f64::from(self.row_scales[slot]));
                     candidate.push_distance((slot, row), distance);
@@ -229,26 +222,18 @@ impl TurboQuantVectorIndex {
     ) -> Vec<VectorTopK<(usize, u32)>> {
         let mut candidates = fast_scan_candidate_top_k_batch_with_limits(candidate_limits);
         let mut accumulators = vec![[u16x16::splat(0), u16x16::splat(0)]; queries.len()];
-        let mut accumulator_lanes = vec![[[0_u16; 16], [0_u16; 16]]; queries.len()];
+        let mut accumulator_lanes = vec![[[0_i32; 16], [0_i32; 16]]; queries.len()];
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
             if !self.block_has_any_allowed_rows(block, block_len, allowed_rows) {
                 continue;
             }
-            accumulators.fill([u16x16::splat(0), u16x16::splat(0)]);
-            for byte in 0..self.bytes_per_row {
-                let codes = self.codes.block_byte(block, byte);
-                let low_lanes = load_lanes(&codes[..16]);
-                let high_lanes = load_lanes(&codes[16..]);
-                for (accumulator, query) in accumulators.iter_mut().zip(queries) {
-                    let byte_lut = &query.lut.bytes[byte];
-                    accumulate_half(&mut accumulator[0], low_lanes, byte_lut);
-                    accumulate_half(&mut accumulator[1], high_lanes, byte_lut);
-                }
-            }
-            for (lanes, accumulator) in accumulator_lanes.iter_mut().zip(&accumulators) {
-                *lanes = [accumulator[0].to_array(), accumulator[1].to_array()];
-            }
+            self.accumulate_fast_scan_batch_block(
+                block,
+                queries,
+                &mut accumulators,
+                &mut accumulator_lanes,
+            );
             let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
             for lane in 0..block_len {
                 let slot = base_slot + lane;
@@ -261,7 +246,7 @@ impl TurboQuantVectorIndex {
                     let Some(row) = self.allowed_live_row_at_slot(slot, allowed) else {
                         continue;
                     };
-                    let centered = i32::from(lanes[lane / 16][lane % 16]) - query.lut.zero_sum;
+                    let centered = lanes[lane / 16][lane % 16] - query.lut.zero_sum;
                     let dot = query.query_bias + f64::from(centered) * query.lut.dequant;
                     let distance = -(dot * f64::from(self.row_scales[slot]));
                     candidate.push_distance((slot, row), distance);
@@ -333,22 +318,17 @@ impl TurboQuantVectorIndex {
     ) -> VectorTopK<(usize, u32)> {
         let mut candidates = VectorTopK::new(candidate_limit);
         let mut accumulators = [u16x16::splat(0), u16x16::splat(0)];
+        let mut lanes = [[0_i32; 16], [0_i32; 16]];
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
-            accumulators.fill(u16x16::splat(0));
-            for (byte, byte_lut) in lut.bytes.iter().enumerate() {
-                let codes = self.codes.block_byte(block, byte);
-                accumulate_half(&mut accumulators[0], load_lanes(&codes[..16]), byte_lut);
-                accumulate_half(&mut accumulators[1], load_lanes(&codes[16..]), byte_lut);
-            }
-            let lanes = [accumulators[0].to_array(), accumulators[1].to_array()];
+            self.accumulate_fast_scan_block(block, lut, &mut accumulators, &mut lanes);
             let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
             for lane in 0..block_len {
                 let slot = base_slot + lane;
                 let Some(row) = self.live_row_at_slot(slot) else {
                     continue;
                 };
-                let centered = i32::from(lanes[lane / 16][lane % 16]) - lut.zero_sum;
+                let centered = lanes[lane / 16][lane % 16] - lut.zero_sum;
                 let dot = query_bias + f64::from(centered) * lut.dequant;
                 let distance = -(dot * f64::from(self.row_scales[slot]));
                 candidates.push_distance((slot, row), distance);
@@ -368,25 +348,20 @@ impl TurboQuantVectorIndex {
     ) -> VectorTopK<(usize, u32)> {
         let mut candidates = VectorTopK::new(candidate_limit);
         let mut accumulators = [u16x16::splat(0), u16x16::splat(0)];
+        let mut lanes = [[0_i32; 16], [0_i32; 16]];
         for block in start_block..end_block {
             let block_len = self.codes.block_len(block);
             if !self.block_has_allowed_rows(block, block_len, allowed_rows) {
                 continue;
             }
-            accumulators.fill(u16x16::splat(0));
-            for (byte, byte_lut) in lut.bytes.iter().enumerate() {
-                let codes = self.codes.block_byte(block, byte);
-                accumulate_half(&mut accumulators[0], load_lanes(&codes[..16]), byte_lut);
-                accumulate_half(&mut accumulators[1], load_lanes(&codes[16..]), byte_lut);
-            }
-            let lanes = [accumulators[0].to_array(), accumulators[1].to_array()];
+            self.accumulate_fast_scan_block(block, lut, &mut accumulators, &mut lanes);
             let base_slot = block * TURBO_QUANT_BLOCK_ROWS;
             for lane in 0..block_len {
                 let slot = base_slot + lane;
                 let Some(row) = self.allowed_live_row_at_slot(slot, allowed_rows) else {
                     continue;
                 };
-                let centered = i32::from(lanes[lane / 16][lane % 16]) - lut.zero_sum;
+                let centered = lanes[lane / 16][lane % 16] - lut.zero_sum;
                 let dot = query_bias + f64::from(centered) * lut.dequant;
                 let distance = -(dot * f64::from(self.row_scales[slot]));
                 candidates.push_distance((slot, row), distance);
@@ -395,11 +370,59 @@ impl TurboQuantVectorIndex {
         candidates
     }
 
+    fn accumulate_fast_scan_block(
+        &self,
+        block: usize,
+        lut: &FastScanQueryLut,
+        accumulators: &mut [u16x16; 2],
+        lanes: &mut [[i32; 16]; 2],
+    ) {
+        lanes.fill([0; 16]);
+        for byte_start in (0..self.bytes_per_row).step_by(lut.flush_bytes) {
+            accumulators.fill(u16x16::splat(0));
+            for byte in byte_start..(byte_start + lut.flush_bytes).min(self.bytes_per_row) {
+                let byte_lut = &lut.bytes[byte];
+                let codes = self.codes.block_byte(block, byte);
+                accumulate_half(&mut accumulators[0], load_lanes(&codes[..16]), byte_lut);
+                accumulate_half(&mut accumulators[1], load_lanes(&codes[16..]), byte_lut);
+            }
+            add_accumulator_lanes(lanes, accumulators);
+        }
+    }
+
+    fn accumulate_fast_scan_batch_block(
+        &self,
+        block: usize,
+        queries: &[PreparedFastScanQuery],
+        accumulators: &mut [[u16x16; 2]],
+        lanes: &mut [[[i32; 16]; 2]],
+    ) {
+        lanes.fill([[0; 16], [0; 16]]);
+        let flush_bytes = queries
+            .first()
+            .map(|query| query.lut.flush_bytes)
+            .unwrap_or(self.bytes_per_row);
+        for byte_start in (0..self.bytes_per_row).step_by(flush_bytes) {
+            accumulators.fill([u16x16::splat(0), u16x16::splat(0)]);
+            for byte in byte_start..(byte_start + flush_bytes).min(self.bytes_per_row) {
+                let codes = self.codes.block_byte(block, byte);
+                let low_lanes = load_lanes(&codes[..16]);
+                let high_lanes = load_lanes(&codes[16..]);
+                for (accumulator, query) in accumulators.iter_mut().zip(queries) {
+                    let byte_lut = &query.lut.bytes[byte];
+                    accumulate_half(&mut accumulator[0], low_lanes, byte_lut);
+                    accumulate_half(&mut accumulator[1], high_lanes, byte_lut);
+                }
+            }
+            for (query_lanes, accumulator) in lanes.iter_mut().zip(accumulators.iter()) {
+                add_accumulator_lanes(query_lanes, accumulator);
+            }
+        }
+    }
+
     pub(super) fn fast_scan_lut(&self, rotated_query: &[f32]) -> Option<FastScanQueryLut> {
         let components = self.fast_scan_components()?;
-        let quant_limit = ((usize::from(u16::MAX) / components.saturating_mul(2))
-            .min(i8::MAX as usize)
-            .max(1)) as i16;
+        let quant_limit = FAST_SCAN_QUANT_LIMIT;
         let max_abs = self.max_fast_scan_query_contribution(rotated_query);
         let quant_scale = if max_abs > 0.0 {
             f64::from(quant_limit) / max_abs
@@ -435,6 +458,7 @@ impl TurboQuantVectorIndex {
             bytes,
             zero_sum: (components as i32) * i32::from(quant_limit),
             dequant,
+            flush_bytes: self.bytes_per_row.clamp(1, FAST_SCAN_FLUSH_BYTES),
         })
     }
 
@@ -443,8 +467,7 @@ impl TurboQuantVectorIndex {
     }
 
     fn fast_scan_components(&self) -> Option<usize> {
-        let components = self.bytes_per_row.checked_mul(2)?;
-        (components <= FAST_SCAN_MAX_COMPONENTS).then_some(components)
+        self.bytes_per_row.checked_mul(2)
     }
 
     fn max_fast_scan_query_contribution(&self, rotated_query: &[f32]) -> f64 {
@@ -488,6 +511,7 @@ pub(super) struct FastScanQueryLut {
     bytes: Vec<FastScanByteLut>,
     zero_sum: i32,
     dequant: f64,
+    flush_bytes: usize,
 }
 
 pub(super) struct PreparedFastScanQuery {
@@ -520,6 +544,17 @@ fn load_lanes(codes: &[u8]) -> u8x16 {
         .try_into()
         .expect("FastScan scorer loads exactly sixteen lanes");
     u8x16::new(lanes)
+}
+
+fn add_accumulator_lanes(lanes: &mut [[i32; 16]; 2], accumulators: &[u16x16; 2]) {
+    let low = accumulators[0].to_array();
+    let high = accumulators[1].to_array();
+    for (lane, value) in lanes[0].iter_mut().zip(low) {
+        *lane += i32::from(value);
+    }
+    for (lane, value) in lanes[1].iter_mut().zip(high) {
+        *lane += i32::from(value);
+    }
 }
 
 fn quantized_contribution(value: f64, quant_scale: f64, quant_limit: i16) -> u8 {
