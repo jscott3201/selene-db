@@ -37,6 +37,11 @@ const TURBO_QUANT_PARALLEL_MIN_ENTRIES: u64 = 8;
 const TURBO_QUANT_PARALLEL_CHUNK_ENTRIES: usize = 1024;
 #[cfg(test)]
 const TURBO_QUANT_PARALLEL_CHUNK_ENTRIES: usize = 4;
+#[cfg(not(test))]
+const TURBO_QUANT_LOW_DIM_PARALLEL_CHUNK_ENTRIES: usize = 2048;
+#[cfg(test)]
+const TURBO_QUANT_LOW_DIM_PARALLEL_CHUNK_ENTRIES: usize = 4;
+const TURBO_QUANT_LOW_DIM_PARALLEL_MAX_DIMENSION: usize = 128;
 const MIN_RECONSTRUCTED_INNER: f64 = 1e-10;
 const QUANTILE_LOW_Z: f32 = -1.644_853_6;
 
@@ -219,6 +224,15 @@ impl TurboQuantVectorIndex {
         )
     }
 
+    fn parallel_chunk_blocks(&self) -> usize {
+        let entries = if self.dimension <= TURBO_QUANT_LOW_DIM_PARALLEL_MAX_DIMENSION {
+            TURBO_QUANT_LOW_DIM_PARALLEL_CHUNK_ENTRIES
+        } else {
+            TURBO_QUANT_PARALLEL_CHUNK_ENTRIES
+        };
+        entries.div_ceil(TURBO_QUANT_BLOCK_ROWS).max(1)
+    }
+
     fn slot_order_candidates(
         &self,
         byte_lut: &[f64],
@@ -243,10 +257,10 @@ impl TurboQuantVectorIndex {
         query_bias: f64,
         candidate_limit: usize,
     ) -> TurboQuantCandidateTopK {
-        let chunk_blocks = TURBO_QUANT_PARALLEL_CHUNK_ENTRIES.div_ceil(TURBO_QUANT_BLOCK_ROWS);
+        let chunk_blocks = self.parallel_chunk_blocks();
         (0..self.codes.block_count())
             .into_par_iter()
-            .chunks(chunk_blocks.max(1))
+            .chunks(chunk_blocks)
             .map(|blocks| {
                 let start = blocks.first().copied().unwrap_or_default();
                 let end = blocks.last().copied().map_or(start, |block| block + 1);
