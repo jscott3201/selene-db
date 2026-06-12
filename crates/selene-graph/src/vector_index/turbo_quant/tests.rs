@@ -90,8 +90,8 @@ fn turbo_quant_bulk_replacement_preserves_pending_calibration_rows() {
     index.insert(2, &vector(&[0.0, 1.0])).unwrap();
     index.insert(1, &vector(&[0.9, 0.1])).unwrap();
 
-    assert_eq!(index.slot_for_row(2), Some(0));
-    assert_eq!(index.slot_for_row(1), Some(1));
+    assert_eq!(index.slot_for_row(1), Some(0));
+    assert_eq!(index.slot_for_row(2), Some(1));
     assert_eq!(index.bulk_rotated.len(), 2 * index.dimension);
 
     index.finish_bulk_load().unwrap();
@@ -101,6 +101,29 @@ fn turbo_quant_bulk_replacement_preserves_pending_calibration_rows() {
         hits.iter().map(|hit| hit.row).collect::<Vec<_>>(),
         vec![1, 2]
     );
+}
+
+#[test]
+fn turbo_quant_replacement_updates_existing_slot_after_calibration() {
+    let mut index = TurboQuantVectorIndex::new(2).unwrap();
+    index.insert(1, &vector(&[1.0, 0.0])).unwrap();
+    index.insert(2, &vector(&[0.0, 1.0])).unwrap();
+    index.insert(3, &vector(&[0.5, 0.5])).unwrap();
+    index.finish_bulk_load().unwrap();
+    let original_slot = index.slot_for_row(2);
+
+    index.insert(2, &vector(&[0.95, 0.05])).unwrap();
+
+    assert_eq!(index.slot_for_row(2), original_slot);
+    let usage = index.memory_usage();
+    assert_eq!(usage.entries, 3);
+    assert_eq!(usage.live_entries, 3);
+    assert_eq!(usage.deleted_entries, 0);
+    let hits = index.candidates(&vector(&[1.0, 0.0]), 3, 3).unwrap();
+    let rows = hits.iter().map(|hit| hit.row).collect::<Vec<_>>();
+    assert!(rows.contains(&1));
+    assert!(rows.contains(&2));
+    assert!(rows.contains(&3));
 }
 
 #[test]

@@ -46,7 +46,7 @@ fn bench_vector_mixed_workload(c: &mut Criterion) {
             &scale,
             |b, &scale| {
                 b.iter_batched(
-                    || MixedVectorFixture::build(scale),
+                    || MixedVectorFixture::build(scale, VectorIndexKind::IvfCosine),
                     |fixture| black_box(fixture.run_cycle()),
                     BatchSize::LargeInput,
                 );
@@ -57,8 +57,31 @@ fn bench_vector_mixed_workload(c: &mut Criterion) {
             &scale,
             |b, &scale| {
                 b.iter_batched(
-                    || MixedVectorFixture::build(scale),
+                    || MixedVectorFixture::build(scale, VectorIndexKind::IvfCosine),
                     |fixture| black_box(fixture.run_point_read_update_cycle()),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("point_read_tqcos_update_r60w40_dim128", scale),
+            &scale,
+            |b, &scale| {
+                b.iter_batched(
+                    || MixedVectorFixture::build(scale, VectorIndexKind::TurboQuantCosine),
+                    |fixture| black_box(fixture.run_point_read_update_cycle()),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+        group.throughput(Throughput::Elements(WRITES_PER_CYCLE as u64));
+        group.bench_with_input(
+            BenchmarkId::new("write_tqcos_update_w40_dim128", scale),
+            &scale,
+            |b, &scale| {
+                b.iter_batched(
+                    || MixedVectorFixture::build(scale, VectorIndexKind::TurboQuantCosine),
+                    |fixture| black_box(fixture.run_update_cycle()),
                     BatchSize::LargeInput,
                 );
             },
@@ -94,7 +117,7 @@ struct MixedVectorFixture {
 }
 
 impl MixedVectorFixture {
-    fn build(scale: usize) -> Self {
+    fn build(scale: usize, index_kind: VectorIndexKind) -> Self {
         let scale = scale.max(READS_PER_CYCLE);
         let label = db_string("VectorDoc").expect("bench label is valid");
         let embedding_key = db_string("embedding").expect("bench key is valid");
@@ -122,7 +145,7 @@ impl MixedVectorFixture {
                 .create_vector_index(
                     label.clone(),
                     embedding_key.clone(),
-                    VectorIndexKind::IvfCosine,
+                    index_kind,
                     DIMENSION as u32,
                 )
                 .expect("bench vector index build succeeds");
@@ -147,6 +170,13 @@ impl MixedVectorFixture {
 
     fn run_point_read_update_cycle(self) -> usize {
         self.run_cycle_with_reads(VectorReadMode::Point)
+    }
+
+    fn run_update_cycle(self) -> usize {
+        for write_idx in 0..WRITES_PER_CYCLE {
+            self.write_once(write_idx);
+        }
+        WRITES_PER_CYCLE
     }
 
     fn run_cycle_with_reads(self, mode: VectorReadMode) -> usize {
