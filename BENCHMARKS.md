@@ -727,6 +727,14 @@ Command: `scripts/run-benches.sh --profile quick --sample-size 50 --measurement-
 |---|---:|---:|---|
 | `graph_turbo_quant_production_filtered_dimension_projection/...d128` | 3.1305 ms | 2.9552 ms | Single-query candidate-set FastScan now builds one per-block allowed-lane mask before compressed scoring, so block filtering and hit emission share the same Roaring membership pass. The row improves 5.28% (`p=0.00`) while preserving exact primary-vector rerank. |
 
+PR-local TurboQuant filtered batch lane-mask spot-check:
+
+Command: `scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c1024_d128 --baseline filtered_batch_masks_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128` | 2.0060 ms | 1.9425 ms | Fused filtered batch FastScan now precomputes per-query allowed-lane masks and lane scales once per block, so hit emission walks set bits instead of repeating row lookups and Roaring membership checks for every query/lane pair. The row improves 2.64% (`p=0.00`) while preserving exact primary-vector rerank. |
+
 PR-local TurboQuant row-key top-k spot-check:
 
 Command: `scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 5 --bench vector_turbo_projection --filter graph_turbo_quant_production_dimension_projection/cluster_cos/tqcos_c1024_d128 --baseline tq_row_key_pre`.
