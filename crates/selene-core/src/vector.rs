@@ -250,7 +250,7 @@ impl<K: Ord> VectorTopK<K> {
     pub fn new(k: usize) -> Self {
         Self {
             k,
-            heap: BinaryHeap::new(),
+            heap: BinaryHeap::with_capacity(k),
         }
     }
 
