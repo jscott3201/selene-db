@@ -78,3 +78,69 @@ fn score_vector_candidate_sets_batch_matches_single_set_for_repeated_candidates(
     assert_eq!(batched[0][0].node_id, ids[0]);
     assert_eq!(batched[1][0].node_id, ids[2]);
 }
+
+#[test]
+fn score_vector_candidate_sets_batch_matches_single_sets_for_mixed_repeated_candidates() {
+    let shared = SharedGraph::new(GraphId::new(988));
+    let label = db_string("vector.score.mixed_repeated_batch.doc").unwrap();
+    let embedding = db_string("embedding").unwrap();
+    let ids = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let mut ids = Vec::new();
+        for value in [0.0_f32, 1.0, 2.0, 8.0, 9.0, 10.0] {
+            ids.push(
+                mutator
+                    .create_node(
+                        LabelSet::single(label.clone()),
+                        props(&embedding, Value::Vector(vector(&[value, 0.0]))),
+                    )
+                    .unwrap(),
+            );
+        }
+        txn.commit().unwrap();
+        ids
+    };
+    let low = VectorCandidateSet::from_nodes([ids[0], ids[1], ids[2]]);
+    let high = VectorCandidateSet::from_nodes([ids[3], ids[4], ids[5]]);
+    let candidate_sets = vec![low.clone(), high.clone(), low.clone(), high.clone()];
+    let queries = vec![
+        vector(&[0.1, 0.0]),
+        vector(&[9.8, 0.0]),
+        vector(&[1.9, 0.0]),
+        vector(&[8.2, 0.0]),
+    ];
+
+    let batched = shared
+        .score_vector_candidate_sets_batch_checked(
+            &embedding,
+            &queries,
+            &candidate_sets,
+            VectorMetric::SquaredEuclidean,
+            2,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let manual = queries
+        .iter()
+        .zip(candidate_sets.iter())
+        .map(|(query, candidates)| {
+            shared
+                .score_vector_candidate_set_checked(
+                    &embedding,
+                    query,
+                    candidates,
+                    VectorMetric::SquaredEuclidean,
+                    2,
+                    CancellationChecker::disabled(),
+                )
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(batched, manual);
+    assert_eq!(batched[0][0].node_id, ids[0]);
+    assert_eq!(batched[1][0].node_id, ids[5]);
+    assert_eq!(batched[2][0].node_id, ids[2]);
+    assert_eq!(batched[3][0].node_id, ids[3]);
+}

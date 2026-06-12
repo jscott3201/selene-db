@@ -348,14 +348,14 @@ impl SeleneGraph {
             );
         }
 
-        let mut batch_hits = Vec::with_capacity(queries.len());
-        for (query, candidates) in queries.iter().zip(candidate_sets) {
-            checker.check()?;
-            batch_hits.push(self.score_vector_candidate_set_checked(
-                property, query, candidates, metric, k, checker,
-            )?);
-        }
-        Ok(batch_hits)
+        self.score_vector_candidate_sets_batch_grouped_serial(
+            property,
+            queries,
+            candidate_sets,
+            metric,
+            k,
+            checker,
+        )
     }
 
     /// Score vector-valued neighbors reached from one anchor through `edge_label`.
