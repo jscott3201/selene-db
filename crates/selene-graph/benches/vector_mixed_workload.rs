@@ -76,6 +76,17 @@ fn bench_vector_mixed_workload(c: &mut Criterion) {
         );
         group.throughput(Throughput::Elements(WRITES_PER_CYCLE as u64));
         group.bench_with_input(
+            BenchmarkId::new("write_ivf_update_w40_dim128", scale),
+            &scale,
+            |b, &scale| {
+                b.iter_batched(
+                    || MixedVectorFixture::build(scale, VectorIndexKind::IvfCosine),
+                    |fixture| black_box(fixture.run_update_cycle()),
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("write_tqcos_update_w40_dim128", scale),
             &scale,
             |b, &scale| {
