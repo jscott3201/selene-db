@@ -2277,6 +2277,18 @@ Command:
 | `graph_vector_omlx_embedding_pressure/hnsw_graph_search/mistralai_codestral-embed-2505_32_q16_k4_ef64_dim1536_precbp8125` | 137.90 µs | HNSW mirrors exact topic precision and is slightly faster at this small project-source scale. |
 | `graph_vector_omlx_embedding_pressure/turbo_quant_graph_search/mistralai_codestral-embed-2505_32_q16_k4_c512_dim1536_precbp8125` | 613.47 µs | Production `TurboQuantCosine` now has a live real-embedding row. The default `c512` envelope preserves the same precision but is intentionally oversized for 32 documents, so graph-scoped exact scoring remains the better tiny-corpus primitive. |
 
+PR-local TurboQuant exact-covered fallback A/B:
+
+Command: same live OpenRouter Codestral source-chunk guard as above, after
+routing TurboQuant searches whose `search_width.max(k)` covers every indexed or
+allowed row straight to exact primary-vector scoring.
+
+| Row | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_vector_omlx_embedding_pressure/exact_graph_search/...dim1536_precbp8125` | 149.51 µs | 149.65 µs | Exact oracle is unchanged on the same 32-document corpus. |
+| `graph_vector_omlx_embedding_pressure/hnsw_graph_search/...ef64_dim1536_precbp8125` | 137.90 µs | 138.18 µs | HNSW guard is unchanged; the fallback is TurboQuant-only. |
+| `graph_vector_omlx_embedding_pressure/turbo_quant_graph_search/...c512_dim1536_precbp8125` | 613.47 µs | 150.88 µs | Full-index TurboQuant no longer pays compressed preselection before exact rerank when the default c512 envelope already covers the whole tiny index. Precision remains 8125 bp. |
+
 | oMLX row | Qwen3 0.6B / 1024 dim | Qwen3 4B / 2560 dim | Notes |
 |---|---:|---:|---|
 | `graph_vector_omlx_embedding_pressure/embed_batch/...docs20_batch64` | 39.23 ms | 208.8 ms | End-to-end localhost embedding request for 20 texts. |
