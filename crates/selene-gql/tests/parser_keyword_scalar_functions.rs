@@ -154,6 +154,13 @@ fn reserved_keyword_aliases_still_format_as_identifiers() {
         "DATE",
         "LOCAL_TIME",
         "DURATION",
+        "IMPLIES",
+        "PATHS",
+        "SUBSTRING",
+        "CURRENT_GRAPH",
+        "HOME_SCHEMA",
+        "INTEGER8",
+        "FLOAT32",
     ] {
         let source = format!("RETURN 1 AS \"{keyword}\"");
         let parsed = parse(&source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
@@ -189,6 +196,62 @@ fn implemented_reserved_function_and_temporal_heads_reject_bare_aliases() {
             parse(&source).is_err(),
             "{source} must reject a bare reserved alias"
         );
+    }
+}
+
+#[test]
+fn iso_reserved_type_session_path_and_pre_reserved_words_reject_bare_identifiers() {
+    let reserved_words = [
+        "ASCENDING",
+        "DESCENDING",
+        "BIG",
+        "CHAR",
+        "BINARY",
+        "FLOAT32",
+        "INTEGER8",
+        "INT8",
+        "UINT8",
+        "UNSIGNED",
+        "PARAMETER",
+        "PARAMETERS",
+        "SESSION",
+        "RESET",
+        "CLOSE",
+        "CHARACTERISTICS",
+        "IF",
+        "NOTHING",
+        "ON",
+        "UNIQUE",
+        "IMPLIES",
+        "PATH",
+        "PATHS",
+        "LIKE",
+        "SUBSTRING",
+        "CURRENT_GRAPH",
+        "HOME_SCHEMA",
+    ];
+
+    for keyword in reserved_words {
+        let expression = format!("RETURN {keyword}");
+        assert!(
+            parse(&expression).is_err(),
+            "{expression} must reject a bare reserved expression"
+        );
+    }
+
+    for keyword in reserved_words.into_iter().chain(["INTEGER"]) {
+        let alias = format!("RETURN 1 AS {keyword}");
+        assert!(
+            parse(&alias).is_err(),
+            "{alias} must reject a bare reserved alias"
+        );
+    }
+
+    for source in [
+        "RETURN \"PATH\" AS \"SUBSTRING\"",
+        "RETURN \"CURRENT_GRAPH\" AS \"HOME_SCHEMA\"",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
     }
 }
 

@@ -114,13 +114,13 @@ fn create_edge_type_with_eight_distinct_labels_resolves_to_oneof_spilled() {
     plan.pipeline.insert(
         0,
         catalog_op(
-            "CREATE EDGE TYPE :MENTIONS (FROM :Episode, :Fact, :Entity, :Skill, :BadPattern, :Note, :Session, :CoreBlock TO :Agent)",
+            "CREATE EDGE TYPE :MENTIONS (FROM :Episode, :Fact, :Entity, :Skill, :BadPattern, :Note, :\"Session\", :CoreBlock TO :Agent)",
         ),
     );
     for label in [
         "Agent",
         "CoreBlock",
-        "Session",
+        "\"Session\"",
         "Note",
         "BadPattern",
         "Skill",

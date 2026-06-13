@@ -17,7 +17,7 @@ use selene_graph::{
 
 use crate::{
     ExecutorError, GqlType, PlannedTypePropertyConstraint, PlannedTypePropertyDef, RecordType,
-    parser::MAX_NESTING_DEPTH,
+    ast::format_ident::fmt_ident, parser::MAX_NESTING_DEPTH,
 };
 
 pub(super) fn property_defs(
@@ -413,7 +413,7 @@ fn render_record_field_types(fields: &RecordFieldTypes) -> String {
             let nullability = if field.required { " NOT NULL" } else { "" };
             format!(
                 "{} :: {}{}",
-                field.name,
+                fmt_ident(field.name.clone()),
                 render_record_field_type(&field.field_type),
                 nullability
             )

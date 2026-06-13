@@ -67,8 +67,8 @@ fn percentile_cont_uses_linear_interpolation() {
     let even = execute(
         "UNWIND [1, 2, 3, 4] AS x \
          RETURN percentile_cont(x, 0.5) AS mid, \
-                percentile_cont(x, 0.0) AS min, \
-                percentile_cont(x, 1.0) AS max",
+                percentile_cont(x, 0.0) AS \"min\", \
+                percentile_cont(x, 1.0) AS \"max\"",
     );
     assert_eq!(column_values(&even, "mid"), vec![Value::Float(2.5)]);
     assert_eq!(column_values(&even, "min"), vec![Value::Float(1.0)]);

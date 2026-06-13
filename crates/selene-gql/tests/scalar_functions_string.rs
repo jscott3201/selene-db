@@ -246,13 +246,10 @@ fn left_and_right_propagate_nulls_and_reject_bad_lengths() {
 
 #[test]
 fn substring_function_is_not_in_the_iso_scalar_set() {
-    let err = execute_read_result("RETURN substring('abcdef', 2, 3) AS value")
-        .expect_err("substring is not in the closed scalar-function set");
-    assert!(matches!(
-        &err,
-        ExecutorError::UnknownFunction { name, .. } if name == "substring"
-    ));
-    assert_eq!(err.gqlstatus().as_str(), "22G03");
+    let err = parse("RETURN substring('abcdef', 2, 3) AS value")
+        .expect_err("SUBSTRING is reserved but not implemented as a scalar function");
+    assert!(matches!(&err, selene_gql::ParserError::SyntaxError { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "42001");
 }
 
 #[test]

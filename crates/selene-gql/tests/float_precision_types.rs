@@ -137,7 +137,7 @@ fn specified_float_precision_lowers_catalog_property_types() {
     let mut session = Session::new(&graph);
     session
         .execute_source(
-            "CREATE NODE TYPE :Metric (small :: FLOAT(23, 7), wide :: FLOAT(24), scaled :: FLOAT(23, 8))",
+            "CREATE NODE TYPE :Metric (\"small\" :: FLOAT(23, 7), wide :: FLOAT(24), scaled :: FLOAT(23, 8))",
             &EmptyProcedureRegistry,
         )
         .expect("catalog DDL executes");
@@ -157,7 +157,7 @@ fn specified_float_precision_lowers_catalog_property_types() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(db_string(
-            "CREATE NODE TYPE :Metric (small :: FLOAT32, wide :: FLOAT, scaled :: FLOAT)"
+            "CREATE NODE TYPE :Metric (\"small\" :: FLOAT32, wide :: FLOAT, scaled :: FLOAT)"
         ))
     );
 }

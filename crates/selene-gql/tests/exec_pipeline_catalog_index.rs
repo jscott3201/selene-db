@@ -242,7 +242,7 @@ fn create_index_infers_all_supported_storage_kinds() {
         &graph,
         "CREATE NODE TYPE :T \
          (b :: BOOLEAN, i :: INT64, n :: UINT64, i128 :: INT128, u128 :: UINT128, \
-          dec :: DECIMAL, f32 :: FLOAT32, f :: FLOAT64, s :: STRING, d :: DATE, \
+          \"dec\" :: DECIMAL, f32 :: FLOAT32, f :: FLOAT64, s :: STRING, d :: DATE, \
           ldt :: LOCAL DATETIME, zdt :: ZONED DATETIME, lt :: LOCAL TIME, \
           zt :: ZONED TIME, dur :: DURATION (DAY TO SECOND), ym :: DURATION (YEAR TO MONTH), \
           dt :: DURATION (DAY TO SECOND), u :: UUID)",

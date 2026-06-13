@@ -78,7 +78,7 @@ fn show_node_types_renders_nested_open_record_fields() {
 #[test]
 fn show_node_types_distinguishes_open_and_closed_unit_record_types() {
     let graph = empty_closed_graph(3748);
-    let ddl = planned("CREATE NODE TYPE :Event (open :: ANY RECORD, closed :: RECORD{})");
+    let ddl = planned("CREATE NODE TYPE :Event (\"open\" :: ANY RECORD, closed :: RECORD{})");
     run_write(&graph, &ddl)
         .expect("record type DDL executes")
         .1
@@ -92,7 +92,7 @@ fn show_node_types_distinguishes_open_and_closed_unit_record_types() {
     };
     assert_eq!(
         definition.as_str(),
-        "CREATE NODE TYPE :Event (open :: RECORD, closed :: RECORD {})"
+        "CREATE NODE TYPE :Event (\"open\" :: RECORD, closed :: RECORD {})"
     );
     parse(definition.as_str()).expect("closed unit RECORD definition round-trips");
 }
