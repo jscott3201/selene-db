@@ -686,8 +686,8 @@ binary_aggregate_op = { ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC" }
 star            = { "*" }
 
 // ISO/IEC 39075:2024 section 20.27 current-datetime value functions.
-// The `!("(")` guards keep existing ordinary niladic function calls such as
-// `current_date()` on the function_call path while admitting keyword syntax.
+// The `!("(")` guards keep the niladic keyword forms from accepting
+// non-standard parenthesized spellings such as `CURRENT_DATE()`.
 current_datetime_function = {
     current_date_function
   | current_time_function
@@ -737,11 +737,10 @@ scalar_keyword_function_name = @{
   | ^"LEFT" | ^"RIGHT" | ^"UPPER" | ^"LOWER"
   | ^"BTRIM" | ^"LTRIM" | ^"RTRIM"
   | ^"COALESCE" | ^"NULLIF"
-  | ^"CURRENT_TIMESTAMP" | ^"CURRENT_TIME" | ^"CURRENT_DATE"
   | ^"LOCAL_DATETIME" | ^"LOCAL_TIME"
   | ^"ZONED_DATETIME" | ^"ZONED_TIME"
   | ^"DATETIME" | ^"DATE" | ^"TIME"
-  | ^"DURATION_BETWEEN" | ^"DURATION"
+  | ^"DURATION"
 }
 
 function_call     = { qualified_name ~ "(" ~ arg_list? ~ ")" }

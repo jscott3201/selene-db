@@ -59,7 +59,7 @@ fn cast_bound_in_zone(value: Value, target: &str, zone: &str) -> Value {
 
 fn current_date(session: &mut Session<'_>) -> jiff::civil::Date {
     let output = session
-        .execute_source("RETURN current_date() AS d", &EmptyProcedureRegistry)
+        .execute_source("RETURN current_date AS d", &EmptyProcedureRegistry)
         .expect("current date");
     let StatementOutput::Rows(table) = output else {
         panic!("current_date produced non-row output");

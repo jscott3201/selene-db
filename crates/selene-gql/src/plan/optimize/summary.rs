@@ -95,7 +95,7 @@ pub struct ScanSnapshot {
     /// (`TypedIndexRange` / `BitmapUnion` / `CompositeLookup`), or `None` for
     /// access variants that do not carry probe keys (`Linear`, `LabelIndex`).
     /// Renders literals as `KIND value` and parameter slots as `$name`; see
-    /// [`bounds_detail`] for the canonical format. Additive field — existing
+    /// `bounds_detail` for the canonical format. Additive field — existing
     /// `#[non_exhaustive]` callers continue to compile by ignoring it.
     pub bounds_detail: Option<String>,
 }

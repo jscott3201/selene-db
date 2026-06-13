@@ -364,12 +364,17 @@ fn parse_current_datetime_keyword_functions() {
     assert_function_call("RETURN LOCAL_TIME", "local_time");
     assert_function_call("RETURN LOCAL_TIME()", "local_time");
 
-    assert_function_call("RETURN current_date()", "current_date");
-    assert_function_call("RETURN current_time()", "current_time");
-    assert_function_call("RETURN current_timestamp()", "current_timestamp");
     assert_function_call("RETURN local_datetime()", "local_datetime");
     assert_function_call("RETURN local_time()", "local_time");
     assert_function_call_with_args("RETURN LOCAL_TIME('12:34:56')", "local_time", 1);
+
+    for source in [
+        "RETURN CURRENT_DATE()",
+        "RETURN CURRENT_TIME()",
+        "RETURN CURRENT_TIMESTAMP()",
+    ] {
+        assert!(parse(source).is_err(), "{source} must reject parentheses");
+    }
 }
 
 #[test]

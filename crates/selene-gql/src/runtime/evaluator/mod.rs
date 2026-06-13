@@ -230,7 +230,7 @@ fn eval_list_literal(
 /// Evaluate an expression without a plan-level subquery registry.
 ///
 /// This preserves the public test helper surface for expression families that
-/// do not require planned subqueries. Statement execution uses [`evaluate`]
+/// do not require planned subqueries. Statement execution uses `evaluate`
 /// with the owning execution plan's registries.
 ///
 /// Gated to the test/`test-harness` surface (D21) so this scaffolding stays off
