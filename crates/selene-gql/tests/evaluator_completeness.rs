@@ -11,6 +11,7 @@ use selene_core::{EdgeId, LabelSet, NodeId, Value};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
     GqlType, IsCheckKind, LabelExpr, Literal, NonEmpty, NormalForm, SourceSpan, ValueExpr,
+    ast::CharacterStringLiteralKind,
 };
 
 fn span() -> SourceSpan {
@@ -26,7 +27,11 @@ fn int_lit(value: i64) -> ValueExpr {
 }
 
 fn string_lit(value: &str) -> ValueExpr {
-    lit(Literal::String(db_string(value), span()))
+    lit(Literal::String(
+        db_string(value),
+        span(),
+        CharacterStringLiteralKind::Escaped,
+    ))
 }
 
 fn null_lit() -> ValueExpr {
@@ -441,6 +446,7 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
     let property_exists = ValueExpr::PropertyExists {
         target: Box::new(var(node.clone())),
         key: fixture.name.clone(),
+        key_source_kind: CharacterStringLiteralKind::Escaped,
         span: span(),
     };
     assert_eq!(
@@ -500,6 +506,7 @@ fn property_exists_target_null_propagates_but_property_null_is_false() {
     let property_exists = ValueExpr::PropertyExists {
         target: Box::new(var(node.clone())),
         key: fixture.name.clone(),
+        key_source_kind: CharacterStringLiteralKind::Escaped,
         span: span(),
     };
 

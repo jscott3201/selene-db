@@ -67,9 +67,9 @@ pub(super) fn literal_property_default_value(
             Ok(PropertyDefaultValue::Integer(*value))
         }
         Literal::Decimal(value, _, _) => decimal_default_value(*value, span),
-        Literal::String(value, _) => Ok(PropertyDefaultValue::String(value.clone())),
+        Literal::String(value, _, _) => Ok(PropertyDefaultValue::String(value.clone())),
         Literal::Bytes(value, _) => Ok(PropertyDefaultValue::Bytes(value.to_vec())),
-        Literal::Uuid(value, _) => db_string(&value.to_string())
+        Literal::Uuid(value, _, _) => db_string(&value.to_string())
             .map(PropertyDefaultValue::Uuid)
             .map_err(|err| {
                 ExecutorError::data_exception(
@@ -79,27 +79,29 @@ pub(super) fn literal_property_default_value(
                 )
             }),
         Literal::Float(value, _, _) => float_default_value(*value, span),
-        Literal::ZonedDateTime(value, _) => {
+        Literal::ZonedDateTime(value, _, _) => {
             temporal_default_value("ZONED DATETIME", zoned_datetime_image(value), span)
                 .map(PropertyDefaultValue::ZonedDateTime)
         }
-        Literal::LocalDateTime(value, _) => {
+        Literal::LocalDateTime(value, _, _) => {
             temporal_default_value("LOCAL DATETIME", value.to_string(), span)
                 .map(PropertyDefaultValue::LocalDateTime)
         }
-        Literal::Date(value, _) => {
+        Literal::Date(value, _, _) => {
             temporal_default_value("DATE", value.to_string(), span).map(PropertyDefaultValue::Date)
         }
-        Literal::ZonedTime(value, _) => {
+        Literal::ZonedTime(value, _, _) => {
             temporal_default_value("ZONED TIME", zoned_time_image(value), span)
                 .map(PropertyDefaultValue::ZonedTime)
         }
-        Literal::LocalTime(value, _) => {
+        Literal::LocalTime(value, _, _) => {
             temporal_default_value("LOCAL TIME", value.to_string(), span)
                 .map(PropertyDefaultValue::LocalTime)
         }
-        Literal::Duration(value, _) => temporal_default_value("DURATION", value.to_string(), span)
-            .map(PropertyDefaultValue::Duration),
+        Literal::Duration(value, _, _) => {
+            temporal_default_value("DURATION", value.to_string(), span)
+                .map(PropertyDefaultValue::Duration)
+        }
     }
 }
 

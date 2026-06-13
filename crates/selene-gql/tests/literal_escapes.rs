@@ -4,7 +4,11 @@ mod exec_common;
 
 use exec_common::{column_values, execute_read};
 use selene_core::Value;
-use selene_gql::{ParserError, parse};
+use selene_gql::{
+    ParserError,
+    ast::{format_read_statement, structurally_eq},
+    parse,
+};
 
 fn string_value(source: &str) -> String {
     let table = execute_read(source);
@@ -58,6 +62,32 @@ fn double_quoted_string_literals_decode() {
     ] {
         assert_eq!(string_value(source), expected, "{source}");
     }
+}
+
+#[test]
+fn no_escape_string_literals_decode_backslash_literally() {
+    for (source, expected) in [
+        (r"RETURN @'a\nb' AS value", r"a\nb"),
+        (r#"RETURN @"a\nb" AS value"#, r"a\nb"),
+        (r"RETURN @'\q' AS value", r"\q"),
+        (r#"RETURN @"don't" AS value"#, "don't"),
+    ] {
+        assert_eq!(string_value(source), expected, "{source}");
+    }
+}
+
+#[test]
+fn no_escape_string_literals_do_not_accept_doubled_delimiters() {
+    assert_syntax_contains("RETURN @'a''b' AS value", "expected");
+    assert_syntax_contains(r#"RETURN @"a""b" AS value"#, "expected");
+}
+
+#[test]
+fn no_escape_string_literals_format_to_escaped_round_trip() {
+    let parsed = parse(r"RETURN @'a\nb' AS value").expect("no-escape literal parses");
+    let formatted = format_read_statement(&parsed).expect("format succeeds");
+    let reparsed = parse(&formatted).expect("formatted statement parses");
+    assert!(structurally_eq(&parsed, &reparsed));
 }
 
 #[test]

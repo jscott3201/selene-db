@@ -114,9 +114,11 @@ fn build_cast_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     })
 }
 
-/// Decode a `string_lit` pair into raw text (unquoted, escapes resolved).
-pub(super) fn decode_string_text(pair: &Pair<'_, Rule>) -> Result<String, ParserError> {
-    literal::decode_string_text(pair)
+/// Decode a `string_lit` pair into raw text plus its source spelling class.
+pub(super) fn decode_string_text_with_kind(
+    pair: &Pair<'_, Rule>,
+) -> Result<(String, crate::ast::CharacterStringLiteralKind), ParserError> {
+    literal::decode_string_text_with_kind(pair)
 }
 
 fn build_left_assoc(

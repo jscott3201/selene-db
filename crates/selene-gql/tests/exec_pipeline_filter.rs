@@ -134,6 +134,7 @@ fn filter_drops_rows_where_expr_is_non_bool() {
     predicate.expr = ValueExpr::Literal(selene_gql::Literal::String(
         exec_common::db_string("not boolean"),
         predicate.span,
+        selene_gql::ast::CharacterStringLiteralKind::Escaped,
     ));
 
     let filtered = execute_pipeline(&[filter], table, &mut ctx).expect("filter executes");

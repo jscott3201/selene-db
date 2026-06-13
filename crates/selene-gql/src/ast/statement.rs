@@ -5,7 +5,7 @@ use selene_core::DbString;
 use crate::ast::{
     call::{InlineProcedureCall, ProcedureCall},
     ddl::DdlStatement,
-    expr::ValueExpr,
+    expr::{CharacterStringLiteralKind, ValueExpr},
     mutation::MutationPipeline,
     pattern::MatchClause,
     span::SourceSpan,
@@ -87,6 +87,8 @@ pub enum Statement {
     SessionSetTimeZone {
         /// Decoded IANA region name or fixed-offset string.
         zone: String,
+        /// Source spelling class for the time-zone character string literal.
+        zone_source_kind: CharacterStringLiteralKind,
         /// Source span.
         span: SourceSpan,
     },

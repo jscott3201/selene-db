@@ -21,8 +21,9 @@ pub use ddl::{
 };
 pub use eq::structurally_eq;
 pub use expr::{
-    BinaryOp, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, IsCheckKind, Literal,
-    NormalForm, TemporalDurationQualifier, TrimSpec, TruthValue, UnaryOp, ValueExpr,
+    BinaryOp, CharacterStringLiteralKind, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind,
+    IsCheckKind, Literal, NormalForm, TemporalDurationQualifier, TrimSpec, TruthValue, UnaryOp,
+    ValueExpr,
 };
 pub use format::{FormatError, format_procedure_call, format_read_statement};
 pub use mutation::{

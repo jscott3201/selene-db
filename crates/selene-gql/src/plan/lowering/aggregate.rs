@@ -399,9 +399,15 @@ fn rewrite_aggregate_refs(
             items: rewrite_exprs(items, aggregate_names, analyzed),
             span: *span,
         },
-        ValueExpr::PropertyExists { target, key, span } => ValueExpr::PropertyExists {
+        ValueExpr::PropertyExists {
+            target,
+            key,
+            key_source_kind,
+            span,
+        } => ValueExpr::PropertyExists {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
             key: key.clone(),
+            key_source_kind: *key_source_kind,
             span: *span,
         },
         ValueExpr::Case {

@@ -60,6 +60,20 @@ fn parse_many_handles_semicolon_in_single_quote() {
 }
 
 #[test]
+fn parse_many_handles_semicolon_in_no_escape_quote() {
+    let statements =
+        parse_many("RETURN @'a;b' AS value; RETURN 1 AS n").expect("parse_many succeeds");
+    assert_eq!(statements.len(), 2);
+}
+
+#[test]
+fn parse_many_no_escape_backslash_does_not_hide_closing_quote() {
+    let statements =
+        parse_many(r"RETURN @'a\' AS value; RETURN 1 AS n").expect("parse_many succeeds");
+    assert_eq!(statements.len(), 2);
+}
+
+#[test]
 fn parse_many_handles_semicolon_in_block_comment() {
     let statements =
         parse_many("/* a;b */ RETURN 1 AS n; RETURN 2 AS n").expect("parse_many succeeds");

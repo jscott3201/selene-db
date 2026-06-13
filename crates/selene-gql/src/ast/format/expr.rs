@@ -21,7 +21,9 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
                 fmt_decimal_literal(out, value, *kind)?;
             }
             crate::Literal::Float(value, _, kind) => fmt_float_literal(out, *value, *kind)?,
-            crate::Literal::String(value, _) => write!(out, "'{}'", escape_string(value.as_str()))?,
+            crate::Literal::String(value, _, _) => {
+                write!(out, "'{}'", escape_string(value.as_str()))?;
+            }
             crate::Literal::Bytes(value, _) => {
                 out.push_str("X'");
                 for byte in value.iter() {
@@ -29,17 +31,17 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
                 }
                 out.push('\'');
             }
-            crate::Literal::Uuid(value, _) => write!(out, "UUID '{value}'")?,
-            crate::Literal::ZonedDateTime(value, _) => {
+            crate::Literal::Uuid(value, _, _) => write!(out, "UUID '{value}'")?,
+            crate::Literal::ZonedDateTime(value, _, _) => {
                 write!(out, "ZONED DATETIME '{}'", format_zoned_datetime(value))?;
             }
-            crate::Literal::LocalDateTime(value, _) => write!(out, "LOCAL DATETIME '{value}'")?,
-            crate::Literal::Date(value, _) => write!(out, "DATE '{value}'")?,
-            crate::Literal::ZonedTime(value, _) => {
+            crate::Literal::LocalDateTime(value, _, _) => write!(out, "LOCAL DATETIME '{value}'")?,
+            crate::Literal::Date(value, _, _) => write!(out, "DATE '{value}'")?,
+            crate::Literal::ZonedTime(value, _, _) => {
                 write!(out, "ZONED TIME '{}'", format_zoned_time(value))?;
             }
-            crate::Literal::LocalTime(value, _) => write!(out, "LOCAL TIME '{value}'")?,
-            crate::Literal::Duration(value, _) => write!(out, "DURATION '{value}'")?,
+            crate::Literal::LocalTime(value, _, _) => write!(out, "LOCAL TIME '{value}'")?,
+            crate::Literal::Duration(value, _, _) => write!(out, "DURATION '{value}'")?,
             crate::Literal::Null(_) => out.push_str("null"),
         },
         ValueExpr::Variable { name, .. } => out.push_str(&fmt_expr_ident(name.clone())),

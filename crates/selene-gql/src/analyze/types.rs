@@ -375,7 +375,9 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             hash_exprs(items, state, memo);
             span.hash(state);
         }
-        ValueExpr::PropertyExists { target, key, span } => {
+        ValueExpr::PropertyExists {
+            target, key, span, ..
+        } => {
             16u8.hash(state);
             hash_child(target, state, memo);
             key.hash(state);
@@ -474,7 +476,7 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
             span.hash(state);
             kind.hash(state);
         }
-        Literal::String(value, span) => {
+        Literal::String(value, span, _) => {
             3u8.hash(state);
             value.hash(state);
             span.hash(state);
@@ -488,37 +490,37 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
             4u8.hash(state);
             span.hash(state);
         }
-        Literal::Uuid(value, span) => {
+        Literal::Uuid(value, span, _) => {
             5u8.hash(state);
             value.hash(state);
             span.hash(state);
         }
-        Literal::ZonedDateTime(value, span) => {
+        Literal::ZonedDateTime(value, span, _) => {
             6u8.hash(state);
             value.hash(state);
             span.hash(state);
         }
-        Literal::LocalDateTime(value, span) => {
+        Literal::LocalDateTime(value, span, _) => {
             7u8.hash(state);
             value.hash(state);
             span.hash(state);
         }
-        Literal::Date(value, span) => {
+        Literal::Date(value, span, _) => {
             8u8.hash(state);
             value.hash(state);
             span.hash(state);
         }
-        Literal::ZonedTime(value, span) => {
+        Literal::ZonedTime(value, span, _) => {
             9u8.hash(state);
             value.hash(state);
             span.hash(state);
         }
-        Literal::LocalTime(value, span) => {
+        Literal::LocalTime(value, span, _) => {
             10u8.hash(state);
             value.hash(state);
             span.hash(state);
         }
-        Literal::Duration(value, span) => {
+        Literal::Duration(value, span, _) => {
             11u8.hash(state);
             (
                 value.get_years(),

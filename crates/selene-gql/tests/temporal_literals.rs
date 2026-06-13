@@ -24,6 +24,10 @@ fn date_and_local_temporal_literals_lower_to_values() {
         Value::Date("2026-05-07".parse().unwrap())
     );
     assert_eq!(
+        single_value("RETURN DATE @'2026-05-07' AS v"),
+        Value::Date("2026-05-07".parse().unwrap())
+    );
+    assert_eq!(
         single_value("RETURN LOCAL DATETIME '2026-05-07T12:34:56' AS v"),
         Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
     );

@@ -221,6 +221,60 @@ fn graph_predicate_functions_are_supported() {
 }
 
 #[test]
+fn no_escape_character_string_literals_flag_gl11() {
+    let ids = |source: &str| {
+        feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    assert!(
+        !ids("RETURN 'literal' AS v").contains(&FeatureId::GL11),
+        "ordinary escaped strings must not flag GL11"
+    );
+
+    for source in [
+        r"RETURN @'literal' AS v",
+        "RETURN DATE @'2026-05-07' AS v",
+        "RETURN DURATION @'PT1S' AS v",
+        "RETURN UUID @'550e8400-e29b-41d4-a716-446655440000' AS v",
+        "RETURN PROPERTY_EXISTS(n, @'name') AS v",
+        "SESSION SET TIME ZONE @'UTC'",
+    ] {
+        let observed = ids(source);
+        assert!(
+            observed.contains(&FeatureId::GL11),
+            "{source} must flag GL11; observed {observed:?}"
+        );
+    }
+
+    let uuid = ids("RETURN UUID @'550e8400-e29b-41d4-a716-446655440000' AS v");
+    assert!(
+        uuid.contains(&FeatureId::IM_UUID),
+        "UUID no-escape literal must retain IM_UUID; observed {uuid:?}"
+    );
+
+    let duration = ids("RETURN DURATION @'PT1S' AS v");
+    assert!(
+        duration.contains(&FeatureId::GV41),
+        "DURATION no-escape literal must retain GV41; observed {duration:?}"
+    );
+
+    let property_exists = ids("RETURN PROPERTY_EXISTS(n, @'name') AS v");
+    assert!(
+        property_exists.contains(&FeatureId::G115),
+        "PROPERTY_EXISTS no-escape key must retain G115; observed {property_exists:?}"
+    );
+
+    let time_zone = ids("SESSION SET TIME ZONE @'UTC'");
+    assert!(
+        time_zone.contains(&FeatureId::GS15),
+        "SESSION SET TIME ZONE no-escape literal must retain GS15; observed {time_zone:?}"
+    );
+}
+
+#[test]
 fn gf01_numeric_functions_are_supported_and_recorded() {
     for source in [
         "RETURN abs(-3)",

@@ -9,6 +9,7 @@ use exec_common::{column_values, db_string, execute_read, execute_read_result};
 use selene_core::Value;
 use selene_gql::{
     Binding, BindingTableSchema, GqlStatus, Literal, NonEmpty, SourceSpan, ValueExpr,
+    ast::CharacterStringLiteralKind,
 };
 
 fn span() -> SourceSpan {
@@ -16,7 +17,11 @@ fn span() -> SourceSpan {
 }
 
 fn string_lit(value: &str) -> ValueExpr {
-    ValueExpr::Literal(Literal::String(db_string(value), span()))
+    ValueExpr::Literal(Literal::String(
+        db_string(value),
+        span(),
+        CharacterStringLiteralKind::Escaped,
+    ))
 }
 
 fn null_lit() -> ValueExpr {

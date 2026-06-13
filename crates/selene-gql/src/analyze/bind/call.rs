@@ -12,6 +12,7 @@ use crate::{
         infer,
         types::AnalyzedType,
     },
+    ast::CharacterStringLiteralKind,
 };
 
 pub(crate) fn bind_procedure_call(
@@ -164,7 +165,7 @@ fn default_expr(
                 span,
                 hint: None,
             })?;
-            Literal::String(default_value, span)
+            Literal::String(default_value, span, CharacterStringLiteralKind::Escaped)
         }
     };
     Ok(ValueExpr::Literal(literal))

@@ -186,6 +186,8 @@ pub enum ValueExpr {
         target: Box<ValueExpr>,
         /// Database-string property key.
         key: DbString,
+        /// Source spelling class for the property-key character string literal.
+        key_source_kind: CharacterStringLiteralKind,
         /// Source span of the predicate.
         span: SourceSpan,
     },
@@ -476,25 +478,39 @@ pub enum Literal {
     /// 64-bit floating-point literal.
     Float(f64, SourceSpan, FloatLiteralKind),
     /// Database-string literal.
-    String(DbString, SourceSpan),
+    String(DbString, SourceSpan, CharacterStringLiteralKind),
     /// Byte-string literal.
     Bytes(Arc<[u8]>, SourceSpan),
     /// UUID literal.
-    Uuid(uuid::Uuid, SourceSpan),
+    Uuid(uuid::Uuid, SourceSpan, CharacterStringLiteralKind),
     /// Zoned datetime literal.
-    ZonedDateTime(Box<jiff::Zoned>, SourceSpan),
+    ZonedDateTime(Box<jiff::Zoned>, SourceSpan, CharacterStringLiteralKind),
     /// Local datetime literal.
-    LocalDateTime(jiff::civil::DateTime, SourceSpan),
+    LocalDateTime(
+        jiff::civil::DateTime,
+        SourceSpan,
+        CharacterStringLiteralKind,
+    ),
     /// Date literal.
-    Date(jiff::civil::Date, SourceSpan),
+    Date(jiff::civil::Date, SourceSpan, CharacterStringLiteralKind),
     /// Zoned time literal.
-    ZonedTime(Box<jiff::Zoned>, SourceSpan),
+    ZonedTime(Box<jiff::Zoned>, SourceSpan, CharacterStringLiteralKind),
     /// Local time literal.
-    LocalTime(jiff::civil::Time, SourceSpan),
+    LocalTime(jiff::civil::Time, SourceSpan, CharacterStringLiteralKind),
     /// Duration literal.
-    Duration(Box<jiff::Span>, SourceSpan),
+    Duration(Box<jiff::Span>, SourceSpan, CharacterStringLiteralKind),
     /// Null literal.
     Null(SourceSpan),
+}
+
+/// Source spelling class for an ISO character string literal.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum CharacterStringLiteralKind {
+    /// Standard character string literal with character escaping enabled.
+    Escaped,
+    /// Character string literal prefixed by `<no escape>` (`@`), disabling
+    /// backslash and doubled-delimiter character representations.
+    NoEscape,
 }
 
 /// Source spelling class for an integer literal.
@@ -553,32 +569,36 @@ impl PartialEq for Literal {
             (Self::Float(lhs, lhs_span, lhs_kind), Self::Float(rhs, rhs_span, rhs_kind)) => {
                 lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind
             }
-            (Self::String(lhs, lhs_span), Self::String(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
+            (Self::String(lhs, lhs_span, lhs_kind), Self::String(rhs, rhs_span, rhs_kind)) => {
+                lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind
             }
             (Self::Bytes(lhs, lhs_span), Self::Bytes(rhs, rhs_span)) => {
                 lhs == rhs && lhs_span == rhs_span
             }
-            (Self::Uuid(lhs, lhs_span), Self::Uuid(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
+            (Self::Uuid(lhs, lhs_span, lhs_kind), Self::Uuid(rhs, rhs_span, rhs_kind)) => {
+                lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind
             }
-            (Self::ZonedDateTime(lhs, lhs_span), Self::ZonedDateTime(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
+            (
+                Self::ZonedDateTime(lhs, lhs_span, lhs_kind),
+                Self::ZonedDateTime(rhs, rhs_span, rhs_kind),
+            ) => lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind,
+            (
+                Self::LocalDateTime(lhs, lhs_span, lhs_kind),
+                Self::LocalDateTime(rhs, rhs_span, rhs_kind),
+            ) => lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind,
+            (Self::Date(lhs, lhs_span, lhs_kind), Self::Date(rhs, rhs_span, rhs_kind)) => {
+                lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind
             }
-            (Self::LocalDateTime(lhs, lhs_span), Self::LocalDateTime(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
-            }
-            (Self::Date(lhs, lhs_span), Self::Date(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
-            }
-            (Self::ZonedTime(lhs, lhs_span), Self::ZonedTime(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
-            }
-            (Self::LocalTime(lhs, lhs_span), Self::LocalTime(rhs, rhs_span)) => {
-                lhs == rhs && lhs_span == rhs_span
-            }
-            (Self::Duration(lhs, lhs_span), Self::Duration(rhs, rhs_span)) => {
-                lhs.fieldwise() == rhs.fieldwise() && lhs_span == rhs_span
+            (
+                Self::ZonedTime(lhs, lhs_span, lhs_kind),
+                Self::ZonedTime(rhs, rhs_span, rhs_kind),
+            ) => lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind,
+            (
+                Self::LocalTime(lhs, lhs_span, lhs_kind),
+                Self::LocalTime(rhs, rhs_span, rhs_kind),
+            ) => lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind,
+            (Self::Duration(lhs, lhs_span, lhs_kind), Self::Duration(rhs, rhs_span, rhs_kind)) => {
+                lhs.fieldwise() == rhs.fieldwise() && lhs_span == rhs_span && lhs_kind == rhs_kind
             }
             (Self::Null(lhs_span), Self::Null(rhs_span)) => lhs_span == rhs_span,
             _ => false,
@@ -596,15 +616,15 @@ impl Literal {
             | Self::RadixInteger(_, span, _)
             | Self::Decimal(_, span, _)
             | Self::Float(_, span, _)
-            | Self::String(_, span)
+            | Self::String(_, span, _)
             | Self::Bytes(_, span)
-            | Self::Uuid(_, span)
-            | Self::ZonedDateTime(_, span)
-            | Self::LocalDateTime(_, span)
-            | Self::Date(_, span)
-            | Self::ZonedTime(_, span)
-            | Self::LocalTime(_, span)
-            | Self::Duration(_, span)
+            | Self::Uuid(_, span, _)
+            | Self::ZonedDateTime(_, span, _)
+            | Self::LocalDateTime(_, span, _)
+            | Self::Date(_, span, _)
+            | Self::ZonedTime(_, span, _)
+            | Self::LocalTime(_, span, _)
+            | Self::Duration(_, span, _)
             | Self::Null(span) => *span,
         }
     }
@@ -621,15 +641,15 @@ impl Literal {
             | Self::RadixInteger(_, span, _)
             | Self::Decimal(_, span, _)
             | Self::Float(_, span, _)
-            | Self::String(_, span)
+            | Self::String(_, span, _)
             | Self::Bytes(_, span)
-            | Self::Uuid(_, span)
-            | Self::ZonedDateTime(_, span)
-            | Self::LocalDateTime(_, span)
-            | Self::Date(_, span)
-            | Self::ZonedTime(_, span)
-            | Self::LocalTime(_, span)
-            | Self::Duration(_, span)
+            | Self::Uuid(_, span, _)
+            | Self::ZonedDateTime(_, span, _)
+            | Self::LocalDateTime(_, span, _)
+            | Self::Date(_, span, _)
+            | Self::ZonedTime(_, span, _)
+            | Self::LocalTime(_, span, _)
+            | Self::Duration(_, span, _)
             | Self::Null(span) => span,
         }
     }
