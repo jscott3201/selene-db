@@ -59,6 +59,7 @@ pub(super) fn is_supported_typed_target(ty: &GqlType) -> bool {
         GqlType::Record(RecordType::Closed(fields)) => {
             fields.iter().all(|(_, ty)| is_supported_typed_target(ty))
         }
-        GqlType::GraphRef | GqlType::NodeRef | GqlType::EdgeRef | GqlType::TableRef(_) => false,
+        GqlType::NodeRef | GqlType::EdgeRef => true,
+        GqlType::GraphRef | GqlType::TableRef(_) => false,
     }
 }

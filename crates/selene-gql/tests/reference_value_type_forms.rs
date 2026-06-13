@@ -1,10 +1,11 @@
 //! ISO open reference value type form coverage.
 
-use selene_core::feature_register::FeatureId;
+use selene_core::{EdgeId, GraphId, NodeId, Value, db_string, feature_register::FeatureId};
 use selene_gql::{
-    GqlType, IsCheckKind, ParserError, PipelineStatement, Statement, ValueExpr,
-    ast::format_read_statement, parse,
+    EmptyProcedureRegistry, ExecutorError, GqlType, IsCheckKind, ParserError, PipelineStatement,
+    Session, Statement, StatementOutput, ValueExpr, ast::format_read_statement, parse,
 };
+use selene_graph::SharedGraph;
 
 #[test]
 fn open_node_and_edge_reference_type_forms_parse_to_ast() {
@@ -67,6 +68,118 @@ fn open_graph_element_reference_type_forms_format_canonically() {
     }
 }
 
+#[test]
+fn open_graph_element_reference_predicates_enforce_membership() {
+    let graph = SharedGraph::new(GraphId::new(16_620));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("node").expect("valid parameter name"),
+        Value::NodeRef(NodeId::new(7)),
+    );
+    session.bind_parameter(
+        db_string("edge").expect("valid parameter name"),
+        Value::EdgeRef(EdgeId::new(9)),
+    );
+    session.bind_parameter(
+        db_string("missing").expect("valid parameter name"),
+        Value::Null,
+    );
+
+    assert_eq!(
+        first_value(&mut session, "RETURN $node IS TYPED NODE AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value(&mut session, "RETURN $node IS TYPED EDGE AS ok"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        first_value(&mut session, "RETURN $edge IS TYPED RELATIONSHIP AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value(&mut session, "RETURN $missing IS TYPED NODE AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value(&mut session, "RETURN $missing IS TYPED NODE NOT NULL AS ok"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn open_graph_element_references_compose_inside_closed_dynamic_unions() {
+    let graph = SharedGraph::new(GraphId::new(16_621));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("node").expect("valid parameter name"),
+        Value::NodeRef(NodeId::new(7)),
+    );
+    session.bind_parameter(
+        db_string("edge").expect("valid parameter name"),
+        Value::EdgeRef(EdgeId::new(9)),
+    );
+    session.bind_parameter(
+        db_string("text").expect("valid parameter name"),
+        Value::String(db_string("not a graph element").expect("valid string")),
+    );
+
+    for source in [
+        "RETURN $node IS TYPED NODE | EDGE AS ok",
+        "RETURN $edge IS TYPED NODE | EDGE AS ok",
+    ] {
+        assert_eq!(
+            first_value(&mut session, source),
+            Value::Bool(true),
+            "{source}"
+        );
+    }
+    assert_eq!(
+        first_value(&mut session, "RETURN $text IS TYPED NODE | EDGE AS ok"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn open_graph_element_reference_typed_parameters_validate_runtime_values() {
+    let graph = SharedGraph::new(GraphId::new(16_622));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("node").expect("valid parameter name"),
+        Value::NodeRef(NodeId::new(7)),
+    );
+    session.bind_parameter(
+        db_string("edge").expect("valid parameter name"),
+        Value::EdgeRef(EdgeId::new(9)),
+    );
+
+    assert_eq!(
+        first_value(&mut session, "RETURN $node :: NODE AS value"),
+        Value::NodeRef(NodeId::new(7))
+    );
+    assert_eq!(
+        first_value(&mut session, "RETURN $edge :: ANY RELATIONSHIP AS value"),
+        Value::EdgeRef(EdgeId::new(9))
+    );
+
+    session.bind_parameter(
+        db_string("node").expect("valid parameter name"),
+        Value::String(db_string("not a node").expect("valid string")),
+    );
+    let err = session
+        .execute_source("RETURN $node :: NODE AS value", &EmptyProcedureRegistry)
+        .expect_err("typed NODE parameter rejects non-node value");
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidParameterType {
+            name,
+            ref expected,
+            actual: "STRING",
+            ..
+        } if name.as_str() == "node" && expected == "NODE"
+    ));
+}
+
 fn typed_type(source: &str) -> GqlType {
     let statement =
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
@@ -84,4 +197,19 @@ fn typed_type(source: &str) -> GqlType {
         panic!("{source} should parse as IS TYPED");
     };
     ty.clone()
+}
+
+fn first_value(session: &mut Session<'_>, source: &str) -> Value {
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .unwrap_or_else(|err| panic!("execute failed for `{source}`: {err:?}"));
+    let StatementOutput::Rows(table) = output else {
+        panic!("{source} should produce rows");
+    };
+    table
+        .rows()
+        .first()
+        .and_then(|row| row.values().first())
+        .cloned()
+        .expect("one value")
 }
