@@ -185,6 +185,19 @@ pub(crate) fn fmt_ident(value: DbString) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
+/// Format an identifier in expression-head position.
+///
+/// Double quotes are string literals in expression slots, so variables and
+/// generic function names must use backticks when bare spelling is unsafe.
+pub(crate) fn fmt_expr_ident(value: DbString) -> String {
+    let value = value.as_str();
+    let upper = value.to_ascii_uppercase();
+    if is_simple_ident(value) && !KEYWORDS.contains(&upper.as_str()) {
+        return value.to_owned();
+    }
+    fmt_backtick_ident(value)
+}
+
 /// Format a function-call name segment.
 ///
 /// Same quoting policy as [`fmt_ident`], minus aggregate-op tokens and reserved
@@ -205,7 +218,7 @@ pub(super) fn fmt_call_segment(value: DbString) -> String {
             return value.to_owned();
         }
     }
-    format!("\"{}\"", value.replace('"', "\"\""))
+    fmt_backtick_ident(value)
 }
 
 /// Escape a string literal's body for re-emission in single quotes.
@@ -228,4 +241,8 @@ fn is_simple_ident(value: &str) -> bool {
 
 fn is_identifier_keyword(upper: &str) -> bool {
     KEYWORDS.contains(&upper) || CONTEXTUAL_IDENTIFIER_KEYWORDS.contains(&upper)
+}
+
+fn fmt_backtick_ident(value: &str) -> String {
+    format!("`{}`", value.replace('`', "``"))
 }

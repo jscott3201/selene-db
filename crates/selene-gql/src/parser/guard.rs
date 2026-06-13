@@ -153,6 +153,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     // skip past the real closing quote to EOF, hiding a hostile `[` run that
     // pest still closes the string before and parses — a parser-time DoS bypass.
     let last_single_quote = bytes.iter().rposition(|byte| *byte == b'\'');
+    let last_double_quote = bytes.iter().rposition(|byte| *byte == b'"');
     let mut index = 0;
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
@@ -187,9 +188,10 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
 
     while index < bytes.len() {
         match bytes[index] {
-            // String / backtick literals are primaries: they reset the unary
-            // and `NOT` runs (a primary terminates a leading-sign / `NOT` chain),
-            // then the scan resumes after the closing quote.
+            // Quoted string/identifier spans are primaries for guard purposes:
+            // they reset the unary and `NOT` runs (a primary terminates a
+            // leading-sign / `NOT` chain), then the scan resumes after the
+            // closing quote.
             b'\'' => {
                 sign_run = 0;
                 not_run = 0;
@@ -202,7 +204,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 not_run = 0;
                 prev_word = PrevWord::Other;
                 prev_sig_byte = Some(b'"');
-                index = skip_double_quoted(bytes, index + 1);
+                index = skip_double_quoted(bytes, index + 1, last_double_quote);
             }
             b'`' => {
                 sign_run = 0;
@@ -567,9 +569,13 @@ fn skip_single_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>)
     bytes.len()
 }
 
-fn skip_double_quoted(bytes: &[u8], mut index: usize) -> usize {
+fn skip_double_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
     while index < bytes.len() {
         match bytes[index] {
+            b'\\' if bytes.get(index + 1) == Some(&b'"') && Some(index + 1) == last_quote => {
+                return index + 1;
+            }
+            b'\\' => index += 2,
             b'"' if next_is(bytes, index, b'"') => index += 2,
             b'"' => return index,
             _ => index += 1,
@@ -580,10 +586,11 @@ fn skip_double_quoted(bytes: &[u8], mut index: usize) -> usize {
 
 fn skip_backtick_quoted(bytes: &[u8], mut index: usize) -> usize {
     while index < bytes.len() {
-        if bytes[index] == b'`' {
-            return index;
+        match bytes[index] {
+            b'`' if next_is(bytes, index, b'`') => index += 2,
+            b'`' => return index,
+            _ => index += 1,
         }
-        index += 1;
     }
     bytes.len()
 }

@@ -479,25 +479,38 @@ fn temporal_text(pair: Pair<'_, Rule>) -> Result<String, ParserError> {
 }
 
 fn parse_string_text(text: &str, span: SourceSpan) -> Result<String, ParserError> {
-    let inner = text
+    if let Some(inner) = text
         .strip_prefix('\'')
         .and_then(|value| value.strip_suffix('\''))
-        .ok_or_else(|| ParserError::syntax("string literal is missing quotes", span, None))?;
-    decode_single_quoted(inner, span)
+    {
+        return decode_quoted(inner, '\'', span);
+    }
+    if let Some(inner) = text
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+    {
+        return decode_quoted(inner, '"', span);
+    }
+    Err(ParserError::syntax(
+        "string literal is missing quotes",
+        span,
+        None,
+    ))
 }
 
-fn decode_single_quoted(inner: &str, span: SourceSpan) -> Result<String, ParserError> {
+fn decode_quoted(inner: &str, delimiter: char, span: SourceSpan) -> Result<String, ParserError> {
     let mut out = String::with_capacity(inner.len());
     let mut chars = inner.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        match ch {
-            '\'' if chars.peek() == Some(&'\'') => {
-                chars.next();
-                out.push('\'');
+        if ch == delimiter && chars.peek() == Some(&delimiter) {
+            chars.next();
+            out.push(delimiter);
+        } else {
+            match ch {
+                '\\' => out.push(decode_escape(&mut chars, span)?),
+                _ => out.push(ch),
             }
-            '\\' => out.push(decode_escape(&mut chars, span)?),
-            _ => out.push(ch),
         }
     }
 

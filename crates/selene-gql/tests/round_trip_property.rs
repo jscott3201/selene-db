@@ -211,6 +211,33 @@ fn read_side_formatting_is_byte_idempotent() {
 }
 
 #[test]
+fn expression_identifiers_format_without_double_quotes() {
+    for source in [
+        "UNWIND [1, 2, 3] AS value RETURN stddev_pop(value) AS pop",
+        "WITH 1 AS \"WITH\" RETURN `WITH` AS result",
+        "WITH 1 AS `a``b` RETURN `a``b` AS result",
+        "RETURN uuid('018f1b6d-7b89-7cc0-9f40-2c6f8d4df101') AS parsed",
+    ] {
+        let parsed = parse(source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert!(
+            !formatted.contains("\"WITH\" AS result"),
+            "expression variable used double quotes: {formatted}"
+        );
+        assert!(
+            !formatted.contains("\"uuid\"("),
+            "function head used double quotes: {formatted}"
+        );
+        let reparsed =
+            parse(&formatted).unwrap_or_else(|error| panic!("{formatted} reparses: {error:?}"));
+        assert!(
+            structurally_eq(&parsed, &reparsed),
+            "{source} should round-trip through {formatted}"
+        );
+    }
+}
+
+#[test]
 fn string_literal_escapes_round_trip() {
     // PARSE-19: the formatter's `escape_string` re-encodes a narrower set
     // (\\, \n, \r, \t, '') than the parser's `decode_escape` decodes (which also
@@ -248,6 +275,18 @@ fn string_literal_escapes_round_trip() {
             structurally_eq(&parsed, &reparsed),
             "string literal {body:?} did not round-trip; formatted as {formatted:?}"
         );
+    }
+}
+
+#[test]
+fn double_quoted_string_literals_round_trip_to_canonical_single_quotes() {
+    for source in [
+        r#"RETURN "plain" AS s"#,
+        r#"RETURN "double "" quote" AS s"#,
+        r#"RETURN "escaped \" quote" AS s"#,
+        r#"RETURN "\u00E9\n" AS s"#,
+    ] {
+        assert_round_trip(source);
     }
 }
 

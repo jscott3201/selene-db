@@ -217,6 +217,12 @@ fn parse_return_alias_backtick() {
 }
 
 #[test]
+fn parse_return_alias_backtick_doubled_backtick() {
+    let item = only_item("RETURN 1 AS `a``b`");
+    assert_eq!(optional_name(item.alias).as_deref(), Some("a`b"));
+}
+
+#[test]
 fn malformed_underscores_in_integer_rejected() {
     for source in ["RETURN 1__2", "RETURN 1_"] {
         let err = parse(source).expect_err("malformed underscores should error");

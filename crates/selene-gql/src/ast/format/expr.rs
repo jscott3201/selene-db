@@ -2,7 +2,7 @@
 
 use std::fmt::{self, Write as _};
 
-use super::super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
+use super::super::format_ident::{escape_string, fmt_call_segment, fmt_expr_ident, fmt_ident};
 use super::super::{
     DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, TemporalDurationQualifier, UnaryOp,
     ValueExpr,
@@ -42,7 +42,7 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             crate::Literal::Duration(value, _) => write!(out, "DURATION '{value}'")?,
             crate::Literal::Null(_) => out.push_str("null"),
         },
-        ValueExpr::Variable { name, .. } => out.push_str(&fmt_ident(name.clone())),
+        ValueExpr::Variable { name, .. } => out.push_str(&fmt_expr_ident(name.clone())),
         ValueExpr::Parameter {
             name,
             declared_type,
