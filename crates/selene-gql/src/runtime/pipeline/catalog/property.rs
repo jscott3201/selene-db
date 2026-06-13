@@ -326,7 +326,7 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::GraphRef => PropertyValueType::GraphRef,
         GqlType::NodeRef => PropertyValueType::NodeRef,
         GqlType::EdgeRef => PropertyValueType::EdgeRef,
-        GqlType::TableRef => PropertyValueType::TableRef,
+        GqlType::TableRef(_) => PropertyValueType::TableRef,
         GqlType::Null => PropertyValueType::Null,
         GqlType::Record(_) | GqlType::List(_) | GqlType::Nothing => {
             return Err(ExecutorError::ImplementationDefined {

@@ -3,10 +3,13 @@
 mod strings;
 
 use pest::iterators::Pair;
-use selene_core::feature_register::FeatureId;
+use selene_core::{DbString, feature_register::FeatureId};
 
 use crate::{
-    ast::{DecimalType, GqlType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, RecordType, SourceSpan},
+    ast::{
+        BindingTableType, DecimalType, GqlType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE,
+        RecordType, SourceSpan,
+    },
     error::ParserError,
     parser::MAX_NESTING_DEPTH,
 };
@@ -156,6 +159,13 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     if keyword_starts_with(text, "DURATION") {
         return build_duration_type_name(pair);
     }
+    if let Some(binding_table_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::binding_table_type)
+    {
+        return build_binding_table_type_name(binding_table_type, depth);
+    }
     if let Some(list_type) = pair
         .clone()
         .into_inner()
@@ -298,44 +308,77 @@ fn build_record_type_name(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, P
     // Per ISO/IEC 39075:2024 §18.9, bare `RECORD` and `ANY RECORD` are open
     // record types. A field-types specification, even `{}`, is a closed record
     // type; field syntax itself is §18.10 `<field type>` (`name :: type`).
-    let mut fields = Vec::new();
-    let mut has_field_specification = false;
     for child in pair.into_inner() {
         if child.as_rule() != Rule::field_types_specification {
             continue;
         }
-        has_field_specification = true;
-        for field in child
-            .into_inner()
-            .filter(|field| field.as_rule() == Rule::record_field_type)
-        {
-            let field_span = span(&field);
-            let mut children = field.into_inner();
-            let name_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("record field type is missing name", field_span, None)
-            })?;
-            let type_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("record field type is missing type", field_span, None)
-            })?;
-            let name = db_string_pair(name_pair)?;
-            if fields
-                .iter()
-                .any(|(existing_name, _)| existing_name == &name)
-            {
-                return Err(ParserError::syntax(
-                    format!("duplicate record field type name: {}", name.as_str()),
-                    field_span,
-                    Some("each closed RECORD type field name must be declared once".into()),
-                ));
-            }
-            fields.push((name, build_type_name_with_depth(type_pair, depth + 1)?));
-        }
+        return Ok(GqlType::Record(RecordType::Closed(
+            build_field_types_specification(
+                child,
+                depth,
+                "duplicate record field type name",
+                "each closed RECORD type field name must be declared once",
+            )?,
+        )));
     }
-    Ok(if has_field_specification {
-        GqlType::Record(RecordType::Closed(fields))
-    } else {
-        GqlType::Record(RecordType::Open)
-    })
+    Ok(GqlType::Record(RecordType::Open))
+}
+
+fn build_binding_table_type_name(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
+    let source_span = span(&pair);
+    let field_spec = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::field_types_specification)
+        .ok_or_else(|| {
+            ParserError::syntax(
+                "binding table type is missing field types specification",
+                source_span,
+                Some("write TABLE { column :: TYPE, ... }".into()),
+            )
+        })?;
+    Ok(GqlType::TableRef(BindingTableType::Closed(
+        build_field_types_specification(
+            field_spec,
+            depth,
+            "duplicate binding table field type name",
+            "each TABLE field name must be declared once",
+        )?,
+    )))
+}
+
+fn build_field_types_specification(
+    pair: Pair<'_, Rule>,
+    depth: u32,
+    duplicate_message: &'static str,
+    duplicate_hint: &'static str,
+) -> Result<Vec<(DbString, GqlType)>, ParserError> {
+    let mut fields = Vec::new();
+    for field in pair
+        .into_inner()
+        .filter(|field| field.as_rule() == Rule::record_field_type)
+    {
+        let field_span = span(&field);
+        let mut children = field.into_inner();
+        let name_pair = children
+            .next()
+            .ok_or_else(|| ParserError::syntax("field type is missing name", field_span, None))?;
+        let type_pair = children
+            .next()
+            .ok_or_else(|| ParserError::syntax("field type is missing type", field_span, None))?;
+        let name = db_string_pair(name_pair)?;
+        if fields
+            .iter()
+            .any(|(existing_name, _)| existing_name == &name)
+        {
+            return Err(ParserError::syntax(
+                format!("{duplicate_message}: {}", name.as_str()),
+                field_span,
+                Some(duplicate_hint.into()),
+            ));
+        }
+        fields.push((name, build_type_name_with_depth(type_pair, depth + 1)?));
+    }
+    Ok(fields)
 }
 
 fn build_integer_precision_type_name(

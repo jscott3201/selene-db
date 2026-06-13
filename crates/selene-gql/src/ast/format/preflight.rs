@@ -284,7 +284,7 @@ fn ast_only_type_variant(ty: &GqlType) -> Option<&'static str> {
     match ty {
         GqlType::NotNull(inner) => ast_only_type_variant(inner),
         GqlType::GraphRef => Some("GraphRef"),
-        GqlType::TableRef => Some("TableRef"),
+        GqlType::TableRef(_) => Some("TableRef"),
         _ => None,
     }
 }
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn preflight_rejects_table_ref_type() {
-        assert_unsupported(GqlType::TableRef, "TableRef");
+        assert_unsupported(GqlType::TableRef(crate::BindingTableType::Any), "TableRef");
     }
 
     fn assert_unsupported(ty: GqlType, expected: &'static str) {

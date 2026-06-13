@@ -93,7 +93,7 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::GraphRef => matches!(value, Value::GraphRef(_)),
         GqlType::NodeRef => matches!(value, Value::NodeRef(_)),
         GqlType::EdgeRef => matches!(value, Value::EdgeRef(_)),
-        GqlType::TableRef => matches!(value, Value::TableRef(_)),
+        GqlType::TableRef(_) => matches!(value, Value::TableRef(_)),
         GqlType::Null => matches!(value, Value::Null),
     }
 }

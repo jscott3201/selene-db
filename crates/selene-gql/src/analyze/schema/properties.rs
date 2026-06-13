@@ -333,7 +333,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::NodeRef, G::NodeRef)
             | (P::EdgeRef, G::EdgeRef)
             | (P::GraphRef, G::GraphRef)
-            | (P::TableRef, G::TableRef)
+            | (P::TableRef, G::TableRef(_))
     )
 }
 
@@ -529,7 +529,7 @@ mod tests {
             ),
             (
                 PropertyValueType::TableRef,
-                GqlType::TableRef,
+                GqlType::TableRef(crate::BindingTableType::Any),
                 Value::TableRef(BindingTableId::new(1)),
             ),
             (

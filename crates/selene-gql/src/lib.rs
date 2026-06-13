@@ -48,7 +48,7 @@ pub use crate::ast::{
         QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement,
         UnwindStatement, WithClause,
     },
-    types::{GqlType, RecordType},
+    types::{BindingTableType, GqlType, RecordType},
     util::{EmptyVecError, NonEmpty, Vec2OrMore},
 };
 pub use crate::diagnostic::DiagnosticReport;

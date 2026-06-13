@@ -44,7 +44,7 @@ pub use statement::{
     UnwindStatement, WithClause,
 };
 pub use types::{
-    ByteStringType, ByteStringTypeForm, CharacterStringType, CharacterStringTypeForm, GqlType,
-    RecordType,
+    BindingTableType, ByteStringType, ByteStringTypeForm, CharacterStringType,
+    CharacterStringTypeForm, GqlType, RecordType,
 };
 pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};
