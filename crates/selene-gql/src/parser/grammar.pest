@@ -814,7 +814,7 @@ float_precision_type = { ^"FLOAT" ~ "(" ~ numeric_type_precision ~ ("," ~ numeri
 decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
 numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
-duration_type = { ^"DURATION" ~ ("(" ~ temporal_duration_qualifier ~ ")")? }
+duration_type = { ^"DURATION" ~ "(" ~ temporal_duration_qualifier ~ ")" }
 
 character_string_type = {
     ^"STRING" ~ ("(" ~ character_string_length ~ ("," ~ character_string_length)? ~ ")")?

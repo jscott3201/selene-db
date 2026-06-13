@@ -551,7 +551,7 @@ fn temporal_default_property_constraint_accepts_temporal_literals() {
          zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04:00', \
          lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
          zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04:00', \
-         dur :: DURATION DEFAULT DURATION 'PT1H2S')",
+         dur :: DURATION (DAY TO SECOND) DEFAULT DURATION 'PT1H2S')",
     );
 
     run_write(&graph, &plan)

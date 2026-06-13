@@ -496,6 +496,7 @@ fn unsigned_integer_precision_type(
 }
 
 fn build_duration_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
+    let source_span = span(&pair);
     let qualifier = pair
         .into_inner()
         .find(|child| child.as_rule() == Rule::duration_type)
@@ -505,7 +506,11 @@ fn build_duration_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError
                 .find(|child| child.as_rule() == Rule::temporal_duration_qualifier)
         });
     let Some(qualifier) = qualifier else {
-        return Ok(GqlType::Duration);
+        return Err(ParserError::syntax(
+            "DURATION type requires YEAR TO MONTH or DAY TO SECOND qualifier",
+            source_span,
+            Some("use DURATION (YEAR TO MONTH) or DURATION (DAY TO SECOND)".into()),
+        ));
     };
     Ok(match qualifier.as_str().to_ascii_uppercase().as_str() {
         "YEAR TO MONTH" => GqlType::DurationYearToMonth,
