@@ -751,7 +751,8 @@ var_ref         = { ident }
 // -- Type names (for CAST) ------------------------------------------
 // PEG ordering: longer alternatives BEFORE shorter to prevent prefix matching.
 
-type_name = { type_name_base ~ postfix_list_suffix* ~ type_not_null? }
+type_name = { prefixed_closed_dynamic_union_type | component_type_union | type_name_primary }
+type_name_primary = { type_name_base ~ postfix_list_suffix* ~ type_not_null? }
 type_not_null = { ^"NOT" ~ ^"NULL" }
 
 type_name_base = {
@@ -843,6 +844,11 @@ node_synonym = @{ (^"NODE" | ^"VERTEX") ~ !(LETTER | NUMBER | "_") }
 dynamic_union_type = { dynamic_property_value_type | open_dynamic_union_type }
 open_dynamic_union_type = { any_value_type_kw ~ value_type_kw? }
 dynamic_property_value_type = { any_value_type_kw? ~ property_type_kw ~ value_type_kw }
+prefixed_closed_dynamic_union_type = {
+    any_value_type_kw ~ value_type_kw? ~ "<" ~ component_type_list ~ ">"
+}
+component_type_union = { type_name_primary ~ ("|" ~ type_name_primary)+ }
+component_type_list = { type_name_primary ~ ("|" ~ type_name_primary)* }
 any_value_type_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
 property_type_kw = @{ ^"PROPERTY" ~ !(LETTER | NUMBER | "_") }
 value_type_kw = @{ ^"VALUE" ~ !(LETTER | NUMBER | "_") }

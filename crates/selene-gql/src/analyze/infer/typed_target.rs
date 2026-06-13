@@ -54,6 +54,7 @@ pub(super) fn is_supported_typed_target(ty: &GqlType) -> bool {
             element_type: inner,
             ..
         } => is_supported_typed_target(inner),
+        GqlType::ClosedDynamicUnion(components) => components.iter().all(is_supported_typed_target),
         GqlType::Record(RecordType::Open) => true,
         GqlType::Record(RecordType::Closed(fields)) => {
             fields.iter().all(|(_, ty)| is_supported_typed_target(ty))

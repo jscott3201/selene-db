@@ -14,6 +14,8 @@ pub enum GqlType {
     Any,
     /// `PROPERTY VALUE`.
     AnyProperty,
+    /// Closed dynamic union value type.
+    ClosedDynamicUnion(Vec<GqlType>),
     /// `STRING`.
     String,
     /// Bounded character-string type.

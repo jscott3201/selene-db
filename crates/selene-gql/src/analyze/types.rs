@@ -663,6 +663,13 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
     match ty {
         GqlType::Any => 50u8.hash(state),
         GqlType::AnyProperty => 51u8.hash(state),
+        GqlType::ClosedDynamicUnion(components) => {
+            54u8.hash(state);
+            components.len().hash(state);
+            for component in components {
+                hash_gql_type(component, state);
+            }
+        }
         GqlType::String => 0u8.hash(state),
         GqlType::CharacterString(character) => {
             48u8.hash(state);
@@ -736,8 +743,8 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
             34u8.hash(state);
             hash_binding_table_type(table, state);
         }
-        GqlType::Null => 35u8.hash(state),
-        GqlType::Nothing => 36u8.hash(state),
+        GqlType::Null => 52u8.hash(state),
+        GqlType::Nothing => 53u8.hash(state),
         GqlType::Uuid => 37u8.hash(state),
         GqlType::Vector => 38u8.hash(state),
         GqlType::Json => 39u8.hash(state),

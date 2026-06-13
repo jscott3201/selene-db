@@ -1,5 +1,7 @@
 //! GQL type-name builders.
 
+mod dynamic_union;
+mod list;
 mod strings;
 
 use pest::iterators::Pair;
@@ -26,8 +28,13 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
 fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
     debug_assert!(matches!(
         pair.as_rule(),
-        Rule::type_name | Rule::type_name_base
+        Rule::type_name
+            | Rule::type_name_primary
+            | Rule::type_name_base
+            | Rule::prefixed_closed_dynamic_union_type
+            | Rule::component_type_union
     ));
+    let pair_rule = pair.as_rule();
     let source_span = span(&pair);
     if depth > MAX_NESTING_DEPTH {
         return Err(ParserError::NestingLimitExceeded {
@@ -36,11 +43,26 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         });
     }
 
-    if pair.as_rule() == Rule::type_name {
+    if matches!(pair_rule, Rule::type_name | Rule::type_name_primary) {
         let mut children = pair.into_inner();
         let base = children.next().ok_or_else(|| {
             ParserError::syntax("type name is missing base type", source_span, None)
         })?;
+        if pair_rule == Rule::type_name
+            && matches!(
+                base.as_rule(),
+                Rule::prefixed_closed_dynamic_union_type | Rule::component_type_union
+            )
+        {
+            if children.next().is_some() {
+                return Err(ParserError::syntax(
+                    "closed dynamic union type cannot have type-name suffixes",
+                    source_span,
+                    None,
+                ));
+            }
+            return dynamic_union::build_closed_dynamic_union_type_name(base, depth, source_span);
+        }
         let mut ty = build_type_name_with_depth(base, depth)?;
         let mut suffix_depth = depth;
         let mut outer_not_null = false;
@@ -55,11 +77,11 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
                         });
                     }
                     let child_span = span(&child);
-                    let (element_not_null, max_len) = build_postfix_list_suffix(child)?;
+                    let (element_not_null, max_len) = list::build_postfix_list_suffix(child)?;
                     if element_not_null {
                         ty = apply_not_null(ty, child_span)?;
                     }
-                    ty = build_list_type(ty, max_len);
+                    ty = list::build_list_type(ty, max_len);
                 }
                 Rule::type_not_null => outer_not_null = true,
                 _ => return Err(unexpected_pair(child, "expected type-name suffix")),
@@ -70,6 +92,12 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         } else {
             ty
         });
+    }
+    if matches!(
+        pair_rule,
+        Rule::prefixed_closed_dynamic_union_type | Rule::component_type_union
+    ) {
+        return dynamic_union::build_closed_dynamic_union_type_name(pair, depth, source_span);
     }
 
     // Match the raw token sequence case- and whitespace-insensitively rather
@@ -169,7 +197,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         .into_inner()
         .find(|child| child.as_rule() == Rule::dynamic_union_type)
     {
-        return build_dynamic_union_type_name(dynamic_union_type, source_span);
+        return dynamic_union::build_open_dynamic_union_type_name(dynamic_union_type, source_span);
     }
     if let Some(list_type) = pair
         .clone()
@@ -184,14 +212,16 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
                 Rule::type_name => {
                     inner_type = Some(build_type_name_with_depth(child, depth + 1)?);
                 }
-                Rule::list_max_cardinality => max_len = Some(build_list_max_cardinality(child)?),
+                Rule::list_max_cardinality => {
+                    max_len = Some(list::build_list_max_cardinality(child)?);
+                }
                 _ => return Err(unexpected_pair(child, "unexpected list type child")),
             }
         }
         let inner_type = inner_type.ok_or_else(|| {
             ParserError::syntax("list type is missing element type", source_span, None)
         })?;
-        return Ok(build_list_type(inner_type, max_len));
+        return Ok(list::build_list_type(inner_type, max_len));
     }
     if let Some(list_type) = pair
         .clone()
@@ -202,11 +232,13 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         for child in list_type.into_inner() {
             match child.as_rule() {
                 Rule::list_value_type_name_synonym => {}
-                Rule::list_max_cardinality => max_len = Some(build_list_max_cardinality(child)?),
+                Rule::list_max_cardinality => {
+                    max_len = Some(list::build_list_max_cardinality(child)?);
+                }
                 _ => return Err(unexpected_pair(child, "unexpected bare list type child")),
             }
         }
-        return Ok(build_list_type(GqlType::Any, max_len));
+        return Ok(list::build_list_type(GqlType::Any, max_len));
     }
 
     if let Some(record_type) = pair
@@ -322,29 +354,6 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     ))
 }
 
-fn build_dynamic_union_type_name(
-    pair: Pair<'_, Rule>,
-    source_span: SourceSpan,
-) -> Result<GqlType, ParserError> {
-    let text = pair.as_str();
-    if keyword_tokens_eq(text, &["ANY"]) || keyword_tokens_eq(text, &["ANY", "VALUE"]) {
-        return Ok(GqlType::Any);
-    }
-    if keyword_tokens_eq(text, &["PROPERTY", "VALUE"])
-        || keyword_tokens_eq(text, &["ANY", "PROPERTY", "VALUE"])
-    {
-        return Ok(GqlType::AnyProperty);
-    }
-    Err(ParserError::syntax(
-        "unsupported dynamic union value type",
-        source_span,
-        Some(
-            "open dynamic union types are ANY, ANY VALUE, PROPERTY VALUE, and ANY PROPERTY VALUE"
-                .into(),
-        ),
-    ))
-}
-
 fn apply_not_null(ty: GqlType, span: SourceSpan) -> Result<GqlType, ParserError> {
     match ty {
         GqlType::Null => Ok(GqlType::Nothing),
@@ -355,56 +364,6 @@ fn apply_not_null(ty: GqlType, span: SourceSpan) -> Result<GqlType, ParserError>
         )),
         other => Ok(GqlType::NotNull(Box::new(other))),
     }
-}
-
-fn build_postfix_list_suffix(pair: Pair<'_, Rule>) -> Result<(bool, Option<u64>), ParserError> {
-    let mut element_not_null = false;
-    let mut max_len = None;
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::list_value_type_name_synonym => {}
-            Rule::type_not_null => element_not_null = true,
-            Rule::list_max_cardinality => max_len = Some(build_list_max_cardinality(child)?),
-            _ => {
-                return Err(unexpected_pair(
-                    child,
-                    "unexpected postfix list suffix child",
-                ));
-            }
-        }
-    }
-    Ok((element_not_null, max_len))
-}
-
-fn build_list_type(element_type: GqlType, max_len: Option<u64>) -> GqlType {
-    match max_len {
-        Some(max_len) => GqlType::BoundedList {
-            element_type: Box::new(element_type),
-            max_len,
-        },
-        None => GqlType::List(Box::new(element_type)),
-    }
-}
-
-fn build_list_max_cardinality(pair: Pair<'_, Rule>) -> Result<u64, ParserError> {
-    let source_span = span(&pair);
-    let max_len = pair
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::unsigned_integer)
-        .ok_or_else(|| {
-            ParserError::syntax("list max cardinality is missing length", source_span, None)
-        })
-        .and_then(|child| {
-            strings::parse_unsigned_length(child.as_str(), span(&child), "list max cardinality")
-        })?;
-    if max_len == 0 {
-        return Err(ParserError::syntax(
-            "list max cardinality must be positive",
-            source_span,
-            Some("use a positive maximum cardinality such as [1]".into()),
-        ));
-    }
-    Ok(max_len)
 }
 
 fn build_record_type_name(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {

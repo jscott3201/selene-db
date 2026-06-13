@@ -330,6 +330,7 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::Null => PropertyValueType::Null,
         GqlType::Any
         | GqlType::AnyProperty
+        | GqlType::ClosedDynamicUnion(_)
         | GqlType::Record(_)
         | GqlType::List(_)
         | GqlType::BoundedList { .. }
