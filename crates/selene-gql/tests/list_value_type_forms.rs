@@ -42,6 +42,17 @@ fn array_and_postfix_list_type_forms_parse_to_canonical_ast() {
                 max_len: 10,
             },
         ),
+        (
+            "RETURN NULL IS TYPED LIST AS ok",
+            GqlType::List(Box::new(GqlType::Any)),
+        ),
+        (
+            "RETURN NULL IS TYPED ARRAY[3] AS ok",
+            GqlType::BoundedList {
+                element_type: Box::new(GqlType::Any),
+                max_len: 3,
+            },
+        ),
     ] {
         assert_eq!(typed_type(source), expected, "{source}");
     }
@@ -92,6 +103,10 @@ fn list_type_forms_format_to_canonical_prefix_list() {
             "RETURN NULL IS TYPED LIST<STRING>[10] NOT NULL AS ok",
             "RETURN null IS TYPED LIST<STRING>[10] NOT NULL AS ok",
         ),
+        (
+            "RETURN NULL IS TYPED ARRAY[3] AS ok",
+            "RETURN null IS TYPED LIST<ANY>[3] AS ok",
+        ),
     ] {
         let parsed = parse(source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
         let formatted = format_read_statement(&parsed).expect("read-side AST formats");
@@ -117,6 +132,59 @@ fn bounded_list_type_predicates_enforce_max_cardinality() {
     );
     assert_eq!(
         first_value("RETURN ['x'] IS TYPED INTEGER ARRAY[1] AS ok"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn bare_list_type_predicates_use_any_element_type() {
+    let graph = SharedGraph::new(GraphId::new(16_607));
+    let mut session = Session::new(&graph);
+    let name = db_string("xs").expect("valid parameter name");
+    session.bind_parameter(
+        name,
+        Value::List(vec![
+            Value::Int(1),
+            Value::String(db_string("x").expect("valid string")),
+            Value::Bool(true),
+        ]),
+    );
+
+    let output = session
+        .execute_source("RETURN $xs IS TYPED LIST AS ok", &EmptyProcedureRegistry)
+        .expect("mixed list parameter can be checked against LIST<ANY>");
+    assert_eq!(first_output_value(output), Value::Bool(true));
+
+    let output = session
+        .execute_source(
+            "RETURN $xs IS TYPED ARRAY[3] AS ok",
+            &EmptyProcedureRegistry,
+        )
+        .expect("mixed list parameter can be checked against bounded LIST<ANY>");
+    assert_eq!(first_output_value(output), Value::Bool(true));
+
+    let output = session
+        .execute_source(
+            "RETURN $xs IS TYPED ARRAY[2] AS ok",
+            &EmptyProcedureRegistry,
+        )
+        .expect("oversized mixed list parameter can be checked against bounded LIST<ANY>");
+    assert_eq!(first_output_value(output), Value::Bool(false));
+
+    assert_eq!(
+        first_value("RETURN ['x'] IS TYPED LIST AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN ['x'] IS TYPED ARRAY[1] AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN ['x'] IS TYPED ARRAY[0x1] AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN ['x', 'y'] IS TYPED ARRAY[1] AS ok"),
         Value::Bool(false)
     );
 }
@@ -170,11 +238,10 @@ fn zero_max_cardinality_rejects_at_parse_time() {
 }
 
 #[test]
-fn group_and_bare_list_type_forms_remain_deferred() {
+fn group_list_type_forms_remain_deferred() {
     for source in [
         "RETURN NULL IS TYPED GROUP LIST<NODE> AS ok",
         "RETURN NULL IS TYPED GROUP ARRAY<EDGE> AS ok",
-        "RETURN NULL IS TYPED LIST AS ok",
     ] {
         let err = parse(source).expect_err("deferred list type form should reject");
         assert!(

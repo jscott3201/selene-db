@@ -328,7 +328,12 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::EdgeRef => PropertyValueType::EdgeRef,
         GqlType::TableRef(_) => PropertyValueType::TableRef,
         GqlType::Null => PropertyValueType::Null,
-        GqlType::Record(_) | GqlType::List(_) | GqlType::BoundedList { .. } | GqlType::Nothing => {
+        GqlType::Any
+        | GqlType::AnyProperty
+        | GqlType::Record(_)
+        | GqlType::List(_)
+        | GqlType::BoundedList { .. }
+        | GqlType::Nothing => {
             return Err(ExecutorError::ImplementationDefined {
                 detail: "type property GQL type not supported as property value type (Phase A)",
             });

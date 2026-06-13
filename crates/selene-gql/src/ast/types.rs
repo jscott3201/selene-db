@@ -10,6 +10,10 @@ use selene_core::{
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub enum GqlType {
+    /// `ANY`.
+    Any,
+    /// `PROPERTY VALUE`.
+    AnyProperty,
     /// `STRING`.
     String,
     /// Bounded character-string type.

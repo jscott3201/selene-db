@@ -800,10 +800,13 @@ type_name_base = {
   | open_reference_value_type
   | ^"PATH"
   | angle_list_type
+  | bare_list_type
   | record_type
+  | dynamic_union_type
   | ^"NOTHING" | ^"NULL"
 }
 angle_list_type = { list_value_type_name_synonym ~ "<" ~ type_name ~ ">" ~ list_max_cardinality? }
+bare_list_type = { list_value_type_name_synonym ~ list_max_cardinality? }
 postfix_list_suffix = { type_not_null? ~ list_value_type_name_synonym ~ list_max_cardinality? }
 list_max_cardinality = { "[" ~ unsigned_integer ~ "]" }
 list_value_type_name_synonym = @{ (^"LIST" | ^"ARRAY") ~ !(LETTER | NUMBER | "_") }
@@ -836,6 +839,13 @@ open_reference_value_type = {
   | edge_synonym
 }
 node_synonym = @{ (^"NODE" | ^"VERTEX") ~ !(LETTER | NUMBER | "_") }
+
+dynamic_union_type = { dynamic_property_value_type | open_dynamic_union_type }
+open_dynamic_union_type = { any_value_type_kw ~ value_type_kw? }
+dynamic_property_value_type = { any_value_type_kw? ~ property_type_kw ~ value_type_kw }
+any_value_type_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
+property_type_kw = @{ ^"PROPERTY" ~ !(LETTER | NUMBER | "_") }
+value_type_kw = @{ ^"VALUE" ~ !(LETTER | NUMBER | "_") }
 
 // ISO/IEC 39075:2024 §18.9 <record type>:
 //   [ ANY ] RECORD | [ RECORD ] <field types specification>

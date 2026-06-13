@@ -346,7 +346,12 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
         GqlType::Uuid => record_feature(uses, FeatureId::IM_UUID, span),
         GqlType::Json => record_feature(uses, FeatureId::IM_JSON, span),
         GqlType::Vector => record_feature(uses, FeatureId::IM_VECTOR, span),
-        GqlType::String | GqlType::Boolean | GqlType::Integer | GqlType::Float => {}
+        GqlType::Any
+        | GqlType::AnyProperty
+        | GqlType::String
+        | GqlType::Boolean
+        | GqlType::Integer
+        | GqlType::Float => {}
         GqlType::CharacterString(character_type) => match character_type.form {
             crate::ast::CharacterStringTypeForm::StringMax
             | crate::ast::CharacterStringTypeForm::VarcharMax => {

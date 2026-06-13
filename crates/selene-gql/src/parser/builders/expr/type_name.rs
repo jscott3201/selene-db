@@ -164,6 +164,13 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     {
         return build_binding_table_type_name(binding_table_type, depth);
     }
+    if let Some(dynamic_union_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::dynamic_union_type)
+    {
+        return build_dynamic_union_type_name(dynamic_union_type, source_span);
+    }
     if let Some(list_type) = pair
         .clone()
         .into_inner()
@@ -185,6 +192,21 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             ParserError::syntax("list type is missing element type", source_span, None)
         })?;
         return Ok(build_list_type(inner_type, max_len));
+    }
+    if let Some(list_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::bare_list_type)
+    {
+        let mut max_len = None;
+        for child in list_type.into_inner() {
+            match child.as_rule() {
+                Rule::list_value_type_name_synonym => {}
+                Rule::list_max_cardinality => max_len = Some(build_list_max_cardinality(child)?),
+                _ => return Err(unexpected_pair(child, "unexpected bare list type child")),
+            }
+        }
+        return Ok(build_list_type(GqlType::Any, max_len));
     }
 
     if let Some(record_type) = pair
@@ -249,6 +271,10 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         (&["REAL"], GqlType::Real),
         (&["DOUBLE"], GqlType::Double),
         (&["DOUBLE", "PRECISION"], GqlType::Double),
+        (&["ANY"], GqlType::Any),
+        (&["ANY", "VALUE"], GqlType::Any),
+        (&["PROPERTY", "VALUE"], GqlType::AnyProperty),
+        (&["ANY", "PROPERTY", "VALUE"], GqlType::AnyProperty),
         (&["UUID"], GqlType::Uuid),
         (&["JSON"], GqlType::Json),
         (&["VECTOR"], GqlType::Vector),
@@ -293,6 +319,29 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     Err(not_implemented(
         &pair,
         "this GQL type constructor is not yet supported",
+    ))
+}
+
+fn build_dynamic_union_type_name(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<GqlType, ParserError> {
+    let text = pair.as_str();
+    if keyword_tokens_eq(text, &["ANY"]) || keyword_tokens_eq(text, &["ANY", "VALUE"]) {
+        return Ok(GqlType::Any);
+    }
+    if keyword_tokens_eq(text, &["PROPERTY", "VALUE"])
+        || keyword_tokens_eq(text, &["ANY", "PROPERTY", "VALUE"])
+    {
+        return Ok(GqlType::AnyProperty);
+    }
+    Err(ParserError::syntax(
+        "unsupported dynamic union value type",
+        source_span,
+        Some(
+            "open dynamic union types are ANY, ANY VALUE, PROPERTY VALUE, and ANY PROPERTY VALUE"
+                .into(),
+        ),
     ))
 }
 
