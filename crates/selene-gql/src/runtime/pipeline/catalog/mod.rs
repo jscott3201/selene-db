@@ -589,6 +589,9 @@ fn render_gql_type(ty: &GqlType) -> String {
         // structure so introspection can distinguish open vs closed.
         GqlType::Record(crate::RecordType::Open) => "RECORD".to_owned(),
         GqlType::Record(crate::RecordType::Closed(fields)) => {
+            if fields.is_empty() {
+                return "RECORD {}".to_owned();
+            }
             let rendered = fields
                 .iter()
                 .map(|(name, ty)| format!("{} :: {}", name.as_str(), render_gql_type(ty)))

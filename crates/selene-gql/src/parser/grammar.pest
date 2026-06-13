@@ -798,10 +798,7 @@ type_name_base = {
   | duration_type
   | ^"PATH"
   | ^"LIST" ~ "<" ~ type_name ~ ">"
-  // Record types (spec section18.9 <record type>): closed `RECORD { a :: INT }` longest
-  // first, then the open/bare `RECORD`. Field syntax uses `::` (record_field_type).
-  | ^"RECORD" ~ "{" ~ record_field_type ~ ("," ~ record_field_type)* ~ "}"
-  | ^"RECORD"
+  | record_type
   | ^"NOTHING" | ^"NULL"
 }
 signed_integer_precision_type = {
@@ -815,6 +812,18 @@ decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision 
 numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 duration_type = { ^"DURATION" ~ "(" ~ temporal_duration_qualifier ~ ")" }
+
+// ISO/IEC 39075:2024 §18.9 <record type>:
+//   [ ANY ] RECORD | [ RECORD ] <field types specification>
+// GROUP-like specification-only devices do not apply here; ANY RECORD is the
+// open record type, while `{}` / `RECORD {}` are the closed unit record type.
+record_type = {
+    ^"ANY" ~ ^"RECORD"
+  | ^"RECORD" ~ field_types_specification
+  | field_types_specification
+  | ^"RECORD"
+}
+field_types_specification = { "{" ~ (record_field_type ~ ("," ~ record_field_type)*)? ~ "}" }
 
 character_string_type = {
     ^"STRING" ~ ("(" ~ character_string_length ~ ("," ~ character_string_length)? ~ ")")?

@@ -397,6 +397,9 @@ pub(super) fn render_property_value_type(
 }
 
 fn render_record_field_types(fields: &RecordFieldTypes) -> String {
+    if fields.0.is_empty() {
+        return "RECORD {}".to_owned();
+    }
     let rendered = fields
         .0
         .iter()
