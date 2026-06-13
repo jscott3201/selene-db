@@ -6,6 +6,8 @@ use selene_testing::local_omlx::EmbeddingBenchConfig;
 
 #[path = "vector_omlx_query_roots/fixture.rs"]
 mod fixture;
+#[path = "vector_omlx_query_roots/json_score_rows.rs"]
+mod json_score_rows;
 #[path = "vector_omlx_query_roots/labels.rs"]
 mod labels;
 #[path = "vector_omlx_query_roots/state_batch_rows.rs"]
@@ -580,6 +582,13 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
             current_precision,
         );
         text_score_rows::bench_text_score_rows(
+            &mut group,
+            &registry,
+            &fixture,
+            &model_id,
+            corpus_label(config.corpus),
+        );
+        json_score_rows::bench_json_score_rows(
             &mut group,
             &registry,
             &fixture,
