@@ -164,6 +164,48 @@ impl CorpusInput {
     }
 }
 
+/// Repeat document inputs while preserving a single copy of each query.
+///
+/// Duplicate documents keep their topic but clear target keys, so target-hit
+/// rows keep a unique original target document. A short marker is appended to
+/// duplicate text so embedding providers do not see exact byte-identical rows.
+pub fn scale_document_inputs(
+    inputs: Vec<CorpusInput>,
+    document_repetitions: usize,
+) -> Vec<CorpusInput> {
+    assert!(
+        document_repetitions > 0,
+        "embedding corpus repeat must be greater than zero"
+    );
+    if document_repetitions == 1 {
+        return inputs;
+    }
+
+    let documents = inputs
+        .iter()
+        .filter(|input| input.is_document)
+        .cloned()
+        .collect::<Vec<_>>();
+    let queries = inputs
+        .into_iter()
+        .filter(|input| !input.is_document)
+        .collect::<Vec<_>>();
+    let mut scaled = Vec::with_capacity(documents.len() * document_repetitions + queries.len());
+    scaled.extend(documents.iter().cloned());
+    for repetition in 2..=document_repetitions {
+        for input in &documents {
+            let mut duplicate = input.clone();
+            duplicate.target_key = None;
+            duplicate.text.push_str(&format!(
+                "\n\n[embedding corpus duplicate {repetition}/{document_repetitions}]"
+            ));
+            scaled.push(duplicate);
+        }
+    }
+    scaled.extend(queries);
+    scaled
+}
+
 /// Return the graph label used for `topic` in benchmark fixtures.
 pub fn topic_label(topic: Topic) -> DbString {
     match topic {

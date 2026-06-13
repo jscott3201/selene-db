@@ -25,7 +25,7 @@ pub(super) fn bench(c: &mut Criterion) {
     let Some(config) = EmbeddingBenchConfig::from_env() else {
         return;
     };
-    let inputs = config.corpus.inputs();
+    let inputs = config.inputs();
     let mut group = c.benchmark_group("graph_vector_omlx_embedding_pressure");
     for model in &config.models {
         let model_id = model_id(model);

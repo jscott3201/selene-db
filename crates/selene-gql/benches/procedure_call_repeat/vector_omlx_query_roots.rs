@@ -20,7 +20,7 @@ pub(super) fn bench_vector_omlx_query_roots_procedure(c: &mut Criterion) {
     let Some(config) = EmbeddingBenchConfig::from_env() else {
         return;
     };
-    let inputs = config.corpus.inputs();
+    let inputs = config.inputs();
     let registry = BuiltinProcedureRegistry::new();
     let mut group = c.benchmark_group("procedure_vector_omlx_query_roots");
     for model in &config.models {
