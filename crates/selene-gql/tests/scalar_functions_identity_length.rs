@@ -190,7 +190,7 @@ fn element_id_rejects_wrong_arity() {
 fn element_id_is_stable_for_equality_within_statement() {
     assert_eq!(
         single_value(
-            "MATCH (n:Person) RETURN element_id(n) = element_id(n) AS same LIMIT 1",
+            "MATCH (n:Person) RETURN element_id(n) = element_id(n) AS \"same\" LIMIT 1",
             "same",
         ),
         Value::Bool(true)

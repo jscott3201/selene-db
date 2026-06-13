@@ -187,7 +187,7 @@ fn elements_function_returns_ordered_path_element_list() {
     let table = rows_from_output(
         session
             .execute_source(
-                "RETURN elements($p) AS elements, elements($empty) AS empty_elements",
+                "RETURN elements($p) AS \"elements\", elements($empty) AS empty_elements",
                 &EmptyProcedureRegistry,
             )
             .expect("source executes"),

@@ -470,7 +470,7 @@ fn build_alias(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let source_span = span(&pair);
     let ident = pair
         .into_inner()
-        .find(|child| child.as_rule() == Rule::prop_ident)
+        .find(|child| child.as_rule() == Rule::ident)
         .ok_or_else(|| ParserError::syntax("AS alias is missing identifier", source_span, None))?;
     db_string_pair(ident)
 }

@@ -369,7 +369,7 @@ fn parse_current_datetime_keyword_functions() {
     assert_function_call("RETURN current_timestamp()", "current_timestamp");
     assert_function_call("RETURN local_datetime()", "local_datetime");
     assert_function_call("RETURN local_time()", "local_time");
-    assert_function_call_with_args("RETURN LOCAL_TIME('12:34:56')", "LOCAL_TIME", 1);
+    assert_function_call_with_args("RETURN LOCAL_TIME('12:34:56')", "local_time", 1);
 }
 
 #[test]

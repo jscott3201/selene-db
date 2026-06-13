@@ -62,7 +62,7 @@ fn return_items(analyzed: &AnalyzedStatement) -> &[ReturnItem] {
 
 #[test]
 fn integer_arithmetic_promotes_to_integer() {
-    let analyzed = analyze_one("RETURN 1 + 2 AS sum").unwrap();
+    let analyzed = analyze_one("RETURN 1 + 2 AS \"sum\"").unwrap();
     assert_eq!(
         projection_type(&analyzed, "sum"),
         AnalyzedType::Resolved(GqlType::Integer)
@@ -71,7 +71,7 @@ fn integer_arithmetic_promotes_to_integer() {
 
 #[test]
 fn float_plus_integer_promotes_to_float64() {
-    let analyzed = analyze_one("RETURN 1 + 2.0D AS sum").unwrap();
+    let analyzed = analyze_one("RETURN 1 + 2.0D AS \"sum\"").unwrap();
     assert_eq!(
         projection_type(&analyzed, "sum"),
         AnalyzedType::Resolved(GqlType::Float64)
@@ -80,7 +80,7 @@ fn float_plus_integer_promotes_to_float64() {
 
 #[test]
 fn decimal_plus_integer_promotes_to_decimal() {
-    let analyzed = analyze_one("RETURN 1 + 2.0 AS sum").unwrap();
+    let analyzed = analyze_one("RETURN 1 + 2.0 AS \"sum\"").unwrap();
     assert_eq!(
         projection_type(&analyzed, "sum"),
         AnalyzedType::Resolved(GqlType::Decimal)
@@ -260,8 +260,8 @@ fn concat_accepts_static_null_operand() {
 
 #[test]
 fn expr_type_table_is_deterministic_for_same_source() {
-    let left = analyze_one("RETURN 1 + 2 AS sum").unwrap();
-    let right = analyze_one("RETURN 1 + 2 AS sum").unwrap();
+    let left = analyze_one("RETURN 1 + 2 AS \"sum\"").unwrap();
+    let right = analyze_one("RETURN 1 + 2 AS \"sum\"").unwrap();
     let left_types = left
         .expr_types
         .iter()
@@ -303,7 +303,7 @@ fn expr_id_lookup_distinguishes_repeated_structural_occurrences() {
 
 #[test]
 fn analyzed_statement_clone_preserves_expr_id_lookup() {
-    let analyzed = analyze_one("RETURN 1 + 2 AS sum").unwrap();
+    let analyzed = analyze_one("RETURN 1 + 2 AS \"sum\"").unwrap();
     let cloned = analyzed.clone();
     let item = &return_items(&cloned)[0];
     let id = cloned
