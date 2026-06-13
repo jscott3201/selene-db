@@ -14,7 +14,7 @@
 #   run-benches.sh --smoke                       # curated <~60s tripwire subset
 #   run-benches.sh --bench wal                   # just one bench bin (scoped compile)
 #   run-benches.sh --bench vector_graph_retrieval --compile-only  # compile tripwire, no Criterion run
-#   run-benches.sh --crate selene-graph          # just one crate's benches
+#   run-benches.sh --crate selene-db-graph       # just one package's benches
 #   run-benches.sh --bench wal --filter append_batch     # one criterion group
 #   run-benches.sh --bench graph_hub_delete --save-baseline pre-graph05
 #   run-benches.sh --bench graph_hub_delete --baseline pre-graph05   # %-change diff
@@ -30,7 +30,7 @@
 #   run-benches.sh --profile quick --bench vector_wgpu --filter core_vector_wgpu_prototype
 #   SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 #   run-benches.sh --bench vector_index_rebuild --allocator system    # allocator A/B
-#   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
+#   run-benches.sh --crate selene-db-graph --dry-run     # preview, run nothing
 #
 # Profiles select the workload envelope via
 # crates/selene-testing/src/bench_profiles.rs::BenchProfile::scales():
@@ -61,57 +61,57 @@ set -euo pipefail
 # bin if the feature is absent, so those entries are marked needs_test_harness=1.
 # ---------------------------------------------------------------------------
 REGISTRY="
-selene-core|value_clone|0
-selene-core|vector_wgpu|0
-selene-graph|single_graph|0
-selene-graph|vector_index_rebuild|0
-selene-graph|vector_pq|0
-selene-graph|vector_ivf_pq|0
-selene-graph|vector_turbo_projection|0
-selene-graph|vector_turbo_churn|0
-selene-graph|vector_ivf_pressure|0
-selene-graph|vector_ivf_insert_drift|0
-selene-graph|vector_mixed_workload|0
-selene-graph|bulk_mutation|0
-selene-graph|concurrent_read|0
-selene-graph|bfs|0
-selene-graph|write_txn_lifecycle|0
-selene-graph|provider_fanout|0
-selene-graph|bound_type_validation|0
-selene-graph|concurrent_writers|0
-selene-graph|graph_hub_delete|0
-selene-graph|graph_delete_reclamation|0
-selene-graph|graph_snapshot_roundtrip|0
-selene-graph|graph_read_under_write|0
-selene-graph|graph_mixed_workload|0
-selene-graph|text_search_bm25|0
-selene-persist|wal|0
-selene-persist|snapshot|0
-selene-gql|parse|1
-selene-gql|analyze|1
-selene-gql|plan_optimize|1
-selene-gql|write_e2e|1
-selene-gql|expression_eval|0
-selene-gql|procedure_call_repeat|0
-selene-gql|correlated_subquery|0
-selene-gql|read_pipeline|0
-selene-algorithms|algo_bench|0
-selene-algorithms|projection|0
-selene-algorithms|vector_graph_retrieval|0
+selene-db-core|value_clone|0
+selene-db-core|vector_wgpu|0
+selene-db-graph|single_graph|0
+selene-db-graph|vector_index_rebuild|0
+selene-db-graph|vector_pq|0
+selene-db-graph|vector_ivf_pq|0
+selene-db-graph|vector_turbo_projection|0
+selene-db-graph|vector_turbo_churn|0
+selene-db-graph|vector_ivf_pressure|0
+selene-db-graph|vector_ivf_insert_drift|0
+selene-db-graph|vector_mixed_workload|0
+selene-db-graph|bulk_mutation|0
+selene-db-graph|concurrent_read|0
+selene-db-graph|bfs|0
+selene-db-graph|write_txn_lifecycle|0
+selene-db-graph|provider_fanout|0
+selene-db-graph|bound_type_validation|0
+selene-db-graph|concurrent_writers|0
+selene-db-graph|graph_hub_delete|0
+selene-db-graph|graph_delete_reclamation|0
+selene-db-graph|graph_snapshot_roundtrip|0
+selene-db-graph|graph_read_under_write|0
+selene-db-graph|graph_mixed_workload|0
+selene-db-graph|text_search_bm25|0
+selene-db-persist|wal|0
+selene-db-persist|snapshot|0
+selene-db-gql|parse|1
+selene-db-gql|analyze|1
+selene-db-gql|plan_optimize|1
+selene-db-gql|write_e2e|1
+selene-db-gql|expression_eval|0
+selene-db-gql|procedure_call_repeat|0
+selene-db-gql|correlated_subquery|0
+selene-db-gql|read_pipeline|0
+selene-db-algorithms|algo_bench|0
+selene-db-algorithms|projection|0
+selene-db-algorithms|vector_graph_retrieval|0
 "
 
 # Curated smoke subset — highest-signal, lowest-variance rows for a <~60s
 # pre-push tripwire. Format: <crate>|<bench-bin>|<criterion-id-filter>
 # Runs at --profile quick unless an explicit --profile overrides it.
 SMOKE="
-selene-graph|single_graph|node_fetch
-selene-graph|single_graph|label_index
-selene-graph|bulk_mutation|commit_batch
-selene-persist|wal|append_batch_1000
-selene-gql|plan_optimize|
-selene-gql|expression_eval|
-selene-algorithms|projection|projection_build
-selene-algorithms|algo_bench|pagerank
+selene-db-graph|single_graph|node_fetch
+selene-db-graph|single_graph|label_index
+selene-db-graph|bulk_mutation|commit_batch
+selene-db-persist|wal|append_batch_1000
+selene-db-gql|plan_optimize|
+selene-db-gql|expression_eval|
+selene-db-algorithms|projection|projection_build
+selene-db-algorithms|algo_bench|pagerank
 "
 
 PROFILE=""

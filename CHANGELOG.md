@@ -8,6 +8,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.2.0] — 2026-06-13
 
+### Packaging
+
+- Public crates publish to crates.io under the `selene-db-*` package namespace:
+  `selene-db-core`, `selene-db-persist`, `selene-db-graph`,
+  `selene-db-algorithms`, and `selene-db-gql`. The Rust library crate names
+  remain `selene_core`, `selene_persist`, `selene_graph`, `selene_algorithms`,
+  and `selene_gql`, so downstream manifests can use dependency aliases such as
+  `selene-core = { package = "selene-db-core", version = "1.2.0" }`.
+
 ### Added
 
 - **TurboQuant cosine vector index.** `selene.create_vector_index(...,
@@ -775,7 +784,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `spin` leave `Cargo.lock`, and `THIRDPARTY.md` attribution is regenerated
   to match. `selene-graph` declares postcard's `use-std` feature on its own
   dependency line (it calls `postcard::to_stdvec`) so a standalone
-  `cargo check -p selene-graph` still builds instead of riding feature
+  `cargo check -p selene-db-graph` still builds instead of riding feature
   unification.
 
 ## [1.1.0] — 2026-05-31

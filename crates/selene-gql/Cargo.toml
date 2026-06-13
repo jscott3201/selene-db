@@ -1,5 +1,5 @@
 [package]
-name = "selene-gql"
+name = "selene-db-gql"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +10,13 @@ homepage.workspace = true
 description = "ISO/IEC 39075:2024 GQL parser, planner, optimizer, and executor for selene-db."
 autobenches = false
 
+[lib]
+name = "selene_gql"
+
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.2.0" }
-selene-graph = { path = "../selene-graph", version = "1.2.0" }
-selene-algorithms = { path = "../selene-algorithms", version = "1.2.0" }
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "1.2.0" }
+selene-algorithms = { package = "selene-db-algorithms", path = "../selene-algorithms", version = "1.2.0" }
 jiff.workspace = true
 miette.workspace = true
 parking_lot.workspace = true
@@ -45,8 +48,8 @@ parking_lot.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 rust_decimal.workspace = true
-selene-persist = { path = "../selene-persist", version = "1.2.0" }
-selene-testing = { path = "../selene-testing" }
+selene-persist = { package = "selene-db-persist", path = "../selene-persist", version = "1.2.0" }
+selene-testing = { package = "selene-db-testing", path = "../selene-testing" }
 serde_json.workspace = true
 tempfile.workspace = true
 tracing-subscriber.workspace = true

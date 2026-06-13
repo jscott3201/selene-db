@@ -31,7 +31,7 @@ rm "$TMPDIR/.github/workflows/bad.yml"
 
 cat > "$TMPDIR/Makefile" <<'SCRIPT'
 bench:
-	cargo bench --bench single_graph -p selene-graph &
+	cargo bench --bench single_graph -p selene-db-graph &
 SCRIPT
 
 if "$SCRIPT_UNDER_TEST" "$TMPDIR" >/dev/null 2>&1; then
