@@ -51,21 +51,11 @@ impl TextIndexBuilder {
         let mut terms = Vec::with_capacity(counts.len());
         for (term, term_count) in counts {
             let postings = self.postings.entry(term.clone()).or_default();
-            match postings.binary_search_by_key(&node_id, |posting| posting.node_id) {
-                Ok(index) => {
-                    postings[index].term_count = term_count;
-                }
-                Err(index) => {
-                    postings.insert(
-                        index,
-                        TextPosting {
-                            node_id,
-                            term_count,
-                        },
-                    );
-                    self.posting_count = self.posting_count.saturating_add(1);
-                }
-            }
+            postings.push(TextPosting {
+                node_id,
+                term_count,
+            });
+            self.posting_count = self.posting_count.saturating_add(1);
             terms.push(term);
         }
         self.document_terms.insert(node_id, terms);
