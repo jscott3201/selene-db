@@ -283,6 +283,24 @@ impl Committer {
         reply_rx.recv().map_err(|_| committer_dead())?
     }
 
+    #[cfg(test)]
+    pub(crate) fn submit_commit_async_for_test(
+        &self,
+        sealed: SealedCommit,
+    ) -> GraphResult<Receiver<GraphResult<CommitOutcome>>> {
+        if self.poisoned.load(Ordering::Acquire) {
+            return Err(committer_dead());
+        }
+        let (reply_tx, reply_rx) = sync_channel::<GraphResult<CommitOutcome>>(1);
+        self.sender
+            .send(Work::Commit {
+                sealed,
+                reply: reply_tx,
+            })
+            .map_err(|_| committer_dead())?;
+        Ok(reply_rx)
+    }
+
     /// Submit a pre-built dense compacted snapshot, blocking until the committer
     /// publishes it (in `seal_seq` order) or reports an error.
     ///

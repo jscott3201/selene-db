@@ -556,31 +556,38 @@ fn t5_partial_batch_append_failure_errs_all_and_poisons() {
         sealeds.push(txn.seal(None, None).expect("seals"));
     }
 
-    let deadline = Instant::now() + Duration::from_secs(10);
-    // seal_seq 0 (a) is withheld; submit seal_seq 1..4 (e,d,c,b in pop order)
+    // seal_seq 0 (a) is withheld; enqueue seal_seq 1..4 (e,d,c,b in pop order)
     // first so they buffer behind the seq-0 gap, then unblock with seq 0 last.
+    // Use the async test seam here: the production submit path blocks waiting
+    // for its reply, so background threads can race seq 0 on Linux before every
+    // later seq is actually enqueued. Same-thread sends are FIFO and make the
+    // intended [0,1,2,3,4] run deterministic.
     let sealed_a = sealeds.remove(0);
-    let mut handles = Vec::new();
+    let mut replies = Vec::new();
     while let Some(sealed) = sealeds.pop() {
-        let shared = Arc::clone(&shared);
-        handles.push(thread::spawn(move || shared.submit_sealed_for_test(sealed)));
-        // Yield so each background submit lands in the reorder buffer (behind the
-        // seq-0 gap) before the next, and well before seq 0 unblocks the run.
-        for _ in 0..1_000 {
-            thread::yield_now();
-        }
+        replies.push(
+            shared
+                .submit_sealed_async_for_test(sealed)
+                .expect("later seq enqueued"),
+        );
     }
     // Seq 0 arrives last: the full [0,1,2,3,4] contiguous run is now buffered, so
     // it drains as ONE batch and the 3rd append fails the whole run.
-    let a_result = shared.submit_sealed_for_test(sealed_a);
+    let a_reply = shared
+        .submit_sealed_async_for_test(sealed_a)
+        .expect("seq 0 enqueued");
+    let a_result = a_reply
+        .recv_timeout(Duration::from_secs(10))
+        .expect("seq 0 waiter did not hang");
     let mut err_count = usize::from(a_result.is_err());
-    for handle in handles {
-        let result = handle.join().expect("waiter thread did not panic");
+    for reply in replies {
+        let result = reply
+            .recv_timeout(Duration::from_secs(10))
+            .expect("later waiter did not hang");
         if result.is_err() {
             err_count += 1;
         }
     }
-    assert!(Instant::now() < deadline, "no waiter hung");
     assert_eq!(err_count, 5, "all 5 members Err (incl. already-appended)");
 
     // Nothing published: generation never advanced.
