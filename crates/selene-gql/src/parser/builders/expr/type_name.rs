@@ -51,11 +51,12 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
                             span: span(&child),
                         });
                     }
+                    let child_span = span(&child);
                     let element_not_null = child
                         .into_inner()
                         .any(|part| part.as_rule() == Rule::type_not_null);
                     if element_not_null {
-                        ty = GqlType::NotNull(Box::new(ty));
+                        ty = apply_not_null(ty, child_span)?;
                     }
                     ty = GqlType::List(Box::new(ty));
                 }
@@ -64,7 +65,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             }
         }
         return Ok(if outer_not_null {
-            GqlType::NotNull(Box::new(ty))
+            apply_not_null(ty, source_span)?
         } else {
             ty
         });
@@ -279,6 +280,18 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         &pair,
         "this GQL type constructor is not yet supported",
     ))
+}
+
+fn apply_not_null(ty: GqlType, span: SourceSpan) -> Result<GqlType, ParserError> {
+    match ty {
+        GqlType::Null => Ok(GqlType::Nothing),
+        GqlType::Nothing => Err(ParserError::syntax(
+            "NOTHING is already the non-null empty type",
+            span,
+            Some("use NOTHING, or write NULL NOT NULL for the ISO empty type".into()),
+        )),
+        other => Ok(GqlType::NotNull(Box::new(other))),
+    }
 }
 
 fn build_record_type_name(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
