@@ -561,12 +561,59 @@ fn parse_string_type_lengths(
     text[open + 1..close]
         .split(',')
         .map(str::trim)
-        .map(|part| {
-            part.parse::<u64>().map_err(|_| {
-                ParserError::syntax(format!("{kind} length exceeds supported range"), span, None)
-            })
-        })
+        .map(|part| parse_unsigned_length(part, span, kind))
         .collect()
+}
+
+fn parse_unsigned_length(
+    text: &str,
+    span: SourceSpan,
+    kind: &'static str,
+) -> Result<u64, ParserError> {
+    let (digits, radix) = if let Some(rest) = text.strip_prefix("0x") {
+        (rest, 16)
+    } else if let Some(rest) = text.strip_prefix("0o") {
+        (rest, 8)
+    } else if let Some(rest) = text.strip_prefix("0b") {
+        (rest, 2)
+    } else {
+        (text, 10)
+    };
+    validate_unsigned_integer_underscores(digits, span, kind)?;
+    let normalized = digits.replace('_', "");
+    u64::from_str_radix(&normalized, radix).map_err(|_| {
+        ParserError::syntax(format!("{kind} length exceeds supported range"), span, None)
+    })
+}
+
+fn validate_unsigned_integer_underscores(
+    text: &str,
+    span: SourceSpan,
+    kind: &'static str,
+) -> Result<(), ParserError> {
+    let mut prev_underscore = false;
+    for &byte in text.as_bytes() {
+        if byte == b'_' {
+            if prev_underscore {
+                return Err(ParserError::syntax(
+                    format!("{kind} length contains consecutive underscores"),
+                    span,
+                    Some("use `_` only between digits".into()),
+                ));
+            }
+            prev_underscore = true;
+        } else {
+            prev_underscore = false;
+        }
+    }
+    if prev_underscore {
+        return Err(ParserError::syntax(
+            format!("{kind} length cannot end with an underscore"),
+            span,
+            Some("remove the trailing `_`".into()),
+        ));
+    }
+    Ok(())
 }
 
 fn byte_string_single_length(lengths: &[u64], span: SourceSpan) -> Result<[u64; 1], ParserError> {
