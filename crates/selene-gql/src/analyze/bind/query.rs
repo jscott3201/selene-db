@@ -519,9 +519,11 @@ fn bind_let(ctx: &mut BindContext, bindings: &[LetBinding]) -> Result<(), Analys
 fn bind_unwind(ctx: &mut BindContext, unwind: &UnwindStatement) -> Result<(), AnalysisError> {
     let id = expr::bind_value_expr(ctx, &unwind.source)?;
     let ty = match ctx.expr_type(id) {
-        AnalyzedType::Resolved(crate::GqlType::List(inner)) => {
-            AnalyzedType::Resolved((**inner).clone())
-        }
+        AnalyzedType::Resolved(crate::GqlType::List(inner))
+        | AnalyzedType::Resolved(crate::GqlType::BoundedList {
+            element_type: inner,
+            ..
+        }) => AnalyzedType::Resolved((**inner).clone()),
         _ => AnalyzedType::Dynamic,
     };
     ctx.declare_strict_typed(

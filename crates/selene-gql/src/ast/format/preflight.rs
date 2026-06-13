@@ -265,7 +265,11 @@ fn validate_type(ty: &GqlType) -> Result<(), FormatError> {
         return Err(FormatError::Unsupported { variant });
     }
     match ty {
-        GqlType::List(inner) => validate_type(inner)?,
+        GqlType::List(inner)
+        | GqlType::BoundedList {
+            element_type: inner,
+            ..
+        } => validate_type(inner)?,
         GqlType::NotNull(inner) => validate_type(inner)?,
         // Closed record types render their field structure, so each field's
         // value type must also be formattable (a nested reference type would
@@ -318,6 +322,11 @@ mod tests {
             GqlType::Vector,
         ))))
         .expect("list of vector type is formattable");
+        validate_formattable(&statement_with_type(GqlType::BoundedList {
+            element_type: Box::new(GqlType::Vector),
+            max_len: 3,
+        }))
+        .expect("bounded list of vector type is formattable");
         validate_formattable(&parameter_statement_with_type(GqlType::Vector))
             .expect("typed vector parameter is formattable");
     }

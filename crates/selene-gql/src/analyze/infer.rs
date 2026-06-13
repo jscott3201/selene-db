@@ -1,6 +1,7 @@
 //! Expression type-inference helpers.
 
 mod duration;
+mod list;
 mod numeric;
 mod trim;
 mod typed_target;
@@ -15,6 +16,7 @@ use crate::{
 
 use self::{
     duration::{duration_add_sub, duration_mul_div, temporal_duration_add_sub},
+    list::{list_concat_type, list_union_type},
     numeric::{is_numeric, numeric_promotion},
     typed_target::is_supported_typed_target,
 };
@@ -215,7 +217,11 @@ pub(crate) fn in_list_expression(
 ) -> Result<AnalyzedType, AnalysisError> {
     if let AnalyzedType::Resolved(list_ty) = list {
         match list_ty.strip_not_null() {
-            GqlType::List(item_ty) => {
+            GqlType::List(item_ty)
+            | GqlType::BoundedList {
+                element_type: item_ty,
+                ..
+            } => {
                 if let AnalyzedType::Resolved(operand_ty) = operand
                     && meet_gql_types(operand_ty, item_ty).is_none()
                 {
@@ -471,10 +477,7 @@ fn concat_result_type(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
     match (lhs.strip_not_null(), rhs.strip_not_null()) {
         (lhs, rhs) if is_character_string(lhs) && is_character_string(rhs) => Some(GqlType::String),
         (GqlType::Path, GqlType::Path) => Some(GqlType::Path),
-        (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
-            meet_gql_types(lhs_inner, rhs_inner).map(|inner| GqlType::List(Box::new(inner)))
-        }
-        _ => None,
+        (lhs, rhs) => list_concat_type(lhs, rhs, meet_gql_types),
     }
 }
 
@@ -595,6 +598,7 @@ fn expect_concat_operand(
                     | GqlType::Bytes
                     | GqlType::ByteString(_)
                     | GqlType::List(_)
+                    | GqlType::BoundedList { .. }
                     | GqlType::Path
             ) =>
         {
@@ -657,12 +661,7 @@ fn meet_gql_types(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
             },
         );
     }
-    match (lhs_base, rhs_base) {
-        (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
-            meet_gql_types(lhs_inner, rhs_inner).map(|ty| GqlType::List(Box::new(ty)))
-        }
-        _ => None,
-    }
+    list_union_type(lhs_base, rhs_base, meet_gql_types)
 }
 
 fn type_mismatch(

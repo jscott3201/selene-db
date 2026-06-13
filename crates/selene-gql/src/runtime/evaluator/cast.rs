@@ -209,7 +209,11 @@ pub(super) fn eval_cast(
         | GqlType::Duration
         | GqlType::DurationYearToMonth
         | GqlType::DurationDayToSecond => cast_to_temporal(value, target_type, span, ctx),
-        GqlType::List(element_type) => cast_to_list(value, element_type, span, ctx),
+        GqlType::List(element_type) => cast_to_list(value, element_type, None, span, ctx),
+        GqlType::BoundedList {
+            element_type,
+            max_len,
+        } => cast_to_list(value, element_type, Some(*max_len), span, ctx),
         other => Err(ExecutorError::FeatureNotSupportedYet {
             feature: cast_to_type_feature(other),
             span,
@@ -447,6 +451,7 @@ fn coerce_bytes_to_type(
 fn cast_to_list(
     value: Value,
     element_type: &GqlType,
+    max_len: Option<u64>,
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
@@ -463,6 +468,15 @@ fn cast_to_list(
             );
         }
     };
+    if let Some(max_len) = max_len
+        && u64::try_from(items.len()).map_or(true, |len| len > max_len)
+    {
+        return Err(ExecutorError::data_exception(
+            DataExceptionSubclass::InvalidValueType,
+            "LIST cast result exceeds declared maximum cardinality",
+            span,
+        ));
+    }
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         // Recursive element-wise cast preserves nested-list semantics per

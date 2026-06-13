@@ -467,7 +467,11 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
                 }
             }
         }
-        GqlType::List(inner) => {
+        GqlType::List(inner)
+        | GqlType::BoundedList {
+            element_type: inner,
+            ..
+        } => {
             record_feature(uses, FeatureId::GV50, span);
             gql_type(inner, span, uses);
         }

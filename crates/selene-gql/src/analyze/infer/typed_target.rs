@@ -47,7 +47,11 @@ pub(super) fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Path
         | GqlType::Null
         | GqlType::Nothing => true,
-        GqlType::List(inner) => is_supported_typed_target(inner),
+        GqlType::List(inner)
+        | GqlType::BoundedList {
+            element_type: inner,
+            ..
+        } => is_supported_typed_target(inner),
         GqlType::Record(RecordType::Open) => true,
         GqlType::Record(RecordType::Closed(fields)) => {
             fields.iter().all(|(_, ty)| is_supported_typed_target(ty))

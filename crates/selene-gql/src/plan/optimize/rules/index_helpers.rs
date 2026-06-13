@@ -138,8 +138,13 @@ pub(super) fn compatible_value(value: &ValueExpr, kind: IndexKind) -> Option<Ind
 pub(super) fn compatible_list_parameter(value: &ValueExpr, kind: IndexKind) -> Option<IndexKey> {
     let param = binding_refs::parameter(value)?;
     let declared = param.declared_type?;
-    let GqlType::List(inner) = declared else {
-        return None;
+    let inner = match declared {
+        GqlType::List(inner)
+        | GqlType::BoundedList {
+            element_type: inner,
+            ..
+        } => inner,
+        _ => return None,
     };
     if !gql_type_compatible_with_index_kind(inner, kind) {
         return None;
