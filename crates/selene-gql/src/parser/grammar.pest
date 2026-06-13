@@ -79,7 +79,7 @@ show_indexes     = { ^"SHOW" ~ ^"INDEXES" }
 show_procedures  = { ^"SHOW" ~ ^"PROCEDURES" }
 
 type_prop_def_list = { type_prop_def ~ ("," ~ type_prop_def)* }
-type_prop_def      = { ident ~ "::" ~ type_name ~ type_prop_constraint* }
+type_prop_def      = { ident ~ ((typed_marker ~ type_name) | type_name) ~ type_prop_constraint* }
 type_prop_constraint = { ^"NOT" ~ ^"NULL" | ^"DEFAULT" ~ default_value | ^"IMMUTABLE" | ^"UNIQUE" | ^"INDEXED" ~ (^"AS" ~ ident)? }
 default_value = _{ record_constructor | literal }
 edge_endpoint_clause = { ^"FROM" ~ label_list ~ ^"TO" ~ label_list }
@@ -541,6 +541,7 @@ labeled_kw        = @{ ^"LABELED" ~ !(LETTER | NUMBER | "_") }
 directed_kw       = @{ ^"DIRECTED" ~ !(LETTER | NUMBER | "_") }
 normalized_kw     = @{ ^"NORMALIZED" ~ !(LETTER | NUMBER | "_") }
 typed_kw          = @{ ^"TYPED" ~ !(LETTER | NUMBER | "_") }
+typed_marker      = @{ "::" | ^"TYPED" ~ !(LETTER | NUMBER | "_") }
 source_of_kw      = ${ ^"SOURCE" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
 destination_of_kw = ${ ^"DESTINATION" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
 truth_value = @{ (^"TRUE" | ^"FALSE" | ^"UNKNOWN") ~ !(LETTER | NUMBER | "_") }
@@ -672,9 +673,9 @@ trim_char = { expr }
 record_constructor = { ^"RECORD"? ~ "{" ~ record_field ~ ("," ~ record_field)* ~ "}" }
 record_field = { prop_ident ~ ":" ~ expr }
 
-// Record TYPE field (spec section18.10 <field type>): `name :: <value type>`.
+// Record TYPE field (spec section18.10 <field type>): `name [ <typed> ] <value type>`.
 // Distinct from `record_field` above (the value form, which binds with a single `:`).
-record_field_type = { prop_ident ~ "::" ~ type_name }
+record_field_type = { prop_ident ~ ((typed_marker ~ type_name) | type_name) }
 
 // Aggregates with optional set quantifier (spec section20.9)
 aggregate_expr         = { binary_aggregate_expr | general_aggregate_expr }
@@ -751,7 +752,8 @@ var_ref         = { ident }
 // -- Type names (for CAST) ------------------------------------------
 // PEG ordering: longer alternatives BEFORE shorter to prevent prefix matching.
 
-type_name = { prefixed_closed_dynamic_union_type | component_type_union | type_name_primary }
+type_name = { prefixed_closed_dynamic_union_type | infix_type_name }
+infix_type_name = { type_name_primary ~ ("|" ~ type_name_primary)* }
 type_name_primary = { type_name_base ~ postfix_list_suffix* ~ type_not_null? }
 type_not_null = { ^"NOT" ~ ^"NULL" }
 
@@ -847,7 +849,6 @@ dynamic_property_value_type = { any_value_type_kw? ~ property_type_kw ~ value_ty
 prefixed_closed_dynamic_union_type = {
     any_value_type_kw ~ value_type_kw? ~ "<" ~ component_type_list ~ ">"
 }
-component_type_union = { type_name_primary ~ ("|" ~ type_name_primary)+ }
 component_type_list = { type_name_primary ~ ("|" ~ type_name_primary)* }
 any_value_type_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
 property_type_kw = @{ ^"PROPERTY" ~ !(LETTER | NUMBER | "_") }

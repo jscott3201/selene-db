@@ -42,7 +42,6 @@ pub(super) fn build_closed_dynamic_union_type_name(
     source_span: SourceSpan,
 ) -> Result<GqlType, ParserError> {
     let components = match pair.as_rule() {
-        Rule::component_type_union => build_component_type_list(pair, depth + 1)?,
         Rule::prefixed_closed_dynamic_union_type => {
             let list = pair
                 .into_inner()
@@ -58,6 +57,15 @@ pub(super) fn build_closed_dynamic_union_type_name(
         }
         _ => return Err(unexpected_pair(pair, "expected closed dynamic union type")),
     };
+    validate_closed_dynamic_union_components(components, source_span)
+}
+
+pub(super) fn build_closed_dynamic_union_components(
+    components: Vec<Pair<'_, Rule>>,
+    depth: u32,
+    source_span: SourceSpan,
+) -> Result<GqlType, ParserError> {
+    let components = build_component_type_pairs(components, depth, source_span)?;
     validate_closed_dynamic_union_components(components, source_span)
 }
 
@@ -78,6 +86,27 @@ fn build_component_type_list(
                 components.push(build_type_name_with_depth(child, depth)?);
             }
             _ => return Err(unexpected_pair(child, "unexpected component type child")),
+        }
+    }
+    Ok(components)
+}
+
+fn build_component_type_pairs(
+    pairs: Vec<Pair<'_, Rule>>,
+    depth: u32,
+    source_span: SourceSpan,
+) -> Result<Vec<GqlType>, ParserError> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(ParserError::NestingLimitExceeded {
+            limit: MAX_NESTING_DEPTH,
+            span: source_span,
+        });
+    }
+    let mut components = Vec::with_capacity(pairs.len());
+    for pair in pairs {
+        match pair.as_rule() {
+            Rule::type_name_primary => components.push(build_type_name_with_depth(pair, depth)?),
+            _ => return Err(unexpected_pair(pair, "unexpected component type child")),
         }
     }
     Ok(components)

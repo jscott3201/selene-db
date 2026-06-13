@@ -29,10 +29,10 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     debug_assert!(matches!(
         pair.as_rule(),
         Rule::type_name
+            | Rule::infix_type_name
             | Rule::type_name_primary
             | Rule::type_name_base
             | Rule::prefixed_closed_dynamic_union_type
-            | Rule::component_type_union
     ));
     let pair_rule = pair.as_rule();
     let source_span = span(&pair);
@@ -43,26 +43,43 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         });
     }
 
-    if matches!(pair_rule, Rule::type_name | Rule::type_name_primary) {
+    if pair_rule == Rule::type_name {
         let mut children = pair.into_inner();
         let base = children.next().ok_or_else(|| {
             ParserError::syntax("type name is missing base type", source_span, None)
         })?;
-        if pair_rule == Rule::type_name
-            && matches!(
-                base.as_rule(),
-                Rule::prefixed_closed_dynamic_union_type | Rule::component_type_union
-            )
-        {
-            if children.next().is_some() {
-                return Err(ParserError::syntax(
-                    "closed dynamic union type cannot have type-name suffixes",
-                    source_span,
-                    None,
-                ));
-            }
-            return dynamic_union::build_closed_dynamic_union_type_name(base, depth, source_span);
+        if children.next().is_some() {
+            return Err(ParserError::syntax(
+                "type name has unexpected trailing terms",
+                source_span,
+                None,
+            ));
         }
+        return build_type_name_with_depth(base, depth);
+    }
+
+    if pair_rule == Rule::infix_type_name {
+        let mut children = pair.into_inner();
+        let first = children.next().ok_or_else(|| {
+            ParserError::syntax("type name is missing base type", source_span, None)
+        })?;
+        let Some(second) = children.next() else {
+            return build_type_name_with_depth(first, depth);
+        };
+        let mut components = vec![first, second];
+        components.extend(children);
+        return dynamic_union::build_closed_dynamic_union_components(
+            components,
+            depth + 1,
+            source_span,
+        );
+    }
+
+    if pair_rule == Rule::type_name_primary {
+        let mut children = pair.into_inner();
+        let base = children.next().ok_or_else(|| {
+            ParserError::syntax("type name is missing base type", source_span, None)
+        })?;
         let mut ty = build_type_name_with_depth(base, depth)?;
         let mut suffix_depth = depth;
         let mut outer_not_null = false;
@@ -93,10 +110,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             ty
         });
     }
-    if matches!(
-        pair_rule,
-        Rule::prefixed_closed_dynamic_union_type | Rule::component_type_union
-    ) {
+    if pair_rule == Rule::prefixed_closed_dynamic_union_type {
         return dynamic_union::build_closed_dynamic_union_type_name(pair, depth, source_span);
     }
 
@@ -420,12 +434,19 @@ fn build_field_types_specification(
         .filter(|field| field.as_rule() == Rule::record_field_type)
     {
         let field_span = span(&field);
-        let mut children = field.into_inner();
-        let name_pair = children
-            .next()
+        let mut name_pair = None;
+        let mut type_pair = None;
+        for child in field.into_inner() {
+            match child.as_rule() {
+                Rule::prop_ident => name_pair = Some(child),
+                Rule::typed_marker => {}
+                Rule::type_name => type_pair = Some(child),
+                _ => return Err(unexpected_pair(child, "unexpected field type child")),
+            }
+        }
+        let name_pair = name_pair
             .ok_or_else(|| ParserError::syntax("field type is missing name", field_span, None))?;
-        let type_pair = children
-            .next()
+        let type_pair = type_pair
             .ok_or_else(|| ParserError::syntax("field type is missing type", field_span, None))?;
         let name = db_string_pair(name_pair)?;
         if fields
