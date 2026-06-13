@@ -2483,6 +2483,103 @@ Current vector-index and retrieval policy matrix from the evidence above:
 | Lexical/currentness-rooted retrieval where BM25 already finds the target set | Maintained BM25/current-state, optionally followed by exact vector rerank or RRF only when it closes a measured quality gap | Live OpenRouter source/code rows repeatedly show BM25/current-state as fastest (roughly 170-195 µs on q16 source-shaped profiles) and often target-complete. Text/vector fusion usually preserves quality while adding millisecond-scale vector cost; vector-first BM25 often lowers current precision. RRF can restore full precision/currentness on alias-heavy rows, but the measured composition is slower than the best single maintained-state quality primitive, so it remains an A/B tool rather than a default fused policy. Snapshot-shared text-index state cuts body-update-heavy mixed rows by more than half at 10k/100k; bulk builder append recovers part of the rebuild/regeneration tax. Keep rebuild/recovery scheduling evidence in scope before broadening maintained text/JSON surfaces. |
 | Partial graph roots/hints without support expansion or maintained state | Expand/intersect roots before final scoring; do not use raw partial hints as final retrieval | Partial graph-hint rows with `*_GRAPH_HINT_DOCS_PER_TOPIC=2` yield only `c2` and `precbp5000` for raw topic-label candidate scoring. Existing graph-expanded and maintained-state rows recover full topic/current precision by expanding roots through support edges and intersecting state before exact rerank. |
 
+Current hybrid retrieval and maintenance stock-take (2026-06-13):
+
+Confirmed defaults:
+
+- Omitted native vector-index creation now defaults to `ivf_cosine`; exact scan or
+  flat/exact remains the small/full-label oracle, HNSW remains the lowest-latency
+  approximate path when recall loss is acceptable, and explicit
+  `TurboQuantCosine` remains compressed derived state with exact primary-vector
+  rerank rather than a blanket default.
+- Target-aware source and memory retrieval should start from graph-derived roots,
+  maintained candidate state, or maintained BM25 when those producers are
+  target-complete. Live OpenRouter Codestral rows keep maintained BM25/current
+  state around 170-195 µs on q16 source-shaped profiles, while maintained
+  current-state vector scoring is the quality path when lexical candidates miss
+  alias-heavy targets.
+- JSON exact candidate procedures are correctness oracles and exact metadata
+  filters. On the OpenRouter source-chunk row, JSON-current vector scoring kept
+  full target/current quality but cost 1.1045 ms versus 318.39 µs for maintained
+  current-state vector scoring; JSON-current BM25 cost 364.84 µs versus
+  185.29 µs for maintained-state BM25.
+- RRF over maintained BM25/current-state and maintained vector/current-state is
+  a benchmarked A/B repair tool, not a default fused API. It restored full
+  quality on the alias and source-chunk rows, but cost 534.14 µs and 487.45 µs
+  respectively, slower than choosing the best single maintained-state primitive.
+- Maintained BM25 read paths remain production-relevant, but maintenance
+  scheduling matters. Snapshot-shared text-index state cut 100k mixed
+  read/update cycles from 764.43 ms to 335.88 ms and write-only text updates
+  from 495.04 ms to 62.795 ms; append-based bulk rebuild then cut 100k
+  registration from 59.798 ms to 49.751 ms and 100k delete/compact rebuild from
+  78.225 ms to 69.793 ms.
+
+Benchmark-backed recommendations:
+
+- Prefer maintained graph state plus the scoring primitive that wins the corpus:
+  BM25/current-state for target-complete lexical/source rows, current-state
+  vector scoring for alias or stale-decoy rows where lexical candidates miss,
+  and exact graph-candidate scoring for tight root sets.
+- Keep vector-first BM25, BM25-then-vector rerank, and RRF as benchmark
+  compositions until a row shows a quality win that is not available by choosing
+  the better existing primitive.
+- Use candidate-scoped JSON filters when metadata expresses a required
+  predicate or acts as an oracle; do not replace maintained current/support
+  state with exact JSON scans when the maintained state already expresses the
+  same set.
+- Treat text-body churn and rebuild/recovery as the next maintenance pressure
+  area before adding broader maintained text or JSON surfaces. The query path is
+  cheap (`prebuilt_topic_query/n1000_k10` stayed at 36.528 µs), while 100k
+  rebuild/compaction rows remain tens of milliseconds.
+- Use OpenRouter live embedding endpoints for future real-validation rows:
+  `mistralai/codestral-embed-2505` for code/source-shaped corpora and
+  `google/gemini-embedding-2` for general memory/retrieval rows. Local oMLX rows
+  are legacy comparison or explicit opt-in rows.
+
+Rejected paths:
+
+- Do not promote `TurboQuantCosine` as the default omitted index kind; the 2k
+  OpenRouter source-chunk row made IVF faster at the same topic precision, while
+  target-hit quality still required graph/state/text composition.
+- Do not add a fused vector-first text API from the current evidence.
+  Vector-first BM25 often lowered `precbp`/`curbp` and stayed slower than either
+  BM25/current-state or current-state vector scoring.
+- Do not make BM25-then-vector rerank a default repair path when the BM25
+  candidate producer already missed the target; reranking cannot recover
+  documents that never entered the candidate set and adds millisecond-scale
+  exact-vector cost on 1536-dimensional OpenRouter rows.
+- Do not use JSON-current scans as the default currentness mechanism when
+  maintained current/support state is available and equivalent.
+- Do not revive raw partial graph hints, ANN unions over precise graph-expanded
+  sets, PageRank/Louvain-only candidate roots, postings-only text-index sharing,
+  or `Arc<Vec<String>>` document-term sharing as defaults; each has measured
+  quality or maintenance regressions in the rows above.
+
+Remaining uncertainty:
+
+- BM25 analyzer quality and sparse lexical-hit behavior still decide whether
+  BM25 is merely the fastest root or a target-complete root on harder alias
+  corpora.
+- Durable JSON/path indexes are not justified yet; they need a focused design
+  with recovery, migration, invalidation, and benchmark evidence showing exact
+  JSON candidate scans are the bottleneck or quality-critical root.
+- Text-index rebuild/recovery under real WAL/snapshot rotation is not fully
+  characterized. The current rows isolate graph-side rebuild/compaction cost, not
+  an end-to-end durable maintenance cycle.
+- Mixed 60/40 maintenance with WAL durability plus maintained BM25, vector
+  indexes, candidate states, and JSON metadata still needs a product-shaped row
+  before broader storage or scheduling changes.
+
+Next specific benchmark/design input:
+
+- Add a WAL-backed 60/40 maintenance benchmark that seeds OpenRouter-derived
+  source/memory corpora, registers maintained BM25 plus candidate states and a
+  vector index, exercises JSON metadata filters, then measures query quality,
+  update latency, rebuild/recovery, and compaction scheduling in one durable
+  cycle. If that row shows exact JSON filters dominate or provide unique quality,
+  follow with a maintained JSON/path index design; otherwise keep JSON exact and
+  keep optimizing the text/vector/state maintenance path.
+
 PR-local OpenRouter Codestral source-chunk vector-index guard:
 
 Command:
