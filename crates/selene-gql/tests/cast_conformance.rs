@@ -111,35 +111,36 @@ fn iso_conformance_cast_positive_corpus_all_pass() {
 
 #[test]
 fn changelog_unreleased_documents_conformance_destamp() {
-    // CONFORMANCE-00 (Codex review follow-up): the [Unreleased] section must
-    // document the conformance-honesty fix — GE08 reclaimed for "Reference
-    // parameters" (§17.7) and removed from CAST, GA05 "Cast specification"
-    // (§20.8) claimed for CAST, and GG21 de-stamped (§18.2/18.3). Pin the entry
-    // so a forgotten changelog edit fails the build, not release prep.
+    // CONFORMANCE-00 (Codex review follow-up): release notes must document the
+    // conformance-honesty fix — GE08 reclaimed for "Reference parameters"
+    // (§17.7) and removed from CAST, GA05 "Cast specification" (§20.8) claimed
+    // for CAST, and GG21 de-stamped (§18.2/18.3). Pin the entry so a forgotten
+    // changelog edit fails the build, including after the entry moves from
+    // [Unreleased] into the cut release section.
     let changelog = include_str!("../../../CHANGELOG.md");
-    let unreleased = changelog
-        .split("## [Unreleased]")
+    let release_notes = changelog
+        .split("## [1.2.0]")
         .nth(1)
-        .expect("CHANGELOG has an [Unreleased] section")
-        // Stop at the first released-version heading so we only inspect the
-        // Unreleased body.
+        .expect("CHANGELOG has a [1.2.0] section")
+        // Stop at the next released-version heading so we only inspect the
+        // release body.
         .split("\n## [")
         .next()
-        .expect("Unreleased body");
+        .expect("release body");
     assert!(
-        unreleased.contains("GE08"),
-        "[Unreleased] must mention the GE08 de-stamp; observed: {unreleased}"
+        release_notes.contains("GE08"),
+        "[1.2.0] must mention the GE08 de-stamp; observed: {release_notes}"
     );
     assert!(
-        unreleased.contains("GA05"),
-        "[Unreleased] must mention the GA05 claim; observed: {unreleased}"
+        release_notes.contains("GA05"),
+        "[1.2.0] must mention the GA05 claim; observed: {release_notes}"
     );
     assert!(
-        unreleased.contains("GG21"),
-        "[Unreleased] must mention the GG21 de-stamp; observed: {unreleased}"
+        release_notes.contains("GG21"),
+        "[1.2.0] must mention the GG21 de-stamp; observed: {release_notes}"
     );
     assert!(
-        unreleased.contains("Reference parameters"),
-        "[Unreleased] must name GE08's real ISO meaning (Reference parameters)"
+        release_notes.contains("Reference parameters"),
+        "[1.2.0] must name GE08's real ISO meaning (Reference parameters)"
     );
 }

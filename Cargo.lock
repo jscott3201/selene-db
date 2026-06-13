@@ -1886,7 +1886,7 @@ checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "selene-algorithms"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "criterion",
  "insta",
@@ -1905,7 +1905,7 @@ dependencies = [
 
 [[package]]
 name = "selene-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -1933,7 +1933,7 @@ dependencies = [
 
 [[package]]
 name = "selene-gql"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "criterion",
  "insta",
@@ -1968,7 +1968,7 @@ dependencies = [
 
 [[package]]
 name = "selene-graph"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "arc-swap",
  "criterion",
@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "selene-persist"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "blake3",
  "criterion",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "selene-testing"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "proptest",
  "selene-core",

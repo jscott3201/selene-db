@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-06-13
+
 ### Added
 
 - **TurboQuant cosine vector index.** `selene.create_vector_index(...,
@@ -1741,6 +1743,7 @@ The following items are intentionally deferred and tracked for future
 - OPQ rotation inner-allocation tightening.
 - Fresh extension crates beyond `selene-vector` and `selene-algorithms`.
 
-[Unreleased]: https://github.com/Aionforge-Labs/selene-db/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/Aionforge-Labs/selene-db/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Aionforge-Labs/selene-db/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/Aionforge-Labs/selene-db/releases/tag/v1.1.0
 [1.0.0]: https://github.com/Aionforge-Labs/selene-db/releases/tag/v1.0.0

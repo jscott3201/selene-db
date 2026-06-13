@@ -11,7 +11,7 @@ description = "In-memory property-graph storage core (ArcSwap + imbl CoW, label/
 autobenches = false
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.1.0" }
+selene-core = { path = "../selene-core", version = "1.2.0" }
 selene-persist.workspace = true
 arc-swap.workspace = true
 parking_lot.workspace = true
@@ -43,7 +43,7 @@ criterion.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
-selene-testing = { path = "../selene-testing", version = "1.1.0" }
+selene-testing = { path = "../selene-testing", version = "1.2.0" }
 serde_json.workspace = true
 
 [[bench]]
