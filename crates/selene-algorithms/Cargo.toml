@@ -24,7 +24,7 @@ criterion.workspace = true
 insta.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
-selene-testing = { path = "../selene-testing", version = "1.2.0" }
+selene-testing = { path = "../selene-testing" }
 
 [features]
 test-harness = []

@@ -17,6 +17,9 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
 
 concurrency:
@@ -36,7 +39,7 @@ permissions:
 jobs:
   fmt:
     name: fmt
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +50,7 @@ jobs:
 
   clippy:
     name: clippy (${{ matrix.os }})
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +66,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -87,7 +90,7 @@ jobs:
 
   deny:
     name: cargo-deny
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +100,7 @@ jobs:
 
   audit:
     name: cargo-audit
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +116,7 @@ jobs:
 
   thirdparty-current:
     name: third-party attribution current
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -126,7 +129,7 @@ jobs:
 
   file-size-cap:
     name: file-size cap (700 LOC)
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +137,7 @@ jobs:
 
   no-secret-scan:
     name: no-secret scan
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -142,7 +145,7 @@ jobs:
 
   bench-invocation-lint:
     name: bench invocation lint
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -156,7 +159,7 @@ jobs:
     name: parse-fuzz (5m release pass)
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     # 5-minute pre-release pass; the 1h deep soak stays on nightly.yml.
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -196,7 +199,7 @@ jobs:
     # super-linear backtracking, which earns the 5m/1h budgets), and the known
     # bound/panic edges already have dedicated regression tests in the normal
     # test suite. This pass is a fast pre-release sanity smoke, not a deep soak.
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && github.event.pull_request.draft == false) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -221,3 +224,70 @@ jobs:
           for target in decode_manifest decode_wal decode_audit decode_snapshot; do
             cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=20 -timeout=20 -max_len=65536
           done
+
+  publish-crates:
+    name: publish crates.io
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'Aionforge-Labs/selene-db'
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: publish public crates
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "CARGO_REGISTRY_TOKEN secret is required for crates.io publishing." >&2
+            exit 1
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+          workspace_version="$(awk -F' = ' '
+            $0 == "[workspace.package]" { in_workspace = 1; next }
+            /^\[/ && in_workspace { exit }
+            in_workspace && $1 == "version" { gsub(/"/, "", $2); print $2; exit }
+          ' Cargo.toml)"
+          if [ "$workspace_version" != "$version" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match workspace version $workspace_version." >&2
+            exit 1
+          fi
+
+          crate_published() {
+            crate="$1"
+            crate_version="$2"
+            curl --fail --silent --output /dev/null \
+              "https://crates.io/api/v1/crates/${crate}/${crate_version}"
+          }
+
+          wait_for_index() {
+            crate="$1"
+            crate_version="$2"
+            for attempt in $(seq 1 60); do
+              if crate_published "$crate" "$crate_version"; then
+                echo "${crate} ${crate_version} is visible in crates.io."
+                return 0
+              fi
+              echo "Waiting for ${crate} ${crate_version} to index (${attempt}/60)..."
+              sleep 10
+            done
+            echo "${crate} ${crate_version} did not become visible in crates.io in time." >&2
+            return 1
+          }
+
+          publish_crate() {
+            crate="$1"
+            if crate_published "$crate" "$version"; then
+              echo "${crate} ${version} is already published; skipping."
+              return 0
+            fi
+            cargo publish -p "$crate" --locked
+            wait_for_index "$crate" "$version"
+          }
+
+          publish_crate selene-core
+          publish_crate selene-persist
+          publish_crate selene-graph
+          publish_crate selene-algorithms
+          publish_crate selene-gql

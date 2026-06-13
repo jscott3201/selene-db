@@ -46,7 +46,7 @@ proptest.workspace = true
 rstest.workspace = true
 rust_decimal.workspace = true
 selene-persist = { path = "../selene-persist", version = "1.2.0" }
-selene-testing = { path = "../selene-testing", version = "1.2.0" }
+selene-testing = { path = "../selene-testing" }
 serde_json.workspace = true
 tempfile.workspace = true
 tracing-subscriber.workspace = true

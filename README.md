@@ -54,14 +54,14 @@ selene-core -> selene-graph -> selene-algorithms -> selene-gql
 
 ## Quickstart
 
-The crates are not published to crates.io yet. Depend on them by path from a
-neighboring application:
+Starting with v1.2.0, the public crates are published to crates.io. Depend on
+the layers your application uses:
 
 ```toml
 [dependencies]
-selene-core = { path = "../selene-db/crates/selene-core" }
-selene-graph = { path = "../selene-db/crates/selene-graph" }
-selene-gql = { path = "../selene-db/crates/selene-gql" }
+selene-core = "1.2.0"
+selene-graph = "1.2.0"
+selene-gql = "1.2.0"
 ```
 
 Create a graph, write through the mutation funnel, and query with GQL:
