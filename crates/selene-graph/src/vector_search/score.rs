@@ -10,7 +10,10 @@ use crate::parallel_scan::{should_parallelize_scan, try_reduce_chunks};
 use super::{
     VECTOR_SEARCH_CANCEL_STRIDE, VectorCandidateSet, VectorNeighborDirection,
     VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError, merge_top_k,
-    score_candidate_batch::{candidate_sets_all_match, should_parallelize_candidate_batch_scoring},
+    score_candidate_batch::{
+        candidate_sets_all_match, should_parallelize_candidate_batch_scoring,
+        should_parallelize_repeated_candidate_batch,
+    },
     vector_node_hits,
 };
 
@@ -327,7 +330,18 @@ impl SeleneGraph {
             return Ok(vec![Vec::new(); queries.len()]);
         }
 
-        if should_parallelize_candidate_batch_scoring(candidate_sets, k) {
+        let should_parallelize_batch =
+            should_parallelize_candidate_batch_scoring(candidate_sets, k);
+        if let Some(candidates) = candidate_sets.first()
+            && should_parallelize_repeated_candidate_batch(queries.len(), candidates.len(), k)
+            && candidate_sets_all_match(candidate_sets)
+        {
+            return self.score_repeated_vector_candidate_set_batch_parallel(
+                property, queries, candidates, metric, k, checker,
+            );
+        }
+
+        if should_parallelize_batch {
             return self.score_vector_candidate_sets_batch_parallel(
                 property,
                 queries,
