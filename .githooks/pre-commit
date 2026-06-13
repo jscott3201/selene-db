@@ -16,6 +16,9 @@ bash .github/scripts/check-file-size.sh
 echo "[pre-commit] no-secret scan"
 bash .github/scripts/check-no-secrets.sh
 
+echo "[pre-commit] repository-home metadata"
+bash .github/scripts/check-repository-home.sh
+
 echo "[pre-commit] id<->row arithmetic gate (BRIEF-Item-4a)"
 bash .github/scripts/check-no-rowid-arith.sh
 
