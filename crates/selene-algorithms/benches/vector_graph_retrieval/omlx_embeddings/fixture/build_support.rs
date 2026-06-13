@@ -11,6 +11,7 @@ pub(super) struct DocumentMeta {
     pub(super) node: NodeId,
     pub(super) topic: Topic,
     pub(super) graph_hint: bool,
+    pub(super) target_key: Option<&'static str>,
 }
 
 pub(super) struct QueryAnchor {
@@ -23,6 +24,7 @@ pub(super) struct QueryVector {
     pub(super) topic: Topic,
     pub(super) text: String,
     pub(super) vector: VectorValue,
+    pub(super) target_key: Option<&'static str>,
 }
 
 pub(super) fn topic_hint_expansion_set_for(
