@@ -162,6 +162,72 @@ fn bench_mixed_bm25(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_text_rebuild(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_text_bm25_rebuild");
+    for &scale in BenchProfile::from_env().scales() {
+        let fixture = TextRebuildFixture::build(scale);
+        group.throughput(Throughput::Elements(scale as u64));
+        group.bench_with_input(
+            BenchmarkId::new("create_registered_index", format!("n{scale}")),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || SharedGraph::from_graph(fixture.graph.as_ref().clone()),
+                    |shared| {
+                        shared
+                            .create_text_index(fixture.label.clone(), fixture.property.clone())
+                            .expect("bench text index registration succeeds");
+                        let snapshot = shared.read();
+                        let index = snapshot
+                            .text_index_for(&fixture.label, &fixture.property)
+                            .expect("bench text index exists after create");
+                        assert_eq!(index.document_count(), fixture.scale);
+                        std::hint::black_box((shared, index.document_count()))
+                    },
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "compact_registered_after_delete",
+                format!("n{scale}_del{}", fixture.delete_count()),
+            ),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || {
+                        let shared =
+                            SharedGraph::from_graph(fixture.indexed_graph.as_ref().clone());
+                        delete_targets(&shared, &fixture.delete_ids);
+                        shared
+                    },
+                    |shared| {
+                        let before = shared.read();
+                        assert_eq!(before.node_count(), fixture.live_after_delete());
+                        assert_eq!(
+                            before.node_store.len() - before.node_count(),
+                            fixture.delete_count()
+                        );
+                        drop(before);
+                        let report = shared.compact().expect("bench text compaction succeeds");
+                        assert_eq!(report.reclaimed_nodes as usize, fixture.delete_count());
+                        let after = shared.read();
+                        let index = after
+                            .text_index_for(&fixture.label, &fixture.property)
+                            .expect("bench text index survives compaction");
+                        assert_eq!(after.node_count(), fixture.live_after_delete());
+                        assert_eq!(index.document_count(), fixture.live_after_delete());
+                        std::hint::black_box((shared, report, index.document_count()))
+                    },
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 struct TextFixture {
     graph: Arc<SeleneGraph>,
     label: DbString,
@@ -216,6 +282,63 @@ impl TextFixture {
             index,
             registered_index,
         }
+    }
+}
+
+struct TextRebuildFixture {
+    graph: Arc<SeleneGraph>,
+    indexed_graph: Arc<SeleneGraph>,
+    label: DbString,
+    property: DbString,
+    scale: usize,
+    delete_ids: Vec<NodeId>,
+}
+
+impl TextRebuildFixture {
+    fn build(scale: usize) -> Self {
+        let scale = scale.max(READS_PER_CYCLE).max(WRITES_PER_CYCLE);
+        let shared = SharedGraph::new(GraphId::new(431_900 + scale as u64));
+        let label = db_string("BenchTextDoc").expect("bench label fits DB string cap");
+        let property = db_string("body").expect("bench property fits DB string cap");
+        let delete_count = (scale / 10).max(1);
+        let mut delete_ids = Vec::with_capacity(delete_count);
+        {
+            let mut txn = shared.begin_write();
+            let mut mutator = txn.mutator();
+            for row in 0..scale {
+                let node_id = mutator
+                    .create_node(
+                        LabelSet::single(label.clone()),
+                        props(&property, text_value(&seed_text(row))),
+                    )
+                    .expect("bench node inserts");
+                if delete_ids.len() < delete_count {
+                    delete_ids.push(node_id);
+                }
+            }
+            txn.commit().expect("bench fixture commits");
+        }
+        let graph = shared.read();
+        shared
+            .create_text_index(label.clone(), property.clone())
+            .expect("bench text index registers");
+        let indexed_graph = shared.read();
+        Self {
+            graph,
+            indexed_graph,
+            label,
+            property,
+            scale,
+            delete_ids,
+        }
+    }
+
+    fn delete_count(&self) -> usize {
+        self.delete_ids.len()
+    }
+
+    fn live_after_delete(&self) -> usize {
+        self.scale - self.delete_count()
     }
 }
 
@@ -319,6 +442,19 @@ impl TextMixedFixture {
     }
 }
 
+fn delete_targets(shared: &SharedGraph, targets: &[NodeId]) {
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        for &target in targets {
+            mutator
+                .delete_node(target)
+                .expect("bench text delete succeeds");
+        }
+    }
+    txn.commit().expect("bench text delete commit succeeds");
+}
+
 fn deadline_checker() -> CancellationChecker<'static> {
     CancellationChecker::new(None, Some(Instant::now() + Duration::from_secs(3600)))
 }
@@ -347,6 +483,6 @@ fn text_value(text: &str) -> Value {
 criterion_group! {
     name = text_search;
     config = common::criterion_config();
-    targets = bench_exact_bm25, bench_indexed_bm25, bench_mixed_bm25, bench_hybrid_bm25_vector
+    targets = bench_exact_bm25, bench_indexed_bm25, bench_mixed_bm25, bench_text_rebuild, bench_hybrid_bm25_vector
 }
 criterion_main!(text_search);

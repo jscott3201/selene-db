@@ -595,6 +595,26 @@ document terms as `Arc<Vec<String>>` instead of `Arc<[String]>` worsened the
 transient build row to 580.25 µs, so the accepted representation uses
 `Arc<[String]>` document terms plus a bulk builder.
 
+PR-local text-index rebuild and bulk-append builder A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_rebuild`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_rebuild/create_registered_index/n10000`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_rebuild/compact_registered_after_delete/n10000`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/transient_build_query`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_rebuild/create_registered_index/n1000` | 491.64 µs | 450.07 µs | -8.5% | Registers and builds a maintained text index over a seeded graph. The bulk builder now appends postings and relies on the final sort instead of binary-searching each posting vector during construction. |
+| `graph_text_bm25_rebuild/create_registered_index/n10000` | 5.1203 ms | 4.3962 ms | -14.1% | Same registration/build row at 10k; Criterion reports a significant improvement (`p=0.00`). |
+| `graph_text_bm25_rebuild/create_registered_index/n100000` | 59.798 ms | 49.751 ms | -16.8% | 100k build/regeneration cost remains material but is no longer inflated by per-posting insertion search. |
+| `graph_text_bm25_rebuild/compact_registered_after_delete/n1000_del100` | 571.97 µs | 533.23 µs | -6.8% | Compacts after deleting 10% of registered text documents, exercising the production rebuild chain from live primary rows. |
+| `graph_text_bm25_rebuild/compact_registered_after_delete/n10000_del1000` | 6.7179 ms | 5.8964 ms | -12.2% | 10k compaction/rebuild improves while preserving the same reclaimed-node assertions. |
+| `graph_text_bm25_rebuild/compact_registered_after_delete/n100000_del10000` | 78.225 ms | 69.793 ms | -10.8% | 100k compaction/rebuild remains a maintenance scheduling concern, but the builder change takes about 8.4 ms off this row. |
+| `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 533.05 µs | 487.80 µs | -8.5% | Recovers part of the snapshot-sharing build tax; still above the pre-sharing 456.56 µs row, so rebuild/recovery stays visible. |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 36.696 µs | 36.528 µs | noise | Query path is unchanged by the bulk-builder append path. |
+
 PR-local quick JSON baseline:
 
 | Bench | 1k | Notes |
@@ -2460,7 +2480,7 @@ Current vector-index and retrieval policy matrix from the evidence above:
 | Lowest-latency approximate vector lookup where recall/precision loss is acceptable or can be repaired by a later exact/state stage | HNSW | The 2k Codestral row has HNSW ef64 at 918.94 µs, much faster than exact/TurboQuant, but with lower `precbp8593`. HNSW remains the latency-oriented ANN primitive; use exact rerank, graph/state gating, or wider/tuned settings when quality matters. |
 | Coarse partitioning, cheap rebuild/recommended maintenance, clustered source corpora, or explicit list-count experiments | IVF | IVF rebuild and recommended-rebuild rows are cheap relative to HNSW construction (`ivf_cos_dim128` 2.124 ms at 1k, recommended 12.63 ms at 10k). The 2k live Codestral row now also gives IVF p2 the best latency while preserving the exact topic-precision suffix. This promotes IVF for the omitted native vector-index kind and clustered/source-shaped broad candidate generation, but its `hitbp5000` result means target-specific retrieval should still prefer graph/state/BM25 roots when available. |
 | Tight graph-derived, maintained-state, BM25, JSON, or explicit candidate sets | Exact graph-candidate scoring or maintained candidate-state scoring | Candidate/state rows are microsecond-scale for c32-c128, and live source/code rows show graph-expanded current-state vector scoring around 300 µs with full target/current precision where applicable. This remains the default for agent-memory and source-shaped workflows when graph or text can produce a meaningful candidate set. |
-| Lexical/currentness-rooted retrieval where BM25 already finds the target set | Maintained BM25/current-state, optionally followed by exact vector rerank or RRF only when it closes a measured quality gap | Live OpenRouter source/code rows repeatedly show BM25/current-state as fastest (roughly 170-195 µs on q16 source-shaped profiles) and often target-complete. Text/vector fusion usually preserves quality while adding millisecond-scale vector cost; vector-first BM25 often lowers current precision. RRF can restore full precision/currentness on alias-heavy rows, but the measured composition is slower than the best single maintained-state quality primitive, so it remains an A/B tool rather than a default fused policy. Snapshot-shared text-index state cuts body-update-heavy mixed rows by more than half at 10k/100k, but leaves a small read tax and a larger transient build/recovery tax; keep rebuild/recovery benchmarks in scope before broadening maintained text/JSON surfaces. |
+| Lexical/currentness-rooted retrieval where BM25 already finds the target set | Maintained BM25/current-state, optionally followed by exact vector rerank or RRF only when it closes a measured quality gap | Live OpenRouter source/code rows repeatedly show BM25/current-state as fastest (roughly 170-195 µs on q16 source-shaped profiles) and often target-complete. Text/vector fusion usually preserves quality while adding millisecond-scale vector cost; vector-first BM25 often lowers current precision. RRF can restore full precision/currentness on alias-heavy rows, but the measured composition is slower than the best single maintained-state quality primitive, so it remains an A/B tool rather than a default fused policy. Snapshot-shared text-index state cuts body-update-heavy mixed rows by more than half at 10k/100k; bulk builder append recovers part of the rebuild/regeneration tax. Keep rebuild/recovery scheduling evidence in scope before broadening maintained text/JSON surfaces. |
 | Partial graph roots/hints without support expansion or maintained state | Expand/intersect roots before final scoring; do not use raw partial hints as final retrieval | Partial graph-hint rows with `*_GRAPH_HINT_DOCS_PER_TOPIC=2` yield only `c2` and `precbp5000` for raw topic-label candidate scoring. Existing graph-expanded and maintained-state rows recover full topic/current precision by expanding roots through support edges and intersecting state before exact rerank. |
 
 PR-local OpenRouter Codestral source-chunk vector-index guard:
