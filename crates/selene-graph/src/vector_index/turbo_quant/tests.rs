@@ -288,6 +288,43 @@ fn turbo_quant_fast_scan_lut_flushes_oversized_accumulators() {
 }
 
 #[test]
+fn turbo_quant_fast_scan_max_contribution_matches_centroid_scan() {
+    let mut index = TurboQuantVectorIndex::new(5).unwrap();
+    for row in 0..16 {
+        index
+            .insert(
+                row,
+                &vector(&[
+                    1.0 + row as f32 * 0.02,
+                    (row % 3) as f32 * 0.1,
+                    (row % 5) as f32 * 0.05,
+                    0.25,
+                    -0.1,
+                ]),
+            )
+            .unwrap();
+    }
+    index.finish_bulk_load().unwrap();
+    let query = vector(&[0.7, -0.4, 0.2, 0.1, 0.05]);
+    let rotated_query = rotated_unit_vector(&query, index.dimension);
+    let optimized = index.max_fast_scan_query_contribution(&rotated_query);
+    let reference = (0..index.dimension)
+        .flat_map(|dimension| {
+            let query =
+                query_component_for_score(rotated_query[dimension], dimension, &index.inv_scale);
+            index
+                .codebook
+                .centroids()
+                .iter()
+                .map(move |centroid| f64::from(query) * f64::from(*centroid))
+        })
+        .map(f64::abs)
+        .fold(0.0, f64::max);
+
+    assert!((optimized - reference).abs() <= f64::EPSILON * reference.max(1.0));
+}
+
+#[test]
 fn turbo_quant_candidates_in_rows_match_sparse_live_map_reference() {
     let mut index = TurboQuantVectorIndex::new(4).unwrap();
     for row in 0..80 {
