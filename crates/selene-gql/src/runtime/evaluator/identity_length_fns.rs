@@ -1,21 +1,19 @@
 //! Identity and length scalar function evaluation.
 
-use std::sync::Arc;
-
-use selene_core::{Record, Value};
+use selene_core::{Path, Record, Value};
 
 use crate::{
     SourceSpan,
     runtime::{DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
-use super::binary_ops::data_exception_with;
+use super::binary_ops::{data_exception_with, string_value};
 
 pub(super) fn eval_element_id(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
     match args.into_iter().next().expect("arity checked") {
         Value::Null => Ok(Value::Null),
-        Value::NodeRef(id) => Ok(Value::ExternalString(Arc::from(id.to_string()))),
-        Value::EdgeRef(id) => Ok(Value::ExternalString(Arc::from(id.to_string()))),
+        Value::NodeRef(id) => string_value(&id.to_string(), span),
+        Value::EdgeRef(id) => string_value(&id.to_string(), span),
         Value::List(_) => data_exception_with(
             DataExceptionSubclass::InvalidValueType,
             "element_id argument is not a singleton element reference",
@@ -69,6 +67,81 @@ pub(super) fn eval_cardinality(
             span,
         ),
     }
+}
+
+pub(super) fn eval_path_length(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match args.into_iter().next().expect("arity checked") {
+        Value::Null => Ok(Value::Null),
+        Value::Path(path) => Ok(Value::Int(path.segments.len() as i64)),
+        _ => data_exception_with(
+            DataExceptionSubclass::InvalidValueType,
+            "path_length argument is not a path",
+            span,
+        ),
+    }
+}
+
+pub(super) fn eval_elements(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match args.into_iter().next().expect("arity checked") {
+        Value::Null => Ok(Value::Null),
+        Value::Path(path) => Ok(Value::List(path_element_list(*path))),
+        _ => data_exception_with(
+            DataExceptionSubclass::InvalidValueType,
+            "elements argument is not a path",
+            span,
+        ),
+    }
+}
+
+pub(super) fn eval_labels(
+    args: Vec<Value>,
+    span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Value, ExecutorError> {
+    match args.into_iter().next().expect("arity checked") {
+        Value::Null => Ok(Value::Null),
+        Value::NodeRef(id) => Ok(Value::List(
+            ctx.tx
+                .snapshot()
+                .node_labels(id)
+                .map(|labels| {
+                    labels
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        )),
+        Value::EdgeRef(id) => Ok(Value::List(
+            ctx.tx
+                .snapshot()
+                .edge_label(id)
+                .map(|label| vec![Value::String(label.clone())])
+                .unwrap_or_default(),
+        )),
+        _ => data_exception_with(
+            DataExceptionSubclass::InvalidValueType,
+            "labels argument is not a graph element",
+            span,
+        ),
+    }
+}
+
+fn path_element_list(path: Path) -> Vec<Value> {
+    let capacity = path
+        .segments
+        .len()
+        .checked_mul(2)
+        .and_then(|len| len.checked_add(1))
+        .expect("path element list length fits in usize");
+    let mut values = Vec::with_capacity(capacity);
+    values.push(Value::NodeRef(path.start));
+    for segment in path.segments {
+        values.push(Value::EdgeRef(segment.edge));
+        values.push(Value::NodeRef(segment.node));
+    }
+    values
 }
 
 #[cfg(test)]

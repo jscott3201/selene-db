@@ -1,6 +1,6 @@
 //! Analyzer output AST wrapper.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     DdlStatement, MutationPipeline, NonEmpty, ProcedureCall, QueryPipeline, SessionResetTarget,
@@ -108,8 +108,8 @@ pub enum AnalyzedStatementKind {
     Rollback(SourceSpan),
     /// `SESSION SET VALUE <param> = <value expression>` (ISO feature GS03).
     SessionSetValue {
-        /// Interned parameter name without the leading `$`.
-        param: IStr,
+        /// Database-string parameter name without the leading `$`.
+        param: DbString,
         /// Value expression bound to the parameter.
         value: Box<ValueExpr>,
         /// `IF NOT EXISTS` was present on the parameter specification.

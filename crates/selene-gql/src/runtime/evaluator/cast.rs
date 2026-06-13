@@ -1,57 +1,83 @@
-//! ISO/IEC 39075:2024 §22 explicit `CAST(<value> AS <target>)` dispatch matrix.
+//! ISO/IEC 39075:2024 §20.8 explicit `CAST(<value> AS <target>)` dispatch matrix.
 //!
 //! Each `Value` x `GqlType` pair routes through this module. The matrix is
-//! split into helpers per source family (numeric, string, boolean, list) so
-//! the dispatch stays linear and walker-friendly. Failure modes:
+//! split into helpers per source family (numeric, string, boolean, list,
+//! decimal) so the dispatch stays linear and walker-friendly. The numeric
+//! family is `Table 4`'s signed-/unsigned-exact + approximate base types
+//! (`EN`/`UN`/`AN`); every `EN/UN/AN ↔ EN/UN/AN/C` cell is mandated `Y`, so a
+//! `Uint`/`Int128`/`Uint128`/`Float32`/`Decimal` source widens to its target
+//! the same as `Int`/`Float`. Failure modes:
 //!
 //! - `22018` (`InvalidCharacterValueForCast`) — strict-parse failure
-//!   (string→numeric/boolean) and NaN→integer (per ISO §22, NaN has no
-//!   representable integer image).
-//! - `22003` (`NumericValueOutOfRange`) — overflow on numeric→numeric or
-//!   float→integer that exceeds the target's range (the truncated integer
-//!   would not fit).
-//! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the v1.1
-//!   explicit-cast scope (NODE / EDGE / PATH / RECORD source, or any cast
-//!   whose target is `NULL` / `NOTHING`).
+//!   (string→numeric/boolean/decimal) and NaN→integer/decimal (per ISO §20.8,
+//!   NaN has no representable exact image).
+//! - `22007` (`InvalidDatetimeFormat`) — strict-parse failure for
+//!   string→date/time/datetime casts.
+//! - `22G0H` (`InvalidDurationFormat`) — strict-parse failure for
+//!   string→duration casts.
+//! - `22003` (`NumericValueOutOfRange`) — overflow on numeric→numeric,
+//!   float→integer, or any widening/Decimal conversion that loses a leading
+//!   significant digit (the value does not fit the target's range).
+//! - `22G03` (`InvalidValueType`, datatype mismatch) — an invalid Table-4
+//!   source/target combination, e.g. boolean ↔ numeric (Table 4 `N`), which
+//!   ISO does not define a `CAST` for.
+//! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
+//!   currently implemented explicit-cast scope (NODE / EDGE / PATH source or
+//!   any cast whose target is `NULL` / `NOTHING`).
 
-use selene_core::{Record, Value};
-use smallvec::SmallVec;
+use std::borrow::Cow;
+use std::sync::Arc;
+
+use selene_core::{CharacterStringCoercionError, DbString, JsonValue, Value};
 
 use crate::{
-    GqlType, RecordType, SourceSpan,
-    runtime::{DataExceptionSubclass, ExecutorError},
+    GqlType, SourceSpan,
+    runtime::{DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
 use super::uuid_fns::parse_uuid_string;
+
+mod decimal;
+mod float;
+mod numeric_text;
+mod record;
+mod signed;
+mod signed128;
+mod temporal;
+mod unsigned;
+mod vector;
+
+use float::{FloatTarget, cast_to_float};
+use record::cast_to_record;
+use signed::{SignedIntegerTarget, cast_to_signed_integer};
+use signed128::cast_to_int128;
+use temporal::cast_to_temporal;
+use unsigned::{UnsignedIntegerTarget, cast_to_unsigned_integer};
+use vector::cast_to_vector;
 
 /// Evaluate an explicit CAST.
 ///
 /// `value` is the already-evaluated source value; `target_type` is the
 /// declared GQL target. The returned `Value` matches the canonical Rust
 /// representation of `target_type` (`Integer` → `Value::Int(i64)`, `STRING`
-/// → `Value::String(IStr)`, etc.). NULL propagates as NULL (ISO §22
+/// → `Value::String(DbString)`, etc.). NULL propagates as NULL (ISO §22
 /// universal rule). Unsupported source/target combinations produce
-/// `FeatureNotInV1_1` with a descriptive `feature` tag.
+/// `FeatureNotSupportedYet` with a descriptive `feature` tag.
 pub(super) fn eval_cast(
     value: Value,
     target_type: &GqlType,
     span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
-    // Target-level rejections evaluated up-front.
-    match target_type {
-        GqlType::Null => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
-                feature: "CAST to NULL",
+    if let GqlType::NotNull(inner) = target_type {
+        if matches!(value, Value::Null) {
+            return Err(ExecutorError::data_exception(
+                DataExceptionSubclass::NullValueNotAllowed,
+                "CAST to a NOT NULL value type cannot produce NULL",
                 span,
-            });
+            ));
         }
-        GqlType::Nothing => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
-                feature: "CAST to NOTHING",
-                span,
-            });
-        }
-        _ => {}
+        return eval_cast(value, inner, span, ctx);
     }
 
     // §22 universal: NULL casts to NULL regardless of target.
@@ -59,29 +85,46 @@ pub(super) fn eval_cast(
         return Ok(Value::Null);
     }
 
+    // Target-level rejections for non-NULL source values.
+    match target_type {
+        GqlType::Null => {
+            return Err(ExecutorError::FeatureNotSupportedYet {
+                feature: "CAST to NULL",
+                span,
+            });
+        }
+        GqlType::Nothing => {
+            return Err(ExecutorError::FeatureNotSupportedYet {
+                feature: "CAST to NOTHING",
+                span,
+            });
+        }
+        _ => {}
+    }
+
     // A RECORD target is handled before the generic source-rejection block: per ISO §20.8
     // Table 4 the only valid source for a record target is a record (R -> R), so a record
     // source reaching a record target must not be spuriously rejected below.
     if let GqlType::Record(record_type) = target_type {
-        return cast_to_record(value, record_type, span);
+        return cast_to_record(value, record_type, span, ctx);
     }
 
     // Source-level rejections (graph-element / path / record).
     match &value {
         Value::NodeRef(_) => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST from NODE",
                 span,
             });
         }
         Value::EdgeRef(_) => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST from EDGE",
                 span,
             });
         }
         Value::Path(_) => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST from PATH",
                 span,
             });
@@ -96,127 +139,329 @@ pub(super) fn eval_cast(
                 span,
             ));
         }
+        Value::Bytes(_) if !matches!(target_type, GqlType::Bytes | GqlType::ByteString(_)) => {
+            // ISO §20.8 Table 4: byte strings only cast to byte strings. Every
+            // byte-string source to a non-BYTES target is an invalid
+            // source/target combination, not an unimplemented conversion.
+            return Err(non_iso_combination(
+                "CAST from BYTES to a non-BYTES type is not a valid type combination",
+                span,
+            ));
+        }
+        Value::Json(_)
+            if !matches!(
+                target_type,
+                GqlType::Json | GqlType::String | GqlType::CharacterString(_)
+            ) =>
+        {
+            return Err(non_iso_combination(
+                "CAST from JSON to this target is not a valid type combination",
+                span,
+            ));
+        }
         _ => {}
     }
 
     match target_type {
-        GqlType::Integer
-        | GqlType::Int64
-        | GqlType::BigInt
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::SmallInt => cast_to_integer(value, span),
-        GqlType::Float | GqlType::Float64 | GqlType::Float32 => cast_to_float(value, span),
+        GqlType::Integer | GqlType::Int64 | GqlType::BigInt => {
+            cast_to_signed_integer(value, SignedIntegerTarget::I64, span)
+        }
+        GqlType::Int8 => cast_to_signed_integer(value, SignedIntegerTarget::I8, span),
+        GqlType::Int16 | GqlType::SmallInt => {
+            cast_to_signed_integer(value, SignedIntegerTarget::I16, span)
+        }
+        GqlType::Int32 => cast_to_signed_integer(value, SignedIntegerTarget::I32, span),
+        GqlType::Int128 => cast_to_int128(value, span),
+        GqlType::Uint8 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U8, span),
+        GqlType::Uint16 | GqlType::USmallInt => {
+            cast_to_unsigned_integer(value, UnsignedIntegerTarget::U16, span)
+        }
+        GqlType::Uint32 | GqlType::Uint => {
+            cast_to_unsigned_integer(value, UnsignedIntegerTarget::U32, span)
+        }
+        GqlType::Uint64 | GqlType::UBigInt => {
+            cast_to_unsigned_integer(value, UnsignedIntegerTarget::U64, span)
+        }
+        GqlType::Uint128 => cast_to_unsigned_integer(value, UnsignedIntegerTarget::U128, span),
+        GqlType::Float | GqlType::Float64 | GqlType::Double => {
+            cast_to_float(value, FloatTarget::F64, span)
+        }
+        GqlType::Float32 | GqlType::Real => cast_to_float(value, FloatTarget::F32, span),
+        GqlType::Decimal => decimal::numeric_to_decimal(value, span),
+        GqlType::DecimalExact(decimal_type) => {
+            decimal::numeric_to_decimal_exact(value, *decimal_type, span)
+        }
         GqlType::Boolean => cast_to_boolean(value, span),
-        GqlType::String => cast_to_string(value, span),
+        GqlType::String => cast_to_string(value, None, span),
+        GqlType::CharacterString(character_type) => {
+            cast_to_string(value, Some(character_type), span)
+        }
+        GqlType::Bytes => cast_to_bytes(value, None, span),
+        GqlType::ByteString(byte_type) => cast_to_bytes(value, Some(byte_type), span),
         GqlType::Uuid => cast_to_uuid(value, span),
-        GqlType::List(element_type) => cast_to_list(value, element_type, span),
-        other => Err(ExecutorError::FeatureNotInV1_1 {
+        GqlType::Json => cast_to_json(value, span),
+        GqlType::Vector => cast_to_vector(value, span),
+        GqlType::ZonedDateTime
+        | GqlType::LocalDateTime
+        | GqlType::Date
+        | GqlType::ZonedTime
+        | GqlType::LocalTime
+        | GqlType::Duration
+        | GqlType::DurationYearToMonth
+        | GqlType::DurationDayToSecond => cast_to_temporal(value, target_type, span, ctx),
+        GqlType::List(element_type) => cast_to_list(value, element_type, span, ctx),
+        other => Err(ExecutorError::FeatureNotSupportedYet {
             feature: cast_to_type_feature(other),
             span,
         }),
     }
 }
 
-fn cast_to_integer(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match value {
-        Value::Int(v) => Ok(Value::Int(v)),
-        Value::Bool(b) => Ok(Value::Int(i64::from(b))),
-        Value::Float(f) => float_to_integer(f, span),
-        Value::String(s) => string_to_integer(s.as_str(), span),
-        Value::ExternalString(s) => string_to_integer(s.as_ref(), span),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
-            feature: "CAST source not supported for INTEGER target",
-            span,
-        }),
-    }
-}
-
-fn cast_to_float(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match value {
-        Value::Float(f) => Ok(Value::Float(f)),
-        Value::Int(v) => {
-            // i64 → f64 is lossy for values exceeding 2^53, but ISO §22 does
-            // not require lossless guarantees here. Convert directly.
-            #[allow(clippy::cast_precision_loss)]
-            Ok(Value::Float(v as f64))
-        }
-        Value::Bool(b) => Ok(Value::Float(if b { 1.0 } else { 0.0 })),
-        Value::String(s) => string_to_float(s.as_str(), span),
-        Value::ExternalString(s) => string_to_float(s.as_ref(), span),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
-            feature: "CAST source not supported for FLOAT target",
-            span,
-        }),
-    }
-}
-
 fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    // Per ISO §20.8 Table 4 the only valid sources for a boolean target are
+    // `BO` (identity, GR4 boolean-source rule) and `C` (string, GR4q). Every
+    // numeric source (`EN`/`UN`/`AN`, including DECIMAL) is a `N` cell — ISO
+    // has no numeric→boolean cast — so it is a 22G03 datatype mismatch, not a
+    // 0/1-truthiness extension.
     match value {
         Value::Bool(b) => Ok(Value::Bool(b)),
-        Value::Int(0) => Ok(Value::Bool(false)),
-        Value::Int(1) => Ok(Value::Bool(true)),
-        Value::Int(_) => Err(ExecutorError::data_exception(
-            DataExceptionSubclass::DataException,
-            "CAST to BOOLEAN accepts only 0 or 1",
+        Value::String(s) => string_to_boolean(s.as_str(), span),
+        Value::Int(_)
+        | Value::Uint(_)
+        | Value::Int128(_)
+        | Value::Uint128(_)
+        | Value::Float(_)
+        | Value::Float32(_)
+        | Value::Decimal(_) => Err(non_iso_combination(
+            "CAST from a numeric type to BOOLEAN is not a valid type combination",
             span,
         )),
-        Value::String(s) => string_to_boolean(s.as_str(), span),
-        Value::ExternalString(s) => string_to_boolean(s.as_ref(), span),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
-            feature: "CAST source not supported for BOOLEAN target",
-            span,
-        }),
+        other => Err(
+            non_iso_static_source_for_target(&other, "BOOLEAN", span).unwrap_or(
+                ExecutorError::FeatureNotSupportedYet {
+                    feature: "CAST source not supported for BOOLEAN target",
+                    span,
+                },
+            ),
+        ),
     }
 }
 
-fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+fn cast_to_string(
+    value: Value,
+    target_type: Option<&crate::ast::CharacterStringType>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     let rendered: String = match value {
-        Value::Bool(b) => if b { "true" } else { "false" }.to_owned(),
+        // ISO §20.8 GR4(j)(v)(1): boolean→string renders the UPPERCASE literal
+        // `'TRUE'`/`'FALSE'` (GR4v), not lowercase.
+        Value::Bool(b) => if b { "TRUE" } else { "FALSE" }.to_owned(),
+        // Numeric → C (GR4j): the shortest conforming literal. Every numeric
+        // family is a Table-4 `Y` source, rendered through its own `Display`.
         Value::Int(v) => v.to_string(),
+        Value::Uint(v) => v.to_string(),
+        Value::Int128(v) => v.to_string(),
+        Value::Uint128(v) => v.to_string(),
         Value::Float(f) => format_float(f),
+        Value::Float32(f) => format_float(f64::from(f)),
+        Value::Decimal(d) => decimal::decimal_to_string(&d),
         Value::String(s) => s.as_str().to_owned(),
-        Value::ExternalString(s) => s.as_ref().to_owned(),
         Value::Uuid(v) => v.to_string(),
-        _ => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+        Value::ZonedDateTime(v) => format!("{}{}", v.datetime(), v.offset()),
+        Value::LocalDateTime(v) => v.to_string(),
+        Value::Date(v) => v.to_string(),
+        Value::ZonedTime(v) => format!("{}{}", v.time(), v.offset()),
+        Value::LocalTime(v) => v.to_string(),
+        Value::Duration(v) => v.to_string(),
+        Value::Json(v) => v.to_canonical_string(),
+        other => {
+            if let Some(error) = non_iso_static_source_for_target(&other, "STRING", span) {
+                return Err(error);
+            }
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST source not supported for STRING target",
                 span,
             });
         }
     };
-    // Why: CAST output strings go to `Value::ExternalString` to avoid
-    // exhausting the global IStr pool from user-controlled input. The DoS
-    // guard at `tests/dos_guard.rs::no_unbudgeted_intern_call_in_selene_gql`
-    // enforces this for runtime paths — per [[feedback_mem_forget_leak_dos]]
-    // user-driven allocations get the unbounded path, not the bounded
-    // interner.
-    Ok(Value::ExternalString(rendered.into()))
+    // CAST output strings construct a plain `Value::String`; the global guard
+    // remains IL013, while an explicit target type applies the character-count
+    // envelope before storage construction.
+    let rendered = coerce_string_to_type(rendered, target_type, span)?;
+    match DbString::from_string(rendered) {
+        Ok(db_string) => Ok(Value::String(db_string)),
+        Err(_err) => Err(ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            "CAST result string exceeds the maximum byte length",
+            span,
+        )),
+    }
+}
+
+fn coerce_string_to_type(
+    mut value: String,
+    target_type: Option<&crate::ast::CharacterStringType>,
+    span: SourceSpan,
+) -> Result<String, ExecutorError> {
+    let Some(target_type) = target_type else {
+        return Ok(value);
+    };
+    // Parser-validated bounds (`1 <= min_len <= max_len`) satisfy the core
+    // envelope invariants by construction. The shared core coercion keeps the
+    // CAST funnel on the same IV023 space-only truncation policy as store
+    // assignment and DEFAULT descriptor coercion.
+    let target = selene_core::CharacterStringType {
+        min_len: target_type.min_len,
+        max_len: target_type.max_len,
+    };
+    let coerced = selene_core::coerce_character_string_to_type(&value, target).map_err(|err| {
+        let (subclass, detail) = match err {
+            CharacterStringCoercionError::SourceLengthOverflow => (
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "character string source length exceeds supported range",
+            ),
+            CharacterStringCoercionError::TargetMinOverflow => (
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "character string target minimum length exceeds supported range",
+            ),
+            CharacterStringCoercionError::TargetMaxOverflow => (
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "character string target maximum length exceeds supported range",
+            ),
+            CharacterStringCoercionError::NonSpaceTruncation => (
+                DataExceptionSubclass::StringDataRightTruncation,
+                "character string cast would truncate non-space trailing characters",
+            ),
+        };
+        ExecutorError::data_exception(subclass, detail, span)
+    })?;
+    match coerced {
+        Cow::Owned(coerced) => Ok(coerced),
+        Cow::Borrowed(coerced) => {
+            // A borrowed result is the whole value or a truncated prefix of
+            // it, so the rendered buffer is reused in place.
+            let keep = coerced.len();
+            value.truncate(keep);
+            Ok(value)
+        }
+    }
+}
+
+fn cast_to_json(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match value {
+        Value::Json(value) => Ok(Value::Json(value)),
+        Value::String(value) => parse_json_value(value.as_str(), span),
+        _ => Err(non_iso_combination(
+            "CAST from this source to JSON is not a valid type combination",
+            span,
+        )),
+    }
+}
+
+pub(super) fn parse_json_value(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
+    JsonValue::parse_str(text).map(Value::Json).map_err(|err| {
+        if err.gqlstatus() == "22018" {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::InvalidCharacterValueForCast,
+                format!("STRING value is not valid JSON: {err}"),
+                span,
+            )
+        } else {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::DataException,
+                format!("JSON value exceeds implementation-defined limits: {err}"),
+                span,
+            )
+        }
+    })
 }
 
 fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
     match value {
         Value::Uuid(v) => Ok(Value::Uuid(v)),
         Value::String(s) => parse_uuid_string(s.as_str(), span).map(Value::Uuid),
-        Value::ExternalString(s) => parse_uuid_string(s.as_ref(), span).map(Value::Uuid),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
+        _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for UUID target",
             span,
         }),
     }
 }
 
+fn cast_to_bytes(
+    value: Value,
+    target_type: Option<&crate::ast::ByteStringType>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match value {
+        Value::Bytes(value) => coerce_bytes_to_type(value, target_type, span),
+        _ => Err(non_iso_combination(
+            "CAST from a non-BYTES type to BYTES is not a valid type combination",
+            span,
+        )),
+    }
+}
+
+fn coerce_bytes_to_type(
+    value: Arc<[u8]>,
+    target_type: Option<&crate::ast::ByteStringType>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Some(target_type) = target_type else {
+        return Ok(Value::Bytes(value));
+    };
+    let len = value.len() as u64;
+    if len >= target_type.min_len && len <= target_type.max_len {
+        return Ok(Value::Bytes(value));
+    }
+    if len < target_type.min_len {
+        let target_len = usize::try_from(target_type.min_len).map_err(|_| {
+            ExecutorError::data_exception(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "byte string target minimum length exceeds supported range",
+                span,
+            )
+        })?;
+        let mut padded = Vec::with_capacity(target_len);
+        padded.extend_from_slice(&value);
+        padded.resize(target_len, 0);
+        return Ok(Value::Bytes(Arc::<[u8]>::from(padded.into_boxed_slice())));
+    }
+
+    let max_len = usize::try_from(target_type.max_len).map_err(|_| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "byte string target maximum length exceeds supported range",
+            span,
+        )
+    })?;
+    if value[max_len..].iter().any(|byte| *byte != 0) {
+        return Err(ExecutorError::data_exception(
+            DataExceptionSubclass::StringDataRightTruncation,
+            "byte string cast would truncate non-zero trailing bytes",
+            span,
+        ));
+    }
+    Ok(Value::Bytes(Arc::<[u8]>::from(&value[..max_len])))
+}
+
 fn cast_to_list(
     value: Value,
     element_type: &GqlType,
     span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
-    let Value::List(items) = value else {
-        return Err(ExecutorError::FeatureNotInV1_1 {
-            feature: "CAST to LIST requires a LIST source",
-            span,
-        });
+    let items = match value {
+        Value::List(items) => items,
+        other => {
+            return Err(
+                non_iso_static_source_for_target(&other, "LIST", span).unwrap_or(
+                    ExecutorError::FeatureNotSupportedYet {
+                        feature: "CAST to LIST requires a LIST source",
+                        span,
+                    },
+                ),
+            );
+        }
     };
     let mut out = Vec::with_capacity(items.len());
     for item in items {
@@ -224,149 +469,60 @@ fn cast_to_list(
         // ISO §22.7. Stack-grown via `stacker::maybe_grow` to bound the
         // worst-case nested-LIST depth.
         out.push(stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
-            eval_cast(item, element_type, span)
+            eval_cast(item, element_type, span, ctx)
         })?);
     }
     Ok(Value::List(out))
 }
 
-/// CAST a record value to a record target type per ISO/IEC 39075:2024 §20.8.
-///
-/// - An **open** record target (`RecordType::Open`) returns the source record unchanged
-///   (GR4(e)(ii) identity).
-/// - A **closed** record target re-casts each declared field. Per GR4(e)(i), for the named
-///   `Value::Record` form each declared target field is resolved by name in the source:
-///   a target field with no matching source field raises `22G0U` "record fields do not
-///   match", and source fields not named by the target are dropped. Each resolved field's
-///   value is recursively re-cast to the declared field type. (A `Value::RecordTyped` source
-///   is rejected — see the fail-closed note below.)
-///
-/// The result is emitted as the open named `Value::Record` form, matching the §20.18
-/// record-constructor output so cast results are indistinguishable from record literals
-/// downstream (and validate identically against a closed-graph RECORD property).
-fn cast_to_record(
-    value: Value,
-    target: &RecordType,
+/// An invalid ISO §20.8 Table-4 source/target combination (a `N` cell) →
+/// `22G03` datatype mismatch. Used for the boolean↔numeric cells ISO does not
+/// define a `CAST` for.
+fn non_iso_combination(message: impl Into<String>, span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(DataExceptionSubclass::InvalidValueType, message, span)
+}
+
+pub(super) fn non_iso_static_source_for_target(
+    value: &Value,
+    target: &'static str,
     span: SourceSpan,
-) -> Result<Value, ExecutorError> {
-    match target {
-        RecordType::Open => match value {
-            Value::Record(_) | Value::RecordTyped(_) => Ok(value),
-            _ => Err(non_record_source_cast(span)),
-        },
-        RecordType::Closed(fields) => {
-            let mut out: SmallVec<[(selene_core::IStr, Value); 4]> =
-                SmallVec::with_capacity(fields.len());
-            match value {
-                Value::Record(record) => {
-                    let Record::Open(source_fields) = *record else {
-                        return Err(non_record_source_cast(span));
-                    };
-                    for (name, ty) in fields {
-                        let Some((_, source_value)) =
-                            source_fields.iter().find(|(field, _)| field == name)
-                        else {
-                            return Err(record_fields_do_not_match(span));
-                        };
-                        let source_value = source_value.clone();
-                        let casted = stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
-                            eval_cast(source_value, ty, span)
-                        })?;
-                        out.push((*name, casted));
-                    }
-                }
-                // Fail-closed. SR12's closed→closed projection is by field NAME, but a
-                // `Value::RecordTyped` source is catalog-bound (a `type_id` + positional
-                // slots, no inline names), so name-keyed projection needs to resolve
-                // `type_id` through the named-record-type catalog. That catalog is unbuilt
-                // (`GraphTypeDef.record_types` is never populated) and its resolution
-                // semantics are undesigned, so rather than project positionally (name-blind,
-                // plausibly wrong) we reject. Unreached today: no production read path
-                // materializes `Value::RecordTyped` (records surface as
-                // `Value::Record(Record::Open)`, handled name-keyed above). Name-keyed
-                // projection lands with the future RecordTyped read-path producer brief.
-                Value::RecordTyped(_) => {
-                    return Err(ExecutorError::FeatureNotInV1_1 {
-                        feature: "CAST of a catalog-bound RECORD (RecordTyped) source value",
-                        span,
-                    });
-                }
-                _ => return Err(non_record_source_cast(span)),
-            }
-            Ok(Value::Record(Box::new(Record::Open(out))))
+) -> Option<ExecutorError> {
+    let source = iso_static_source_name(value)?;
+    Some(non_iso_combination(
+        format!("CAST from {source} to {target} is not a valid type combination"),
+        span,
+    ))
+}
+
+fn iso_static_source_name(value: &Value) -> Option<&'static str> {
+    Some(match value {
+        Value::Bool(_) => "BOOLEAN",
+        Value::Int(_) | Value::Int128(_) | Value::Decimal(_) => "signed exact numeric",
+        Value::Uint(_) | Value::Uint128(_) => "unsigned exact numeric",
+        Value::Float(_) | Value::Float32(_) => "approximate numeric",
+        Value::String(_) => "STRING",
+        Value::Bytes(_) => "BYTES",
+        Value::List(_) => "LIST",
+        Value::Record(_) | Value::RecordTyped(_) => "RECORD",
+        Value::Path(_) => "PATH",
+        Value::ZonedDateTime(_) | Value::LocalDateTime(_) | Value::Date(_) => "datetime",
+        Value::ZonedTime(_) | Value::LocalTime(_) => "time",
+        Value::Duration(_) => "DURATION",
+        Value::Null => "NULL",
+        Value::NodeRef(_) | Value::EdgeRef(_) | Value::GraphRef(_) | Value::TableRef(_) => {
+            return None;
         }
-    }
-}
-
-fn non_record_source_cast(span: SourceSpan) -> ExecutorError {
-    // ISO §20.8 Table 4: a non-record source to a record target is an invalid type
-    // combination (`N`) → 22G03 datatype mismatch.
-    ExecutorError::data_exception(
-        DataExceptionSubclass::InvalidValueType,
-        "CAST to RECORD requires a record source value",
-        span,
-    )
-}
-
-fn record_fields_do_not_match(span: SourceSpan) -> ExecutorError {
-    // ISO §20.8 GR4(e): the source record fields do not match the target RECORD type.
-    ExecutorError::data_exception(
-        DataExceptionSubclass::RecordFieldsDoNotMatch,
-        "source record fields do not match the target RECORD type",
-        span,
-    )
-}
-
-fn float_to_integer(f: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
-    if f.is_nan() {
-        return Err(ExecutorError::data_exception(
-            DataExceptionSubclass::InvalidCharacterValueForCast,
-            "CAST of NaN to INTEGER has no representable image",
-            span,
-        ));
-    }
-    // §22.4 — truncate toward zero (Q4). Rust `as` saturates rather than
-    // wrapping, so an explicit range check enforces the 22003 contract
-    // before the conversion: any |f| > i64::MAX as f64 would silently land
-    // at i64::MAX/MIN otherwise.
-    #[allow(clippy::cast_precision_loss)]
-    let max = i64::MAX as f64;
-    #[allow(clippy::cast_precision_loss)]
-    let min = i64::MIN as f64;
-    if !f.is_finite() || f >= max || f <= min {
-        return Err(ExecutorError::data_exception(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "FLOAT value exceeds INTEGER range during CAST",
-            span,
-        ));
-    }
-    let truncated = f.trunc();
-    #[allow(clippy::cast_possible_truncation)]
-    Ok(Value::Int(truncated as i64))
-}
-
-fn string_to_integer(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    // Trim whitespace per ecosystem precedent (Postgres/Neo4j/SQLite); see
-    // BRIEF-135a §O Q2-deviation.
-    text.trim()
-        .parse::<i64>()
-        .map(Value::Int)
-        .map_err(|_| invalid_character(text, "INTEGER", span))
-}
-
-fn string_to_float(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    // Trim whitespace per ecosystem precedent (Postgres/Neo4j/SQLite); see
-    // BRIEF-135a §O Q2-deviation.
-    text.trim()
-        .parse::<f64>()
-        .map(Value::Float)
-        .map_err(|_| invalid_character(text, "FLOAT", span))
+        Value::Extended { .. } | Value::Uuid(_) | Value::Vector(_) | Value::Json(_) => return None,
+        _ => return None,
+    })
 }
 
 fn string_to_boolean(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    // ISO §22 — strict lowercase only (Q3 fold). "TRUE"/"True" are not
-    // accepted; tests pin this.
-    match text {
+    // ISO §20.8 GR4(q) defers C→BO to the §21.2 boolean-literal rules, which
+    // are case-insensitive (`TRUE`/`True`/`true`, `FALSE`/`False`/`false`).
+    // Trim leading/trailing whitespace consistent with the numeric GR4(g)(ii)
+    // truncating-whitespace rule used by string-to-integer casts.
+    match text.trim().to_ascii_lowercase().as_str() {
         "true" => Ok(Value::Bool(true)),
         "false" => Ok(Value::Bool(false)),
         _ => Err(invalid_character(text, "BOOLEAN", span)),
@@ -393,116 +549,29 @@ fn format_float(f: f64) -> String {
 
 fn cast_to_type_feature(target: &GqlType) -> &'static str {
     match target {
-        GqlType::Decimal => "CAST to DECIMAL",
-        GqlType::Bytes => "CAST to BYTES",
+        GqlType::DecimalExact(_) => "CAST to DECIMAL",
+        GqlType::CharacterString(_) => "CAST to STRING",
+        GqlType::Bytes | GqlType::ByteString(_) => "CAST to BYTES",
         GqlType::ZonedDateTime => "CAST to ZONED DATETIME",
         GqlType::LocalDateTime => "CAST to LOCAL DATETIME",
         GqlType::Date => "CAST to DATE",
         GqlType::ZonedTime => "CAST to ZONED TIME",
         GqlType::LocalTime => "CAST to LOCAL TIME",
-        GqlType::Duration => "CAST to DURATION",
+        GqlType::Duration | GqlType::DurationYearToMonth | GqlType::DurationDayToSecond => {
+            "CAST to DURATION"
+        }
+        GqlType::Vector => "CAST to VECTOR",
+        GqlType::Json => "CAST to JSON",
         GqlType::Record(_) => "CAST to RECORD",
+        GqlType::NotNull(inner) => cast_to_type_feature(inner),
         GqlType::Path => "CAST to PATH",
         GqlType::GraphRef => "CAST to GRAPH",
         GqlType::NodeRef => "CAST to NODE",
         GqlType::EdgeRef => "CAST to EDGE",
         GqlType::TableRef => "CAST to TABLE",
-        GqlType::Int128 | GqlType::Uint128 => "CAST to 128-bit integer",
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            "CAST to unsigned integer"
-        }
         _ => "CAST to unsupported target type",
     }
 }
 
 #[cfg(test)]
-mod tests {
-    //! Unit coverage for runtime CAST branches that are not addressable
-    //! through GQL grammar. The integration suite at
-    //! `crates/selene-gql/tests/cast.rs` covers every grammar-reachable
-    //! path; these tests close the remaining BF-class gaps (NaN, overflow,
-    //! ±Infinity) where the grammar has no literal for the input value.
-    use super::*;
-    use crate::SourceSpan;
-    use crate::runtime::ExecutorError;
-
-    fn span() -> SourceSpan {
-        SourceSpan::default()
-    }
-
-    #[test]
-    fn float_nan_to_integer_returns_22018() {
-        let err = eval_cast(Value::Float(f64::NAN), &GqlType::Integer, span())
-            .expect_err("NaN cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(
-            subclass,
-            DataExceptionSubclass::InvalidCharacterValueForCast
-        );
-    }
-
-    #[test]
-    fn float_overflow_to_integer_returns_22003() {
-        let err = eval_cast(Value::Float(1e30_f64), &GqlType::Integer, span())
-            .expect_err("overflow cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
-    }
-
-    #[test]
-    fn float_negative_overflow_to_integer_returns_22003() {
-        let err = eval_cast(Value::Float(-1e30_f64), &GqlType::Integer, span())
-            .expect_err("negative overflow cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
-    }
-
-    #[test]
-    fn float_positive_infinity_to_integer_returns_22003() {
-        let err = eval_cast(Value::Float(f64::INFINITY), &GqlType::Integer, span())
-            .expect_err("+inf cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
-    }
-
-    #[test]
-    fn float_negative_infinity_to_integer_returns_22003() {
-        let err = eval_cast(Value::Float(f64::NEG_INFINITY), &GqlType::Integer, span())
-            .expect_err("-inf cast is rejected");
-        let ExecutorError::DataException { subclass, .. } = err else {
-            panic!("expected DataException, got {err:?}");
-        };
-        assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
-    }
-
-    #[test]
-    fn recordtyped_source_to_closed_record_is_fail_closed() {
-        // A catalog-bound `Value::RecordTyped` source carries no inline field names, and the
-        // named-record-type catalog needed to resolve them is unbuilt — so CAST rejects it
-        // (42N01 feature-not-in-v1.1) rather than projecting positionally (name-blind).
-        // RecordTyped is not grammar-reachable, hence this unit test.
-        use selene_core::{RecordTypeId, RecordTyped};
-        let value = Value::RecordTyped(Box::new(RecordTyped {
-            type_id: RecordTypeId::new(1),
-            values: [Some(Value::Int(1))].into_iter().collect(),
-        }));
-        let field = selene_core::intern_with_admission("a")
-            .expect("intern field")
-            .0;
-        let target = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
-        let err = eval_cast(value, &target, span()).expect_err("RecordTyped source rejected");
-        assert!(
-            matches!(err, ExecutorError::FeatureNotInV1_1 { .. }),
-            "expected FeatureNotInV1_1, got {err:?}"
-        );
-        assert_eq!(err.gqlstatus().as_str(), "42N01");
-    }
-}
+mod tests;

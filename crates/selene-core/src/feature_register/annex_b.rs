@@ -142,14 +142,14 @@ pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
     (
         AnnexBId("IL013"),
         ImplDefinedChoice {
-            choice: "2^32 - 1 bytes per inline string",
+            choice: "stored inline strings capped at 2^32 - 1 bytes; session-configurable character and byte-string result caps default to 2^32 - 1",
             settled_in: "spec 02 section 3.1",
         },
     ),
     (
         AnnexBId("IL015"),
         ImplDefinedChoice {
-            choice: "2^32 - 1 constructed-value elements",
+            choice: "stored property maps capped at 2^32 - 1 entries; session-configurable list and path result caps default to 1,000,000 list elements and 32 path edges",
             settled_in: "spec 02 section 3.1",
         },
     ),
@@ -191,7 +191,7 @@ pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
     (
         AnnexBId("IV011"),
         ImplDefinedChoice {
-            choice: "Value minus RecordTyped; Value::Extended carries opaque sister-project payloads",
+            choice: "Value minus RecordTyped; Value::Vector is native dense f32; Value::Json is native RFC 8259 JSON; Value::Extended carries opaque sister-project payloads",
             settled_in: "spec 02 section 3.1",
         },
     ),

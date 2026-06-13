@@ -70,7 +70,8 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
         JoinTree::Expand { child, .. }
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
-        | JoinTree::PathModeFilter { child, .. } => rewrite_tree(child, cap),
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, cap),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, cap) | rewrite_tree(right, cap)
         }

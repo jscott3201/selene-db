@@ -1,36 +1,38 @@
 use std::{sync::Arc, thread};
 
 use parking_lot::Mutex;
-use selene_core::{
-    Change, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, intern,
-};
+use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value};
 
 use crate::{
     GraphTypeDef, IndexProvider, NodeTypeDef, PropertyTypeDef, ProviderError, ProviderTag,
     SharedGraph, SubTag, ValidationMode,
 };
 
-fn istr(value: &str) -> selene_core::IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> selene_core::DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn prop(name: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(istr(name), value)]).expect("test property map is valid")
+    PropertyMap::from_pairs([(db_string(name), value)]).expect("test property map is valid")
 }
 
 fn person_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("txn.person.graph"),
+        name: db_string("txn.person.graph"),
         node_types: vec![NodeTypeDef {
-            name: istr("txn.person"),
-            key_labels: LabelSet::single(istr("Person")),
+            name: db_string("txn.person"),
+            key_labels: LabelSet::single(db_string("Person")),
             properties: vec![PropertyTypeDef {
-                name: istr("name"),
+                name: db_string("name"),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -349,7 +351,7 @@ fn validation_failure_rolls_back_and_does_not_bump_generation() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(istr("Person")),
+                LabelSet::single(db_string("Person")),
                 prop("name", Value::Int(7)),
             )
             .expect("mutation accepts before commit-time validation");
@@ -428,13 +430,13 @@ fn commit_with_principal_carries_principal_to_outcome() {
 fn commit_returns_changes_in_order() {
     let shared = SharedGraph::new(GraphId::new(1));
     let mut txn = shared.begin_write();
-    let label = intern("txn.node").unwrap();
+    let label = db_string("txn.node");
     {
         let mut mutator = txn.mutator();
         let id = mutator
             .create_node(LabelSet::single(label), PropertyMap::new())
             .expect("create_node ok");
-        let prop = intern("txn.prop").unwrap();
+        let prop = db_string("txn.prop");
         let diff = selene_core::PropertyDiff::new([(prop, Value::Int(1))], []).unwrap();
         mutator
             .update_node(id, selene_core::LabelDiff::new([], []).unwrap(), diff)
@@ -558,7 +560,7 @@ fn provider_panic_isolation() {
         let id = mutator
             .create_node(LabelSet::new(), PropertyMap::new())
             .expect("create_node ok");
-        let prop = intern("txn.panic.prop").unwrap();
+        let prop = db_string("txn.panic.prop");
         let diff = selene_core::PropertyDiff::new([(prop, Value::Int(1))], []).unwrap();
         mutator
             .update_node(id, selene_core::LabelDiff::new([], []).unwrap(), diff)

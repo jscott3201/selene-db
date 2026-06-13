@@ -1,6 +1,6 @@
 //! Analyzer positive binding tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     AnalysisError, BindingDeclKind, BindingUseKind, EmptyProcedureRegistry, GqlType,
     PipelineStatement, ProcedureOutputColumn, ProcedureParameter, ProcedureRegistry, Statement,
@@ -27,14 +27,14 @@ fn pkg_fn_registry(
     output_columns: Vec<ProcedureOutputColumn>,
 ) -> MockProcedureRegistry {
     MockProcedureRegistry::new().with_procedure(
-        vec![istr("pkg"), istr("fn")],
+        vec![db_string("pkg"), db_string("fn")],
         parameters,
         output_columns,
     )
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test strings fit interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test strings fit DB string cap")
 }
 
 #[test]
@@ -86,11 +86,14 @@ fn order_by_alias_resolves_to_projection() {
 fn explicit_yield_columns_bind_by_visible_name() {
     let registry = pkg_fn_registry(
         vec![ProcedureParameter::new(
-            istr("node"),
+            db_string("node"),
             GqlType::NodeRef,
             false,
         )],
-        vec![ProcedureOutputColumn::new(istr("col"), GqlType::String)],
+        vec![ProcedureOutputColumn::new(
+            db_string("col"),
+            GqlType::String,
+        )],
     );
     let analyzed = analyze_with(
         "MATCH (n) CALL pkg.fn(n) YIELD col AS answer RETURN answer",
@@ -107,8 +110,8 @@ fn yield_star_expands_registered_columns() {
     let registry = pkg_fn_registry(
         Vec::new(),
         vec![
-            ProcedureOutputColumn::new(istr("first"), GqlType::String),
-            ProcedureOutputColumn::new(istr("second"), GqlType::Integer),
+            ProcedureOutputColumn::new(db_string("first"), GqlType::String),
+            ProcedureOutputColumn::new(db_string("second"), GqlType::Integer),
         ],
     );
     let analyzed = analyze_with("CALL pkg.fn() YIELD *", &registry).expect("analyzes");
@@ -117,7 +120,7 @@ fn yield_star_expands_registered_columns() {
         .declarations()
         .iter()
         .filter(|decl| decl.kind() == BindingDeclKind::YieldColumn)
-        .map(|decl| decl.name().as_str())
+        .map(|decl| decl.name().as_str().to_owned())
         .collect::<Vec<_>>();
     assert_eq!(yield_names, ["first", "second"]);
 }
@@ -173,6 +176,10 @@ fn unbounded_quantifier_without_iso_gate_rejects_42001() {
     for source in [
         "MATCH (a)-[:K*]->(b) RETURN b",
         "MATCH ALL (a)-[:K+]->(b) RETURN b",
+        // An explicit bare WALK (no selector, no DIFFERENT EDGES) is still
+        // rejected — the FU-2 unbounded-shortest TRAIL downshift is a planner-only
+        // change and must not relax this analyzer gate.
+        "MATCH WALK (a)-[:K+]->(b) RETURN b",
     ] {
         let err = analyze_one(source).expect_err("unbounded quantifier requires a gate");
         assert!(matches!(err, AnalysisError::UnboundedRequiresGate { .. }));
@@ -186,6 +193,11 @@ fn unbounded_quantifier_with_restrictive_or_selective_gate_analyzes() {
         "MATCH TRAIL (a)-[:K*]->(b) RETURN b",
         "MATCH ANY (a)-[:K+]->(b) RETURN b",
         "MATCH ALL SHORTEST (a)-[:K{2,}]->(b) RETURN b",
+        // ISO §16.6 SR4: the counted shortest path (G019) and counted shortest
+        // group (G020) prefixes are selective, so they also gate an unbounded
+        // variable-length pattern — the primary use of a shortest selector.
+        "MATCH SHORTEST 3 (a)-[:K*]->(b) RETURN b",
+        "MATCH SHORTEST 2 GROUPS (a)-[:K+]->(b) RETURN b",
     ] {
         analyze_one(source).unwrap_or_else(|err| panic!("{source} should analyze: {err}"));
     }
@@ -239,7 +251,10 @@ fn next_chain_threads_bindings_forward() {
 fn mixed_yield_star_binds_explicit_columns() {
     let registry = pkg_fn_registry(
         Vec::new(),
-        vec![ProcedureOutputColumn::new(istr("result"), GqlType::String)],
+        vec![ProcedureOutputColumn::new(
+            db_string("result"),
+            GqlType::String,
+        )],
     );
     let analyzed = analyze_with("CALL pkg.fn() YIELD *, result AS alias", &registry)
         .expect("mixed YIELD analyses");

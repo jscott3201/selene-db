@@ -2,10 +2,10 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::{IStr, PropertyValueType};
+use selene_core::{DbString, PropertyValueType};
 use selene_graph::{GraphTypeDef, NodeTypeDef, TypedIndexKind};
 
-use super::intern_runtime;
+use super::runtime_db_string;
 use crate::{
     SourceSpan,
     runtime::{ExecutorError, TxContext},
@@ -17,20 +17,20 @@ use super::super::catalog_index::{
 
 pub(super) enum IndexPath {
     Single {
-        property: IStr,
+        property: DbString,
         kind: TypedIndexKind,
     },
     Composite {
-        properties: Vec<IStr>,
+        properties: Vec<DbString>,
         kinds: Vec<TypedIndexKind>,
     },
 }
 
 pub(super) fn create_index_plan(
     ctx: &TxContext<'_, '_>,
-    name: IStr,
-    label: IStr,
-    properties: &[IStr],
+    name: DbString,
+    label: DbString,
+    properties: &[DbString],
     if_not_exists: bool,
     span: SourceSpan,
 ) -> Result<Option<IndexPath>, ExecutorError> {
@@ -45,8 +45,8 @@ pub(super) fn create_index_plan(
                     .to_owned(),
             span,
         })?;
-    let node_type = index_node_type(graph_type, label, span)?;
-    let path = dispatch_index_properties(node_type, label, properties, span)?;
+    let node_type = index_node_type(graph_type, label.clone(), span)?;
+    let path = dispatch_index_properties(node_type, label.clone(), properties, span)?;
     match path {
         IndexPath::Single { property, kind } => {
             create_single_index_plan(graph, name, label, property, kind, if_not_exists, span)
@@ -59,14 +59,14 @@ pub(super) fn create_index_plan(
 
 fn create_single_index_plan(
     graph: &selene_graph::SeleneGraph,
-    name: IStr,
-    label: IStr,
-    property: IStr,
+    name: DbString,
+    label: DbString,
+    property: DbString,
     kind: TypedIndexKind,
     if_not_exists: bool,
     span: SourceSpan,
 ) -> Result<Option<IndexPath>, ExecutorError> {
-    let report = lookup_index_entries(graph, name, label, &[property]);
+    let report = lookup_index_entries(graph, name.clone(), label, std::slice::from_ref(&property));
     if !report.other_name_matches.is_empty() {
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
@@ -80,7 +80,7 @@ fn create_single_index_plan(
         }
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
-            name: intern_runtime(&existing_name)?,
+            name: runtime_db_string(&existing_name)?,
             span,
         });
     }
@@ -89,8 +89,8 @@ fn create_single_index_plan(
 
 fn dispatch_index_properties(
     node_type: &NodeTypeDef,
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     span: SourceSpan,
 ) -> Result<IndexPath, ExecutorError> {
     match properties {
@@ -99,13 +99,15 @@ fn dispatch_index_properties(
             span,
         }),
         [property] => Ok(IndexPath::Single {
-            property: *property,
-            kind: index_kind_for_property(node_type, label, *property, span)?,
+            property: property.clone(),
+            kind: index_kind_for_property(node_type, label, property.clone(), span)?,
         }),
         _ => {
             let kinds = properties
                 .iter()
-                .map(|property| index_kind_for_property(node_type, label, *property, span))
+                .map(|property| {
+                    index_kind_for_property(node_type, label.clone(), property.clone(), span)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(IndexPath::Composite {
                 properties: properties.to_vec(),
@@ -117,9 +119,9 @@ fn dispatch_index_properties(
 
 fn create_composite_index_plan(
     graph: &selene_graph::SeleneGraph,
-    name: IStr,
-    label: IStr,
-    properties: Vec<IStr>,
+    name: DbString,
+    label: DbString,
+    properties: Vec<DbString>,
     kinds: Vec<TypedIndexKind>,
     if_not_exists: bool,
     span: SourceSpan,
@@ -138,7 +140,7 @@ fn create_composite_index_plan(
             span,
         });
     }
-    let report = lookup_index_entries(graph, name, label, &properties);
+    let report = lookup_index_entries(graph, name.clone(), label, &properties);
     if !report.other_name_matches.is_empty() {
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
@@ -152,7 +154,7 @@ fn create_composite_index_plan(
         }
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
-            name: intern_runtime(&existing_name)?,
+            name: runtime_db_string(&existing_name)?,
             span,
         });
     }
@@ -161,13 +163,13 @@ fn create_composite_index_plan(
 
 fn index_node_type(
     graph_type: &GraphTypeDef,
-    label: IStr,
+    label: DbString,
     span: SourceSpan,
 ) -> Result<&NodeTypeDef, ExecutorError> {
-    if let Some(index) = graph_type.node_type_index_for(label) {
+    if let Some(index) = graph_type.node_type_index_for(label.clone()) {
         return Ok(&graph_type.node_types[index as usize]);
     }
-    if graph_type.edge_type_index_for(label).is_some() {
+    if graph_type.edge_type_index_for(label.clone()).is_some() {
         return Err(ExecutorError::GraphTypeViolation {
             message: format!(
                 "CREATE INDEX on edge label ':{}' -- edge-property indexes ship in BRIEF-140c",
@@ -184,8 +186,8 @@ fn index_node_type(
 
 fn index_kind_for_property(
     node_type: &NodeTypeDef,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     span: SourceSpan,
 ) -> Result<TypedIndexKind, ExecutorError> {
     let property_def = node_type
@@ -201,11 +203,23 @@ fn index_kind_for_property(
             span,
         })?;
     match property_def.value_type {
+        PropertyValueType::Bool => Ok(TypedIndexKind::Bool),
         PropertyValueType::Int => Ok(TypedIndexKind::I64),
+        PropertyValueType::Uint => Ok(TypedIndexKind::U64),
+        PropertyValueType::Int128 => Ok(TypedIndexKind::I128),
+        PropertyValueType::Uint128 => Ok(TypedIndexKind::U128),
+        PropertyValueType::Decimal => Ok(TypedIndexKind::Decimal),
+        PropertyValueType::Float32 => Ok(TypedIndexKind::F32),
         PropertyValueType::Float => Ok(TypedIndexKind::F64),
         PropertyValueType::String => Ok(TypedIndexKind::String),
         PropertyValueType::Date => Ok(TypedIndexKind::Date),
         PropertyValueType::LocalDateTime => Ok(TypedIndexKind::LocalDateTime),
+        PropertyValueType::ZonedDateTime => Ok(TypedIndexKind::ZonedDateTime),
+        PropertyValueType::LocalTime => Ok(TypedIndexKind::LocalTime),
+        PropertyValueType::ZonedTime => Ok(TypedIndexKind::ZonedTime),
+        PropertyValueType::Duration
+        | PropertyValueType::DurationYearToMonth
+        | PropertyValueType::DurationDayToSecond => Ok(TypedIndexKind::Duration),
         PropertyValueType::Uuid => Ok(TypedIndexKind::Uuid),
         value_type => Err(ExecutorError::GraphTypeViolation {
             message: format!(
@@ -219,11 +233,11 @@ fn index_kind_for_property(
 
 pub(super) fn resolve_drop_index(
     graph: &selene_graph::SeleneGraph,
-    name: IStr,
+    name: DbString,
     if_exists: bool,
     span: SourceSpan,
 ) -> Result<Option<DropTarget>, ExecutorError> {
-    let matches = resolve_drop_index_matches(graph, name);
+    let matches = resolve_drop_index_matches(graph, name.clone());
     match matches.as_slice() {
         [] if if_exists => Ok(None),
         [] => Err(ExecutorError::GraphTypeViolation {
@@ -251,12 +265,12 @@ fn render_index_pair_list(pairs: &[DropTarget]) -> String {
         .join(", ")
 }
 
-fn duplicate_properties(properties: &[IStr]) -> Vec<IStr> {
+fn duplicate_properties(properties: &[DbString]) -> Vec<DbString> {
     let mut seen = BTreeSet::new();
     let mut duplicates = Vec::new();
     for property in properties {
-        if !seen.insert(*property) && !duplicates.contains(property) {
-            duplicates.push(*property);
+        if !seen.insert(property.clone()) && !duplicates.contains(property) {
+            duplicates.push(property.clone());
         }
     }
     duplicates

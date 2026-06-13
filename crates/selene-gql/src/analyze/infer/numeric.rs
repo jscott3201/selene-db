@@ -5,7 +5,7 @@ use crate::GqlType;
 /// Find the promoted result type for numeric operands.
 #[must_use]
 pub(crate) fn numeric_promotion(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
-    if lhs == rhs && is_numeric(lhs) {
+    if lhs == rhs && is_numeric(lhs) && !matches!(lhs.strip_not_null(), GqlType::DecimalExact(_)) {
         return Some(lhs.clone());
     }
     match (numeric_kind(lhs)?, numeric_kind(rhs)?) {
@@ -25,9 +25,14 @@ pub(crate) fn is_numeric(ty: &GqlType) -> bool {
 
 /// Return true if `arg_ty` can flow into a procedure parameter of `param_ty`.
 pub(crate) fn argument_assignable(arg_ty: &GqlType, param_ty: &GqlType, nullable: bool) -> bool {
+    if matches!(param_ty, GqlType::NotNull(_)) && matches!(arg_ty, GqlType::Null) {
+        return false;
+    }
     if matches!(arg_ty, GqlType::Null) {
         return nullable;
     }
+    let arg_ty = arg_ty.strip_not_null();
+    let param_ty = param_ty.strip_not_null();
     if arg_ty == param_ty {
         return true;
     }
@@ -58,7 +63,7 @@ enum FloatKind {
 }
 
 fn numeric_kind(ty: &GqlType) -> Option<NumericKind> {
-    Some(match ty {
+    Some(match ty.strip_not_null() {
         GqlType::Integer | GqlType::BigInt | GqlType::Int64 => NumericKind::Integer(IntegerKind {
             signed: true,
             width: 64,
@@ -83,15 +88,15 @@ fn numeric_kind(ty: &GqlType) -> Option<NumericKind> {
             signed: false,
             width: 8,
         }),
-        GqlType::Uint16 => NumericKind::Integer(IntegerKind {
+        GqlType::Uint16 | GqlType::USmallInt => NumericKind::Integer(IntegerKind {
             signed: false,
             width: 16,
         }),
-        GqlType::Uint32 => NumericKind::Integer(IntegerKind {
+        GqlType::Uint32 | GqlType::Uint => NumericKind::Integer(IntegerKind {
             signed: false,
             width: 32,
         }),
-        GqlType::Uint64 => NumericKind::Integer(IntegerKind {
+        GqlType::Uint64 | GqlType::UBigInt => NumericKind::Integer(IntegerKind {
             signed: false,
             width: 64,
         }),
@@ -99,10 +104,10 @@ fn numeric_kind(ty: &GqlType) -> Option<NumericKind> {
             signed: false,
             width: 128,
         }),
-        GqlType::Decimal => NumericKind::Decimal,
+        GqlType::Decimal | GqlType::DecimalExact(_) => NumericKind::Decimal,
         GqlType::Float => NumericKind::Float(FloatKind::Unsized),
-        GqlType::Float32 => NumericKind::Float(FloatKind::F32),
-        GqlType::Float64 => NumericKind::Float(FloatKind::F64),
+        GqlType::Float32 | GqlType::Real => NumericKind::Float(FloatKind::F32),
+        GqlType::Float64 | GqlType::Double => NumericKind::Float(FloatKind::F64),
         _ => return None,
     })
 }

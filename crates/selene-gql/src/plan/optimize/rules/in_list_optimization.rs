@@ -5,7 +5,7 @@ use crate::plan::{
     optimize::{OptimizeContext, Rule, Transformed, binding_refs, cost, walk},
 };
 
-use super::index_helpers::{compatible_value, single_label};
+use super::index_helpers::{compatible_list_parameter, compatible_value, single_label};
 
 const SMALL_IN_LIST_LIMIT: usize = 16;
 
@@ -51,9 +51,9 @@ fn rewrite_tree(
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
-            rewrite_tree(child, bindings, catalog)
-        }
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
         // Walk each per-label branch; the disjunctive_label_expansion rule
         // runs at slot 5 (before this rule), so DisjunctiveScan only carries
@@ -85,16 +85,31 @@ fn rewrite_scan(
         if !binding_is_node(bindings, matched.binding) {
             continue;
         }
+        let Some(lookup) =
+            catalog.typed_index(crate::IndexTarget::Node, label.clone(), matched.key.clone())
+        else {
+            continue;
+        };
+        let property = matched.key;
+        if let binding_refs::PropertyPredicateShape::InListExpression(list_expr) = matched.shape {
+            let Some(key) = compatible_list_parameter(list_expr, lookup.kind) else {
+                continue;
+            };
+            scan.property_predicates.remove(index);
+            scan.access = ScanAccess::BitmapUnion {
+                handle: lookup.handle,
+                property,
+                kind: lookup.kind,
+                keys: vec![key],
+            };
+            return true;
+        }
         let binding_refs::PropertyPredicateShape::InList(items) = matched.shape else {
             continue;
         };
         if items.is_empty() || items.len() > SMALL_IN_LIST_LIMIT {
             continue;
         }
-        let Some(lookup) = catalog.typed_index(crate::IndexTarget::Node, label, matched.key) else {
-            continue;
-        };
-        let property = matched.key;
         let mut keys = Vec::with_capacity(items.len());
         let mut has_literal = false;
         let mut has_parameter = false;
@@ -107,6 +122,7 @@ fn rewrite_scan(
             match &index_key {
                 IndexKey::Literal(_) => has_literal = true,
                 IndexKey::Parameter { .. } => has_parameter = true,
+                IndexKey::ParameterList { .. } => {}
             }
             keys.push(index_key);
         }
@@ -123,8 +139,14 @@ fn rewrite_scan(
         // same rows the residual `IN`-list filter would, so results are
         // identical regardless of path.
         if let (Some(index_cost), Some(baseline)) = (
-            cost::in_list_cost(catalog, IndexTarget::Node, label, property, &keys),
-            cost::linear_baseline(catalog, IndexTarget::Node, label),
+            cost::in_list_cost(
+                catalog,
+                IndexTarget::Node,
+                label.clone(),
+                property.clone(),
+                &keys,
+            ),
+            cost::linear_baseline(catalog, IndexTarget::Node, label.clone()),
         ) && cost::should_decline_index(index_cost, baseline)
         {
             continue;

@@ -1,25 +1,25 @@
 //! Cooperative cancellation coverage for cancellable algorithm variants.
 
 use selene_algorithms::{
-    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism, PathfindingError,
-    ProjectionConfig, TopoSortError, TriangleCountConfig, apsp_with_checker,
-    articulation_points_with_checker, betweenness_with_checker, bridges_with_checker,
-    dijkstra_with_checker, label_propagation_with_checker, louvain_with_checker,
-    pagerank_with_checker, scc_count_with_checker, scc_with_checker, sssp_with_checker,
-    topological_sort_with_checker, triangle_count_with_checker, wcc_count_with_checker,
-    wcc_with_checker,
+    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, PageRankOrientation,
+    Parallelism, PathfindingError, ProjectionConfig, TopoSortError, TriangleCountConfig,
+    apsp_with_checker, articulation_points_with_checker, betweenness_with_checker,
+    bridges_with_checker, dijkstra_with_checker, label_propagation_with_checker,
+    louvain_with_checker, pagerank_with_checker, scc_count_with_checker, scc_with_checker,
+    sssp_with_checker, topological_sort_with_checker, triangle_count_with_checker,
+    wcc_count_with_checker, wcc_with_checker,
 };
 use selene_core::{
-    CancellationCause, CancellationChecker, CancellationToken, GraphId, IStr, LabelSet,
-    PropertyMap, intern,
+    CancellationCause, CancellationChecker, CancellationToken, DbString, GraphId, LabelSet,
+    PropertyMap,
 };
 use selene_graph::SharedGraph;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-fn istr(name: &str) -> IStr {
-    intern(name).expect("test name interns")
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).expect("test name fits DB string cap")
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -39,20 +39,20 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
 
 fn build_graph() -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(1170));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::new();
     for _ in 0..4 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .expect("node inserts"),
         );
     }
     for &(s, t) in &[(0, 1), (1, 2), (2, 0), (2, 3)] {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .expect("edge inserts");
     }
     txn.commit().expect("graph commits");
@@ -70,20 +70,20 @@ fn cancelled_checker<'a>(token: &'a CancellationToken) -> CancellationChecker<'a
 /// the in-loop strided checkpoint rather than the entry check.
 fn build_large_line_graph(n: usize) -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(1171));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(n);
     for _ in 0..n {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .expect("node inserts"),
         );
     }
     for i in 0..n - 1 {
         txn.mutator()
-            .create_edge(rel, nodes[i], nodes[i + 1], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[i], nodes[i + 1], PropertyMap::new())
             .expect("edge inserts");
     }
     txn.commit().expect("graph commits");
@@ -110,6 +110,8 @@ fn cancellable_algorithm_variants_report_cancelled() {
                 max_iter: 10,
                 tolerance: 1e-6,
                 parallelism: Parallelism::Sequential,
+                orientation: PageRankOrientation::Natural,
+                personalization: None,
             },
             checker,
         )

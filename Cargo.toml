@@ -16,21 +16,22 @@ members = [
     "crates/selene-algorithms",
     "crates/selene-testing",
 ]
-exclude = ["_spec", "crates/selene-gql/fuzz"]
+exclude = ["_spec", "crates/selene-gql/fuzz", "crates/selene-persist/fuzz"]
 
 [workspace.package]
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 rust-version = "1.95.0"
 authors = ["selene-db contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/jscott3201/selene-db"
-homepage = "https://github.com/jscott3201/selene-db"
+repository = "https://github.com/Aionforge-Labs/selene-db"
+homepage = "https://github.com/Aionforge-Labs/selene-db"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "deny"
 unused_must_use = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(selene_bench_system_alloc)"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -46,7 +47,6 @@ thiserror = "2.0"
 miette = { version = "7.6", features = ["derive"] }
 pest = "2.8"
 pest_derive = "2.8"
-lasso = { version = "0.7", features = ["multi-threaded"] }
 jiff = { version = "0.2", features = ["serde"] }
 rust_decimal = { version = "1.42", default-features = false, features = ["std", "serde"] }
 uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
@@ -77,23 +77,32 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = "0.13"
 semver = "1"
 serde_json = "1"
+# Safe SIMD lane types for vector metric kernels. Keep on imbl's existing 0.7
+# line unless the whole dependency graph can move, because cargo-deny rejects
+# duplicate crate versions.
+wide = "0.7.33"
 # Runtime stack-growth shim. Used by the GQL analyzer to bound recursive
 # `bind_value_expr` against the OS default thread stack (2 MB on macOS);
 # matches the rustc / syn / serde recursion pattern.
 stacker = "0.1"
-selene-persist = { path = "crates/selene-persist", version = "1.1.0" }
+selene-persist = { path = "crates/selene-persist", version = "1.2.0" }
 
 # Dev dependencies.
 criterion = "0.8"
-iai-callgrind = "0.16"
 # Bench-binary global allocator. Library crates do NOT depend on this;
 # embedders pick their own allocator.
 mimalloc = { version = "0.1", default-features = false }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 rstest = "0.26"
 insta = "1.47"
-postcard = { version = "1.1", features = ["alloc"] }
+# default-features = false drops postcard's default heapless-cas feature, the
+# only path pulling heapless 0.7 -> atomic-polyfill (unmaintained,
+# RUSTSEC-2023-0089) + spin. Crates that call to_stdvec declare use-std on
+# their own dependency line instead of riding feature unification.
+postcard = { version = "1.1", default-features = false, features = ["alloc"] }
 tempfile = "3.27"
+pollster = "0.4"
+wgpu = { version = "29.0.3", default-features = false, features = ["std", "wgsl", "metal", "vulkan", "dx12"] }
 
 [profile.release]
 opt-level = 3

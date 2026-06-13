@@ -1,6 +1,6 @@
 //! Graph-layer error types and GQLSTATUS mappings.
 
-use selene_core::{CoreError, EdgeId, IStr, NodeId};
+use selene_core::{CoreError, DbString, EdgeId, NodeId};
 use selene_persist::PersistError;
 use smallvec::SmallVec;
 
@@ -10,6 +10,40 @@ use crate::typed_index::TypedIndexKind;
 
 /// Result alias for graph operations.
 pub type GraphResult<T> = Result<T, GraphError>;
+
+/// Store-assignment data-exception family.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum StoreAssignmentException {
+    /// String or byte-string assignment would truncate non-padding data.
+    StringDataRightTruncation,
+    /// Numeric assignment cannot be represented by the target type.
+    NumericValueOutOfRange,
+}
+
+impl StoreAssignmentException {
+    /// Map this store-assignment exception to its ISO GQLSTATUS code.
+    #[must_use]
+    pub const fn gqlstatus(self) -> &'static str {
+        match self {
+            Self::StringDataRightTruncation => "22001",
+            Self::NumericValueOutOfRange => "22003",
+        }
+    }
+}
+
+/// Error raised while applying ISO store-assignment conversion rules.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[error("store assignment to property {property} failed: {reason}")]
+#[diagnostic(code(SLENE_G_027))]
+pub struct StoreAssignmentError {
+    /// Property being assigned.
+    pub property: DbString,
+    /// Data-exception family.
+    pub exception: StoreAssignmentException,
+    /// Human-readable reason.
+    pub reason: String,
+}
 
 /// Error type for graph storage and mutation operations.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -77,9 +111,9 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_007))]
     PropertyIndexAlreadyExists {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
     },
 
     /// The named property index does not exist.
@@ -87,9 +121,9 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_008))]
     PropertyIndexNotFound {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
     },
 
     /// A value cannot be admitted to the declared property index kind.
@@ -99,35 +133,13 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_009))]
     IndexValueRejected {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
         /// Registered index kind.
         expected_kind: TypedIndexKind,
         /// Observed value kind or `"NaN"`.
         observed: &'static str,
-    },
-
-    /// A `Value::ExternalString` could not be admitted to the global
-    /// [`IStr`] pool for use as a `STRING`-kind property-index key —
-    /// typically because the pool reached
-    /// [`selene_core::MAX_INTERNED_STRINGS`].
-    ///
-    /// DDL `INDEXED` is the user's consent to admit a column's content to
-    /// the pool (BRIEF-153 carve-out from D20); cap exhaustion at that
-    /// boundary is a hard error rather than a silent skip. Maps to
-    /// GQLSTATUS `5GQL1`, matching the source
-    /// [`CoreError::IStrCapExceeded`].
-    #[error("property index ({label}, {property}) cannot admit value to the IStr pool: {source}")]
-    #[diagnostic(code(SLENE_G_018))]
-    IndexAdmissionExhausted {
-        /// Indexed node label.
-        label: IStr,
-        /// Indexed property key.
-        property: IStr,
-        /// Underlying admission failure (carries count + max).
-        #[source]
-        source: CoreError,
     },
 
     /// A composite property index already exists for this `(label, properties...)`.
@@ -135,15 +147,95 @@ pub enum GraphError {
     #[diagnostic(code(SLENE_G_020))]
     CompositePropertyIndexAlreadyExists {
         /// Indexed node label.
-        label: IStr,
+        label: DbString,
         /// Indexed property keys in declaration order.
-        properties: SmallVec<[IStr; 4]>,
+        ///
+        /// Boxed so this variant does not inflate `GraphError` past clippy's
+        /// `result_large_err` byte threshold: an inline `SmallVec<[DbString; 4]>`
+        /// is ~104 B (four owned string values plus header), and the variant
+        /// otherwise drives every `GraphResult<T>` stack slot over the limit.
+        /// The `Box` pushes the allocation onto the cold error-construction
+        /// path.
+        properties: Box<SmallVec<[DbString; 4]>>,
+    },
+
+    /// A vector property index already exists for this `(label, property)`.
+    #[error("vector index already exists for ({label}, {property})")]
+    #[diagnostic(code(SLENE_G_021))]
+    VectorIndexAlreadyExists {
+        /// Indexed node label.
+        label: DbString,
+        /// Indexed vector property key.
+        property: DbString,
+    },
+
+    /// A vector index was declared with an invalid dimensionality.
+    #[error("vector index dimension must be non-zero, observed {dimension}")]
+    #[diagnostic(code(SLENE_G_022))]
+    VectorIndexInvalidDimension {
+        /// Declared vector dimensionality.
+        dimension: u32,
+    },
+
+    /// A vector index was declared with invalid HNSW construction parameters.
+    #[error(
+        "invalid HNSW vector index config max_neighbors={max_neighbors}, ef_construction={ef_construction}: {reason}"
+    )]
+    #[diagnostic(code(SLENE_G_024))]
+    VectorIndexInvalidHnswConfig {
+        /// Declared HNSW `M` fanout.
+        max_neighbors: u16,
+        /// Declared HNSW construction beam width.
+        ef_construction: u16,
+        /// Reason the configuration is rejected.
+        reason: &'static str,
+    },
+
+    /// A vector index was declared with invalid IVF construction parameters.
+    #[error("invalid IVF vector index config target_centroids={target_centroids}: {reason}")]
+    #[diagnostic(code(SLENE_G_025))]
+    VectorIndexInvalidIvfConfig {
+        /// Declared IVF target centroid count.
+        target_centroids: u16,
+        /// Reason the configuration is rejected.
+        reason: &'static str,
+    },
+
+    /// A value cannot be admitted to a vector index.
+    #[error(
+        "vector index ({label}, {property}) expected VECTOR<{expected_dimension}> but observed {observed}"
+    )]
+    #[diagnostic(code(SLENE_G_023))]
+    VectorIndexValueRejected {
+        /// Indexed node label.
+        label: DbString,
+        /// Indexed vector property key.
+        property: DbString,
+        /// Registered vector dimensionality.
+        expected_dimension: u32,
+        /// Observed value kind or dimensionality.
+        observed: String,
+    },
+
+    /// A text index already exists for this `(label, property)`.
+    #[error("text index already exists for ({label}, {property})")]
+    #[diagnostic(code(SLENE_G_026))]
+    TextIndexAlreadyExists {
+        /// Indexed node label.
+        label: DbString,
+        /// Indexed string property key.
+        property: DbString,
     },
 
     /// A closed graph mutation violates its bound graph type.
     #[error(transparent)]
     #[diagnostic(transparent)]
     TypeViolation(#[from] TypeViolation),
+
+    /// A store assignment failed before the graph mutation was applied.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    StoreAssignment(Box<StoreAssignmentError>),
 
     /// A commit-critical durable provider rejected or failed a write.
     #[error("durable provider failed: {reason}")]
@@ -191,9 +283,15 @@ impl GraphError {
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
             | Self::IndexValueRejected { .. }
-            | Self::CompositePropertyIndexAlreadyExists { .. } => "22G03",
-            Self::IndexAdmissionExhausted { .. } => "5GQL1",
+            | Self::CompositePropertyIndexAlreadyExists { .. }
+            | Self::VectorIndexAlreadyExists { .. }
+            | Self::VectorIndexInvalidDimension { .. }
+            | Self::VectorIndexInvalidHnswConfig { .. }
+            | Self::VectorIndexInvalidIvfConfig { .. }
+            | Self::VectorIndexValueRejected { .. }
+            | Self::TextIndexAlreadyExists { .. } => "22G03",
             Self::TypeViolation(_) => "G2000",
+            Self::StoreAssignment(source) => source.exception.gqlstatus(),
             Self::Core(source) => source.gqlstatus(),
             Self::Durable { .. } => "5GQL0",
             Self::Cancelled => "5GQL2",
@@ -205,7 +303,7 @@ impl GraphError {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
-    use selene_core::intern;
+    use selene_core::db_string;
 
     use super::*;
     use crate::ProviderError;
@@ -225,41 +323,80 @@ mod tests {
     )]
     #[case(
         GraphError::PropertyIndexAlreadyExists {
-            label: intern("err.label").unwrap(),
-            property: intern("err.property").unwrap(),
+            label: db_string("err.label").unwrap(),
+            property: db_string("err.property").unwrap(),
         },
         "22G03"
     )]
     #[case(
         GraphError::PropertyIndexNotFound {
-            label: intern("err.label.missing").unwrap(),
-            property: intern("err.property.missing").unwrap(),
+            label: db_string("err.label.missing").unwrap(),
+            property: db_string("err.property.missing").unwrap(),
         },
         "22G03"
     )]
     #[case(
         GraphError::IndexValueRejected {
-            label: intern("err.label.rejected").unwrap(),
-            property: intern("err.property.rejected").unwrap(),
+            label: db_string("err.label.rejected").unwrap(),
+            property: db_string("err.property.rejected").unwrap(),
             expected_kind: TypedIndexKind::I64,
             observed: "String",
         },
         "22G03"
     )]
     #[case(
-        GraphError::IndexAdmissionExhausted {
-            label: intern("err.label.admission").unwrap(),
-            property: intern("err.property.admission").unwrap(),
-            source: CoreError::IStrCapExceeded { count: 2, max: 1 },
+        GraphError::VectorIndexAlreadyExists {
+            label: db_string("err.label.vector.exists").unwrap(),
+            property: db_string("err.property.vector.exists").unwrap(),
         },
-        "5GQL1"
+        "22G03"
+    )]
+    #[case(GraphError::VectorIndexInvalidDimension { dimension: 0 }, "22G03")]
+    #[case(
+        GraphError::VectorIndexInvalidHnswConfig {
+            max_neighbors: 24,
+            ef_construction: 8,
+            reason: "ef_construction must be at least max_neighbors",
+        },
+        "22G03"
+    )]
+    #[case(
+        GraphError::VectorIndexInvalidIvfConfig {
+            target_centroids: 0,
+            reason: "target_centroids must be greater than zero",
+        },
+        "22G03"
+    )]
+    #[case(
+        GraphError::VectorIndexValueRejected {
+            label: db_string("err.label.vector.rejected").unwrap(),
+            property: db_string("err.property.vector.rejected").unwrap(),
+            expected_dimension: 3,
+            observed: "VECTOR<4>".to_owned(),
+        },
+        "22G03"
+    )]
+    #[case(
+        GraphError::TextIndexAlreadyExists {
+            label: db_string("err.label.text.exists").unwrap(),
+            property: db_string("err.property.text.exists").unwrap(),
+        },
+        "22G03"
     )]
     #[case(
         GraphError::TypeViolation(TypeViolation::UnknownEdgeLabel {
             id: EdgeId::new(1),
-            label: intern("err.edge.label").unwrap(),
+            label: db_string("err.edge.label").unwrap(),
         }),
         "G2000"
+    )]
+    #[case(
+        GraphError::StoreAssignment(Box::new(StoreAssignmentError {
+            property: db_string("err.assignment.property").unwrap(),
+            exception: StoreAssignmentException::StringDataRightTruncation,
+            reason: "right truncation".to_owned(),
+        })),
+        "22001"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "0G003")]
     #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
@@ -304,8 +441,8 @@ mod tests {
         use crate::graph_types::EdgeEndpointDef;
         use crate::type_validator::EntityId;
 
-        let lbl = intern("codes.label").unwrap();
-        let prop = intern("codes.property").unwrap();
+        let lbl = db_string("codes.label").unwrap();
+        let prop = db_string("codes.property").unwrap();
 
         // One representative of every code-carrying GraphError variant (the
         // transparent `TypeViolation`/`Core`/`Persist`/`Provider` wrappers carry
@@ -324,28 +461,52 @@ mod tests {
                 reason: "x".to_owned(),
             },
             GraphError::PropertyIndexAlreadyExists {
-                label: lbl,
-                property: prop,
+                label: lbl.clone(),
+                property: prop.clone(),
             },
             GraphError::PropertyIndexNotFound {
-                label: lbl,
-                property: prop,
+                label: lbl.clone(),
+                property: prop.clone(),
             },
             GraphError::IndexValueRejected {
-                label: lbl,
-                property: prop,
+                label: lbl.clone(),
+                property: prop.clone(),
                 expected_kind: TypedIndexKind::I64,
                 observed: "String",
             },
-            GraphError::IndexAdmissionExhausted {
-                label: lbl,
-                property: prop,
-                source: CoreError::IStrCapExceeded { count: 2, max: 1 },
-            },
             GraphError::CompositePropertyIndexAlreadyExists {
-                label: lbl,
-                properties: Default::default(),
+                label: lbl.clone(),
+                properties: Box::default(),
             },
+            GraphError::VectorIndexAlreadyExists {
+                label: lbl.clone(),
+                property: prop.clone(),
+            },
+            GraphError::VectorIndexInvalidDimension { dimension: 0 },
+            GraphError::VectorIndexInvalidHnswConfig {
+                max_neighbors: 24,
+                ef_construction: 8,
+                reason: "ef_construction must be at least max_neighbors",
+            },
+            GraphError::VectorIndexInvalidIvfConfig {
+                target_centroids: 0,
+                reason: "target_centroids must be greater than zero",
+            },
+            GraphError::VectorIndexValueRejected {
+                label: lbl.clone(),
+                property: prop.clone(),
+                expected_dimension: 3,
+                observed: "VECTOR<4>".to_owned(),
+            },
+            GraphError::TextIndexAlreadyExists {
+                label: lbl.clone(),
+                property: prop.clone(),
+            },
+            GraphError::StoreAssignment(Box::new(StoreAssignmentError {
+                property: prop.clone(),
+                exception: StoreAssignmentException::StringDataRightTruncation,
+                reason: "right truncation".to_owned(),
+            })),
             GraphError::Durable {
                 reason: "x".to_owned(),
             },
@@ -359,11 +520,11 @@ mod tests {
             },
             TypeViolation::UnknownEdgeLabel {
                 id: EdgeId::new(1),
-                label: lbl,
+                label: lbl.clone(),
             },
             TypeViolation::EdgeEndpointTypeMismatch {
                 id: EdgeId::new(1),
-                label: lbl,
+                label: lbl.clone(),
                 expected_source_type: EdgeEndpointDef::Any,
                 observed_source_type: 0,
                 expected_target_type: EdgeEndpointDef::Any,
@@ -371,22 +532,22 @@ mod tests {
             },
             TypeViolation::MissingRequiredProperty {
                 entity_id: EntityId::Node(NodeId::new(1)),
-                property: prop,
-                declared_in: lbl,
+                property: prop.clone(),
+                declared_in: lbl.clone(),
             },
             TypeViolation::PropertyTypeMismatch {
                 entity_id: EntityId::Node(NodeId::new(1)),
-                property: prop,
+                property: prop.clone(),
                 expected: PropertyValueType::Int,
                 observed: "String",
             },
             TypeViolation::ExtensionValueRejected {
                 entity_id: EntityId::Node(NodeId::new(1)),
-                property: prop,
+                property: prop.clone(),
             },
             TypeViolation::UndeclaredProperty {
                 entity_id: EntityId::Node(NodeId::new(1)),
-                property: prop,
+                property: prop.clone(),
             },
             TypeViolation::ImmutablePropertyUpdate {
                 entity_id: EntityId::Node(NodeId::new(1)),

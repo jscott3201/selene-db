@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use selene_core::{IStr, intern_with_admission};
+use selene_core::{DbString, db_string};
 
 use crate::{
     ReturnItem, ValueExpr,
@@ -17,7 +17,7 @@ use super::expr;
 #[derive(Default)]
 pub(super) struct AggregateRewrite {
     pub(super) aggregates: Vec<Aggregate>,
-    pub(super) names_by_expr_id: HashMap<ExprId, IStr>,
+    pub(super) names_by_expr_id: HashMap<ExprId, DbString>,
 }
 
 /// Emit a `GroupBy` op when grouping is required.
@@ -54,14 +54,14 @@ pub(super) fn push_grouping(
 pub(super) fn project_items(
     items: &[ReturnItem],
     analyzed: &AnalyzedStatement,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
 ) -> Result<Vec<ProjectExpr>, PlannerError> {
     items
         .iter()
         .map(|item| {
             project_expr(
                 &item.expr,
-                column_name(&item.expr, item.alias),
+                column_name(&item.expr, item.alias.clone()),
                 analyzed,
                 aggregate_names,
             )
@@ -72,7 +72,7 @@ pub(super) fn project_items(
 pub(super) fn filter_predicate(
     original: &ValueExpr,
     analyzed: &AnalyzedStatement,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
 ) -> Result<FilterPredicate, PlannerError> {
     let (expr_id, ty) = expr::expr_cell(original, analyzed)?;
     Ok(FilterPredicate {
@@ -116,7 +116,9 @@ fn collect_aggregates(
             ValueExpr::FunctionCall { args, .. } => args,
             _ => unreachable!("aggregate_name only matches function calls"),
         };
-        rewrite.names_by_expr_id.insert(aggregate_id, output_name);
+        rewrite
+            .names_by_expr_id
+            .insert(aggregate_id, output_name.clone());
         rewrite.aggregates.push(Aggregate {
             aggregate_id,
             output_name,
@@ -147,6 +149,9 @@ fn collect_aggregates(
             collect_aggregates(index, analyzed, rewrite)?;
         }
         ValueExpr::ListLiteral { items, .. }
+        | ValueExpr::PathConstructor {
+            elements: items, ..
+        }
         | ValueExpr::AllDifferent { items, .. }
         | ValueExpr::Same { items, .. } => {
             for item in items {
@@ -167,6 +172,10 @@ fn collect_aggregates(
                 collect_aggregates(arg, analyzed, rewrite)?;
             }
         }
+        ValueExpr::DurationBetween { start, end, .. } => {
+            collect_aggregates(start, analyzed, rewrite)?;
+            collect_aggregates(end, analyzed, rewrite)?;
+        }
         ValueExpr::IsCheck { operand, kind, .. } => {
             collect_aggregates(operand, analyzed, rewrite)?;
             collect_is_check_aggregates(kind, analyzed, rewrite)?;
@@ -176,6 +185,10 @@ fn collect_aggregates(
             for item in list {
                 collect_aggregates(item, analyzed, rewrite)?;
             }
+        }
+        ValueExpr::InListExpression { operand, list, .. } => {
+            collect_aggregates(operand, analyzed, rewrite)?;
+            collect_aggregates(list, analyzed, rewrite)?;
         }
         ValueExpr::Case {
             branches,
@@ -228,21 +241,19 @@ fn collect_is_check_aggregates(
 fn synthesized_aggregate_name(
     expr_id: ExprId,
     span: crate::SourceSpan,
-) -> Result<IStr, PlannerError> {
+) -> Result<DbString, PlannerError> {
     let name = format!("agg_{}", expr_id.get());
-    intern_with_admission(&name)
-        .map(|(name, _)| name)
-        .map_err(|_err| PlannerError::InternerCapExhausted {
-            detail: "aggregate synthesized column",
-            span,
-        })
+    db_string(&name).map_err(|_err| PlannerError::StaticStringConstructionFailed {
+        detail: "aggregate synthesized column",
+        span,
+    })
 }
 
 fn project_expr(
     original: &ValueExpr,
-    alias: Option<IStr>,
+    alias: Option<DbString>,
     analyzed: &AnalyzedStatement,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
 ) -> Result<ProjectExpr, PlannerError> {
     let (expr_id, ty) = expr::expr_cell(original, analyzed)?;
     Ok(ProjectExpr {
@@ -257,7 +268,7 @@ fn project_expr(
 
 fn rewrite_aggregate_refs(
     value: &ValueExpr,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
     analyzed: &AnalyzedStatement,
 ) -> ValueExpr {
     if let Some(name) = analyzed
@@ -266,7 +277,7 @@ fn rewrite_aggregate_refs(
         .and_then(|expr_id| aggregate_names.get(&expr_id))
     {
         return ValueExpr::Variable {
-            name: *name,
+            name: name.clone(),
             span: value.span(),
         };
     }
@@ -280,7 +291,7 @@ fn rewrite_aggregate_refs(
         | ValueExpr::ValueSubquery { .. } => value.clone(),
         ValueExpr::PropertyAccess { target, key, span } => ValueExpr::PropertyAccess {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
-            key: *key,
+            key: key.clone(),
             span: *span,
         },
         ValueExpr::ListAccess {
@@ -301,7 +312,7 @@ fn rewrite_aggregate_refs(
                 .iter()
                 .map(|(key, field)| {
                     (
-                        *key,
+                        key.clone(),
                         rewrite_aggregate_refs(field, aggregate_names, analyzed),
                     )
                 })
@@ -332,6 +343,21 @@ fn rewrite_aggregate_refs(
             distinct: *distinct,
             span: *span,
         },
+        ValueExpr::PathConstructor { elements, span } => ValueExpr::PathConstructor {
+            elements: rewrite_exprs(elements, aggregate_names, analyzed),
+            span: *span,
+        },
+        ValueExpr::DurationBetween {
+            start,
+            end,
+            qualifier,
+            span,
+        } => ValueExpr::DurationBetween {
+            start: Box::new(rewrite_aggregate_refs(start, aggregate_names, analyzed)),
+            end: Box::new(rewrite_aggregate_refs(end, aggregate_names, analyzed)),
+            qualifier: *qualifier,
+            span: *span,
+        },
         ValueExpr::IsCheck {
             operand,
             kind,
@@ -354,6 +380,17 @@ fn rewrite_aggregate_refs(
             negated: *negated,
             span: *span,
         },
+        ValueExpr::InListExpression {
+            operand,
+            list,
+            negated,
+            span,
+        } => ValueExpr::InListExpression {
+            operand: Box::new(rewrite_aggregate_refs(operand, aggregate_names, analyzed)),
+            list: Box::new(rewrite_aggregate_refs(list, aggregate_names, analyzed)),
+            negated: *negated,
+            span: *span,
+        },
         ValueExpr::AllDifferent { items, span } => ValueExpr::AllDifferent {
             items: rewrite_exprs(items, aggregate_names, analyzed),
             span: *span,
@@ -364,7 +401,7 @@ fn rewrite_aggregate_refs(
         },
         ValueExpr::PropertyExists { target, key, span } => ValueExpr::PropertyExists {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
-            key: *key,
+            key: key.clone(),
             span: *span,
         },
         ValueExpr::Case {
@@ -418,7 +455,7 @@ fn rewrite_aggregate_refs(
 
 fn rewrite_exprs(
     values: &[ValueExpr],
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
     analyzed: &AnalyzedStatement,
 ) -> Vec<ValueExpr> {
     values
@@ -429,7 +466,7 @@ fn rewrite_exprs(
 
 fn rewrite_is_check_kind(
     kind: &crate::IsCheckKind,
-    aggregate_names: &HashMap<ExprId, IStr>,
+    aggregate_names: &HashMap<ExprId, DbString>,
     analyzed: &AnalyzedStatement,
 ) -> crate::IsCheckKind {
     match kind {
@@ -448,17 +485,17 @@ fn rewrite_is_check_kind(
     }
 }
 
-fn group_key_alias(expr: &ValueExpr, items: &[ReturnItem]) -> Option<IStr> {
+fn group_key_alias(expr: &ValueExpr, items: &[ReturnItem]) -> Option<DbString> {
     items
         .iter()
         .find(|item| item.expr == *expr)
-        .and_then(|item| column_name(&item.expr, item.alias))
+        .and_then(|item| column_name(&item.expr, item.alias.clone()))
         .or_else(|| column_name(expr, None))
 }
 
-fn column_name(expr: &ValueExpr, alias: Option<IStr>) -> Option<IStr> {
+fn column_name(expr: &ValueExpr, alias: Option<DbString>) -> Option<DbString> {
     alias.or(match expr {
-        ValueExpr::Variable { name, .. } => Some(*name),
+        ValueExpr::Variable { name, .. } => Some(name.clone()),
         _ => None,
     })
 }

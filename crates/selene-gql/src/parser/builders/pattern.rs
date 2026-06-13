@@ -10,13 +10,9 @@ use crate::{
     error::ParserError,
 };
 
-use super::{Rule, expr, first_child, intern_pair, keyword_tokens_eq, span, unexpected_pair};
-use crate::parser::budget::InternerBudget;
+use super::{Rule, db_string_pair, expr, first_child, keyword_tokens_eq, span, unexpected_pair};
 
-pub(super) fn build_match_clause(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<MatchClause, ParserError> {
+pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::match_stmt);
     let source_span = span(&pair);
     let mut optional = false;
@@ -24,20 +20,44 @@ pub(super) fn build_match_clause(
     let mut match_mode = None;
     let mut path_mode = PathMode::Walk;
     let mut path_mode_explicit = false;
+    // ISO §16.6 <path or paths> (Feature G014) is pure surface sugar (§1.2.4). It
+    // reaches the AST from two grammar sites: nested inside `counted_shortest_tail`
+    // (its ISO position for the counted SHORTEST forms) or the trailing `match_stmt`
+    // slot (the ALL/ANY/<path mode prefix> forms). `path_or_paths` records presence
+    // for the flagger (G014, recorded iff true); `trailing_path_or_paths` tracks the
+    // trailing-slot site only, which the conformance guards below constrain.
+    let mut path_or_paths = false;
+    let mut trailing_path_or_paths = false;
     let mut patterns = Vec::new();
     let mut where_clause = None;
 
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::optional_modifier => optional = true,
-            Rule::path_selector => selector = Some(build_path_selector(&child)?),
+            Rule::path_selector => {
+                selector = Some(build_path_selector(&child)?);
+                // A counted SHORTEST form may carry <path or paths> in its ISO
+                // position inside counted_shortest_tail — recover the presence bit.
+                if child
+                    .clone()
+                    .into_inner()
+                    .flatten()
+                    .any(|p| p.as_rule() == Rule::path_or_paths)
+                {
+                    path_or_paths = true;
+                }
+            }
             Rule::match_mode => match_mode = Some(build_match_mode(&child)?),
             Rule::path_modifier => {
                 path_mode = build_path_mode(&child)?;
                 path_mode_explicit = true;
             }
-            Rule::graph_pattern_list => patterns = build_graph_pattern_list(child, budget)?,
-            Rule::where_clause => where_clause = Some(expr_from_child(child, budget)?),
+            Rule::path_or_paths => {
+                path_or_paths = true;
+                trailing_path_or_paths = true;
+            }
+            Rule::graph_pattern_list => patterns = build_graph_pattern_list(child)?,
+            Rule::where_clause => where_clause = Some(expr_from_child(child)?),
             _ => return Err(unexpected_pair(child, "unexpected MATCH child")),
         }
     }
@@ -50,12 +70,59 @@ pub(super) fn build_match_clause(
         ));
     }
 
+    // The conformance constraints below apply to the TRAILING <path or paths> slot
+    // only. A counted-form <path or paths> (parsed inside counted_shortest_tail) is
+    // already in its exact ISO position, so it is unconditionally legal.
+
+    // ISO §16.6: <path or paths> never appears standalone — it is the optional
+    // trailing token of a <path mode prefix> (which REQUIRES a <path mode>) or a
+    // <path search prefix> (ALL / ANY / SHORTEST). A bare `MATCH PATHS (n)` with
+    // neither a path selector nor an explicit path mode is therefore not conforming.
+    if trailing_path_or_paths && selector.is_none() && !path_mode_explicit {
+        return Err(ParserError::syntax(
+            "PATH/PATHS must follow a path mode (WALK/TRAIL/SIMPLE/ACYCLIC) or a \
+             path search prefix (ALL/ANY/SHORTEST) per ISO/IEC 39075:2024 §16.6",
+            source_span,
+            None,
+        ));
+    }
+
+    // ISO §16.6 binds <path or paths> to the path-pattern prefix (`ALL [mode] [PATHS]`,
+    // etc.); the §16.4 <match mode> (DIFFERENT EDGES / REPEATABLE ELEMENTS) is a
+    // separate, graph-level construct and cannot sit between the prefix and
+    // <path or paths>. selene's flattened order would otherwise accept
+    // `ALL DIFFERENT EDGES PATHS` — reject it.
+    if trailing_path_or_paths && match_mode.is_some() {
+        return Err(ParserError::syntax(
+            "PATH/PATHS may not be separated from the path prefix by a match mode \
+             (DIFFERENT EDGES / REPEATABLE ELEMENTS) per ISO/IEC 39075:2024 §16.6",
+            source_span,
+            None,
+        ));
+    }
+
+    // ISO §16.6 <counted shortest group search> places <path or paths> BEFORE the
+    // GROUP/GROUPS discriminator (`SHORTEST [n] [mode] [path-or-paths] {GROUP|
+    // GROUPS}`). The conforming `SHORTEST n PATHS GROUPS` spelling is parsed inside
+    // counted_shortest_tail; a TRAILING slot here means PATH/PATHS came AFTER
+    // GROUP[S] (`SHORTEST n GROUPS PATHS`), which is the wrong ISO order — reject it.
+    if trailing_path_or_paths && matches!(selector, Some(PathSelector::CountedShortestGroup { .. }))
+    {
+        return Err(ParserError::syntax(
+            "PATH/PATHS must precede GROUP/GROUPS (write SHORTEST n PATHS GROUPS) per \
+             ISO/IEC 39075:2024 §16.6",
+            source_span,
+            None,
+        ));
+    }
+
     Ok(MatchClause {
         optional,
         selector,
         match_mode,
         path_mode,
         path_mode_explicit,
+        path_or_paths,
         patterns,
         where_clause,
         span: source_span,
@@ -63,6 +130,19 @@ pub(super) fn build_match_clause(
 }
 
 fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserError> {
+    // Per ISO 39075:2024 §16.6: the `SHORTEST <n> [GROUP[S]]` / `SHORTEST
+    // GROUP[S]` forms (counted shortest path G019 / group G020) carry a
+    // `counted_shortest_tail` child; the bare `ANY`/`ALL`/`ANY SHORTEST`/
+    // `ALL SHORTEST` forms do not. Dispatch on the structured child first so the
+    // counted forms never fall through to the keyword-text match below.
+    if let Some(tail) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::counted_shortest_tail)
+    {
+        return build_counted_shortest(tail);
+    }
+
     // Match the selector keyword(s) token-wise (case- and whitespace-
     // insensitive) without allocating a normalized `String`. `ANY SHORTEST` /
     // `ALL SHORTEST` keep their two-token match; check them before the bare
@@ -85,11 +165,91 @@ fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserErro
     }
 }
 
+// Build the counted shortest selector from a `counted_shortest_tail` pair.
+//
+// Per ISO 39075:2024 §16.6 the tail is `uint ~ counted_group_kw?` or a bare
+// `counted_group_kw`:
+//   - a `uint` with no GROUP keyword -> G019 counted shortest PATH (paths = N);
+//   - a `counted_group_kw` (with or without a leading `uint`) -> G020 counted
+//     shortest GROUP (groups = N, defaulting to 1 when no `uint` is written,
+//     per §16.6 SR2b).
+//
+// §16.6 SR2bii requires a written literal count to be positive; a literal `0`
+// (`SHORTEST 0` / `SHORTEST 0 GROUPS`) is a static violation rejected here with
+// GQLSTATUS 22G0F. A literal too large for `u32` saturates to `u32::MAX` rather
+// than erroring, because keep-up-to-N semantics make any count `>= |partition|`
+// equivalent to keep-all.
+fn build_counted_shortest(tail: Pair<'_, Rule>) -> Result<PathSelector, ParserError> {
+    let tail_span = span(&tail);
+    let mut count = None;
+    let mut is_group = false;
+    for child in tail.into_inner() {
+        match child.as_rule() {
+            Rule::uint => count = Some(parse_counted_uint(&child)?),
+            Rule::counted_group_kw => is_group = true,
+            // ISO §16.6 <path or paths> (Feature G014) in its counted-form position.
+            // It is pure surface sugar with no effect on the selector; the presence
+            // bit is recovered by build_match_clause (which scans the path_selector
+            // subtree), so it is ignored here.
+            Rule::path_or_paths => {}
+            _ => return Err(unexpected_pair(child, "unexpected counted-shortest child")),
+        }
+    }
+
+    if is_group {
+        // SHORTEST [N] GROUP[S]: N defaults to 1 per §16.6 SR2b.
+        Ok(PathSelector::CountedShortestGroup {
+            groups: count.unwrap_or(1),
+        })
+    } else {
+        // SHORTEST N (no GROUP): the count is mandatory in this grammar branch.
+        let paths = count.ok_or_else(|| {
+            ParserError::syntax(
+                "counted shortest path is missing its count",
+                tail_span,
+                None,
+            )
+        })?;
+        Ok(PathSelector::CountedShortest { paths })
+    }
+}
+
+// Parse a counted shortest path/group `uint` literal to a positive `u32`.
+//
+// Saturates an out-of-range literal to `u32::MAX` (keep-all). Rejects a literal
+// `0` with GQLSTATUS 22G0F per ISO 39075:2024 §16.6 SR2bii / §22.4 GR7.
+fn parse_counted_uint(pair: &Pair<'_, Rule>) -> Result<u32, ParserError> {
+    let value = pair.as_str().parse::<u32>().unwrap_or(u32::MAX);
+    if value == 0 {
+        return Err(ParserError::syntax_with_status(
+            crate::error::GqlStatus::INVALID_NUMBER_OF_PATHS_OR_GROUPS,
+            "counted shortest path/group count must be a positive integer",
+            span(pair),
+            Some("write SHORTEST 1 (or more); 0 is invalid per ISO 39075:2024 §16.6".into()),
+        ));
+    }
+    Ok(value)
+}
+
 fn build_match_mode(pair: &Pair<'_, Rule>) -> Result<MatchMode, ParserError> {
-    let text = pair.as_str().to_ascii_uppercase();
-    match text.as_str() {
-        "DIFFERENT EDGES" => Ok(MatchMode::DifferentEdges),
-        "REPEATABLE ELEMENTS" => Ok(MatchMode::RepeatableElements),
+    // The grammar factors <match mode> (ISO §16.4) as
+    //   different_mode_kw  ~ edge_bindings_or_edges        (DIFFERENT EDGES, G002)
+    //   repeatable_mode_kw ~ element_bindings_or_elements  (REPEATABLE ELEMENTS, G003)
+    // where the leading mode keyword is a boundary-guarded atomic rule. Dispatch
+    // on that first child *rule* rather than slicing `as_str()`: the `~` skips
+    // implicit WHITESPACE *and* COMMENTs, so a comment can sit flush against the
+    // keyword with no surrounding space (e.g. "DIFFERENT/*x*/EDGE"), which a raw
+    // `split_whitespace()` would see as one un-delimited blob and wrongly reject.
+    // Structural dispatch is immune to every whitespace/comment spelling. All
+    // edge-/element-family synonyms collapse onto the two semantics here.
+    match pair
+        .clone()
+        .into_inner()
+        .next()
+        .map(|inner| inner.as_rule())
+    {
+        Some(Rule::different_mode_kw) => Ok(MatchMode::DifferentEdges),
+        Some(Rule::repeatable_mode_kw) => Ok(MatchMode::RepeatableElements),
         _ => Err(ParserError::syntax("unknown match mode", span(pair), None)),
     }
 }
@@ -105,20 +265,14 @@ fn build_path_mode(pair: &Pair<'_, Rule>) -> Result<PathMode, ParserError> {
     }
 }
 
-fn build_graph_pattern_list(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Vec<GraphPattern>, ParserError> {
+fn build_graph_pattern_list(pair: Pair<'_, Rule>) -> Result<Vec<GraphPattern>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::graph_pattern)
-        .map(|child| build_graph_pattern(child, budget))
+        .map(|child| build_graph_pattern(child))
         .collect()
 }
 
-fn build_graph_pattern(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<GraphPattern, ParserError> {
+fn build_graph_pattern(pair: Pair<'_, Rule>) -> Result<GraphPattern, ParserError> {
     let source_span = span(&pair);
     let mut path_binding = None;
     let mut elements = Vec::new();
@@ -126,9 +280,9 @@ fn build_graph_pattern(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::path_var_binding => {
-                path_binding = Some(intern_pair(first_child(child)?, budget)?);
+                path_binding = Some(db_string_pair(first_child(child)?)?);
             }
-            Rule::pattern_chain => elements = build_pattern_chain(child, budget)?,
+            Rule::pattern_chain => elements = build_pattern_chain(child)?,
             _ => return Err(unexpected_pair(child, "unexpected graph-pattern child")),
         }
     }
@@ -148,18 +302,15 @@ fn build_graph_pattern(
     })
 }
 
-fn build_pattern_chain(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Vec<PatternElement>, ParserError> {
+fn build_pattern_chain(pair: Pair<'_, Rule>) -> Result<Vec<PatternElement>, ParserError> {
     let mut elements = Vec::new();
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::node_pattern => {
-                elements.push(PatternElement::Node(build_node_pattern(child, budget)?));
+                elements.push(PatternElement::Node(build_node_pattern(child)?));
             }
             Rule::edge_pattern => {
-                elements.push(PatternElement::Edge(build_edge_pattern(child, budget)?));
+                elements.push(PatternElement::Edge(build_edge_pattern(child)?));
             }
             _ => return Err(unexpected_pair(child, "unexpected pattern-chain child")),
         }
@@ -167,10 +318,7 @@ fn build_pattern_chain(
     Ok(elements)
 }
 
-fn build_node_pattern(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<NodePattern, ParserError> {
+fn build_node_pattern(pair: Pair<'_, Rule>) -> Result<NodePattern, ParserError> {
     let source_span = span(&pair);
     let mut binding = None;
     let mut label_expr = None;
@@ -179,10 +327,10 @@ fn build_node_pattern(
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::node_var => binding = Some(intern_pair(first_child(child)?, budget)?),
-            Rule::label_expr => label_expr = Some(build_label_expr(child, budget)?),
-            Rule::property_map => properties = build_property_map(child, budget)?,
-            Rule::inline_where => inline_where = Some(expr_from_child(child, budget)?),
+            Rule::node_var => binding = Some(db_string_pair(first_child(child)?)?),
+            Rule::label_expr => label_expr = Some(build_label_expr(child)?),
+            Rule::property_map => properties = build_property_map(child)?,
+            Rule::inline_where => inline_where = Some(expr_from_child(child)?),
             _ => return Err(unexpected_pair(child, "unexpected node-pattern child")),
         }
     }
@@ -196,10 +344,7 @@ fn build_node_pattern(
     })
 }
 
-fn build_edge_pattern(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<EdgePattern, ParserError> {
+fn build_edge_pattern(pair: Pair<'_, Rule>) -> Result<EdgePattern, ParserError> {
     let source_span = span(&pair);
     let child = first_child(pair)?;
     let direction = match child.as_rule() {
@@ -221,7 +366,7 @@ fn build_edge_pattern(
 
     for child in child.into_inner() {
         match child.as_rule() {
-            Rule::edge_interior => apply_edge_interior(child, &mut pattern, budget)?,
+            Rule::edge_interior => apply_edge_interior(child, &mut pattern)?,
             Rule::quantifier => assign_quantifier(&mut pattern, child)?,
             _ => return Err(unexpected_pair(child, "unexpected edge-pattern child")),
         }
@@ -247,35 +392,28 @@ fn assign_quantifier(pattern: &mut EdgePattern, pair: Pair<'_, Rule>) -> Result<
     Ok(())
 }
 
-fn apply_edge_interior(
-    pair: Pair<'_, Rule>,
-    pattern: &mut EdgePattern,
-    budget: &mut InternerBudget,
-) -> Result<(), ParserError> {
+fn apply_edge_interior(pair: Pair<'_, Rule>, pattern: &mut EdgePattern) -> Result<(), ParserError> {
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::edge_var => pattern.binding = Some(intern_pair(first_child(child)?, budget)?),
-            Rule::label_expr => pattern.label_expr = Some(build_label_expr(child, budget)?),
-            Rule::property_map => pattern.properties = build_property_map(child, budget)?,
+            Rule::edge_var => pattern.binding = Some(db_string_pair(first_child(child)?)?),
+            Rule::label_expr => pattern.label_expr = Some(build_label_expr(child)?),
+            Rule::property_map => pattern.properties = build_property_map(child)?,
             Rule::quantifier => assign_quantifier(pattern, child)?,
-            Rule::inline_where => pattern.inline_where = Some(expr_from_child(child, budget)?),
+            Rule::inline_where => pattern.inline_where = Some(expr_from_child(child)?),
             _ => return Err(unexpected_pair(child, "unexpected edge-interior child")),
         }
     }
     Ok(())
 }
 
-pub(super) fn build_label_expr(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<LabelExpr, ParserError> {
+pub(super) fn build_label_expr(pair: Pair<'_, Rule>) -> Result<LabelExpr, ParserError> {
     match pair.as_rule() {
-        Rule::label_expr => build_label_expr(first_child(pair)?, budget),
+        Rule::label_expr => build_label_expr(first_child(pair)?),
         Rule::label_or => {
             let parts = pair
                 .into_inner()
                 .filter(|child| child.as_rule() == Rule::label_and)
-                .map(|child| build_label_expr(child, budget))
+                .map(|child| build_label_expr(child))
                 .collect::<Result<Vec<_>, _>>()?;
             collapse_label_parts(parts, LabelExpr::Disjunction)
         }
@@ -283,23 +421,23 @@ pub(super) fn build_label_expr(
             let parts = pair
                 .into_inner()
                 .filter(|child| child.as_rule() == Rule::label_not)
-                .map(|child| build_label_expr(child, budget))
+                .map(|child| build_label_expr(child))
                 .collect::<Result<Vec<_>, _>>()?;
             collapse_label_parts(parts, LabelExpr::Conjunction)
         }
         Rule::label_not => {
             let negated = pair.as_str().starts_with('!');
             let child = first_child(pair)?;
-            let value = build_label_expr(child, budget)?;
+            let value = build_label_expr(child)?;
             if negated {
                 Ok(LabelExpr::Negation(Box::new(value)))
             } else {
                 Ok(value)
             }
         }
-        Rule::label_atom => build_label_expr(first_child(pair)?, budget),
+        Rule::label_atom => build_label_expr(first_child(pair)?),
         Rule::label_wildcard => Ok(LabelExpr::Wildcard),
-        Rule::ident => Ok(LabelExpr::Single(intern_pair(pair, budget)?)),
+        Rule::ident => Ok(LabelExpr::Single(db_string_pair(pair)?)),
         _ => Err(unexpected_pair(pair, "expected label expression")),
     }
 }
@@ -405,8 +543,7 @@ fn parse_u32(text: &str, source_span: SourceSpan) -> Result<u32, ParserError> {
 
 pub(super) fn build_property_map(
     pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Vec<(selene_core::IStr, ValueExpr)>, ParserError> {
+) -> Result<Vec<(selene_core::DbString, ValueExpr)>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::property_pair)
         .map(|property| {
@@ -417,25 +554,22 @@ pub(super) fn build_property_map(
                 .ok_or_else(|| {
                     ParserError::syntax("property pair is missing key", property_span, None)
                 })
-                .and_then(|pair| intern_pair(pair, budget))?;
+                .and_then(|pair| db_string_pair(pair))?;
             let value = children
                 .next()
                 .ok_or_else(|| {
                     ParserError::syntax("property pair is missing value", property_span, None)
                 })
-                .and_then(|pair| expr::build_value_expr(pair, budget))?;
+                .and_then(|pair| expr::build_value_expr(pair))?;
             Ok((key, value))
         })
         .collect()
 }
 
-fn expr_from_child(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+fn expr_from_child(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     pair.into_inner()
         .find(|child| child.as_rule() == Rule::expr)
         .ok_or_else(|| ParserError::syntax("clause is missing expression", source_span, None))
-        .and_then(|pair| expr::build_value_expr(pair, budget))
+        .and_then(|pair| expr::build_value_expr(pair))
 }

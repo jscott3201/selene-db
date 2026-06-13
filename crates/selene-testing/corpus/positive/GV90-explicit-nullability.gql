@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GV90
+// also-covers: GA06
+// expects: parse-ok
+RETURN NULL IS TYPED STRING NOT NULL AS explicit_nullability

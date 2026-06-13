@@ -93,9 +93,7 @@ pub fn sssp_with_checker(
 
         let source_node = idx.node_id_of(dense);
         for nb in proj.out_neighbors(source_node) {
-            let Some(next_dense) = idx.dense_of_node(nb.node_id) else {
-                continue;
-            };
+            let next_dense = nb.dense;
             if nb.weight.is_nan() {
                 return Err(PathfindingError::NaNWeight {
                     source_node,

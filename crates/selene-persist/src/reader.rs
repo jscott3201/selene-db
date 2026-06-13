@@ -1,8 +1,7 @@
 //! Read-only WAL iteration.
 
 use std::fs::File;
-use std::io::{BufReader, Read};
-use std::marker::PhantomData;
+use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use selene_core::Change;
@@ -47,7 +46,7 @@ impl WalReader {
     /// # Errors
     ///
     /// Returns I/O errors from opening a fresh read handle.
-    pub fn iterate<F>(&self, filter: F) -> PersistResult<WalEntryStream<'_>>
+    pub fn iterate<F>(&self, filter: F) -> PersistResult<WalEntryStream<BufReader<File>>>
     where
         F: Fn(&WalEntryHeader) -> bool + 'static,
     {
@@ -55,31 +54,65 @@ impl WalReader {
         let mut file = BufReader::with_capacity(64 * 1024, file);
         WalFileHeader::read_from(&mut file)?;
         let file_len = file.get_ref().metadata()?.len();
-        Ok(WalEntryStream {
+        Ok(WalEntryStream::from_reader(
             file,
             file_len,
-            next_offset: WAL_FILE_HEADER_LEN as u64,
-            previous_sequence: 0,
-            filter: Box::new(filter),
-            stopped: false,
-            _marker: PhantomData,
-        })
+            Box::new(filter),
+        ))
+    }
+
+    /// Iterate WAL entries directly over an in-memory byte slice.
+    ///
+    /// Validates the WAL file header at the front of `bytes`, then streams every
+    /// entry over a [`Cursor`] exactly as [`Self::iterate`] streams over a file
+    /// handle (`file_len` is taken from the slice length, so the per-entry
+    /// payload-vs-remaining bound is the slice bound). Unlike [`Self::iterate`]
+    /// there is no header filtering — every entry is yielded — which is the most
+    /// aggressive form for exercising the full decode path on untrusted bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same file-header validation errors as [`Self::open`].
+    pub fn from_bytes(bytes: &[u8]) -> PersistResult<WalEntryStream<Cursor<&[u8]>>> {
+        let mut cursor = Cursor::new(bytes);
+        WalFileHeader::read_from(&mut cursor)?;
+        let file_len = bytes.len() as u64;
+        Ok(WalEntryStream::from_reader(
+            cursor,
+            file_len,
+            Box::new(|_| true),
+        ))
     }
 }
 
-/// Streaming WAL entry iterator.
-pub struct WalEntryStream<'a> {
-    file: BufReader<File>,
+/// Streaming WAL entry iterator over a reader `R` (a buffered file for
+/// [`WalReader::iterate`], an in-memory [`Cursor`] for [`WalReader::from_bytes`]).
+pub struct WalEntryStream<R = BufReader<File>> {
+    file: R,
     file_len: u64,
     next_offset: u64,
     previous_sequence: u64,
     filter: Box<dyn Fn(&WalEntryHeader) -> bool>,
     stopped: bool,
-    _marker: PhantomData<&'a ()>,
 }
 
-impl<'a> Iterator for WalEntryStream<'a> {
-    type Item = PersistResult<WalEntryView<'a>>;
+impl<R: Read> WalEntryStream<R> {
+    /// Build a stream over a reader already positioned just past the validated
+    /// WAL file header. `file_len` bounds the per-entry payload reads.
+    fn from_reader(file: R, file_len: u64, filter: Box<dyn Fn(&WalEntryHeader) -> bool>) -> Self {
+        Self {
+            file,
+            file_len,
+            next_offset: WAL_FILE_HEADER_LEN as u64,
+            previous_sequence: 0,
+            filter,
+            stopped: false,
+        }
+    }
+}
+
+impl<R: Read> Iterator for WalEntryStream<R> {
+    type Item = PersistResult<WalEntryView>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.stopped {
@@ -129,24 +162,22 @@ impl<'a> Iterator for WalEntryStream<'a> {
             if !(self.filter)(&header) {
                 continue;
             }
-            return Some(Ok(WalEntryView {
-                header,
-                payload,
-                _marker: PhantomData,
-            }));
+            return Some(Ok(WalEntryView { header, payload }));
         }
     }
 }
 
 /// Header-filtered WAL entry view with lazily decoded body.
-pub struct WalEntryView<'a> {
+///
+/// Owns its payload bytes outright, so it carries no borrow of the underlying
+/// reader and outlives the [`WalEntryStream`] that produced it.
+pub struct WalEntryView {
     /// Decoded entry header.
     pub header: WalEntryHeader,
     payload: Vec<u8>,
-    _marker: PhantomData<&'a ()>,
 }
 
-impl WalEntryView<'_> {
+impl WalEntryView {
     /// Validate the checksum and decode the body as `Vec<Change>`.
     ///
     /// # Errors
@@ -187,7 +218,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern};
+    use selene_core::{
+        Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, db_string,
+    };
 
     use super::*;
     use crate::entry_header::encode_entry_header;
@@ -209,8 +242,8 @@ mod tests {
     fn changes(id: u64) -> Vec<Change> {
         vec![Change::NodeCreated {
             id: NodeId::new(id),
-            labels: LabelSet::single(intern("reader.node").unwrap()),
-            properties: PropertyMap::from_pairs([(intern("reader.p").unwrap(), Value::Int(1))])
+            labels: LabelSet::single(db_string("reader.node").unwrap()),
+            properties: PropertyMap::from_pairs([(db_string("reader.p").unwrap(), Value::Int(1))])
                 .unwrap(),
         }]
     }
@@ -226,9 +259,9 @@ mod tests {
         }
         vec![Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(intern("reader.boundary").unwrap()),
+            labels: LabelSet::single(db_string("reader.boundary").unwrap()),
             properties: PropertyMap::from_pairs([(
-                intern("reader.payload").unwrap(),
+                db_string("reader.payload").unwrap(),
                 Value::Bytes(Arc::from(payload)),
             )])
             .unwrap(),
@@ -353,6 +386,66 @@ mod tests {
             Err(PersistError::TruncatedEntry { .. })
         ));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn from_bytes_matches_file_path_iteration() {
+        let path = temp_path("from-bytes-eq");
+        append(&path, None, 1);
+        append(&path, Some(Arc::from(b"alice".as_slice())), 2);
+        let via_file: Vec<_> = WalReader::open(&path)
+            .unwrap()
+            .iterate(|_| true)
+            .unwrap()
+            .map(|r| r.unwrap().into_entry().unwrap())
+            .collect();
+        let bytes = fs::read(&path).unwrap();
+        let via_slice: Vec<_> = WalReader::from_bytes(&bytes)
+            .unwrap()
+            .map(|r| r.unwrap().into_entry().unwrap())
+            .collect();
+        assert_eq!(via_file, via_slice);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn from_bytes_payload_len_past_remaining_yields_truncated_entry() {
+        // A WAL file header + one entry header whose payload_len is large (but
+        // under the 256 MiB cap, so ensure_payload_len passes) with only a few
+        // payload bytes supplied. The slice reader must yield TruncatedEntry
+        // WITHOUT allocating the claimed payload (the payload_end > file_len
+        // bound runs before the `vec![0; payload_len]` allocation).
+        let header = WalEntryHeader::new(
+            64 * 1024 * 1024,
+            0,
+            1,
+            HlcTimestamp::zero(),
+            Origin::Local,
+            0,
+            None,
+        )
+        .unwrap();
+        let mut bytes = Vec::new();
+        WalFileHeader::new(0).write_to(&mut bytes).unwrap();
+        bytes.extend_from_slice(&encode_entry_header(&header).unwrap());
+        bytes.extend_from_slice(&[0_u8; 8]);
+        let mut stream = WalReader::from_bytes(&bytes).unwrap();
+        assert!(matches!(
+            stream.next().unwrap(),
+            Err(PersistError::TruncatedEntry { .. })
+        ));
+    }
+
+    #[test]
+    fn from_bytes_rejects_bad_file_header() {
+        assert!(matches!(
+            WalReader::from_bytes(b"NOPExxxxxxxxxxxx"),
+            Err(PersistError::MagicMismatch { .. })
+        ));
+        assert!(matches!(
+            WalReader::from_bytes(&[0_u8; 4]),
+            Err(PersistError::TruncatedFileHeader)
+        ));
     }
 
     #[test]

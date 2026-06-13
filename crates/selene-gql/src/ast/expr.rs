@@ -1,6 +1,9 @@
 //! Expression AST nodes.
 
-use selene_core::IStr;
+use std::sync::Arc;
+
+use rust_decimal::Decimal;
+use selene_core::DbString;
 
 use crate::ast::{
     pattern::LabelExpr, pattern::MatchClause, span::SourceSpan, statement::QueryPipeline,
@@ -15,15 +18,15 @@ pub enum ValueExpr {
     Literal(Literal),
     /// Variable reference parsed from an identifier token.
     Variable {
-        /// Interned variable name.
-        name: IStr,
+        /// Database-string variable name.
+        name: DbString,
         /// Source span of the variable reference.
         span: SourceSpan,
     },
     /// Query parameter reference, such as `$name`.
     Parameter {
-        /// Interned parameter name without the leading `$`.
-        name: IStr,
+        /// Database-string parameter name without the leading `$`.
+        name: DbString,
         /// Optional inline declared parameter type.
         declared_type: Option<GqlType>,
         /// Source span of the parameter reference.
@@ -33,8 +36,8 @@ pub enum ValueExpr {
     PropertyAccess {
         /// Target expression.
         target: Box<ValueExpr>,
-        /// Interned property key.
-        key: IStr,
+        /// Database-string property key.
+        key: DbString,
         /// Source span of the full property access.
         span: SourceSpan,
     },
@@ -57,8 +60,15 @@ pub enum ValueExpr {
     /// Record literal.
     RecordLiteral {
         /// Record fields in source order.
-        fields: Vec<(IStr, ValueExpr)>,
+        fields: Vec<(DbString, ValueExpr)>,
         /// Source span of the record.
+        span: SourceSpan,
+    },
+    /// `PATH[<node>, <edge>, <node>, ...]` constructor.
+    PathConstructor {
+        /// Alternating node/edge/node reference expressions.
+        elements: Vec<ValueExpr>,
+        /// Source span of the path constructor.
         span: SourceSpan,
     },
     /// Binary operator expression.
@@ -83,14 +93,14 @@ pub enum ValueExpr {
     },
     /// Function call, including aggregate-looking calls.
     FunctionCall {
-        /// Qualified function name as a list of interned segments.
+        /// Qualified function name as a list of database-string segments.
         ///
         /// Stored as a path so that `foo."bar.baz"` and `foo.bar.baz`
         /// (which a flat string would alias) parse to distinguishable
         /// values. Bare functions (`count(...)`) are a single-element
         /// path; namespaced calls (`db.bar()`, `pkg.subpkg.fn()`) preserve
         /// every segment.
-        name: NonEmpty<IStr>,
+        name: NonEmpty<DbString>,
         /// Function arguments.
         args: Vec<ValueExpr>,
         /// `true` for `count(*)`.
@@ -98,6 +108,17 @@ pub enum ValueExpr {
         /// `true` when the call included `DISTINCT`.
         distinct: bool,
         /// Source span of the call.
+        span: SourceSpan,
+    },
+    /// `DURATION_BETWEEN(<start>, <end>) [<temporal duration qualifier>]`.
+    DurationBetween {
+        /// Start temporal value expression.
+        start: Box<ValueExpr>,
+        /// End temporal value expression.
+        end: Box<ValueExpr>,
+        /// Requested duration unit group.
+        qualifier: TemporalDurationQualifier,
+        /// Source span of the full expression.
         span: SourceSpan,
     },
     /// `IS` predicate family.
@@ -122,10 +143,22 @@ pub enum ValueExpr {
         /// Source span of the full predicate.
         span: SourceSpan,
     },
+    /// `[NOT] IN` predicate with a list-valued expression on the right.
+    InListExpression {
+        /// Checked operand.
+        operand: Box<ValueExpr>,
+        /// List-valued expression.
+        list: Box<ValueExpr>,
+        /// Whether the predicate was negated.
+        negated: bool,
+        /// Source span of the full predicate.
+        span: SourceSpan,
+    },
     /// `ALL_DIFFERENT(...)` predicate.
     ///
-    /// selene-db extension: ISO/IEC 39075:2024 section 19.11 takes element
-    /// variable references; this AST keeps the broader expression shape.
+    /// ISO/IEC 39075:2024 section 19.11 takes element variable references.
+    /// The AST keeps a broad item shape so parser construction stays regular;
+    /// analysis enforces the ISO argument rule.
     AllDifferent {
         /// Items to compare.
         items: Vec<ValueExpr>,
@@ -134,8 +167,9 @@ pub enum ValueExpr {
     },
     /// `SAME(...)` predicate.
     ///
-    /// selene-db extension: ISO/IEC 39075:2024 section 19.12 takes element
-    /// variable references; this AST keeps the broader expression shape.
+    /// ISO/IEC 39075:2024 section 19.12 takes element variable references.
+    /// The AST keeps a broad item shape so parser construction stays regular;
+    /// analysis enforces the ISO argument rule.
     Same {
         /// Items to compare.
         items: Vec<ValueExpr>,
@@ -144,13 +178,14 @@ pub enum ValueExpr {
     },
     /// `PROPERTY_EXISTS(target, 'key')` predicate.
     ///
-    /// selene-db extension: ISO/IEC 39075:2024 section 19.13 takes an element
-    /// variable reference and property name; this AST accepts any target expression.
+    /// ISO/IEC 39075:2024 section 19.13 takes an element variable reference
+    /// and property name. The AST keeps a broad target shape so parser
+    /// construction stays regular; analysis enforces the ISO target rule.
     PropertyExists {
         /// Target expression.
         target: Box<ValueExpr>,
-        /// Interned property key.
-        key: IStr,
+        /// Database-string property key.
+        key: DbString,
         /// Source span of the predicate.
         span: SourceSpan,
     },
@@ -222,6 +257,64 @@ pub enum ValueExpr {
     },
 }
 
+/// Temporal duration qualifier for `DURATION_BETWEEN`.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum TemporalDurationQualifier {
+    /// `YEAR TO MONTH`.
+    YearToMonth,
+    /// `DAY TO SECOND`.
+    DayToSecond,
+}
+
+impl Drop for ValueExpr {
+    /// Tear this expression down iteratively rather than with the compiler's
+    /// derived recursive destructor.
+    ///
+    /// A left-leaning `Box<ValueExpr>` chain (e.g. the depth-N tree built from
+    /// `a OR a OR …` or a long `a.b.c.…` access chain) overflows the native
+    /// stack when freed recursively — one frame per level — at roughly 130k
+    /// deep. A Rust stack overflow is **non-unwindable** (`catch_unwind` cannot
+    /// trap it), so it hard-kills the host process embedding selene-db. The
+    /// parser caps *accepted* expression depth far below that
+    /// (`parser::depth`), but an over-cap tree is still fully constructed before
+    /// the cap rejects it, and that rejected tree must be dropped without
+    /// recursing. This manual `Drop` hoists every owned child `ValueExpr` onto a
+    /// heap worklist (replacing it in place with a childless placeholder) and
+    /// drops the worklist in a pop-loop, so teardown is O(nodes) iterative.
+    ///
+    /// By the time any hoisted node is itself dropped, its children have already
+    /// been replaced by placeholders, so its re-entrant destructor finds nothing
+    /// to recurse into (recursion depth stays ≤ 2 regardless of tree depth).
+    /// Subquery bodies (`Box<MatchClause>` / `Box<QueryPipeline>`) and the
+    /// `Cast` target type (`Box<GqlType>`) are **not** direct `ValueExpr`
+    /// children (see [`ValueExpr::for_each_child_mut`]); they drop normally,
+    /// which is safe because subquery nesting is bounded by the pre-pest `{`
+    /// delimiter cap and `GqlType` depth by the type builder's gate.
+    fn drop(&mut self) {
+        let mut pending: Vec<ValueExpr> = Vec::new();
+        hoist_children(self, &mut pending);
+        while let Some(mut node) = pending.pop() {
+            hoist_children(&mut node, &mut pending);
+            // `node` drops here with its children already hoisted out.
+        }
+    }
+}
+
+/// Move every direct child [`ValueExpr`] of `expr` onto `pending`, leaving a
+/// childless placeholder in its slot. Shared by the iterative [`Drop`] impl.
+fn hoist_children(expr: &mut ValueExpr, pending: &mut Vec<ValueExpr>) {
+    expr.for_each_child_mut(&mut |child| {
+        pending.push(core::mem::replace(child, drop_placeholder()));
+    });
+}
+
+/// A cheap, childless [`ValueExpr`] swapped in for a hoisted child during
+/// iterative teardown. Constructing it allocates nothing and dropping it
+/// recurses into nothing.
+fn drop_placeholder() -> ValueExpr {
+    ValueExpr::Literal(Literal::Null(SourceSpan::default()))
+}
+
 impl ValueExpr {
     /// Return the source span for this expression.
     #[must_use]
@@ -234,11 +327,14 @@ impl ValueExpr {
             | Self::ListAccess { span, .. }
             | Self::ListLiteral { span, .. }
             | Self::RecordLiteral { span, .. }
+            | Self::PathConstructor { span, .. }
             | Self::BinaryOp { span, .. }
             | Self::UnaryOp { span, .. }
             | Self::FunctionCall { span, .. }
+            | Self::DurationBetween { span, .. }
             | Self::IsCheck { span, .. }
             | Self::InList { span, .. }
+            | Self::InListExpression { span, .. }
             | Self::AllDifferent { span, .. }
             | Self::Same { span, .. }
             | Self::PropertyExists { span, .. }
@@ -289,7 +385,7 @@ pub enum BinaryOp {
     Or,
     /// Boolean exclusive-or.
     Xor,
-    /// String/list concatenation.
+    /// String/list/bytes/path concatenation.
     Concat,
     /// `CONTAINS`.
     Contains,
@@ -366,21 +462,128 @@ pub enum TrimSpec {
 }
 
 /// Literal expression.
-#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub enum Literal {
     /// Boolean literal.
     Bool(bool, SourceSpan),
     /// Signed 64-bit integer literal.
     Integer(i64, SourceSpan),
+    /// Signed 64-bit integer literal written with a non-decimal radix prefix.
+    RadixInteger(i64, SourceSpan, IntegerLiteralKind),
+    /// Exact fixed-precision decimal literal.
+    Decimal(Decimal, SourceSpan, DecimalLiteralKind),
     /// 64-bit floating-point literal.
-    Float(f64, SourceSpan),
-    /// Interned string literal.
-    String(IStr, SourceSpan),
+    Float(f64, SourceSpan, FloatLiteralKind),
+    /// Database-string literal.
+    String(DbString, SourceSpan),
+    /// Byte-string literal.
+    Bytes(Arc<[u8]>, SourceSpan),
     /// UUID literal.
     Uuid(uuid::Uuid, SourceSpan),
+    /// Zoned datetime literal.
+    ZonedDateTime(Box<jiff::Zoned>, SourceSpan),
+    /// Local datetime literal.
+    LocalDateTime(jiff::civil::DateTime, SourceSpan),
+    /// Date literal.
+    Date(jiff::civil::Date, SourceSpan),
+    /// Zoned time literal.
+    ZonedTime(Box<jiff::Zoned>, SourceSpan),
+    /// Local time literal.
+    LocalTime(jiff::civil::Time, SourceSpan),
+    /// Duration literal.
+    Duration(Box<jiff::Span>, SourceSpan),
     /// Null literal.
     Null(SourceSpan),
+}
+
+/// Source spelling class for an integer literal.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum IntegerLiteralKind {
+    /// Hexadecimal literal with a `0x` prefix.
+    Hexadecimal,
+    /// Octal literal with a `0o` prefix.
+    Octal,
+    /// Binary literal with a `0b` prefix.
+    Binary,
+}
+
+/// Source spelling class for an exact decimal literal.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum DecimalLiteralKind {
+    /// Common decimal notation without an exact-number suffix.
+    CommonWithoutSuffix,
+    /// Common decimal notation or decimal integer with an exact-number suffix.
+    CommonOrIntegerWithSuffix,
+    /// Scientific decimal notation with an exact-number suffix.
+    ScientificWithSuffix,
+}
+
+/// Source spelling class for an approximate numeric literal.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum FloatLiteralKind {
+    /// Scientific decimal notation without an approximate-number suffix.
+    ScientificWithoutSuffix,
+    /// Common decimal notation or decimal integer with an `F` suffix.
+    CommonOrIntegerWithFloatSuffix,
+    /// Common decimal notation or decimal integer with a `D` suffix.
+    CommonOrIntegerWithDoubleSuffix,
+    /// Scientific decimal notation with an `F` suffix.
+    ScientificWithFloatSuffix,
+    /// Scientific decimal notation with a `D` suffix.
+    ScientificWithDoubleSuffix,
+}
+
+impl PartialEq for Literal {
+    fn eq(&self, rhs: &Self) -> bool {
+        match (self, rhs) {
+            (Self::Bool(lhs, lhs_span), Self::Bool(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Integer(lhs, lhs_span), Self::Integer(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (
+                Self::RadixInteger(lhs, lhs_span, lhs_kind),
+                Self::RadixInteger(rhs, rhs_span, rhs_kind),
+            ) => lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind,
+            (Self::Decimal(lhs, lhs_span, lhs_kind), Self::Decimal(rhs, rhs_span, rhs_kind)) => {
+                lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind
+            }
+            (Self::Float(lhs, lhs_span, lhs_kind), Self::Float(rhs, rhs_span, rhs_kind)) => {
+                lhs == rhs && lhs_span == rhs_span && lhs_kind == rhs_kind
+            }
+            (Self::String(lhs, lhs_span), Self::String(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Bytes(lhs, lhs_span), Self::Bytes(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Uuid(lhs, lhs_span), Self::Uuid(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::ZonedDateTime(lhs, lhs_span), Self::ZonedDateTime(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::LocalDateTime(lhs, lhs_span), Self::LocalDateTime(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Date(lhs, lhs_span), Self::Date(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::ZonedTime(lhs, lhs_span), Self::ZonedTime(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::LocalTime(lhs, lhs_span), Self::LocalTime(rhs, rhs_span)) => {
+                lhs == rhs && lhs_span == rhs_span
+            }
+            (Self::Duration(lhs, lhs_span), Self::Duration(rhs, rhs_span)) => {
+                lhs.fieldwise() == rhs.fieldwise() && lhs_span == rhs_span
+            }
+            (Self::Null(lhs_span), Self::Null(rhs_span)) => lhs_span == rhs_span,
+            _ => false,
+        }
+    }
 }
 
 impl Literal {
@@ -390,10 +593,44 @@ impl Literal {
         match self {
             Self::Bool(_, span)
             | Self::Integer(_, span)
-            | Self::Float(_, span)
+            | Self::RadixInteger(_, span, _)
+            | Self::Decimal(_, span, _)
+            | Self::Float(_, span, _)
             | Self::String(_, span)
+            | Self::Bytes(_, span)
             | Self::Uuid(_, span)
+            | Self::ZonedDateTime(_, span)
+            | Self::LocalDateTime(_, span)
+            | Self::Date(_, span)
+            | Self::ZonedTime(_, span)
+            | Self::LocalTime(_, span)
+            | Self::Duration(_, span)
             | Self::Null(span) => *span,
+        }
+    }
+
+    /// Return a mutable reference to this literal's source span.
+    ///
+    /// Used by [`ValueExpr::for_each_span_mut`](crate::ValueExpr::for_each_span_mut)
+    /// so span-rewriting walkers (parser span rebasing, span-erasing equality)
+    /// can reach the span stored inside the literal variant.
+    pub const fn span_mut(&mut self) -> &mut SourceSpan {
+        match self {
+            Self::Bool(_, span)
+            | Self::Integer(_, span)
+            | Self::RadixInteger(_, span, _)
+            | Self::Decimal(_, span, _)
+            | Self::Float(_, span, _)
+            | Self::String(_, span)
+            | Self::Bytes(_, span)
+            | Self::Uuid(_, span)
+            | Self::ZonedDateTime(_, span)
+            | Self::LocalDateTime(_, span)
+            | Self::Date(_, span)
+            | Self::ZonedTime(_, span)
+            | Self::LocalTime(_, span)
+            | Self::Duration(_, span)
+            | Self::Null(span) => span,
         }
     }
 }

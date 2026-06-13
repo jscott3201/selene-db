@@ -4,14 +4,15 @@ use std::{
     borrow::Cow, cell::RefCell, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant,
 };
 
-use selene_core::{CancellationToken, Change, IStr, IStrAdmissionPolicy, Value};
+use selene_core::{CancellationToken, Change, DbString, Value};
 use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
 
 use crate::{
     GqlStatus, SourceSpan,
+    plan::ImplDefinedCaps,
     runtime::{
         BindingTable, BindingTableRegistry, CallPlanCache, ExecutorError, ExecutorWarning,
-        PlanCache, PlanCacheStats, WarningSink, WriteOutcome,
+        PlanCache, PlanCacheStats, SharedPlanCache, WarningSink, WriteOutcome,
     },
 };
 
@@ -32,9 +33,10 @@ pub enum SessionParameterValue {
 pub struct Session<'g> {
     graph: &'g SharedGraph,
     principal: Option<Arc<[u8]>>,
-    pub(crate) parameters: BTreeMap<IStr, SessionParameterValue>,
-    pub(crate) scalar_parameters: BTreeMap<IStr, Value>,
+    pub(crate) parameters: BTreeMap<DbString, SessionParameterValue>,
+    pub(crate) scalar_parameters: BTreeMap<DbString, Value>,
     pub(crate) plan_cache: Option<PlanCache>,
+    pub(crate) shared_plan_cache: Option<Arc<SharedPlanCache>>,
     pub(crate) call_plan_cache: Option<Arc<CallPlanCache>>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
     pub(crate) aborted: bool,
@@ -43,7 +45,6 @@ pub struct Session<'g> {
     pub(crate) cancellation: Option<CancellationToken>,
     pub(crate) deadline: Option<Instant>,
     pub(crate) row_cap: Option<usize>,
-    pub(crate) istr_admission_policy: IStrAdmissionPolicy,
     pub(crate) warning_sink: Option<RefCell<Box<dyn WarningSink>>>,
     /// When set, `execute_source` runs the optimizer with a snapshot-pinned
     /// [`LiveIndexCatalog`] so label / typed / composite index access paths are
@@ -62,13 +63,20 @@ pub struct Session<'g> {
     /// Set by `SESSION CLOSE`; once set, every subsequent `execute_source`
     /// request returns [`ExecutorError::SessionClosed`].
     pub(crate) closed: bool,
+    /// Embedder-configured implementation-defined planning/runtime caps
+    /// (ISO IL013/IL015/IL018 limit surfaces). Defaults to
+    /// [`ImplDefinedCaps::DEFAULT`]; overridden via
+    /// [`Session::with_impl_defined_caps`]. Passed into `build_plan`, so it is
+    /// baked into every lowered plan and consulted by the plan-time quantifier
+    /// gate as well as the runtime/optimizer cap checks.
+    pub(crate) caps: ImplDefinedCaps,
 }
 
 pub(crate) fn materialize_parameter_values<'a>(
-    parameters: &'a BTreeMap<IStr, SessionParameterValue>,
-    scalar_parameters: &'a BTreeMap<IStr, Value>,
+    parameters: &'a BTreeMap<DbString, SessionParameterValue>,
+    scalar_parameters: &'a BTreeMap<DbString, Value>,
     registry: &BindingTableRegistry,
-) -> Cow<'a, BTreeMap<IStr, Value>> {
+) -> Cow<'a, BTreeMap<DbString, Value>> {
     if parameters
         .values()
         .all(|value| matches!(value, SessionParameterValue::Scalar(_)))
@@ -79,7 +87,10 @@ pub(crate) fn materialize_parameter_values<'a>(
     let mut materialized = scalar_parameters.clone();
     for (name, value) in parameters {
         if let SessionParameterValue::Table(table) = value {
-            materialized.insert(*name, Value::TableRef(registry.register(Arc::clone(table))));
+            materialized.insert(
+                name.clone(),
+                Value::TableRef(registry.register(Arc::clone(table))),
+            );
         }
     }
     Cow::Owned(materialized)
@@ -140,6 +151,7 @@ impl<'g> Session<'g> {
             parameters: BTreeMap::new(),
             scalar_parameters: BTreeMap::new(),
             plan_cache: None,
+            shared_plan_cache: None,
             call_plan_cache: None,
             active_txn: None,
             aborted: false,
@@ -148,11 +160,11 @@ impl<'g> Session<'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             index_selection: true,
             time_zone: None,
             closed: false,
+            caps: ImplDefinedCaps::DEFAULT,
         }
     }
 
@@ -165,6 +177,7 @@ impl<'g> Session<'g> {
             parameters: BTreeMap::new(),
             scalar_parameters: BTreeMap::new(),
             plan_cache: None,
+            shared_plan_cache: None,
             call_plan_cache: None,
             active_txn: None,
             aborted: false,
@@ -173,11 +186,11 @@ impl<'g> Session<'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             index_selection: true,
             time_zone: None,
             closed: false,
+            caps: ImplDefinedCaps::DEFAULT,
         }
     }
 
@@ -205,6 +218,21 @@ impl<'g> Session<'g> {
         self
     }
 
+    /// Set the implementation-defined planning/runtime caps for subsequent
+    /// statements (ISO IL013/IL015/IL018 limit surfaces — e.g.
+    /// [`max_quantifier`](ImplDefinedCaps::max_quantifier), set-op / `GROUP BY`
+    /// key caps, optimizer-iteration, string/byte-string concat length,
+    /// path-length, and list-cardinality bounds).
+    ///
+    /// The caps are baked into every plan lowered for this session, so they are
+    /// honored by both the plan-time variable-length quantifier gate and the
+    /// runtime/optimizer cap checks. Defaults to [`ImplDefinedCaps::DEFAULT`].
+    #[must_use]
+    pub fn with_impl_defined_caps(mut self, caps: ImplDefinedCaps) -> Self {
+        self.caps = caps;
+        self
+    }
+
     /// Attach an outermost result-row cap to subsequent statements.
     ///
     /// The cap is enforced only at the statement output boundary. Intermediate
@@ -215,18 +243,6 @@ impl<'g> Session<'g> {
     #[must_use]
     pub fn with_row_cap(mut self, max_rows: usize) -> Self {
         self.row_cap = Some(max_rows);
-        self
-    }
-
-    /// Set the policy used when engine-created strings cross admission boundaries.
-    ///
-    /// The default is [`IStrAdmissionPolicy::Reject`], preserving the hard-error
-    /// behavior of v1.0. [`IStrAdmissionPolicy::FallbackToExternal`] lets
-    /// eligible runtime boundaries carry over-cap strings as
-    /// [`Value::ExternalString`].
-    #[must_use]
-    pub fn with_istr_admission_policy(mut self, policy: IStrAdmissionPolicy) -> Self {
-        self.istr_admission_policy = policy;
         self
     }
 
@@ -260,8 +276,8 @@ impl<'g> Session<'g> {
     /// If `name` previously held a table binding, the table is replaced and
     /// `None` is returned. Use [`Self::bind_table_parameter`] when callers need
     /// table-aware replacement information.
-    pub fn bind_parameter(&mut self, name: IStr, value: Value) -> Option<Value> {
-        self.scalar_parameters.insert(name, value.clone());
+    pub fn bind_parameter(&mut self, name: DbString, value: Value) -> Option<Value> {
+        self.scalar_parameters.insert(name.clone(), value.clone());
         match self
             .parameters
             .insert(name, SessionParameterValue::Scalar(value))
@@ -277,7 +293,7 @@ impl<'g> Session<'g> {
     /// request-scoped table reference for each statement execution.
     pub fn bind_table_parameter(
         &mut self,
-        name: IStr,
+        name: DbString,
         table: BindingTable,
     ) -> Option<SessionParameterValue> {
         self.scalar_parameters.remove(&name);
@@ -289,7 +305,7 @@ impl<'g> Session<'g> {
     ///
     /// If `name` held a table binding, the table is removed and `None` is
     /// returned.
-    pub fn clear_parameter(&mut self, name: &IStr) -> Option<Value> {
+    pub fn clear_parameter(&mut self, name: &DbString) -> Option<Value> {
         self.scalar_parameters.remove(name);
         match self.parameters.remove(name) {
             Some(SessionParameterValue::Scalar(prior)) => Some(prior),
@@ -308,7 +324,7 @@ impl<'g> Session<'g> {
     /// Used to honor `SESSION SET VALUE IF NOT EXISTS` (ISO section 7.4): an
     /// existing binding is left untouched.
     #[must_use]
-    pub(crate) fn has_parameter(&self, name: &IStr) -> bool {
+    pub(crate) fn has_parameter(&self, name: &DbString) -> bool {
         self.parameters.contains_key(name)
     }
 
@@ -347,7 +363,7 @@ impl<'g> Session<'g> {
     }
 
     /// Reset one named session parameter (ISO feature GS16).
-    pub(crate) fn reset_parameter(&mut self, name: &IStr) {
+    pub(crate) fn reset_parameter(&mut self, name: &DbString) {
         self.clear_parameter(name);
     }
 
@@ -369,7 +385,7 @@ impl<'g> Session<'g> {
     /// Borrow the session-local query-parameter map used for statement execution.
     #[must_use]
     #[cfg(test)]
-    pub(crate) fn parameters(&self) -> &BTreeMap<IStr, SessionParameterValue> {
+    pub(crate) fn parameters(&self) -> &BTreeMap<DbString, SessionParameterValue> {
         &self.parameters
     }
 
@@ -377,7 +393,7 @@ impl<'g> Session<'g> {
     pub(crate) fn materialize_parameters<'a>(
         &'a self,
         registry: &BindingTableRegistry,
-    ) -> Cow<'a, BTreeMap<IStr, Value>> {
+    ) -> Cow<'a, BTreeMap<DbString, Value>> {
         materialize_parameter_values(&self.parameters, &self.scalar_parameters, registry)
     }
 
@@ -414,6 +430,19 @@ impl<'g> Session<'g> {
     #[must_use]
     pub fn with_plan_cache(mut self, capacity: NonZeroUsize) -> Self {
         self.plan_cache = Some(PlanCache::new(capacity));
+        self
+    }
+
+    /// Enable this session's shared non-CALL source-string plan cache.
+    ///
+    /// Embedders should pass one shared cache per graph so short-lived
+    /// sessions can reuse read and write plans across requests. The cache key
+    /// includes graph ID, schema-version epoch, procedure-registry version,
+    /// source text, implementation-defined caps, and optimizer
+    /// index-selection mode.
+    #[must_use]
+    pub fn with_shared_plan_cache(mut self, cache: Arc<SharedPlanCache>) -> Self {
+        self.shared_plan_cache = Some(cache);
         self
     }
 

@@ -1,6 +1,6 @@
 //! Data-definition statement AST nodes.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::ast::{expr::ValueExpr, span::SourceSpan, types::GqlType};
 
@@ -11,7 +11,7 @@ pub enum DdlStatement {
     /// `CREATE GRAPH`.
     CreateGraph {
         /// Graph name.
-        name: IStr,
+        name: DbString,
         /// `OR REPLACE`.
         or_replace: bool,
         /// `IF NOT EXISTS`.
@@ -22,7 +22,7 @@ pub enum DdlStatement {
     /// `DROP GRAPH`.
     DropGraph {
         /// Graph name.
-        name: IStr,
+        name: DbString,
         /// `IF EXISTS`.
         if_exists: bool,
         /// Source span.
@@ -31,13 +31,17 @@ pub enum DdlStatement {
     /// `CREATE NODE TYPE`.
     CreateNodeType {
         /// Node label, stored without the source `:` prefix.
-        label: IStr,
+        label: DbString,
+        /// Explicit `<node type key label set>` (Feature GG21), or `None` for the
+        /// bare `:Name` element-type-name form whose key label set is implied
+        /// (Feature GG20).
+        key_label_set: Option<KeyLabelSet>,
         /// `OR REPLACE`.
         or_replace: bool,
         /// `IF NOT EXISTS`.
         if_not_exists: bool,
         /// Optional parent type.
-        extends: Option<IStr>,
+        extends: Option<DbString>,
         /// Property definitions.
         properties: Vec<TypePropertyDef>,
         /// Optional validation mode.
@@ -50,13 +54,17 @@ pub enum DdlStatement {
     /// `CREATE EDGE TYPE`.
     CreateEdgeType {
         /// Edge label, stored without the source `:` prefix.
-        label: IStr,
+        label: DbString,
+        /// Explicit `<edge type key label set>` (Feature GG21), or `None` for the
+        /// bare `:Name` element-type-name form whose key label set is implied
+        /// (Feature GG20).
+        key_label_set: Option<KeyLabelSet>,
         /// `OR REPLACE`.
         or_replace: bool,
         /// `IF NOT EXISTS`.
         if_not_exists: bool,
         /// Optional parent type.
-        extends: Option<IStr>,
+        extends: Option<DbString>,
         /// Optional endpoint declaration.
         endpoints: Option<EdgeEndpointSpec>,
         /// Property definitions.
@@ -71,7 +79,7 @@ pub enum DdlStatement {
     /// `DROP NODE TYPE`.
     DropNodeType {
         /// Node label.
-        label: IStr,
+        label: DbString,
         /// `IF EXISTS`.
         if_exists: bool,
         /// `RESTRICT` (default) or `CASCADE` drop behavior.
@@ -82,7 +90,7 @@ pub enum DdlStatement {
     /// `DROP EDGE TYPE`.
     DropEdgeType {
         /// Edge label.
-        label: IStr,
+        label: DbString,
         /// `IF EXISTS`.
         if_exists: bool,
         /// `RESTRICT` (default) or `CASCADE` drop behavior.
@@ -98,7 +106,7 @@ pub enum DdlStatement {
     /// clean no-op; no `IF EXISTS` is needed.
     TruncateNodeType {
         /// Node label whose instances are removed.
-        label: IStr,
+        label: DbString,
         /// Source span.
         span: SourceSpan,
     },
@@ -108,18 +116,18 @@ pub enum DdlStatement {
     /// label is a clean no-op.
     TruncateEdgeType {
         /// Edge label whose instances are removed.
-        label: IStr,
+        label: DbString,
         /// Source span.
         span: SourceSpan,
     },
     /// `CREATE INDEX`.
     CreateIndex {
         /// Catalog index name.
-        name: IStr,
+        name: DbString,
         /// Node label, stored without the source `:` prefix.
-        label: IStr,
+        label: DbString,
         /// Property names in source order.
-        properties: Vec<IStr>,
+        properties: Vec<DbString>,
         /// `IF NOT EXISTS`.
         if_not_exists: bool,
         /// Source span.
@@ -128,7 +136,7 @@ pub enum DdlStatement {
     /// `DROP INDEX`.
     DropIndex {
         /// Catalog index name.
-        name: IStr,
+        name: DbString,
         /// `IF EXISTS`.
         if_exists: bool,
         /// Source span.
@@ -197,13 +205,41 @@ pub enum ValidationMode {
     Warn,
 }
 
+/// Explicitly-written element type key label set (ISO/IEC 39075:2024 §18.2/18.3,
+/// Feature GG21 "Explicit element type key label sets").
+///
+/// Present only when the source contains the explicit `<...type key label set>`
+/// production (`[ <label set phrase> ] <implies>`, i.e. a `=>` marker). The bare
+/// `:Name` element-type-name form (Feature GG20, key label set implied per §18.2
+/// SR5c) leaves the owning statement's `key_label_set` field `None`.
+///
+/// `labels` carries the labels of the explicit `<label set phrase>` in source
+/// order (the key label set per §18.2 SR5a). An empty `labels` is the bare
+/// `<implies>` with no `<label set phrase>` (§18.2 SR5b — the empty key label
+/// set, cardinality 0). `implied_labels` carries any separate post-`<implies>`
+/// `<...type label set>` (the `:Person => :Employee` shape); selene-db defers
+/// the union/containment-identification semantics this requires (§18.2 SR7/SR8)
+/// to a later release and rejects a non-empty `implied_labels` with an honest
+/// `FEATURE_NOT_SUPPORTED` (42N01) at plan time.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct KeyLabelSet {
+    /// Labels of the explicit `<label set phrase>` in source order (empty for a
+    /// bare `<implies>`).
+    pub labels: Vec<DbString>,
+    /// Labels of a separate post-`<implies>` `<...type label set>` (the deferred
+    /// `:Key => :Implied` shape); empty in the supported singleton form.
+    pub implied_labels: Vec<DbString>,
+    /// Source span of the key-label-set production.
+    pub span: SourceSpan,
+}
+
 /// Edge endpoint declaration.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct EdgeEndpointSpec {
     /// Source node labels.
-    pub from_labels: Vec<IStr>,
+    pub from_labels: Vec<DbString>,
     /// Target node labels.
-    pub to_labels: Vec<IStr>,
+    pub to_labels: Vec<DbString>,
     /// Source span.
     pub span: SourceSpan,
 }
@@ -212,7 +248,7 @@ pub struct EdgeEndpointSpec {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TypePropertyDef {
     /// Property name.
-    pub name: IStr,
+    pub name: DbString,
     /// GQL value type.
     pub gql_type: GqlType,
     /// Property constraints.
@@ -243,7 +279,7 @@ pub enum TypePropertyConstraint {
     /// `INDEXED [AS name]`.
     Indexed {
         /// Optional explicit index name.
-        name: Option<IStr>,
+        name: Option<DbString>,
         /// Source span.
         span: SourceSpan,
     },

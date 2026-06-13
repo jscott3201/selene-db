@@ -11,9 +11,9 @@ description = "ISO/IEC 39075:2024 GQL parser, planner, optimizer, and executor f
 autobenches = false
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.1.0" }
-selene-graph = { path = "../selene-graph", version = "1.1.0" }
-selene-algorithms = { path = "../selene-algorithms", version = "1.1.0" }
+selene-core = { path = "../selene-core", version = "1.2.0" }
+selene-graph = { path = "../selene-graph", version = "1.2.0" }
+selene-algorithms = { path = "../selene-algorithms", version = "1.2.0" }
 jiff.workspace = true
 miette.workspace = true
 parking_lot.workspace = true
@@ -21,6 +21,7 @@ pest.workspace = true
 pest_derive.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 smallvec.workspace = true
 rustc-hash.workspace = true
 thiserror.workspace = true
@@ -37,7 +38,6 @@ plan-cache-source-tracing = []
 
 [dev-dependencies]
 criterion.workspace = true
-iai-callgrind.workspace = true
 insta.workspace = true
 mimalloc.workspace = true
 metrics.workspace = true
@@ -45,8 +45,8 @@ parking_lot.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 rust_decimal.workspace = true
-selene-persist = { path = "../selene-persist", version = "1.1.0" }
-selene-testing = { path = "../selene-testing", version = "1.1.0" }
+selene-persist = { path = "../selene-persist", version = "1.2.0" }
+selene-testing = { path = "../selene-testing" }
 serde_json.workspace = true
 tempfile.workspace = true
 tracing-subscriber.workspace = true
@@ -104,9 +104,12 @@ name = "procedure_call_repeat"
 harness = false
 
 [[bench]]
-name = "iai_gates"
+name = "correlated_subquery"
 harness = false
-required-features = ["test-harness"]
+
+[[bench]]
+name = "read_pipeline"
+harness = false
 
 [lints]
 workspace = true

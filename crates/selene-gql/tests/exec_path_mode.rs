@@ -2,7 +2,7 @@
 
 mod exec_common;
 
-use exec_common::{istr, planned, props};
+use exec_common::{db_string, planned, props};
 use selene_core::{GraphId, LabelSet, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutorError, TxContext,
@@ -16,34 +16,40 @@ struct PathModeFixture {
 
 impl PathModeFixture {
     fn build() -> Self {
-        let node = istr("N");
-        let edge = istr("K");
-        let name = istr("name");
+        let node = db_string("N");
+        let edge = db_string("K");
+        let name = db_string("name");
         let graph = SharedGraph::new(GraphId::new(6335));
         {
             let mut txn = graph.begin_write();
             let mut mutator = txn.mutator();
             let a = mutator
                 .create_node(
-                    LabelSet::single(node),
-                    props([(name, Value::String(istr("A")))]),
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(db_string("A")))]),
                 )
                 .expect("A inserts");
             let b = mutator
                 .create_node(
-                    LabelSet::single(node),
-                    props([(name, Value::String(istr("B")))]),
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(db_string("B")))]),
                 )
                 .expect("B inserts");
             let c = mutator
                 .create_node(
                     LabelSet::single(node),
-                    props([(name, Value::String(istr("C")))]),
+                    props([(name, Value::String(db_string("C")))]),
                 )
                 .expect("C inserts");
-            mutator.create_edge(edge, a, a, props([])).expect("A loop");
-            mutator.create_edge(edge, a, b, props([])).expect("A to B");
-            mutator.create_edge(edge, b, a, props([])).expect("B to A");
+            mutator
+                .create_edge(edge.clone(), a, a, props([]))
+                .expect("A loop");
+            mutator
+                .create_edge(edge.clone(), a, b, props([]))
+                .expect("A to B");
+            mutator
+                .create_edge(edge.clone(), b, a, props([]))
+                .expect("B to A");
             mutator.create_edge(edge, a, c, props([])).expect("A to C");
             txn.commit().expect("fixture commits");
         }

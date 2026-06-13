@@ -21,7 +21,7 @@ use selene_graph::{
 };
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
 
-use exec_common::istr;
+use exec_common::db_string;
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -48,7 +48,7 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 
 fn empty_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("catalog.extends.graph"),
+        name: db_string("catalog.extends.graph"),
         node_types: Vec::new(),
         edge_types: Vec::new(),
     }
@@ -212,8 +212,8 @@ fn node_extends_allows_parent_only_child_only_and_multilevel_shapes() {
 fn exact_match_redeclaration_succeeds_without_duplicate_property() {
     let graph = empty_closed_graph(13_905);
     let plan = plan_with_prefix(
-        "CREATE NODE TYPE :Child EXTENDS :Parent (a :: INT NOT NULL)",
-        &["CREATE NODE TYPE :Parent (a :: INT NOT NULL)"],
+        "CREATE NODE TYPE :Child EXTENDS :Parent (a :: INT NOT NULL UNIQUE)",
+        &["CREATE NODE TYPE :Parent (a :: INT NOT NULL UNIQUE)"],
     );
 
     run_write(&graph, &plan).expect("matching redeclaration succeeds");
@@ -245,9 +245,24 @@ fn property_conflicts_name_each_mismatched_field() {
             "property 'a' redeclared with different IMMUTABLE constraint (parent: true, child: false) on child type Child",
         ),
         (
+            "CREATE NODE TYPE :Parent (a :: INT UNIQUE)",
+            "CREATE NODE TYPE :Child EXTENDS :Parent (a :: INT)",
+            "property 'a' redeclared with different UNIQUE constraint (parent: true, child: false) on child type Child",
+        ),
+        (
             "CREATE NODE TYPE :Parent (a :: LIST<INT>)",
             "CREATE NODE TYPE :Child EXTENDS :Parent (a :: LIST<STRING>)",
             "property 'a' redeclared with different list element type (parent: INTEGER, child: STRING) on child type Child",
+        ),
+        (
+            "CREATE NODE TYPE :Parent (a :: STRING(2, 4))",
+            "CREATE NODE TYPE :Child EXTENDS :Parent (a :: VARCHAR(4))",
+            "property 'a' redeclared with different character-string length (parent: STRING(2, 4), child: STRING(4)) on child type Child",
+        ),
+        (
+            "CREATE NODE TYPE :Parent (a :: BYTES(2))",
+            "CREATE NODE TYPE :Child EXTENDS :Parent (a :: BYTES(4))",
+            "property 'a' redeclared with different byte-string length (parent: BYTES(2), child: BYTES(4)) on child type Child",
         ),
     ];
 

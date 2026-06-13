@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{
     Change, EdgeId, GraphId, GraphTypeId, HlcTimestamp, LabelSet, NodeId, Origin,
-    PredefinedValueType, PropertyDef, PropertyMap, SchemaChange, Value, ValueType, intern,
+    PredefinedValueType, PropertyDef, PropertyMap, SchemaChange, Value, ValueType, db_string,
 };
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, PersistError, SectionCompression, SnapshotBuilder, SnapshotConfig,
@@ -13,12 +13,15 @@ use selene_persist::{
 use smallvec::smallvec;
 
 use crate::{
-    CORE_PROVIDER_TAG, EdgeEndpointDef, GraphError, GraphTypeDef, PropertyDefaultValue,
-    PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph, ValidationMode,
+    CORE_PROVIDER_TAG, GraphError, GraphTypeDef, PropertyDefaultValue, PropertyElementType,
+    PropertyTypeDef, ProviderTag, SharedGraph, ValidationMode,
 };
 
 #[path = "recover_tests/variant_tests.rs"]
 mod variant_tests;
+
+#[path = "recover_tests/catalog_ddl.rs"]
+mod catalog_ddl;
 
 #[path = "recover_tests/oneof.rs"]
 mod oneof;
@@ -32,8 +35,20 @@ mod truncate_recovery;
 #[path = "recover_tests/nodeid_split_recovery.rs"]
 mod nodeid_split_recovery;
 
+#[path = "recover_tests/endpoint_recovery.rs"]
+mod endpoint_recovery;
+
 #[path = "recover_tests/record_recovery.rs"]
 mod record_recovery;
+
+#[path = "recover_tests/vector_recovery.rs"]
+mod vector_recovery;
+
+#[path = "recover_tests/json_recovery.rs"]
+mod json_recovery;
+
+#[path = "recover_tests/text_recovery.rs"]
+mod text_recovery;
 
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -50,26 +65,18 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 fn prop(name: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(name).unwrap(), value)]).unwrap()
 }
 
 fn write_snapshot(dir: &Path, shared: &SharedGraph, sequence: u64) -> PathBuf {
-    let provider = shared
-        .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
-        .expect("core provider is registered");
-    let mut builder = SnapshotBuilder::new(SnapshotConfig {
-        dir: dir.to_path_buf(),
-        sequence,
-        compression: SectionCompression::None,
-        fsync: false,
-    });
-    for sub in provider.declared_sub_tags() {
-        let bytes = provider.write_section(*sub).unwrap();
-        builder
-            .add_section(CORE_PROVIDER_TAG, sub.0, bytes)
-            .unwrap();
-    }
-    let outcome = builder.finalize().unwrap();
+    let outcome = shared
+        .write_snapshot(SnapshotConfig {
+            dir: dir.to_path_buf(),
+            sequence,
+            compression: SectionCompression::None,
+            fsync: false,
+        })
+        .unwrap();
     assert_eq!(outcome.snapshot_seq, sequence);
     snapshot_path(dir, sequence)
 }
@@ -107,7 +114,7 @@ fn sample_shared_graph() -> SharedGraph {
             ids.push(
                 mutator
                     .create_node(
-                        LabelSet::single(intern("recover.node").unwrap()),
+                        LabelSet::single(db_string("recover.node").unwrap()),
                         prop("recover.index", Value::Int(index)),
                     )
                     .unwrap(),
@@ -115,7 +122,7 @@ fn sample_shared_graph() -> SharedGraph {
         }
         mutator
             .create_edge(
-                intern("recover.edge").unwrap(),
+                db_string("recover.edge").unwrap(),
                 ids[0],
                 ids[1],
                 prop("recover.weight", Value::Int(9)),
@@ -137,7 +144,7 @@ fn large_shared_graph() -> SharedGraph {
             ids.push(
                 mutator
                     .create_node(
-                        LabelSet::single(intern("recover.large.node").unwrap()),
+                        LabelSet::single(db_string("recover.large.node").unwrap()),
                         prop("recover.large.index", Value::Int(index)),
                     )
                     .unwrap(),
@@ -148,7 +155,7 @@ fn large_shared_graph() -> SharedGraph {
             let target = ids[10 + ((index * 7 + 1) % 90)];
             mutator
                 .create_edge(
-                    intern("recover.large.edge").unwrap(),
+                    db_string("recover.large.edge").unwrap(),
                     source,
                     target,
                     prop("recover.large.weight", Value::Int(index as i64)),
@@ -166,13 +173,13 @@ fn large_shared_graph() -> SharedGraph {
 fn node_created(id: u64) -> Change {
     Change::NodeCreated {
         id: NodeId::new(id),
-        labels: LabelSet::single(intern("recover.wal.node").unwrap()),
+        labels: LabelSet::single(db_string("recover.wal.node").unwrap()),
         properties: prop("recover.id", Value::Int(id as i64)),
     }
 }
 
 fn expect_prop<'a>(map: &'a PropertyMap, key: &str, expected: &Value) -> &'a Value {
-    let key = intern(key).unwrap();
+    let key = db_string(key).unwrap();
     let actual = map.get(&key).expect("expected property present");
     assert_eq!(actual, expected);
     actual
@@ -180,7 +187,7 @@ fn expect_prop<'a>(map: &'a PropertyMap, key: &str, expected: &Value) -> &'a Val
 
 fn empty_closed_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: intern("recover.closed.graph").unwrap(),
+        name: db_string("recover.closed.graph").unwrap(),
         node_types: Vec::new(),
         edge_types: Vec::new(),
     }
@@ -218,13 +225,13 @@ fn recover_from_snapshot_only_round_trips_nodes_and_edges() {
 #[test]
 fn recover_from_wal_only_replays_changes_to_state() {
     let dir = temp_dir("wal-only");
-    let edge_label = intern("recover.wal.edge").unwrap();
+    let edge_label = db_string("recover.wal.edge").unwrap();
     let changes = vec![
         node_created(1),
         node_created(2),
         Change::EdgeCreated {
             id: EdgeId::new(1),
-            label: edge_label,
+            label: edge_label.clone(),
             source: NodeId::new(1),
             target: NodeId::new(2),
             properties: prop("recover.wal.weight", Value::Int(5)),
@@ -237,7 +244,7 @@ fn recover_from_wal_only_replays_changes_to_state() {
     assert_eq!(snapshot.node_count(), 2);
     assert_eq!(snapshot.edge_count(), 1);
     assert!(snapshot.outgoing_edges(NodeId::new(1)).is_some());
-    let expected_labels = LabelSet::single(intern("recover.wal.node").unwrap());
+    let expected_labels = LabelSet::single(db_string("recover.wal.node").unwrap());
     assert_eq!(snapshot.node_labels(NodeId::new(1)), Some(&expected_labels));
     assert_eq!(snapshot.node_labels(NodeId::new(2)), Some(&expected_labels));
     expect_prop(
@@ -264,68 +271,6 @@ fn recover_from_wal_only_replays_changes_to_state() {
 }
 
 #[test]
-fn recover_closed_wal_only_replays_catalog_ddl() {
-    let dir = temp_dir("closed-schema-wal-only");
-    let graph_id = GraphId::new(19);
-    let base = empty_closed_graph_type();
-    let shared = SharedGraph::builder(graph_id)
-        .bound_to(base.clone())
-        .unwrap()
-        .build()
-        .unwrap();
-    let sensor = intern("Sensor").unwrap();
-    let serial = intern("serial").unwrap();
-    let changes = {
-        let mut txn = shared.begin_write();
-        txn.mutator()
-            .create_node_type(
-                sensor,
-                LabelSet::single(sensor),
-                vec![PropertyTypeDef {
-                    name: serial,
-                    value_type: selene_core::PropertyValueType::String,
-                    list_element_type: None,
-                    required: false,
-                    default: Some(PropertyDefaultValue::String(intern("unknown").unwrap())),
-                    immutable: true,
-                    record_field_types: None,
-                }],
-                ValidationMode::Warn,
-            )
-            .unwrap();
-        txn.commit().unwrap().changes
-    };
-    assert!(matches!(
-        changes.as_slice(),
-        [Change::SchemaChanged {
-            change: selene_core::SchemaChange::NodeTypeAddedV2 { .. },
-            ..
-        }]
-    ));
-    append_wal(&dir, 0, &changes);
-
-    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
-    let graph_type = recovered.graph_type().unwrap();
-    assert_eq!(graph_type.node_types.len(), 1);
-    assert_eq!(graph_type.node_types[0].name, sensor);
-    assert_eq!(
-        graph_type.node_types[0].key_labels,
-        LabelSet::single(sensor)
-    );
-    assert_eq!(
-        graph_type.node_types[0].validation_mode,
-        ValidationMode::Warn
-    );
-    assert_eq!(graph_type.node_types[0].properties[0].name, serial);
-    assert_eq!(
-        graph_type.node_types[0].properties[0].default,
-        Some(PropertyDefaultValue::String(intern("unknown").unwrap()))
-    );
-    assert!(graph_type.node_types[0].properties[0].immutable);
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
 fn recover_closed_wal_only_preserves_typed_list_property() {
     let dir = temp_dir("closed-schema-list-wal-only");
     let graph_id = GraphId::new(21);
@@ -335,24 +280,28 @@ fn recover_closed_wal_only_preserves_typed_list_property() {
         .unwrap()
         .build()
         .unwrap();
-    let sensor = intern("ListSensor").unwrap();
-    let readings = intern("readings").unwrap();
-    let element_type = PropertyElementType::List(Box::new(PropertyElementType::Scalar(
-        selene_core::PropertyValueType::Int,
-    )));
+    let sensor = db_string("ListSensor").unwrap();
+    let readings = db_string("readings").unwrap();
+    let element_type = PropertyElementType::List(Box::new(PropertyElementType::NotNull(Box::new(
+        PropertyElementType::Scalar(selene_core::PropertyValueType::Int),
+    ))));
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node_type(
-                sensor,
+                sensor.clone(),
                 LabelSet::single(sensor),
                 vec![PropertyTypeDef {
-                    name: readings,
+                    name: readings.clone(),
                     value_type: selene_core::PropertyValueType::List,
                     list_element_type: Some(element_type.clone()),
                     required: false,
                     default: None,
                     immutable: false,
+                    unique: false,
+                    decimal_type: None,
+                    character_string_type: None,
+                    byte_string_type: None,
                     record_field_types: None,
                 }],
                 ValidationMode::Strict,
@@ -372,79 +321,12 @@ fn recover_closed_wal_only_preserves_typed_list_property() {
 }
 
 #[test]
-fn recover_closed_wal_only_preserves_any_edge_endpoints() {
-    let dir = temp_dir("closed-schema-any-edge-wal-only");
-    let graph_id = GraphId::new(22);
-    let person = intern("RecoverAnyPerson").unwrap();
-    let company = intern("RecoverAnyCompany").unwrap();
-    let rel = intern("RECOVER_ANY_REL").unwrap();
-    let base = GraphTypeDef {
-        name: intern("recover.any.edge.graph").unwrap(),
-        node_types: vec![
-            crate::NodeTypeDef {
-                name: person,
-                key_labels: LabelSet::single(person),
-                properties: Vec::new(),
-                validation_mode: ValidationMode::Strict,
-            },
-            crate::NodeTypeDef {
-                name: company,
-                key_labels: LabelSet::single(company),
-                properties: Vec::new(),
-                validation_mode: ValidationMode::Strict,
-            },
-        ],
-        edge_types: Vec::new(),
-    };
-    let shared = SharedGraph::builder(graph_id)
-        .bound_to(base.clone())
-        .unwrap()
-        .build()
-        .unwrap();
-    let outcome = {
-        let mut txn = shared.begin_write();
-        txn.mutator()
-            .create_edge_type(
-                rel,
-                rel,
-                EdgeEndpointDef::Any,
-                EdgeEndpointDef::Any,
-                Vec::new(),
-                ValidationMode::Strict,
-            )
-            .unwrap();
-        txn.commit().unwrap()
-    };
-    append_wal(&dir, 0, &outcome.changes);
-
-    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
-    let graph_type = recovered.graph_type().unwrap();
-    assert_eq!(
-        graph_type.edge_types[0].source_node_type,
-        EdgeEndpointDef::Any
-    );
-    assert_eq!(
-        graph_type.edge_types[0].target_node_type,
-        EdgeEndpointDef::Any
-    );
-    assert!(matches!(
-        outcome.changes.as_slice(),
-        [Change::SchemaChanged {
-            change: SchemaChange::EdgeTypeAddedV2 { def, .. },
-            ..
-        }] if def.source_node_type == selene_core::EdgeEndpointDef::Any
-            && def.target_node_type == selene_core::EdgeEndpointDef::Any
-    ));
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
 fn recover_closed_rejects_overdeep_typed_list_property() {
     let dir = temp_dir("closed-schema-list-depth");
     let graph_id = GraphId::new(22);
     let base = empty_closed_graph_type();
     let graph_type = GraphTypeId::new(1).unwrap();
-    let sensor = intern("DeepListSensor").unwrap();
+    let sensor = db_string("DeepListSensor").unwrap();
     let mut value_type = ValueType::predefined(PredefinedValueType::Int);
     for _ in 0..=64 {
         value_type = ValueType::list_of(value_type);
@@ -456,15 +338,16 @@ fn recover_closed_rejects_overdeep_typed_list_property() {
             graph: graph_id,
             change: SchemaChange::NodeTypeAddedV2 {
                 graph_type,
-                label: sensor,
+                label: sensor.clone(),
                 def: selene_core::NodeTypeDef {
                     labels: LabelSet::single(sensor),
                     properties: smallvec![PropertyDef {
-                        name: intern("too_deep").unwrap(),
+                        name: db_string("too_deep").unwrap(),
                         value_type,
                         nullable: true,
                         default: None,
                         immutable: false,
+                        unique: false,
                         record_fields: None,
                     }],
                     key: None,
@@ -655,10 +538,10 @@ fn recover_round_trips_property_index_registrations() {
 
     let dir = temp_dir("scma");
     let shared = sample_shared_graph();
-    let label = intern("recover.node").unwrap();
-    let property = intern("recover.index").unwrap();
+    let label = db_string("recover.node").unwrap();
+    let property = db_string("recover.index").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
     write_snapshot(&dir, &shared, shared.read().meta.generation);
 
@@ -680,11 +563,16 @@ fn recover_round_trips_named_property_index_registrations() {
 
     let dir = temp_dir("scma-named");
     let shared = sample_shared_graph();
-    let label = intern("recover.named.node").unwrap();
-    let property = intern("recover.named.index").unwrap();
-    let name = intern("recover_named_index").unwrap();
+    let label = db_string("recover.named.node").unwrap();
+    let property = db_string("recover.named.index").unwrap();
+    let name = db_string("recover_named_index").unwrap();
     shared
-        .create_property_index_named(label, property, TypedIndexKind::I64, Some(name))
+        .create_property_index_named(
+            label.clone(),
+            property.clone(),
+            TypedIndexKind::I64,
+            Some(name.clone()),
+        )
         .unwrap();
     write_snapshot(&dir, &shared, shared.read().meta.generation);
 

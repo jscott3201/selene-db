@@ -13,7 +13,8 @@ use crate::{
     },
 };
 
-use super::{BindContext, call, expr, pattern};
+use super::{BindContext, call, expr, expr_depth, pattern};
+use crate::analyze::bind::aggregate_rules;
 use crate::analyze::scope::ScopeKind;
 
 pub(crate) fn bind_query_pipeline(
@@ -47,7 +48,10 @@ pub(crate) fn bind_pipeline_statement(
         PipelineStatement::With(clause) => bind_with_clause(ctx, clause),
         PipelineStatement::Call(call) => {
             let metadata = call::lookup_metadata(ctx, call)?;
-            if matches!(metadata.mutability, ProcedureMutability::SchemaWrite) {
+            if matches!(
+                metadata.mutability,
+                ProcedureMutability::SchemaWrite | ProcedureMutability::MaintenanceWrite
+            ) {
                 return Err(AnalysisError::MutatingProcedureInReadPipeline {
                     procedure: call.name.clone().into_vec().into_boxed_slice(),
                     mutability: metadata.mutability,
@@ -65,27 +69,33 @@ fn bind_inline_call(
     ctx: &mut BindContext,
     call: &mut InlineProcedureCall,
 ) -> Result<(), AnalysisError> {
-    if call.variable_scope.is_some() {
-        return Err(AnalysisError::NotImplemented {
-            message: "explicit variable-scope CALL subqueries require unsupported GP03".into(),
-            span: call.span,
-            hint: None,
-        });
-    }
     if call.in_transactions {
         return Err(AnalysisError::NotImplemented {
-            message: "CALL { ... } IN TRANSACTIONS is not supported in v1.1".into(),
+            message: "CALL { ... } IN TRANSACTIONS is not yet supported".into(),
             span: call.span,
             hint: None,
         });
     }
-    expr::check_query_subquery_depth(&call.body, 1)?;
-    let bind_result = ctx.with_child_scope(ScopeKind::Subquery, call.span, false, |ctx| {
-        bind_query_pipeline(ctx, &mut call.body)
-    });
+    expr_depth::check_query_subquery_depth(&call.body, 1)?;
+    let bind_result = match &call.variable_scope {
+        // GP03 (ISO §15.2): explicit variable scope — the body sees ONLY the
+        // named imports. An empty list (`CALL () { ... }`) is fully isolated.
+        // Imports are cloned so the body's `&mut call.body` borrow stays disjoint
+        // from the `call.variable_scope` read.
+        Some(imports) => {
+            let imports = imports.clone();
+            ctx.with_imported_scope(&imports, call.span, |ctx| {
+                bind_query_pipeline(ctx, &mut call.body)
+            })
+        }
+        // GP02: implicit scope — the body inherits all outer bindings.
+        None => ctx.with_child_scope(ScopeKind::Subquery, call.span, false, |ctx| {
+            bind_query_pipeline(ctx, &mut call.body)
+        }),
+    };
     if let Err(AnalysisError::MutatingProcedureInReadPipeline { span, .. }) = bind_result {
         return Err(AnalysisError::NotImplemented {
-            message: "write operations inside CALL { ... } are not supported in v1.1".into(),
+            message: "write operations inside CALL { ... } are not yet supported".into(),
             span,
             hint: None,
         });
@@ -97,7 +107,7 @@ fn bind_inline_call(
 
 #[derive(Clone)]
 struct InlineCallOutput {
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     ty: AnalyzedType,
     span: crate::SourceSpan,
 }
@@ -146,28 +156,28 @@ fn declare_inline_call_yields(
         return Ok(());
     }
     for item in &call.yield_items {
-        match item.column {
+        match &item.column {
             YieldColumn::Star => {
                 for output in outputs {
                     ctx.declare_strict_typed(
                         BindingDeclKind::YieldColumn,
-                        output.name,
+                        output.name.clone(),
                         item.span,
                         output.ty.clone(),
                     )?;
                 }
             }
             YieldColumn::Named(column) => {
-                let Some(output) = outputs.iter().find(|output| output.name == column) else {
+                let Some(output) = outputs.iter().find(|output| output.name == *column) else {
                     return Err(AnalysisError::UnknownYieldColumn {
                         procedure: Box::new([]),
-                        column,
+                        column: column.clone(),
                         span: item.span,
                     });
                 };
                 ctx.declare_strict_typed(
                     BindingDeclKind::YieldColumn,
-                    item.alias.unwrap_or(column),
+                    item.alias.clone().unwrap_or_else(|| column.clone()),
                     output.span,
                     output.ty.clone(),
                 )?;
@@ -177,10 +187,10 @@ fn declare_inline_call_yields(
     Ok(())
 }
 
-fn projection_name(item: &ReturnItem) -> Option<selene_core::IStr> {
-    item.alias.or({
+fn projection_name(item: &ReturnItem) -> Option<selene_core::DbString> {
+    item.alias.clone().or({
         if let ValueExpr::Variable { name, .. } = &item.expr {
-            Some(*name)
+            Some(name.clone())
         } else {
             None
         }
@@ -239,6 +249,7 @@ fn bind_return_inputs(
     if let Some(value) = having {
         expr::bind_condition(ctx, value, ConditionClause::Having)?;
     }
+    aggregate_rules::validate_aggregate_nesting(items, having)?;
     validate_percentile_independent_refs(ctx, row_scope, items, group_by, having)?;
     Ok(())
 }
@@ -316,10 +327,17 @@ fn validate_percentile_independent_refs_in_expr(
                 stack.push(target);
             }
             ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::PathConstructor {
+                elements: items, ..
+            }
             | ValueExpr::AllDifferent { items, .. }
             | ValueExpr::Same { items, .. }
             | ValueExpr::FunctionCall { args: items, .. } => {
                 stack.extend(items.iter());
+            }
+            ValueExpr::DurationBetween { start, end, .. } => {
+                stack.push(end);
+                stack.push(start);
             }
             ValueExpr::RecordLiteral { fields, .. } => {
                 stack.extend(fields.iter().map(|(_, field)| field));
@@ -343,6 +361,10 @@ fn validate_percentile_independent_refs_in_expr(
             }
             ValueExpr::InList { operand, list, .. } => {
                 stack.extend(list.iter());
+                stack.push(operand);
+            }
+            ValueExpr::InListExpression { operand, list, .. } => {
+                stack.push(list);
                 stack.push(operand);
             }
             ValueExpr::Case {
@@ -466,10 +488,15 @@ fn declare_projection_items(
 ) -> Result<(), AnalysisError> {
     for item in items {
         let ty = projection_item_type(ctx, item);
-        if let Some(alias) = item.alias {
-            ctx.declare_strict_typed(BindingDeclKind::ProjectionAlias, alias, item.span, ty)?;
+        if let Some(alias) = &item.alias {
+            ctx.declare_strict_typed(
+                BindingDeclKind::ProjectionAlias,
+                alias.clone(),
+                item.span,
+                ty,
+            )?;
         } else if let ValueExpr::Variable { name, span } = &item.expr {
-            ctx.declare_strict_typed(BindingDeclKind::ProjectionAlias, *name, *span, ty)?;
+            ctx.declare_strict_typed(BindingDeclKind::ProjectionAlias, name.clone(), *span, ty)?;
         }
     }
     Ok(())
@@ -479,7 +506,12 @@ fn bind_let(ctx: &mut BindContext, bindings: &[LetBinding]) -> Result<(), Analys
     for binding in bindings {
         let id = expr::bind_value_expr(ctx, &binding.value)?;
         let ty = ctx.expr_type(id).clone();
-        ctx.declare_strict_typed(BindingDeclKind::LetAlias, binding.alias, binding.span, ty)?;
+        ctx.declare_strict_typed(
+            BindingDeclKind::LetAlias,
+            binding.alias.clone(),
+            binding.span,
+            ty,
+        )?;
     }
     Ok(())
 }
@@ -492,7 +524,12 @@ fn bind_unwind(ctx: &mut BindContext, unwind: &UnwindStatement) -> Result<(), An
         }
         _ => AnalyzedType::Dynamic,
     };
-    ctx.declare_strict_typed(BindingDeclKind::UnwindAlias, unwind.alias, unwind.span, ty)?;
+    ctx.declare_strict_typed(
+        BindingDeclKind::UnwindAlias,
+        unwind.alias.clone(),
+        unwind.span,
+        ty,
+    )?;
     Ok(())
 }
 
@@ -522,7 +559,7 @@ fn bind_limit_value(value: &LimitValue) -> Result<(), AnalysisError> {
 
 fn is_limit_amount_type(ty: &GqlType) -> bool {
     matches!(
-        ty,
+        ty.strip_not_null(),
         GqlType::Integer
             | GqlType::Int8
             | GqlType::Int16
@@ -530,10 +567,17 @@ fn is_limit_amount_type(ty: &GqlType) -> bool {
             | GqlType::Int64
             | GqlType::SmallInt
             | GqlType::BigInt
+            | GqlType::Int128
+            | GqlType::Decimal
+            | GqlType::DecimalExact(_)
             | GqlType::Uint8
             | GqlType::Uint16
             | GqlType::Uint32
             | GqlType::Uint64
+            | GqlType::USmallInt
+            | GqlType::Uint
+            | GqlType::UBigInt
+            | GqlType::Uint128
     )
 }
 

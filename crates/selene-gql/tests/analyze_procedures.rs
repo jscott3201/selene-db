@@ -1,10 +1,10 @@
 //! Analyzer ProcedureRegistry integration tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedType, BindingDeclKind, EmptyProcedureRegistry,
     GqlStatus, GqlType, ProcedureOutputColumn, ProcedureParameter, ProcedureRegistry,
-    TypeMismatchContext, analyze, parse,
+    TypeMismatchContext, analyze, analyze::ConditionClause, parse,
 };
 use selene_testing::MockProcedureRegistry;
 
@@ -22,18 +22,18 @@ fn registry(
     output_columns: Vec<ProcedureOutputColumn>,
 ) -> MockProcedureRegistry {
     MockProcedureRegistry::new().with_procedure(
-        name.iter().map(|segment| istr(segment)).collect(),
+        name.iter().map(|segment| db_string(segment)).collect(),
         parameters,
         output_columns,
     )
 }
 
 fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-    ProcedureParameter::new(istr(name), ty, nullable)
+    ProcedureParameter::new(db_string(name), ty, nullable)
 }
 
 fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-    ProcedureOutputColumn::new(istr(name), ty)
+    ProcedureOutputColumn::new(db_string(name), ty)
 }
 
 fn yield_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
@@ -47,18 +47,18 @@ fn yield_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
         .clone()
 }
 
-fn yield_names(analyzed: &AnalyzedStatement) -> Vec<&'static str> {
+fn yield_names(analyzed: &AnalyzedStatement) -> Vec<String> {
     analyzed
         .scopes
         .declarations()
         .iter()
         .filter(|decl| decl.kind() == BindingDeclKind::YieldColumn)
-        .map(|decl| decl.name().as_str())
+        .map(|decl| decl.name().as_str().to_owned())
         .collect()
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test strings fit interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test strings fit DB string cap")
 }
 
 #[test]
@@ -316,6 +316,45 @@ fn unknown_yield_column_errors() {
     assert!(matches!(
         err,
         AnalysisError::UnknownYieldColumn { column, .. } if column.as_str() == "nope"
+    ));
+}
+
+#[test]
+fn yield_where_filter_binds_yielded_alias() {
+    let registry = registry(
+        &["pkg", "one"],
+        Vec::new(),
+        vec![output("score", GqlType::Integer)],
+    );
+
+    let analyzed = analyze_with("CALL pkg.one() YIELD score AS s WHERE s > 10", &registry)
+        .expect("yield filter sees yielded alias");
+
+    assert_eq!(
+        yield_type(&analyzed, "s"),
+        AnalyzedType::Resolved(GqlType::Integer)
+    );
+}
+
+#[test]
+fn yield_where_filter_must_be_boolean_when_static() {
+    let registry = registry(
+        &["pkg", "one"],
+        Vec::new(),
+        vec![output("score", GqlType::Integer)],
+    );
+
+    let err = analyze_with("CALL pkg.one() YIELD score WHERE score", &registry)
+        .expect_err("non-boolean yield filter rejects");
+
+    assert!(matches!(
+        err,
+        AnalysisError::TypeMismatch {
+            context: TypeMismatchContext::Condition {
+                clause: ConditionClause::YieldWhere
+            },
+            ..
+        }
     ));
 }
 

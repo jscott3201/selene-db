@@ -10,7 +10,7 @@ use selene_gql::{
 };
 use selene_graph::{EdgeEndpointDef, GraphError, GraphTypeDef, SharedGraph};
 
-use exec_common::istr;
+use exec_common::db_string;
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -30,7 +30,7 @@ fn seed_table() -> BindingTable {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("catalog.test.one_of.graph"),
+            name: db_string("catalog.test.one_of.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -150,7 +150,7 @@ fn create_edge_type_with_eight_distinct_labels_resolves_to_oneof_spilled() {
         other => panic!("expected OneOf source endpoint, got {other:?}"),
     }
     let agent_index = graph_type
-        .node_type_index_for(istr("Agent"))
+        .node_type_index_for(db_string("Agent"))
         .expect("Agent declared");
     assert_eq!(
         edge_type.target_node_type,
@@ -237,7 +237,7 @@ fn show_edge_types_round_trips_oneof_endpoint() {
 
     let (table_a, outcome_a) = run_write(&graph_a, &plan_a).expect("catalog A executes");
     outcome_a.expect("commit A succeeds");
-    let Value::String(definition) = table_a.rows()[0].values()[1] else {
+    let Value::String(ref definition) = table_a.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     let rendered = definition.as_str();
@@ -284,7 +284,7 @@ fn show_edge_types_round_trips_oneof_on_both_endpoints() {
 
     let (table_a, outcome_a) = run_write(&graph_a, &plan_a).expect("catalog A executes");
     outcome_a.expect("commit A succeeds");
-    let Value::String(definition) = table_a.rows()[0].values()[1] else {
+    let Value::String(ref definition) = table_a.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     let rendered = definition.as_str();

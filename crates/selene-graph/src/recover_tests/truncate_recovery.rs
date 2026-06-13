@@ -6,7 +6,7 @@
 //!   containing the equivalent N `NodeDeleted` + incident `EdgeDeleted`
 //!   ("replay walks the store").
 
-use selene_core::{Change, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{Change, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, db_string};
 
 use super::{append_wal, temp_dir};
 use crate::{SeleneGraph, SharedGraph};
@@ -14,7 +14,7 @@ use crate::{SeleneGraph, SharedGraph};
 fn node_created(id: u64, label: &str) -> Change {
     Change::NodeCreated {
         id: NodeId::new(id),
-        labels: LabelSet::single(intern(label).unwrap()),
+        labels: LabelSet::single(db_string(label).unwrap()),
         properties: PropertyMap::new(),
     }
 }
@@ -22,7 +22,7 @@ fn node_created(id: u64, label: &str) -> Change {
 fn edge_created(id: u64, source: u64, target: u64, label: &str) -> Change {
     Change::EdgeCreated {
         id: EdgeId::new(id),
-        label: intern(label).unwrap(),
+        label: db_string(label).unwrap(),
         source: NodeId::new(source),
         target: NodeId::new(target),
         properties: PropertyMap::new(),
@@ -66,7 +66,7 @@ fn recovery_of_declarative_truncate_matches_expanded_form() {
     let dir_a = temp_dir("trec-declarative");
     let mut changes_a = base_creates();
     changes_a.push(Change::NodesOfTypeTruncated {
-        label: intern("trec.L").unwrap(),
+        label: db_string("trec.L").unwrap(),
     });
     append_wal(&dir_a, 0, &changes_a);
     let recovered_a = SharedGraph::recover(&dir_a, GraphId::new(7)).unwrap();
@@ -106,7 +106,7 @@ fn recovery_of_edge_type_truncate_matches_expanded_form() {
     let dir_a = temp_dir("trec-edge-declarative");
     let mut changes_a = base_creates();
     changes_a.push(Change::EdgesOfTypeTruncated {
-        label: intern("trec.E1").unwrap(),
+        label: db_string("trec.E1").unwrap(),
     });
     append_wal(&dir_a, 0, &changes_a);
     let recovered_a = SharedGraph::recover(&dir_a, GraphId::new(7)).unwrap();
@@ -123,7 +123,47 @@ fn recovery_of_edge_type_truncate_matches_expanded_form() {
     assert_same_observable_state(&recovered_a.read(), &recovered_b.read());
     let g = recovered_a.read();
     assert_eq!(g.node_count(), 4, "edge truncate leaves all nodes alive");
-    assert!(g.edges_with_label(&intern("trec.E1").unwrap()).is_none());
+    assert!(g.edges_with_label(&db_string("trec.E1").unwrap()).is_none());
+    let _ = std::fs::remove_dir_all(dir_a);
+    let _ = std::fs::remove_dir_all(dir_b);
+}
+
+#[test]
+fn recovery_of_graph_reset_matches_expanded_form() {
+    let dir_a = temp_dir("trec-reset-declarative");
+    let mut changes_a = base_creates();
+    changes_a.push(Change::GraphReset {});
+    append_wal(&dir_a, 0, &changes_a);
+    let recovered_a = SharedGraph::recover(&dir_a, GraphId::new(7)).unwrap();
+
+    let dir_b = temp_dir("trec-reset-expanded");
+    let mut changes_b = base_creates();
+    for id in 1_u64..=4 {
+        changes_b.push(Change::NodeDeleted {
+            id: NodeId::new(id),
+        });
+    }
+    for id in 1_u64..=5 {
+        changes_b.push(Change::EdgeDeleted {
+            id: EdgeId::new(id),
+        });
+    }
+    append_wal(&dir_b, 0, &changes_b);
+    let recovered_b = SharedGraph::recover(&dir_b, GraphId::new(7)).unwrap();
+
+    assert_same_observable_state(&recovered_a.read(), &recovered_b.read());
+    let g = recovered_a.read();
+    assert_eq!(g.node_count(), 0, "graph reset wipes every node");
+    assert_eq!(g.edge_count(), 0, "graph reset wipes every edge");
+    assert!(
+        g.nodes_with_label(&db_string("trec.Keep").unwrap())
+            .is_none(),
+        "label indexes are cleared for reset nodes"
+    );
+    assert!(
+        g.edges_with_label(&db_string("trec.E1").unwrap()).is_none(),
+        "edge-label indexes are cleared for reset edges"
+    );
     let _ = std::fs::remove_dir_all(dir_a);
     let _ = std::fs::remove_dir_all(dir_b);
 }

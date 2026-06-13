@@ -1,0 +1,9 @@
+// corpus: positive
+// feature: IM_JSON
+// expects: parse-ok
+RETURN json('{"kind":"memory","score":7}') AS payload,
+       json_contains(json('{"kind":"memory","score":7}'), json('{"kind":"memory"}')) AS has_kind,
+       json_array_length(json('[1,2,3]')) AS item_count,
+       json_object_keys(json('{"kind":"memory","score":7}')) AS keys,
+       json_get_path(json('{"memory":{"score":7}}'), 'memory', 'score') AS score,
+       json_has_path(json('{"memory":{"score":7}}'), 'memory', 'score') AS has_score

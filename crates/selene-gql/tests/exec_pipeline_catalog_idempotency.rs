@@ -9,7 +9,7 @@ use selene_gql::{
 };
 use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
-use exec_common::{istr, planned};
+use exec_common::{db_string, planned};
 
 fn seed_table() -> BindingTable {
     BindingTable::new(
@@ -23,7 +23,7 @@ fn seed_table() -> BindingTable {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("catalog.idempotency.graph"),
+            name: db_string("catalog.idempotency.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -33,12 +33,12 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 }
 
 fn person_graph(id: u64) -> SharedGraph {
-    let person = istr("Person");
+    let person = db_string("Person");
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("catalog.idempotency.person.graph"),
+            name: db_string("catalog.idempotency.person.graph"),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,

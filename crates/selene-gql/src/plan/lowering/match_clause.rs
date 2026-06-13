@@ -2,11 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
-    EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathMode, PathSelector,
-    PatternElement, Quantifier,
+    EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern, PathMode,
+    PathSelector, PatternElement, Quantifier,
     analyze::{AnalyzedStatement, BindingDecl, BindingDeclKind, BindingId, BindingUseKind},
     plan::{
         BindingDef, BindingElement, BuildSide, EdgeMatch, FilterPredicate, HiddenBindingId,
@@ -17,7 +17,7 @@ use crate::{
 
 struct LoweredClause {
     tree: JoinTree,
-    names: BTreeSet<IStr>,
+    names: BTreeSet<DbString>,
     filters: Vec<FilterPredicate>,
 }
 
@@ -29,6 +29,16 @@ struct GraphLoweringContext<'a, 's> {
     paths: &'s mut Vec<PathPlan>,
     binding_ids: &'s mut BTreeSet<BindingId>,
     hidden: &'s mut HiddenAllocator,
+    /// Embedder-configured variable-length quantifier upper-bound cap
+    /// (`ImplDefinedCaps::max_quantifier`), threaded to the plan-time gate.
+    max_quantifier: u32,
+    /// True when this MATCH carries a DIFFERENT EDGES (`G002`) match mode. Per
+    /// ISO 39075:2024 §16.4 NOTE 222, DIFFERENT EDGES imparts the effect of
+    /// TRAIL to each path pattern, so every quantified edge must (a) carry an
+    /// edge-identity group slot the pattern-wide filter can read and (b) prune
+    /// repeated edges *during* an unbounded repeat — otherwise the post-walk
+    /// filter never runs because the WALK traversal first hits `max_quantifier`.
+    different_edges: bool,
 }
 
 /// Predicates collected from the syntactic right-side node of an edge
@@ -44,7 +54,7 @@ pub(super) struct RightNode {
 pub(super) struct EdgeLoweringContext<'a, 's> {
     pub(super) analyzed: &'a AnalyzedStatement,
     pub(super) filters: &'s mut Vec<FilterPredicate>,
-    pub(super) names: &'s mut BTreeSet<IStr>,
+    pub(super) names: &'s mut BTreeSet<DbString>,
     pub(super) binding_ids: &'s mut BTreeSet<BindingId>,
     pub(super) hidden: &'s mut HiddenAllocator,
 }
@@ -62,12 +72,13 @@ impl HiddenAllocator {
     }
 }
 
-use super::{expr, path_mode, path_search, repeat};
+use super::{expr, match_mode, path_mode, path_search, repeat};
 
 /// Lower leading MATCH clauses into one pattern plan.
 pub(crate) fn lower_match_prefix(
     clauses: &[&MatchClause],
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<Option<PatternPlan>, PlannerError> {
     if clauses.is_empty() {
         return Ok(None);
@@ -77,12 +88,18 @@ pub(crate) fn lower_match_prefix(
     let mut paths = Vec::new();
     let mut binding_ids = BTreeSet::new();
     let mut hidden = HiddenAllocator::default();
-    let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
+    let mut current: Option<(JoinTree, BTreeSet<DbString>)> = None;
 
     for clause in clauses {
         reject_unsupported_clause(clause)?;
-        let lowered =
-            lower_match_clause(clause, analyzed, &mut paths, &mut binding_ids, &mut hidden)?;
+        let lowered = lower_match_clause(
+            clause,
+            analyzed,
+            &mut paths,
+            &mut binding_ids,
+            &mut hidden,
+            max_quantifier,
+        )?;
         current = Some(match (current, clause.optional) {
             (None, false) => {
                 filters.extend(lowered.filters);
@@ -147,13 +164,21 @@ pub(crate) fn lower_match_prefix(
 pub(super) fn lower_pipeline_match(
     clause: &MatchClause,
     analyzed: &AnalyzedStatement,
-    left_names: &BTreeSet<IStr>,
+    left_names: &BTreeSet<DbString>,
+    max_quantifier: u32,
 ) -> Result<(PatternPlan, Vec<FilterPredicate>), PlannerError> {
     reject_unsupported_clause(clause)?;
     let mut paths = Vec::new();
     let mut binding_ids = BTreeSet::new();
     let mut hidden = HiddenAllocator::default();
-    let lowered = lower_match_clause(clause, analyzed, &mut paths, &mut binding_ids, &mut hidden)?;
+    let lowered = lower_match_clause(
+        clause,
+        analyzed,
+        &mut paths,
+        &mut binding_ids,
+        &mut hidden,
+        max_quantifier,
+    )?;
     let (filters, global_filters) = if clause.optional {
         split_optional_filters(lowered.filters, left_names, analyzed)
     } else {
@@ -176,9 +201,10 @@ fn lower_match_clause(
     paths: &mut Vec<PathPlan>,
     binding_ids: &mut BTreeSet<BindingId>,
     hidden: &mut HiddenAllocator,
+    max_quantifier: u32,
 ) -> Result<LoweredClause, PlannerError> {
     let mut filters = Vec::new();
-    let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
+    let mut current: Option<(JoinTree, BTreeSet<DbString>)> = None;
     for pattern in &clause.patterns {
         let mut ctx = GraphLoweringContext {
             path_mode: clause.path_mode,
@@ -188,6 +214,8 @@ fn lower_match_clause(
             paths,
             binding_ids,
             hidden,
+            max_quantifier,
+            different_edges: clause.match_mode == Some(MatchMode::DifferentEdges),
         };
         let (tree, names) = lower_graph_pattern(pattern, &mut ctx)?;
         current = Some(match current {
@@ -215,6 +243,12 @@ fn lower_match_clause(
         feature: "empty graph pattern",
         span: clause.span,
     })?;
+    // Per ISO 39075:2024 §16.4: the `<match mode>` is pattern-wide, so it wraps
+    // the join of every comma-separated path pattern in this MATCH clause (the
+    // `current` tree above). DIFFERENT EDGES installs the pattern-wide
+    // edge-uniqueness filter here; REPEATABLE ELEMENTS and the ID086 default
+    // install nothing.
+    let tree = match_mode::wrap_in_match_mode_filter(tree, clause.match_mode, clause.span)?;
     Ok(LoweredClause {
         tree,
         names,
@@ -225,10 +259,10 @@ fn lower_match_clause(
 fn lower_graph_pattern(
     pattern: &GraphPattern,
     ctx: &mut GraphLoweringContext<'_, '_>,
-) -> Result<(JoinTree, BTreeSet<IStr>), PlannerError> {
-    if let Some(name) = pattern.path_binding {
+) -> Result<(JoinTree, BTreeSet<DbString>), PlannerError> {
+    if let Some(name) = &pattern.path_binding {
         let binding = binding_for_decl(
-            name,
+            name.clone(),
             pattern.span,
             BindingDeclKind::PathBinding,
             ctx.analyzed,
@@ -261,6 +295,22 @@ fn lower_graph_pattern(
     // a path *selector*, so it is deferred to the `if let Some(selector)` block
     // below — a non-selector pattern over a bindingless source is legal.
     let source_binding = chain_tail_binding(&current);
+    // Per ISO 39075:2024 §16.4 NOTE 222, DIFFERENT EDGES imparts TRAIL to each
+    // path pattern. When a path SELECTOR (ANY/SHORTEST) is present it ranks/picks
+    // paths BEFORE the outer pattern-wide `MatchModeFilter` runs, so a bare-WALK
+    // repeat could surface an edge-reusing path that the selector chooses and the
+    // filter then drops — losing a valid edge-distinct binding. Bumping the
+    // effective path mode to TRAIL installs the per-path trail filter
+    // (`wrap_in_path_mode_filter`) BENEATH the selector, so the selector only
+    // ever ranks edge-distinct paths. Non-selector patterns keep their declared
+    // mode: the pattern-wide filter is then the sole, correct authority
+    // (result-equivalent, and it avoids a redundant per-path trail pass).
+    let effective_path_mode =
+        if ctx.different_edges && ctx.selector.is_some() && ctx.path_mode == PathMode::Walk {
+            PathMode::Trail
+        } else {
+            ctx.path_mode
+        };
     while let Some(element) = elements.next() {
         let PatternElement::Edge(edge) = element else {
             return Err(PlannerError::NotImplemented {
@@ -283,8 +333,10 @@ fn lower_graph_pattern(
             ctx.binding_ids,
             ctx.hidden,
         )?;
-        let path_mode = ctx.path_mode;
+        let path_mode = effective_path_mode;
         let selector = ctx.selector;
+        let max_quantifier = ctx.max_quantifier;
+        let different_edges = ctx.different_edges;
         let mut edge_ctx = EdgeLoweringContext {
             analyzed: ctx.analyzed,
             filters: ctx.filters,
@@ -295,12 +347,12 @@ fn lower_graph_pattern(
         current = match &edge.quantifier {
             Some(Quantifier::GraphPattern { min, max }) => {
                 if let Some(max) = max {
-                    repeat::ensure_within_max_quantifier(*max, edge.span)?;
+                    repeat::ensure_within_max_quantifier(*max, max_quantifier, edge.span)?;
                 }
                 let mut repeat_edge =
                     repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
                 if repeat_edge.group_binding.is_none()
-                    && repeat_needs_hidden_group(selector, path_mode, *min, *max)
+                    && repeat_needs_hidden_group(selector, path_mode, *min, *max, different_edges)
                 {
                     repeat_edge.group_hidden_binding = Some(ctx.hidden.next());
                 }
@@ -310,7 +362,13 @@ fn lower_graph_pattern(
                     edge: repeat_edge,
                     min: *min,
                     max: *max,
-                    path_mode: repeat_path_mode_under_filter(path_mode, *max),
+                    path_mode: repeat_path_mode_under_filter(
+                        path_mode,
+                        *min,
+                        *max,
+                        different_edges,
+                        selector,
+                    ),
                 }
             }
             Some(Quantifier::Questioned) => {
@@ -345,7 +403,7 @@ fn lower_graph_pattern(
             }
         };
     }
-    current = path_mode::wrap_in_path_mode_filter(current, ctx.path_mode, pattern.span)?;
+    current = path_mode::wrap_in_path_mode_filter(current, effective_path_mode, pattern.span)?;
     if let Some(selector) = ctx.selector {
         let source_binding = source_binding.ok_or(PlannerError::NotImplemented {
             feature: "path selector over bindingless source node",
@@ -361,7 +419,7 @@ pub(super) fn right_node_predicates(
     node: &NodePattern,
     analyzed: &AnalyzedStatement,
     filters: &mut Vec<FilterPredicate>,
-    names: &mut BTreeSet<IStr>,
+    names: &mut BTreeSet<DbString>,
     binding_ids: &mut BTreeSet<BindingId>,
     hidden: &mut HiddenAllocator,
 ) -> Result<RightNode, PlannerError> {
@@ -370,7 +428,7 @@ pub(super) fn right_node_predicates(
     let property_predicates = node
         .properties
         .iter()
-        .map(|(key, value)| expr::property_predicate(binding, *key, value, analyzed))
+        .map(|(key, value)| expr::property_predicate(binding, key.clone(), value, analyzed))
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(where_clause) = &node.inline_where {
         // Why: inline WHERE on an expanded right node may reference bindings
@@ -390,7 +448,7 @@ fn node_scan(
     node: &NodePattern,
     analyzed: &AnalyzedStatement,
     filters: &mut Vec<FilterPredicate>,
-    names: &mut BTreeSet<IStr>,
+    names: &mut BTreeSet<DbString>,
     binding_ids: &mut BTreeSet<BindingId>,
     hidden: &mut HiddenAllocator,
 ) -> Result<NodeOrEdgeScan, PlannerError> {
@@ -399,7 +457,7 @@ fn node_scan(
     let property_predicates = node
         .properties
         .iter()
-        .map(|(key, value)| expr::property_predicate(binding, *key, value, analyzed))
+        .map(|(key, value)| expr::property_predicate(binding, key.clone(), value, analyzed))
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(where_clause) = &node.inline_where {
         filters.push(expr::filter_predicate(where_clause, analyzed)?);
@@ -426,7 +484,7 @@ fn edge_match(
     let property_predicates = edge
         .properties
         .iter()
-        .map(|(key, value)| expr::property_predicate(binding, *key, value, ctx.analyzed))
+        .map(|(key, value)| expr::property_predicate(binding, key.clone(), value, ctx.analyzed))
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(where_clause) = &edge.inline_where {
         ctx.filters
@@ -451,12 +509,13 @@ fn edge_match(
 fn node_binding(
     node: &NodePattern,
     analyzed: &AnalyzedStatement,
-    names: &mut BTreeSet<IStr>,
+    names: &mut BTreeSet<DbString>,
     binding_ids: &mut BTreeSet<BindingId>,
 ) -> Result<Option<BindingId>, PlannerError> {
     node.binding
+        .clone()
         .map(|name| {
-            names.insert(name);
+            names.insert(name.clone());
             let binding =
                 binding_for_pattern(name, node.span, BindingDeclKind::NodePattern, analyzed)?;
             binding_ids.insert(binding);
@@ -468,12 +527,13 @@ fn node_binding(
 pub(super) fn edge_binding(
     edge: &EdgePattern,
     analyzed: &AnalyzedStatement,
-    names: &mut BTreeSet<IStr>,
+    names: &mut BTreeSet<DbString>,
     binding_ids: &mut BTreeSet<BindingId>,
 ) -> Result<Option<BindingId>, PlannerError> {
     edge.binding
+        .clone()
         .map(|name| {
-            names.insert(name);
+            names.insert(name.clone());
             let binding =
                 binding_for_pattern(name, edge.span, BindingDeclKind::EdgePattern, analyzed)?;
             binding_ids.insert(binding);
@@ -483,7 +543,7 @@ pub(super) fn edge_binding(
 }
 
 fn binding_for_pattern(
-    name: IStr,
+    name: DbString,
     span: crate::SourceSpan,
     expected: BindingDeclKind,
     analyzed: &AnalyzedStatement,
@@ -515,7 +575,7 @@ fn binding_for_pattern(
 }
 
 fn binding_for_decl(
-    name: IStr,
+    name: DbString,
     span: crate::SourceSpan,
     expected: BindingDeclKind,
     analyzed: &AnalyzedStatement,
@@ -547,7 +607,7 @@ fn same_element(found: BindingDeclKind, expected: BindingDeclKind) -> bool {
 
 fn split_optional_filters(
     filters: Vec<FilterPredicate>,
-    left_names: &BTreeSet<IStr>,
+    left_names: &BTreeSet<DbString>,
     analyzed: &AnalyzedStatement,
 ) -> (Vec<FilterPredicate>, Vec<FilterPredicate>) {
     let mut right_filters = Vec::new();
@@ -564,7 +624,7 @@ fn split_optional_filters(
 
 fn references_optional_binding(
     filter: &FilterPredicate,
-    left_names: &BTreeSet<IStr>,
+    left_names: &BTreeSet<DbString>,
     analyzed: &AnalyzedStatement,
 ) -> bool {
     filter.binding_refs.iter().any(|binding| {
@@ -572,7 +632,7 @@ fn references_optional_binding(
     })
 }
 
-fn binding_name(binding: BindingId, analyzed: &AnalyzedStatement) -> Option<IStr> {
+fn binding_name(binding: BindingId, analyzed: &AnalyzedStatement) -> Option<DbString> {
     analyzed
         .scopes
         .declarations()
@@ -613,19 +673,20 @@ fn binding_defs(
 }
 
 fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
-    // Why: unreachable-by-flagger defense. G002 (REPEATABLE ELEMENTS) and G003
-    // (DIFFERENT EDGES) are absent from `SUPPORTED_FEATURES`, so the GQL flagger
-    // (clause 24.6) rejects them at parse time, before the planner ever sees a
-    // populated `match_mode`. This guard is kept as defense-in-depth so that a
-    // future feature-register change (registering G002/G003 without wiring the
-    // runtime visited-set contract) cannot silently lower an unsupported mode.
-    if clause.match_mode.is_some() {
-        return Err(PlannerError::NotImplemented {
-            feature: "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
-            span: clause.span,
-        });
+    // Why: true backstop against any future `<match mode>` (ISO 39075:2024
+    // §16.4) that reaches the planner without a lowering arm. Per the §16.4
+    // Conformance Rules, G002 (DIFFERENT EDGES) and G003 (REPEATABLE ELEMENTS)
+    // are both claimed and lowered, so this guard lets them pass; it errors only
+    // on an unhandled mode so a future register change (registering a new mode
+    // without wiring its runtime contract) cannot silently lower it. The match
+    // is exhaustive so the compiler forces an explicit decision for any added
+    // `MatchMode` variant.
+    match clause.match_mode {
+        // Per ISO 39075:2024 §16.4 GR8: DIFFERENT EDGES installs the pattern-wide
+        // edge-uniqueness filter at lowering; REPEATABLE ELEMENTS installs none
+        // (GR8(b): BINDINGS = INNER). Both are handled — no rejection.
+        None | Some(MatchMode::DifferentEdges) | Some(MatchMode::RepeatableElements) => Ok(()),
     }
-    Ok(())
 }
 
 fn repeat_needs_hidden_group(
@@ -633,29 +694,130 @@ fn repeat_needs_hidden_group(
     path_mode: PathMode,
     min: u32,
     max: Option<u32>,
+    different_edges: bool,
 ) -> bool {
-    path_mode != PathMode::Walk
+    // Per ISO 39075:2024 §16.4 NOTE 222: a DIFFERENT EDGES match mode imparts
+    // TRAIL to every path pattern, so an *anonymous* quantified edge still needs
+    // an edge-identity group slot — the pattern-wide `MatchModeFilter` reads it
+    // via `collect_path_contributors`/`repeat_contributor`. Without this, a
+    // legal G002 pattern such as `MATCH DIFFERENT EDGES (a)-[:K*2]->(b)` would
+    // fail to plan ("path mode over quantified edge without edge group slot").
+    different_edges
+        || path_mode != PathMode::Walk
         || selector.is_some_and(|selector| selector_needs_repeat_group(selector, min, max))
 }
 
 fn selector_needs_repeat_group(selector: PathSelector, min: u32, max: Option<u32>) -> bool {
+    // Per ISO 39075:2024 §22.4: every shortest-based selector (ALL/ANY SHORTEST
+    // plus the counted G019/G020 forms) ranks bindings by hop count, so each
+    // needs the hidden hop-count group slot even at a fixed length.
     max != Some(min)
         || matches!(
             selector,
-            PathSelector::AllShortest | PathSelector::AnyShortest
+            PathSelector::AllShortest
+                | PathSelector::AnyShortest
+                | PathSelector::CountedShortest { .. }
+                | PathSelector::CountedShortestGroup { .. }
         )
 }
 
-fn repeat_path_mode_under_filter(path_mode: PathMode, max: Option<u32>) -> PathMode {
+fn repeat_path_mode_under_filter(
+    path_mode: PathMode,
+    min: u32,
+    max: Option<u32>,
+    different_edges: bool,
+    selector: Option<PathSelector>,
+) -> PathMode {
     if max.is_none() {
-        path_mode
+        // An unbounded repeat must prune *during* traversal or it never
+        // terminates on a cyclic graph. Per ISO 39075:2024 §16.4 NOTE 222, a
+        // DIFFERENT EDGES match mode imparts TRAIL to each path pattern, so a
+        // bare WALK quantifier under DIFFERENT EDGES traverses as TRAIL — this
+        // is exactly the finiteness guarantee the analyzer relies on when it
+        // admits an unbounded quantifier gated only by DIFFERENT EDGES
+        // (`analyze::bind::pattern::validate_unbounded_legality`). A more
+        // restrictive declared path mode (TRAIL/ACYCLIC/SIMPLE) already prunes
+        // and is the user's explicit per-path choice, so it is left intact; the
+        // pattern-wide post-walk filter then enforces the broader G002
+        // cross-path-pattern edge-uniqueness on top.
+        //
+        // A minimum-length shortest selector — `ANY SHORTEST` / `ALL SHORTEST`
+        // and their ISO §16.6 SR2c-equivalent count-1 counted spellings
+        // `SHORTEST 1 [PATH]` / `SHORTEST [1] GROUP[S]` — gives the same
+        // finiteness guarantee and the same downshift is result-equivalent —
+        // BUT ONLY when the quantifier lower bound is <= 1.
+        // Reason: an UNCONSTRAINED minimum-hop path never repeats a node (a
+        // repeated node is a removable cycle, yielding a strictly shorter path), so
+        // it is simple, hence a trail; TRAIL traversal then contains *all*
+        // minimum-hop paths (the extra node-repeating trails it produces are
+        // strictly longer and the shortest selector discards them). With a lower
+        // bound `min >= 2` that argument FAILS: removing the cycle would drop below
+        // `min`, so the shortest path satisfying the bound can legitimately reuse an
+        // edge — e.g. `ALL SHORTEST WALK (a)-[r:K*2..]->(a)` over a self-loop has
+        // shortest walk `[e, e]`, which TRAIL would reject (losing the row). So the
+        // shortest downshift is gated on `min <= 1`; a `min >= 2` shortest stays
+        // WALK and, over a cyclic graph, raises 5GQL1 (deferred — like counted, it
+        // needs ordered length-enumeration over an infinite WALK candidate set).
+        //
+        // The count-`>= 2` counted forms (`SHORTEST N` G019 / `SHORTEST N GROUP`
+        // G020, N >= 2) are deliberately *excluded* regardless of bound: per ISO
+        // 39075:2024 §22.4 they rank paths by hop count *including* non-simple
+        // (cyclic) paths — consistent with selene's bounded counted-shortest.
+        // Downshifting them to TRAIL would silently change their semantics (count
+        // trails, not walks); over an unbounded cyclic WALK the candidate set is
+        // infinite, so plain counted (N >= 2) stays WALK and raises 5GQL1. The
+        // count-`1` forms are NOT excluded — they ARE the min-length shortest
+        // selector above (§16.6 SR2c) and downshift identically to ANY/ALL
+        // SHORTEST.
+        // NOTE the exception: a selector written WITH `DIFFERENT EDGES` *does*
+        // downshift via the `different_edges` arm regardless of `min` / counted, and
+        // that is correct — DIFFERENT EDGES constrains the candidate set to
+        // edge-distinct paths (TRAIL), which is finite, so e.g.
+        // `SHORTEST N DIFFERENT EDGES` counts the N shortest edge-distinct paths and
+        // terminates. The min/counted exclusions above are only about the *plain*
+        // (WALK) forms.
+        let shortest_simple_safe = is_min_length_shortest(selector) && min <= 1;
+        if path_mode == PathMode::Walk && (different_edges || shortest_simple_safe) {
+            PathMode::Trail
+        } else {
+            path_mode
+        }
     } else {
+        // Bounded repeats are finite under WALK; the post-walk filter (path-mode
+        // or pattern-wide match-mode) prunes the surviving rows.
         PathMode::Walk
     }
 }
 
-fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {
-    left.intersection(right).copied().collect()
+/// A minimum-length shortest selector retains *only* the single minimum
+/// hop-rank, so the TRAIL downshift is result-equivalent (every minimum-hop
+/// path is simple when the lower bound is <= 1). Per ISO 39075:2024 §16.6 SR2c
+/// the count-1 counted forms are the *same selector* as the keyword spellings —
+/// `ANY SHORTEST == SHORTEST 1 [PATH]` (`CountedShortest { paths: 1 }`) and
+/// `ALL SHORTEST == SHORTEST [1] GROUP[S]` (`CountedShortestGroup { groups: 1 }`,
+/// the count defaulting to 1 per §16.6 SR2b) — the runtime collapses all four to
+/// one `select_counted(count = 1, group)` (`runtime::path_search`). Matching on
+/// the count-1 *semantics* (not just the keyword spelling) keeps ISO-equivalent
+/// forms behaving identically on cyclic graphs.
+///
+/// The count-`>= 2` counted forms (`SHORTEST N` / `SHORTEST N GROUP[S]`, N >= 2)
+/// are intentionally excluded: they admit longer, possibly non-simple, paths
+/// (§22.4), so the TRAIL downshift is not result-equivalent for them. See
+/// `repeat_path_mode_under_filter`.
+fn is_min_length_shortest(selector: Option<PathSelector>) -> bool {
+    matches!(
+        selector,
+        Some(
+            PathSelector::AnyShortest
+                | PathSelector::AllShortest
+                | PathSelector::CountedShortest { paths: 1 }
+                | PathSelector::CountedShortestGroup { groups: 1 }
+        )
+    )
+}
+
+fn shared_names(left: &BTreeSet<DbString>, right: &BTreeSet<DbString>) -> Vec<DbString> {
+    left.intersection(right).cloned().collect()
 }
 
 /// Return the binding of the most-recently expanded chain tail, propagating
@@ -676,7 +838,9 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             .final_binding
             .map(TailBinding::Named)
             .or_else(|| edge.final_hidden_binding.map(TailBinding::Hidden)),
-        JoinTree::PathModeFilter { child, .. } => chain_tail_binding(child),
+        JoinTree::PathModeFilter { child, .. } | JoinTree::MatchModeFilter { child, .. } => {
+            chain_tail_binding(child)
+        }
         JoinTree::PathSearch { final_binding, .. } => Some(*final_binding),
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)

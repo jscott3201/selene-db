@@ -7,18 +7,83 @@
 //! identically to the pack era, with the registry swapped behind the
 //! `ProcedureRegistry` trait.
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Record, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
+use smallvec::smallvec;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
     SharedGraph::new(GraphId::new(id))
+}
+
+fn seed_isolated_nodes(graph: &SharedGraph, count: usize) -> Vec<NodeId> {
+    let mut txn = graph.begin_write();
+    let label = db_string("N");
+    let mut nodes = Vec::with_capacity(count);
+    for _ in 0..count {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+                .expect("test node creates"),
+        );
+    }
+    txn.commit().expect("test graph commit");
+    nodes
+}
+
+fn seed_sink_personalization_graph(graph: &SharedGraph) -> Vec<NodeId> {
+    let mut txn = graph.begin_write();
+    let label = db_string("N");
+    let rel = db_string("R");
+    let mut nodes = Vec::with_capacity(3);
+    for _ in 0..3 {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+                .expect("test node creates"),
+        );
+    }
+    txn.mutator()
+        .create_edge(rel.clone(), nodes[0], nodes[1], PropertyMap::new())
+        .expect("fact edge creates");
+    txn.mutator()
+        .create_edge(rel, nodes[2], nodes[1], PropertyMap::new())
+        .expect("episode edge creates");
+    txn.commit().expect("test graph commit");
+    nodes
+}
+
+fn seed_labeled_pagerank_graph(graph: &SharedGraph) -> Vec<NodeId> {
+    let mut txn = graph.begin_write();
+    let fact = db_string("Fact");
+    let entity = db_string("Entity");
+    let about = db_string("ABOUT");
+    let left = txn
+        .mutator()
+        .create_node(LabelSet::single(fact.clone()), PropertyMap::new())
+        .expect("left fact creates");
+    let center = txn
+        .mutator()
+        .create_node(LabelSet::single(entity), PropertyMap::new())
+        .expect("entity creates");
+    let right = txn
+        .mutator()
+        .create_node(LabelSet::single(fact), PropertyMap::new())
+        .expect("right fact creates");
+    txn.mutator()
+        .create_edge(about.clone(), left, center, PropertyMap::new())
+        .expect("left fact edge creates");
+    txn.mutator()
+        .create_edge(about, right, center, PropertyMap::new())
+        .expect("right fact edge creates");
+    txn.commit().expect("test graph commit");
+    vec![left, center, right]
 }
 
 fn rows(output: StatementOutput) -> BindingTable {
@@ -43,7 +108,7 @@ fn execute_rows(
 
 fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -55,16 +120,29 @@ fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
         .collect()
 }
 
+fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
+    let index = table
+        .column_index(db_string(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::NodeRef(value)) => *value,
+            other => panic!("expected node ref in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
         .iter()
         .map(|row| match row.values().get(index) {
             Some(Value::String(value)) => value.as_str().to_owned(),
-            Some(Value::ExternalString(value)) => value.as_ref().to_owned(),
             other => panic!("expected string in {name}, got {other:?}"),
         })
         .collect()
@@ -80,6 +158,13 @@ fn seed_triangle(session: &mut Session<'_>, registry: &dyn ProcedureRegistry) {
         .expect("seed graph inserts");
 }
 
+fn personalization_seed(node: NodeId, weight: f64) -> Value {
+    Value::Record(Box::new(Record::Open(smallvec![
+        (db_string("node_id"), Value::NodeRef(node)),
+        (db_string("weight"), Value::Float(weight)),
+    ])))
+}
+
 #[test]
 fn show_procedures_lists_all_nineteen_algo_procedures() {
     let graph = graph(220_001);
@@ -89,12 +174,12 @@ fn show_procedures_lists_all_nineteen_algo_procedures() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = string_column(&table, "name");
 
-    // After STEP 3 the registry also carries the 5 `selene.*` platform built-ins,
-    // so SHOW PROCEDURES lists 24; all 19 algo names must still be present.
+    // The registry also carries the 46 `selene.*` platform built-ins, so SHOW
+    // PROCEDURES lists 65; all 19 algo names must still be present.
     assert_eq!(
         table.row_count(),
-        24,
-        "expected 19 algo procedures + 5 platform built-ins"
+        65,
+        "expected 19 algo procedures + 46 platform built-ins"
     );
     for expected in [
         "algo.projection_build",
@@ -160,6 +245,158 @@ fn pagerank_runs_end_to_end_over_a_built_projection() {
 }
 
 #[test]
+fn pagerank_accepts_personalization_parameter() {
+    let graph = graph(220_008);
+    let nodes = seed_isolated_nodes(&graph, 3);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+    session.bind_parameter(
+        db_string("seeds"),
+        Value::List(vec![personalization_seed(nodes[2], 1.0)]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', $seeds) YIELD node_id, score",
+        &registry,
+    );
+
+    let result_nodes = node_column(&table, "node_id");
+    let scores = float_column(&table, "score");
+    assert_eq!(result_nodes[0], nodes[2]);
+    assert!((scores[0] - 1.0).abs() < 1e-12);
+    assert!((scores[1] - 0.0).abs() < 1e-12);
+    assert!((scores[2] - 0.0).abs() < 1e-12);
+}
+
+#[test]
+fn pagerank_filters_results_by_label_and_limit() {
+    let graph = graph(220_011);
+    let nodes = seed_labeled_pagerank_graph(&graph);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+
+    let all_facts = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', NULL, 'Fact', NULL) \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(node_column(&all_facts, "node_id"), vec![nodes[0], nodes[2]]);
+    assert!(
+        float_column(&all_facts, "score")
+            .iter()
+            .all(|score| *score > 0.0)
+    );
+
+    let top_fact = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', NULL, 'Fact', 1) \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(node_column(&top_fact, "node_id"), vec![nodes[0]]);
+
+    let zero = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', NULL, 'Fact', 0) \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(zero.row_count(), 0);
+}
+
+#[test]
+fn pagerank_undirected_orientation_spreads_personalized_sink_seed() {
+    let graph = graph(220_010);
+    let nodes = seed_sink_personalization_graph(&graph);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+    session.bind_parameter(
+        db_string("seeds"),
+        Value::List(vec![personalization_seed(nodes[1], 1.0)]),
+    );
+
+    let natural = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85D, 1, 0.0D, NULL, 'NATURAL', $seeds) YIELD node_id, score",
+        &registry,
+    );
+    let undirected = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85D, 1, 0.0D, NULL, 'UNDIRECTED', $seeds) YIELD node_id, score",
+        &registry,
+    );
+    let score_for = |table: &BindingTable, node| {
+        node_column(table, "node_id")
+            .into_iter()
+            .zip(float_column(table, "score"))
+            .find(|(candidate, _)| *candidate == node)
+            .expect("node has score")
+            .1
+    };
+
+    assert!((score_for(&natural, nodes[1]) - 1.0).abs() < 1e-12);
+    assert!((score_for(&natural, nodes[0]) - 0.0).abs() < 1e-12);
+    assert!((score_for(&natural, nodes[2]) - 0.0).abs() < 1e-12);
+    assert!((score_for(&undirected, nodes[1]) - 0.15).abs() < 1e-12);
+    assert!((score_for(&undirected, nodes[0]) - 0.425).abs() < 1e-12);
+    assert!((score_for(&undirected, nodes[2]) - 0.425).abs() < 1e-12);
+}
+
+#[test]
+fn pagerank_personalization_rejects_seed_outside_projection() {
+    let graph = graph(220_009);
+    seed_isolated_nodes(&graph, 2);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+    session.bind_parameter(
+        db_string("seeds"),
+        Value::List(vec![personalization_seed(NodeId::new(999), 1.0)]),
+    );
+
+    let err = session
+        .execute_source(
+            "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', $seeds) YIELD node_id, score",
+            &registry,
+        )
+        .expect_err("out-of-projection seed rejected");
+    let rendered = format!("{err:?}");
+    assert!(
+        rendered.contains("not in projection") && rendered.contains("999"),
+        "error should mention out-of-projection seed, got: {rendered}"
+    );
+}
+
+#[test]
 fn wcc_count_yields_single_component_for_connected_graph() {
     let graph = graph(220_003);
     let registry = BuiltinProcedureRegistry::new();
@@ -179,7 +416,9 @@ fn wcc_count_yields_single_component_for_connected_graph() {
         &registry,
     );
 
-    let index = table.column_index(istr("count")).expect("count column");
+    let index = table
+        .column_index(db_string("count"))
+        .expect("count column");
     let count = match table.rows()[0].values().get(index) {
         Some(Value::Uint(value)) => *value,
         other => panic!("expected uint count, got {other:?}"),

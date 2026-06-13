@@ -81,6 +81,7 @@ pub fn executor_summary(input: &ExecutorSummaryInput<'_>) -> ExecutorSnapshot {
         .map(|(index, column)| SnapshotColumn {
             name: column
                 .name
+                .clone()
                 .map(|name| name.as_str().to_owned())
                 .or_else(|| {
                     column
@@ -180,7 +181,6 @@ fn raw_value_key(value: &Value) -> String {
         Value::Float32(value) => format!("float32:{:08x}", canonical_f32_bits(*value)),
         Value::Decimal(value) => format!("decimal:{value}"),
         Value::String(value) => format!("string:{}", value.as_str()),
-        Value::ExternalString(value) => format!("external_string:{}", value.as_ref()),
         Value::Bytes(value) => format!("bytes:{}", hex_bytes(value)),
         Value::List(values) => raw_sequence_key("list:[", "]", values.iter().map(raw_value_key)),
         Value::Record(record) => raw_record_key(record),
@@ -201,6 +201,15 @@ fn raw_value_key(value: &Value) -> String {
         }
         Value::Null => "null".to_owned(),
         Value::Uuid(value) => format!("uuid:{value}"),
+        Value::Vector(value) => raw_sequence_key(
+            "vector:[",
+            "]",
+            value
+                .as_slice()
+                .iter()
+                .map(|component| format!("{:08x}", canonical_f32_bits(*component))),
+        ),
+        Value::Json(value) => format!("json:{}", value.to_canonical_string()),
         _ => "<value::unknown>".to_owned(),
     }
 }
@@ -316,7 +325,6 @@ fn render_value(value: &Value, placeholders: &mut PlaceholderTable) -> String {
         Value::Float32(value) => format!("{value:?}f32"),
         Value::Decimal(value) => value.to_string(),
         Value::String(value) => format!("\"{}\"", value.as_str()),
-        Value::ExternalString(value) => format!("\"{}\"", value.as_ref()),
         Value::Bytes(value) => format!("0x{}", hex_bytes(value)),
         Value::List(values) => format!(
             "[{}]",
@@ -344,6 +352,16 @@ fn render_value(value: &Value, placeholders: &mut PlaceholderTable) -> String {
         }
         Value::Null => "NULL".to_owned(),
         Value::Uuid(value) => value.to_string(),
+        Value::Vector(value) => format!(
+            "VECTOR[{}]",
+            value
+                .as_slice()
+                .iter()
+                .map(f32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Json(value) => format!("JSON {}", value.to_canonical_string()),
         _ => "<value::unknown>".to_owned(),
     }
 }
@@ -411,7 +429,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{NodeId, Value, intern_with_admission};
+    use selene_core::{NodeId, Value, VectorValue, db_string};
 
     use crate::{
         Binding, BindingTable, BindingTableColumn, BindingTableSchema, analyze::AnalyzedType,
@@ -448,20 +466,12 @@ mod tests {
     #[test]
     fn raw_list_keys_are_injective_when_string_elements_contain_commas() {
         let lhs = Value::List(vec![
-            Value::String(intern_with_admission("a").expect("test string interns").0),
-            Value::String(
-                intern_with_admission("b,string:c")
-                    .expect("test string interns")
-                    .0,
-            ),
+            Value::String(db_string("a").expect("test string fits DB string cap")),
+            Value::String(db_string("b,string:c").expect("test string fits DB string cap")),
         ]);
         let rhs = Value::List(vec![
-            Value::String(
-                intern_with_admission("a,string:b")
-                    .expect("test string interns")
-                    .0,
-            ),
-            Value::String(intern_with_admission("c").expect("test string interns").0),
+            Value::String(db_string("a,string:b").expect("test string fits DB string cap")),
+            Value::String(db_string("c").expect("test string fits DB string cap")),
         ]);
 
         assert_ne!(raw_value_key(&lhs), raw_value_key(&rhs));
@@ -516,6 +526,20 @@ mod tests {
         assert_ne!(
             raw_value_key(&Value::Float(1.0)),
             raw_value_key(&Value::Float(0.0))
+        );
+    }
+
+    #[test]
+    fn raw_vector_key_canonicalizes_signed_zero_components() {
+        let lhs = Value::Vector(VectorValue::new(vec![0.0, -0.0]).unwrap());
+        let rhs = Value::Vector(VectorValue::new(vec![-0.0, 0.0]).unwrap());
+        let different = Value::Vector(VectorValue::new(vec![0.0, 1.0]).unwrap());
+
+        assert_eq!(raw_value_key(&lhs), raw_value_key(&rhs));
+        assert_ne!(raw_value_key(&lhs), raw_value_key(&different));
+        assert_eq!(
+            render_value(&lhs, &mut PlaceholderTable::default()),
+            "VECTOR[0, -0]"
         );
     }
 

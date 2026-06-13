@@ -115,25 +115,26 @@ const _: fn() = || {
 ///
 /// Since v1.2 (BRIEF 1) the transaction no longer holds the snapshot cell,
 /// schema-version, or provider handles — those moved to the single committer
-/// thread, which the transaction reaches via the cheap [`Committer`] submit
+/// thread, which the transaction reaches via the cheap `Committer` submit
 /// handle. The transaction still owns the write lock + allocator guards for the
-/// duration of execution and releases them when [`Self::seal`] consumes it.
+/// duration of execution and releases them when `seal` consumes it.
 pub struct WriteTxn<'g> {
     pub(crate) guard: RwLockWriteGuard<'g, Arc<SeleneGraph>>,
     pub(crate) committer: Committer,
     pub(crate) pre_txn: Option<Arc<SeleneGraph>>,
     pub(crate) allocator: MutexGuard<'g, IdAllocator>,
     /// Index-provider registry, retained so `Mutator::index_provider_by_tag`
-    /// can resolve a provider during execution. The committer holds its own
-    /// clone for fan-out; this is the execution-time lookup copy.
-    pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
+    /// can resolve a provider during execution. Shares the one frozen
+    /// registry allocation with `SharedGraph` and the committer — handing it
+    /// to a transaction is a refcount bump, not a `Vec` clone.
+    pub(crate) providers: Arc<[Arc<dyn IndexProvider>]>,
     pub(crate) changes: Vec<Change>,
     /// Per-truncate per-row tombstone expansions, keyed by the index of the
     /// declarative truncate change in [`Self::changes`] that produced them.
     ///
     /// BRIEF-150 / deletion-reclamation audit Item 11. The WAL/changeset carries
     /// only the O(1) declarative `NodesOfTypeTruncated`/`EdgesOfTypeTruncated`
-    /// change, but index-provider fan-out must observe the same per-row
+    /// change, but live index-provider fan-out must observe the same per-row
     /// `NodeDeleted`/`EdgeDeleted` multiset a `MATCH (n:L) DETACH DELETE n` would
     /// emit (so derived state is reclaimed without leaks). The mutator
     /// snapshots the matched ids while it still holds the store and stages their
@@ -148,7 +149,7 @@ impl<'g> WriteTxn<'g> {
         guard: RwLockWriteGuard<'g, Arc<SeleneGraph>>,
         committer: Committer,
         allocator: MutexGuard<'g, IdAllocator>,
-        providers: Vec<Arc<dyn IndexProvider>>,
+        providers: Arc<[Arc<dyn IndexProvider>]>,
     ) -> Self {
         let pre_txn = Some(Arc::clone(&*guard));
         Self {
@@ -187,9 +188,9 @@ impl<'g> WriteTxn<'g> {
     /// Commit with optional caller-owned principal bytes for D12 audit replay.
     ///
     /// Since v1.2 (BRIEF 1) commit is **seal-and-handover**: this method runs
-    /// [`Self::seal`] on the calling thread (generation/meta bump + GG02
+    /// `seal` on the calling thread (generation/meta bump + GG02
     /// validation under the write lock, then **lock release**), then submits the
-    /// resulting [`SealedCommit`] to the per-graph single committer thread and
+    /// resulting `SealedCommit` to the per-graph single committer thread and
     /// blocks until it is durable + visible. The public contract is unchanged —
     /// "`commit()` returns ⇒ durable + visible" — only the internal threading
     /// model differs.
@@ -208,7 +209,7 @@ impl<'g> WriteTxn<'g> {
     ///
     /// # Errors
     ///
-    /// Returns the GG02 / validation error from [`Self::seal`], or a
+    /// Returns the GG02 / validation error from `seal`, or a
     /// [`GraphError::Durable`] if the WAL append failed or the committer thread
     /// is no longer running.
     #[tracing::instrument(
@@ -315,6 +316,12 @@ impl<'g> WriteTxn<'g> {
                         .into_iter()
                         .map(|warning| CommitWarning { warning }),
                 );
+            } else {
+                crate::type_validator::validate_unique_property_changes(
+                    &self.changes,
+                    self.read(),
+                    type_def,
+                )?;
             }
         }
         for warning in validation_warnings {
@@ -662,7 +669,7 @@ pub(crate) fn publish_appended(
     let fanout: &[Change] = fanout_changes.as_deref().unwrap_or(&changes);
     {
         let _fanout_guard = crate::reentry::FanoutGuard::enter();
-        notify_providers(providers, fanout);
+        crate::provider_fanout::notify_providers(providers, generation, fanout);
     }
 
     // (4) Metrics + outcome.
@@ -682,79 +689,6 @@ pub(crate) fn publish_appended(
         next_node_id,
         next_edge_id,
         warnings,
-    }
-}
-
-/// Fan out committed changes to every registered provider, swallowing
-/// returned errors and panics so a misbehaving provider can never abort or
-/// crash the writer thread after the snapshot has already published.
-///
-/// Each iteration first reads the provider's tag through its own unwind
-/// boundary so a panic in `provider_tag()` is logged with the sentinel
-/// `<unknown>` tag and the provider is **skipped for this change** —
-/// matching the original "single combined unwind" behavior where a tag
-/// panic short-circuited `on_change`. When the tag is read successfully it
-/// is reused in both the error-return and panic branches of `on_change` so
-/// operators can attribute failures to the faulty provider.
-#[tracing::instrument(
-    name = "selene.graph.notify_providers",
-    skip(providers, changes),
-    fields(provider_count = providers.len(), change_count = changes.len())
-)]
-fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
-    for provider in providers {
-        for change in changes {
-            // First boundary: cache the provider tag for logging. If
-            // `provider_tag()` itself panics, log with the sentinel tag and
-            // skip `on_change` — the provider is in an inconsistent state
-            // and we should not invoke further side effects on it.
-            let tag = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                provider.provider_tag()
-            })) {
-                Ok(tag) => tag,
-                Err(payload) => {
-                    let payload = crate::panic_payload::describe(&payload);
-                    tracing::error!(
-                        provider_tag = %SENTINEL_PROVIDER_TAG,
-                        ?change,
-                        payload = %payload,
-                        "index provider provider_tag() panicked after graph commit; \
-                         skipping on_change for this change",
-                    );
-                    continue;
-                }
-            };
-
-            // Second boundary: invoke `on_change`. The cached tag is
-            // available for both the error-return and panic branches.
-            // AssertUnwindSafe: provider interior state may be left
-            // half-updated by a panic. The engine's contract is that the
-            // graph commit succeeded; provider drift is logged but not
-            // catastrophic.
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                provider.on_change(change)
-            }));
-            match outcome {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    tracing::error!(
-                        provider_tag = %tag,
-                        error = %error,
-                        ?change,
-                        "index provider on_change failed after graph commit; continuing",
-                    );
-                }
-                Err(panic_payload) => {
-                    let payload = crate::panic_payload::describe(&panic_payload);
-                    tracing::error!(
-                        provider_tag = %tag,
-                        ?change,
-                        payload = %payload,
-                        "index provider on_change panicked after graph commit; continuing",
-                    );
-                }
-            }
-        }
     }
 }
 
@@ -779,8 +713,9 @@ fn expand_truncates_for_fanout(
         match change {
             // BRIEF-152: GraphReset is fanned out as its staged per-row
             // tombstones too, alongside the BRIEF-150 truncate variants, so
-            // index providers reclaim derived state for every wiped node/edge and
-            // never see the bare declarative reset they could not expand.
+            // live index providers reclaim derived state for every wiped
+            // node/edge without seeing the bare declarative reset on the commit
+            // path. WAL recovery still replays the persisted declarative change.
             Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }
             | Change::GraphReset { .. } => {
@@ -798,22 +733,18 @@ fn expand_truncates_for_fanout(
     Some(view)
 }
 
-/// Sentinel value emitted on the `provider_tag` field when the provider's
-/// own `provider_tag()` method panicked, so log filters keyed on the field
-/// name still match.
-const SENTINEL_PROVIDER_TAG: &str = "<unknown>";
-
 /// Test-only seam to drive a panic from inside [`publish_appended`] (Stage 3) on
 /// a chosen publish ordinal, so the committer's multi-member publish-panic
 /// poison-and-drain branch can be exercised deterministically.
 ///
 /// This is the *only* way to reach that branch from a test: a misbehaving
-/// [`IndexProvider`]'s `on_change` panic is swallowed by [`notify_providers`]'
-/// per-callback `catch_unwind`, and `snapshot.store` does not panic, so without
-/// this hook the Stage-3 panic path is unreachable through the public API. The
-/// counter is keyed on the committer thread (the sole `publish_appended` caller),
-/// so "panic on the Nth publish of this run" is deterministic. Compiled only
-/// under `cfg(test)`; production builds have no injection point and no overhead.
+/// [`IndexProvider`]'s `on_change` panic is swallowed by
+/// [`crate::provider_fanout::notify_providers`]'s per-callback `catch_unwind`,
+/// and `snapshot.store` does not panic, so without this hook the Stage-3 panic
+/// path is unreachable through the public API. The counter is keyed on the
+/// committer thread (the sole `publish_appended` caller), so "panic on the Nth
+/// publish of this run" is deterministic. Compiled only under `cfg(test)`;
+/// production builds have no injection point and no overhead.
 #[cfg(test)]
 pub(crate) mod publish_panic_inject {
     use std::cell::Cell;

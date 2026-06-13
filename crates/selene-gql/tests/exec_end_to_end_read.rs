@@ -28,8 +28,8 @@ fn read_executes_match_filter_project() {
     assert_eq!(
         column_values(&table, "name"),
         vec![
-            Value::String(exec_common::istr("Bob")),
-            Value::String(exec_common::istr("Cara")),
+            Value::String(exec_common::db_string("Bob")),
+            Value::String(exec_common::db_string("Cara")),
         ]
     );
 }
@@ -41,8 +41,8 @@ fn read_executes_with_filter_chain() {
     assert_eq!(
         column_values(&table, "name"),
         vec![
-            Value::String(exec_common::istr("Bob")),
-            Value::String(exec_common::istr("Cara")),
+            Value::String(exec_common::db_string("Bob")),
+            Value::String(exec_common::db_string("Cara")),
         ]
     );
 }
@@ -74,8 +74,8 @@ fn read_executes_distinct_projection() {
     assert_eq!(
         column_values(&table, "tenant"),
         vec![
-            Value::String(exec_common::istr("t1")),
-            Value::String(exec_common::istr("t2")),
+            Value::String(exec_common::db_string("t1")),
+            Value::String(exec_common::db_string("t2")),
         ]
     );
 }
@@ -87,8 +87,8 @@ fn read_executes_limit_with_offset() {
     assert_eq!(
         column_values(&table, "name"),
         vec![
-            Value::String(exec_common::istr("Bob")),
-            Value::String(exec_common::istr("Cara")),
+            Value::String(exec_common::db_string("Bob")),
+            Value::String(exec_common::db_string("Cara")),
         ]
     );
 }
@@ -104,10 +104,32 @@ fn stored_edges_are_directed_for_is_directed() {
 }
 
 #[test]
+fn stored_elements_match_is_labeled() {
+    let nodes = execute_read("MATCH (n:Person) RETURN n IS LABELED :Person AS labeled");
+    assert_eq!(
+        column_values(&nodes, "labeled"),
+        vec![Value::Bool(true), Value::Bool(true), Value::Bool(true)]
+    );
+
+    let edges = execute_read("MATCH ()-[e:KNOWS]->() RETURN e IS LABELED :KNOWS AS labeled");
+    assert_eq!(
+        column_values(&edges, "labeled"),
+        vec![Value::Bool(true), Value::Bool(true)]
+    );
+}
+
+#[test]
 fn read_executes_projection_without_pattern() {
     let table = execute_read("RETURN 1 AS n");
 
     assert_eq!(column_values(&table, "n"), vec![Value::Int(1)]);
+}
+
+#[test]
+fn read_executes_boolean_ordering() {
+    let table = execute_read("RETURN false < true AS r");
+
+    assert_eq!(column_values(&table, "r"), vec![Value::Bool(true)]);
 }
 
 // PARSE-01: `UNKNOWN` is the ISO §21.2 boolean unknown literal; it parses to

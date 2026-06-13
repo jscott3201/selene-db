@@ -1,6 +1,7 @@
 use selene_core::{
-    Change, EdgeTypeDefV1, GraphId, GraphType, LabelSet, NodeTypeDefV1, NodeTypeRef, RecordTypeDef,
-    RecordTypeId, SchemaChange, SchemaPropertyIndexKind, intern,
+    Change, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, LabelSet, NodeTypeDef, NodeTypeDefV1,
+    NodeTypeRef, RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
+    SchemaVectorIndexKind, db_string,
 };
 use smallvec::smallvec;
 
@@ -38,14 +39,20 @@ const SCHEMA_CHANGE_INTENT: &[SchemaChangeIntent] = &[
     schema_intent!(apply intent_property_index_created),
     schema_intent!(apply intent_property_index_dropped),
     schema_intent!(apply intent_property_index_created_named),
+    schema_intent!(apply intent_node_type_added_v2),
+    schema_intent!(apply intent_edge_type_added_v2),
     schema_intent!(apply intent_composite_property_index_created),
     schema_intent!(apply intent_composite_property_index_dropped),
+    schema_intent!(apply intent_vector_index_created),
+    schema_intent!(apply intent_vector_index_dropped),
+    schema_intent!(apply intent_text_index_created),
+    schema_intent!(apply intent_text_index_dropped),
 ];
 
 fn intent_graph_created() -> SchemaChange {
     SchemaChange::GraphCreated {
         id: GraphId::new(101),
-        name: intern("intent.graph").unwrap(),
+        name: db_string("intent.graph").unwrap(),
         graph_type: Some(test_graph_type_id()),
     }
 }
@@ -58,7 +65,10 @@ fn intent_graph_dropped() -> SchemaChange {
 
 fn intent_graph_type_created() -> SchemaChange {
     SchemaChange::GraphTypeCreated {
-        graph_type: GraphType::new(test_graph_type_id(), intern("intent.graph.type").unwrap()),
+        graph_type: GraphType::new(
+            test_graph_type_id(),
+            db_string("intent.graph.type").unwrap(),
+        ),
     }
 }
 
@@ -69,23 +79,23 @@ fn intent_graph_type_dropped() -> SchemaChange {
 }
 
 fn intent_node_type_added() -> SchemaChange {
-    let label = intern("IntentNode").unwrap();
+    let label = db_string("IntentNode").unwrap();
     SchemaChange::NodeTypeAdded {
         graph_type: test_graph_type_id(),
-        label,
+        label: label.clone(),
         def: NodeTypeDefV1::new(LabelSet::single(label)),
     }
 }
 
 fn intent_edge_type_added() -> SchemaChange {
-    let label = intern("INTENT_EDGE").unwrap();
-    let endpoint = intern("IntentNode").unwrap();
+    let label = db_string("INTENT_EDGE").unwrap();
+    let endpoint = db_string("IntentNode").unwrap();
     SchemaChange::EdgeTypeAdded {
         graph_type: test_graph_type_id(),
-        label,
+        label: label.clone(),
         def: EdgeTypeDefV1 {
             label,
-            source_node_type: NodeTypeRef(endpoint),
+            source_node_type: NodeTypeRef(endpoint.clone()),
             target_node_type: NodeTypeRef(endpoint),
             properties: smallvec![],
         },
@@ -95,14 +105,14 @@ fn intent_edge_type_added() -> SchemaChange {
 fn intent_node_type_dropped() -> SchemaChange {
     SchemaChange::NodeTypeDropped {
         graph_type: test_graph_type_id(),
-        name: intern("IntentNode").unwrap(),
+        name: db_string("IntentNode").unwrap(),
     }
 }
 
 fn intent_edge_type_dropped() -> SchemaChange {
     SchemaChange::EdgeTypeDropped {
         graph_type: test_graph_type_id(),
-        name: intern("INTENT_EDGE").unwrap(),
+        name: db_string("INTENT_EDGE").unwrap(),
     }
 }
 
@@ -111,7 +121,7 @@ fn intent_record_type_added() -> SchemaChange {
         graph_type: test_graph_type_id(),
         def: RecordTypeDef {
             id: RecordTypeId::new(1),
-            name: intern("IntentRecord").unwrap(),
+            name: db_string("IntentRecord").unwrap(),
             fields: smallvec![],
         },
     }
@@ -119,50 +129,103 @@ fn intent_record_type_added() -> SchemaChange {
 
 fn intent_property_index_created() -> SchemaChange {
     SchemaChange::PropertyIndexCreated {
-        label: intern("IntentIndexedNode").unwrap(),
-        property: intern("intentIndexedProperty").unwrap(),
+        label: db_string("IntentIndexedNode").unwrap(),
+        property: db_string("intentIndexedProperty").unwrap(),
         kind: SchemaPropertyIndexKind::I64,
     }
 }
 
 fn intent_property_index_dropped() -> SchemaChange {
     SchemaChange::PropertyIndexDropped {
-        label: intern("IntentIndexedNode").unwrap(),
-        property: intern("intentIndexedProperty").unwrap(),
+        label: db_string("IntentIndexedNode").unwrap(),
+        property: db_string("intentIndexedProperty").unwrap(),
     }
 }
 
 fn intent_property_index_created_named() -> SchemaChange {
     SchemaChange::PropertyIndexCreatedNamed {
-        label: intern("IntentNamedIndexedNode").unwrap(),
-        property: intern("intentNamedIndexedProperty").unwrap(),
+        label: db_string("IntentNamedIndexedNode").unwrap(),
+        property: db_string("intentNamedIndexedProperty").unwrap(),
         kind: SchemaPropertyIndexKind::String,
-        name: Some(intern("intent_named_index").unwrap()),
+        name: Some(db_string("intent_named_index").unwrap()),
+    }
+}
+
+fn intent_node_type_added_v2() -> SchemaChange {
+    let label = db_string("IntentNodeV2").unwrap();
+    SchemaChange::NodeTypeAddedV2 {
+        graph_type: test_graph_type_id(),
+        label: label.clone(),
+        def: NodeTypeDef::new(LabelSet::single(label)),
+    }
+}
+
+fn intent_edge_type_added_v2() -> SchemaChange {
+    let label = db_string("INTENT_EDGE_V2").unwrap();
+    let endpoint = db_string("IntentNode").unwrap();
+    SchemaChange::EdgeTypeAddedV2 {
+        graph_type: test_graph_type_id(),
+        label: label.clone(),
+        def: EdgeTypeDef::new(label, NodeTypeRef(endpoint.clone()), NodeTypeRef(endpoint)),
     }
 }
 
 fn intent_composite_property_index_created() -> SchemaChange {
     SchemaChange::CompositePropertyIndexCreated {
-        label: intern("IntentCompositeIndexedNode").unwrap(),
+        label: db_string("IntentCompositeIndexedNode").unwrap(),
         properties: smallvec![
-            intern("intentCompositeA").unwrap(),
-            intern("intentCompositeB").unwrap()
+            db_string("intentCompositeA").unwrap(),
+            db_string("intentCompositeB").unwrap()
         ],
         kinds: smallvec![
             SchemaPropertyIndexKind::I64,
             SchemaPropertyIndexKind::String
         ],
-        name: Some(intern("intent_composite_index").unwrap()),
+        name: Some(db_string("intent_composite_index").unwrap()),
     }
 }
 
 fn intent_composite_property_index_dropped() -> SchemaChange {
     SchemaChange::CompositePropertyIndexDropped {
-        label: intern("IntentCompositeIndexedNode").unwrap(),
+        label: db_string("IntentCompositeIndexedNode").unwrap(),
         properties: smallvec![
-            intern("intentCompositeA").unwrap(),
-            intern("intentCompositeB").unwrap()
+            db_string("intentCompositeA").unwrap(),
+            db_string("intentCompositeB").unwrap()
         ],
+    }
+}
+
+fn intent_vector_index_created() -> SchemaChange {
+    SchemaChange::VectorIndexCreated {
+        label: db_string("IntentVectorIndexedNode").unwrap(),
+        property: db_string("intentEmbedding").unwrap(),
+        kind: SchemaVectorIndexKind::Flat,
+        dimension: 3,
+        name: Some(db_string("intent_vector_index").unwrap()),
+        hnsw_config: None,
+        ivf_config: None,
+    }
+}
+
+fn intent_vector_index_dropped() -> SchemaChange {
+    SchemaChange::VectorIndexDropped {
+        label: db_string("IntentVectorIndexedNode").unwrap(),
+        property: db_string("intentEmbedding").unwrap(),
+    }
+}
+
+fn intent_text_index_created() -> SchemaChange {
+    SchemaChange::TextIndexCreated {
+        label: db_string("IntentTextIndexedNode").unwrap(),
+        property: db_string("intentBody").unwrap(),
+        name: Some(db_string("intent_text_index").unwrap()),
+    }
+}
+
+fn intent_text_index_dropped() -> SchemaChange {
+    SchemaChange::TextIndexDropped {
+        label: db_string("IntentTextIndexedNode").unwrap(),
+        property: db_string("intentBody").unwrap(),
     }
 }
 
@@ -177,7 +240,9 @@ fn drive_handler_and_observe(change: SchemaChange) -> Intent {
         Ok(())
             if !state.pending_schema_changes.is_empty()
                 || !state.pending_property_index_changes.is_empty()
-                || !state.pending_composite_property_index_changes.is_empty() =>
+                || !state.pending_composite_property_index_changes.is_empty()
+                || !state.pending_vector_index_changes.is_empty()
+                || !state.pending_text_index_changes.is_empty() =>
         {
             Intent::Apply
         }
@@ -194,7 +259,7 @@ fn drive_handler_and_observe(change: SchemaChange) -> Intent {
 #[test]
 fn recovery_intent_table_covers_every_schema_change_variant() {
     let mut seen = std::collections::BTreeSet::new();
-    assert_eq!(SCHEMA_CHANGE_INTENT.len(), 14);
+    assert_eq!(SCHEMA_CHANGE_INTENT.len(), SchemaChange::VARIANT_COUNT);
 
     for (factory, expected_intent) in SCHEMA_CHANGE_INTENT {
         let change = factory();

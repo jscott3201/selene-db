@@ -1,6 +1,6 @@
 //! Curated planner and optimizer corpus fixtures.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     GqlType, IndexKind, ProcedureMutability, ProcedureOutputColumn, ProcedureParameter,
 };
@@ -82,21 +82,21 @@ impl PlanCorpus {
             // Label index drives the bare single-label `label_scan` corpus
             // entry; the intrinsic RoaringBitmap label index is always present
             // in the live engine, so this mirrors `LiveIndexCatalog`.
-            .with_node_label_index(istr("Person"))
-            .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
-            .with_node_typed_index(istr("Person"), istr("email"), IndexKind::String)
-            .with_node_typed_index(istr("Person"), istr("name"), IndexKind::String)
+            .with_node_label_index(db_string("Person"))
+            .with_node_typed_index(db_string("Person"), db_string("age"), IndexKind::Integer)
+            .with_node_typed_index(db_string("Person"), db_string("email"), IndexKind::String)
+            .with_node_typed_index(db_string("Person"), db_string("name"), IndexKind::String)
             // BRIEF-155 disjunctive-label-expansion corpus entry uses
             // `(n:Person|Account|Robot)` with a per-label `email` index,
             // so the rule's index-applicability gate finds a matching
             // typed index on every branch.
-            .with_node_typed_index(istr("Account"), istr("email"), IndexKind::String)
-            .with_node_typed_index(istr("Robot"), istr("email"), IndexKind::String)
+            .with_node_typed_index(db_string("Account"), db_string("email"), IndexKind::String)
+            .with_node_typed_index(db_string("Robot"), db_string("email"), IndexKind::String)
             .with_node_composite_index(
-                istr("Purchase"),
+                db_string("Purchase"),
                 vec![
-                    (istr("tenant"), IndexKind::String),
-                    (istr("kind"), IndexKind::String),
+                    (db_string("tenant"), IndexKind::String),
+                    (db_string("kind"), IndexKind::String),
                 ],
             )
     }
@@ -106,22 +106,22 @@ impl PlanCorpus {
     pub fn standard_mock_registry() -> MockProcedureRegistry {
         MockProcedureRegistry::new()
             .with_procedure(
-                vec![istr("pkg"), istr("all")],
+                vec![db_string("pkg"), db_string("all")],
                 Vec::new(),
                 vec![
-                    ProcedureOutputColumn::new(istr("outA"), GqlType::String),
-                    ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
+                    ProcedureOutputColumn::new(db_string("outA"), GqlType::String),
+                    ProcedureOutputColumn::new(db_string("outB"), GqlType::Integer),
                 ],
             )
             .with_procedure_mutability(
-                vec![istr("pkg"), istr("mutate")],
+                vec![db_string("pkg"), db_string("mutate")],
                 vec![ProcedureParameter::new(
-                    istr("name"),
+                    db_string("name"),
                     GqlType::String,
                     false,
                 )],
                 vec![ProcedureOutputColumn::new(
-                    istr("changed"),
+                    db_string("changed"),
                     GqlType::Boolean,
                 )],
                 ProcedureMutability::SchemaWrite,
@@ -403,6 +403,6 @@ const ENTRIES: &[PlanCorpusEntry] = &[
     },
 ];
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test fixture strings fit the interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test fixture strings fit DB string cap")
 }

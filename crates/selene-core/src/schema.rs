@@ -10,7 +10,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    CoreError, CoreResult, ExtensionTypeId, IStr, LabelSet, PropertyValueType, RecordTypeId, Value,
+    ByteStringType, CharacterStringType, CoreError, CoreResult, DbString, DecimalType,
+    ExtensionTypeId, LabelSet, PropertyValueType, RecordTypeId, Value,
 };
 
 /// Graph-type-scoped schema identifier.
@@ -60,12 +61,12 @@ impl fmt::Display for GraphTypeId {
 pub struct GraphType {
     /// Stable graph type ID.
     pub id: GraphTypeId,
-    /// Interned graph type name.
-    pub name: IStr,
+    /// Database-string graph type name.
+    pub name: DbString,
     /// Node types keyed by node label.
-    pub node_types: BTreeMap<IStr, NodeTypeDef>,
+    pub node_types: BTreeMap<DbString, NodeTypeDef>,
     /// Edge types keyed by edge label.
-    pub edge_types: BTreeMap<IStr, EdgeTypeDef>,
+    pub edge_types: BTreeMap<DbString, EdgeTypeDef>,
     /// Record types keyed by record type ID.
     pub record_types: BTreeMap<RecordTypeId, RecordTypeDef>,
     /// Reserved policy for relationships between key label sets. **Not yet
@@ -79,7 +80,7 @@ pub struct GraphType {
 impl GraphType {
     /// Construct an empty graph type.
     #[must_use]
-    pub fn new(id: GraphTypeId, name: IStr) -> Self {
+    pub fn new(id: GraphTypeId, name: DbString) -> Self {
         Self {
             id,
             name,
@@ -123,7 +124,7 @@ impl NodeTypeDef {
 /// This freezes the pre-v1.1 catalog-DDL payload shape. New WAL entries use
 /// [`SchemaChange::NodeTypeAddedV2`](crate::SchemaChange::NodeTypeAddedV2)
 /// with [`NodeTypeDef`]; recovery upgrades this shape with
-/// [`ValidationMode::Strict`] and non-immutable properties.
+/// [`ValidationMode::Strict`] plus non-immutable, non-unique properties.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct NodeTypeDefV1 {
     /// Label set required by this node type.
@@ -161,7 +162,7 @@ impl From<NodeTypeDefV1> for NodeTypeDef {
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct NodeKey {
     /// Property names participating in the key.
-    pub property_names: SmallVec<[IStr; 2]>,
+    pub property_names: SmallVec<[DbString; 2]>,
 }
 
 /// Edge endpoint definition.
@@ -186,7 +187,7 @@ pub enum EdgeEndpointDef {
 impl EdgeEndpointDef {
     /// Construct an endpoint accepting `refs`, canonicalized.
     ///
-    /// References are sorted by interned-name identity and deduplicated. A
+    /// References are sorted by database-string identity and deduplicated. A
     /// single resulting reference collapses to [`EdgeEndpointDef::NodeType`].
     ///
     /// # Panics
@@ -197,14 +198,14 @@ impl EdgeEndpointDef {
     #[must_use]
     pub fn one_of(refs: impl IntoIterator<Item = NodeTypeRef>) -> Self {
         let mut buf: SmallVec<[NodeTypeRef; 4]> = refs.into_iter().collect();
-        buf.sort_unstable_by_key(|node| node.0);
+        buf.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         buf.dedup();
         assert!(
             !buf.is_empty(),
             "EdgeEndpointDef::one_of called with empty NodeTypeRef set"
         );
         match buf.len() {
-            1 => Self::NodeType(buf[0]),
+            1 => Self::NodeType(buf[0].clone()),
             _ => Self::OneOf(buf),
         }
     }
@@ -214,7 +215,7 @@ impl EdgeEndpointDef {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EdgeTypeDef {
     /// Single edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Source endpoint definition.
     pub source_node_type: EdgeEndpointDef,
     /// Target endpoint definition.
@@ -229,7 +230,7 @@ pub struct EdgeTypeDef {
 impl EdgeTypeDef {
     /// Construct an edge type definition with no properties.
     #[must_use]
-    pub fn new(label: IStr, source: NodeTypeRef, target: NodeTypeRef) -> Self {
+    pub fn new(label: DbString, source: NodeTypeRef, target: NodeTypeRef) -> Self {
         Self::new_with_endpoints(
             label,
             EdgeEndpointDef::NodeType(source),
@@ -240,7 +241,7 @@ impl EdgeTypeDef {
     /// Construct an edge type definition with explicit endpoints and no properties.
     #[must_use]
     pub fn new_with_endpoints(
-        label: IStr,
+        label: DbString,
         source: EdgeEndpointDef,
         target: EdgeEndpointDef,
     ) -> Self {
@@ -259,11 +260,11 @@ impl EdgeTypeDef {
 /// This freezes the pre-v1.1 catalog-DDL payload shape. New WAL entries use
 /// [`SchemaChange::EdgeTypeAddedV2`](crate::SchemaChange::EdgeTypeAddedV2)
 /// with [`EdgeTypeDef`]; recovery upgrades this shape with
-/// [`ValidationMode::Strict`] and non-immutable properties.
+/// [`ValidationMode::Strict`] plus non-immutable, non-unique properties.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EdgeTypeDefV1 {
     /// Single edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Source node type reference.
     pub source_node_type: NodeTypeRef,
     /// Target node type reference.
@@ -275,7 +276,7 @@ pub struct EdgeTypeDefV1 {
 impl EdgeTypeDefV1 {
     /// Construct a legacy edge type definition with no properties.
     #[must_use]
-    pub fn new(label: IStr, source: NodeTypeRef, target: NodeTypeRef) -> Self {
+    pub fn new(label: DbString, source: NodeTypeRef, target: NodeTypeRef) -> Self {
         Self {
             label,
             source_node_type: source,
@@ -308,9 +309,9 @@ pub enum ValidationMode {
 }
 
 /// Node type reference by label.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[repr(transparent)]
-pub struct NodeTypeRef(pub IStr);
+pub struct NodeTypeRef(pub DbString);
 
 /// Record type reference by ID.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -348,7 +349,7 @@ pub enum RecordFieldStructure {
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct RecordFieldStructureDef {
     /// Field name.
-    pub name: IStr,
+    pub name: DbString,
     /// Declared field type (recursively nestable).
     pub field_type: RecordFieldStructureType,
     /// `true` when the field is required (NOT NULL).
@@ -366,17 +367,25 @@ pub struct RecordFieldStructureDef {
 pub enum RecordFieldStructureType {
     /// Scalar field type.
     Scalar(PropertyValueType),
+    /// STRING field type with a user-specified length envelope.
+    CharacterString(CharacterStringType),
+    /// DECIMAL field type with a user-specified precision/scale envelope.
+    Decimal(DecimalType),
+    /// BYTES field type with a user-specified length envelope.
+    ByteString(ByteStringType),
     /// LIST field type.
     List(Box<RecordFieldStructureType>),
     /// Nested RECORD field type.
     Record(Box<RecordFieldStructure>),
+    /// Explicitly non-null field or nested element type.
+    NotNull(Box<RecordFieldStructureType>),
 }
 
 /// Property schema definition.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PropertyDef {
     /// Property name.
-    pub name: IStr,
+    pub name: DbString,
     /// Property value type.
     pub value_type: ValueType,
     /// Whether `Value::Null` is allowed.
@@ -386,6 +395,9 @@ pub struct PropertyDef {
     /// Whether updates to this property are forbidden after creation.
     #[serde(default)]
     pub immutable: bool,
+    /// Whether non-null property values must be unique within the declaring type.
+    #[serde(default)]
+    pub unique: bool,
     /// Inline RECORD field structure when [`PropertyDef::value_type`] resolves to a
     /// `RecordTyped` property. `None` for every non-record property; `Some(Open)` for an
     /// open/bare `RECORD`; `Some(Closed(..))` for a closed/typed `RECORD{..}`. The
@@ -403,7 +415,7 @@ pub struct PropertyDef {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PropertyDefV1 {
     /// Property name.
-    pub name: IStr,
+    pub name: DbString,
     /// Property value type.
     pub value_type: ValueType,
     /// Whether `Value::Null` is allowed.
@@ -420,6 +432,7 @@ impl From<PropertyDefV1> for PropertyDef {
             nullable: value.nullable,
             default: value.default,
             immutable: false,
+            unique: false,
             record_fields: None,
         }
     }
@@ -430,6 +443,23 @@ impl From<PropertyDefV1> for PropertyDef {
 pub struct ValueType {
     /// Scalar predefined type.
     pub predefined: Option<PredefinedValueType>,
+    /// User-specified decimal precision/scale descriptor.
+    ///
+    /// Only meaningful when [`Self::predefined`] is
+    /// [`PredefinedValueType::Decimal`].
+    #[serde(default)]
+    pub decimal_type: Option<DecimalType>,
+    /// User-specified character-string length descriptor.
+    ///
+    /// Only meaningful when [`Self::predefined`] is
+    /// [`PredefinedValueType::String`].
+    #[serde(default)]
+    pub character_string_type: Option<CharacterStringType>,
+    /// User-specified byte-string length descriptor.
+    ///
+    /// Only meaningful when [`Self::predefined`] is [`PredefinedValueType::Bytes`].
+    #[serde(default)]
+    pub byte_string_type: Option<ByteStringType>,
     /// Union member types.
     pub union: Option<Vec<ValueType>>,
     /// List element type. When present, this takes precedence over scalar
@@ -449,6 +479,9 @@ impl ValueType {
     pub const fn predefined(predefined: PredefinedValueType) -> Self {
         Self {
             predefined: Some(predefined),
+            decimal_type: None,
+            character_string_type: None,
+            byte_string_type: None,
             union: None,
             list_of: None,
             record: None,
@@ -462,6 +495,9 @@ impl ValueType {
     pub fn list_of(item: Self) -> Self {
         Self {
             predefined: None,
+            decimal_type: None,
+            character_string_type: None,
+            byte_string_type: None,
             union: None,
             list_of: Some(Box::new(item)),
             record: None,
@@ -508,7 +544,7 @@ pub enum PredefinedValueType {
     Float64,
     /// Fixed-precision decimal.
     Decimal,
-    /// Interned string.
+    /// Database string.
     String,
     /// Byte string.
     Bytes,
@@ -524,6 +560,10 @@ pub enum PredefinedValueType {
     ZonedDateTime,
     /// Duration.
     Duration,
+    /// `DURATION (YEAR TO MONTH)`.
+    DurationYearToMonth,
+    /// `DURATION (DAY TO SECOND)`.
+    DurationDayToSecond,
     /// Node reference.
     NodeRef,
     /// Edge reference.
@@ -538,6 +578,10 @@ pub enum PredefinedValueType {
     Uuid,
     /// Extension-owned value type.
     Extended(ExtensionTypeId),
+    /// Native dense vector.
+    Vector,
+    /// Native JSON.
+    Json,
 }
 
 /// Minimal v1.0 value cardinality.
@@ -554,8 +598,8 @@ pub enum ValueTypeCardinality {
 pub struct RecordTypeDef {
     /// Stable record type ID.
     pub id: RecordTypeId,
-    /// Interned record type name.
-    pub name: IStr,
+    /// Database-string record type name.
+    pub name: DbString,
     /// Field definitions in schema order.
     pub fields: SmallVec<[PropertyDef; 4]>,
 }

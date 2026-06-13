@@ -1,10 +1,10 @@
 //! BRIEF-28 constant-folding optimizer tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
-    AnalyzedStatement, BinaryOp, CatalogOp, EmptyProcedureRegistry, Literal, MutationOp,
-    PipelineOp, PlannedTypePropertyConstraint, ProcedureOutputColumn, SourceSpan, ValueExpr,
-    analyze, optimize, parse, plan,
+    AnalyzedStatement, BinaryOp, CatalogOp, EmptyProcedureRegistry, ImplDefinedCaps, Literal,
+    MutationOp, PipelineOp, PlannedTypePropertyConstraint, ProcedureOutputColumn, SourceSpan,
+    ValueExpr, analyze, optimize, parse, plan, plan::plan_with_caps,
 };
 use selene_testing::MockProcedureRegistry;
 
@@ -17,6 +17,12 @@ fn optimized_one(source: &str) -> selene_gql::ExecutionPlan {
     let analyzed = analyzed(source);
     let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("test input plans");
     optimize(plan, &selene_gql::OptimizeContext::default())
+}
+
+fn optimized_one_with_caps(source: &str, caps: &ImplDefinedCaps) -> selene_gql::ExecutionPlan {
+    let analyzed = analyzed(source);
+    let plan = plan_with_caps(&analyzed, &EmptyProcedureRegistry, caps).expect("test input plans");
+    optimize(plan, &selene_gql::OptimizeContext::new(caps))
 }
 
 fn optimized_with_registry(
@@ -39,8 +45,8 @@ fn project_expr(plan: &selene_gql::ExecutionPlan) -> &ValueExpr {
         .expect("project expression")
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 #[test]
@@ -53,7 +59,7 @@ fn folds_project_arithmetic_bottom_up() {
 }
 
 #[test]
-fn folds_boolean_unary_and_string_concat() {
+fn folds_boolean_unary_and_string_byte_concat() {
     let plan = optimized_one("RETURN NOT TRUE AS x");
     assert!(matches!(
         project_expr(&plan),
@@ -64,6 +70,103 @@ fn folds_boolean_unary_and_string_concat() {
     assert!(matches!(
         project_expr(&plan),
         ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "foobar"
+    ));
+
+    let plan = optimized_one("RETURN X'CA' || X'FE00' AS x");
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bytes(value, _)) if value.as_ref() == [0xca, 0xfe, 0x00]
+    ));
+}
+
+#[test]
+fn string_byte_concat_folding_respects_length_caps() {
+    let string_caps = ImplDefinedCaps::default().with_max_string_length(3);
+    let plan = optimized_one_with_caps("RETURN 'ab' || 'c  ' AS x", &string_caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "abc"
+    ));
+    let plan = optimized_one_with_caps("RETURN 'ab' || 'cd' AS x", &string_caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::BinaryOp {
+            op: selene_gql::BinaryOp::Concat,
+            ..
+        }
+    ));
+
+    let byte_caps = ImplDefinedCaps::default().with_max_byte_string_length(3);
+    let plan = optimized_one_with_caps("RETURN X'CAFE' || X'0000' AS x", &byte_caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bytes(value, _)) if value.as_ref() == [0xca, 0xfe, 0x00]
+    ));
+    let byte_error_caps = ImplDefinedCaps::default().with_max_byte_string_length(1);
+    let plan = optimized_one_with_caps("RETURN X'CA' || X'FE' AS x", &byte_error_caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::BinaryOp {
+            op: selene_gql::BinaryOp::Concat,
+            ..
+        }
+    ));
+}
+
+/// Folding mirrors the runtime IV023 `<truncating whitespace>` subset: an
+/// overflow tail folds away only when every discarded character is U+0020.
+/// Anything else must stay an unfolded `Concat` so the runtime raises 22001
+/// instead of the optimizer changing the statement's outcome.
+#[test]
+fn string_concat_folding_truncating_whitespace_is_space_only() {
+    let caps = ImplDefinedCaps::default().with_max_string_length(3);
+
+    let plan = optimized_one_with_caps("RETURN 'ab' || 'c ' AS x", &caps);
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "abc"
+    ));
+
+    for source in [
+        r"RETURN 'ab' || 'c\t' AS x",
+        r"RETURN 'ab' || 'c\n' AS x",
+        r"RETURN 'ab' || 'c\u00A0' AS x",
+        r"RETURN 'ab' || 'c \t' AS x",
+    ] {
+        let plan = optimized_one_with_caps(source, &caps);
+        assert!(
+            matches!(
+                project_expr(&plan),
+                ValueExpr::BinaryOp {
+                    op: BinaryOp::Concat,
+                    ..
+                }
+            ),
+            "data-bearing overflow must not fold: {source}"
+        );
+    }
+}
+
+#[test]
+fn folds_temporal_literal_comparisons() {
+    let plan = optimized_one("RETURN DATE '2026-05-07' < DATE '2026-05-08' AS x");
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bool(true, _))
+    ));
+
+    let plan = optimized_one(
+        "RETURN LOCAL DATETIME '2026-05-07T12:34:56' = LOCAL DATETIME '2026-05-07T12:34:56' AS x",
+    );
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bool(true, _))
+    ));
+
+    let plan = optimized_one("RETURN LOCAL TIME '12:34:56' >= LOCAL TIME '12:34:55' AS x");
+    assert!(matches!(
+        project_expr(&plan),
+        ValueExpr::Literal(Literal::Bool(true, _))
     ));
 }
 
@@ -120,14 +223,14 @@ fn folds_pattern_property_and_where_expressions() {
 #[test]
 fn folds_call_mutation_and_catalog_expression_payloads() {
     let registry = MockProcedureRegistry::new().with_procedure(
-        vec![istr("pkg"), istr("args")],
+        vec![db_string("pkg"), db_string("args")],
         vec![selene_gql::ProcedureParameter::new(
-            istr("a"),
+            db_string("a"),
             selene_gql::GqlType::Integer,
             false,
         )],
         vec![ProcedureOutputColumn::new(
-            istr("out"),
+            db_string("out"),
             selene_gql::GqlType::Integer,
         )],
     );
@@ -208,7 +311,7 @@ fn literal_summary(expr: &ValueExpr) -> String {
     match expr {
         ValueExpr::Literal(Literal::Bool(value, _)) => format!("Bool({value})"),
         ValueExpr::Literal(Literal::Integer(value, _)) => format!("Integer({value})"),
-        ValueExpr::Literal(Literal::Float(value, _)) => format!("Float({value})"),
+        ValueExpr::Literal(Literal::Float(value, _, _)) => format!("Float({value})"),
         ValueExpr::Literal(Literal::String(value, _)) => format!("String({})", value.as_str()),
         ValueExpr::Literal(Literal::Null(_)) => "Null".to_string(),
         other => format!("{other:?}"),

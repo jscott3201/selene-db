@@ -2,8 +2,10 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, edge_ids_for, execute_plan, istr, node_ids_for, planned, props};
-use selene_core::{GraphId, IStr, LabelSet, Value};
+use exec_common::{
+    ExecFixture, db_string, edge_ids_for, execute_plan, node_ids_for, planned, props,
+};
+use selene_core::{DbString, GraphId, LabelSet, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutorError, TxContext,
     execute_pattern, execute_pipeline,
@@ -54,26 +56,28 @@ fn execute_on_graph(
 }
 
 fn cycle_graph() -> SharedGraph {
-    let node = istr("N");
-    let edge = istr("K");
-    let name = istr("name");
+    let node = db_string("N");
+    let edge = db_string("K");
+    let name = db_string("name");
     let graph = SharedGraph::new(GraphId::new(6401));
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         let a = mutator
             .create_node(
-                LabelSet::single(node),
-                props([(name, Value::String(istr("A")))]),
+                LabelSet::single(node.clone()),
+                props([(name.clone(), Value::String(db_string("A")))]),
             )
             .expect("A inserts");
         let b = mutator
             .create_node(
                 LabelSet::single(node),
-                props([(name, Value::String(istr("B")))]),
+                props([(name, Value::String(db_string("B")))]),
             )
             .expect("B inserts");
-        mutator.create_edge(edge, a, b, props([])).expect("edge 1");
+        mutator
+            .create_edge(edge.clone(), a, b, props([]))
+            .expect("edge 1");
         mutator.create_edge(edge, b, a, props([])).expect("edge 2");
         txn.commit().expect("fixture commits");
     }
@@ -81,17 +85,19 @@ fn cycle_graph() -> SharedGraph {
 }
 
 fn chain_graph() -> SharedGraph {
-    let node = istr("N");
-    let edge = istr("K");
-    let name = istr("name");
+    let node = db_string("N");
+    let edge = db_string("K");
+    let name = db_string("name");
     let graph = SharedGraph::new(GraphId::new(6402));
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
-        let a = named_node(&mut mutator, node, name, "A");
-        let b = named_node(&mut mutator, node, name, "B");
+        let a = named_node(&mut mutator, node.clone(), name.clone(), "A");
+        let b = named_node(&mut mutator, node.clone(), name.clone(), "B");
         let c = named_node(&mut mutator, node, name, "C");
-        mutator.create_edge(edge, a, b, props([])).expect("edge 1");
+        mutator
+            .create_edge(edge.clone(), a, b, props([]))
+            .expect("edge 1");
         mutator.create_edge(edge, b, c, props([])).expect("edge 2");
         txn.commit().expect("fixture commits");
     }
@@ -100,14 +106,14 @@ fn chain_graph() -> SharedGraph {
 
 fn named_node(
     mutator: &mut selene_graph::Mutator<'_, '_>,
-    label: IStr,
-    name_key: IStr,
+    label: DbString,
+    name_key: DbString,
     name: &str,
 ) -> selene_core::NodeId {
     mutator
         .create_node(
             LabelSet::single(label),
-            props([(name_key, Value::String(istr(name)))]),
+            props([(name_key, Value::String(db_string(name)))]),
         )
         .expect("node inserts")
 }
@@ -187,6 +193,291 @@ fn unbounded_cap_exceed_returns_program_limit() {
     plan.impl_defined_caps.max_quantifier = 1;
 
     let err = execute_on_graph(&graph, &plan).expect_err("cap exceeds");
+
+    assert!(matches!(
+        err,
+        ExecutorError::ProgramLimitExceeded {
+            detail: "max_quantifier",
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "5GQL1");
+}
+
+// FU-2: an UNBOUNDED minimum-length shortest selector (ANY/ALL SHORTEST) must
+// downshift its repeat traversal from the default WALK to TRAIL so it terminates
+// on a cyclic graph — and the TRAIL traversal is result-equivalent because every
+// minimum-hop path is simple (hence a trail). See
+// `plan::lowering::match_clause::repeat_path_mode_under_filter`.
+
+/// `(b, edge-id-list)` rows, sorted, for order-independent comparison.
+fn shortest_rows(table: &BindingTable) -> Vec<(Option<u64>, Option<Vec<u64>>)> {
+    let bs = node_ids_for(table, "b");
+    let rs = edge_lists_for(table, "r");
+    let mut rows: Vec<_> = bs.into_iter().zip(rs).collect();
+    rows.sort();
+    rows
+}
+
+#[test]
+fn unbounded_all_shortest_terminates_and_equals_trail_on_cycle() {
+    let graph = cycle_graph();
+    // Pre-fix this raised 5GQL1 (ProgramLimitExceeded "max_quantifier") because the
+    // bare ALL SHORTEST selector kept the default WALK and the unbounded WALK
+    // expanded to the max_quantifier cap before the selector could run.
+    let plan = planned("MATCH ALL SHORTEST (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r, b");
+
+    let table = execute_on_graph(&graph, &plan).expect("unbounded ALL SHORTEST terminates");
+
+    // Identical to the explicit TRAIL spelling: b=B path [1], b=A path [1, 2].
+    assert_eq!(
+        shortest_rows(&table),
+        vec![(Some(1), Some(vec![1, 2])), (Some(2), Some(vec![1]))]
+    );
+
+    let trail = planned("MATCH TRAIL (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r, b");
+    let trail_table = execute_on_graph(&graph, &trail).expect("trail executes");
+    assert_eq!(shortest_rows(&table), shortest_rows(&trail_table));
+}
+
+#[test]
+fn unbounded_any_shortest_terminates_one_row_per_endpoint_on_cycle() {
+    let graph = cycle_graph();
+    let plan = planned("MATCH ANY SHORTEST (a:N {name: 'A'})-[r:K+]->(b:N) RETURN b");
+
+    let table = execute_on_graph(&graph, &plan).expect("unbounded ANY SHORTEST terminates");
+
+    // One row per distinct (source, target) endpoint pair: b=B and b=A.
+    let mut bs = node_ids_for(&table, "b");
+    bs.sort();
+    assert_eq!(bs, vec![Some(1), Some(2)]);
+}
+
+#[test]
+fn unbounded_all_shortest_keeps_equal_length_paths_and_equals_trail() {
+    // Diamond with two equal-length shortest paths to D plus a longer one:
+    //   A -e1-> B -e3-> D   (len 2, shortest)
+    //   A -e2-> C -e4-> D   (len 2, shortest)
+    //   A -e1-> B -e5-> E -e6-> D  (len 3, longer — must be pruned by the selector)
+    let node = db_string("N");
+    let edge = db_string("K");
+    let name = db_string("name");
+    let graph = SharedGraph::new(GraphId::new(6403));
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let a = named_node(&mut mutator, node.clone(), name.clone(), "A");
+        let b = named_node(&mut mutator, node.clone(), name.clone(), "B");
+        let c = named_node(&mut mutator, node.clone(), name.clone(), "C");
+        let d = named_node(&mut mutator, node.clone(), name.clone(), "D");
+        let e = named_node(&mut mutator, node, name, "E");
+        mutator
+            .create_edge(edge.clone(), a, b, props([]))
+            .expect("e1");
+        mutator
+            .create_edge(edge.clone(), a, c, props([]))
+            .expect("e2");
+        mutator
+            .create_edge(edge.clone(), b, d, props([]))
+            .expect("e3");
+        mutator
+            .create_edge(edge.clone(), c, d, props([]))
+            .expect("e4");
+        mutator
+            .create_edge(edge.clone(), b, e, props([]))
+            .expect("e5");
+        mutator.create_edge(edge, e, d, props([])).expect("e6");
+        txn.commit().expect("fixture commits");
+    }
+
+    let plan =
+        planned("MATCH ALL SHORTEST (a:N {name: 'A'})-[r:K+]->(d:N {name: 'D'}) RETURN r, d");
+    let table = execute_on_graph(&graph, &plan).expect("ALL SHORTEST terminates");
+
+    // BOTH equal-length shortest paths to D are retained (the longer 3-hop one
+    // is pruned by the selector): edge-lists [1, 3] and [2, 4].
+    let mut edge_lists: Vec<_> = edge_lists_for(&table, "r")
+        .into_iter()
+        .map(|opt| opt.expect("edge list present"))
+        .collect();
+    edge_lists.sort();
+    assert_eq!(edge_lists, vec![vec![1, 3], vec![2, 4]]);
+
+    // Result-equivalent to the explicit TRAIL-mode spelling of the same query.
+    let trail =
+        planned("MATCH ALL SHORTEST TRAIL (a:N {name: 'A'})-[r:K+]->(d:N {name: 'D'}) RETURN r, d");
+    let trail_table = execute_on_graph(&graph, &trail).expect("trail spelling executes");
+    let mut trail_lists: Vec<_> = edge_lists_for(&trail_table, "r")
+        .into_iter()
+        .map(|opt| opt.expect("edge list present"))
+        .collect();
+    trail_lists.sort();
+    assert_eq!(edge_lists, trail_lists);
+}
+
+#[test]
+fn bounded_shortest_unchanged_on_cycle() {
+    // Regression: a BOUNDED repeat is finite under WALK already; the downshift
+    // is unbounded-only and must not alter bounded behavior.
+    let graph = cycle_graph();
+    let plan = planned("MATCH ALL SHORTEST (a:N {name: 'A'})-[r:K*1..3]->(b:N) RETURN r, b");
+
+    let table = execute_on_graph(&graph, &plan).expect("bounded shortest executes");
+
+    // Shortest hop-rank to each reachable endpoint: b=B [1], b=A [1, 2].
+    assert_eq!(
+        shortest_rows(&table),
+        vec![(Some(1), Some(vec![1, 2])), (Some(2), Some(vec![1]))]
+    );
+}
+
+#[test]
+fn unbounded_counted_shortest_still_program_limit_on_cycle() {
+    // SCOPE: counted shortest (G019 SHORTEST N) is DEFERRED — it counts paths by
+    // hop-rank INCLUDING non-simple paths (ISO §22.4), so it must stay WALK and
+    // keep raising 5GQL1 on an unbounded cyclic graph (downshifting to TRAIL would
+    // silently change its semantics to count trails, inconsistent with bounded
+    // counted-shortest). Pins the deferral.
+    let graph = cycle_graph();
+    let plan = planned("MATCH SHORTEST 2 (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r");
+
+    let err = execute_on_graph(&graph, &plan).expect_err("counted shortest still capped");
+
+    assert!(matches!(
+        err,
+        ExecutorError::ProgramLimitExceeded {
+            detail: "max_quantifier",
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "5GQL1");
+}
+
+// FU-2 (Codex PR #245 r2, P2): the count-1 counted spellings are ISO §16.6 SR2c
+// EQUIVALENT to the keyword forms — `SHORTEST 1 [PATH]` == `ANY SHORTEST`
+// (`CountedShortest { paths: 1 }`) and `SHORTEST [1] GROUP[S]` == `ALL SHORTEST`
+// (`CountedShortestGroup { groups: 1 }`). They are min-length shortest selectors,
+// so on a cyclic graph they must downshift to TRAIL and TERMINATE identically to
+// their keyword twins, not raise 5GQL1. The downshift predicate matches on the
+// count-1 *semantics*, not the surface keyword, so equivalent forms agree.
+
+#[test]
+fn unbounded_counted_shortest_one_terminates_and_equals_any_shortest_on_cycle() {
+    let graph = cycle_graph();
+    let counted = planned("MATCH SHORTEST 1 (a:N {name: 'A'})-[r:K+]->(b:N) RETURN b");
+
+    let table = execute_on_graph(&graph, &counted)
+        .expect("unbounded SHORTEST 1 terminates (== ANY SHORTEST)");
+
+    // One row per distinct (source, target) endpoint pair, exactly like ANY SHORTEST.
+    let mut bs = node_ids_for(&table, "b");
+    bs.sort();
+    assert_eq!(bs, vec![Some(1), Some(2)]);
+
+    let any = planned("MATCH ANY SHORTEST (a:N {name: 'A'})-[r:K+]->(b:N) RETURN b");
+    let any_table = execute_on_graph(&graph, &any).expect("ANY SHORTEST executes");
+    let mut any_bs = node_ids_for(&any_table, "b");
+    any_bs.sort();
+    assert_eq!(bs, any_bs);
+}
+
+#[test]
+fn unbounded_shortest_one_group_terminates_and_equals_all_shortest_on_cycle() {
+    let graph = cycle_graph();
+    let counted = planned("MATCH SHORTEST 1 GROUP (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r, b");
+
+    let table = execute_on_graph(&graph, &counted)
+        .expect("unbounded SHORTEST 1 GROUP terminates (== ALL SHORTEST)");
+
+    // Identical to ALL SHORTEST: b=A path [1, 2], b=B path [1].
+    assert_eq!(
+        shortest_rows(&table),
+        vec![(Some(1), Some(vec![1, 2])), (Some(2), Some(vec![1]))]
+    );
+
+    let all = planned("MATCH ALL SHORTEST (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r, b");
+    let all_table = execute_on_graph(&graph, &all).expect("ALL SHORTEST executes");
+    assert_eq!(shortest_rows(&table), shortest_rows(&all_table));
+}
+
+#[test]
+fn unbounded_shortest_bare_group_defaults_to_one_and_terminates_on_cycle() {
+    // `SHORTEST GROUP` (no count) defaults groups -> 1 per ISO §16.6 SR2b, so it is
+    // also the ALL SHORTEST min-length selector and must terminate on a cycle.
+    let graph = cycle_graph();
+    let plan = planned("MATCH SHORTEST GROUP (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r, b");
+
+    let table =
+        execute_on_graph(&graph, &plan).expect("unbounded SHORTEST GROUP (groups=1) terminates");
+
+    assert_eq!(
+        shortest_rows(&table),
+        vec![(Some(1), Some(vec![1, 2])), (Some(2), Some(vec![1]))]
+    );
+}
+
+#[test]
+fn unbounded_counted_shortest_group_two_still_program_limit_on_cycle() {
+    // Boundary pin (complements the SHORTEST 2 PATH deferral above): a count-`>= 2`
+    // GROUP form admits a strictly-longer second length-group, which can be
+    // non-simple — so it is NOT downshiftable and stays DEFERRED (5GQL1) on an
+    // unbounded cyclic graph. Only count-1 downshifts.
+    let graph = cycle_graph();
+    let plan = planned("MATCH SHORTEST 2 GROUPS (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r");
+
+    let err = execute_on_graph(&graph, &plan).expect_err("count>=2 group form still capped");
+
+    assert!(matches!(
+        err,
+        ExecutorError::ProgramLimitExceeded {
+            detail: "max_quantifier",
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "5GQL1");
+}
+
+#[test]
+fn different_edges_makes_counted_shortest_finite_on_cycle() {
+    // The counted-shortest DEFERRAL (5GQL1, pinned above) is specific to plain WALK,
+    // whose candidate set over a cycle is infinite. With DIFFERENT EDGES (G002, ISO
+    // §16.4 NOTE 222) the candidate set is constrained to edge-distinct paths (TRAIL),
+    // which is finite — so `SHORTEST N DIFFERENT EDGES` over a cycle TERMINATES and
+    // counts the N shortest edge-distinct paths. Correct AND complete: node-repeating-
+    // but-edge-distinct trails are still counted (DIFFERENT EDGES forbids only edge
+    // reuse, not node reuse), so it is NOT the deferred plain-WALK case. The
+    // pre-existing different_edges -> TRAIL downshift handles this; the FU-2 shortest
+    // downshift is OR-composed and does not change it.
+    let graph = cycle_graph();
+    let plan = planned("MATCH SHORTEST 2 DIFFERENT EDGES (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r");
+
+    let table = execute_on_graph(&graph, &plan)
+        .expect("DIFFERENT EDGES bounds the candidate set to trails, so it terminates");
+
+    // The 2 shortest edge-distinct paths from A: A->B [1] and A->B->A [1, 2].
+    assert_eq!(
+        edge_lists_for(&table, "r"),
+        vec![Some(vec![1]), Some(vec![1, 2])]
+    );
+}
+
+#[test]
+fn lower_bounded_shortest_over_cycle_is_deferred_not_wrong() {
+    // Codex (PR #245, P2): the WALK->TRAIL downshift is only result-equivalent when
+    // the quantifier lower bound is <= 1. With `min >= 2`, removing a cycle would
+    // drop below the bound, so the shortest WALK satisfying the bound can legitimately
+    // REUSE an edge (e.g. on the A<->B cycle the shortest >=2-hop walk to B is the
+    // edge-reusing A->B->A->B [1,2,1]). A TRAIL downshift would drop those rows and
+    // return a WRONG (under-)result. So `min >= 2` shortest is NOT downshifted: it
+    // stays WALK and, over a cyclic graph, is DEFERRED (5GQL1, ProgramLimitExceeded) —
+    // the same posture as plain counted-shortest (both need ordered length-enumeration
+    // over an infinite WALK candidate set). The point is that the engine never returns
+    // a silently-truncated result here.
+    let graph = cycle_graph();
+    let plan = planned("MATCH ALL SHORTEST (a:N {name: 'A'})-[r:K*2..]->(b:N) RETURN r");
+
+    let err = execute_on_graph(&graph, &plan)
+        .expect_err("lower-bounded shortest over a cycle is deferred, not wrongly truncated");
 
     assert!(matches!(
         err,

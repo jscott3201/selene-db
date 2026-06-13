@@ -13,7 +13,7 @@ pub use selene_core::Value;
 
 use std::time::Duration;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{GqlStatus, GqlType, runtime::ProcedureContext};
 
@@ -24,14 +24,14 @@ use crate::{GqlStatus, GqlType, runtime::ProcedureContext};
 /// metadata lookup and runtime dispatch through an opaque handle.
 pub trait ProcedureRegistry: Send + Sync {
     /// Look up procedure metadata by canonical CALL-time name.
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata>;
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata>;
 
-    /// Return the registry epoch used by shared CALL plan caches.
+    /// Return the registry epoch used by shared plan caches.
     ///
     /// Construct-once registries may keep the default `0`. Registries that can
     /// change lookup metadata or handle dispatch while a [`crate::CallPlanCache`]
-    /// may still contain plans must return a value that changes whenever cached
-    /// procedure plans would need to be recompiled.
+    /// or [`crate::SharedPlanCache`] may still contain plans must return a value
+    /// that changes whenever cached plans would need to be recompiled.
     fn registry_version(&self) -> u64 {
         0
     }
@@ -40,7 +40,7 @@ pub trait ProcedureRegistry: Send + Sync {
     ///
     /// Registries that cannot enumerate may keep the default empty iterator.
     /// SHOW PROCEDURES uses this cold-path surface for introspection.
-    fn iter_handles(&self) -> Box<dyn Iterator<Item = (Vec<IStr>, ProcedureMetadata)> + '_> {
+    fn iter_handles(&self) -> Box<dyn Iterator<Item = (Vec<DbString>, ProcedureMetadata)> + '_> {
         Box::new(std::iter::empty())
     }
 
@@ -184,7 +184,7 @@ impl Default for ProcedureSignature {
 #[non_exhaustive]
 pub struct ProcedureParameter {
     /// Parameter name. Diagnostic-only; arguments are positional in v1.0.
-    pub name: IStr,
+    pub name: DbString,
     /// Expected static type for the corresponding positional argument.
     pub ty: GqlType,
     /// Whether a statically resolved `NULL` argument is accepted.
@@ -200,7 +200,7 @@ pub struct ProcedureParameter {
 impl ProcedureParameter {
     /// Construct a declared procedure parameter.
     #[must_use]
-    pub const fn new(name: IStr, ty: GqlType, nullable: bool) -> Self {
+    pub const fn new(name: DbString, ty: GqlType, nullable: bool) -> Self {
         Self {
             name,
             ty,
@@ -285,9 +285,11 @@ pub struct ProcedureOutputSchema {
 #[non_exhaustive]
 pub struct ProcedureOutputColumn {
     /// Column name matched against `YIELD col` references.
-    pub name: IStr,
+    pub name: DbString,
     /// Static type assigned to the YIELD binding.
     pub ty: GqlType,
+    /// Whether the procedure may return NULL for this column.
+    pub nullable: bool,
     /// Human-readable output-column description for catalog introspection.
     pub description: &'static str,
 }
@@ -295,12 +297,20 @@ pub struct ProcedureOutputColumn {
 impl ProcedureOutputColumn {
     /// Construct a declared procedure output column.
     #[must_use]
-    pub const fn new(name: IStr, ty: GqlType) -> Self {
+    pub const fn new(name: DbString, ty: GqlType) -> Self {
         Self {
             name,
             ty,
+            nullable: false,
             description: "",
         }
+    }
+
+    /// Set whether this output column accepts NULL values at runtime.
+    #[must_use]
+    pub const fn with_nullable(mut self, nullable: bool) -> Self {
+        self.nullable = nullable;
+        self
     }
 
     /// Attach a human-readable output-column description.
@@ -318,6 +328,8 @@ pub enum ProcedureTier {
     Graph,
     /// Mutation-tier procedure running inside a write transaction.
     Mutation,
+    /// Engine-maintenance procedure running against the shared graph.
+    Maintenance,
 }
 
 /// Side-effect class declared by the registered procedure.
@@ -327,6 +339,8 @@ pub enum ProcedureMutability {
     Read,
     /// Procedure may mutate catalog/schema state.
     SchemaWrite,
+    /// Procedure may rebuild derived engine state without emitting graph changes.
+    MaintenanceWrite,
 }
 
 /// Result returned by procedure execution.
@@ -344,7 +358,7 @@ pub enum ProcedureError {
     #[error("unknown procedure")]
     UnknownProcedure {
         /// Best-effort procedure name. May be empty for defensive handle-only paths.
-        name: Box<[IStr]>,
+        name: Box<[DbString]>,
     },
     /// The registry rejected evaluated arguments.
     #[error("invalid procedure argument: {detail}")]
@@ -402,7 +416,7 @@ impl ProcedureError {
 pub struct EmptyProcedureRegistry;
 
 impl ProcedureRegistry for EmptyProcedureRegistry {
-    fn lookup(&self, _name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, _name: &[DbString]) -> Option<ProcedureMetadata> {
         None
     }
 

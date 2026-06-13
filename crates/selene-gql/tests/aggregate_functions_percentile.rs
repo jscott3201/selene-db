@@ -2,15 +2,15 @@
 
 use std::sync::{Arc, Mutex};
 
-use selene_core::{GraphId, IStr, Value, feature_register::FeatureId, intern};
+use selene_core::{DbString, GraphId, Value, feature_register::FeatureId};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorWarning, GqlStatus, Session, StatementOutput, WarningSink,
     analyze, feature_walk, parse,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn execute_rows(session: &mut Session<'_>, source: &str) -> selene_gql::BindingTable {
@@ -34,7 +34,12 @@ fn column_values(table: &selene_gql::BindingTable, name: &str) -> Vec<Value> {
         .schema()
         .columns
         .iter()
-        .position(|column| column.name.is_some_and(|column| column.as_str() == name))
+        .position(|column| {
+            column
+                .name
+                .clone()
+                .is_some_and(|column| column.as_str() == name)
+        })
         .expect("column exists");
     table
         .rows()
@@ -82,6 +87,55 @@ fn percentile_disc_uses_ties_even_on_one_based_index() {
 }
 
 #[test]
+fn percentile_distinct_applies_to_dependent_values() {
+    let table = execute(
+        "UNWIND [1, 1, 4] AS x \
+         RETURN percentile_cont(DISTINCT x, 0.5) AS continuous, \
+                percentile_disc(DISTINCT x, 0.5) AS discrete",
+    );
+
+    assert_eq!(column_values(&table, "continuous"), vec![Value::Float(2.5)]);
+    assert_eq!(column_values(&table, "discrete"), vec![Value::Int(4)]);
+}
+
+#[test]
+fn percentile_all_quantifier_matches_implicit_all() {
+    let table = execute(
+        "UNWIND [1, 1, 4] AS x \
+         RETURN percentile_cont(ALL x, 0.5) AS continuous, \
+                percentile_disc(ALL x, 0.5) AS discrete",
+    );
+
+    assert_eq!(column_values(&table, "continuous"), vec![Value::Float(1.0)]);
+    assert_eq!(column_values(&table, "discrete"), vec![Value::Int(1)]);
+}
+
+#[test]
+fn percentile_functions_accept_wide_unsigned_dependent_values() {
+    let graph = SharedGraph::new(GraphId::new(13_504));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(db_string("lo"), Value::Uint128(u128::MAX - 1));
+    session.bind_parameter(db_string("hi"), Value::Uint128(u128::MAX));
+
+    let table = execute_rows(
+        &mut session,
+        "UNWIND [$lo, $hi] AS x \
+         RETURN percentile_disc(x, 1.0) AS discrete, \
+                percentile_cont(x, 1.0) AS continuous",
+    );
+
+    assert_eq!(
+        column_values(&table, "discrete"),
+        vec![Value::Uint128(u128::MAX)]
+    );
+    let continuous = column_values(&table, "continuous");
+    let [Value::Float(value)] = continuous.as_slice() else {
+        panic!("expected continuous percentile float, got {continuous:?}");
+    };
+    assert_eq!(*value, u128::MAX as f64);
+}
+
+#[test]
 fn percentile_null_handling_matches_set_function_warning_contract() {
     let graph = SharedGraph::new(GraphId::new(13_501));
     let warnings = Arc::new(Mutex::new(Vec::new()));
@@ -117,7 +171,7 @@ fn percentile_null_handling_matches_set_function_warning_contract() {
 fn percentile_independent_expression_accepts_parameters_and_arithmetic() {
     let graph = SharedGraph::new(GraphId::new(13_502));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("p"), Value::Float(0.75));
+    session.bind_parameter(db_string("p"), Value::Float(0.75));
 
     let parameterized = execute_rows(
         &mut session,

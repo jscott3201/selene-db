@@ -3,7 +3,10 @@
 use std::fmt::{self, Write as _};
 
 use super::super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
-use super::super::{UnaryOp, ValueExpr};
+use super::super::{
+    DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, TemporalDurationQualifier, UnaryOp,
+    ValueExpr,
+};
 use super::is_check::{fmt_is_check, fmt_normal_form};
 use super::keywords::fmt_binary;
 use super::{cast, fmt_match, fmt_parameter, fmt_pipeline, trim};
@@ -13,20 +16,41 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
         ValueExpr::Literal(literal) => match literal {
             crate::Literal::Bool(value, _) => out.push_str(if *value { "true" } else { "false" }),
             crate::Literal::Integer(value, _) => write!(out, "{value}")?,
-            crate::Literal::Float(value, _) => write!(out, "{value}")?,
+            crate::Literal::RadixInteger(value, _, kind) => fmt_radix_integer(out, *value, *kind)?,
+            crate::Literal::Decimal(value, _, kind) => {
+                fmt_decimal_literal(out, value, *kind)?;
+            }
+            crate::Literal::Float(value, _, kind) => fmt_float_literal(out, *value, *kind)?,
             crate::Literal::String(value, _) => write!(out, "'{}'", escape_string(value.as_str()))?,
+            crate::Literal::Bytes(value, _) => {
+                out.push_str("X'");
+                for byte in value.iter() {
+                    write!(out, "{byte:02X}")?;
+                }
+                out.push('\'');
+            }
             crate::Literal::Uuid(value, _) => write!(out, "UUID '{value}'")?,
+            crate::Literal::ZonedDateTime(value, _) => {
+                write!(out, "ZONED DATETIME '{}'", format_zoned_datetime(value))?;
+            }
+            crate::Literal::LocalDateTime(value, _) => write!(out, "LOCAL DATETIME '{value}'")?,
+            crate::Literal::Date(value, _) => write!(out, "DATE '{value}'")?,
+            crate::Literal::ZonedTime(value, _) => {
+                write!(out, "ZONED TIME '{}'", format_zoned_time(value))?;
+            }
+            crate::Literal::LocalTime(value, _) => write!(out, "LOCAL TIME '{value}'")?,
+            crate::Literal::Duration(value, _) => write!(out, "DURATION '{value}'")?,
             crate::Literal::Null(_) => out.push_str("null"),
         },
-        ValueExpr::Variable { name, .. } => out.push_str(&fmt_ident(*name)),
+        ValueExpr::Variable { name, .. } => out.push_str(&fmt_ident(name.clone())),
         ValueExpr::Parameter {
             name,
             declared_type,
             ..
-        } => fmt_parameter(out, *name, declared_type.as_ref())?,
+        } => fmt_parameter(out, name.clone(), declared_type.as_ref())?,
         ValueExpr::PropertyAccess { target, key, .. } => {
             fmt_expr(out, target)?;
-            write!(out, ".{}", fmt_ident(*key))?;
+            write!(out, ".{}", fmt_ident(key.clone()))?;
         }
         ValueExpr::ListAccess { target, index, .. } => {
             fmt_expr(out, target)?;
@@ -50,10 +74,20 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
                 if index > 0 {
                     out.push_str(", ");
                 }
-                write!(out, "{}: ", fmt_ident(*key))?;
+                write!(out, "{}: ", fmt_ident(key.clone()))?;
                 fmt_expr(out, value)?;
             }
             out.push('}');
+        }
+        ValueExpr::PathConstructor { elements, .. } => {
+            out.push_str("PATH[");
+            for (index, element) in elements.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                fmt_expr(out, element)?;
+            }
+            out.push(']');
         }
         ValueExpr::BinaryOp { op, lhs, rhs, .. } => {
             // `MOD` and `POWER` are runtime-only operators with no infix
@@ -95,11 +129,15 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             distinct,
             ..
         } => {
-            for (index, part) in name.iter().enumerate() {
-                if index > 0 {
-                    out.push('.');
+            if let Some(keyword) = keyword_function_name(name) {
+                out.push_str(keyword);
+            } else {
+                for (index, part) in name.iter().enumerate() {
+                    if index > 0 {
+                        out.push('.');
+                    }
+                    out.push_str(&fmt_call_segment(part.clone()));
                 }
-                out.push_str(&fmt_call_segment(*part));
             }
             out.push('(');
             if *distinct {
@@ -116,6 +154,19 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
                 }
             }
             out.push(')');
+        }
+        ValueExpr::DurationBetween {
+            start,
+            end,
+            qualifier,
+            ..
+        } => {
+            out.push_str("DURATION_BETWEEN(");
+            fmt_expr(out, start)?;
+            out.push_str(", ");
+            fmt_expr(out, end)?;
+            out.push_str(") ");
+            out.push_str(fmt_temporal_duration_qualifier(*qualifier));
         }
         ValueExpr::Normalize { source, form, .. } => {
             out.push_str("NORMALIZE(");
@@ -156,6 +207,19 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
                 fmt_expr(out, item)?;
             }
             out.push(']');
+        }
+        ValueExpr::InListExpression {
+            operand,
+            list,
+            negated,
+            ..
+        } => {
+            fmt_expr(out, operand)?;
+            if *negated {
+                out.push_str(" NOT");
+            }
+            out.push_str(" IN ");
+            fmt_expr(out, list)?;
         }
         ValueExpr::AllDifferent { items, .. } => fmt_variadic(out, "ALL_DIFFERENT", items)?,
         ValueExpr::Same { items, .. } => fmt_variadic(out, "SAME", items)?,
@@ -207,6 +271,78 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
         } => cast::fmt_cast(out, value, target_type)?,
     }
     Ok(())
+}
+
+fn fmt_decimal_literal(
+    out: &mut String,
+    value: &rust_decimal::Decimal,
+    kind: DecimalLiteralKind,
+) -> fmt::Result {
+    match kind {
+        DecimalLiteralKind::CommonWithoutSuffix => {
+            write!(out, "{value}")?;
+            if !value.to_string().contains('.') {
+                out.push('.');
+            }
+        }
+        DecimalLiteralKind::CommonOrIntegerWithSuffix => write!(out, "{value}M")?,
+        DecimalLiteralKind::ScientificWithSuffix => write!(out, "{value}E0M")?,
+    }
+    Ok(())
+}
+
+fn fmt_float_literal(out: &mut String, value: f64, kind: FloatLiteralKind) -> fmt::Result {
+    match kind {
+        FloatLiteralKind::ScientificWithoutSuffix => write!(out, "{value:e}")?,
+        FloatLiteralKind::CommonOrIntegerWithFloatSuffix => write!(out, "{value}F")?,
+        FloatLiteralKind::CommonOrIntegerWithDoubleSuffix => write!(out, "{value}D")?,
+        FloatLiteralKind::ScientificWithFloatSuffix => write!(out, "{value:e}F")?,
+        FloatLiteralKind::ScientificWithDoubleSuffix => write!(out, "{value:e}D")?,
+    }
+    Ok(())
+}
+
+fn fmt_radix_integer(out: &mut String, value: i64, kind: IntegerLiteralKind) -> fmt::Result {
+    let sign = if value < 0 { "-" } else { "" };
+    let magnitude = if value < 0 {
+        -(value as i128)
+    } else {
+        value as i128
+    };
+    match kind {
+        IntegerLiteralKind::Hexadecimal => write!(out, "{sign}0x{magnitude:X}"),
+        IntegerLiteralKind::Octal => write!(out, "{sign}0o{magnitude:o}"),
+        IntegerLiteralKind::Binary => write!(out, "{sign}0b{magnitude:b}"),
+    }
+}
+
+fn fmt_temporal_duration_qualifier(qualifier: TemporalDurationQualifier) -> &'static str {
+    match qualifier {
+        TemporalDurationQualifier::YearToMonth => "YEAR TO MONTH",
+        TemporalDurationQualifier::DayToSecond => "DAY TO SECOND",
+    }
+}
+
+fn format_zoned_datetime(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.datetime(), value.offset())
+}
+
+fn format_zoned_time(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.time(), value.offset())
+}
+
+fn keyword_function_name(name: &crate::NonEmpty<selene_core::DbString>) -> Option<&'static str> {
+    if name.len() != 1 {
+        return None;
+    }
+    let segment = name.first().as_str();
+    if segment.eq_ignore_ascii_case("elements") {
+        Some("ELEMENTS")
+    } else if segment.eq_ignore_ascii_case("labels") {
+        Some("LABELS")
+    } else {
+        None
+    }
 }
 
 fn fmt_variadic(out: &mut String, name: &str, items: &[ValueExpr]) -> fmt::Result {

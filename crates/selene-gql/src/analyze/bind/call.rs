@@ -1,6 +1,6 @@
 //! Procedure-call bind handling.
 
-use selene_core::{IStr, intern_with_admission};
+use selene_core::{DbString, db_string};
 
 use super::{BindContext, expr};
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
     ValueExpr, YieldColumn,
     analyze::{
         binding::BindingDeclKind,
-        error::{AnalysisError, ExpectedType, TypeMismatchContext},
+        error::{AnalysisError, ConditionClause, ExpectedType, TypeMismatchContext},
         infer,
         types::AnalyzedType,
     },
@@ -37,7 +37,7 @@ pub(crate) fn lookup_metadata(
 /// Build the boxed name slice used by the error variants that name the
 /// offending procedure. Computed lazily at each error-return site so the
 /// happy path allocates nothing.
-fn procedure_name(call: &ProcedureCall) -> Box<[IStr]> {
+fn procedure_name(call: &ProcedureCall) -> Box<[DbString]> {
     call.name.clone().into_vec().into_boxed_slice()
 }
 
@@ -77,7 +77,7 @@ pub(crate) fn bind_procedure_call_with_metadata(
             return Err(AnalysisError::TypeMismatch {
                 context: TypeMismatchContext::ProcedureArgument {
                     procedure: procedure_name(call),
-                    parameter: parameter.name,
+                    parameter: parameter.name.clone(),
                     position,
                 },
                 expected: ExpectedType::Specific(parameter.ty.clone()),
@@ -97,27 +97,30 @@ pub(crate) fn bind_procedure_call_with_metadata(
         .map(|item| item.span)
     {
         for column in &metadata.output_schema.columns {
-            declare_output(ctx, column, column.name, star_span)?;
+            declare_output(ctx, column, column.name.clone(), star_span)?;
         }
     }
 
     for item in &call.yield_items {
-        if let YieldColumn::Named(column) = item.column {
+        if let YieldColumn::Named(column) = &item.column {
             let Some(output) = metadata
                 .output_schema
                 .columns
                 .iter()
-                .find(|candidate| candidate.name == column)
+                .find(|candidate| candidate.name == *column)
             else {
                 return Err(AnalysisError::UnknownYieldColumn {
                     procedure: procedure_name(call),
-                    column,
+                    column: column.clone(),
                     span: item.span,
                 });
             };
-            let name = item.alias.unwrap_or(column);
+            let name = item.alias.clone().unwrap_or_else(|| column.clone());
             declare_output(ctx, output, name, item.span)?;
         }
+    }
+    if let Some(filter) = &call.yield_filter {
+        expr::bind_condition(ctx, filter, ConditionClause::YieldWhere)?;
     }
     Ok(())
 }
@@ -155,14 +158,13 @@ fn default_expr(
         ProcedureDefaultValue::Null => Literal::Null(span),
         ProcedureDefaultValue::Integer(value) => Literal::Integer(value, span),
         ProcedureDefaultValue::String(value) => {
-            let interned = intern_with_admission(value)
-                .map(|(interned, _was_new)| interned)
-                .map_err(|_| AnalysisError::NotImplemented {
-                    message: "procedure default string exhausted the interner budget".to_owned(),
-                    span,
-                    hint: None,
-                })?;
-            Literal::String(interned, span)
+            let default_value = db_string(value).map_err(|_| AnalysisError::NotImplemented {
+                message: "procedure default string exceeds the maximum DB string byte length"
+                    .to_owned(),
+                span,
+                hint: None,
+            })?;
+            Literal::String(default_value, span)
         }
     };
     Ok(ValueExpr::Literal(literal))
@@ -171,7 +173,7 @@ fn default_expr(
 fn declare_output(
     ctx: &mut BindContext,
     column: &ProcedureOutputColumn,
-    name: IStr,
+    name: DbString,
     span: crate::SourceSpan,
 ) -> Result<(), AnalysisError> {
     ctx.declare_strict_typed(

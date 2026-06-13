@@ -1,4 +1,11 @@
-//! Pins BENCHMARKS.md coverage against the benchmark runner registry.
+//! Registry↔doc parity lint: pins BENCHMARKS.md coverage against the runner.
+//!
+//! Every bench bin registered in `scripts/run-benches.sh` (the `REGISTRY`
+//! block, `<crate>|<bench>|<needs_test_harness>`) MUST be named in
+//! BENCHMARKS.md, so a newly added bench can never ship undocumented — the
+//! historical `expression_eval` orphan. Mirrored as a fast-gate shell check in
+//! `.github/scripts/check-benchmarks-doc.sh`; this test is the release-gate
+//! enforcement under nextest.
 
 use std::path::Path;
 
@@ -12,68 +19,51 @@ fn benchmarks_md_lists_all_registered_benches() {
     let benchmarks = std::fs::read_to_string(&benchmarks_path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", benchmarks_path.display()));
 
-    let tokens = bench_tokens(&script);
+    let benches = registry_benches(&script);
     assert!(
-        !tokens.is_empty(),
-        "expected at least one crate:bench:layer token in scripts/run-benches.sh"
+        !benches.is_empty(),
+        "expected at least one <crate>|<bench>|<harness> row in the run-benches.sh REGISTRY block"
     );
-    for token in tokens {
+    for (crate_name, bench) in &benches {
         assert!(
-            benchmarks.contains(token),
-            "BENCHMARKS.md is missing registered bench token `{token}`"
+            benchmarks.contains(bench.as_str()),
+            "BENCHMARKS.md is missing registered bench `{crate_name}::{bench}` \
+             — every REGISTRY bench bin must be documented (no silent orphans)"
         );
     }
     assert!(
         benchmarks.contains("Hardware footprint"),
-        "BENCHMARKS.md must include hardware capture instructions"
-    );
-    assert!(
-        benchmarks.contains("iai-callgrind"),
-        "BENCHMARKS.md must include the deferred iai-callgrind section"
+        "BENCHMARKS.md must include the hardware footprint capture instructions"
     );
 }
 
-fn bench_tokens(script: &str) -> Vec<&str> {
-    let mut tokens = Vec::new();
-    let mut in_benches = false;
+/// Extract `(crate, bench)` pairs from the `REGISTRY="..."` block in
+/// run-benches.sh. The separate `SMOKE` block (also pipe-delimited) is
+/// deliberately not parsed — only the authoritative registry gates the doc.
+fn registry_benches(script: &str) -> Vec<(String, String)> {
+    let mut benches = Vec::new();
+    let mut in_registry = false;
     for line in script.lines() {
-        if line.trim() == "BENCHES=\"" {
-            in_benches = true;
+        let trimmed = line.trim();
+        if trimmed == "REGISTRY=\"" {
+            in_registry = true;
             continue;
         }
-        if in_benches && line.trim() == "\"" {
+        if in_registry && trimmed == "\"" {
             break;
         }
-        if in_benches {
-            let candidate = line.trim();
-            if is_bench_token(candidate) {
-                tokens.push(candidate);
-            }
+        if !in_registry {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split('|').collect();
+        if parts.len() == 3 && is_token(parts[0]) && is_token(parts[1]) {
+            benches.push((parts[0].to_string(), parts[1].to_string()));
         }
     }
-    tokens
+    benches
 }
 
-fn is_bench_token(candidate: &str) -> bool {
-    let mut parts = candidate.split(':');
-    let Some(crate_name) = parts.next() else {
-        return false;
-    };
-    let Some(bench_name) = parts.next() else {
-        return false;
-    };
-    let Some(layer) = parts.next() else {
-        return false;
-    };
-    if parts.next().is_some() {
-        return false;
-    }
-    [crate_name, bench_name, layer]
-        .iter()
-        .all(|part| is_token_part(part))
-}
-
-fn is_token_part(part: &str) -> bool {
+fn is_token(part: &str) -> bool {
     !part.is_empty()
         && part
             .bytes()

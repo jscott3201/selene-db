@@ -1,17 +1,20 @@
 //! Function, aggregate, subquery, and CASE builders.
 
 use pest::iterators::Pair;
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
-    ast::{BinaryOp, NormalForm, SourceSpan, TrimSpec, ValueExpr, util::NonEmpty},
+    ast::{
+        BinaryOp, NormalForm, SourceSpan, TemporalDurationQualifier, TrimSpec, ValueExpr,
+        util::NonEmpty,
+    },
     error::ParserError,
-    parser::budget::InternerBudget,
 };
 
 use super::{Rule, build_value_expr, first_child, literal};
 use crate::parser::builders::{
-    build_qualified_name, build_query_pipeline, pattern, span, unexpected_pair,
+    build_qualified_name, build_query_pipeline, db_string_from_owned, pattern, span,
+    unexpected_pair,
 };
 
 pub(super) enum PredicateKind {
@@ -19,16 +22,13 @@ pub(super) enum PredicateKind {
     Same,
 }
 
-pub(super) fn build_function_call(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_function_call(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let name_pair = children
         .next()
         .ok_or_else(|| ParserError::syntax("function call is missing name", source_span, None))?;
-    let name = build_qualified_name(name_pair, budget)?;
+    let name = build_qualified_name(name_pair)?;
     let mut args = Vec::new();
     for child in children {
         match child.as_rule() {
@@ -36,7 +36,7 @@ pub(super) fn build_function_call(
                 args = child
                     .into_inner()
                     .filter(|arg| arg.as_rule() == Rule::expr)
-                    .map(|arg| build_value_expr(arg, budget))
+                    .map(|arg| build_value_expr(arg))
                     .collect::<Result<Vec<_>, _>>()?;
             }
             _ => return Err(unexpected_pair(child, "unexpected function-call child")),
@@ -51,24 +51,172 @@ pub(super) fn build_function_call(
     })
 }
 
-pub(super) fn build_aggregate_expr(
+pub(super) fn build_elements_function(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+    build_keyword_function(pair, "elements")
+}
+
+pub(super) fn build_labels_function(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let arg = build_value_expr(first_child(pair)?)?;
+    Ok(ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![db_string_from_owned(
+            "labels".to_owned(),
+            source_span,
+            "keyword function name",
+        )?])
+        .expect("literal vector is non-empty"),
+        args: vec![arg],
+        star: false,
+        distinct: false,
+        span: source_span,
+    })
+}
+
+pub(super) fn build_path_constructor(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let elements = pair
+        .into_inner()
+        .filter(|child| child.as_rule() == Rule::expr)
+        .map(build_value_expr)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ValueExpr::PathConstructor {
+        elements,
+        span: source_span,
+    })
+}
+
+pub(super) fn build_current_datetime_function(
     pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let function_pair = first_child(pair)?;
+    let name = match function_pair.as_rule() {
+        Rule::current_date_function => "current_date",
+        Rule::current_time_function => "current_time",
+        Rule::current_timestamp_function => "current_timestamp",
+        Rule::local_timestamp_function => "local_datetime",
+        Rule::local_time_function => "local_time",
+        _ => {
+            return Err(unexpected_pair(
+                function_pair,
+                "unexpected current-datetime function",
+            ));
+        }
+    };
+    Ok(ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![db_string_from_owned(
+            name.to_owned(),
+            source_span,
+            "current-datetime function name",
+        )?])
+        .expect("literal vector is non-empty"),
+        args: Vec::new(),
+        star: false,
+        distinct: false,
+        span: source_span,
+    })
+}
+
+pub(super) fn build_duration_between_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut start = None;
+    let mut end = None;
+    let mut qualifier = TemporalDurationQualifier::DayToSecond;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::duration_between_kw => {}
+            Rule::expr if start.is_none() => start = Some(build_value_expr(child)?),
+            Rule::expr => end = Some(build_value_expr(child)?),
+            Rule::temporal_duration_qualifier => qualifier = build_duration_qualifier(child)?,
+            _ => return Err(unexpected_pair(child, "unexpected DURATION_BETWEEN child")),
+        }
+    }
+    let start = start.ok_or_else(|| {
+        ParserError::syntax(
+            "DURATION_BETWEEN is missing start expression",
+            source_span,
+            None,
+        )
+    })?;
+    let end = end.ok_or_else(|| {
+        ParserError::syntax(
+            "DURATION_BETWEEN is missing end expression",
+            source_span,
+            None,
+        )
+    })?;
+    Ok(ValueExpr::DurationBetween {
+        start: Box::new(start),
+        end: Box::new(end),
+        qualifier,
+        span: source_span,
+    })
+}
+
+fn build_duration_qualifier(
+    pair: Pair<'_, Rule>,
+) -> Result<TemporalDurationQualifier, ParserError> {
+    let child = first_child(pair)?;
+    match child.as_rule() {
+        Rule::year_to_month_qualifier => Ok(TemporalDurationQualifier::YearToMonth),
+        Rule::day_to_second_qualifier => Ok(TemporalDurationQualifier::DayToSecond),
+        _ => Err(unexpected_pair(
+            child,
+            "unexpected temporal duration qualifier",
+        )),
+    }
+}
+
+fn build_keyword_function(pair: Pair<'_, Rule>, name: &str) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut args = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::elements_synonym => {}
+            Rule::arg_list => {
+                args = child
+                    .into_inner()
+                    .filter(|arg| arg.as_rule() == Rule::expr)
+                    .map(|arg| build_value_expr(arg))
+                    .collect::<Result<Vec<_>, _>>()?;
+            }
+            _ => return Err(unexpected_pair(child, "unexpected keyword-function child")),
+        }
+    }
+    Ok(ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![db_string_from_owned(
+            name.to_owned(),
+            source_span,
+            "keyword function name",
+        )?])
+        .expect("literal vector is non-empty"),
+        args,
+        star: false,
+        distinct: false,
+        span: source_span,
+    })
+}
+
+pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut name = None;
     let mut distinct = false;
+    let mut quantifier = false;
     let mut star = false;
     let mut args = Vec::new();
 
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::aggregate_op | Rule::binary_aggregate_op => {
-                name = Some(intern_lower(child, budget)?)
+                name = Some(lowercase_db_string(child)?)
             }
-            Rule::distinct_kw => distinct = true,
+            Rule::distinct_kw => {
+                distinct = true;
+                quantifier = true;
+            }
+            Rule::all_kw => quantifier = true,
             Rule::star => star = true,
-            Rule::expr => args.push(build_value_expr(child, budget)?),
+            Rule::expr => args.push(build_value_expr(child)?),
             _ => return Err(unexpected_pair(child, "unexpected aggregate child")),
         }
     }
@@ -76,6 +224,7 @@ pub(super) fn build_aggregate_expr(
     let segment = name.ok_or_else(|| {
         ParserError::syntax("aggregate expression is missing name", source_span, None)
     })?;
+    validate_aggregate_shape(&segment, quantifier, star, args.len(), source_span)?;
     Ok(ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![segment]).expect("grammar guarantees >= 1: aggregate_op"),
         args,
@@ -85,16 +234,40 @@ pub(super) fn build_aggregate_expr(
     })
 }
 
-pub(super) fn build_normalize_expr(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+fn validate_aggregate_shape(
+    name: &DbString,
+    quantifier: bool,
+    star: bool,
+    arg_count: usize,
+    span: SourceSpan,
+) -> Result<(), ParserError> {
+    if star {
+        if name.as_str() == "count" && !quantifier {
+            return Ok(());
+        }
+        return Err(ParserError::syntax(
+            "only COUNT(*) may use aggregate asterisk syntax",
+            span,
+            None,
+        ));
+    }
+    if arg_count == 0 {
+        return Err(ParserError::syntax(
+            "aggregate function is missing value expression",
+            span,
+            None,
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn build_normalize_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut source = None;
     let mut form = None;
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::expr => source = Some(build_value_expr(child, budget)?),
+            Rule::expr => source = Some(build_value_expr(child)?),
             Rule::normal_form => form = Some(parse_normal_form(child.as_str())),
             _ => return Err(unexpected_pair(child, "unexpected NORMALIZE child")),
         }
@@ -108,20 +281,32 @@ pub(super) fn build_normalize_expr(
     })
 }
 
-pub(super) fn build_trim_expr(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_trim_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut spec = TrimSpec::Both;
+    let mut has_spec = false;
+    let mut has_character = false;
     let mut values = Vec::new();
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::trim_spec => spec = parse_trim_spec(child.as_str()),
-            Rule::expr => values.push(build_value_expr(child, budget)?),
-            Rule::trim_char => values.push(build_value_expr(first_child(child)?, budget)?),
+            Rule::trim_spec => {
+                has_spec = true;
+                spec = parse_trim_spec(child.as_str());
+            }
+            Rule::expr => values.push(build_value_expr(child)?),
+            Rule::trim_char => {
+                has_character = true;
+                values.push(build_value_expr(first_child(child)?)?);
+            }
             _ => return Err(unexpected_pair(child, "unexpected TRIM child")),
         }
+    }
+    if !has_spec && !has_character {
+        return Err(ParserError::syntax(
+            "TRIM with FROM requires a trim specification or trim character",
+            source_span,
+            None,
+        ));
     }
     let source = values.pop().ok_or_else(|| {
         ParserError::syntax("TRIM is missing source expression", source_span, None)
@@ -145,13 +330,12 @@ pub(super) fn build_trim_expr(
 pub(super) fn build_expr_list_predicate(
     pair: Pair<'_, Rule>,
     kind: PredicateKind,
-    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let items = pair
         .into_inner()
         .filter(|child| child.as_rule() == Rule::expr)
-        .map(|child| build_value_expr(child, budget))
+        .map(|child| build_value_expr(child))
         .collect::<Result<Vec<_>, _>>()?;
     match kind {
         PredicateKind::AllDifferent => Ok(ValueExpr::AllDifferent {
@@ -165,17 +349,14 @@ pub(super) fn build_expr_list_predicate(
     }
 }
 
-pub(super) fn build_property_exists(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_property_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut target = None;
     let mut key = None;
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::expr => target = Some(build_value_expr(child, budget)?),
-            Rule::string_lit => key = Some(literal::parse_string_pair(child, budget)?),
+            Rule::expr => target = Some(build_value_expr(child)?),
+            Rule::string_lit => key = Some(literal::parse_string_pair(child)?),
             _ => return Err(unexpected_pair(child, "unexpected PROPERTY_EXISTS child")),
         }
     }
@@ -190,10 +371,7 @@ pub(super) fn build_property_exists(
     })
 }
 
-pub(super) fn build_exists(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let negated = pair.as_str().to_ascii_uppercase().starts_with("NOT");
     let match_pair = pair
@@ -201,16 +379,13 @@ pub(super) fn build_exists(
         .find(|child| child.as_rule() == Rule::match_stmt)
         .ok_or_else(|| ParserError::syntax("EXISTS is missing MATCH pattern", source_span, None))?;
     Ok(ValueExpr::Exists {
-        pattern: Box::new(pattern::build_match_clause(match_pair, budget)?),
+        pattern: Box::new(pattern::build_match_clause(match_pair)?),
         negated,
         span: source_span,
     })
 }
 
-pub(super) fn build_count_subquery(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_count_subquery(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let match_pair = pair
         .into_inner()
@@ -219,15 +394,12 @@ pub(super) fn build_count_subquery(
             ParserError::syntax("COUNT subquery is missing MATCH pattern", source_span, None)
         })?;
     Ok(ValueExpr::CountSubquery {
-        pattern: Box::new(pattern::build_match_clause(match_pair, budget)?),
+        pattern: Box::new(pattern::build_match_clause(match_pair)?),
         span: source_span,
     })
 }
 
-pub(super) fn build_value_subquery(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_value_subquery(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let body_pair = pair
         .into_inner()
@@ -236,19 +408,16 @@ pub(super) fn build_value_subquery(
             ParserError::syntax("VALUE subquery is missing query body", source_span, None)
         })?;
     Ok(ValueExpr::ValueSubquery {
-        body: Box::new(build_query_pipeline(body_pair, budget)?),
+        body: Box::new(build_query_pipeline(body_pair)?),
         span: source_span,
     })
 }
 
-pub(super) fn build_case_expr(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_case_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     match pair.as_rule() {
-        Rule::simple_case => build_simple_case(pair, source_span, budget),
-        Rule::searched_case => build_searched_case(pair, source_span, budget),
+        Rule::simple_case => build_simple_case(pair, source_span),
+        Rule::searched_case => build_searched_case(pair, source_span),
         _ => Err(unexpected_pair(pair, "expected CASE expression")),
     }
 }
@@ -256,22 +425,21 @@ pub(super) fn build_case_expr(
 fn build_simple_case(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
-    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
-    let mut children = pair.into_inner();
-    let base = build_value_expr(
-        children.next().ok_or_else(|| {
+    let mut children = pair
+        .into_inner()
+        .filter(|child| child.as_rule() != Rule::case_kw);
+    let base =
+        build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("simple CASE is missing input", source_span, None)
-        })?,
-        budget,
-    )?;
+        })?)?;
     let mut branches = Vec::new();
     let mut else_branch = None;
 
     for child in children {
         match child.as_rule() {
-            Rule::simple_when => branches.push(simple_when_branch(child, &base, budget)?),
-            Rule::else_clause => else_branch = Some(Box::new(expr_from_child(child, budget)?)),
+            Rule::simple_when => branches.push(simple_when_branch(child, &base)?),
+            Rule::else_clause => else_branch = Some(Box::new(expr_from_child(child)?)),
             _ => return Err(unexpected_pair(child, "unexpected CASE child")),
         }
     }
@@ -286,22 +454,17 @@ fn build_simple_case(
 fn simple_when_branch(
     pair: Pair<'_, Rule>,
     base: &ValueExpr,
-    budget: &mut InternerBudget,
 ) -> Result<(ValueExpr, ValueExpr), ParserError> {
     let when_span = span(&pair);
     let mut children = pair.into_inner();
-    let when_value = build_value_expr(
-        children.next().ok_or_else(|| {
+    let when_value =
+        build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("CASE WHEN is missing expression", when_span, None)
-        })?,
-        budget,
-    )?;
-    let then_value = build_value_expr(
-        children.next().ok_or_else(|| {
+        })?)?;
+    let then_value =
+        build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("CASE THEN is missing expression", when_span, None)
-        })?,
-        budget,
-    )?;
+        })?)?;
     let condition_span = SourceSpan::merge(base.span(), when_value.span());
     Ok((
         ValueExpr::BinaryOp {
@@ -317,14 +480,14 @@ fn simple_when_branch(
 fn build_searched_case(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
-    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     let mut branches = Vec::new();
     let mut else_branch = None;
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::when_clause => branches.push(searched_when_branch(child, budget)?),
-            Rule::else_clause => else_branch = Some(Box::new(expr_from_child(child, budget)?)),
+            Rule::case_kw => {}
+            Rule::when_clause => branches.push(searched_when_branch(child)?),
+            Rule::else_clause => else_branch = Some(Box::new(expr_from_child(child)?)),
             _ => return Err(unexpected_pair(child, "unexpected CASE child")),
         }
     }
@@ -335,42 +498,33 @@ fn build_searched_case(
     })
 }
 
-fn searched_when_branch(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<(ValueExpr, ValueExpr), ParserError> {
+fn searched_when_branch(pair: Pair<'_, Rule>) -> Result<(ValueExpr, ValueExpr), ParserError> {
     let when_span = span(&pair);
     let mut children = pair.into_inner();
-    let condition = build_value_expr(
-        children.next().ok_or_else(|| {
+    let condition =
+        build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("CASE WHEN is missing condition", when_span, None)
-        })?,
-        budget,
-    )?;
+        })?)?;
     let value = build_value_expr(
         children
             .next()
             .ok_or_else(|| ParserError::syntax("CASE THEN is missing value", when_span, None))?,
-        budget,
     )?;
     Ok((condition, value))
 }
 
-fn expr_from_child(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+fn expr_from_child(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     pair.into_inner()
         .find(|child| child.as_rule() == Rule::expr)
         .ok_or_else(|| ParserError::syntax("clause is missing expression", source_span, None))
-        .and_then(|pair| build_value_expr(pair, budget))
+        .and_then(|pair| build_value_expr(pair))
 }
 
-fn intern_lower(pair: Pair<'_, Rule>, budget: &mut InternerBudget) -> Result<IStr, ParserError> {
+fn lowercase_db_string(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
     let source_span = span(&pair);
     let canonical = pair.as_str().to_ascii_lowercase();
-    budget.intern_str(&canonical, source_span, "aggregate name")
+    db_string_from_owned(canonical, source_span, "aggregate name")
 }
 
 fn parse_normal_form(value: &str) -> NormalForm {

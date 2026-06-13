@@ -18,15 +18,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use proptest::prelude::*;
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Record, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Record, Value, db_string};
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
-    WalConfig,
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig,
 };
 
-use selene_graph::{
-    CORE_PROVIDER_TAG, CommitBatching, ProviderTag, SeleneGraph, SharedGraph, TypedIndexKind,
-};
+use selene_graph::{CommitBatching, SeleneGraph, SharedGraph, TypedIndexKind};
 
 use funnel_harness::{Oracle, apply_op, arb_op, assert_snapshot_matches_oracle};
 
@@ -57,27 +54,19 @@ fn wal_backed_graph(dir: &Path, graph_id: GraphId, batching: CommitBatching) -> 
         .unwrap()
 }
 
-/// Persist a `CORE/*` snapshot of `shared`'s live state at `sequence`, mirroring
-/// the production CORE provider's section writes (same path the recover_tests
-/// `write_snapshot` helper exercises). Used by the snapshot-mid-stream arm so
-/// recovery must reconcile the snapshot base with the post-snapshot WAL tail.
+/// Persist a snapshot of `shared`'s live state at `sequence`.
+///
+/// Used by the snapshot-mid-stream arm so recovery must reconcile the snapshot
+/// base with the post-snapshot WAL tail.
 fn write_core_snapshot(dir: &Path, shared: &SharedGraph, sequence: u64) {
-    let provider = shared
-        .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
-        .expect("core provider registered");
-    let mut builder = SnapshotBuilder::new(SnapshotConfig {
-        dir: dir.to_path_buf(),
-        sequence,
-        compression: SectionCompression::None,
-        fsync: false,
-    });
-    for sub in provider.declared_sub_tags() {
-        let bytes = provider.write_section(*sub).unwrap();
-        builder
-            .add_section(CORE_PROVIDER_TAG, sub.0, bytes)
-            .unwrap();
-    }
-    let outcome = builder.finalize().unwrap();
+    let outcome = shared
+        .write_snapshot(SnapshotConfig {
+            dir: dir.to_path_buf(),
+            sequence,
+            compression: SectionCompression::None,
+            fsync: false,
+        })
+        .unwrap();
     assert_eq!(outcome.snapshot_seq, sequence);
 }
 
@@ -191,7 +180,7 @@ proptest! {
 //
 // `recovery_round_trips_arbitrary_op_sequence` (above) uses the shared harness's
 // `arb_value`, which only emits Int/Float/String/Null. This focused test carries
-// every heavy `Value` variant (all numeric widths, Decimal, ExternalString,
+// every heavy `Value` variant (all numeric widths, Decimal, String,
 // Bytes, temporals, Uuid, nested List/Record) on a dedicated NON-indexed property
 // key, commits a real `SchemaChange` (a property-index DDL — index admission for
 // the indexed I64 key stays type-clean), snapshots + WALs through the funnel,
@@ -200,22 +189,22 @@ proptest! {
 // ---------------------------------------------------------------------------
 
 /// The non-indexed property key the heavy values land on.
-fn payload_key() -> IStr {
-    intern("recover.heavy.payload").unwrap()
+fn payload_key() -> DbString {
+    db_string("recover.heavy.payload").unwrap()
 }
 
 /// The indexed I64 key (only ever set to `Value::Int`, so index admission stays
 /// type-clean while the schema change still exercises catalog DDL persistence).
-fn indexed_key() -> IStr {
-    intern("recover.heavy.age").unwrap()
+fn indexed_key() -> DbString {
+    db_string("recover.heavy.age").unwrap()
 }
 
-fn heavy_label() -> IStr {
-    intern("recover.heavy.node").unwrap()
+fn heavy_label() -> DbString {
+    db_string("recover.heavy.node").unwrap()
 }
 
-fn heavy_edge_label() -> IStr {
-    intern("recover.heavy.edge").unwrap()
+fn heavy_edge_label() -> DbString {
+    db_string("recover.heavy.edge").unwrap()
 }
 
 /// Generate one heavy `Value`. Bounded `prop_recursive` covers the nested
@@ -230,14 +219,14 @@ fn heavy_value() -> impl Strategy<Value = Value> {
         any::<f64>().prop_map(Value::Float),
         any::<f32>().prop_map(Value::Float32),
         any::<i64>().prop_map(|m| Value::Decimal(rust_decimal::Decimal::new(m, 2))),
-        "[a-z]{1,8}".prop_map(|s| Value::String(intern(&format!("recover.v.{s}")).unwrap())),
-        "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::ExternalString(std::sync::Arc::from(s.as_str()))),
+        "[a-z]{1,8}".prop_map(|s| Value::String(db_string(&format!("recover.v.{s}")).unwrap())),
+        "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::String(db_string(&s).unwrap())),
         proptest::collection::vec(any::<u8>(), 0..20)
             .prop_map(|b| Value::Bytes(std::sync::Arc::from(b))),
         Just(Value::Date("2024-06-15".parse().unwrap())),
         Just(Value::LocalDateTime("2024-06-15T12:30:00".parse().unwrap())),
         Just(Value::LocalTime("12:30:00".parse().unwrap())),
-        Just(Value::Duration("PT3H15M".parse().unwrap())),
+        Just(Value::Duration(Box::new("PT3H15M".parse().unwrap()))),
         any::<u128>().prop_map(|n| Value::Uuid(uuid::Uuid::from_u128(n))),
         Just(Value::Null),
     ];
@@ -248,7 +237,7 @@ fn heavy_value() -> impl Strategy<Value = Value> {
                 Value::Record(Box::new(Record::Open(
                     fields
                         .into_iter()
-                        .map(|(k, v)| (intern(&format!("recover.f.{k}")).unwrap(), v))
+                        .map(|(k, v)| (db_string(&format!("recover.f.{k}")).unwrap(), v))
                         .collect(),
                 )))
             }),
@@ -277,7 +266,7 @@ proptest! {
     /// node/edge creates carrying heavy-Value PropertyMaps through a WAL-backed
     /// funnel, drop, recover, and assert the recovered graph reproduces every
     /// alive id's exact content. Exercises the heavy `Value` postcard variants
-    /// (numeric widths, Decimal, ExternalString, Bytes, temporals, Uuid, nested
+    /// (numeric widths, Decimal, String, Bytes, temporals, Uuid, nested
     /// List/Record) end-to-end through WAL replay + index re-derivation — none of
     /// which the shared-harness `arb_value` (Int/Float/String/Null) reaches.
     #[test]

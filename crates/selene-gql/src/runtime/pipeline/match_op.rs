@@ -100,11 +100,11 @@ fn target_schema(input: &BindingTableSchema, pattern_plan: &PatternPlan) -> Bind
 }
 
 fn column_exists(schema: &BindingTableSchema, column: &BindingTableColumn) -> bool {
-    match (column.name, column.hidden) {
+    match (column.name.clone(), column.hidden) {
         (Some(name), _) => schema
             .columns
             .iter()
-            .any(|candidate| candidate.name == Some(name)),
+            .any(|candidate| candidate.name == Some(name.clone())),
         (None, Some(hidden)) => schema
             .columns
             .iter()

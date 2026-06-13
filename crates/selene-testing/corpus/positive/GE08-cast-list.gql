@@ -1,4 +1,0 @@
-// corpus: positive
-// feature: GE08
-// expects: parse-ok
-RETURN CAST([1, 2, 3] AS LIST<STRING>) AS l

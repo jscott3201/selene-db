@@ -1,6 +1,6 @@
 //! BRIEF-Item-4b CORE compaction tests.
 //!
-//! Bar ("would this catch the IStr admission race"): the suite drives a graph
+//! Bar ("would this catch the DbString admission race"): the suite drives a graph
 //! with a cascade-deleting node delete through `compact_core`, then walks every
 //! surviving external id through every read path (labels, properties,
 //! endpoints, adjacency, label index) asserting observational equivalence,
@@ -9,23 +9,26 @@
 
 use std::collections::HashSet;
 
-use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, db_string};
 
-use super::compact_core;
+use super::{
+    COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_BASIS_POINTS,
+    COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS, CompactionStats, compact_core,
+};
 use crate::error::GraphError;
 use crate::store::RowIndex;
 use crate::{AdjacencyEntry, CompactionReport, SeleneGraph, SharedGraph};
 
 fn prop(key: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(key).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
 }
 
 /// Sorted (neighbor, edge_id, label) projection of an adjacency entry, for
 /// order-independent equality across the row renumber.
-fn adjacency_summary(entry: &AdjacencyEntry) -> Vec<(NodeId, EdgeId, IStr)> {
-    let mut edges: Vec<(NodeId, EdgeId, IStr)> = entry
+fn adjacency_summary(entry: &AdjacencyEntry) -> Vec<(NodeId, EdgeId, DbString)> {
+    let mut edges: Vec<(NodeId, EdgeId, DbString)> = entry
         .iter()
-        .map(|edge| (edge.neighbor, edge.edge_id, edge.label))
+        .map(|edge| (edge.neighbor, edge.edge_id, edge.label.clone()))
         .collect();
     edges.sort_by_key(|(neighbor, edge_id, _)| (*neighbor, *edge_id));
     edges
@@ -35,20 +38,20 @@ fn adjacency_summary(entry: &AdjacencyEntry) -> Vec<(NodeId, EdgeId, IStr)> {
 /// cascade-deletes its incident edge (id 2). Surviving: nodes 1,3,4; edges 1,3.
 fn graph_with_a_deletion() -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.a").unwrap();
-    let lb = intern("cmp.b").unwrap();
-    let el = intern("cmp.e").unwrap();
+    let la = db_string("cmp.a").unwrap();
+    let lb = db_string("cmp.b").unwrap();
+    let el = db_string("cmp.e").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
         let n1 = m
-            .create_node(LabelSet::single(la), prop("name", Value::Int(1)))
+            .create_node(LabelSet::single(la.clone()), prop("name", Value::Int(1)))
             .unwrap();
         let n2 = m
             .create_node(LabelSet::single(lb), prop("name", Value::Int(2)))
             .unwrap();
         let n3 = m
-            .create_node(LabelSet::single(la), prop("name", Value::Int(3)))
+            .create_node(LabelSet::single(la.clone()), prop("name", Value::Int(3)))
             .unwrap();
         let n4 = m
             .create_node(LabelSet::single(la), prop("name", Value::Int(4)))
@@ -62,9 +65,10 @@ fn graph_with_a_deletion() -> SharedGraph {
                 NodeId::new(4)
             )
         );
-        m.create_edge(el, n1, n3, prop("w", Value::Int(10)))
+        m.create_edge(el.clone(), n1, n3, prop("w", Value::Int(10)))
             .unwrap(); // id 1 — survives
-        m.create_edge(el, n1, n2, PropertyMap::new()).unwrap(); // id 2 — cascade-deleted
+        m.create_edge(el.clone(), n1, n2, PropertyMap::new())
+            .unwrap(); // id 2 — cascade-deleted
         m.create_edge(el, n3, n4, PropertyMap::new()).unwrap(); // id 3 — survives
         m.delete_node(n2).unwrap();
     }
@@ -171,7 +175,7 @@ fn compaction_preserves_observable_reads() {
     }
 
     // The label index resolves the SAME external ids after the row renumber.
-    let la = intern("cmp.a").unwrap();
+    let la = db_string("cmp.a").unwrap();
     let external_with_label = |graph: &SeleneGraph| -> HashSet<NodeId> {
         graph
             .nodes_with_label(&la)
@@ -219,11 +223,11 @@ fn compacting_a_dense_graph_is_idempotent() {
     // A graph with no dead rows compacts to an observationally identical graph
     // (same ids, same dense rows) and reclaims nothing.
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.idem").unwrap();
+    let la = db_string("cmp.idem").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
-        m.create_node(LabelSet::single(la), PropertyMap::new())
+        m.create_node(LabelSet::single(la.clone()), PropertyMap::new())
             .unwrap();
         m.create_node(LabelSet::single(la), PropertyMap::new())
             .unwrap();
@@ -267,18 +271,65 @@ fn compaction_of_empty_graph_is_a_clean_noop() {
 }
 
 #[test]
+fn compaction_stats_reclaimable_ratio_uses_allocated_rows() {
+    let stats = CompactionStats {
+        allocated_nodes: 800,
+        live_nodes: 600,
+        reclaimable_nodes: 200,
+        allocated_edges: 200,
+        live_edges: 100,
+        reclaimable_edges: 100,
+    };
+
+    assert_eq!(stats.allocated_rows(), 1_000);
+    assert_eq!(stats.reclaimable_rows(), 300);
+    assert_eq!(stats.reclaimable_row_basis_points(), 3_000);
+}
+
+#[test]
+fn compaction_recommendation_requires_dead_row_floor_and_ratio() {
+    let below_floor = CompactionStats {
+        allocated_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS * 2,
+        live_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS + 1,
+        reclaimable_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS - 1,
+        ..CompactionStats::default()
+    };
+    let below_ratio = CompactionStats {
+        allocated_nodes: 100_000,
+        live_nodes: 100_000 - COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS,
+        reclaimable_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS,
+        ..CompactionStats::default()
+    };
+    let recommended = CompactionStats {
+        allocated_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS * 4,
+        live_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS * 3,
+        reclaimable_nodes: COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS,
+        ..CompactionStats::default()
+    };
+
+    assert_eq!(CompactionStats::default().reclaimable_row_basis_points(), 0);
+    assert!(!below_floor.compaction_recommended());
+    assert!(!below_ratio.compaction_recommended());
+    assert_eq!(
+        recommended.reclaimable_row_basis_points(),
+        COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_BASIS_POINTS
+    );
+    assert!(recommended.compaction_recommended());
+}
+
+#[test]
 fn compaction_of_an_all_deleted_graph_reclaims_everything() {
     // Every row dead: compaction reclaims all of them, the result is empty, and
     // the allocator high-water marks are still preserved so the deleted ids are
     // never reissued by a later create.
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.alldel").unwrap();
-    let el = intern("cmp.alldele").unwrap();
+    let la = db_string("cmp.alldel").unwrap();
+    let el = db_string("cmp.alldele").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
         let n1 = m
-            .create_node(LabelSet::single(la), PropertyMap::new())
+            .create_node(LabelSet::single(la.clone()), PropertyMap::new())
             .unwrap();
         let n2 = m
             .create_node(LabelSet::single(la), PropertyMap::new())
@@ -320,13 +371,13 @@ fn aborted_tx_leaves_no_hole_so_store_stays_dense() {
     // land at rows 0 and 1 with NO gap. The burned id is still NotFound, the
     // high-water is still preserved, and compaction has nothing to reclaim.
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("cmp.hole").unwrap();
+    let la = db_string("cmp.hole").unwrap();
 
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
         let n1 = m
-            .create_node(LabelSet::single(la), PropertyMap::new())
+            .create_node(LabelSet::single(la.clone()), PropertyMap::new())
             .unwrap();
         assert_eq!(n1, NodeId::new(1));
     }
@@ -337,7 +388,7 @@ fn aborted_tx_leaves_no_hole_so_store_stays_dense() {
         let mut txn = shared.begin_write();
         let mut m = txn.mutator();
         let n2 = m
-            .create_node(LabelSet::single(la), PropertyMap::new())
+            .create_node(LabelSet::single(la.clone()), PropertyMap::new())
             .unwrap();
         assert_eq!(n2, NodeId::new(2));
         // txn dropped here, uncommitted.
@@ -412,7 +463,7 @@ fn republished_compacted_graph_allocates_without_reuse() {
         let id = {
             let mut m = txn.mutator();
             m.create_node(
-                LabelSet::single(intern("cmp.a").unwrap()),
+                LabelSet::single(db_string("cmp.a").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap()
@@ -458,10 +509,10 @@ fn graph_with_one_live_node() -> SeleneGraph {
     graph
         .node_store
         .labels
-        .push(LabelSet::single(intern("cmp.live").unwrap()));
+        .push(LabelSet::single(db_string("cmp.live").unwrap()));
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.row_to_id.push(NodeId::new(1));
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
     graph
         .node_id_to_row
         .insert(NodeId::new(1), RowIndex::new(0));
@@ -489,12 +540,15 @@ fn compaction_rejects_edge_with_dead_endpoint() {
     // Alive edge (row 0) from the live node (1) to a node id (99) that is NOT in
     // the alive set: the edge "survives compaction but its endpoint does not".
     let mut graph = graph_with_one_live_node();
-    graph.edge_store.label.push(intern("cmp.dangling").unwrap());
+    graph
+        .edge_store
+        .label
+        .push(db_string("cmp.dangling").unwrap());
     graph.edge_store.source.push(NodeId::new(1));
     graph.edge_store.target.push(NodeId::new(99)); // dead endpoint
     graph.edge_store.properties.push(PropertyMap::new());
     graph.edge_store.row_to_id.push(EdgeId::new(1));
-    graph.edge_store.alive.insert(0);
+    graph.edge_store.alive_mut().insert(0);
     graph
         .edge_id_to_row
         .insert(EdgeId::new(1), RowIndex::new(0));
@@ -517,10 +571,10 @@ fn compaction_rejects_alive_node_row_with_no_external_id() {
     graph
         .node_store
         .labels
-        .push(LabelSet::single(intern("cmp.noid").unwrap()));
+        .push(LabelSet::single(db_string("cmp.noid").unwrap()));
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.row_to_id.push(NodeId::TOMBSTONE); // alive but no id
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
 
     let GraphError::Inconsistent { reason } = expect_compact_inconsistent(&graph) else {
         unreachable!("helper returns only Inconsistent");
@@ -540,12 +594,12 @@ fn compaction_rejects_alive_edge_row_with_no_external_id() {
     graph
         .edge_store
         .label
-        .push(intern("cmp.noid.edge").unwrap());
+        .push(db_string("cmp.noid.edge").unwrap());
     graph.edge_store.source.push(NodeId::new(1));
     graph.edge_store.target.push(NodeId::new(1));
     graph.edge_store.properties.push(PropertyMap::new());
     graph.edge_store.row_to_id.push(EdgeId::TOMBSTONE); // alive but no id
-    graph.edge_store.alive.insert(0);
+    graph.edge_store.alive_mut().insert(0);
 
     let GraphError::Inconsistent { reason } = expect_compact_inconsistent(&graph) else {
         unreachable!("helper returns only Inconsistent");

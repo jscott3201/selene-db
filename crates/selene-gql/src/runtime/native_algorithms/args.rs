@@ -7,7 +7,7 @@
 //! contract. Any drift here silently changes a procedure's accepted arguments,
 //! so the edge-case tests are ported verbatim alongside them.
 
-use selene_core::{IStr, NodeId, Value, intern_with_admission};
+use selene_core::{DbString, NodeId, Value};
 
 use super::error::invalid_argument;
 use crate::ProcedureError;
@@ -34,7 +34,6 @@ pub(super) fn required_string(
 ) -> Result<String, ProcedureError> {
     match &args[index] {
         Value::String(value) => Ok(value.as_str().to_owned()),
-        Value::ExternalString(value) => Ok(value.to_string()),
         other => Err(invalid_argument(format!(
             "{procedure} expected {name} to be STRING, got {other:?}"
         ))),
@@ -55,36 +54,34 @@ pub(super) fn required_node_ref(
     }
 }
 
-pub(super) fn nullable_istr(
+pub(super) fn nullable_db_string(
     procedure: &'static str,
     args: &[Value],
     index: usize,
     name: &'static str,
-) -> Result<Option<IStr>, ProcedureError> {
+) -> Result<Option<DbString>, ProcedureError> {
     match &args[index] {
         Value::Null => Ok(None),
-        Value::String(value) => Ok(Some(*value)),
-        Value::ExternalString(value) => Ok(Some(intern_label(procedure, name, value)?)),
+        Value::String(value) => Ok(Some(value.clone())),
         other => Err(invalid_argument(format!(
             "{procedure} expected {name} to be STRING or NULL, got {other:?}"
         ))),
     }
 }
 
-pub(super) fn nullable_istr_list(
+pub(super) fn nullable_db_string_list(
     procedure: &'static str,
     args: &[Value],
     index: usize,
     name: &'static str,
-) -> Result<Vec<IStr>, ProcedureError> {
+) -> Result<Vec<DbString>, ProcedureError> {
     match &args[index] {
         Value::Null => Ok(Vec::new()),
         Value::List(values) => values
             .iter()
             .enumerate()
             .map(|(item_index, value)| match value {
-                Value::String(value) => Ok(*value),
-                Value::ExternalString(value) => intern_label(procedure, name, value),
+                Value::String(value) => Ok(value.clone()),
                 other => Err(invalid_argument(format!(
                     "{procedure} expected {name}[{item_index}] to be STRING, got {other:?}"
                 ))),
@@ -178,18 +175,4 @@ pub(super) fn required_nonnegative_usize(
             "{procedure}: expected {name} to be INTEGER, got {other:?}"
         ))),
     }
-}
-
-fn intern_label(
-    procedure: &'static str,
-    name: &'static str,
-    value: &str,
-) -> Result<IStr, ProcedureError> {
-    intern_with_admission(value)
-        .map(|(istr, _was_new)| istr)
-        .map_err(|_error| {
-            invalid_argument(format!(
-                "{procedure} could not intern {name} value {value:?}"
-            ))
-        })
 }

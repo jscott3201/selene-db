@@ -1,7 +1,7 @@
 //! Commit-path maintenance for built-in composite node property indexes.
 
 use rustc_hash::FxHashMap;
-use selene_core::{IStr, LabelSet, PropertyMap, Value};
+use selene_core::{DbString, LabelSet, PropertyMap, Value};
 use smallvec::SmallVec;
 
 use crate::composite_typed_index::CompositeIndexValueError;
@@ -9,7 +9,8 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::{CompositePropertyIndexEntry, composite_property_key};
 use crate::{CompositeTypedIndex, TypedIndexKind};
 
-type CompositeIndexMap = FxHashMap<(IStr, SmallVec<[IStr; 4]>), CompositePropertyIndexEntry>;
+type CompositeIndexMap =
+    FxHashMap<(DbString, SmallVec<[DbString; 4]>), CompositePropertyIndexEntry>;
 
 pub(crate) fn apply_node_create(
     indexes: &mut CompositeIndexMap,
@@ -63,10 +64,10 @@ pub(crate) fn apply_node_update(
             continue;
         }
         if let Some(values) = old_values {
-            remove_commit(*label, entry, &values, row)?;
+            remove_commit(label.clone(), entry, &values, row)?;
         }
         if let Some(values) = new_values {
-            insert_commit(*label, entry, &values, row)?;
+            insert_commit(label.clone(), entry, &values, row)?;
         }
     }
     Ok(())
@@ -75,8 +76,8 @@ pub(crate) fn apply_node_update(
 /// Build a composite property index strictly.
 pub(crate) fn build_composite_property_index(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    properties: SmallVec<[IStr; 4]>,
+    label: DbString,
+    properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
 ) -> GraphResult<CompositeTypedIndex> {
     build_composite_property_index_inner(graph, label, properties, kinds, BuildPolicy::Strict)
@@ -85,8 +86,8 @@ pub(crate) fn build_composite_property_index(
 /// Build a composite property index leniently.
 pub(crate) fn build_composite_property_index_lenient(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    properties: SmallVec<[IStr; 4]>,
+    label: DbString,
+    properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
 ) -> GraphResult<CompositeTypedIndex> {
     build_composite_property_index_inner(graph, label, properties, kinds, BuildPolicy::Lenient)
@@ -101,18 +102,22 @@ pub(crate) fn rebuild_composite_property_indexes(
         .iter()
         .map(|((label, _), entry)| {
             (
-                *label,
+                label.clone(),
                 entry.declared_properties.clone(),
                 entry.kinds(),
-                entry.name,
+                entry.name.clone(),
             )
         })
         .collect();
     graph.composite_property_index.clear();
     for (label, properties, kinds, name) in registrations {
         let key = composite_property_key(&properties);
-        let index =
-            build_composite_property_index_lenient(graph, label, properties.clone(), kinds)?;
+        let index = build_composite_property_index_lenient(
+            graph,
+            label.clone(),
+            properties.clone(),
+            kinds,
+        )?;
         graph.composite_property_index.insert(
             (label, key),
             CompositePropertyIndexEntry::new(index, properties, name),
@@ -129,8 +134,8 @@ enum BuildPolicy {
 
 fn build_composite_property_index_inner(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    properties: SmallVec<[IStr; 4]>,
+    label: DbString,
+    properties: SmallVec<[DbString; 4]>,
     kinds: SmallVec<[TypedIndexKind; 4]>,
     policy: BuildPolicy,
 ) -> GraphResult<CompositeTypedIndex> {
@@ -159,13 +164,12 @@ fn build_composite_property_index_inner(
         };
         match index.insert(&values, row) {
             Ok(()) => {}
-            Err(err) => match (&err, policy) {
-                (CompositeIndexValueError::ComponentAdmissionFailed { .. }, _)
-                | (_, BuildPolicy::Strict) => {
-                    return Err(index_rejection(label, &properties, err));
+            Err(err) => match policy {
+                BuildPolicy::Strict => {
+                    return Err(index_rejection(label.clone(), &properties, err));
                 }
-                (_, BuildPolicy::Lenient) => {
-                    warn_rejected("rebuild", label, &properties, row, &err);
+                BuildPolicy::Lenient => {
+                    warn_rejected("rebuild", label.clone(), &properties, row, &err);
                 }
             },
         }
@@ -176,15 +180,15 @@ fn build_composite_property_index_inner(
 fn indexes_for_labels<'a>(
     indexes: &'a mut CompositeIndexMap,
     labels: &'a LabelSet,
-) -> impl Iterator<Item = (IStr, &'a mut CompositePropertyIndexEntry)> {
+) -> impl Iterator<Item = (DbString, &'a mut CompositePropertyIndexEntry)> {
     indexes
         .iter_mut()
-        .filter_map(|((label, _), entry)| labels.contains(label).then_some((*label, entry)))
+        .filter_map(|((label, _), entry)| labels.contains(label).then_some((label.clone(), entry)))
 }
 
 fn indexable_values<'a>(
     props: &'a PropertyMap,
-    properties: &[IStr],
+    properties: &[DbString],
 ) -> Option<SmallVec<[&'a Value; 4]>> {
     properties
         .iter()
@@ -207,7 +211,7 @@ fn values_share_key(
 }
 
 fn insert_commit(
-    label: IStr,
+    label: DbString,
     entry: &mut CompositePropertyIndexEntry,
     values: &[&Value],
     row: u32,
@@ -219,7 +223,7 @@ fn insert_commit(
 }
 
 fn remove_commit(
-    label: IStr,
+    label: DbString,
     entry: &mut CompositePropertyIndexEntry,
     values: &[&Value],
     row: u32,
@@ -231,24 +235,18 @@ fn remove_commit(
 }
 
 /// Commit-path branching for [`CompositeIndexValueError`]: parallel to the
-/// single-key helper in [`crate::property_index`]. Only
-/// `ComponentAdmissionFailed` promotes to a hard
-/// [`GraphError::IndexAdmissionExhausted`]; `Component` (kind mismatch)
-/// AND `ArityMismatch` retain the pre-BRIEF-153 commit-path semantics of
+/// single-key helper in [`crate::property_index`]. `Component` (kind
+/// mismatch) AND `ArityMismatch` retain the commit-path semantics of
 /// `warn_rejected` lenient skip. Build paths handle `ArityMismatch`
-/// separately via [`index_rejection`] under the strict policy (BRIEF-153
-/// fix-cycle R1).
+/// separately via [`index_rejection`] under the strict policy.
 fn demote_or_promote(
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     row: u32,
     op: &'static str,
     err: CompositeIndexValueError,
 ) -> GraphResult<()> {
     match err {
-        CompositeIndexValueError::ComponentAdmissionFailed { .. } => {
-            Err(index_rejection(label, properties, err))
-        }
         CompositeIndexValueError::Component { .. }
         | CompositeIndexValueError::ArityMismatch { .. } => {
             warn_rejected(op, label, properties, row, &err);
@@ -257,7 +255,11 @@ fn demote_or_promote(
     }
 }
 
-fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueError) -> GraphError {
+fn index_rejection(
+    label: DbString,
+    properties: &[DbString],
+    err: CompositeIndexValueError,
+) -> GraphError {
     match err {
         CompositeIndexValueError::ArityMismatch { expected, observed } => {
             GraphError::Inconsistent {
@@ -271,37 +273,21 @@ fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueErr
             expected_kind,
             observed,
         } => GraphError::IndexValueRejected {
-            label,
             property: properties
                 .get(index)
-                .copied()
-                .unwrap_or_else(|| properties.first().copied().unwrap_or(label)),
+                .cloned()
+                .unwrap_or_else(|| properties.first().cloned().unwrap_or_else(|| label.clone())),
+            label,
             expected_kind,
             observed,
-        },
-        // BRIEF-153: IStr-pool admission failure surfaces as the dedicated
-        // hard-error variant so the underlying CoreError chain (count, max)
-        // reaches the caller — `IndexValueRejected.observed` has no slot
-        // for it.
-        CompositeIndexValueError::ComponentAdmissionFailed {
-            index,
-            expected_kind: _,
-            reason,
-        } => GraphError::IndexAdmissionExhausted {
-            label,
-            property: properties
-                .get(index)
-                .copied()
-                .unwrap_or_else(|| properties.first().copied().unwrap_or(label)),
-            source: reason,
         },
     }
 }
 
 fn warn_rejected(
     op: &'static str,
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     row: u32,
     err: &CompositeIndexValueError,
 ) {

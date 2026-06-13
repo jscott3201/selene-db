@@ -25,10 +25,10 @@ fn mutation_ops(plan: &ExecutionPlan) -> Vec<&MutationOp> {
         .collect()
 }
 
-fn column_names(columns: &[BindingTableColumn]) -> Vec<&'static str> {
+fn column_names(columns: &[BindingTableColumn]) -> Vec<&str> {
     columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str()))
         .collect()
 }
 
@@ -110,13 +110,13 @@ fn set_remove_and_delete_lower_to_mutation_ops() {
             MutationOp::SetProperty { .. } => "SetProperty",
             MutationOp::SetLabel { .. } => "SetLabel",
             MutationOp::RemoveProperty { .. } => "RemoveProperty",
-            MutationOp::DeleteTarget { .. } => "DeleteTarget",
+            MutationOp::DeleteTargets { .. } => "DeleteTargets",
             other => panic!("unexpected op {other:?}"),
         })
         .collect::<Vec<_>>();
     assert_eq!(
         names,
-        ["SetProperty", "SetLabel", "RemoveProperty", "DeleteTarget"]
+        ["SetProperty", "SetLabel", "RemoveProperty", "DeleteTargets"]
     );
 }
 
@@ -135,10 +135,22 @@ fn property_merge_emits_one_set_property_per_key() {
 fn detach_delete_edge_binding_preserves_mode_and_element() {
     let plan = plan_one("MATCH (a)-[e]->(b) DETACH DELETE e");
     let ops = mutation_ops(&plan);
-    let MutationOp::DeleteTarget { mode, .. } = ops[0] else {
-        panic!("expected delete target");
+    let MutationOp::DeleteTargets { mode, targets, .. } = ops[0] else {
+        panic!("expected delete targets");
     };
     assert_eq!(*mode, selene_gql::DeleteMode::Detach);
+    assert_eq!(targets.len(), 1);
+}
+
+#[test]
+fn delete_item_list_lowers_to_one_set_oriented_op() {
+    let plan = plan_one("MATCH (a)-[e]->(b) DELETE a, e");
+    let ops = mutation_ops(&plan);
+    let MutationOp::DeleteTargets { targets, mode, .. } = ops[0] else {
+        panic!("expected delete targets");
+    };
+    assert_eq!(*mode, selene_gql::DeleteMode::Bare);
+    assert_eq!(targets.len(), 2);
 }
 
 #[test]

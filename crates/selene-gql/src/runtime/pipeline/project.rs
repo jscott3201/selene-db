@@ -37,7 +37,7 @@ pub(super) fn schema_for_items(items: &[ProjectExpr]) -> BindingTableSchema {
         columns: items
             .iter()
             .map(|item| BindingTableColumn {
-                name: item.alias,
+                name: item.alias.clone(),
                 hidden: None,
                 ty: item.ty.clone(),
             })

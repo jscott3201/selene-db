@@ -11,7 +11,7 @@ use selene_algorithms::{AlgorithmsError, GraphProjection, ProjectionConfig};
 use selene_core::Value;
 use selene_graph::SeleneGraph;
 
-use super::args::{expect_arity, nullable_istr, nullable_istr_list, required_string};
+use super::args::{expect_arity, nullable_db_string, nullable_db_string_list, required_string};
 use super::error::algorithm_error;
 use super::meta::{output, parameter};
 use super::state::AlgorithmCatalogs;
@@ -73,13 +73,13 @@ pub(super) fn build(
     expect_arity(BUILD_PROC, args, 4)?;
     let config = ProjectionConfig {
         name: required_string(BUILD_PROC, args, 0, "name")?,
-        node_labels: nullable_istr_list(BUILD_PROC, args, 1, "node_labels")?,
-        edge_labels: nullable_istr_list(BUILD_PROC, args, 2, "edge_labels")?,
-        weight_property: nullable_istr(BUILD_PROC, args, 3, "weight_property")?,
+        node_labels: nullable_db_string_list(BUILD_PROC, args, 1, "node_labels")?,
+        edge_labels: nullable_db_string_list(BUILD_PROC, args, 2, "edge_labels")?,
+        weight_property: nullable_db_string(BUILD_PROC, args, 3, "weight_property")?,
     };
     catalogs.with_catalog(snapshot.graph_id(), |catalog| {
         catalog
-            .project(snapshot, &config, None)
+            .project(snapshot, &config)
             .map_err(algorithm_error)?;
         Ok(unit_result())
     })
@@ -164,7 +164,12 @@ impl From<&GraphProjection> for ProjectionSnapshot {
 
 fn projection_snapshot_row(snapshot: ProjectionSnapshot) -> Vec<Value> {
     vec![
-        Value::ExternalString(snapshot.name),
+        // The projection name was already a validated catalog identifier, so
+        // it is within the IL013 byte cap and constructs infallibly.
+        Value::String(
+            selene_core::db_string(snapshot.name.as_ref())
+                .expect("projection name within IL013 cap"),
+        ),
         Value::Uint(snapshot.generation),
         Value::Uint(snapshot.node_count),
         Value::Uint(snapshot.edge_count),

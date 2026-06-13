@@ -1,9 +1,10 @@
 //! DDL lowering.
 
-use selene_core::{IStr, intern_with_admission};
+use selene_core::{DbString, db_string};
 
 use crate::{
-    DdlStatement, GqlType, TypePropertyConstraint, TypePropertyDef,
+    DdlStatement, GqlStatus, GqlType, KeyLabelSet, SourceSpan, TypePropertyConstraint,
+    TypePropertyDef,
     analyze::{AnalyzedStatement, AnalyzedType},
     plan::{
         BindingTableColumn, BindingTableSchema, CatalogOp, ExecutionPlan, ImplDefinedCaps,
@@ -17,6 +18,7 @@ use super::expr;
 pub(crate) fn lower_ddl(
     statement: &DdlStatement,
     analyzed: &AnalyzedStatement,
+    caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
     let op = match statement {
         DdlStatement::CreateGraph {
@@ -25,7 +27,7 @@ pub(crate) fn lower_ddl(
             if_not_exists,
             span,
         } => CatalogOp::CreateGraph {
-            name: *name,
+            name: name.clone(),
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
             span: *span,
@@ -35,12 +37,13 @@ pub(crate) fn lower_ddl(
             if_exists,
             span,
         } => CatalogOp::DropGraph {
-            name: *name,
+            name: name.clone(),
             if_exists: *if_exists,
             span: *span,
         },
         DdlStatement::CreateNodeType {
             label,
+            key_label_set,
             or_replace,
             if_not_exists,
             extends,
@@ -48,16 +51,18 @@ pub(crate) fn lower_ddl(
             validation_mode,
             span,
         } => CatalogOp::CreateNodeType {
-            label: *label,
+            label: label.clone(),
+            key_labels: resolve_key_labels(key_label_set.as_ref(), Element::Node, caps, *span)?,
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
-            extends: *extends,
+            extends: extends.clone(),
             properties: lower_property_defs(properties, analyzed)?,
             validation_mode: *validation_mode,
             span: *span,
         },
         DdlStatement::CreateEdgeType {
             label,
+            key_label_set,
             or_replace,
             if_not_exists,
             extends,
@@ -66,10 +71,11 @@ pub(crate) fn lower_ddl(
             validation_mode,
             span,
         } => CatalogOp::CreateEdgeType {
-            label: *label,
+            label: label.clone(),
+            key_labels: resolve_key_labels(key_label_set.as_ref(), Element::Edge, caps, *span)?,
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
-            extends: *extends,
+            extends: extends.clone(),
             endpoints: endpoints.clone(),
             properties: lower_property_defs(properties, analyzed)?,
             validation_mode: *validation_mode,
@@ -81,7 +87,7 @@ pub(crate) fn lower_ddl(
             behavior,
             span,
         } => CatalogOp::DropNodeType {
-            label: *label,
+            label: label.clone(),
             if_exists: *if_exists,
             behavior: *behavior,
             span: *span,
@@ -92,17 +98,17 @@ pub(crate) fn lower_ddl(
             behavior,
             span,
         } => CatalogOp::DropEdgeType {
-            label: *label,
+            label: label.clone(),
             if_exists: *if_exists,
             behavior: *behavior,
             span: *span,
         },
         DdlStatement::TruncateNodeType { label, span } => CatalogOp::TruncateNodeType {
-            label: *label,
+            label: label.clone(),
             span: *span,
         },
         DdlStatement::TruncateEdgeType { label, span } => CatalogOp::TruncateEdgeType {
-            label: *label,
+            label: label.clone(),
             span: *span,
         },
         DdlStatement::CreateIndex {
@@ -112,8 +118,8 @@ pub(crate) fn lower_ddl(
             if_not_exists,
             span,
         } => CatalogOp::CreateIndex {
-            name: *name,
-            label: *label,
+            name: name.clone(),
+            label: label.clone(),
             properties: properties.clone(),
             if_not_exists: *if_not_exists,
             span: *span,
@@ -123,7 +129,7 @@ pub(crate) fn lower_ddl(
             if_exists,
             span,
         } => CatalogOp::DropIndex {
-            name: *name,
+            name: name.clone(),
             if_exists: *if_exists,
             span: *span,
         },
@@ -147,6 +153,111 @@ pub(crate) fn lower_ddl(
     })
 }
 
+/// Node-vs-edge element-type discriminator for IL003 key-label-set diagnostics.
+#[derive(Clone, Copy)]
+enum Element {
+    Node,
+    Edge,
+}
+
+impl Element {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Edge => "edge",
+        }
+    }
+
+    /// IL003 key-label-set cardinality bounds for this element kind.
+    const fn bounds(self, caps: &ImplDefinedCaps) -> (u32, u32) {
+        match self {
+            Self::Node => (caps.node_key_label_set_min, caps.node_key_label_set_max),
+            Self::Edge => (caps.edge_key_label_set_min, caps.edge_key_label_set_max),
+        }
+    }
+
+    /// Spec-defined GQLSTATUS for a below-minimum cardinality (§18.2 SR10 /
+    /// §18.3 SR11).
+    const fn below_minimum_status(self) -> GqlStatus {
+        match self {
+            Self::Node => GqlStatus::NODE_TYPE_KEY_LABELS_BELOW_MINIMUM,
+            Self::Edge => GqlStatus::EDGE_TYPE_KEY_LABELS_BELOW_MINIMUM,
+        }
+    }
+
+    /// Spec-defined GQLSTATUS for an above-maximum cardinality (§18.2 SR11 /
+    /// §18.3 SR12).
+    const fn above_maximum_status(self) -> GqlStatus {
+        match self {
+            Self::Node => GqlStatus::NODE_TYPE_KEY_LABELS_EXCEED_MAXIMUM,
+            Self::Edge => GqlStatus::EDGE_TYPE_KEY_LABELS_EXCEED_MAXIMUM,
+        }
+    }
+}
+
+/// Resolve an explicit `<...type key label set>` (Feature GG21) into the catalog
+/// key-label-set vector, enforcing the IL003 cardinality cap (ISO/IEC
+/// 39075:2024 §18.2 SR10/SR11 for nodes, §18.3 SR11/SR12 for edges) and
+/// rejecting the deferred separate-implied-label-set shape.
+///
+/// Returns an empty vector for the bare `:Name` element-type-name form
+/// (`key_label_set == None`): the executor then keys on the singleton
+/// `LabelSet::single(label)` (the implied key label set per §18.2 SR5c), exactly
+/// as before GG21.
+fn resolve_key_labels(
+    key_label_set: Option<&KeyLabelSet>,
+    element: Element,
+    caps: &ImplDefinedCaps,
+    fallback_span: SourceSpan,
+) -> Result<Vec<DbString>, PlannerError> {
+    let Some(key_label_set) = key_label_set else {
+        return Ok(Vec::new());
+    };
+    let span = if key_label_set.span == SourceSpan::default() {
+        fallback_span
+    } else {
+        key_label_set.span
+    };
+
+    // The separate-implied-label-set shape (`:Key => :Implied`) needs the
+    // §18.2 SR7/SR8 union + containment identification, which is deferred.
+    if !key_label_set.implied_labels.is_empty() {
+        return Err(PlannerError::SeparateImpliedLabelSet {
+            element: element.name(),
+            span,
+        });
+    }
+
+    // IL003: the effective key-label-set cardinality must fall in [min, max].
+    // selene-db's default min == max == 1 (singleton), so the empty bare
+    // `<implies>` (cardinality 0) and any multi-label phrase (cardinality > 1)
+    // are rejected here with the spec-defined GQLSTATUS.
+    let cardinality = key_label_set.labels.len();
+    let (min, max) = element.bounds(caps);
+    if cardinality < min as usize {
+        return Err(PlannerError::KeyLabelSetCardinality {
+            element: element.name(),
+            actual: cardinality,
+            min,
+            max,
+            status: element.below_minimum_status(),
+            span,
+        });
+    }
+    if cardinality > max as usize {
+        return Err(PlannerError::KeyLabelSetCardinality {
+            element: element.name(),
+            actual: cardinality,
+            min,
+            max,
+            status: element.above_maximum_status(),
+            span,
+        });
+    }
+
+    Ok(key_label_set.labels.clone())
+}
+
 fn lower_property_defs(
     defs: &[TypePropertyDef],
     analyzed: &AnalyzedStatement,
@@ -159,7 +270,7 @@ fn lower_property_defs(
                 .map(|constraint| lower_property_constraint(constraint, analyzed))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(PlannedTypePropertyDef {
-                name: def.name,
+                name: def.name.clone(),
                 gql_type: def.gql_type.clone(),
                 constraints,
                 span: def.span,
@@ -181,35 +292,35 @@ fn lower_property_constraint(
         TypePropertyConstraint::Immutable(span) => PlannedTypePropertyConstraint::Immutable(*span),
         TypePropertyConstraint::Unique(span) => PlannedTypePropertyConstraint::Unique(*span),
         TypePropertyConstraint::Indexed { name, span } => PlannedTypePropertyConstraint::Indexed {
-            name: *name,
+            name: name.clone(),
             span: *span,
         },
     })
 }
 
 fn ddl_output_schema(statement: &DdlStatement) -> Result<BindingTableSchema, PlannerError> {
-    ddl_output_schema_with(statement, intern_with_admission)
+    ddl_output_schema_with(statement, db_string)
 }
 
 fn ddl_output_schema_with<F, E>(
     statement: &DdlStatement,
-    intern: F,
+    db_string: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<(IStr, bool), E>,
+    F: FnMut(&str) -> Result<DbString, E>,
 {
     match statement {
         DdlStatement::ShowNodeTypes(span) => show_output_schema(
             *span,
             "static SHOW NODE TYPES column 'label'",
             "static SHOW NODE TYPES column 'definition'",
-            intern,
+            db_string,
         ),
         DdlStatement::ShowEdgeTypes(span) => show_output_schema(
             *span,
             "static SHOW EDGE TYPES column 'label'",
             "static SHOW EDGE TYPES column 'definition'",
-            intern,
+            db_string,
         ),
         DdlStatement::ShowIndexes(span) => named_output_schema(
             *span,
@@ -219,7 +330,7 @@ where
                 ("property", "static SHOW INDEXES column 'property'"),
                 ("kind", "static SHOW INDEXES column 'kind'"),
             ],
-            intern,
+            db_string,
         ),
         DdlStatement::ShowProcedures(span) => named_output_schema(
             *span,
@@ -234,7 +345,7 @@ where
                     "static SHOW PROCEDURES column 'since_version'",
                 ),
             ],
-            intern,
+            db_string,
         ),
         _ => Ok(BindingTableSchema {
             columns: Vec::new(),
@@ -245,15 +356,15 @@ where
 fn named_output_schema<F, E>(
     span: crate::SourceSpan,
     names: &[(&'static str, &'static str)],
-    mut intern: F,
+    mut db_string: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<(IStr, bool), E>,
+    F: FnMut(&str) -> Result<DbString, E>,
 {
     let mut columns = Vec::with_capacity(names.len());
     for (name, detail) in names {
         columns.push(BindingTableColumn {
-            name: Some(show_column_name(name, detail, span, &mut intern)?),
+            name: Some(show_column_name(name, detail, span, &mut db_string)?),
             hidden: None,
             ty: AnalyzedType::Resolved(GqlType::String),
         });
@@ -265,15 +376,20 @@ fn show_output_schema<F, E>(
     span: crate::SourceSpan,
     label_detail: &'static str,
     definition_detail: &'static str,
-    mut intern: F,
+    mut db_string: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<(IStr, bool), E>,
+    F: FnMut(&str) -> Result<DbString, E>,
 {
     Ok(BindingTableSchema {
         columns: vec![
             BindingTableColumn {
-                name: Some(show_column_name("label", label_detail, span, &mut intern)?),
+                name: Some(show_column_name(
+                    "label",
+                    label_detail,
+                    span,
+                    &mut db_string,
+                )?),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::String),
             },
@@ -282,7 +398,7 @@ where
                     "definition",
                     definition_detail,
                     span,
-                    &mut intern,
+                    &mut db_string,
                 )?),
                 hidden: None,
                 ty: AnalyzedType::DYNAMIC,
@@ -296,13 +412,11 @@ fn show_column_name<F, E>(
     detail: &'static str,
     span: crate::SourceSpan,
     admit_name: &mut F,
-) -> Result<IStr, PlannerError>
+) -> Result<DbString, PlannerError>
 where
-    F: FnMut(&str) -> Result<(IStr, bool), E>,
+    F: FnMut(&str) -> Result<DbString, E>,
 {
-    admit_name(value)
-        .map(|(name, _was_new)| name)
-        .map_err(|_err| PlannerError::InternerCapExhausted { detail, span })
+    admit_name(value).map_err(|_err| PlannerError::StaticStringConstructionFailed { detail, span })
 }
 
 #[cfg(test)]
@@ -311,16 +425,16 @@ mod defensive_tests {
     use crate::SourceSpan;
 
     #[test]
-    fn ddl_output_schema_reports_interner_cap_for_static_show_column() {
+    fn ddl_output_schema_reports_string_construction_failure_for_static_show_column() {
         let err = ddl_output_schema_with(
             &DdlStatement::ShowNodeTypes(SourceSpan::new(4, 15)),
             |_value| Err(()),
         )
-        .expect_err("static SHOW column intern failure is recoverable");
+        .expect_err("static SHOW column db_string failure is recoverable");
 
         assert!(matches!(
             err,
-            PlannerError::InternerCapExhausted {
+            PlannerError::StaticStringConstructionFailed {
                 detail: "static SHOW NODE TYPES column 'label'",
                 span,
             } if span == SourceSpan::new(4, 15)

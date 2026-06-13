@@ -1,7 +1,7 @@
 //! Shared optimizer walkers.
 
 use crate::{
-    IsCheckKind, PatternElement, StatementCategory, ValueExpr,
+    PatternElement, StatementCategory, ValueExpr,
     plan::{
         BindingDef, BindingTableSchema, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate,
         FilterPredicateKind, JoinTree, MutationOp, OrderKey, PipelineOp,
@@ -183,6 +183,11 @@ pub(crate) fn walk_expand_nodes(
             let changed_child = walk_expand_nodes(child, visit);
             visit(edge) | changed_child
         }
+        // MatchModeFilter wraps the whole graph pattern (the join-tree root for
+        // DIFFERENT EDGES). Descend so edge-filter pushdown still reaches the
+        // Expand nodes beneath it; the pattern-wide filter runs afterward on the
+        // surviving rows, so narrowing edge candidates first is safe.
+        JoinTree::MatchModeFilter { child, .. } => walk_expand_nodes(child, visit),
         JoinTree::HashJoin { left, right, .. } => {
             walk_expand_nodes(left, visit) | walk_expand_nodes(right, visit)
         }
@@ -202,7 +207,8 @@ fn recurse_join_tree_subplans(
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
         | JoinTree::PathSearch { child, .. }
-        | JoinTree::PathModeFilter { child, .. } => recurse_join_tree_subplans(child, visit),
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => recurse_join_tree_subplans(child, visit),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             recurse_join_tree_subplans(left, visit) | recurse_join_tree_subplans(right, visit)
         }
@@ -264,9 +270,9 @@ fn walk_join_tree_exprs(
                 | walk_predicates(&mut edge.final_property_predicates, bindings, visit);
             changed_child | changed_edge
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
-            walk_join_tree_exprs(child, bindings, visit)
-        }
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => walk_join_tree_exprs(child, bindings, visit),
         JoinTree::HashJoin { left, right, .. } => {
             walk_join_tree_exprs(left, bindings, visit)
                 | walk_join_tree_exprs(right, bindings, visit)
@@ -363,7 +369,7 @@ fn walk_mutation_exprs(
         MutationOp::SetLabel { .. }
         | MutationOp::RemoveProperty { .. }
         | MutationOp::RemoveLabel { .. }
-        | MutationOp::DeleteTarget { .. } => false,
+        | MutationOp::DeleteTargets { .. } => false,
     }
 }
 
@@ -454,79 +460,21 @@ fn sync_binding_refs(
 }
 
 fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> bool) -> bool {
-    let changed_children = match expr {
-        ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => false,
-        ValueExpr::PropertyAccess { target, .. } => walk_expr(target, visit),
-        ValueExpr::ListAccess { target, index, .. } => {
-            walk_expr(target, visit) | walk_expr(index, visit)
-        }
-        ValueExpr::ListLiteral { items, .. } => items
-            .iter_mut()
-            .fold(false, |changed, item| walk_expr(item, visit) | changed),
-        ValueExpr::RecordLiteral { fields, .. } => {
-            fields.iter_mut().fold(false, |changed, (_, value)| {
-                walk_expr(value, visit) | changed
-            })
-        }
-        ValueExpr::BinaryOp { lhs, rhs, .. } => walk_expr(lhs, visit) | walk_expr(rhs, visit),
-        ValueExpr::UnaryOp { operand, .. } => walk_expr(operand, visit),
-        ValueExpr::FunctionCall { args, .. } => args
-            .iter_mut()
-            .fold(false, |changed, arg| walk_expr(arg, visit) | changed),
-        ValueExpr::Normalize { source, .. } => walk_expr(source, visit),
-        ValueExpr::Trim {
-            character, source, ..
-        } => {
-            let character_changed = character
-                .as_mut()
-                .is_some_and(|character| walk_expr(character, visit));
-            character_changed | walk_expr(source, visit)
-        }
-        ValueExpr::IsCheck { operand, kind, .. } => {
-            walk_expr(operand, visit) | walk_is_check(kind, visit)
-        }
-        ValueExpr::InList { operand, list, .. } => {
-            walk_expr(operand, visit)
-                | list
-                    .iter_mut()
-                    .fold(false, |changed, item| walk_expr(item, visit) | changed)
-        }
-        ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => items
-            .iter_mut()
-            .fold(false, |changed, item| walk_expr(item, visit) | changed),
-        ValueExpr::PropertyExists { target, .. } => walk_expr(target, visit),
-        ValueExpr::Case {
-            branches,
-            else_branch,
-            ..
-        } => {
-            let branch_changed = branches.iter_mut().fold(false, |changed, (when, then)| {
-                walk_expr(when, visit) | walk_expr(then, visit) | changed
-            });
-            let else_changed = else_branch
-                .as_mut()
-                .is_some_and(|value| walk_expr(value, visit));
-            branch_changed | else_changed
-        }
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-            walk_match_clause(pattern, visit)
-        }
-        ValueExpr::ValueSubquery { .. } => false,
-        ValueExpr::Cast { value, .. } => walk_expr(value, visit),
-    };
-    visit(expr) | changed_children
-}
-
-fn walk_is_check(kind: &mut IsCheckKind, visit: &mut impl FnMut(&mut ValueExpr) -> bool) -> bool {
-    match kind {
-        IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => walk_expr(value, visit),
-        IsCheckKind::Null
-        | IsCheckKind::Directed
-        | IsCheckKind::Labeled(_)
-        | IsCheckKind::TruthValue(_)
-        | IsCheckKind::Typed(_)
-        | IsCheckKind::Normalized(_) => false,
+    // Recurse into direct `ValueExpr` children (post-order), tracking whether
+    // any descendant was rewritten. `for_each_child_mut` yields the `IS
+    // [SOURCE|DESTINATION] OF` operand as a child, so the edge-binding walk that
+    // the optimizer relies on is preserved. Subquery bodies are not `ValueExpr`
+    // children: `Exists`/`CountSubquery` descend into their `MatchClause`
+    // explicitly, and `ValueSubquery` is intentionally not descended (matching
+    // the prior `=> false` arm) — its body is optimized as its own plan.
+    let mut changed_children = false;
+    expr.for_each_child_mut(&mut |child| {
+        changed_children |= walk_expr(child, visit);
+    });
+    if let ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } = expr {
+        changed_children |= walk_match_clause(pattern, visit);
     }
+    visit(expr) | changed_children
 }
 
 fn walk_match_clause(
@@ -586,7 +534,7 @@ fn walk_pattern_element(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::IStr;
+    use selene_core::DbString;
 
     use crate::{
         BinaryOp, Literal, SourceSpan,
@@ -594,10 +542,8 @@ mod tests {
         plan::{BindingElement, FilterPredicateKind},
     };
 
-    fn istr(value: &str) -> IStr {
-        selene_core::intern_with_admission(value)
-            .expect("test string interns")
-            .0
+    fn db_string(value: &str) -> DbString {
+        selene_core::db_string(value).expect("test string fits DB string cap")
     }
 
     fn span() -> SourceSpan {
@@ -607,7 +553,7 @@ mod tests {
     fn binding(raw: u32, name: &str) -> BindingDef {
         BindingDef {
             binding: BindingId::new(raw),
-            name: istr(name),
+            name: db_string(name),
             element: BindingElement::Node,
             ty: AnalyzedType::DYNAMIC,
             label_predicate: None,
@@ -617,7 +563,7 @@ mod tests {
 
     fn variable(name: &str) -> ValueExpr {
         ValueExpr::Variable {
-            name: istr(name),
+            name: db_string(name),
             span: span(),
         }
     }
@@ -686,7 +632,7 @@ mod tests {
             binding_refs: vec![n],
             kind: FilterPredicateKind::PropertyEquals {
                 binding: Some(n),
-                key: istr("age"),
+                key: db_string("age"),
             },
             index_consumed: false,
             span: span(),
@@ -711,7 +657,7 @@ mod tests {
         let n = bindings[0].binding;
         let m = bindings[1].binding;
         let mut init = PropertyInit {
-            key: istr("age"),
+            key: db_string("age"),
             value: dynamic_project(binary_refs("n", "m"), vec![n, m]),
             span: span(),
         };

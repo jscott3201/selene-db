@@ -10,8 +10,8 @@ use crate::{
         MutationWriteSet, WriteKind, WriteSetEntry,
     },
     plan::{
-        BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps, InsertEndpointRef,
-        InsertSiteId, MutationOp, PipelineOp, PlannerError, PropertyInit,
+        BindingTableColumn, BindingTableSchema, DeleteTargetPlan, ExecutionPlan, ImplDefinedCaps,
+        InsertEndpointRef, InsertSiteId, MutationOp, PipelineOp, PlannerError, PropertyInit,
     },
 };
 
@@ -21,6 +21,7 @@ use super::{expr, match_clause, sequential_match, visible_after_pattern};
 pub(crate) fn lower_mutation(
     pipeline: &MutationPipeline,
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<ExecutionPlan, PlannerError> {
     let write_set = analyzed
         .write_set
@@ -30,7 +31,7 @@ pub(crate) fn lower_mutation(
         })?;
 
     let (mut pattern_plan, prefix_filters, mutation_start) =
-        lower_read_prefix(&pipeline.statements, analyzed)?;
+        lower_read_prefix(&pipeline.statements, analyzed, max_quantifier)?;
     let mut visible = visible_after_pattern(pattern_plan.as_ref());
     let mut ops = Vec::new();
     if let Some(pattern) = pattern_plan.as_mut() {
@@ -44,7 +45,7 @@ pub(crate) fn lower_mutation(
     for statement in &pipeline.statements[mutation_start..] {
         match statement {
             MutationStatement::Match(clause) => {
-                sequential_match::lower(clause, analyzed, &mut ops, &mut visible)?;
+                sequential_match::lower(clause, analyzed, &mut ops, &mut visible, max_quantifier)?;
             }
             MutationStatement::Filter(value) => {
                 ops.push(PipelineOp::Filter(expr::filter_predicate(value, analyzed)?));
@@ -65,26 +66,30 @@ pub(crate) fn lower_mutation(
                 lower_remove_items(items, write_set, &mut cursor, analyzed, &visible, &mut ops)?;
             }
             MutationStatement::Delete(statement) => {
+                let mut targets = Vec::with_capacity(statement.items.len());
                 for _ in &statement.items {
                     let entry = consume_entry(write_set, &mut cursor, statement.span)?;
                     let WriteKind::DeleteTarget {
                         target,
                         element,
-                        mode,
+                        mode: _,
                     } = entry.kind
                     else {
                         return Err(mismatch(entry.span));
                     };
                     let target_column_index =
                         mutation_target_column_index(target, element, analyzed, &visible)?;
-                    ops.push(PipelineOp::Mutation(MutationOp::DeleteTarget {
+                    targets.push(DeleteTargetPlan {
                         target,
                         element,
                         target_column_index,
-                        mode,
-                        span: entry.span,
-                    }));
+                    });
                 }
+                ops.push(PipelineOp::Mutation(MutationOp::DeleteTargets {
+                    targets,
+                    mode: statement.mode,
+                    span: statement.span,
+                }));
             }
         }
     }
@@ -117,9 +122,13 @@ pub(crate) fn lower_mutation(
     })
 }
 
+mod helpers;
+use helpers::*;
+
 fn lower_read_prefix(
     statements: &[MutationStatement],
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<
     (
         Option<crate::plan::PatternPlan>,
@@ -137,12 +146,13 @@ fn lower_read_prefix(
                 filters.push(expr::filter_predicate(value, analyzed)?);
             }
             _ => {
-                let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed)?;
+                let pattern_plan =
+                    match_clause::lower_match_prefix(&matches, analyzed, max_quantifier)?;
                 return Ok((pattern_plan, filters, index));
             }
         }
     }
-    let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed)?;
+    let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed, max_quantifier)?;
     Ok((pattern_plan, filters, statements.len()))
 }
 
@@ -337,7 +347,7 @@ fn lower_set_items(
                     target,
                     element,
                     target_column_index,
-                    key: *key,
+                    key: key.clone(),
                     value: expr::project_expr(value, None, analyzed)?,
                     span: entry.span,
                 }));
@@ -365,7 +375,7 @@ fn lower_set_items(
                         target,
                         element,
                         target_column_index,
-                        key: *key,
+                        key: key.clone(),
                         value: expr::project_expr(value, None, analyzed)?,
                         span: entry.span,
                     }));
@@ -390,7 +400,7 @@ fn lower_set_items(
                     target,
                     element,
                     target_column_index,
-                    label: *label,
+                    label: label.clone(),
                     span: entry.span,
                 }));
             }
@@ -428,7 +438,7 @@ fn lower_remove_items(
                     target,
                     element,
                     target_column_index,
-                    key: *key,
+                    key: key.clone(),
                     span: entry.span,
                 }));
             }
@@ -451,7 +461,7 @@ fn lower_remove_items(
                     target,
                     element,
                     target_column_index,
-                    label: *label,
+                    label: label.clone(),
                     span: entry.span,
                 }));
             }
@@ -461,219 +471,19 @@ fn lower_remove_items(
 }
 
 fn property_inits(
-    properties: &[(selene_core::IStr, ValueExpr)],
+    properties: &[(selene_core::DbString, ValueExpr)],
     analyzed: &AnalyzedStatement,
 ) -> Result<Vec<PropertyInit>, PlannerError> {
     properties
         .iter()
         .map(|(key, value)| {
             Ok(PropertyInit {
-                key: *key,
+                key: key.clone(),
                 value: expr::project_expr(value, None, analyzed)?,
                 span: value.span(),
             })
         })
         .collect()
-}
-
-fn classify_insert_element(
-    element: &PatternElement,
-    analyzed: &AnalyzedStatement,
-) -> Result<InsertSiteEmission, PlannerError> {
-    let (name, span, expected) = match element {
-        PatternElement::Node(node) => (node.binding, node.span, BindingDeclKind::InsertNode),
-        PatternElement::Edge(edge) => (edge.binding, edge.span, BindingDeclKind::InsertEdge),
-    };
-    let Some(name) = name else {
-        return Ok(InsertSiteEmission::Emitted);
-    };
-    if fresh_insert_binding(name, span, expected, analyzed).is_some() {
-        return Ok(InsertSiteEmission::Emitted);
-    }
-    if pattern_reuse_binding(name, span, analyzed).is_some() {
-        return Ok(InsertSiteEmission::Skipped);
-    }
-    Err(mismatch(span))
-}
-
-fn endpoint_ref(
-    element: &PatternElement,
-    index: usize,
-    sites: &HashMap<usize, InsertSiteId>,
-    analyzed: &AnalyzedStatement,
-    visible: &[BindingTableColumn],
-    span: SourceSpan,
-) -> Result<InsertEndpointRef, PlannerError> {
-    let PatternElement::Node(node) = element else {
-        return Err(mismatch(span));
-    };
-    if let Some(binding) = named_node_endpoint(node, analyzed)? {
-        return Ok(InsertEndpointRef::Binding {
-            binding,
-            column_index: binding_column_index(binding, analyzed, visible)?,
-        });
-    }
-    sites
-        .get(&index)
-        .copied()
-        .map(InsertEndpointRef::InsertedNode)
-        .ok_or_else(|| mismatch(span))
-}
-
-fn named_node_endpoint(
-    node: &NodePattern,
-    analyzed: &AnalyzedStatement,
-) -> Result<Option<BindingId>, PlannerError> {
-    let Some(name) = node.binding else {
-        return Ok(None);
-    };
-    if let Some(binding) = pattern_reuse_binding(name, node.span, analyzed) {
-        return Ok(Some(binding));
-    }
-    if let Some(binding) =
-        fresh_insert_binding(name, node.span, BindingDeclKind::InsertNode, analyzed)
-    {
-        return Ok(Some(binding));
-    }
-    Err(mismatch(node.span))
-}
-
-fn fresh_insert_binding(
-    name: selene_core::IStr,
-    span: SourceSpan,
-    kind: BindingDeclKind,
-    analyzed: &AnalyzedStatement,
-) -> Option<BindingId> {
-    analyzed
-        .scopes
-        .declarations()
-        .iter()
-        .find(|decl| decl.name() == name && decl.span() == span && decl.kind() == kind)
-        .map(|decl| decl.id())
-}
-
-fn pattern_reuse_binding(
-    name: selene_core::IStr,
-    span: SourceSpan,
-    analyzed: &AnalyzedStatement,
-) -> Option<BindingId> {
-    analyzed
-        .references
-        .iter()
-        .find(|reference| {
-            reference.name == name
-                && reference.span == span
-                && reference.kind == BindingUseKind::PatternReuse
-        })
-        .map(|reference| reference.binding)
-}
-
-fn visible_column_for_binding(
-    binding: BindingId,
-    analyzed: &AnalyzedStatement,
-) -> Result<BindingTableColumn, PlannerError> {
-    let declaration =
-        analyzed
-            .scopes
-            .declaration(binding)
-            .ok_or(PlannerError::BindingResolutionLost {
-                binding,
-                span: analyzed.span,
-            })?;
-    Ok(BindingTableColumn {
-        name: Some(declaration.name()),
-        hidden: None,
-        ty: declaration.ty().clone(),
-    })
-}
-
-fn push_insert_output(
-    binding: Option<BindingId>,
-    analyzed: &AnalyzedStatement,
-    visible: &mut Vec<BindingTableColumn>,
-) -> Result<(Option<u32>, Option<BindingTableColumn>), PlannerError> {
-    let Some(binding) = binding else {
-        return Ok((None, None));
-    };
-    let index = u32::try_from(visible.len()).expect("binding table column count fits u32");
-    let column = visible_column_for_binding(binding, analyzed)?;
-    visible.push(column.clone());
-    Ok((Some(index), Some(column)))
-}
-
-fn binding_column_index(
-    binding: BindingId,
-    analyzed: &AnalyzedStatement,
-    visible: &[BindingTableColumn],
-) -> Result<u32, PlannerError> {
-    let declaration =
-        analyzed
-            .scopes
-            .declaration(binding)
-            .ok_or(PlannerError::BindingResolutionLost {
-                binding,
-                span: analyzed.span,
-            })?;
-    let index = visible
-        .iter()
-        .position(|column| column.name == Some(declaration.name()))
-        .ok_or(PlannerError::BindingResolutionLost {
-            binding,
-            span: declaration.span(),
-        })?;
-    Ok(u32::try_from(index).expect("binding table column count fits u32"))
-}
-
-fn mutation_target_column_index(
-    binding: BindingId,
-    element: ElementKind,
-    analyzed: &AnalyzedStatement,
-    visible: &[BindingTableColumn],
-) -> Result<u32, PlannerError> {
-    match element {
-        ElementKind::Node | ElementKind::Edge => binding_column_index(binding, analyzed, visible),
-        ElementKind::Path | ElementKind::Alias => Ok(0),
-    }
-}
-
-fn consume_entry(
-    write_set: &MutationWriteSet,
-    cursor: &mut usize,
-    expected_span: SourceSpan,
-) -> Result<WriteSetEntry, PlannerError> {
-    let entry = write_set
-        .entries
-        .get(*cursor)
-        .cloned()
-        .ok_or_else(|| mismatch(expected_span))?;
-    if entry.span != expected_span {
-        return Err(mismatch(entry.span));
-    }
-    *cursor += 1;
-    Ok(entry)
-}
-
-fn mismatch(span: SourceSpan) -> PlannerError {
-    PlannerError::WriteSetPatternMismatch { span }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum InsertSiteEmission {
-    Emitted,
-    Skipped,
-}
-
-#[derive(Default)]
-struct InsertSiteIdAlloc {
-    next: u32,
-}
-
-impl InsertSiteIdAlloc {
-    fn alloc(&mut self) -> InsertSiteId {
-        let id = InsertSiteId::new(self.next);
-        self.next += 1;
-        id
-    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,0 @@
-// corpus: positive
-// feature: GE08
-// expects: parse-ok
-RETURN CAST(CAST(1 AS STRING) AS INTEGER) AS n

@@ -15,11 +15,20 @@
 //! `SNAPSHOT_VERSION_MINOR` 0 -> 1 (selene-persist); pre-STEP-9 (minor 0)
 //! snapshots are cleanly rejected — a clean break, not a dual decoder
 //! (deferred to 4c per the D14 amendment).
+//! `CORE/VIDX` later added optional IVF construction config beside HNSW config,
+//! which bumped `SNAPSHOT_VERSION_MINOR` 2 -> 3 for the same clean-break reason.
+//! The typed-descriptor stream then added `decimal_type` /
+//! `character_string_type` / `byte_string_type` fields to the `CORE/GTYP`
+//! `PropertyTypeDef` archive (plus descriptor variants on
+//! `PropertyElementType` / `RecordFieldType`), which bumped
+//! `SNAPSHOT_VERSION_MINOR` 3 -> 4 and the section-internal `GTYP_VERSION`
+//! 1 -> 2.
 //!
-//! `CORE/SCMA` schema rows are stored in memory by [`IStr`] handle order via
-//! [`SchemaKey::Ord`]. Their wire order is canonical lexicographic order by
-//! `(label.as_str(), property.as_str())`; decode re-sorts to the receiver's
-//! local handle order before duplicate validation.
+//! `CORE/SCMA` schema rows are stored in memory in `(label, property)` order
+//! via [`SchemaKey`]'s derived `Ord`, which is lexicographic through [`DbString`].
+//! Their wire order is the same canonical lexicographic order by
+//! `(label.as_str(), property.as_str())`; decode re-sorts defensively into that
+//! canonical order before duplicate validation.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -31,12 +40,15 @@ use rkyv::{
     vec::{ArchivedVec, VecResolver},
     with::{ArchiveWith, DeserializeWith, SerializeWith},
 };
-use selene_core::{EdgeId, IStr, LabelSet, NodeId, PropertyMap};
+use selene_core::{
+    DbString, EdgeId, HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, PropertyMap,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::core_provider::{inconsistent, invalid_payload};
 use crate::graph::{GraphMeta, SeleneGraph};
 use crate::typed_index::TypedIndexKind;
+use crate::vector_index::{MAX_IVF_TARGET_CENTROIDS, VectorIndexKind};
 
 mod codec;
 mod gtyp;
@@ -126,7 +138,7 @@ pub struct NodeRow {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EdgeRow {
     /// Edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Source node ID.
     pub source: NodeId,
     /// Target node ID.
@@ -165,7 +177,7 @@ impl NodeArchiveRow {
 
 #[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
 struct EdgeArchiveRow {
-    label: IStr,
+    label: DbString,
     source: NodeId,
     target: NodeId,
     #[rkyv(with = ArcBytes)]
@@ -198,12 +210,10 @@ impl EdgeArchiveRow {
 /// Identity for an entry in the core schema section.
 ///
 /// In v1.0, schema entries map one-to-one with built-in property index
-/// registrations. In-memory order follows local [`IStr`] handles; the
-/// `CORE/SCMA` wire order is lexicographic by `label.as_str()` and
-/// `property.as_str()` for cross-process stability.
+/// registrations. In-memory and `CORE/SCMA` wire order are lexicographic by
+/// `label.as_str()` and `property.as_str()` for cross-process stability.
 #[derive(
     Clone,
-    Copy,
     Debug,
     Deserialize,
     Eq,
@@ -217,15 +227,14 @@ impl EdgeArchiveRow {
 )]
 pub struct SchemaKey {
     /// Node label the registration applies to.
-    pub label: IStr,
+    pub label: DbString,
     /// Property the registration applies to.
-    pub property: IStr,
+    pub property: DbString,
 }
 
 /// Persisted shape of a single schema entry.
 #[derive(
     Clone,
-    Copy,
     Debug,
     Deserialize,
     Eq,
@@ -239,7 +248,7 @@ pub struct SchemaEntry {
     /// Indexable value kind declared at registration time.
     pub kind: TypedIndexKind,
     /// Optional explicit catalog name for the property index.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
 }
 
 /// `CORE/SCMA` section format version byte.
@@ -266,9 +275,9 @@ pub(super) const SCMA_VERSION: u8 = 2;
 )]
 pub struct CompositeSchemaKey {
     /// Node label the composite registration applies to.
-    pub label: IStr,
+    pub label: DbString,
     /// Properties in declaration order.
-    pub properties: Vec<IStr>,
+    pub properties: Vec<DbString>,
 }
 
 /// Persisted shape of a composite-property-index registration.
@@ -287,7 +296,91 @@ pub struct CompositeSchemaEntry {
     /// Indexable value kinds in declaration order.
     pub kinds: Vec<TypedIndexKind>,
     /// Optional explicit catalog name for the composite property index.
-    pub name: Option<IStr>,
+    pub name: Option<DbString>,
+}
+
+/// Identity for an entry in the vector-index snapshot section.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct VectorSchemaKey {
+    /// Node label the vector registration applies to.
+    pub label: DbString,
+    /// Vector property the registration applies to.
+    pub property: DbString,
+}
+
+/// Persisted shape of a vector-index registration.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct VectorSchemaEntry {
+    /// Vector index algorithm kind.
+    pub kind: VectorIndexKind,
+    /// Required vector dimensionality.
+    pub dimension: u32,
+    /// HNSW construction config for HNSW vector indexes.
+    pub hnsw_config: Option<HnswIndexConfig>,
+    /// IVF construction config for IVF vector indexes.
+    pub ivf_config: Option<IvfIndexConfig>,
+    /// Optional explicit catalog name for the vector index.
+    pub name: Option<DbString>,
+}
+
+/// Identity for an entry in the text-index snapshot section.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct TextSchemaKey {
+    /// Node label the text registration applies to.
+    pub label: DbString,
+    /// Text property the registration applies to.
+    pub property: DbString,
+}
+
+/// Persisted shape of a text-index registration.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct TextSchemaEntry {
+    /// Optional explicit catalog name for the text index.
+    pub name: Option<DbString>,
 }
 
 pub(super) fn encode_meta(
@@ -388,7 +481,7 @@ pub(super) fn encode_edges(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Provid
             inconsistent(format!("edge properties column missing row {row_index}"))
         })?;
         let runtime = EdgeRow {
-            label: *label,
+            label: label.clone(),
             source: *source,
             target: *target,
             properties: properties.clone(),
@@ -425,12 +518,12 @@ pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Prov
         .map(|((label, property), entry)| {
             (
                 SchemaKey {
-                    label: *label,
-                    property: *property,
+                    label: label.clone(),
+                    property: property.clone(),
                 },
                 SchemaEntry {
                     kind: entry.kind(),
-                    name: entry.name,
+                    name: entry.name.clone(),
                 },
             )
         })
@@ -460,7 +553,7 @@ pub(super) fn decode_schemas(
         )));
     }
     let mut rows: Vec<(SchemaKey, SchemaEntry)> = decode_rkyv(rest, "CORE/SCMA")?;
-    rows.sort_unstable_by_key(|(key, _)| *key);
+    rows.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
     validate_sorted_unique(&rows, "CORE/SCMA")?;
     Ok(rows)
 }
@@ -479,12 +572,12 @@ pub(super) fn encode_composite_schemas(
         .map(|((label, _), entry)| {
             (
                 CompositeSchemaKey {
-                    label: *label,
-                    properties: entry.declared_properties.iter().copied().collect(),
+                    label: label.clone(),
+                    properties: entry.declared_properties.iter().cloned().collect(),
                 },
                 CompositeSchemaEntry {
                     kinds: entry.kinds().iter().copied().collect(),
-                    name: entry.name,
+                    name: entry.name.clone(),
                 },
             )
         })
@@ -520,6 +613,84 @@ fn composite_schema_wire_cmp(
         })
 }
 
+pub(super) fn encode_vector_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
+    let mut rows: Vec<(VectorSchemaKey, VectorSchemaEntry)> = graph
+        .vector_index
+        .iter()
+        .map(|((label, property), entry)| {
+            (
+                VectorSchemaKey {
+                    label: label.clone(),
+                    property: property.clone(),
+                },
+                VectorSchemaEntry {
+                    kind: entry.kind(),
+                    dimension: entry.dimension(),
+                    hnsw_config: entry.hnsw_config(),
+                    ivf_config: entry.ivf_config(),
+                    name: entry.name.clone(),
+                },
+            )
+        })
+        .collect();
+    rows.sort_by(vector_schema_wire_cmp);
+    encode_rkyv(&rows, "CORE/VIDX")
+}
+
+pub(super) fn decode_vector_schemas(
+    bytes: &[u8],
+) -> Result<Vec<(VectorSchemaKey, VectorSchemaEntry)>, crate::ProviderError> {
+    let mut rows: Vec<(VectorSchemaKey, VectorSchemaEntry)> = decode_rkyv(bytes, "CORE/VIDX")?;
+    rows.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+    validate_vector_schema_rows(&rows)?;
+    Ok(rows)
+}
+
+pub(super) fn encode_text_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
+    let mut rows: Vec<(TextSchemaKey, TextSchemaEntry)> = graph
+        .text_index
+        .iter()
+        .map(|((label, property), entry)| {
+            (
+                TextSchemaKey {
+                    label: label.clone(),
+                    property: property.clone(),
+                },
+                TextSchemaEntry {
+                    name: entry.name.clone(),
+                },
+            )
+        })
+        .collect();
+    rows.sort_by(text_schema_wire_cmp);
+    encode_rkyv(&rows, "CORE/TIDX")
+}
+
+pub(super) fn decode_text_schemas(
+    bytes: &[u8],
+) -> Result<Vec<(TextSchemaKey, TextSchemaEntry)>, crate::ProviderError> {
+    let mut rows: Vec<(TextSchemaKey, TextSchemaEntry)> = decode_rkyv(bytes, "CORE/TIDX")?;
+    rows.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+    validate_sorted_unique(&rows, "CORE/TIDX")?;
+    Ok(rows)
+}
+
+fn vector_schema_wire_cmp(
+    lhs: &(VectorSchemaKey, VectorSchemaEntry),
+    rhs: &(VectorSchemaKey, VectorSchemaEntry),
+) -> std::cmp::Ordering {
+    (lhs.0.label.as_str(), lhs.0.property.as_str())
+        .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))
+}
+
+fn text_schema_wire_cmp(
+    lhs: &(TextSchemaKey, TextSchemaEntry),
+    rhs: &(TextSchemaKey, TextSchemaEntry),
+) -> std::cmp::Ordering {
+    (lhs.0.label.as_str(), lhs.0.property.as_str())
+        .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))
+}
+
 fn validate_composite_schema_rows(
     rows: &[(CompositeSchemaKey, CompositeSchemaEntry)],
 ) -> Result<(), crate::ProviderError> {
@@ -547,10 +718,57 @@ fn validate_composite_schema_rows(
                 key.label
             )));
         }
-        if !seen.insert((key.label, canonical)) {
+        if !seen.insert((key.label.clone(), canonical)) {
             return Err(invalid_payload(format!(
                 "CORE/CPIX rows contain duplicate composite registration for label {}",
                 key.label
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_vector_schema_rows(
+    rows: &[(VectorSchemaKey, VectorSchemaEntry)],
+) -> Result<(), crate::ProviderError> {
+    validate_sorted_unique(rows, "CORE/VIDX")?;
+    for (key, entry) in rows {
+        if entry.dimension == 0 {
+            return Err(invalid_payload(format!(
+                "CORE/VIDX row for ({}, {}) has zero vector dimension",
+                key.label, key.property
+            )));
+        }
+        if entry.kind.hnsw_metric().is_some() != entry.hnsw_config.is_some() {
+            return Err(invalid_payload(format!(
+                "CORE/VIDX row for ({}, {}) has inconsistent HNSW config",
+                key.label, key.property
+            )));
+        }
+        if entry.kind.ivf_metric().is_some() {
+            if let Some(config) = entry.ivf_config
+                && (config.target_centroids == 0
+                    || config.target_centroids > MAX_IVF_TARGET_CENTROIDS)
+            {
+                return Err(invalid_payload(format!(
+                    "CORE/VIDX row for ({}, {}) has invalid IVF config",
+                    key.label, key.property
+                )));
+            }
+        } else if entry.ivf_config.is_some() {
+            return Err(invalid_payload(format!(
+                "CORE/VIDX row for ({}, {}) has inconsistent IVF config",
+                key.label, key.property
+            )));
+        }
+        if let Some(config) = entry.hnsw_config
+            && (config.max_neighbors == 0
+                || config.ef_construction == 0
+                || config.ef_construction < config.max_neighbors)
+        {
+            return Err(invalid_payload(format!(
+                "CORE/VIDX row for ({}, {}) has invalid HNSW config",
+                key.label, key.property
             )));
         }
     }

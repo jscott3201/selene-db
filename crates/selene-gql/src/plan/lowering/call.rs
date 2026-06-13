@@ -37,11 +37,17 @@ pub(crate) fn lower_top_level_call(
         }
     }
     let columns = planned.yield_schema.clone();
-    let next_pipeline_op_id = crate::PipelineOpId::new(1);
+    let mut pipeline = vec![PipelineOp::Call(planned)];
+    if let Some(filter) = &call.yield_filter {
+        pipeline.push(PipelineOp::Filter(expr::filter_predicate(
+            filter, analyzed,
+        )?));
+    }
+    let next_pipeline_op_id = crate::PipelineOpId::new(pipeline.len() as u32);
     Ok(ExecutionPlan {
         category: analyzed.category,
         pattern_plan: None,
-        pipeline: vec![PipelineOp::Call(planned)],
+        pipeline,
         output_schema: BindingTableSchema { columns },
         impl_defined_caps: ImplDefinedCaps::default(),
         expr_ids: analyzed.expr_ids.clone(),
@@ -83,11 +89,11 @@ pub(crate) fn plan_call(
         .yield_items
         .iter()
         .map(|item| PlannedYieldItem {
-            column: match item.column {
+            column: match &item.column {
                 YieldColumn::Star => YieldKind::Star,
-                YieldColumn::Named(name) => YieldKind::Named(name),
+                YieldColumn::Named(name) => YieldKind::Named(name.clone()),
             },
-            alias: item.alias,
+            alias: item.alias.clone(),
             span: item.span,
         })
         .collect();
@@ -127,19 +133,26 @@ pub(crate) fn yield_to_columns(
 
     if let Some(star_span) = wildcard_span {
         for col in &planned.output_schema.columns {
-            push_binding_column(planned, &mut columns, &mut seen, col, col.name, star_span)?;
+            push_binding_column(
+                planned,
+                &mut columns,
+                &mut seen,
+                col,
+                col.name.clone(),
+                star_span,
+            )?;
         }
     }
 
     for item in &planned.yield_cols {
-        let YieldKind::Named(name) = item.column else {
+        let YieldKind::Named(ref name) = item.column else {
             continue;
         };
         let col = planned
             .output_schema
             .columns
             .iter()
-            .find(|candidate| candidate.name == name)
+            .find(|candidate| candidate.name == *name)
             .ok_or_else(|| PlannerError::ProcedureMetadataMismatch {
                 procedure: planned.procedure.clone(),
                 detail: "yield column not in registry output schema",
@@ -150,7 +163,7 @@ pub(crate) fn yield_to_columns(
             &mut columns,
             &mut seen,
             col,
-            item.alias.unwrap_or(name),
+            item.alias.clone().unwrap_or(name.clone()),
             item.span,
         )?;
     }
@@ -204,9 +217,10 @@ fn default_matches_project_expr(
     match (default, literal) {
         (ProcedureDefaultValue::Boolean(expected), Literal::Bool(found, _)) => expected == *found,
         (ProcedureDefaultValue::Null, Literal::Null(_)) => true,
-        (ProcedureDefaultValue::Integer(expected), Literal::Integer(found, _)) => {
-            expected == *found
-        }
+        (
+            ProcedureDefaultValue::Integer(expected),
+            Literal::Integer(found, _) | Literal::RadixInteger(found, _, _),
+        ) => expected == *found,
         (ProcedureDefaultValue::String(expected), Literal::String(found, _)) => {
             expected == found.as_str()
         }
@@ -241,15 +255,15 @@ fn expected_yield_type_for_decl(
         if item.span != decl.span() {
             continue;
         }
-        let YieldColumn::Named(source_name) = item.column else {
+        let YieldColumn::Named(ref source_name) = item.column else {
             continue;
         };
-        if item.alias.unwrap_or(source_name) == decl.name() {
+        if item.alias.clone().unwrap_or(source_name.clone()) == decl.name() {
             return metadata
                 .output_schema
                 .columns
                 .iter()
-                .find(|candidate| candidate.name == source_name)
+                .find(|candidate| candidate.name == *source_name)
                 .map(|col| col.ty.clone());
         }
     }
@@ -286,18 +300,19 @@ const fn classify_mutability(mutability: ProcedureMutability) -> StatementCatego
     match mutability {
         ProcedureMutability::Read => StatementCategory::ReadOnly,
         ProcedureMutability::SchemaWrite => StatementCategory::CatalogModifying,
+        ProcedureMutability::MaintenanceWrite => StatementCategory::Maintenance,
     }
 }
 
 fn push_binding_column(
     planned: &PlannedCall,
     columns: &mut Vec<BindingTableColumn>,
-    seen: &mut HashSet<selene_core::IStr>,
+    seen: &mut HashSet<selene_core::DbString>,
     col: &ProcedureOutputColumn,
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     span: crate::SourceSpan,
 ) -> Result<(), PlannerError> {
-    if !seen.insert(name) {
+    if !seen.insert(name.clone()) {
         return Err(PlannerError::ProcedureMetadataMismatch {
             procedure: planned.procedure.clone(),
             detail: "duplicate yield column after wildcard",
@@ -308,7 +323,7 @@ fn push_binding_column(
     Ok(())
 }
 
-fn binding_column(col: &ProcedureOutputColumn, name: selene_core::IStr) -> BindingTableColumn {
+fn binding_column(col: &ProcedureOutputColumn, name: selene_core::DbString) -> BindingTableColumn {
     BindingTableColumn {
         name: Some(name),
         hidden: None,
@@ -318,8 +333,6 @@ fn binding_column(col: &ProcedureOutputColumn, name: selene_core::IStr) -> Bindi
 
 #[cfg(test)]
 mod defensive_tests {
-    use selene_core::intern_with_admission;
-
     use super::*;
     use crate::{
         ProcedureDefaultValue, ProcedureHandle, ProcedureOutputSchema, ProcedureParameter,
@@ -333,7 +346,7 @@ mod defensive_tests {
     }
 
     impl ProcedureRegistry for StaticRegistry {
-        fn lookup(&self, _name: &[selene_core::IStr]) -> Option<ProcedureMetadata> {
+        fn lookup(&self, _name: &[selene_core::DbString]) -> Option<ProcedureMetadata> {
             Some(self.metadata.clone())
         }
 
@@ -347,16 +360,16 @@ mod defensive_tests {
         }
     }
 
-    fn istr(value: &str) -> selene_core::IStr {
-        intern_with_admission(value).expect("test interner").0
+    fn db_string(value: &str) -> selene_core::DbString {
+        selene_core::db_string(value).expect("test string fits DB string cap")
     }
 
     fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-        ProcedureParameter::new(istr(name), ty, nullable)
+        ProcedureParameter::new(db_string(name), ty, nullable)
     }
 
     fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-        ProcedureOutputColumn::new(istr(name), ty)
+        ProcedureOutputColumn::new(db_string(name), ty)
     }
 
     fn registry(
@@ -512,10 +525,10 @@ mod defensive_tests {
 
     #[test]
     fn changed_yield_schema_reports_metadata_mismatch() {
-        let name = intern_with_admission("pkg").expect("test interner").0;
-        let col = intern_with_admission("out").expect("test interner").0;
+        let name = selene_core::db_string("pkg").expect("test string fits DB string cap");
+        let col = selene_core::db_string("out").expect("test string fits DB string cap");
         let planned = PlannedCall {
-            procedure: Box::new([name]),
+            procedure: Box::new([name.clone()]),
             handle: ProcedureHandle::new(1),
             args: Vec::new(),
             yield_cols: vec![PlannedYieldItem {
@@ -528,7 +541,7 @@ mod defensive_tests {
                 vec![output("different", GqlType::String)],
                 ProcedureMutability::Read,
             )
-            .lookup(&[name])
+            .lookup(std::slice::from_ref(&name))
             .expect("metadata")
             .output_schema,
             yield_schema: Vec::new(),

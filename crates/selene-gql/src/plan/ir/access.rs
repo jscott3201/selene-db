@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     GqlType, Literal, OrderDirection, SourceSpan,
@@ -27,23 +27,24 @@ pub enum ScanAccess {
         /// Opaque catalog handle for the selected typed index.
         handle: IndexHandle,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
         /// Typed-index value kind.
         kind: IndexKind,
         /// Lookup bounds.
         bounds: TypedIndexBounds,
     },
-    /// Bitmap union over a small set of literal-or-parameter point lookups.
+    /// Bitmap union over literal, scalar-parameter, or declared list-parameter
+    /// point lookups.
     BitmapUnion {
         /// Opaque catalog handle for the selected typed index.
         handle: IndexHandle,
         /// Indexed property key.
-        property: IStr,
+        property: DbString,
         /// Typed-index value kind. Carried so runtime parameter resolution
-        /// can run the BRIEF-154 §B.3 F4 ExternalString carve-out and the
-        /// F12 IndexKind-mismatch loud error path against bound values.
+        /// can run the IndexKind-mismatch loud error path against bound values.
         kind: IndexKind,
-        /// Lookup keys; each is either an inline literal or a parameter slot.
+        /// Lookup keys; each is an inline literal, a scalar parameter slot, or
+        /// a declared list parameter slot expanded at execution time.
         keys: Vec<IndexKey>,
     },
     /// Composite multi-property exact lookup.
@@ -55,9 +56,9 @@ pub enum ScanAccess {
         /// (BRIEF-154 §B.3 + F17) — Commit 1 already widened
         /// `CompositeIndexHandle.properties`, this carries the same shape
         /// into the executable plan IR.
-        properties: Vec<(IStr, IndexKind)>,
+        properties: Vec<(DbString, IndexKind)>,
         /// Lookup keys in declaration order; each is literal-or-parameter.
-        keys: Vec<(IStr, IndexKey)>,
+        keys: Vec<(DbString, IndexKey)>,
     },
 }
 
@@ -72,14 +73,24 @@ pub enum IndexKey {
     Literal(Literal),
     /// Parameter slot resolved at execute time.
     Parameter {
-        /// Parameter name (e.g. `$symbol` → `IStr("symbol")`).
-        name: IStr,
+        /// Parameter name (e.g. `$symbol` → `DbString("symbol")`).
+        name: DbString,
         /// Optional declared parameter type, per BRIEF-137 `$id :: TYPE`.
         ///
         /// Plan-time typed-incompatibility checks consult this; the runtime
-        /// resolver also runs [`crate::runtime::parameter_type::validate_declared_type`]
-        /// against it before the [`IndexKind`] check.
+        /// resolver also validates the declared type against it before the
+        /// [`IndexKind`] check.
         declared_type: Option<GqlType>,
+        /// Source span for diagnostics.
+        span: SourceSpan,
+    },
+    /// Parameter slot resolved to a list and expanded into multiple bitmap
+    /// union point probes at execute time.
+    ParameterList {
+        /// Parameter name (e.g. `$symbols` -> `DbString("symbols")`).
+        name: DbString,
+        /// Declared list type, per BRIEF-137 `$ids :: LIST<T>`.
+        declared_type: GqlType,
         /// Source span for diagnostics.
         span: SourceSpan,
     },

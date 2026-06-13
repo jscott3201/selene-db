@@ -1,0 +1,12 @@
+// corpus: positive
+// feature: GL04
+// also-covers: GL05, GL06, GL07, GL08, GL09, GL10
+// expects: parse-ok
+RETURN
+  1.5 AS exact_common_without_suffix,
+  1M AS exact_integer_with_suffix,
+  1e2M AS exact_scientific_with_suffix,
+  1F AS approximate_integer_with_float_suffix,
+  1e2F AS approximate_scientific_with_float_suffix,
+  1.5D AS approximate_common_with_double_suffix,
+  1e2D AS approximate_scientific_with_double_suffix

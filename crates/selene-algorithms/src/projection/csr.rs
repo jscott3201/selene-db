@@ -18,7 +18,7 @@
 //! surface — distributed algorithms handle them.
 
 use roaring::RoaringBitmap;
-use selene_core::{EdgeId, IStr, NodeId, Value};
+use selene_core::{DbString, EdgeId, NodeId, Value};
 use selene_graph::SeleneGraph;
 
 use super::RowIndex;
@@ -35,6 +35,15 @@ pub struct ProjNeighbor {
     /// non-numeric / `Value::Null` per spec 16 §3 E04 (matches the donor's
     /// permissive behavior).
     pub weight: f64,
+    /// Dense index of [`Self::node_id`] within the projection's row index
+    /// (ALGO-01). The CSR only ever stores projected neighbors (`build_csr`
+    /// pass-1 and pass-2 each skip any neighbor outside the projection), and the
+    /// row index is immutable after projection build, so this equals
+    /// `row_index.dense_of_node(node_id).unwrap()` for the lifetime of the
+    /// projection. Caching it lets the centrality / community / structural
+    /// algorithms read the dense index directly from the contiguous CSR slice
+    /// instead of re-probing the `node_to_dense` hash map on every edge visit.
+    pub dense: u32,
 }
 
 /// CSR adjacency for one direction within a projection.
@@ -79,50 +88,8 @@ pub(crate) fn build_csr_out(
     snapshot: &SeleneGraph,
     nodes: &RoaringBitmap,
     row_index: &RowIndex,
-    edge_labels: &[IStr],
-    weight_property: Option<&IStr>,
-) -> ProjCsr {
-    build_csr(
-        snapshot,
-        nodes,
-        row_index,
-        edge_labels,
-        weight_property,
-        Direction::Out,
-    )
-}
-
-/// Build the incoming-direction CSR for a projection.
-pub(crate) fn build_csr_in(
-    snapshot: &SeleneGraph,
-    nodes: &RoaringBitmap,
-    row_index: &RowIndex,
-    edge_labels: &[IStr],
-    weight_property: Option<&IStr>,
-) -> ProjCsr {
-    build_csr(
-        snapshot,
-        nodes,
-        row_index,
-        edge_labels,
-        weight_property,
-        Direction::In,
-    )
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Direction {
-    Out,
-    In,
-}
-
-fn build_csr(
-    snapshot: &SeleneGraph,
-    nodes: &RoaringBitmap,
-    row_index: &RowIndex,
-    edge_labels: &[IStr],
-    weight_property: Option<&IStr>,
-    direction: Direction,
+    edge_labels: &[DbString],
+    weight_property: Option<&DbString>,
 ) -> ProjCsr {
     // Invariant: `row_index` is built from exactly this `nodes` bitmap (see
     // `GraphProjection::build`), so every row enumerated below has a dense
@@ -149,10 +116,7 @@ fn build_csr(
             .dense_of(row_u32)
             .expect("projection row has a dense index") as usize;
         let nid = row_index.node_id_of(dense as u32);
-        let Some(entry) = (match direction {
-            Direction::Out => snapshot.outgoing_edges(nid),
-            Direction::In => snapshot.incoming_edges(nid),
-        }) else {
+        let Some(entry) = snapshot.outgoing_edges(nid) else {
             continue;
         };
         for adj in entry.iter() {
@@ -182,6 +146,7 @@ fn build_csr(
             edge_id: EdgeId::new(0),
             node_id: NodeId::new(0),
             weight: 0.0,
+            dense: 0,
         };
         total
     ];
@@ -197,16 +162,16 @@ fn build_csr(
             .dense_of(row_u32)
             .expect("projection row has a dense index") as usize;
         let nid = row_index.node_id_of(dense as u32);
-        let Some(entry) = (match direction {
-            Direction::Out => snapshot.outgoing_edges(nid),
-            Direction::In => snapshot.incoming_edges(nid),
-        }) else {
+        let Some(entry) = snapshot.outgoing_edges(nid) else {
             continue;
         };
         for adj in entry.iter() {
-            if row_index.dense_of_node(adj.neighbor).is_none() {
+            // Capture the neighbor's dense index here (ALGO-01): this pass is
+            // already resolving it for the projection-membership skip, so caching
+            // it costs one extra u32 write and zero additional map probes.
+            let Some(neighbor_dense) = row_index.dense_of_node(adj.neighbor) else {
                 continue;
-            }
+            };
             if !edge_labels.is_empty() && !edge_labels.contains(&adj.label) {
                 continue;
             }
@@ -216,6 +181,7 @@ fn build_csr(
                 edge_id: adj.edge_id,
                 node_id: adj.neighbor,
                 weight,
+                dense: neighbor_dense,
             };
             cursor[dense] += 1;
         }
@@ -237,9 +203,76 @@ fn build_csr(
     ProjCsr { offsets, neighbors }
 }
 
+/// Build the incoming-direction CSR by transposing an already-filtered out CSR.
+pub(crate) fn transpose_csr_in(out_csr: &ProjCsr, row_index: &RowIndex) -> ProjCsr {
+    let dense_n = row_index.len();
+    debug_assert_eq!(
+        out_csr.offsets.len(),
+        dense_n + 1,
+        "out CSR offsets must match the projection row index"
+    );
+    let mut offsets = vec![0u32; dense_n + 1];
+
+    for source_dense in 0..dense_n {
+        let source_dense = u32::try_from(source_dense).expect("projection dense index fits u32");
+        for neighbor in out_csr.neighbors_of_dense(source_dense) {
+            offsets[neighbor.dense as usize] += 1;
+        }
+    }
+
+    let mut cumulative: u32 = 0;
+    for slot in &mut offsets {
+        let count = *slot;
+        *slot = cumulative;
+        cumulative = cumulative.saturating_add(count);
+    }
+
+    let total = cumulative as usize;
+    let mut neighbors: Vec<ProjNeighbor> = vec![
+        ProjNeighbor {
+            edge_id: EdgeId::new(0),
+            node_id: NodeId::new(0),
+            weight: 0.0,
+            dense: 0,
+        };
+        total
+    ];
+    let mut cursor = offsets.clone();
+
+    for source_dense in 0..dense_n {
+        let source_dense = u32::try_from(source_dense).expect("projection dense index fits u32");
+        let source = row_index.node_id_of(source_dense);
+        for neighbor in out_csr.neighbors_of_dense(source_dense) {
+            let target_dense = neighbor.dense as usize;
+            let pos = cursor[target_dense] as usize;
+            neighbors[pos] = ProjNeighbor {
+                edge_id: neighbor.edge_id,
+                node_id: source,
+                weight: neighbor.weight,
+                dense: source_dense,
+            };
+            cursor[target_dense] += 1;
+        }
+    }
+
+    for d in 0..dense_n {
+        let start = offsets[d] as usize;
+        let end = offsets[d + 1] as usize;
+        if end > start {
+            neighbors[start..end].sort_by_key(|n| n.node_id);
+        }
+    }
+
+    ProjCsr { offsets, neighbors }
+}
+
 /// Extract the edge weight per spec 16 §E04 (permissive: missing / non-numeric
 /// / null → `1.0`).
-fn extract_weight(snapshot: &SeleneGraph, edge_id: EdgeId, weight_property: Option<&IStr>) -> f64 {
+fn extract_weight(
+    snapshot: &SeleneGraph,
+    edge_id: EdgeId,
+    weight_property: Option<&DbString>,
+) -> f64 {
     let Some(prop) = weight_property else {
         return 1.0;
     };

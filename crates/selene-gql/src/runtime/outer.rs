@@ -1,6 +1,6 @@
 //! Left-outer join-tree operator.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     FilterPredicate, JoinTree,
@@ -12,10 +12,11 @@ use super::pattern;
 pub(crate) fn execute(
     left: &JoinTree,
     right: &JoinTree,
-    key: &[IStr],
+    key: &[DbString],
     right_filters: &[FilterPredicate],
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
+    let key_indexes = pattern::resolve_key(env.schema, key)?;
     let left_rows = pattern::walk_join_tree(left, env)?;
     let mut output = Vec::new();
     for left_row in left_rows {
@@ -37,7 +38,7 @@ pub(crate) fn execute(
             )? {
                 continue;
             }
-            if !pattern::rows_match_on_key(&left_row, &right_row, env.schema, key)? {
+            if !pattern::rows_match_on_resolved_key(&left_row, &right_row, &key_indexes) {
                 continue;
             }
             output.push(pattern::merge_rows(&left_row, &right_row, env.schema));

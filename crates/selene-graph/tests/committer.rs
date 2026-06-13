@@ -15,19 +15,19 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use selene_core::{
-    Change, GraphId, IStr, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, intern,
+    Change, DbString, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value,
 };
 use selene_graph::{
     GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef, SharedGraph, ValidationMode,
 };
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn prop(name: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(istr(name), value)]).expect("valid property map")
+    PropertyMap::from_pairs([(db_string(name), value)]).expect("valid property map")
 }
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -48,17 +48,21 @@ fn temp_dir(name: &str) -> PathBuf {
 /// empty-property `Person` insert is a GG02 violation.
 fn person_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("committer.person.graph"),
+        name: db_string("committer.person.graph"),
         node_types: vec![NodeTypeDef {
-            name: istr("committer.person"),
-            key_labels: LabelSet::single(istr("Person")),
+            name: db_string("committer.person"),
+            key_labels: LabelSet::single(db_string("Person")),
             properties: vec![PropertyTypeDef {
-                name: istr("name"),
+                name: db_string("name"),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -89,11 +93,11 @@ fn handover_preserves_change_list_and_ids() {
     let mut txn = shared.begin_write();
     let a = txn
         .mutator()
-        .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("A")), PropertyMap::new())
         .unwrap();
     let b = txn
         .mutator()
-        .create_node(LabelSet::single(istr("B")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("B")), PropertyMap::new())
         .unwrap();
     let outcome = txn.commit().unwrap();
 
@@ -137,7 +141,7 @@ fn gg02_violation_aborts_in_seal_and_rolls_back_generation_bump() {
     let mut txn = shared.begin_write();
     // A Person with no `name` violates the closed-graph type.
     txn.mutator()
-        .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
         .expect("mutation stages (validation is at commit)");
     let err = txn.commit().expect_err("GG02 must abort the commit");
     assert!(
@@ -185,15 +189,15 @@ fn gg02_aborts_under_contention_never_advance_published_generation() {
                 if valid {
                     txn.mutator()
                         .create_node(
-                            LabelSet::single(istr("Person")),
-                            prop("name", Value::String(istr("ada"))),
+                            LabelSet::single(db_string("Person")),
+                            prop("name", Value::String(db_string("ada"))),
                         )
                         .unwrap();
                     txn.commit().expect("valid Person commit succeeds");
                 } else {
                     // A Person with no `name` violates the closed-graph type.
                     txn.mutator()
-                        .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+                        .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
                         .unwrap();
                     let err = txn.commit().expect_err("GG02 violation aborts");
                     assert!(
@@ -236,7 +240,7 @@ fn abort_isolation_does_not_leak_into_next_commit() {
     {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
             .unwrap();
         assert!(txn.commit().is_err());
     }
@@ -246,8 +250,8 @@ fn abort_isolation_does_not_leak_into_next_commit() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("ada"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("ada"))),
             )
             .unwrap();
         let outcome = txn.commit().unwrap();
@@ -335,7 +339,7 @@ fn concurrent_commits_persist_a_gapfree_durable_sequence() {
                 for _ in 0..per {
                     let mut txn = shared.begin_write();
                     txn.mutator()
-                        .create_node(LabelSet::single(istr("D")), PropertyMap::new())
+                        .create_node(LabelSet::single(db_string("D")), PropertyMap::new())
                         .unwrap();
                     let outcome = txn.commit().unwrap();
                     let seq = outcome
@@ -378,7 +382,7 @@ fn compact_serializes_with_concurrent_commits() {
         for _ in 0..50 {
             ids.push(
                 txn.mutator()
-                    .create_node(LabelSet::single(istr("T")), PropertyMap::new())
+                    .create_node(LabelSet::single(db_string("T")), PropertyMap::new())
                     .unwrap(),
             );
         }
@@ -407,7 +411,10 @@ fn compact_serializes_with_concurrent_commits() {
             for _ in 0..25 {
                 let mut txn = shared.begin_write();
                 txn.mutator()
-                    .create_node(LabelSet::single(istr("W")), prop("t", Value::Int(t as i64)))
+                    .create_node(
+                        LabelSet::single(db_string("W")),
+                        prop("t", Value::Int(t as i64)),
+                    )
                     .unwrap();
                 txn.commit().unwrap();
             }
@@ -438,14 +445,14 @@ fn compact_serializes_with_concurrent_commits() {
 #[test]
 fn index_ddl_serializes_with_commits_through_committer() {
     let shared = Arc::new(SharedGraph::new(GraphId::new(1_008)));
-    let label = istr("Doc");
-    let key = istr("rank");
+    let label = db_string("Doc");
+    let key = db_string("rank");
 
     // Seed an indexed-compatible node so the DDL build passes.
     {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(label), prop("rank", Value::Int(1)))
+            .create_node(LabelSet::single(label.clone()), prop("rank", Value::Int(1)))
             .unwrap();
         txn.commit().unwrap();
     }
@@ -456,12 +463,13 @@ fn index_ddl_serializes_with_commits_through_committer() {
     for _ in 0..threads {
         let shared = Arc::clone(&shared);
         let barrier = Arc::clone(&barrier);
+        let value = label.clone();
         handles.push(thread::spawn(move || {
             barrier.wait();
             for n in 0..20 {
                 let mut txn = shared.begin_write();
                 txn.mutator()
-                    .create_node(LabelSet::single(label), prop("rank", Value::Int(n)))
+                    .create_node(LabelSet::single(value.clone()), prop("rank", Value::Int(n)))
                     .unwrap();
                 txn.commit().unwrap();
             }
@@ -470,6 +478,8 @@ fn index_ddl_serializes_with_commits_through_committer() {
     let ddl = {
         let shared = Arc::clone(&shared);
         let barrier = Arc::clone(&barrier);
+        let label = label.clone();
+        let key = key.clone();
         thread::spawn(move || {
             barrier.wait();
             shared
@@ -490,8 +500,8 @@ fn index_ddl_serializes_with_commits_through_committer() {
 }
 
 #[test]
-fn istr_admission_race_class_concurrency_is_consistent() {
-    // The "would this catch the IStr admission race" bar: many threads commit
+fn string_admission_race_class_concurrency_is_consistent() {
+    // The "would this catch the DbString admission race" bar: many threads commit
     // overlapping label/property writes concurrently; the single committer
     // serializes every publish so the final snapshot is internally consistent
     // (label index ↔ columns ↔ adjacency), validated by the debug-only
@@ -510,7 +520,7 @@ fn istr_admission_race_class_concurrency_is_consistent() {
                 let mut txn = shared.begin_write();
                 txn.mutator()
                     .create_node(
-                        LabelSet::single(istr("Shared")),
+                        LabelSet::single(db_string("Shared")),
                         prop("k", Value::Int((t * per + n) as i64)),
                     )
                     .unwrap();
@@ -545,7 +555,7 @@ fn explicit_txn_releases_lock_before_recv_block_no_deadlock() {
         let mut txn = shared.begin_write();
         for _ in 0..10 {
             txn.mutator()
-                .create_node(LabelSet::single(istr("X")), PropertyMap::new())
+                .create_node(LabelSet::single(db_string("X")), PropertyMap::new())
                 .unwrap();
         }
         txn.commit().unwrap();

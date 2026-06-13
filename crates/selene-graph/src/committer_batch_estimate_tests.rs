@@ -41,7 +41,7 @@ fn encoded_estimate_is_header_plus_per_change_allowance() {
         {
             let mut m = txn.mutator();
             for _ in 0..change_count {
-                m.create_node(LabelSet::single(istr("Est")), PropertyMap::new())
+                m.create_node(LabelSet::single(db_string("Est")), PropertyMap::new())
                     .unwrap();
             }
         }
@@ -73,7 +73,7 @@ fn encoded_estimate_saturates_on_pathological_change_count() {
     {
         let mut m = txn.mutator();
         for _ in 0..100 {
-            m.create_node(LabelSet::single(istr("Sat")), PropertyMap::new())
+            m.create_node(LabelSet::single(db_string("Sat")), PropertyMap::new())
                 .unwrap();
         }
     }
@@ -101,7 +101,7 @@ fn aggregate_byte_cap_bounds_batch_below_count_cap() {
     for _ in 0..TOTAL {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("B")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("B")), PropertyMap::new())
             .unwrap();
         sealeds.push(txn.seal(None, None).expect("seals"));
     }
@@ -150,7 +150,7 @@ fn over_cap_single_commit_is_taken_alone_and_committed() {
     {
         let mut m = txn.mutator();
         for _ in 0..50 {
-            m.create_node(LabelSet::single(istr("Fat")), PropertyMap::new())
+            m.create_node(LabelSet::single(db_string("Fat")), PropertyMap::new())
                 .unwrap();
         }
     }

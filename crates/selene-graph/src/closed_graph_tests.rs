@@ -4,17 +4,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{
     Change, EdgeId, GraphId, HlcTimestamp, LabelDiff, LabelSet, NodeId, Origin, PropertyDiff,
-    PropertyMap, PropertyValueType, Value, intern,
+    PropertyMap, PropertyValueType, Value,
 };
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
-    WalConfig, WalWriter,
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotConfig, SyncPolicy, WalConfig, WalWriter,
 };
 
 use crate::{
-    CORE_PROVIDER_TAG, EdgeEndpointDef, EntityId, GraphError, GraphTypeDef, NodeTypeDef,
-    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph,
-    TypeViolation, ValidationMode,
+    EdgeEndpointDef, EntityId, GraphError, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
+    PropertyElementType, PropertyTypeDef, SharedGraph, TypeViolation, ValidationMode,
 };
 
 #[path = "closed_graph_tests/immutable.rs"]
@@ -26,45 +24,54 @@ mod one_of;
 #[path = "closed_graph_tests/truncate.rs"]
 mod truncate;
 
-fn istr(name: &str) -> selene_core::IStr {
-    intern(name).unwrap()
+#[path = "closed_graph_tests/unique.rs"]
+mod unique;
+
+fn db_string(name: &str) -> selene_core::DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn prop(name: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(istr(name), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(name), value)]).unwrap()
 }
 
 fn person_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("closed.person.graph"),
+        name: db_string("closed.person.graph"),
         node_types: vec![NodeTypeDef {
-            name: istr("closed.person"),
-            key_labels: LabelSet::single(istr("Person")),
+            name: db_string("closed.person"),
+            key_labels: LabelSet::single(db_string("Person")),
             properties: vec![PropertyTypeDef {
-                name: istr("name"),
+                name: db_string("name"),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,
-
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],
         edge_types: vec![crate::EdgeTypeDef {
-            name: istr("closed.knows"),
-            label: istr("KNOWS"),
+            name: db_string("closed.knows"),
+            label: db_string("KNOWS"),
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(0),
             properties: vec![PropertyTypeDef {
-                name: istr("since"),
+                name: db_string("since"),
                 value_type: PropertyValueType::Int,
                 list_element_type: None,
                 required: false,
                 default: None,
                 immutable: false,
-
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -87,22 +94,14 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 fn write_snapshot(dir: &Path, shared: &SharedGraph, sequence: u64) {
-    let provider = shared
-        .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
-        .expect("core provider is registered");
-    let mut builder = SnapshotBuilder::new(SnapshotConfig {
-        dir: dir.to_path_buf(),
-        sequence,
-        compression: SectionCompression::None,
-        fsync: false,
-    });
-    for sub in provider.declared_sub_tags() {
-        let bytes = provider.write_section(*sub).unwrap();
-        builder
-            .add_section(CORE_PROVIDER_TAG, sub.0, bytes)
-            .unwrap();
-    }
-    builder.finalize().unwrap();
+    shared
+        .write_snapshot(SnapshotConfig {
+            dir: dir.to_path_buf(),
+            sequence,
+            compression: SectionCompression::None,
+            fsync: false,
+        })
+        .unwrap();
 }
 
 fn append_wal(dir: &Path, snapshot_seq: u64, changes: &[Change]) {
@@ -127,7 +126,7 @@ fn open_graph_commits_unchanged() {
     {
         let mut mutator = txn.mutator();
         mutator
-            .create_node(LabelSet::single(istr("Anything")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Anything")), PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();
@@ -147,8 +146,8 @@ fn closed_graph_accepts_valid_commit() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("Alice"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("Alice"))),
             )
             .unwrap()
     };
@@ -159,18 +158,21 @@ fn closed_graph_accepts_valid_commit() {
 #[test]
 fn create_node_fills_declared_default_property() {
     let graph_type = GraphTypeDef {
-        name: istr("closed.default.graph"),
+        name: db_string("closed.default.graph"),
         node_types: vec![NodeTypeDef {
-            name: istr("closed.default.person"),
-            key_labels: LabelSet::single(istr("Person")),
+            name: db_string("closed.default.person"),
+            key_labels: LabelSet::single(db_string("Person")),
             properties: vec![PropertyTypeDef {
-                name: istr("active"),
+                name: db_string("active"),
                 value_type: PropertyValueType::Bool,
                 list_element_type: None,
                 required: false,
                 default: Some(PropertyDefaultValue::Boolean(true)),
                 immutable: false,
-
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -185,7 +187,7 @@ fn create_node_fills_declared_default_property() {
     let mut txn = shared.begin_write();
     let id = txn
         .mutator()
-        .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+        .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
         .unwrap();
     txn.commit().unwrap();
 
@@ -193,7 +195,7 @@ fn create_node_fills_declared_default_property() {
         shared
             .read()
             .node_properties(id)
-            .and_then(|properties| properties.get(&istr("active"))),
+            .and_then(|properties| properties.get(&db_string("active"))),
         Some(&Value::Bool(true))
     );
 }
@@ -201,18 +203,21 @@ fn create_node_fills_declared_default_property() {
 #[test]
 fn typed_list_property_rejects_wrong_element_type() {
     let graph_type = GraphTypeDef {
-        name: istr("closed.list.graph"),
+        name: db_string("closed.list.graph"),
         node_types: vec![NodeTypeDef {
-            name: istr("closed.list.person"),
-            key_labels: LabelSet::single(istr("Person")),
+            name: db_string("closed.list.person"),
+            key_labels: LabelSet::single(db_string("Person")),
             properties: vec![PropertyTypeDef {
-                name: istr("tags"),
+                name: db_string("tags"),
                 value_type: PropertyValueType::List,
                 list_element_type: Some(PropertyElementType::Scalar(PropertyValueType::String)),
                 required: false,
                 default: None,
                 immutable: false,
-
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -227,10 +232,10 @@ fn typed_list_property_rejects_wrong_element_type() {
     let mut txn = shared.begin_write();
     txn.mutator()
         .create_node(
-            LabelSet::single(istr("Person")),
+            LabelSet::single(db_string("Person")),
             prop(
                 "tags",
-                Value::List(vec![Value::String(istr("ok")), Value::Int(7)]),
+                Value::List(vec![Value::String(db_string("ok")), Value::Int(7)]),
             ),
         )
         .unwrap();
@@ -239,25 +244,28 @@ fn typed_list_property_rejects_wrong_element_type() {
     assert!(matches!(
         err,
         GraphError::TypeViolation(TypeViolation::PropertyTypeMismatch { property, .. })
-            if property == istr("tags")
+            if property == db_string("tags")
     ));
 }
 
 #[test]
 fn immutable_property_update_is_rejected_before_commit() {
     let graph_type = GraphTypeDef {
-        name: istr("closed.immutable.graph"),
+        name: db_string("closed.immutable.graph"),
         node_types: vec![NodeTypeDef {
-            name: istr("closed.immutable.person"),
-            key_labels: LabelSet::single(istr("Person")),
+            name: db_string("closed.immutable.person"),
+            key_labels: LabelSet::single(db_string("Person")),
             properties: vec![PropertyTypeDef {
-                name: istr("serial"),
+                name: db_string("serial"),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
                 default: None,
                 immutable: true,
-
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -273,8 +281,8 @@ fn immutable_property_update_is_rejected_before_commit() {
     let id = txn
         .mutator()
         .create_node(
-            LabelSet::single(istr("Person")),
-            prop("serial", Value::String(istr("A"))),
+            LabelSet::single(db_string("Person")),
+            prop("serial", Value::String(db_string("A"))),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -285,7 +293,7 @@ fn immutable_property_update_is_rejected_before_commit() {
         .update_node(
             id,
             LabelDiff::new([], []).unwrap(),
-            PropertyDiff::new([(istr("serial"), Value::String(istr("B")))], []).unwrap(),
+            PropertyDiff::new([(db_string("serial"), Value::String(db_string("B")))], []).unwrap(),
         )
         .unwrap_err();
 
@@ -295,17 +303,17 @@ fn immutable_property_update_is_rejected_before_commit() {
             entity_id,
             property,
             ..
-        }) if entity_id == EntityId::Node(id) && property == istr("serial")
+        }) if entity_id == EntityId::Node(id) && property == db_string("serial")
     ));
 }
 
 #[test]
 fn warn_validation_mode_records_undeclared_property_warning() {
     let graph_type = GraphTypeDef {
-        name: istr("closed.warn.graph"),
+        name: db_string("closed.warn.graph"),
         node_types: vec![NodeTypeDef {
-            name: istr("closed.warn.person"),
-            key_labels: LabelSet::single(istr("Person")),
+            name: db_string("closed.warn.person"),
+            key_labels: LabelSet::single(db_string("Person")),
             properties: Vec::new(),
             validation_mode: ValidationMode::Warn,
         }],
@@ -319,7 +327,7 @@ fn warn_validation_mode_records_undeclared_property_warning() {
     let mut txn = shared.begin_write();
     txn.mutator()
         .create_node(
-            LabelSet::single(istr("Person")),
+            LabelSet::single(db_string("Person")),
             prop("extra", Value::Int(1)),
         )
         .unwrap();
@@ -328,8 +336,8 @@ fn warn_validation_mode_records_undeclared_property_warning() {
 
     assert_eq!(outcome.warnings.len(), 1);
     assert!(matches!(
-        outcome.warnings[0].warning.violation,
-        TypeViolation::UndeclaredProperty { property, .. } if property == istr("extra")
+        &outcome.warnings[0].warning.violation,
+        TypeViolation::UndeclaredProperty { property, .. } if *property == db_string("extra")
     ));
 }
 
@@ -345,7 +353,7 @@ fn closed_graph_rejects_invalid_commit_without_publishing() {
         let mut mutator = txn.mutator();
         assert_eq!(
             mutator
-                .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+                .create_node(LabelSet::single(db_string("Person")), PropertyMap::new())
                 .unwrap(),
             NodeId::new(1)
         );
@@ -357,7 +365,7 @@ fn closed_graph_rejects_invalid_commit_without_publishing() {
             entity_id,
             property,
             ..
-        }) if entity_id == EntityId::Node(NodeId::new(1)) && property == istr("name")
+        }) if entity_id == EntityId::Node(NodeId::new(1)) && property == db_string("name")
     ));
     assert_eq!(shared.read().node_count(), 0);
 
@@ -366,8 +374,8 @@ fn closed_graph_rejects_invalid_commit_without_publishing() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("Bob"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("Bob"))),
             )
             .unwrap()
     };
@@ -387,18 +395,18 @@ fn closed_graph_rejects_edge_endpoint_mismatch() {
         let mut mutator = txn.mutator();
         let alice = mutator
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("Alice"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("Alice"))),
             )
             .unwrap();
         let project = mutator
             .create_node(
-                LabelSet::single(istr("Project")),
-                prop("name", Value::String(istr("Apollo"))),
+                LabelSet::single(db_string("Project")),
+                prop("name", Value::String(db_string("Apollo"))),
             )
             .unwrap();
         mutator
-            .create_edge(istr("KNOWS"), alice, project, PropertyMap::new())
+            .create_edge(db_string("KNOWS"), alice, project, PropertyMap::new())
             .unwrap();
     }
     assert!(matches!(
@@ -424,18 +432,23 @@ fn recover_round_trips_bound_graph_type_and_rearms_validator() {
         let mut mutator = txn.mutator();
         let alice = mutator
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("Alice"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("Alice"))),
             )
             .unwrap();
         let bob = mutator
             .create_node(
-                LabelSet::single(istr("Person")),
-                prop("name", Value::String(istr("Bob"))),
+                LabelSet::single(db_string("Person")),
+                prop("name", Value::String(db_string("Bob"))),
             )
             .unwrap();
         mutator
-            .create_edge(istr("KNOWS"), alice, bob, prop("since", Value::Int(2026)))
+            .create_edge(
+                db_string("KNOWS"),
+                alice,
+                bob,
+                prop("since", Value::Int(2026)),
+            )
             .unwrap();
     }
     txn.commit().unwrap();
@@ -446,8 +459,8 @@ fn recover_round_trips_bound_graph_type_and_rearms_validator() {
         sequence,
         &[Change::NodeCreated {
             id: NodeId::new(3),
-            labels: LabelSet::single(istr("Person")),
-            properties: prop("name", Value::String(istr("Carol"))),
+            labels: LabelSet::single(db_string("Person")),
+            properties: prop("name", Value::String(db_string("Carol"))),
         }],
     );
 
@@ -461,10 +474,10 @@ fn recover_round_trips_bound_graph_type_and_rearms_validator() {
         let mut mutator = txn.mutator();
         mutator
             .create_edge(
-                istr("KNOWS"),
+                db_string("KNOWS"),
                 NodeId::new(1),
                 NodeId::new(2),
-                prop("since", Value::String(istr("bad"))),
+                prop("since", Value::String(db_string("bad"))),
             )
             .unwrap();
     }
@@ -475,31 +488,31 @@ fn recover_round_trips_bound_graph_type_and_rearms_validator() {
             property,
             expected: PropertyValueType::Int,
             observed: "String",
-        }) if entity_id == EntityId::Edge(EdgeId::new(2)) && property == istr("since")
+        }) if entity_id == EntityId::Edge(EdgeId::new(2)) && property == db_string("since")
     ));
     let _ = fs::remove_dir_all(dir);
 }
 
 fn person_company_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("closed.pc.graph"),
+        name: db_string("closed.pc.graph"),
         node_types: vec![
             NodeTypeDef {
-                name: istr("closed.person.pc"),
-                key_labels: LabelSet::single(istr("PCPerson")),
+                name: db_string("closed.person.pc"),
+                key_labels: LabelSet::single(db_string("PCPerson")),
                 properties: vec![],
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("closed.company.pc"),
-                key_labels: LabelSet::single(istr("PCCompany")),
+                name: db_string("closed.company.pc"),
+                key_labels: LabelSet::single(db_string("PCCompany")),
                 properties: vec![],
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![crate::EdgeTypeDef {
-            name: istr("closed.works_at"),
-            label: istr("WORKS_AT"),
+            name: db_string("closed.works_at"),
+            label: db_string("WORKS_AT"),
             source_node_type: EdgeEndpointDef::NodeType(0), // PCPerson
             target_node_type: EdgeEndpointDef::NodeType(1), // PCCompany
             properties: vec![],
@@ -526,13 +539,13 @@ fn closed_graph_any_edge_accepts_declared_endpoint_types() {
     {
         let mut mutator = txn.mutator();
         let person = mutator
-            .create_node(LabelSet::single(istr("PCPerson")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("PCPerson")), PropertyMap::new())
             .unwrap();
         let company = mutator
-            .create_node(LabelSet::single(istr("PCCompany")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("PCCompany")), PropertyMap::new())
             .unwrap();
         mutator
-            .create_edge(istr("WORKS_AT"), company, person, PropertyMap::new())
+            .create_edge(db_string("WORKS_AT"), company, person, PropertyMap::new())
             .unwrap();
     }
 
@@ -551,20 +564,20 @@ fn closed_graph_any_edge_rejects_undeclared_endpoint_type() {
     {
         let mut mutator = txn.mutator();
         let person = mutator
-            .create_node(LabelSet::single(istr("PCPerson")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("PCPerson")), PropertyMap::new())
             .unwrap();
         let project = mutator
-            .create_node(LabelSet::single(istr("PCProject")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("PCProject")), PropertyMap::new())
             .unwrap();
         mutator
-            .create_edge(istr("WORKS_AT"), person, project, PropertyMap::new())
+            .create_edge(db_string("WORKS_AT"), person, project, PropertyMap::new())
             .unwrap();
     }
 
     assert!(matches!(
         txn.commit().unwrap_err(),
         GraphError::TypeViolation(TypeViolation::UnknownNodeLabel { labels, .. })
-            if labels == LabelSet::single(istr("PCProject"))
+            if labels == LabelSet::single(db_string("PCProject"))
     ));
 }
 
@@ -583,13 +596,13 @@ fn closed_graph_revalidates_incident_edges_on_node_label_change() {
     let (alice, acme) = {
         let mut mutator = txn.mutator();
         let alice = mutator
-            .create_node(LabelSet::single(istr("PCPerson")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("PCPerson")), PropertyMap::new())
             .unwrap();
         let acme = mutator
-            .create_node(LabelSet::single(istr("PCCompany")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("PCCompany")), PropertyMap::new())
             .unwrap();
         mutator
-            .create_edge(istr("WORKS_AT"), alice, acme, PropertyMap::new())
+            .create_edge(db_string("WORKS_AT"), alice, acme, PropertyMap::new())
             .unwrap();
         (alice, acme)
     };
@@ -604,7 +617,7 @@ fn closed_graph_revalidates_incident_edges_on_node_label_change() {
         mutator
             .update_node(
                 alice,
-                LabelDiff::new([istr("PCCompany")], [istr("PCPerson")]).unwrap(),
+                LabelDiff::new([db_string("PCCompany")], [db_string("PCPerson")]).unwrap(),
                 PropertyDiff::new(std::iter::empty(), std::iter::empty()).unwrap(),
             )
             .unwrap();
@@ -638,8 +651,8 @@ fn closed_graph_accepts_create_then_delete_in_same_tx() {
         let mut mutator = txn.mutator();
         let scratch = mutator
             .create_node(
-                LabelSet::single(istr("Stranger")), // would fail validation if checked
-                prop("name", Value::String(istr("scratch"))),
+                LabelSet::single(db_string("Stranger")), // would fail validation if checked
+                prop("name", Value::String(db_string("scratch"))),
             )
             .unwrap();
         mutator.delete_node(scratch).unwrap();
@@ -682,8 +695,8 @@ fn recover_closed_preserves_bound_type_for_wal_only() {
         0,
         &[Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(istr("Person")),
-            properties: prop("name", Value::String(istr("Alice"))),
+            labels: LabelSet::single(db_string("Person")),
+            properties: prop("name", Value::String(db_string("Alice"))),
         }],
     );
 
@@ -710,7 +723,7 @@ fn recover_closed_rejects_disagreement_with_snapshot_meta() {
     write_snapshot(&dir, &shared, 1);
 
     let mut other_type = person_graph_type();
-    other_type.name = istr("closed.person.other");
+    other_type.name = db_string("closed.person.other");
     let err = match SharedGraph::recover_closed(&dir, GraphId::new(15), other_type) {
         Ok(_) => panic!("recovery should fail on bound_type drift"),
         Err(error) => error,

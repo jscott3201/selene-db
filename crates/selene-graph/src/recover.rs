@@ -119,6 +119,7 @@ impl SharedGraph {
         // increment from a stale snapshot generation, regressing or
         // duplicating sequencing relative to the recovered tip.
         graph.meta.generation = graph.meta.generation.max(outcome.last_wal_seq);
+        mark_recovered_provider_generation(&providers, &graph, &outcome)?;
         // Reopen the WAL file as a live writer so post-recovery commits
         // continue to append durably. Without this, recover() returns a
         // graph whose commits go to memory only — a crash after recovery
@@ -182,10 +183,7 @@ impl RecoveryProvider for IndexRecoveryProvider {
     }
 
     fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
-        for change in changes {
-            self.provider.on_change(change).map_err(recovery_error)?;
-        }
-        Ok(())
+        self.provider.on_changes(changes).map_err(recovery_error)
     }
 }
 
@@ -209,6 +207,27 @@ fn register_index_recovery_providers(
             provider: Arc::clone(provider),
         });
         registry.register(recovery_provider)?;
+    }
+    Ok(())
+}
+
+fn mark_recovered_provider_generation(
+    providers: &[Arc<dyn IndexProvider>],
+    graph: &crate::SeleneGraph,
+    outcome: &selene_persist::RecoveryOutcome,
+) -> GraphResult<()> {
+    for provider in providers {
+        let provider_tag = provider.provider_tag().0;
+        let missing_snapshot_state = outcome.applied_snapshot_seq > 0
+            && !provider.declared_sub_tags().is_empty()
+            && outcome
+                .snapshot_providers_invoked
+                .binary_search(&provider_tag)
+                .is_err();
+        if missing_snapshot_state {
+            provider.rebuild_from_graph(graph)?;
+        }
+        provider.on_commit_applied(graph.meta.generation)?;
     }
     Ok(())
 }

@@ -3,19 +3,26 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use selene_core::{Change, EdgeId, GraphId, NodeId, PropertyDiff, PropertyMap, SchemaChange};
+use selene_core::{
+    Change, DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
+    db_string,
+};
 use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
     CompositeSchemaEntry, CompositeSchemaKey, EdgeRow, MetaPayload, NodeRow, SchemaEntry,
-    SchemaKey, decode_composite_schemas, decode_edges, decode_graph_types, decode_meta,
-    decode_nodes, decode_schemas,
+    SchemaKey, TextSchemaEntry, TextSchemaKey, VectorSchemaEntry, VectorSchemaKey,
+    decode_composite_schemas, decode_edges, decode_graph_types, decode_meta, decode_nodes,
+    decode_schemas, decode_text_schemas, decode_vector_schemas,
 };
 use crate::core_provider::{
     CORE_CPIX_SUB, CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB,
-    inconsistent, invalid_payload,
+    CORE_TIDX_SUB, CORE_VIDX_SUB, inconsistent, invalid_payload,
 };
-use crate::graph::{CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph};
+use crate::graph::{
+    CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph, TextIndexEntry,
+    VectorIndexEntry,
+};
 use crate::graph_types::GraphTypeDef;
 use crate::typed_index::TypedIndex;
 
@@ -24,9 +31,11 @@ mod materialize;
 mod schema_replay;
 
 use index_replay::{
-    PendingCompositeIndex, PendingIndex, pending_composite_property_index_change,
-    pending_property_index_change, replay_composite_property_index_changes,
-    replay_property_index_changes,
+    PendingCompositeIndex, PendingIndex, PendingTextIndex, PendingVectorIndex,
+    pending_composite_property_index_change, pending_property_index_change,
+    pending_text_index_change, pending_vector_index_change,
+    replay_composite_property_index_changes, replay_property_index_changes,
+    replay_text_index_changes, replay_vector_index_changes,
 };
 use materialize::{insert_edge_row, insert_node_row};
 
@@ -38,6 +47,8 @@ pub(crate) struct RecoveryState {
     pending_schema_changes: Vec<SchemaChange>,
     pending_property_index_changes: Vec<PendingIndex>,
     pending_composite_property_index_changes: Vec<PendingCompositeIndex>,
+    pending_vector_index_changes: Vec<PendingVectorIndex>,
+    pending_text_index_changes: Vec<PendingTextIndex>,
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
     /// BRIEF-Item-4a STEP 9: the snapshot row (= section position) each
@@ -51,6 +62,8 @@ pub(crate) struct RecoveryState {
     edge_snapshot_rows: BTreeMap<EdgeId, u32>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
+    vector_schemas: Vec<(VectorSchemaKey, VectorSchemaEntry)>,
+    text_schemas: Vec<(TextSchemaKey, TextSchemaEntry)>,
     sequence: u64,
     /// Set once a [`Change::GraphReset`] (BRIEF-152, audit Item 10) is replayed.
     ///
@@ -129,6 +142,12 @@ impl RecoveryState {
             CORE_CPIX_SUB => {
                 self.composite_schemas = decode_composite_schemas(bytes)?;
             }
+            CORE_VIDX_SUB => {
+                self.vector_schemas = decode_vector_schemas(bytes)?;
+            }
+            CORE_TIDX_SUB => {
+                self.text_schemas = decode_text_schemas(bytes)?;
+            }
             _ => {
                 return Err(invalid_payload(format!("unknown CORE sub-tag {sub_tag}")));
             }
@@ -170,7 +189,7 @@ impl RecoveryState {
                 properties_diff,
             } => {
                 let row = require_live_node(&mut self.nodes, *id)?;
-                for label in labels_diff.added.iter().copied() {
+                for label in labels_diff.added.iter().cloned() {
                     row.labels.insert(label);
                 }
                 for label in labels_diff.removed.iter() {
@@ -180,7 +199,7 @@ impl RecoveryState {
             }
             Change::NodeDeleted { id } => {
                 let row = require_live_node(&mut self.nodes, *id)?;
-                row.alive = false;
+                clear_node_row(row);
             }
             Change::EdgeCreated {
                 id,
@@ -200,7 +219,7 @@ impl RecoveryState {
                 self.edges.insert(
                     *id,
                     EdgeRow {
-                        label: *label,
+                        label: label.clone(),
                         source: *source,
                         target: *target,
                         properties: properties.clone(),
@@ -217,7 +236,7 @@ impl RecoveryState {
             }
             Change::EdgeDeleted { id } => {
                 let row = require_live_edge(&mut self.edges, *id)?;
-                row.alive = false;
+                clear_edge_row(row);
             }
             Change::NodePropertyRemoved { id, property } => {
                 let row = require_live_node(&mut self.nodes, *id)?;
@@ -239,8 +258,8 @@ impl RecoveryState {
                 let mut truncated_nodes = std::collections::BTreeSet::new();
                 for (id, row) in self.nodes.iter_mut() {
                     if row.alive && row.labels.contains(label) {
-                        row.alive = false;
                         truncated_nodes.insert(*id);
+                        clear_node_row(row);
                     }
                 }
                 for row in self.edges.values_mut() {
@@ -248,14 +267,14 @@ impl RecoveryState {
                         && (truncated_nodes.contains(&row.source)
                             || truncated_nodes.contains(&row.target))
                     {
-                        row.alive = false;
+                        clear_edge_row(row);
                     }
                 }
             }
             Change::EdgesOfTypeTruncated { label } => {
                 for row in self.edges.values_mut() {
                     if row.alive && row.label == *label {
-                        row.alive = false;
+                        clear_edge_row(row);
                     }
                 }
             }
@@ -264,18 +283,16 @@ impl RecoveryState {
                 // position and mark it dead — identical to the runtime mutator,
                 // which carries no ids in the declarative change ("replay walks
                 // the store"). Wipes ALL nodes/edges incl untyped ones.
-                for row in self.nodes.values_mut() {
-                    row.alive = false;
-                }
-                for row in self.edges.values_mut() {
-                    row.alive = false;
-                }
+                self.nodes.values_mut().for_each(clear_node_row);
+                self.edges.values_mut().for_each(clear_edge_row);
                 // A reset moots every prior schema/index intent in the WAL up to
                 // this point, and forces the recovered graph open.
                 self.schema_reset_to_open = true;
                 self.pending_schema_changes.clear();
                 self.pending_property_index_changes.clear();
                 self.pending_composite_property_index_changes.clear();
+                self.pending_vector_index_changes.clear();
+                self.pending_text_index_changes.clear();
             }
             Change::SchemaChanged { change, .. } => match change {
                 SchemaChange::NodeTypeAdded { .. }
@@ -298,6 +315,17 @@ impl RecoveryState {
                     let pending = pending_composite_property_index_change(change)
                         .expect("composite property-index variants map to pending recovery intent");
                     self.pending_composite_property_index_changes.push(pending);
+                }
+                SchemaChange::VectorIndexCreated { .. }
+                | SchemaChange::VectorIndexDropped { .. } => {
+                    let pending = pending_vector_index_change(change)
+                        .expect("vector-index variants map to pending recovery intent");
+                    self.pending_vector_index_changes.push(pending);
+                }
+                SchemaChange::TextIndexCreated { .. } | SchemaChange::TextIndexDropped { .. } => {
+                    let pending = pending_text_index_change(change)
+                        .expect("text-index variants map to pending recovery intent");
+                    self.pending_text_index_changes.push(pending);
                 }
                 SchemaChange::GraphCreated { .. }
                 | SchemaChange::GraphDropped { .. }
@@ -509,6 +537,26 @@ impl RecoveryState {
                 ),
             );
         }
+        for (key, entry) in self.vector_schemas {
+            graph.vector_index.insert(
+                (key.label, key.property),
+                VectorIndexEntry::new(
+                    crate::VectorIndex::new_with_configs(
+                        entry.kind,
+                        entry.dimension,
+                        entry.hnsw_config,
+                        entry.ivf_config,
+                    )?,
+                    entry.name,
+                ),
+            );
+        }
+        for (key, entry) in self.text_schemas {
+            graph.text_index.insert(
+                (key.label.clone(), key.property.clone()),
+                TextIndexEntry::new(crate::TextIndex::empty(key.label, key.property), entry.name),
+            );
+        }
         // Apply the post-snapshot WAL index intents to the registration set
         // only. `into_graph` deliberately does NOT rebuild index contents or
         // re-validate the closed-graph state here: the single rebuild + validate
@@ -520,6 +568,8 @@ impl RecoveryState {
             &mut graph,
             &self.pending_composite_property_index_changes,
         )?;
+        replay_vector_index_changes(&mut graph, &self.pending_vector_index_changes)?;
+        replay_text_index_changes(&mut graph, &self.pending_text_index_changes)?;
         Ok(graph)
     }
 }
@@ -569,12 +619,30 @@ fn require_live_edge(
     Ok(row)
 }
 
+fn clear_node_row(row: &mut NodeRow) {
+    row.labels = LabelSet::new();
+    row.properties = PropertyMap::new();
+    row.alive = false;
+}
+
+fn clear_edge_row(row: &mut EdgeRow) {
+    row.label = dead_edge_label();
+    row.source = NodeId::TOMBSTONE;
+    row.target = NodeId::TOMBSTONE;
+    row.properties = PropertyMap::new();
+    row.alive = false;
+}
+
+fn dead_edge_label() -> DbString {
+    db_string("").expect("empty edge tombstone label is always within the string cap")
+}
+
 fn apply_property_diff(
     map: &mut PropertyMap,
     diff: &PropertyDiff,
 ) -> Result<(), crate::ProviderError> {
     for (key, value) in diff.set.iter() {
-        map.set(*key, value.clone())
+        map.set(key.clone(), value.clone())
             .map_err(|error| inconsistent(format!("WAL replay property set failed: {error}")))?;
     }
     for key in diff.removed.iter() {

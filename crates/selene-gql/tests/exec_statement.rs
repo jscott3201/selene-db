@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use selene_core::{GraphId, LabelSet, Value, intern};
+use selene_core::{GraphId, LabelSet, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ExecutorError, ExecutorWarning, GqlStatus, Session,
     StatementOutput, WarningSink, WriteOutcome, analyze, execute_statement, parse, plan,
@@ -10,8 +10,8 @@ use selene_gql::{
 use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
-fn istr(value: &str) -> selene_core::IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> selene_core::DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn planned(source: &str) -> ExecutionPlan {
@@ -42,7 +42,7 @@ fn written(output: StatementOutput) -> WriteOutcome {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("statement.test.graph"),
+            name: db_string("statement.test.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -52,12 +52,12 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 }
 
 fn closed_person_graph(id: u64) -> SharedGraph {
-    let person = istr("Person");
+    let person = db_string("Person");
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("statement.person.graph"),
+            name: db_string("statement.person.graph"),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
@@ -97,7 +97,7 @@ fn read_only_returns_rows_from_pattern_plan() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("Person")), Default::default())
+            .create_node(LabelSet::single(db_string("Person")), Default::default())
             .expect("fixture node inserts");
         txn.commit().expect("fixture commits");
     }
@@ -185,6 +185,110 @@ fn catalog_default_property_materializes_on_insert() {
 }
 
 #[test]
+fn catalog_bytes_default_property_materializes_on_insert() {
+    let graph = empty_closed_graph(3817);
+    let mut session = Session::new(&graph);
+
+    execute(
+        "CREATE NODE TYPE :Blob (payload :: BYTES DEFAULT X'CAFE')",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute("INSERT (n:Blob) FINISH", &mut session).expect("insert succeeds");
+    let table = rows(
+        execute("MATCH (n:Blob) RETURN n.payload AS payload", &mut session)
+            .expect("match succeeds"),
+    );
+
+    assert_eq!(
+        table.rows()[0].values(),
+        &[Value::Bytes(Arc::<[u8]>::from([0xCA, 0xFE]))]
+    );
+}
+
+#[test]
+fn catalog_float_default_properties_materialize_and_round_trip() {
+    let graph = empty_closed_graph(3825);
+    let mut session = Session::new(&graph);
+
+    execute(
+        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5D, small :: FLOAT32 DEFAULT 2.25D)",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute("INSERT (n:Metric) FINISH", &mut session).expect("insert succeeds");
+    let table = rows(
+        execute(
+            "MATCH (n:Metric) RETURN n.score AS score, n.small AS small",
+            &mut session,
+        )
+        .expect("match succeeds"),
+    );
+
+    assert_eq!(
+        table.rows()[0].values(),
+        &[Value::Float(1.5), Value::Float32(2.25_f32)]
+    );
+
+    let table = rows(execute("SHOW NODE TYPES", &mut session).expect("show succeeds"));
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5D, small :: FLOAT32 DEFAULT 2.25D)"
+        ))
+    );
+}
+
+#[test]
+fn catalog_exact_numeric_default_properties_materialize_and_round_trip() {
+    let graph = empty_closed_graph(3826);
+    let mut session = Session::new(&graph);
+
+    execute(
+        "CREATE NODE TYPE :Metric (u :: UINT64 DEFAULT 42, \
+         i128 :: INT128 DEFAULT '-170141183460469231731687303715884105728', \
+         u128 :: UINT128 DEFAULT '340282366920938463463374607431768211455', \
+         dec_i :: DECIMAL DEFAULT 7, dec_s :: DECIMAL DEFAULT '123.450', \
+         dec_f :: DECIMAL DEFAULT 1.25)",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute("INSERT (n:Metric) FINISH", &mut session).expect("insert succeeds");
+    let table = rows(
+        execute(
+            "MATCH (n:Metric) RETURN n.u AS u, n.i128 AS i128, n.u128 AS u128, \
+             n.dec_i AS dec_i, n.dec_s AS dec_s, n.dec_f AS dec_f",
+            &mut session,
+        )
+        .expect("match succeeds"),
+    );
+
+    assert_eq!(
+        table.rows()[0].values(),
+        &[
+            Value::Uint(42),
+            Value::Int128(i128::MIN),
+            Value::Uint128(u128::MAX),
+            Value::Decimal("7".parse().unwrap()),
+            Value::Decimal("123.450".parse().unwrap()),
+            Value::Decimal("1.25".parse().unwrap()),
+        ]
+    );
+
+    let table = rows(execute("SHOW NODE TYPES", &mut session).expect("show succeeds"));
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Metric (u :: UINT64 DEFAULT '42', \
+         i128 :: INT128 DEFAULT '-170141183460469231731687303715884105728', \
+         u128 :: UINT128 DEFAULT '340282366920938463463374607431768211455', \
+         dec_i :: DECIMAL DEFAULT '7', dec_s :: DECIMAL DEFAULT '123.450', \
+         dec_f :: DECIMAL DEFAULT '1.25')"
+        ))
+    );
+}
+
+#[test]
 fn catalog_immutable_property_rejects_gql_set() {
     let graph = empty_closed_graph(3815);
     let mut session = Session::new(&graph);
@@ -243,10 +347,10 @@ fn explicit_commit_emits_relaxed_write_warning_after_commit() {
 fn catalog_show_yields_rows() {
     let graph = SharedGraph::builder(GraphId::new(3806))
         .bound_to(GraphTypeDef {
-            name: istr("statement.show.graph"),
+            name: db_string("statement.show.graph"),
             node_types: vec![NodeTypeDef {
-                name: istr("types.person"),
-                key_labels: LabelSet::single(istr("Person")),
+                name: db_string("types.person"),
+                key_labels: LabelSet::single(db_string("Person")),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
@@ -260,7 +364,10 @@ fn catalog_show_yields_rows() {
     let table = rows(execute("SHOW NODE TYPES", &mut session).expect("show executes"));
 
     assert_eq!(table.row_count(), 1);
-    assert_eq!(table.rows()[0].values()[0], Value::String(istr("Person")));
+    assert_eq!(
+        table.rows()[0].values()[0],
+        Value::String(db_string("Person"))
+    );
 }
 
 #[test]
@@ -535,7 +642,7 @@ fn catalog_modifying_rejects_drop_with_surviving_instances_no_partial_state() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(istr("Person")), Default::default())
+            .create_node(LabelSet::single(db_string("Person")), Default::default())
             .expect("fixture node inserts");
         txn.commit().expect("fixture commits");
     }

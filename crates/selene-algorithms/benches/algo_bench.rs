@@ -1,49 +1,59 @@
 #![allow(missing_docs)]
 //! Criterion benches for graph-algorithm baselines.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+mod common;
 
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
-    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism, ProjectionConfig,
-    TriangleCountConfig, apsp, betweenness, louvain, pagerank, triangle_count,
+    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, PageRankOrientation,
+    Parallelism, TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, scc,
+    scc_count, topological_sort, triangle_count, wcc, wcc_count,
 };
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
-use selene_graph::{SeleneGraph, SharedGraph};
-use selene_testing::bench_fixtures::BENCHMARK_SCALES as BENCH_SCALES;
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
+use selene_graph::SharedGraph;
 use selene_testing::{BenchFixture, BenchProfile};
+
+use common::{build_projection, criterion_config, scale_label};
+
+/// Node scales for the scale-swept algorithm groups, selected by
+/// `SELENE_BENCH_PROFILE` (quick=1k, full=10k/50k/100k, stress=+250k) so a
+/// `--profile quick` spot-check no longer runs the 100k betweenness baseline.
+fn profile_scales() -> &'static [usize] {
+    BenchProfile::from_env().scales()
+}
 
 // All-pairs SSSP iterates every source; N=1000 is roughly 10^6 output tuples.
 // Bump only with measured wall-clock evidence per BRIEF-87 section B.2.
 const APSP_SCALES: &[usize] = &[200, 500, 1_000];
 const BENCH_BETWEENNESS_SAMPLE_SIZE: usize = 256;
+const BENCH_LABEL_PROPAGATION_MAX_ITER: usize = 50;
 const BENCH_LOUVAIN_MAX_ITER: usize = 50;
 const PARALLELISM_BENCH_MODES: &[(&str, Parallelism)] = &[
     ("sequential", Parallelism::Sequential),
     ("auto", Parallelism::Auto),
 ];
 
-const BENCH_PAGERANK_CONFIG: PageRankConfig = PageRankConfig {
-    damping: 0.85,
-    max_iter: 100,
-    tolerance: 1e-6,
-    parallelism: Parallelism::Sequential,
-};
-
 fn bench_pagerank(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/pagerank");
-    for &scale in BENCH_SCALES {
+    for &scale in profile_scales() {
         let state = BenchState::from_bench_fixture(scale);
         for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
             let config = PageRankConfig {
+                damping: 0.85,
+                max_iter: 100,
+                tolerance: 1e-6,
                 parallelism,
-                ..BENCH_PAGERANK_CONFIG
+                orientation: PageRankOrientation::Natural,
+                personalization: None,
             };
             group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {
-                b.iter(|| black_box(pagerank(&state.projection, config)));
+                b.iter(|| black_box(pagerank(&state.projection, config.clone())));
             });
         }
     }
@@ -52,7 +62,7 @@ fn bench_pagerank(c: &mut Criterion) {
 
 fn bench_betweenness(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/betweenness");
-    for &scale in BENCH_SCALES {
+    for &scale in profile_scales() {
         let state = BenchState::from_bench_fixture(scale);
         // Sample large betweenness fixtures so the 10k baseline stays bounded.
         let sample_size = betweenness_sample_size(scale);
@@ -71,7 +81,7 @@ fn bench_betweenness(c: &mut Criterion) {
 
 fn bench_triangle_count(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/triangle_count");
-    for &scale in BENCH_SCALES {
+    for &scale in profile_scales() {
         // Local planted communities keep triangle_count from measuring a mostly-empty result.
         let state = BenchState::from_planted_community(scale, 82_200 + scale as u64);
         for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
@@ -101,9 +111,83 @@ fn bench_apsp(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_topological_sort(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/topological_sort");
+    for &scale in profile_scales() {
+        let state = BenchState::from_dag(scale, 82_240 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| {
+                black_box(topological_sort(&state.projection).expect("bench graph is a DAG"))
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_wcc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/wcc");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_245 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(wcc(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_wcc_count(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/wcc_count");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_246 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(wcc_count(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_scc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/scc");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_247 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(scc(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_scc_count(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/scc_count");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_248 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(scc_count(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
+fn bench_label_propagation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/label_propagation");
+    for &scale in profile_scales() {
+        // Local planted communities give label propagation a stable community structure.
+        let state = BenchState::from_planted_community(scale, 82_250 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| {
+                black_box(label_propagation(
+                    &state.projection,
+                    BENCH_LABEL_PROPAGATION_MAX_ITER,
+                ))
+            });
+        });
+    }
+    group.finish();
+}
+
 fn bench_louvain(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/louvain");
-    for &scale in BENCH_SCALES {
+    for &scale in profile_scales() {
         // Local planted communities give Louvain an actual modularity structure.
         let state = BenchState::from_planted_community(scale, 82_300 + scale as u64);
         group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
@@ -132,29 +216,61 @@ impl BenchState {
             projection: build_projection(&snapshot),
         }
     }
+
+    fn from_dag(scale: usize, graph_id: u64) -> Self {
+        let graph = dag_graph(scale, graph_id);
+        let snapshot = graph.read();
+        Self {
+            projection: build_projection(&snapshot),
+        }
+    }
 }
 
-fn build_projection(snapshot: &SeleneGraph) -> GraphProjection {
-    let config = ProjectionConfig {
-        name: "bench".to_string(),
-        node_labels: Vec::new(),
-        edge_labels: Vec::new(),
-        weight_property: None,
-    };
-    GraphProjection::build(snapshot, &config, None).expect("bench projection builds")
-}
-
-fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
-    let scale = scale.max(6);
+fn dag_graph(scale: usize, graph_id: u64) -> SharedGraph {
+    let scale = scale.max(2);
     let graph = SharedGraph::new(GraphId::new(graph_id));
-    let node_label = istr("AlgoBench");
-    let rel = istr("LINK");
+    let node_label = db_string("AlgoBench");
+    let rel = db_string("LINK");
     let mut txn = graph.begin_write();
     let mut nodes = Vec::with_capacity(scale);
     for _ in 0..scale {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(node_label), PropertyMap::new())
+                .create_node(LabelSet::single(node_label.clone()), PropertyMap::new())
+                .expect("bench node inserts"),
+        );
+    }
+
+    for source in 0..scale {
+        for offset in [1_usize, 2, 4] {
+            let target = source + offset;
+            if target < scale {
+                txn.mutator()
+                    .create_edge(
+                        rel.clone(),
+                        nodes[source],
+                        nodes[target],
+                        PropertyMap::new(),
+                    )
+                    .expect("bench dag edge inserts");
+            }
+        }
+    }
+    txn.commit().expect("bench graph commits");
+    graph
+}
+
+fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
+    let scale = scale.max(6);
+    let graph = SharedGraph::new(GraphId::new(graph_id));
+    let node_label = db_string("AlgoBench");
+    let rel = db_string("LINK");
+    let mut txn = graph.begin_write();
+    let mut nodes = Vec::with_capacity(scale);
+    for _ in 0..scale {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(node_label.clone()), PropertyMap::new())
                 .expect("bench node inserts"),
         );
     }
@@ -175,12 +291,12 @@ fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
                     continue;
                 }
                 let target = start + ((local + offset) % len);
-                create_undirected_edge(&mut txn, rel, nodes[source], nodes[target]);
+                create_undirected_edge(&mut txn, rel.clone(), nodes[source], nodes[target]);
             }
         }
         if community + 1 < community_count {
             let next = ((community + 1) * community_size).min(scale - 1);
-            create_undirected_edge(&mut txn, rel, nodes[end - 1], nodes[next]);
+            create_undirected_edge(&mut txn, rel.clone(), nodes[end - 1], nodes[next]);
         }
     }
     txn.commit().expect("bench graph commits");
@@ -189,12 +305,12 @@ fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
 
 fn create_undirected_edge(
     txn: &mut selene_graph::WriteTxn<'_>,
-    rel: IStr,
+    rel: DbString,
     source: NodeId,
     target: NodeId,
 ) {
     txn.mutator()
-        .create_edge(rel, source, target, PropertyMap::new())
+        .create_edge(rel.clone(), source, target, PropertyMap::new())
         .expect("bench edge inserts");
     txn.mutator()
         .create_edge(rel, target, source, PropertyMap::new())
@@ -205,28 +321,8 @@ fn betweenness_sample_size(scale: usize) -> Option<usize> {
     (scale > BENCH_BETWEENNESS_SAMPLE_SIZE).then_some(BENCH_BETWEENNESS_SAMPLE_SIZE)
 }
 
-fn scale_label(scale: usize) -> String {
-    if scale >= 1_000 {
-        format!("{}k", scale / 1_000)
-    } else {
-        scale.to_string()
-    }
-}
-
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
-}
-
-fn criterion_config() -> Criterion {
-    let profile = BenchProfile::from_env();
-    Criterion::default()
-        .sample_size(profile.sample_size())
-        .warm_up_time(std::time::Duration::from_millis(100))
-        .measurement_time(std::time::Duration::from_millis(match profile {
-            BenchProfile::Quick => 500,
-            BenchProfile::Full | BenchProfile::Stress => 1_500,
-            _ => 500,
-        }))
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }
 
 criterion_group! {
@@ -236,6 +332,12 @@ criterion_group! {
         bench_betweenness,
         bench_triangle_count,
         bench_apsp,
+        bench_topological_sort,
+        bench_wcc,
+        bench_wcc_count,
+        bench_scc,
+        bench_scc_count,
+        bench_label_propagation,
         bench_louvain
 }
 criterion_main!(benches);

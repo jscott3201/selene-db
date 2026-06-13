@@ -17,7 +17,7 @@
 //! keeping the MANIFEST epoch and WAL lineage intact. This is forward-compatible
 //! with multi-graph (v1.4+), where the name resolves to a real catalog entry.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     SourceSpan,
@@ -34,7 +34,7 @@ use super::catalog_graph_error;
 /// (O(1) WAL). Idempotent: a second `DROP GRAPH` on an already-empty + open
 /// graph is a clean no-op, not an error.
 pub(super) fn execute_drop_graph(
-    name: IStr,
+    name: DbString,
     if_exists: bool,
     span: SourceSpan,
     table: BindingTable,

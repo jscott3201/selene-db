@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::ops::Bound::{Excluded, Included, Unbounded};
 
-use selene_core::{IStr, LabelSet, Value};
+use selene_core::{DbString, LabelSet, Value};
 use selene_graph::RowIndex;
 
 use crate::{
@@ -13,10 +13,10 @@ use crate::{
 };
 
 use super::scan_resolve::{
-    IndexKeyOutcome, ProbeShape, ResolvedBounds, range_satisfiable_runtime, resolve_bounds,
-    resolve_index_key,
+    IndexKeyOutcome, ResolvedBounds, range_satisfiable_runtime, resolve_bitmap_union_key_values,
+    resolve_bounds, resolve_index_key,
 };
-use super::{EvalCtx, evaluator, pattern, value_compare};
+use super::{EvalCtx, evaluator, scan_bind, scan_seed, value_compare};
 
 /// Execute one `JoinTree::Scan` against the transaction snapshot.
 pub(crate) fn scan_pattern(
@@ -39,6 +39,35 @@ pub(crate) fn scan_entities(
     seed: Option<&Binding>,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+    let slots = scan_bind::ScanSlots::resolve(scan, pattern, schema)?;
+    match seed {
+        Some(seed) => scan_entities_with_seed(scan, pattern, schema, seed, slots, ctx),
+        None => collect_scan_entities(scan, pattern, schema, None, slots, ctx),
+    }
+}
+
+fn scan_entities_with_seed(
+    scan: &NodeOrEdgeScan,
+    pattern: &PatternPlan,
+    schema: &BindingTableSchema,
+    seed: &Binding,
+    slots: scan_bind::ScanSlots,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+    if let Some(rows) = scan_seed::try_seeded_scan(scan, pattern, schema, seed, slots, ctx)? {
+        return Ok(rows);
+    }
+    collect_scan_entities(scan, pattern, schema, Some(seed), slots, ctx)
+}
+
+fn collect_scan_entities(
+    scan: &NodeOrEdgeScan,
+    pattern: &PatternPlan,
+    schema: &BindingTableSchema,
+    seed: Option<&Binding>,
+    slots: scan_bind::ScanSlots,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<(Value, Binding)>, ExecutorError> {
     let mut rows = Vec::new();
     for row in candidate_rows(scan, ctx)? {
         if !label_matches_scan(scan, row, ctx) {
@@ -47,7 +76,7 @@ pub(crate) fn scan_entities(
         let Some(entity) = entity_value(scan.kind, row, ctx) else {
             continue;
         };
-        let Some(binding) = binding_for_scan(scan, pattern, schema, seed, entity.clone())? else {
+        let Some(binding) = scan_bind::binding_for_scan(schema, seed, entity.clone(), slots) else {
             continue;
         };
         if predicates_pass(scan, pattern, &binding, schema, &entity, ctx)? {
@@ -55,26 +84,6 @@ pub(crate) fn scan_entities(
         }
     }
     Ok(rows)
-}
-
-fn binding_for_scan(
-    scan: &NodeOrEdgeScan,
-    pattern: &PatternPlan,
-    schema: &BindingTableSchema,
-    seed: Option<&Binding>,
-    entity: Value,
-) -> Result<Option<Binding>, ExecutorError> {
-    let mut values = seed
-        .map(|row| row.values().to_vec())
-        .unwrap_or_else(|| vec![Value::Null; schema.columns.len()]);
-    values.resize(schema.columns.len(), Value::Null);
-    if !pattern::set_binding_value(&mut values, pattern, schema, scan.binding, entity.clone())? {
-        return Ok(None);
-    }
-    if !pattern::set_hidden_value(&mut values, schema, scan.hidden_binding, entity)? {
-        return Ok(None);
-    }
-    Ok(Some(Binding::new(values)))
 }
 
 fn candidate_rows(
@@ -89,13 +98,13 @@ fn candidate_rows(
             kind,
             bounds,
             ..
-        } => typed_index_rows(scan, *property, *kind, bounds, ctx),
+        } => typed_index_rows(scan, property.clone(), *kind, bounds, ctx),
         ScanAccess::BitmapUnion {
             property,
             kind,
             keys,
             ..
-        } => bitmap_union_rows(scan, *property, *kind, keys, ctx),
+        } => bitmap_union_rows(scan, property.clone(), *kind, keys, ctx),
         ScanAccess::CompositeLookup {
             properties, keys, ..
         } => composite_lookup_rows(scan, properties, keys, ctx),
@@ -131,7 +140,7 @@ fn label_index_rows(scan: &NodeOrEdgeScan, ctx: &EvalCtx<'_, '_, '_, '_>) -> Vec
 
 fn typed_index_rows(
     scan: &NodeOrEdgeScan,
-    property: IStr,
+    property: DbString,
     kind: IndexKind,
     bounds: &TypedIndexBounds,
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -216,7 +225,7 @@ fn typed_index_rows(
 
 fn bitmap_union_rows(
     scan: &NodeOrEdgeScan,
-    property: IStr,
+    property: DbString,
     kind: IndexKind,
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -228,23 +237,18 @@ fn bitmap_union_rows(
 
 fn union_property_eq(
     scan: &NodeOrEdgeScan,
-    property: IStr,
+    property: DbString,
     kind: IndexKind,
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BTreeSet<u32>, ExecutorError> {
-    // Pre-resolve all keys once: parameter slots resolve to concrete Values
-    // under `ProbeShape::Equality` (BitmapUnion fans out variant-strict
-    // equality probes — same shape contract as `Equality(IndexKey)`).
-    // `IndexKeyOutcome::EmptyResult` slots (NULL binding or unpoolable
-    // ExternalString) drop out of the union per BRIEF-154 §B.3. A loud
-    // `InvalidParameterType` propagates immediately.
+    // Pre-resolve all keys once: scalar parameter slots resolve to concrete
+    // Values, while declared list-parameter slots expand into many concrete
+    // Values. Empty slots (NULL bindings or empty lists) drop out of the union
+    // per the same 3VL WHERE semantics as the residual IN predicate.
     let mut resolved_keys: Vec<Value> = Vec::with_capacity(keys.len());
     for key in keys {
-        match resolve_index_key(key, kind, ProbeShape::Equality, ctx)? {
-            IndexKeyOutcome::Value(value) => resolved_keys.push(value),
-            IndexKeyOutcome::EmptyResult => {}
-        }
+        resolved_keys.extend(resolve_bitmap_union_key_values(key, kind, ctx)?);
     }
     // P3 short-circuit: if every key resolved to EmptyResult, the union is
     // empty by construction — no need to scan rows looking for matches.
@@ -255,7 +259,7 @@ fn union_property_eq(
         return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
             })
             .collect());
     }
@@ -263,7 +267,7 @@ fn union_property_eq(
         return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
             })
             .collect());
     };
@@ -285,7 +289,7 @@ fn union_property_eq(
         Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
             })
             .collect())
     }
@@ -293,8 +297,8 @@ fn union_property_eq(
 
 fn composite_lookup_rows(
     scan: &NodeOrEdgeScan,
-    properties: &[(IStr, IndexKind)],
-    keys: &[(IStr, IndexKey)],
+    properties: &[(DbString, IndexKind)],
+    keys: &[(DbString, IndexKey)],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<u32>, ExecutorError> {
     // Resolve once at scan-entry: every key is matched to its declared kind
@@ -319,25 +323,23 @@ fn composite_lookup_rows(
             ctx,
         ));
     };
-    let property_keys: Vec<IStr> = properties.iter().map(|(property, _)| *property).collect();
+    let property_keys: Vec<DbString> = properties
+        .iter()
+        .map(|(property, _)| property.clone())
+        .collect();
     if let Some(index) = ctx
         .tx
         .snapshot()
         .composite_property_index_for(&label, &property_keys)
     {
         let refs = resolved_values.iter().collect::<Vec<_>>();
-        // Read-path MUST NOT admit new strings into the IStr pool (BRIEF-153);
-        // an unpoolable `Value::ExternalString` component proves no indexed
-        // row could match, so render as empty without admission.
-        match index.key_from_values_lookup(&refs) {
-            Ok(Some(key)) => {
-                return Ok(index
-                    .lookup_key(&key)
-                    .map(|bitmap| bitmap.iter().collect())
-                    .unwrap_or_default());
-            }
-            Ok(None) => return Ok(Vec::new()),
-            Err(_) => {}
+        // Single-coercion key build; a kind/arity mismatch (`Err`) declines the
+        // index probe and drops to the linear filter below.
+        if let Ok(key) = index.key_from_values(&refs) {
+            return Ok(index
+                .lookup_key(&key)
+                .map(|bitmap| bitmap.iter().collect())
+                .unwrap_or_default());
         }
     }
     Ok(linear_rows_filtered_by_resolved_composite(
@@ -350,12 +352,12 @@ fn composite_lookup_rows(
 
 /// Resolve a composite probe's per-component keys against bound parameters.
 ///
-/// Returns `Ok(None)` when any component resolved to `EmptyResult` (NULL
-/// parameter binding, unpoolable ExternalString against a STRING component).
-/// Returns `Ok(Some(values))` with `values` aligned to `properties` order.
-fn resolve_composite_values(
-    properties: &[(IStr, IndexKind)],
-    keys: &[(IStr, IndexKey)],
+/// Returns `Ok(None)` when any component resolved to `EmptyResult` (e.g. a
+/// NULL parameter binding). Returns `Ok(Some(values))` with `values` aligned
+/// to `properties` order.
+pub(super) fn resolve_composite_values(
+    properties: &[(DbString, IndexKind)],
+    keys: &[(DbString, IndexKey)],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Option<Vec<Value>>, ExecutorError> {
     let mut out = Vec::with_capacity(properties.len());
@@ -366,10 +368,8 @@ fn resolve_composite_values(
             return Ok(None);
         };
         // Composite probes via `composite_property_index_for` →
-        // `key_from_values_lookup` are variant-strict on each component
-        // (BRIEF-153 carve-out is built into the lookup path), so every
-        // component is `ProbeShape::Equality`.
-        match resolve_index_key(key, *kind, ProbeShape::Equality, ctx)? {
+        // `key_from_values` are variant-strict on each component.
+        match resolve_index_key(key, *kind, ctx)? {
             IndexKeyOutcome::Value(value) => out.push(value),
             IndexKeyOutcome::EmptyResult => return Ok(None),
         }
@@ -379,39 +379,56 @@ fn resolve_composite_values(
 
 fn linear_rows_filtered_by_resolved_composite(
     scan: &NodeOrEdgeScan,
-    properties: &[(IStr, IndexKind)],
+    properties: &[(DbString, IndexKind)],
     values: &[Value],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
-        .filter(|row| {
-            properties
-                .iter()
-                .zip(values.iter())
-                .all(|((property, _), expected)| {
-                    property_value(scan.kind, *row, *property, ctx)
-                        .is_some_and(|value| value_eq_non_null(value, expected))
-                })
-        })
+        .filter(|row| row_matches_resolved_composite(scan.kind, *row, properties, values, ctx))
         .collect()
+}
+
+pub(super) fn row_matches_resolved_composite(
+    kind: ScanKind,
+    row: u32,
+    properties: &[(DbString, IndexKind)],
+    values: &[Value],
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> bool {
+    properties
+        .iter()
+        .zip(values.iter())
+        .all(|((property, _), expected)| {
+            property_value(kind, row, property, ctx)
+                .is_some_and(|value| value_eq_non_null(value, expected))
+        })
 }
 
 fn linear_rows_filtered_by_resolved_bounds(
     scan: &NodeOrEdgeScan,
-    property: IStr,
+    property: DbString,
     resolved: &ResolvedBounds,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
-        .filter(|row| {
-            property_value(scan.kind, *row, property, ctx)
-                .is_some_and(|value| value_matches_resolved_bounds(value, resolved))
-        })
+        .filter(|row| row_matches_resolved_bounds(scan.kind, *row, &property, resolved, ctx))
         .collect()
 }
 
+pub(super) fn row_matches_resolved_bounds(
+    kind: ScanKind,
+    row: u32,
+    property: &DbString,
+    resolved: &ResolvedBounds,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> bool {
+    property_value(kind, row, property, ctx)
+        .is_some_and(|value| value_matches_resolved_bounds(value, resolved))
+}
+
+#[inline]
 pub(crate) fn predicates_pass(
     scan: &NodeOrEdgeScan,
     pattern: &PatternPlan,
@@ -487,11 +504,16 @@ pub(crate) fn value_for_binding(
     let index = schema
         .columns
         .iter()
-        .position(|column| column.name == Some(binding_def.name))?;
+        .position(|column| column.name == Some(binding_def.name.clone()))?;
     binding.get(index).cloned()
 }
 
-fn label_matches_scan(scan: &NodeOrEdgeScan, row: u32, ctx: &EvalCtx<'_, '_, '_, '_>) -> bool {
+#[inline]
+pub(super) fn label_matches_scan(
+    scan: &NodeOrEdgeScan,
+    row: u32,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> bool {
     let Some(label_expr) = &scan.label_predicate else {
         return true;
     };
@@ -511,7 +533,7 @@ fn label_matches_scan(scan: &NodeOrEdgeScan, row: u32, ctx: &EvalCtx<'_, '_, '_,
             };
             snapshot
                 .edge_label(id)
-                .is_some_and(|label| label_matches_edge(label_expr, *label))
+                .is_some_and(|label| label_matches_edge(label_expr, label.clone()))
         }
     }
 }
@@ -526,23 +548,28 @@ pub(crate) fn label_matches_node(expr: &LabelExpr, labels: &LabelSet) -> bool {
     }
 }
 
-pub(crate) fn label_matches_edge(expr: &LabelExpr, label: IStr) -> bool {
+pub(crate) fn label_matches_edge(expr: &LabelExpr, label: DbString) -> bool {
     match expr {
         LabelExpr::Single(expected) => *expected == label,
-        LabelExpr::Conjunction(parts) => parts.iter().all(|part| label_matches_edge(part, label)),
-        LabelExpr::Disjunction(parts) => parts.iter().any(|part| label_matches_edge(part, label)),
+        LabelExpr::Conjunction(parts) => parts
+            .iter()
+            .all(|part| label_matches_edge(part, label.clone())),
+        LabelExpr::Disjunction(parts) => parts
+            .iter()
+            .any(|part| label_matches_edge(part, label.clone())),
         LabelExpr::Negation(part) => !label_matches_edge(part, label),
         LabelExpr::Wildcard => true,
     }
 }
 
-fn single_label(label: &Option<LabelExpr>) -> Option<IStr> {
+fn single_label(label: &Option<LabelExpr>) -> Option<DbString> {
     match label {
-        Some(LabelExpr::Single(label)) => Some(*label),
+        Some(LabelExpr::Single(label)) => Some(label.clone()),
         _ => None,
     }
 }
 
+#[inline]
 fn entity_value(kind: ScanKind, row: u32, ctx: &EvalCtx<'_, '_, '_, '_>) -> Option<Value> {
     let snapshot = ctx.tx.snapshot();
     match kind {
@@ -555,10 +582,10 @@ fn entity_value(kind: ScanKind, row: u32, ctx: &EvalCtx<'_, '_, '_, '_>) -> Opti
     }
 }
 
-fn property_matches_any_resolved(
+pub(super) fn property_matches_any_resolved(
     kind: ScanKind,
     row: u32,
-    property: IStr,
+    property: &DbString,
     values: &[Value],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> bool {
@@ -572,7 +599,7 @@ fn property_matches_any_resolved(
 fn property_value<'a>(
     kind: ScanKind,
     row: u32,
-    property: IStr,
+    property: &DbString,
     ctx: &'a EvalCtx<'_, '_, '_, '_>,
 ) -> Option<&'a Value> {
     let snapshot = ctx.tx.snapshot();
@@ -580,11 +607,11 @@ fn property_value<'a>(
         ScanKind::Node => snapshot
             .node_id_for_row(RowIndex::new(row))
             .and_then(|id| snapshot.node_properties(id))
-            .and_then(|properties| properties.get(&property)),
+            .and_then(|properties| properties.get(property)),
         ScanKind::Edge => snapshot
             .edge_id_for_row(RowIndex::new(row))
             .and_then(|id| snapshot.edge_properties(id))
-            .and_then(|properties| properties.get(&property)),
+            .and_then(|properties| properties.get(property)),
     }
 }
 

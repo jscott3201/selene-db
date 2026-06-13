@@ -17,11 +17,11 @@ mod csr;
 mod row_index;
 
 use roaring::RoaringBitmap;
-use selene_core::{IStr, NodeId};
+use selene_core::{DbString, NodeId};
 use selene_graph::SeleneGraph;
 
 pub use csr::ProjNeighbor;
-use csr::{ProjCsr, build_csr_in, build_csr_out};
+use csr::{ProjCsr, build_csr_out, transpose_csr_in};
 pub(crate) use row_index::RowIndex;
 
 use crate::error::AlgorithmsError;
@@ -34,14 +34,14 @@ use crate::error::AlgorithmsError;
 #[derive(Debug, Clone)]
 pub struct ProjectionConfig {
     /// Stable name used by the projection catalog. Projection names are
-    /// user-facing and arbitrary; `String` keeps them out of the global
-    /// `IStr` interner per the Spec 16 §E04 high-cardinality discipline.
+    /// user-facing and arbitrary; `String` avoids forcing projection-catalog
+    /// names through the graph identifier string type.
     pub name: String,
     /// Node labels to include. Empty = all alive nodes (intersected with
     /// `scope` at build time).
-    pub node_labels: Vec<IStr>,
+    pub node_labels: Vec<DbString>,
     /// Edge labels to include. Empty = all edge types.
-    pub edge_labels: Vec<IStr>,
+    pub edge_labels: Vec<DbString>,
     /// Property key projecting numeric edge weights to `f64`. `None` =
     /// unweighted (all weights = `1.0`).
     ///
@@ -49,7 +49,7 @@ pub struct ProjectionConfig {
     /// (including `Value::Null`), default to weight `1.0` (the same as the
     /// unweighted case). For strict weight validation, preprocess at write
     /// time.
-    pub weight_property: Option<IStr>,
+    pub weight_property: Option<DbString>,
 }
 
 /// A named subgraph view with cached CSR adjacency for fast algorithm
@@ -64,8 +64,8 @@ pub struct GraphProjection {
     /// Row-indexed bitmap of nodes included in this projection (post label
     /// filter, post scope intersection).
     nodes: RoaringBitmap,
-    edge_labels: Vec<IStr>,
-    weight_property: Option<IStr>,
+    edge_labels: Vec<DbString>,
+    weight_property: Option<DbString>,
     /// Cached dense `sparse_row ↔ dense_index` remap over the frozen `nodes`
     /// set. Built once at construction and shared by reference with every
     /// algorithm via [`GraphProjection::row_index`].
@@ -119,13 +119,7 @@ impl GraphProjection {
             &config.edge_labels,
             config.weight_property.as_ref(),
         );
-        let in_csr = build_csr_in(
-            snapshot,
-            &nodes,
-            &row_index,
-            &config.edge_labels,
-            config.weight_property.as_ref(),
-        );
+        let in_csr = transpose_csr_in(&out_csr, &row_index);
         #[cfg(debug_assertions)]
         assert_csr_transpose(&nodes, &row_index, &out_csr, &in_csr);
 
@@ -133,7 +127,7 @@ impl GraphProjection {
             name: config.name.clone(),
             nodes,
             edge_labels: config.edge_labels.clone(),
-            weight_property: config.weight_property,
+            weight_property: config.weight_property.clone(),
             row_index,
             out_csr,
             in_csr,
@@ -216,6 +210,12 @@ impl GraphProjection {
         self.out_csr.neighbors_of_dense(dense)
     }
 
+    /// Out-neighbors of a dense projection row.
+    #[must_use]
+    pub(crate) fn out_neighbors_dense(&self, dense: u32) -> &[ProjNeighbor] {
+        self.out_csr.neighbors_of_dense(dense)
+    }
+
     /// In-neighbors of `node`, sorted ASC by `node_id` per spec 16 §E03.
     ///
     /// Returns an empty slice when `node` is not in this projection or has no
@@ -259,7 +259,7 @@ impl GraphProjection {
     /// Edge-label filter declared at projection build time. Empty slice means
     /// "all edge types were admitted" (no filter).
     #[must_use]
-    pub fn edge_labels(&self) -> &[IStr] {
+    pub fn edge_labels(&self) -> &[DbString] {
         &self.edge_labels
     }
 }
@@ -304,11 +304,11 @@ fn assert_csr_transpose(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_core::{GraphId, LabelSet, PropertyMap, intern};
+    use selene_core::{GraphId, LabelSet, PropertyMap, Value};
     use selene_graph::SharedGraph;
 
-    fn istr(name: &str) -> IStr {
-        intern(name).unwrap()
+    fn db_string(name: &str) -> DbString {
+        selene_core::db_string(name).unwrap()
     }
 
     /// Build a graph with `total` nodes (all labeled `T`), keep only the nodes
@@ -317,8 +317,8 @@ mod tests {
     /// surviving NodeIds in insertion order.
     fn sparse_ring(total: u64, keep_rows: &[u32]) -> (SharedGraph, Vec<NodeId>) {
         let shared = SharedGraph::new(GraphId::new(7_700));
-        let label = istr("T");
-        let link = istr("link");
+        let label = db_string("T");
+        let link = db_string("link");
 
         let mut all = Vec::with_capacity(total as usize);
         {
@@ -326,7 +326,7 @@ mod tests {
             for _ in 0..total {
                 let nid = txn
                     .mutator()
-                    .create_node(LabelSet::single(label), PropertyMap::new())
+                    .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                     .unwrap();
                 all.push(nid);
             }
@@ -351,7 +351,7 @@ mod tests {
                 let b = survivors[(i + 1) % survivors.len()];
                 if a != b {
                     txn.mutator()
-                        .create_edge(link, a, b, PropertyMap::new())
+                        .create_edge(link.clone(), a, b, PropertyMap::new())
                         .unwrap();
                 }
             }
@@ -364,7 +364,7 @@ mod tests {
     fn config() -> ProjectionConfig {
         ProjectionConfig {
             name: "p".to_string(),
-            node_labels: vec![istr("T")],
+            node_labels: vec![db_string("T")],
             edge_labels: vec![],
             weight_property: None,
         }
@@ -463,6 +463,73 @@ mod tests {
         }
     }
 
+    #[test]
+    fn incoming_csr_transpose_preserves_sources_dense_indices_and_weights() {
+        let shared = SharedGraph::new(GraphId::new(7_703));
+        let label = db_string("T");
+        let link = db_string("link");
+        let weight = db_string("weight");
+        let (a, b, c) = {
+            let mut txn = shared.begin_write();
+            let a = txn
+                .mutator()
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+                .unwrap();
+            let b = txn
+                .mutator()
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+                .unwrap();
+            let c = txn
+                .mutator()
+                .create_node(LabelSet::single(label), PropertyMap::new())
+                .unwrap();
+            txn.mutator()
+                .create_edge(
+                    link.clone(),
+                    c,
+                    b,
+                    PropertyMap::from_pairs([(weight.clone(), Value::Float(3.0))]).unwrap(),
+                )
+                .unwrap();
+            txn.mutator()
+                .create_edge(
+                    link,
+                    a,
+                    b,
+                    PropertyMap::from_pairs([(weight.clone(), Value::Float(1.0))]).unwrap(),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+            (a, b, c)
+        };
+
+        let snapshot = shared.read();
+        let cfg = ProjectionConfig {
+            name: "weighted".to_string(),
+            node_labels: vec![db_string("T")],
+            edge_labels: vec![db_string("link")],
+            weight_property: Some(weight),
+        };
+        let proj = GraphProjection::build(&snapshot, &cfg, None).unwrap();
+        let incoming = proj.in_neighbors(b);
+
+        assert_eq!(
+            incoming.iter().map(|n| n.node_id).collect::<Vec<_>>(),
+            vec![a, c]
+        );
+        assert_eq!(
+            incoming.iter().map(|n| n.dense).collect::<Vec<_>>(),
+            vec![
+                proj.row_index().dense_of_node(a).unwrap(),
+                proj.row_index().dense_of_node(c).unwrap()
+            ]
+        );
+        assert_eq!(
+            incoming.iter().map(|n| n.weight).collect::<Vec<_>>(),
+            vec![1.0, 3.0]
+        );
+    }
+
     /// Empty projection: cached row_index is empty and offsets are [0].
     #[test]
     fn empty_projection_dense_offsets() {
@@ -470,7 +537,7 @@ mod tests {
         let snapshot = shared.read();
         let cfg = ProjectionConfig {
             name: "empty".to_string(),
-            node_labels: vec![istr("Nonexistent")],
+            node_labels: vec![db_string("Nonexistent")],
             edge_labels: vec![],
             weight_property: None,
         };
@@ -509,23 +576,26 @@ mod tests {
     #[test]
     fn projection_over_non_identity_graph_emits_external_node_ids() {
         use selene_core::EdgeId;
-        let label = istr("T");
-        let link = istr("link");
+        let label = db_string("T");
+        let link = db_string("link");
         let mut built = SeleneGraph::new(GraphId::new(7_702));
-        built.node_store.labels.push(LabelSet::single(label));
+        built
+            .node_store
+            .labels
+            .push(LabelSet::single(label.clone()));
         built.node_store.properties.push(PropertyMap::new());
         built.node_store.row_to_id.push(NodeId::new(5));
         built.node_store.labels.push(LabelSet::single(label));
         built.node_store.properties.push(PropertyMap::new());
         built.node_store.row_to_id.push(NodeId::new(8));
-        built.node_store.alive.insert(0);
-        built.node_store.alive.insert(1);
+        built.node_store.alive_mut().insert(0);
+        built.node_store.alive_mut().insert(1);
         built.edge_store.label.push(link);
         built.edge_store.source.push(NodeId::new(5));
         built.edge_store.target.push(NodeId::new(8));
         built.edge_store.properties.push(PropertyMap::new());
         built.edge_store.row_to_id.push(EdgeId::new(3));
-        built.edge_store.alive.insert(0);
+        built.edge_store.alive_mut().insert(0);
         built.meta.next_node_id = 9;
         built.meta.next_edge_id = 4;
         let shared = SharedGraph::from_graph(built);

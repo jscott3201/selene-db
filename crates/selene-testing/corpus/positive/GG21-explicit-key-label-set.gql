@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GG21
+// also-covers: GG02, GG20
+// expects: parse-ok
+CREATE NODE TYPE :Person => (id :: STRING)

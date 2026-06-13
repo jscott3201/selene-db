@@ -1,31 +1,31 @@
 //! BRIEF-27 CALL planner lowering tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     AnalyzedStatement, AnalyzedType, EmptyProcedureRegistry, GqlType, PipelineOp, PlannerError,
     ProcedureOutputColumn, ProcedureParameter, YieldKind, analyze, parse, plan,
 };
 use selene_testing::MockProcedureRegistry;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn registry() -> MockProcedureRegistry {
     MockProcedureRegistry::new()
         .with_procedure(
-            vec![istr("pkg"), istr("all")],
+            vec![db_string("pkg"), db_string("all")],
             Vec::new(),
             vec![
-                ProcedureOutputColumn::new(istr("outA"), GqlType::String),
-                ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
+                ProcedureOutputColumn::new(db_string("outA"), GqlType::String),
+                ProcedureOutputColumn::new(db_string("outB"), GqlType::Integer),
             ],
         )
         .with_procedure(
-            vec![istr("pkg"), istr("args")],
+            vec![db_string("pkg"), db_string("args")],
             vec![
-                ProcedureParameter::new(istr("a"), GqlType::Integer, false),
-                ProcedureParameter::new(istr("b"), GqlType::String, false),
+                ProcedureParameter::new(db_string("a"), GqlType::Integer, false),
+                ProcedureParameter::new(db_string("b"), GqlType::String, false),
             ],
             Vec::new(),
         )
@@ -72,17 +72,62 @@ fn mixed_yield_star_and_alias_matches_analyzer_order() {
         panic!("expected call op");
     };
     assert!(matches!(call.yield_cols[0].column, YieldKind::Star));
-    assert!(matches!(call.yield_cols[1].column, YieldKind::Named(name) if name.as_str() == "outA"));
+    assert!(
+        matches!(&call.yield_cols[1].column, YieldKind::Named(name) if name.as_str() == "outA")
+    );
     let names = plan
         .output_schema
         .columns
         .iter()
-        .map(|column| column.name.expect("name").as_str())
+        .map(|column| column.name.as_ref().expect("name").as_str())
         .collect::<Vec<_>>();
     assert_eq!(names, ["outA", "outB", "first"]);
     assert_eq!(
         plan.output_schema.columns[1].ty,
         AnalyzedType::Resolved(GqlType::Integer)
+    );
+}
+
+#[test]
+fn top_level_call_yield_where_lowers_to_filter_after_call() {
+    let registry = registry();
+    let plan = plan_one("CALL pkg.all() YIELD outB WHERE outB >= 2", &registry);
+    let [PipelineOp::Call(call), PipelineOp::Filter(filter)] = plan.pipeline.as_slice() else {
+        panic!("expected call followed by filter");
+    };
+
+    assert_eq!(call.yield_schema.len(), 1);
+    assert_eq!(filter.ty, AnalyzedType::Resolved(GqlType::Boolean));
+    assert_eq!(plan.output_schema.columns.len(), 1);
+}
+
+#[test]
+fn leading_call_can_continue_as_query_pipeline() {
+    let registry = registry();
+    let plan = plan_one(
+        "CALL pkg.all() YIELD outB RETURN outB ORDER BY outB DESC LIMIT 1",
+        &registry,
+    );
+    let [
+        PipelineOp::Call(call),
+        PipelineOp::Project(project),
+        PipelineOp::OrderBy(_),
+        PipelineOp::Limit { .. },
+    ] = plan.pipeline.as_slice()
+    else {
+        panic!("expected leading call, project, order, limit pipeline");
+    };
+
+    assert_eq!(call.yield_schema.len(), 1);
+    assert_eq!(project.len(), 1);
+    assert_eq!(plan.output_schema.columns.len(), 1);
+    assert_eq!(
+        plan.output_schema.columns[0]
+            .name
+            .as_ref()
+            .expect("output is named")
+            .as_str(),
+        "outB"
     );
 }
 
@@ -94,7 +139,7 @@ fn in_pipeline_call_extends_visible_columns() {
         .output_schema
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str()))
         .collect::<Vec<_>>();
     assert_eq!(names, ["n", "outA"]);
     assert!(
@@ -121,12 +166,12 @@ fn yield_star_duplicate_after_registry_drift_is_defensive_error() {
     let registry = registry();
     let analyzed = analyzed("CALL pkg.all() YIELD *, outA AS first", &registry);
     let drifted = MockProcedureRegistry::new().with_procedure(
-        vec![istr("pkg"), istr("all")],
+        vec![db_string("pkg"), db_string("all")],
         Vec::new(),
         vec![
-            ProcedureOutputColumn::new(istr("outA"), GqlType::String),
-            ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
-            ProcedureOutputColumn::new(istr("first"), GqlType::String),
+            ProcedureOutputColumn::new(db_string("outA"), GqlType::String),
+            ProcedureOutputColumn::new(db_string("outB"), GqlType::Integer),
+            ProcedureOutputColumn::new(db_string("first"), GqlType::String),
         ],
     );
 
@@ -148,7 +193,13 @@ fn sentinel_call_plan_shape_snapshot() {
         .output_schema
         .columns
         .iter()
-        .map(|column| format!("{}:{:?}", column.name.expect("name").as_str(), column.ty))
+        .map(|column| {
+            format!(
+                "{}:{:?}",
+                column.name.clone().expect("name").as_str(),
+                column.ty
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     insta::assert_snapshot!(summary, @r###"

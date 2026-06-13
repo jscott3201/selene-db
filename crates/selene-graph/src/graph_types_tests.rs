@@ -1,9 +1,9 @@
-use selene_core::{PropertyValueType, Value, intern};
+use selene_core::{PropertyValueType, Value, VectorValue, db_string};
 
 use super::*;
 
-fn label(name: &str) -> IStr {
-    intern(name).unwrap()
+fn label(name: &str) -> DbString {
+    db_string(name).unwrap()
 }
 
 fn property(name: &str) -> PropertyTypeDef {
@@ -14,8 +14,16 @@ fn property(name: &str) -> PropertyTypeDef {
         required: true,
         default: None,
         immutable: false,
+        unique: false,
+        decimal_type: None,
+        character_string_type: None,
+        byte_string_type: None,
         record_field_types: None,
     }
+}
+
+fn list_default(items: Vec<PropertyDefaultValue>) -> PropertyDefaultValue {
+    PropertyDefaultValue::List(items.into_iter().map(Box::new).collect())
 }
 
 fn valid_type() -> GraphTypeDef {
@@ -52,9 +60,224 @@ fn validate_accepts_well_formed_type() {
 }
 
 #[test]
+fn property_default_float_descriptors_materialize_finite_values() {
+    assert_eq!(
+        PropertyDefaultValue::Float(1.5_f64.to_bits())
+            .to_value()
+            .unwrap(),
+        Value::Float(1.5)
+    );
+    assert_eq!(
+        PropertyDefaultValue::Float32(2.25_f32.to_bits())
+            .to_value()
+            .unwrap(),
+        Value::Float32(2.25_f32)
+    );
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Float(-0.0)),
+        Some(PropertyDefaultValue::Float(0.0_f64.to_bits()))
+    );
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Float32(-0.0)),
+        Some(PropertyDefaultValue::Float32(0.0_f32.to_bits()))
+    );
+}
+
+#[test]
+fn property_default_float_descriptors_reject_non_finite_values() {
+    assert!(PropertyDefaultValue::from_value(&Value::Float(f64::INFINITY)).is_none());
+    assert!(PropertyDefaultValue::from_value(&Value::Float32(f32::NAN)).is_none());
+    assert!(matches!(
+        PropertyDefaultValue::Float(f64::NAN.to_bits()).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("FLOAT property default is not finite")
+    ));
+    assert!(matches!(
+        PropertyDefaultValue::Float32(f32::INFINITY.to_bits()).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("FLOAT32 property default is not finite")
+    ));
+}
+
+#[test]
+fn property_default_exact_numeric_descriptors_materialize_values() {
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Uint(u64::MAX)),
+        Some(PropertyDefaultValue::Uint(u64::MAX))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Uint(u64::MAX).to_value().unwrap(),
+        Value::Uint(u64::MAX)
+    );
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Int128(i128::MIN)),
+        Some(PropertyDefaultValue::Int128(i128::MIN))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Int128(i128::MIN).to_value().unwrap(),
+        Value::Int128(i128::MIN)
+    );
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Uint128(u128::MAX)),
+        Some(PropertyDefaultValue::Uint128(u128::MAX))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Uint128(u128::MAX).to_value().unwrap(),
+        Value::Uint128(u128::MAX)
+    );
+    let decimal = Value::Decimal("123.450".parse().unwrap());
+    assert_eq!(
+        PropertyDefaultValue::from_value(&decimal),
+        Some(PropertyDefaultValue::Decimal(label("123.450")))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Decimal(label("123.450"))
+            .to_value()
+            .unwrap(),
+        decimal
+    );
+}
+
+#[test]
+fn property_default_decimal_descriptor_rejects_invalid_text() {
+    assert!(matches!(
+        PropertyDefaultValue::Decimal(label("not-decimal")).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("DECIMAL property default is invalid")
+    ));
+}
+
+#[test]
+fn property_default_vector_descriptor_materializes_values() {
+    let vector = VectorValue::new(vec![1.0, -0.0, 2.5]).unwrap();
+    assert_eq!(
+        PropertyDefaultValue::from_value(&Value::Vector(vector)),
+        Some(PropertyDefaultValue::Vector(vec![
+            1.0_f32.to_bits(),
+            0.0_f32.to_bits(),
+            2.5_f32.to_bits(),
+        ]))
+    );
+    assert_eq!(
+        PropertyDefaultValue::Vector(vec![1.0_f32.to_bits(), 2.5_f32.to_bits()])
+            .to_value()
+            .unwrap(),
+        Value::Vector(VectorValue::new(vec![1.0, 2.5]).unwrap())
+    );
+}
+
+#[test]
+fn property_default_vector_descriptor_rejects_invalid_bits() {
+    assert!(matches!(
+        PropertyDefaultValue::Vector(Vec::new()).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("VECTOR property default is invalid")
+    ));
+    assert!(matches!(
+        PropertyDefaultValue::Vector(vec![f32::INFINITY.to_bits()]).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("VECTOR property default is invalid")
+    ));
+}
+
+#[test]
+fn property_default_list_descriptors_materialize_nested_values() {
+    let value = Value::List(vec![
+        Value::String(label("alpha")),
+        Value::List(vec![Value::Int(1), Value::Int(2)]),
+        Value::Vector(VectorValue::new(vec![1.0, 0.0]).unwrap()),
+    ]);
+    let expected = list_default(vec![
+        PropertyDefaultValue::String(label("alpha")),
+        list_default(vec![
+            PropertyDefaultValue::Integer(1),
+            PropertyDefaultValue::Integer(2),
+        ]),
+        PropertyDefaultValue::Vector(vec![1.0_f32.to_bits(), 0.0_f32.to_bits()]),
+    ]);
+
+    assert_eq!(
+        PropertyDefaultValue::from_value(&value),
+        Some(expected.clone())
+    );
+    assert_eq!(expected.to_value().unwrap(), value);
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&expected).unwrap();
+    let decoded = rkyv::from_bytes::<PropertyDefaultValue, rkyv::rancor::Error>(&bytes).unwrap();
+    assert_eq!(decoded, expected);
+    assert!(PropertyDefaultValue::from_value(&Value::List(vec![Value::Float(f64::NAN)])).is_none());
+}
+
+#[test]
+fn property_default_temporal_descriptors_materialize_values() {
+    let zoned = Value::ZonedDateTime(Box::new(
+        "2026-05-07T12:34:56-04:00[America/New_York]"
+            .parse()
+            .unwrap(),
+    ));
+    assert_eq!(
+        PropertyDefaultValue::from_value(&zoned),
+        Some(PropertyDefaultValue::ZonedDateTime(label(
+            "2026-05-07T12:34:56-04"
+        )))
+    );
+    assert_eq!(
+        PropertyDefaultValue::ZonedDateTime(label("2026-05-07T12:34:56-04"))
+            .to_value()
+            .unwrap()
+            .variant_name(),
+        "ZonedDateTime"
+    );
+    assert_eq!(
+        PropertyDefaultValue::LocalDateTime(label("2026-05-07T12:34:56"))
+            .to_value()
+            .unwrap(),
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        PropertyDefaultValue::Date(label("2026-05-07"))
+            .to_value()
+            .unwrap(),
+        Value::Date("2026-05-07".parse().unwrap())
+    );
+    assert_eq!(
+        PropertyDefaultValue::ZonedTime(label("12:34:56-04"))
+            .to_value()
+            .unwrap()
+            .variant_name(),
+        "ZonedTime"
+    );
+    assert_eq!(
+        PropertyDefaultValue::LocalTime(label("12:34:56"))
+            .to_value()
+            .unwrap(),
+        Value::LocalTime("12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        PropertyDefaultValue::Duration(label("PT1H2S"))
+            .to_value()
+            .unwrap(),
+        Value::Duration(Box::new("PT1H2S".parse().unwrap()))
+    );
+}
+
+#[test]
+fn property_default_temporal_descriptors_reject_invalid_text() {
+    assert!(matches!(
+        PropertyDefaultValue::Date(label("not-date")).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("DATE property default is invalid")
+    ));
+    assert!(matches!(
+        PropertyDefaultValue::ZonedTime(label("12:34:56")).to_value(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("ZONED TIME property default requires a time zone displacement")
+    ));
+}
+
+#[test]
 fn validate_rejects_duplicate_node_type_names() {
     let mut graph_type = valid_type();
-    graph_type.node_types[1].name = graph_type.node_types[0].name;
+    graph_type.node_types[1].name = graph_type.node_types[0].name.clone();
     assert!(matches!(
         graph_type.validate(),
         Err(GraphError::Inconsistent { reason }) if reason.contains("duplicate node type name")
@@ -131,7 +354,7 @@ fn lookup_returns_matching_elements() {
     assert_eq!(
         graph_type
             .find_node_type(&person)
-            .map(|node_type| node_type.name),
+            .map(|node_type| node_type.name.clone()),
         Some(label("types.person"))
     );
     assert_eq!(graph_type.find_node_type_index(&person), Some(0));
@@ -142,7 +365,7 @@ fn lookup_returns_matching_elements() {
     assert_eq!(
         graph_type
             .find_edge_type(label("WORKS_AT"), 0, 1)
-            .map(|edge_type| edge_type.name),
+            .map(|edge_type| edge_type.name.clone()),
         Some(label("types.works_at"))
     );
 }
@@ -399,26 +622,23 @@ fn rkyv_round_trips_graph_type_def_with_oneof() {
 }
 
 #[test]
-fn list_element_null_is_rejected_strictly() {
-    // GRAPH-41 / GV90 (Explicit value type nullability — NOT_SUPPORTED): the
-    // engine cannot spell `LIST<T NULL>` or `LIST<T NOT NULL>`; a `LIST<T>`
-    // descriptor matches elements strictly by type, so a NULL element never
-    // conforms to a non-NULL element type. This pins the single, internally
-    // consistent "not offered" semantics — a change here is a deliberate GV90
-    // decision, not an accident.
+fn list_element_nullability_is_explicit() {
     let int_list = PropertyElementType::Scalar(PropertyValueType::Int);
     assert!(
         int_list.matches(&Value::Int(7)),
         "a typed Int element conforms to LIST<Int>"
     );
     assert!(
-        !int_list.matches(&Value::Null),
-        "a NULL element does NOT conform to LIST<Int> (no per-element nullability)"
+        int_list.matches(&Value::Null),
+        "a NULL element conforms to nullable LIST<Int>"
     );
 
-    // Only an explicit LIST<NULL> descriptor accepts a NULL element — the engine
-    // offers no element-nullability modifier on a non-NULL element type.
-    let null_list = PropertyElementType::Scalar(PropertyValueType::Null);
-    assert!(null_list.matches(&Value::Null));
-    assert!(!null_list.matches(&Value::Int(7)));
+    let strict_int_list = PropertyElementType::NotNull(Box::new(PropertyElementType::Scalar(
+        PropertyValueType::Int,
+    )));
+    assert!(strict_int_list.matches(&Value::Int(7)));
+    assert!(
+        !strict_int_list.matches(&Value::Null),
+        "explicit LIST<Int NOT NULL> rejects NULL elements"
+    );
 }

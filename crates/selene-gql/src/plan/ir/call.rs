@@ -1,6 +1,6 @@
 //! Procedure-call planner IR rows.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     ProcedureHandle, ProcedureMutability, ProcedureOutputSchema, ProcedureTier, SourceSpan,
@@ -12,7 +12,7 @@ use super::{BindingTableColumn, ProjectExpr};
 #[derive(Clone, Debug)]
 pub struct PlannedCall {
     /// Qualified procedure name.
-    pub procedure: Box<[IStr]>,
+    pub procedure: Box<[DbString]>,
     /// Opaque procedure handle.
     pub handle: ProcedureHandle,
     /// Planned call arguments.
@@ -37,16 +37,16 @@ pub struct PlannedYieldItem {
     /// Source output column selector.
     pub column: YieldKind,
     /// Output alias, when present.
-    pub alias: Option<IStr>,
+    pub alias: Option<DbString>,
     /// Source span of this yield item.
     pub span: SourceSpan,
 }
 
 /// Planned yield column selector.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum YieldKind {
     /// `YIELD *`.
     Star,
     /// `YIELD col`.
-    Named(IStr),
+    Named(DbString),
 }

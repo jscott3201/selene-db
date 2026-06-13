@@ -1,6 +1,6 @@
 //! Graph-pattern AST nodes.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::ast::{expr::ValueExpr, span::SourceSpan, util::Vec2OrMore};
 
@@ -31,6 +31,20 @@ pub enum PathSelector {
     AnyShortest,
     /// `ALL SHORTEST`.
     AllShortest,
+    /// ISO §16.6 G019 counted shortest path search: `SHORTEST N [PATHS]`.
+    /// Retains up to N individually-shortest path bindings per endpoint
+    /// partition (§22.4 GR13b-i). `ANY SHORTEST` == `CountedShortest { paths: 1 }`.
+    CountedShortest {
+        /// Number of shortest path bindings to retain per endpoint partition.
+        paths: u32,
+    },
+    /// ISO §16.6 G020 counted shortest group search: `SHORTEST [N] GROUP[S]`.
+    /// Retains all bindings within the N smallest distinct-length groups per
+    /// endpoint partition (§22.4 GR13b-ii). `ALL SHORTEST` == `CountedShortestGroup { groups: 1 }`.
+    CountedShortestGroup {
+        /// Number of smallest distinct-length groups to retain per endpoint partition.
+        groups: u32,
+    },
 }
 
 /// Match-mode modifier.
@@ -47,7 +61,7 @@ pub enum MatchMode {
 #[non_exhaustive]
 pub enum LabelExpr {
     /// One label name.
-    Single(IStr),
+    Single(DbString),
     /// Conjunction.
     Conjunction(Vec2OrMore<LabelExpr>),
     /// Disjunction.
@@ -87,11 +101,11 @@ pub enum Quantifier {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct NodePattern {
     /// Optional binding.
-    pub binding: Option<IStr>,
+    pub binding: Option<DbString>,
     /// Optional label expression.
     pub label_expr: Option<LabelExpr>,
     /// Inline property predicates in source order.
-    pub properties: Vec<(IStr, ValueExpr)>,
+    pub properties: Vec<(DbString, ValueExpr)>,
     /// Optional inline `WHERE`.
     pub inline_where: Option<ValueExpr>,
     /// Source span.
@@ -102,13 +116,13 @@ pub struct NodePattern {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct EdgePattern {
     /// Optional binding.
-    pub binding: Option<IStr>,
+    pub binding: Option<DbString>,
     /// Direction.
     pub direction: EdgeDirection,
     /// Optional label expression.
     pub label_expr: Option<LabelExpr>,
     /// Inline property predicates in source order.
-    pub properties: Vec<(IStr, ValueExpr)>,
+    pub properties: Vec<(DbString, ValueExpr)>,
     /// Optional variable-length quantifier.
     pub quantifier: Option<Quantifier>,
     /// Optional inline `WHERE`.
@@ -131,7 +145,7 @@ pub enum PatternElement {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct GraphPattern {
     /// Optional path binding.
-    pub path_binding: Option<IStr>,
+    pub path_binding: Option<DbString>,
     /// Alternating node/edge/node elements.
     pub elements: Vec<PatternElement>,
     /// Source span.
@@ -151,6 +165,13 @@ pub struct MatchClause {
     pub path_mode: PathMode,
     /// Whether the path mode was written explicitly in source.
     pub path_mode_explicit: bool,
+    /// Whether an explicit `PATH` / `PATHS` keyword was written in source
+    /// (ISO/IEC 39075:2024 §16.6 `<path or paths>`, Feature G014).
+    ///
+    /// Pure surface sugar per ISO §1.2.4: it has no semantic effect over the
+    /// no-keyword spelling. The flagger stamps `FeatureId::G014` iff this is
+    /// `true`; the runtime treats it as inert. `false` when absent.
+    pub path_or_paths: bool,
     /// Graph patterns.
     pub patterns: Vec<GraphPattern>,
     /// Optional statement-level `WHERE`.

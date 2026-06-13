@@ -2,7 +2,9 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, execute_pattern, execute_plan, istr, node_ids_for, planned, props};
+use exec_common::{
+    ExecFixture, db_string, execute_pattern, execute_plan, node_ids_for, planned, props,
+};
 use selene_core::{CancellationToken, GraphId, LabelSet, Value};
 use selene_gql::{EmptyProcedureRegistry, ExecutorError, ImplDefinedCaps, TxContext};
 use selene_graph::SharedGraph;
@@ -26,6 +28,23 @@ fn edge_lists_for(table: &selene_gql::BindingTable, name: &str) -> Vec<Option<Ve
         .collect()
 }
 
+fn int_lists_for(table: &selene_gql::BindingTable, name: &str) -> Vec<Vec<Option<i64>>> {
+    exec_common::column_values(table, name)
+        .into_iter()
+        .map(|value| match value {
+            Value::List(items) => items
+                .into_iter()
+                .map(|item| match item {
+                    Value::Int(value) => Some(value),
+                    Value::Null => None,
+                    other => panic!("expected integer or null in property list, got {other:?}"),
+                })
+                .collect(),
+            other => panic!("expected property list, got {other:?}"),
+        })
+        .collect()
+}
+
 #[test]
 fn bounded_repeat_emits_paths_across_hop_range() {
     let fixture = ExecFixture::build();
@@ -40,6 +59,39 @@ fn bounded_repeat_emits_paths_across_hop_range() {
     assert_eq!(
         edge_lists_for(&table, "r"),
         vec![Some(vec![1]), Some(vec![1, 2]), Some(vec![2])]
+    );
+}
+
+#[test]
+fn group_variable_property_access_emits_ordered_property_lists() {
+    let fixture = ExecFixture::build();
+    let plan = planned(
+        "MATCH (a:Person)-[r:KNOWS*1..2]->(b) \
+         RETURN r.score AS scores, r.missing AS missing",
+    );
+
+    let table = execute_plan(&fixture, &plan).expect("repeat property projection executes");
+
+    assert_eq!(
+        int_lists_for(&table, "scores"),
+        vec![vec![Some(1)], vec![Some(1), Some(2)], vec![Some(2)]]
+    );
+    assert_eq!(
+        int_lists_for(&table, "missing"),
+        vec![vec![None], vec![None, None], vec![None]]
+    );
+}
+
+#[test]
+fn zero_hop_group_variable_property_access_emits_empty_list() {
+    let fixture = ExecFixture::build();
+    let plan = planned("MATCH (a:Person)-[r:KNOWS*0..1]->(b) RETURN r.score AS scores");
+
+    let table = execute_plan(&fixture, &plan).expect("zero-hop property projection executes");
+
+    assert_eq!(
+        int_lists_for(&table, "scores"),
+        vec![vec![], vec![Some(1)], vec![], vec![Some(2)], vec![]]
     );
 }
 
@@ -144,9 +196,9 @@ fn repeat_composes_under_optional_outer_join() {
 
 #[test]
 fn repeat_checks_cancellation_during_traversal() {
-    let root_label = istr("Root");
-    let target_label = istr("Target");
-    let edge_label = istr("K");
+    let root_label = db_string("Root");
+    let target_label = db_string("Target");
+    let edge_label = db_string("K");
     let graph = SharedGraph::new(GraphId::new(6201));
     {
         let mut txn = graph.begin_write();
@@ -156,10 +208,10 @@ fn repeat_checks_cancellation_during_traversal() {
             .expect("root inserts");
         for _ in 0..1100 {
             let target = mutator
-                .create_node(LabelSet::single(target_label), props([]))
+                .create_node(LabelSet::single(target_label.clone()), props([]))
                 .expect("target inserts");
             mutator
-                .create_edge(edge_label, root, target, props([]))
+                .create_edge(edge_label.clone(), root, target, props([]))
                 .expect("edge inserts");
         }
         txn.commit().expect("fixture commits");
@@ -187,14 +239,14 @@ fn repeat_checks_cancellation_during_traversal() {
 
 #[test]
 fn repeat_checks_cancellation_between_source_rows_without_adjacent_edges() {
-    let root_label = istr("Root");
+    let root_label = db_string("Root");
     let graph = SharedGraph::new(GraphId::new(6202));
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         for _ in 0..1100 {
             mutator
-                .create_node(LabelSet::single(root_label), props([]))
+                .create_node(LabelSet::single(root_label.clone()), props([]))
                 .expect("root inserts");
         }
         txn.commit().expect("fixture commits");

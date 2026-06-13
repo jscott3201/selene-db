@@ -7,14 +7,14 @@
 //! would be harder to reason about.
 
 use rustc_hash::FxHashMap;
-use selene_core::{IStr, LabelSet, PropertyMap, Value};
+use selene_core::{DbString, LabelSet, PropertyMap, Value};
 use std::collections::BTreeSet;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::PropertyIndexEntry;
 use crate::typed_index::{TypedIndex, TypedIndexKind, TypedIndexValueError};
 
-type PropertyIndexMap = FxHashMap<(IStr, IStr), PropertyIndexEntry>;
+type PropertyIndexMap = FxHashMap<(DbString, DbString), PropertyIndexEntry>;
 
 pub(crate) fn apply_node_create(
     indexes: &mut PropertyIndexMap,
@@ -22,12 +22,12 @@ pub(crate) fn apply_node_create(
     props: &PropertyMap,
     row: u32,
 ) -> GraphResult<()> {
-    for label in labels.iter().copied() {
+    for label in labels.iter() {
         for (property, value) in props.iter() {
             if is_null(value) {
                 continue;
             }
-            insert_commit(indexes, label, *property, value, row)?;
+            insert_commit(indexes, label.clone(), property.clone(), value, row)?;
         }
     }
     Ok(())
@@ -39,12 +39,12 @@ pub(crate) fn apply_node_delete(
     props: &PropertyMap,
     row: u32,
 ) -> GraphResult<()> {
-    for label in labels.iter().copied() {
+    for label in labels.iter() {
         for (property, value) in props.iter() {
             if is_null(value) {
                 continue;
             }
-            remove_commit(indexes, label, *property, value, row)?;
+            remove_commit(indexes, label.clone(), property.clone(), value, row)?;
         }
     }
     Ok(())
@@ -67,14 +67,20 @@ pub(crate) fn apply_node_update(
     for (label, property) in candidates {
         let old_value = indexable_value(old_labels, old_props, &label, &property);
         let new_value = indexable_value(new_labels, new_props, &label, &property);
-        if values_share_key(indexes, label, property, old_value, new_value) {
+        if values_share_key(
+            indexes,
+            label.clone(),
+            property.clone(),
+            old_value,
+            new_value,
+        ) {
             continue;
         }
         if let Some(value) = old_value {
-            remove_commit(indexes, label, property, value, row)?;
+            remove_commit(indexes, label.clone(), property.clone(), value, row)?;
         }
         if let Some(value) = new_value {
-            insert_commit(indexes, label, property, value, row)?;
+            insert_commit(indexes, label.clone(), property.clone(), value, row)?;
         }
     }
     Ok(())
@@ -89,25 +95,25 @@ fn candidate_keys(
     old_props: &PropertyMap,
     new_labels: &LabelSet,
     new_props: &PropertyMap,
-) -> BTreeSet<(IStr, IStr)> {
+) -> BTreeSet<(DbString, DbString)> {
     // Zero registered indexes is the common case for graphs that never declared
     // a property index — skip the three BTreeSet allocations entirely (mirrors
     // the composite-index sibling, which is already alloc-free on an empty map).
     if indexes.is_empty() {
         return BTreeSet::new();
     }
-    let mut labels: BTreeSet<IStr> = BTreeSet::new();
-    labels.extend(old_labels.iter().copied());
-    labels.extend(new_labels.iter().copied());
+    let mut labels: BTreeSet<DbString> = BTreeSet::new();
+    labels.extend(old_labels.iter().cloned());
+    labels.extend(new_labels.iter().cloned());
 
-    let mut properties: BTreeSet<IStr> = BTreeSet::new();
-    properties.extend(old_props.keys().copied());
-    properties.extend(new_props.keys().copied());
+    let mut properties: BTreeSet<DbString> = BTreeSet::new();
+    properties.extend(old_props.keys().cloned());
+    properties.extend(new_props.keys().cloned());
 
     let mut candidates = BTreeSet::new();
     for label in &labels {
         for property in &properties {
-            let key = (*label, *property);
+            let key = (label.clone(), property.clone());
             if indexes.contains_key(&key) {
                 candidates.insert(key);
             }
@@ -122,8 +128,8 @@ fn candidate_keys(
 /// existing data violates the declared kind.
 pub(crate) fn build_property_index(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: TypedIndexKind,
 ) -> GraphResult<TypedIndex> {
     build_property_index_inner(graph, label, property, kind, BuildPolicy::Strict)
@@ -137,8 +143,8 @@ pub(crate) fn build_property_index(
 /// indexes are not.
 pub(crate) fn build_property_index_lenient(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: TypedIndexKind,
 ) -> GraphResult<TypedIndex> {
     build_property_index_inner(graph, label, property, kind, BuildPolicy::Lenient)
@@ -152,8 +158,8 @@ enum BuildPolicy {
 
 fn build_property_index_inner(
     graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     kind: TypedIndexKind,
     policy: BuildPolicy,
 ) -> GraphResult<TypedIndex> {
@@ -185,12 +191,12 @@ fn build_property_index_inner(
         }
         match index.insert(value, row) {
             Ok(()) => {}
-            Err(err) => match (&err, policy) {
-                (TypedIndexValueError::AdmissionFailed { .. }, _) | (_, BuildPolicy::Strict) => {
-                    return Err(index_rejection(label, property, err));
+            Err(err) => match policy {
+                BuildPolicy::Strict => {
+                    return Err(index_rejection(label.clone(), property.clone(), err));
                 }
-                (_, BuildPolicy::Lenient) => {
-                    warn_rejected("rebuild", label, property, row, &err);
+                BuildPolicy::Lenient => {
+                    warn_rejected("rebuild", label.clone(), property.clone(), row, &err);
                 }
             },
         }
@@ -203,14 +209,14 @@ fn build_property_index_inner(
 /// of a runtime-accepted snapshot never fails. The strict policy lives
 /// at registration only.
 pub(crate) fn rebuild_property_indexes(graph: &mut crate::SeleneGraph) -> GraphResult<()> {
-    let registrations: Vec<((IStr, IStr), TypedIndexKind, Option<IStr>)> = graph
+    let registrations: Vec<((DbString, DbString), TypedIndexKind, Option<DbString>)> = graph
         .property_index
         .iter()
-        .map(|(key, entry)| (*key, entry.kind(), entry.name))
+        .map(|(key, entry)| (key.clone(), entry.kind(), entry.name.clone()))
         .collect();
     graph.property_index.clear();
     for ((label, property), kind, name) in registrations {
-        let index = build_property_index_lenient(graph, label, property, kind)?;
+        let index = build_property_index_lenient(graph, label.clone(), property.clone(), kind)?;
         graph
             .property_index
             .insert((label, property), PropertyIndexEntry::new(index, name));
@@ -220,15 +226,15 @@ pub(crate) fn rebuild_property_indexes(graph: &mut crate::SeleneGraph) -> GraphR
 
 fn values_share_key(
     indexes: &PropertyIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     old_value: Option<&Value>,
     new_value: Option<&Value>,
 ) -> bool {
     match (old_value, new_value) {
         (None, None) => true,
         (Some(old_value), Some(new_value)) => indexes
-            .get(&(label, property))
+            .get(&(label.clone(), property.clone()))
             .is_some_and(|entry| entry.index.values_share_key(old_value, new_value)),
         _ => false,
     }
@@ -237,8 +243,8 @@ fn values_share_key(
 fn indexable_value<'a>(
     labels: &LabelSet,
     props: &'a PropertyMap,
-    label: &IStr,
-    property: &IStr,
+    label: &DbString,
+    property: &DbString,
 ) -> Option<&'a Value> {
     if !labels.contains(label) {
         return None;
@@ -248,12 +254,12 @@ fn indexable_value<'a>(
 
 fn insert_commit(
     indexes: &mut PropertyIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
-    if let Some(index) = indexes.get_mut(&(label, property))
+    if let Some(index) = indexes.get_mut(&(label.clone(), property.clone()))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).insert(value, row)
     {
         return demote_or_promote(label, property, row, "insert", err);
@@ -263,12 +269,12 @@ fn insert_commit(
 
 fn remove_commit(
     indexes: &mut PropertyIndexMap,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
-    if let Some(index) = indexes.get_mut(&(label, property))
+    if let Some(index) = indexes.get_mut(&(label.clone(), property.clone()))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).remove(value, row)
     {
         return demote_or_promote(label, property, row, "remove", err);
@@ -276,22 +282,17 @@ fn remove_commit(
     Ok(())
 }
 
-/// Commit-path branching for [`TypedIndexValueError`]: `AdmissionFailed`
-/// surfaces as a hard [`GraphError::IndexAdmissionExhausted`] (BRIEF-153 —
-/// DDL `INDEXED` is the user's consent for STRING admission, cap exhaustion
-/// at that boundary cannot be silently dropped). Other variants
-/// (`KindMismatch`, `NaN`) keep the legacy `warn_rejected` lenient skip
-/// because open-graph kind drift remains recoverable per the module
-/// rustdoc.
+/// Commit-path branching for [`TypedIndexValueError`]. Open-graph kind
+/// drift (`KindMismatch`, `NaN`) keeps the `warn_rejected` lenient skip
+/// because it remains recoverable per the module rustdoc.
 fn demote_or_promote(
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     row: u32,
     op: &'static str,
     err: TypedIndexValueError,
 ) -> GraphResult<()> {
     match err {
-        TypedIndexValueError::AdmissionFailed { .. } => Err(index_rejection(label, property, err)),
         TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
             warn_rejected(op, label, property, row, &err);
             Ok(())
@@ -299,15 +300,8 @@ fn demote_or_promote(
     }
 }
 
-fn index_rejection(label: IStr, property: IStr, err: TypedIndexValueError) -> GraphError {
+fn index_rejection(label: DbString, property: DbString, err: TypedIndexValueError) -> GraphError {
     match err {
-        TypedIndexValueError::AdmissionFailed { reason, .. } => {
-            GraphError::IndexAdmissionExhausted {
-                label,
-                property,
-                source: reason,
-            }
-        }
         TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
             GraphError::IndexValueRejected {
                 label,
@@ -321,8 +315,8 @@ fn index_rejection(label: IStr, property: IStr, err: TypedIndexValueError) -> Gr
 
 fn warn_rejected(
     op: &'static str,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     row: u32,
     err: &TypedIndexValueError,
 ) {

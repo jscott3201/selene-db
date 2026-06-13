@@ -1,28 +1,46 @@
 //! Expression type-inference helpers.
 
+mod duration;
 mod numeric;
+mod trim;
+mod typed_target;
 
 use crate::{
-    BinaryOp, GqlType, IsCheckKind, Literal, RecordType, SourceSpan, UnaryOp,
+    BinaryOp, GqlType, IsCheckKind, Literal, SourceSpan, UnaryOp,
     analyze::{
         error::{AnalysisError, ConditionClause, ExpectedType, Side, TypeMismatchContext},
         types::AnalyzedType,
     },
 };
 
-use self::numeric::{is_numeric, numeric_promotion};
+use self::{
+    duration::{duration_add_sub, duration_mul_div, temporal_duration_add_sub},
+    numeric::{is_numeric, numeric_promotion},
+    typed_target::is_supported_typed_target,
+};
 
 pub(crate) use self::numeric::argument_assignable;
+pub(crate) use self::trim::trim;
 
 /// Infer a literal expression type.
 #[must_use]
 pub(crate) fn literal(literal: &Literal) -> AnalyzedType {
     match literal {
         Literal::Bool(..) => AnalyzedType::Resolved(GqlType::Boolean),
-        Literal::Integer(..) => AnalyzedType::Resolved(GqlType::Integer),
+        Literal::Integer(..) | Literal::RadixInteger(..) => {
+            AnalyzedType::Resolved(GqlType::Integer)
+        }
+        Literal::Decimal(..) => AnalyzedType::Resolved(GqlType::Decimal),
         Literal::Float(..) => AnalyzedType::Resolved(GqlType::Float),
         Literal::String(..) => AnalyzedType::Resolved(GqlType::String),
+        Literal::Bytes(..) => AnalyzedType::Resolved(GqlType::Bytes),
         Literal::Uuid(..) => AnalyzedType::Resolved(GqlType::Uuid),
+        Literal::ZonedDateTime(..) => AnalyzedType::Resolved(GqlType::ZonedDateTime),
+        Literal::LocalDateTime(..) => AnalyzedType::Resolved(GqlType::LocalDateTime),
+        Literal::Date(..) => AnalyzedType::Resolved(GqlType::Date),
+        Literal::ZonedTime(..) => AnalyzedType::Resolved(GqlType::ZonedTime),
+        Literal::LocalTime(..) => AnalyzedType::Resolved(GqlType::LocalTime),
+        Literal::Duration(..) => AnalyzedType::Resolved(GqlType::Duration),
         Literal::Null(..) => AnalyzedType::Resolved(GqlType::Null),
     }
 }
@@ -36,12 +54,27 @@ pub(crate) fn binary(
     rhs_span: SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
     match op {
-        BinaryOp::Add
-        | BinaryOp::Sub
-        | BinaryOp::Mul
-        | BinaryOp::Div
-        | BinaryOp::Mod
-        | BinaryOp::Power => arithmetic(op, lhs, lhs_span, rhs, rhs_span),
+        BinaryOp::Add | BinaryOp::Sub => {
+            if let Some(result) = temporal_duration_add_sub(op, lhs, lhs_span, rhs, rhs_span) {
+                result
+            } else if let Some(result) = duration_add_sub(op, lhs, lhs_span, rhs, rhs_span) {
+                result
+            } else {
+                arithmetic(op, lhs, lhs_span, rhs, rhs_span)
+            }
+        }
+        BinaryOp::Mul | BinaryOp::Div => {
+            if let Some(result) = duration_mul_div(op, lhs, lhs_span, rhs, rhs_span) {
+                result
+            } else {
+                arithmetic(op, lhs, lhs_span, rhs, rhs_span)
+            }
+        }
+        BinaryOp::Mod => arithmetic(op, lhs, lhs_span, rhs, rhs_span),
+        BinaryOp::Power => arithmetic(op, lhs, lhs_span, rhs, rhs_span).map(|ty| match ty {
+            AnalyzedType::Dynamic => AnalyzedType::Dynamic,
+            AnalyzedType::Resolved(_) => AnalyzedType::Resolved(GqlType::Float),
+        }),
         BinaryOp::Eq | BinaryOp::Ne => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             comparison(op, lhs, lhs_span, rhs, rhs_span)
@@ -66,8 +99,10 @@ pub(crate) fn unary(
         UnaryOp::Negate => match operand {
             AnalyzedType::Dynamic => Ok(AnalyzedType::Dynamic),
             AnalyzedType::Resolved(ty) if is_numeric(ty) => Ok(operand.clone()),
-            // Per ISO/IEC 39075:2024 three-valued logic, `- NULL` yields NULL.
-            // The runtime returns `Value::Null`; the analyzer must not reject.
+            AnalyzedType::Resolved(ty) if ty.is_duration() => {
+                Ok(AnalyzedType::Resolved(GqlType::Duration))
+            }
+            // Three-valued logic: `- NULL` yields NULL, so analysis must not reject.
             AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Null)),
             AnalyzedType::Resolved(found) => Err(type_mismatch(
                 TypeMismatchContext::UnaryNegate,
@@ -77,12 +112,11 @@ pub(crate) fn unary(
             )),
         },
         UnaryOp::Not => match operand {
-            AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => {
+            AnalyzedType::Dynamic => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
+            AnalyzedType::Resolved(ty) if matches!(ty.strip_not_null(), GqlType::Boolean) => {
                 Ok(AnalyzedType::Resolved(GqlType::Boolean))
             }
-            // `NOT NULL` yields NULL (UNKNOWN) under three-valued logic; the
-            // runtime returns `Value::Null`. The static result type stays
-            // Boolean (the UNKNOWN truth value lives in the Boolean domain).
+            // `NOT NULL` yields UNKNOWN; the static result stays Boolean.
             AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
             AnalyzedType::Resolved(found) => Err(type_mismatch(
                 TypeMismatchContext::UnaryNot,
@@ -112,10 +146,13 @@ pub(crate) fn is_check(
             expect_string(operand, operand_span, TypeMismatchContext::IsNormalized)?;
             Ok(AnalyzedType::Resolved(GqlType::Boolean))
         }
+        IsCheckKind::TruthValue(_) => {
+            expect_boolean(operand, operand_span, TypeMismatchContext::IsTruthValue)?;
+            Ok(AnalyzedType::Resolved(GqlType::Boolean))
+        }
         IsCheckKind::Null
         | IsCheckKind::Directed
         | IsCheckKind::Labeled(_)
-        | IsCheckKind::TruthValue(_)
         | IsCheckKind::Typed(_)
         | IsCheckKind::SourceOf(_)
         | IsCheckKind::DestinationOf(_) => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
@@ -128,15 +165,6 @@ pub(crate) fn normalize(
     source_span: SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
     expect_string(source, source_span, TypeMismatchContext::NormalizeFunction)?;
-    Ok(AnalyzedType::Resolved(GqlType::String))
-}
-
-/// Infer an explicit TRIM source expression.
-pub(crate) fn trim_source(
-    source: &AnalyzedType,
-    source_span: SourceSpan,
-) -> Result<AnalyzedType, AnalysisError> {
-    expect_string(source, source_span, TypeMismatchContext::TrimSource)?;
     Ok(AnalyzedType::Resolved(GqlType::String))
 }
 
@@ -174,6 +202,41 @@ pub(crate) fn in_list(
             item_ty,
             item_span.max(operand_span),
         ));
+    }
+    Ok(AnalyzedType::Resolved(GqlType::Boolean))
+}
+
+/// Infer an `IN` predicate whose right side is a list-valued expression.
+pub(crate) fn in_list_expression(
+    operand: &AnalyzedType,
+    operand_span: SourceSpan,
+    list: &AnalyzedType,
+    list_span: SourceSpan,
+) -> Result<AnalyzedType, AnalysisError> {
+    if let AnalyzedType::Resolved(list_ty) = list {
+        match list_ty.strip_not_null() {
+            GqlType::List(item_ty) => {
+                if let AnalyzedType::Resolved(operand_ty) = operand
+                    && meet_gql_types(operand_ty, item_ty).is_none()
+                {
+                    return Err(type_mismatch(
+                        TypeMismatchContext::InListUnification,
+                        ExpectedType::Specific(operand_ty.clone()),
+                        (**item_ty).clone(),
+                        list_span.max(operand_span),
+                    ));
+                }
+            }
+            GqlType::Null => {}
+            found => {
+                return Err(type_mismatch(
+                    TypeMismatchContext::InListUnification,
+                    ExpectedType::List,
+                    found.clone(),
+                    list_span,
+                ));
+            }
+        }
     }
     Ok(AnalyzedType::Resolved(GqlType::Boolean))
 }
@@ -256,7 +319,10 @@ pub(crate) fn condition(
     clause: ConditionClause,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => Ok(()),
+        AnalyzedType::Dynamic => Ok(()),
+        AnalyzedType::Resolved(found) if matches!(found.strip_not_null(), GqlType::Boolean) => {
+            Ok(())
+        }
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             TypeMismatchContext::Condition { clause },
             ExpectedType::Specific(GqlType::Boolean),
@@ -365,40 +431,50 @@ fn concat(
     rhs: &AnalyzedType,
     rhs_span: SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
-    expect_list_or_string(
+    expect_concat_operand(
         lhs,
         lhs_span,
         TypeMismatchContext::BinaryConcat { side: Side::Lhs },
     )?;
-    expect_list_or_string(
+    expect_concat_operand(
         rhs,
         rhs_span,
         TypeMismatchContext::BinaryConcat { side: Side::Rhs },
     )?;
     match (lhs, rhs) {
         (AnalyzedType::Dynamic, _) | (_, AnalyzedType::Dynamic) => Ok(AnalyzedType::Dynamic),
-        (AnalyzedType::Resolved(GqlType::String), AnalyzedType::Resolved(GqlType::String)) => {
-            Ok(AnalyzedType::Resolved(GqlType::String))
+        (AnalyzedType::Resolved(lhs_ty), AnalyzedType::Resolved(rhs_ty)) => {
+            concat_result_type(lhs_ty, rhs_ty)
+                .map(AnalyzedType::Resolved)
+                .ok_or_else(|| {
+                    type_mismatch(
+                        TypeMismatchContext::BinaryConcat { side: Side::Rhs },
+                        ExpectedType::Specific(lhs_ty.clone()),
+                        rhs_ty.clone(),
+                        rhs_span,
+                    )
+                })
         }
-        (
-            AnalyzedType::Resolved(GqlType::List(lhs_inner)),
-            AnalyzedType::Resolved(GqlType::List(rhs_inner)),
-        ) => meet_gql_types(lhs_inner, rhs_inner)
-            .map(|inner| AnalyzedType::Resolved(GqlType::List(Box::new(inner))))
-            .ok_or_else(|| {
-                type_mismatch(
-                    TypeMismatchContext::BinaryConcat { side: Side::Rhs },
-                    ExpectedType::Specific(GqlType::List(lhs_inner.clone())),
-                    GqlType::List(rhs_inner.clone()),
-                    rhs_span,
-                )
-            }),
-        (AnalyzedType::Resolved(lhs_ty), AnalyzedType::Resolved(rhs_ty)) => Err(type_mismatch(
-            TypeMismatchContext::BinaryConcat { side: Side::Rhs },
-            ExpectedType::Specific(lhs_ty.clone()),
-            rhs_ty.clone(),
-            rhs_span,
-        )),
+    }
+}
+
+fn concat_result_type(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
+    if matches!(lhs, GqlType::Null) {
+        return Some(rhs.strip_not_null().clone());
+    }
+    if matches!(rhs, GqlType::Null) {
+        return Some(lhs.strip_not_null().clone());
+    }
+    if is_byte_string(lhs) && is_byte_string(rhs) {
+        return Some(GqlType::Bytes);
+    }
+    match (lhs.strip_not_null(), rhs.strip_not_null()) {
+        (lhs, rhs) if is_character_string(lhs) && is_character_string(rhs) => Some(GqlType::String),
+        (GqlType::Path, GqlType::Path) => Some(GqlType::Path),
+        (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
+            meet_gql_types(lhs_inner, rhs_inner).map(|inner| GqlType::List(Box::new(inner)))
+        }
+        _ => None,
     }
 }
 
@@ -455,9 +531,10 @@ fn expect_boolean(
     match ty {
         // A NULL operand is accepted: under three-valued logic a boolean
         // operator over NULL yields NULL, not a type error (runtime parity).
-        AnalyzedType::Dynamic
-        | AnalyzedType::Resolved(GqlType::Boolean)
-        | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Resolved(found) if matches!(found.strip_not_null(), GqlType::Boolean) => {
+            Ok(())
+        }
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::Boolean,
@@ -473,9 +550,8 @@ fn expect_string(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic
-        | AnalyzedType::Resolved(GqlType::String)
-        | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Resolved(found) if is_character_string(found) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::String,
@@ -504,18 +580,29 @@ fn expect_comparable(
     }
 }
 
-fn expect_list_or_string(
+fn expect_concat_operand(
     ty: &AnalyzedType,
     span: SourceSpan,
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic
-        | AnalyzedType::Resolved(GqlType::String)
-        | AnalyzedType::Resolved(GqlType::List(_)) => Ok(()),
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
+        AnalyzedType::Resolved(found)
+            if matches!(
+                found.strip_not_null(),
+                GqlType::String
+                    | GqlType::CharacterString(_)
+                    | GqlType::Bytes
+                    | GqlType::ByteString(_)
+                    | GqlType::List(_)
+                    | GqlType::Path
+            ) =>
+        {
+            Ok(())
+        }
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
-            ExpectedType::ListOrString,
+            ExpectedType::ListStringBytesOrPath,
             found.clone(),
             span,
         )),
@@ -551,15 +638,26 @@ fn meet_gql_types(lhs: &GqlType, rhs: &GqlType) -> Option<GqlType> {
         return Some(lhs.clone());
     }
     if matches!(lhs, GqlType::Null) {
-        return Some(rhs.clone());
+        return Some(rhs.strip_not_null().clone());
     }
     if matches!(rhs, GqlType::Null) {
-        return Some(lhs.clone());
+        return Some(lhs.strip_not_null().clone());
     }
     if is_numeric(lhs) && is_numeric(rhs) {
         return numeric_promotion(lhs, rhs);
     }
-    match (lhs, rhs) {
+    let lhs_base = lhs.strip_not_null();
+    let rhs_base = rhs.strip_not_null();
+    if lhs_base == rhs_base {
+        return Some(
+            if matches!(lhs, GqlType::NotNull(_)) && matches!(rhs, GqlType::NotNull(_)) {
+                GqlType::NotNull(Box::new(lhs_base.clone()))
+            } else {
+                lhs_base.clone()
+            },
+        );
+    }
+    match (lhs_base, rhs_base) {
         (GqlType::List(lhs_inner), GqlType::List(rhs_inner)) => {
             meet_gql_types(lhs_inner, rhs_inner).map(|ty| GqlType::List(Box::new(ty)))
         }
@@ -581,71 +679,48 @@ fn type_mismatch(
     }
 }
 
-fn is_supported_typed_target(ty: &GqlType) -> bool {
-    match ty {
-        GqlType::String
-        | GqlType::Boolean
-        | GqlType::Integer
-        | GqlType::Float
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::Int128
-        | GqlType::Uint8
-        | GqlType::Uint16
-        | GqlType::Uint32
-        | GqlType::Uint64
-        | GqlType::Uint128
-        | GqlType::SmallInt
-        | GqlType::BigInt
-        | GqlType::Decimal
-        | GqlType::Float32
-        | GqlType::Float64
-        | GqlType::Bytes
-        | GqlType::Uuid
-        | GqlType::ZonedDateTime
-        | GqlType::LocalDateTime
-        | GqlType::Date
-        | GqlType::ZonedTime
-        | GqlType::LocalTime
-        | GqlType::Duration
-        | GqlType::Path
-        | GqlType::Null
-        | GqlType::Nothing => true,
-        GqlType::List(inner) => is_supported_typed_target(inner),
-        // Why: per ISO 39075:2024 §18.9 <record type> + §19.6 <value type predicate>, a
-        // record type is an authorized typed-predicate target. Closed-record field types
-        // are validated recursively, mirroring the List(inner) arm above.
-        GqlType::Record(RecordType::Open) => true,
-        GqlType::Record(RecordType::Closed(fields)) => {
-            fields.iter().all(|(_, ty)| is_supported_typed_target(ty))
-        }
-        GqlType::GraphRef | GqlType::NodeRef | GqlType::EdgeRef | GqlType::TableRef => false,
-    }
+fn is_byte_string(ty: &GqlType) -> bool {
+    matches!(ty.strip_not_null(), GqlType::Bytes | GqlType::ByteString(_))
+}
+
+fn is_character_string(ty: &GqlType) -> bool {
+    matches!(
+        ty.strip_not_null(),
+        GqlType::String | GqlType::CharacterString(_)
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ComparableFamily {
+    Boolean,
     Numeric,
     String,
     Bytes,
     Temporal,
+    Uuid,
+    NodeRef,
+    EdgeRef,
 }
 
 fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
     if is_numeric(ty) {
         return Some(ComparableFamily::Numeric);
     }
-    Some(match ty {
-        GqlType::String => ComparableFamily::String,
-        GqlType::Bytes => ComparableFamily::Bytes,
+    Some(match ty.strip_not_null() {
+        GqlType::Boolean => ComparableFamily::Boolean,
+        GqlType::String | GqlType::CharacterString(_) => ComparableFamily::String,
+        GqlType::Bytes | GqlType::ByteString(_) => ComparableFamily::Bytes,
+        GqlType::Uuid => ComparableFamily::Uuid,
+        GqlType::NodeRef => ComparableFamily::NodeRef,
+        GqlType::EdgeRef => ComparableFamily::EdgeRef,
         GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date
         | GqlType::ZonedTime
         | GqlType::LocalTime
-        | GqlType::Duration => ComparableFamily::Temporal,
+        | GqlType::Duration
+        | GqlType::DurationYearToMonth
+        | GqlType::DurationDayToSecond => ComparableFamily::Temporal,
         _ => return None,
     })
 }

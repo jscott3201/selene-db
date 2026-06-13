@@ -1,8 +1,11 @@
 //! Bind-pass orchestration.
 
+pub(crate) mod aggregate_rules;
 pub(crate) mod call;
 pub(crate) mod ddl;
+pub(crate) mod element_ref;
 pub(crate) mod expr;
+pub(crate) mod expr_depth;
 pub(crate) mod mutation;
 pub(crate) mod parameter_inheritance;
 pub(crate) mod parameters;
@@ -11,7 +14,7 @@ pub(crate) mod query;
 pub(crate) mod session;
 pub(crate) mod transaction;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     ProcedureRegistry, SourceSpan, Statement, ValueExpr,
@@ -204,7 +207,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_strict_typed(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         ty: AnalyzedType,
     ) -> Result<BindingId, AnalysisError> {
@@ -215,7 +218,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_or_reuse(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
     ) -> Result<BindingId, AnalysisError> {
         self.declare_or_reuse_with_labels(kind, name, span, None)
@@ -224,7 +227,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_or_reuse_with_labels(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         labels: Option<crate::LabelExpr>,
     ) -> Result<BindingId, AnalysisError> {
@@ -235,7 +238,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_or_reuse_with_labels_info(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         labels: Option<crate::LabelExpr>,
     ) -> Result<(BindingId, bool), AnalysisError> {
@@ -251,7 +254,7 @@ impl<'ctx> BindContext<'ctx> {
     pub(crate) fn declare_or_reuse_with_labels_typed_info(
         &mut self,
         kind: BindingDeclKind,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         ty: AnalyzedType,
         labels: Option<crate::LabelExpr>,
@@ -259,7 +262,7 @@ impl<'ctx> BindContext<'ctx> {
         let (binding, reused) = self.scopes.declare_or_reuse_with_labels_typed(
             self.current,
             kind,
-            name,
+            name.clone(),
             span,
             ty,
             labels,
@@ -277,11 +280,11 @@ impl<'ctx> BindContext<'ctx> {
 
     pub(crate) fn resolve(
         &mut self,
-        name: IStr,
+        name: DbString,
         span: SourceSpan,
         kind: BindingUseKind,
     ) -> Result<BindingId, AnalysisError> {
-        let Some(binding) = self.scopes.resolve(self.current, name) else {
+        let Some(binding) = self.scopes.resolve(self.current, name.clone()) else {
             return Err(AnalysisError::undefined_reference(name, span));
         };
         self.references.push(BindingUse {
@@ -323,6 +326,46 @@ impl<'ctx> BindContext<'ctx> {
     ) -> Result<T, AnalysisError> {
         let parent = self.current;
         let child = self.scopes.push_scope(parent, kind, span, boundary);
+        self.current = child;
+        let result = f(self);
+        self.current = parent;
+        result
+    }
+
+    /// Bind `f` inside a boundary subquery scope that imports ONLY the named
+    /// outer bindings (ISO/IEC 39075:2024 §15.2 explicit variable scope, GP03).
+    ///
+    /// Each name is resolved against the current (parent) scope first — an
+    /// unknown name is an undefined-reference error — and re-exposed in the
+    /// child by id, so a body reference to an import resolves to the outer
+    /// binding (and flows through `outer_binding_refs`). The child is a
+    /// `boundary`, so any *unnamed* outer variable referenced in the body stops
+    /// at the child and resolves to undefined. An empty `imports` slice
+    /// (`CALL () { ... }`) yields a fully isolated scope. Duplicate import names
+    /// are rejected by [`BindingScopeTree::import_binding`].
+    pub(crate) fn with_imported_scope<T>(
+        &mut self,
+        imports: &[DbString],
+        span: SourceSpan,
+        f: impl FnOnce(&mut Self) -> Result<T, AnalysisError>,
+    ) -> Result<T, AnalysisError> {
+        let parent = self.current;
+        // Resolve imports against the parent scope before entering the (boundary)
+        // child — the child cannot see the parent, so resolution must happen now.
+        let mut resolved = Vec::with_capacity(imports.len());
+        for name in imports {
+            let binding = self
+                .scopes
+                .resolve(parent, name.clone())
+                .ok_or_else(|| AnalysisError::undefined_reference(name.clone(), span))?;
+            resolved.push((name.clone(), binding));
+        }
+        let child = self
+            .scopes
+            .push_scope(parent, ScopeKind::Subquery, span, true);
+        for (name, binding) in resolved {
+            self.scopes.import_binding(child, binding, name, span)?;
+        }
         self.current = child;
         let result = f(self);
         self.current = parent;

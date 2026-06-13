@@ -9,7 +9,7 @@
 //! to the verbatim `HEURISTIC_*` constants + `expr_id` tie-break so plans are
 //! byte-identical to pre-OPT-5 HEAD when stats are absent.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
     BinaryOp, LabelExpr, Literal, ValueExpr,
@@ -68,7 +68,8 @@ fn stats_selectivity(pred: &FilterPredicate, scan_ctx: &ScanContext<'_>) -> Opti
     // Only literal equality has an exact count at plan time; parameters defer
     // to the heuristic so the no-value case stays unchanged.
     let value = equality_literal_value(value_expr)?;
-    let matches = catalog.equality_cardinality(IndexTarget::Node, label, matched.key, &value)?;
+    let matches =
+        catalog.equality_cardinality(IndexTarget::Node, label.clone(), matched.key, &value)?;
     let population = catalog.label_cardinality(IndexTarget::Node, label)?;
     if population == 0 {
         return None;
@@ -82,10 +83,18 @@ fn equality_literal_value(expr: &ValueExpr) -> Option<Value> {
     let literal = binding_refs::literal(expr)?;
     match literal {
         Literal::Bool(value, _) => Some(Value::Bool(*value)),
-        Literal::Integer(value, _) => Some(Value::Int(*value)),
-        Literal::Float(value, _) => Some(Value::Float(*value)),
-        Literal::String(value, _) => Some(Value::String(*value)),
+        Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => Some(Value::Int(*value)),
+        Literal::Decimal(value, _, _) => Some(Value::Decimal(*value)),
+        Literal::Float(value, _, _) => Some(Value::Float(*value)),
+        Literal::String(value, _) => Some(Value::String(value.clone())),
+        Literal::Bytes(value, _) => Some(Value::Bytes(value.clone())),
         Literal::Uuid(value, _) => Some(Value::Uuid(*value)),
+        Literal::ZonedDateTime(value, _) => Some(Value::ZonedDateTime(value.clone())),
+        Literal::LocalDateTime(value, _) => Some(Value::LocalDateTime(*value)),
+        Literal::Date(value, _) => Some(Value::Date(*value)),
+        Literal::ZonedTime(value, _) => Some(Value::ZonedTime(value.clone())),
+        Literal::LocalTime(value, _) => Some(Value::LocalTime(*value)),
+        Literal::Duration(value, _) => Some(Value::Duration(value.clone())),
         Literal::Null(_) => None,
     }
 }
@@ -120,12 +129,12 @@ fn estimate_expr(expr: &ValueExpr) -> f64 {
     }
 }
 
-fn label_for_binding(bindings: &[BindingDef], binding_id: crate::BindingId) -> Option<IStr> {
+fn label_for_binding(bindings: &[BindingDef], binding_id: crate::BindingId) -> Option<DbString> {
     bindings
         .iter()
         .find(|binding| binding.binding == binding_id)
         .and_then(|binding| match &binding.label_predicate {
-            Some(LabelExpr::Single(label)) => Some(*label),
+            Some(LabelExpr::Single(label)) => Some(label.clone()),
             _ => None,
         })
 }

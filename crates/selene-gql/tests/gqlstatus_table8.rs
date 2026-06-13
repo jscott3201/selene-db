@@ -6,7 +6,7 @@ mod exec_common;
 
 use std::sync::{Arc, Mutex};
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, DataExceptionSubclass,
     EmptyProcedureRegistry, ExecutorWarning, GqlStatus, Session, SourceSpan, ValueExpr,
@@ -14,8 +14,8 @@ use selene_gql::{
 };
 use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn status_for(source: &str) -> String {
@@ -31,7 +31,12 @@ fn status_for(source: &str) -> String {
 #[test]
 fn data_exception_subclasses_map_to_folded_table8_codes() {
     let cases = [
+        (DataExceptionSubclass::DataException, "22000"),
+        (DataExceptionSubclass::StringDataRightTruncation, "22001"),
         (DataExceptionSubclass::NumericValueOutOfRange, "22003"),
+        (DataExceptionSubclass::NullValueNotAllowed, "22004"),
+        (DataExceptionSubclass::InvalidDatetimeFormat, "22007"),
+        (DataExceptionSubclass::SubstringError, "22011"),
         (DataExceptionSubclass::DivisionByZero, "22012"),
         (
             DataExceptionSubclass::InvalidArgumentForNaturalLogarithm,
@@ -41,12 +46,48 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
             DataExceptionSubclass::InvalidArgumentForPowerFunction,
             "2201F",
         ),
+        (DataExceptionSubclass::TrimError, "22027"),
+        (DataExceptionSubclass::InvalidCharacterValueForCast, "22018"),
+        (DataExceptionSubclass::InvalidTimeZone, "22009"),
+        (DataExceptionSubclass::NegativeLimitValue, "22G02"),
         (DataExceptionSubclass::InvalidValueType, "22G03"),
         (DataExceptionSubclass::ValuesNotComparable, "22G04"),
+        (
+            DataExceptionSubclass::InvalidDatetimeFunctionFieldName,
+            "22G05",
+        ),
+        (DataExceptionSubclass::InvalidDatetimeFunctionValue, "22G06"),
+        (
+            DataExceptionSubclass::InvalidDurationFunctionFieldName,
+            "22G07",
+        ),
+        (DataExceptionSubclass::ListDataRightTruncation, "22G0B"),
         (DataExceptionSubclass::ListElementError, "22G0C"),
+        (DataExceptionSubclass::InvalidDurationFormat, "22G0H"),
+        (DataExceptionSubclass::PathDataRightTruncation, "22G10"),
+        (
+            DataExceptionSubclass::IncompatibleTemporalInstantUnitGroups,
+            "22G14",
+        ),
         (
             DataExceptionSubclass::MultipleAssignmentsToGraphElementProperty,
             "22G0M",
+        ),
+        (
+            DataExceptionSubclass::NodeLabelsBelowSupportedMinimum,
+            "22G0N",
+        ),
+        (
+            DataExceptionSubclass::NodeLabelsExceedSupportedMaximum,
+            "22G0P",
+        ),
+        (
+            DataExceptionSubclass::EdgeLabelsBelowSupportedMinimum,
+            "22G0Q",
+        ),
+        (
+            DataExceptionSubclass::EdgeLabelsExceedSupportedMaximum,
+            "22G0R",
         ),
         (
             DataExceptionSubclass::NodePropertiesExceedSupportedMaximum,
@@ -56,7 +97,9 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
             DataExceptionSubclass::EdgePropertiesExceedSupportedMaximum,
             "22G0T",
         ),
+        (DataExceptionSubclass::RecordFieldsDoNotMatch, "22G0U"),
         (DataExceptionSubclass::RecordDataFieldUnassignable, "22G0X"),
+        (DataExceptionSubclass::MalformedPath, "22G0Z"),
     ];
 
     for (subclass, expected) in cases {
@@ -70,7 +113,9 @@ fn runtime_data_exceptions_emit_specific_subclasses() {
         ("RETURN 9223372036854775807 + 1 AS v", "22003"),
         ("RETURN 1 / 0 AS v", "22012"),
         ("RETURN power(0, -1) AS v", "2201F"),
+        ("RETURN sqrt(-1) AS v", "2201F"),
         ("RETURN 'x' + 1 AS v", "22G03"),
+        ("RETURN DURATION('P1M') + DURATION('PT1H') AS v", "22G14"),
         ("RETURN {a: 1, a: 2} AS v", "22G0X"),
     ];
 
@@ -81,16 +126,16 @@ fn runtime_data_exceptions_emit_specific_subclasses() {
 
 #[test]
 fn dynamic_ordering_of_incomparable_values_emits_22g04() {
-    let lhs = istr("lhs");
-    let rhs = istr("rhs");
+    let lhs = db_string("lhs");
+    let rhs = db_string("rhs");
     let expr = ValueExpr::BinaryOp {
         op: BinaryOp::Lt,
         lhs: Box::new(ValueExpr::Variable {
-            name: lhs,
+            name: lhs.clone(),
             span: SourceSpan::new(0, 3),
         }),
         rhs: Box::new(ValueExpr::Variable {
-            name: rhs,
+            name: rhs.clone(),
             span: SourceSpan::new(6, 3),
         }),
         span: SourceSpan::new(0, 9),
@@ -109,7 +154,7 @@ fn dynamic_ordering_of_incomparable_values_emits_22g04() {
             },
         ],
     };
-    let binding = Binding::new([Value::Int(1), Value::String(istr("x"))]);
+    let binding = Binding::new([Value::Int(1), Value::String(db_string("x"))]);
     let caps = selene_gql::ImplDefinedCaps::default();
     let ctx = exec_common::empty_graph_context(&caps);
 
@@ -149,13 +194,13 @@ fn detach_delete_requirement_emits_g1001() {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         let victim = mutator
-            .create_node(LabelSet::single(istr("Victim")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Victim")), PropertyMap::new())
             .expect("victim inserts");
         let other = mutator
-            .create_node(LabelSet::single(istr("Other")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("Other")), PropertyMap::new())
             .expect("other inserts");
         mutator
-            .create_edge(istr("REL"), victim, other, PropertyMap::new())
+            .create_edge(db_string("REL"), victim, other, PropertyMap::new())
             .expect("edge inserts");
         txn.commit().expect("fixture commits");
     }
@@ -170,11 +215,11 @@ fn detach_delete_requirement_emits_g1001() {
 
 #[test]
 fn closed_graph_schema_analysis_emits_g2000() {
-    let person = istr("Person");
+    let person = db_string("Person");
     let graph_type = GraphTypeDef {
-        name: istr("schema.graph"),
+        name: db_string("schema.graph"),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,

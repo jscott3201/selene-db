@@ -31,9 +31,7 @@ pub use summary::{
 // Test-harness-gated re-export of the cost estimators so integration tests can
 // exercise them in isolation against a synthetic catalog. Production code
 // reaches these via the `cost` module path; this is not a stable public API
-// (gated exactly like `summary`). Kept out of `src/` test modules because the
-// `dos_guard` interner-budget scan rejects any direct interner-call substring
-// under `src/`.
+// (gated exactly like `summary`).
 #[cfg(any(test, feature = "test-harness"))]
 pub use cost::{
     composite_cost, disjunctive_cost, in_list_cost, linear_baseline, should_decline_index,
@@ -242,7 +240,8 @@ mod tests {
             | JoinTree::Repeat { child, .. }
             | JoinTree::Questioned { child, .. }
             | JoinTree::PathSearch { child, .. }
-            | JoinTree::PathModeFilter { child, .. } => leading_scan_access(child),
+            | JoinTree::PathModeFilter { child, .. }
+            | JoinTree::MatchModeFilter { child, .. } => leading_scan_access(child),
             _ => None,
         }
     }
@@ -371,7 +370,8 @@ mod tests {
                 | JoinTree::Repeat { child, .. }
                 | JoinTree::Questioned { child, .. }
                 | JoinTree::PathSearch { child, .. }
-                | JoinTree::PathModeFilter { child, .. } => tree = child,
+                | JoinTree::PathModeFilter { child, .. }
+                | JoinTree::MatchModeFilter { child, .. } => tree = child,
                 _ => break,
             }
         }

@@ -10,7 +10,7 @@ use std::fs;
 use selene_core::{
     Change, GraphId, GraphTypeId, LabelSet, PredefinedValueType, PropertyValueType,
     RecordFieldStructure, RecordFieldStructureDef, RecordFieldStructureType, SchemaChange,
-    ValueType, intern,
+    ValueType, db_string,
 };
 use smallvec::smallvec;
 
@@ -21,31 +21,39 @@ use crate::{
 
 use super::{append_wal, empty_closed_graph_type, temp_dir};
 
-/// A nested closed-record descriptor: `RECORD{a :: INT, b :: LIST<STRING>, c :: RECORD{d :: BOOL}}`.
+/// A nested record descriptor:
+/// `RECORD{a :: INT NOT NULL, b :: LIST<STRING NOT NULL>, c :: RECORD{d :: BOOL NOT NULL}, meta :: RECORD}`.
 fn nested_record_field_types() -> RecordFieldTypes {
     RecordFieldTypes(vec![
         RecordFieldTypeDef {
-            name: intern("a").unwrap(),
+            name: db_string("a").unwrap(),
             field_type: RecordFieldType::Scalar(PropertyValueType::Int),
             required: true,
         },
         RecordFieldTypeDef {
-            name: intern("b").unwrap(),
-            field_type: RecordFieldType::List(Box::new(RecordFieldType::Scalar(
-                PropertyValueType::String,
-            ))),
+            name: db_string("b").unwrap(),
+            field_type: RecordFieldType::List(Box::new(RecordFieldType::NotNull(Box::new(
+                RecordFieldType::Scalar(PropertyValueType::String),
+            )))),
             required: false,
         },
         RecordFieldTypeDef {
-            name: intern("c").unwrap(),
+            name: db_string("c").unwrap(),
             field_type: RecordFieldType::Record(Box::new(RecordFieldTypes(vec![
                 RecordFieldTypeDef {
-                    name: intern("d").unwrap(),
-                    field_type: RecordFieldType::Scalar(PropertyValueType::Bool),
+                    name: db_string("d").unwrap(),
+                    field_type: RecordFieldType::NotNull(Box::new(RecordFieldType::Scalar(
+                        PropertyValueType::Bool,
+                    ))),
                     required: true,
                 },
             ]))),
             required: true,
+        },
+        RecordFieldTypeDef {
+            name: db_string("meta").unwrap(),
+            field_type: RecordFieldType::OpenRecord,
+            required: false,
         },
     ])
 }
@@ -60,22 +68,26 @@ fn recover_closed_wal_only_preserves_closed_record_property() {
         .unwrap()
         .build()
         .unwrap();
-    let sensor = intern("RecordSensor").unwrap();
-    let config = intern("config").unwrap();
+    let sensor = db_string("RecordSensor").unwrap();
+    let config = db_string("config").unwrap();
     let field_types = nested_record_field_types();
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node_type(
-                sensor,
+                sensor.clone(),
                 LabelSet::single(sensor),
                 vec![PropertyTypeDef {
-                    name: config,
+                    name: config.clone(),
                     value_type: PropertyValueType::RecordTyped,
                     list_element_type: None,
                     required: false,
                     default: None,
                     immutable: false,
+                    unique: false,
+                    decimal_type: None,
+                    character_string_type: None,
+                    byte_string_type: None,
                     record_field_types: Some(field_types.clone()),
                 }],
                 ValidationMode::Strict,
@@ -90,7 +102,7 @@ fn recover_closed_wal_only_preserves_closed_record_property() {
     let property = &graph_type.node_types[0].properties[0];
     assert_eq!(property.name, config);
     assert_eq!(property.value_type, PropertyValueType::RecordTyped);
-    // Full structural equality pins that the nested LIST + nested RECORD field types
+    // Full structural equality pins that the nested LIST + open/closed RECORD field types
     // survived the serde encode → WAL → serde decode round-trip intact.
     assert_eq!(property.record_field_types, Some(field_types));
     let _ = fs::remove_dir_all(dir);
@@ -110,21 +122,25 @@ fn recover_closed_wal_only_preserves_open_record_property() {
         .unwrap()
         .build()
         .unwrap();
-    let sensor = intern("OpenRecordSensor").unwrap();
-    let payload = intern("payload").unwrap();
+    let sensor = db_string("OpenRecordSensor").unwrap();
+    let payload = db_string("payload").unwrap();
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node_type(
-                sensor,
+                sensor.clone(),
                 LabelSet::single(sensor),
                 vec![PropertyTypeDef {
-                    name: payload,
+                    name: payload.clone(),
                     value_type: PropertyValueType::RecordTyped,
                     list_element_type: None,
                     required: false,
                     default: None,
                     immutable: false,
+                    unique: false,
+                    decimal_type: None,
+                    character_string_type: None,
+                    byte_string_type: None,
                     record_field_types: None,
                 }],
                 ValidationMode::Strict,
@@ -148,13 +164,13 @@ fn recover_closed_wal_only_preserves_open_record_property() {
 /// recovery-side depth guard directly.
 fn deep_record_structure(levels: u32) -> RecordFieldStructure {
     let mut structure = RecordFieldStructure::Closed(vec![RecordFieldStructureDef {
-        name: intern("leaf").unwrap(),
+        name: db_string("leaf").unwrap(),
         field_type: RecordFieldStructureType::Scalar(PropertyValueType::Bool),
         required: true,
     }]);
     for _ in 0..levels {
         structure = RecordFieldStructure::Closed(vec![RecordFieldStructureDef {
-            name: intern("nest").unwrap(),
+            name: db_string("nest").unwrap(),
             field_type: RecordFieldStructureType::Record(Box::new(structure)),
             required: true,
         }]);
@@ -168,7 +184,7 @@ fn recover_closed_rejects_overdeep_record_property() {
     let graph_id = GraphId::new(33);
     let base = empty_closed_graph_type();
     let graph_type = GraphTypeId::new(1).unwrap();
-    let sensor = intern("DeepRecordSensor").unwrap();
+    let sensor = db_string("DeepRecordSensor").unwrap();
     // value_type is unread on the record-recovery path (record_fields drives it); a scalar
     // placeholder keeps the hand-built WAL entry well-formed.
     let value_type = ValueType::predefined(PredefinedValueType::String);
@@ -180,15 +196,16 @@ fn recover_closed_rejects_overdeep_record_property() {
             graph: graph_id,
             change: SchemaChange::NodeTypeAddedV2 {
                 graph_type,
-                label: sensor,
+                label: sensor.clone(),
                 def: selene_core::NodeTypeDef {
                     labels: LabelSet::single(sensor),
                     properties: smallvec![selene_core::PropertyDef {
-                        name: intern("too_deep").unwrap(),
+                        name: db_string("too_deep").unwrap(),
                         value_type,
                         nullable: true,
                         default: None,
                         immutable: false,
+                        unique: false,
                         record_fields,
                     }],
                     key: None,

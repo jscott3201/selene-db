@@ -10,15 +10,48 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 5 surviving platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 46 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
-//! `selene.create_index`, `selene.drop_index`) are relocated here in STEP 3,
-//! bringing the total to 24; the registry's tables and `iter_handles` are
+//! `selene.compaction_stats`,
+//! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
+//! `selene.vector_search_nodes_batch`, `selene.vector_score_nodes`,
+//! `selene.vector_score_nodes_batch`, `selene.vector_score_neighbors`,
+//! `selene.vector_score_neighbors_batch`,
+//! `selene.vector_score_candidate_state`,
+//! `selene.vector_score_candidate_state_nodes`,
+//! `selene.vector_score_candidate_state_expanded`,
+//! `selene.vector_score_candidate_state_expanded_batch`,
+//! `selene.vector_candidate_states`,
+//! `selene.vector_score_expanded_candidates`,
+//! `selene.vector_score_expanded_candidates_batch`,
+//! `selene.vector_search_nodes_ann`,
+//! `selene.vector_search_nodes_ann_batch`,
+//! `selene.vector_search_expanded_candidates_ann`,
+//! `selene.vector_search_candidate_state_expanded_ann`,
+//! `selene.vector_search_expanded_candidates_ann_batch`,
+//! `selene.vector_index_stats`, `selene.text_index_stats`,
+//! `selene.json_contains_nodes`, `selene.json_path_exists_nodes`,
+//! `selene.json_path_contains_nodes`, `selene.json_path_value_nodes`,
+//! `selene.json_contains_candidate_nodes`,
+//! `selene.json_path_exists_candidate_nodes`,
+//! `selene.json_path_contains_candidate_nodes`,
+//! `selene.json_path_value_candidate_nodes`,
+//! `selene.rebuild_vector_indexes`,
+//! `selene.rebuild_recommended_vector_indexes`, `selene.compact`,
+//! `selene.create_vector_index`,
+//! `selene.drop_vector_index`, `selene.create_text_index`,
+//! `selene.drop_text_index`, `selene.text_search_nodes`,
+//! `selene.text_score_nodes`, `selene.text_score_nodes_batch`,
+//! `selene.text_score_candidate_state_expanded_batch`,
+//! `selene.reciprocal_rank_fusion`) are registered here,
+//! bringing the total to 65;
+//! the registry's tables and
+//! `iter_handles` are
 //! already shaped to carry both.
 
 use std::collections::HashMap;
 
-use selene_core::{GraphId, IStr, Value, intern_with_admission};
+use selene_core::{DbString, GraphId, Value, db_string};
 
 use crate::ProcedureContext;
 use crate::procedure_registry::{
@@ -45,12 +78,12 @@ enum Dispatch {
 #[derive(Debug)]
 pub struct BuiltinProcedureRegistry {
     /// `name → metadata`, used by plan-time [`lookup`](ProcedureRegistry::lookup).
-    by_name: HashMap<Box<[IStr]>, ProcedureMetadata>,
+    by_name: HashMap<Box<[DbString]>, ProcedureMetadata>,
     /// `handle → dispatch`, used by runtime [`execute`](ProcedureRegistry::execute).
     by_handle: HashMap<ProcedureHandle, Dispatch>,
     /// `(name, metadata)` pairs in registration order for
     /// [`iter_handles`](ProcedureRegistry::iter_handles) (SHOW PROCEDURES).
-    ordered: Vec<(Vec<IStr>, ProcedureMetadata)>,
+    ordered: Vec<(Vec<DbString>, ProcedureMetadata)>,
     /// Engine-internal, per-`GraphId`, ephemeral projection catalogs.
     catalogs: AlgorithmCatalogs,
 }
@@ -60,13 +93,10 @@ impl BuiltinProcedureRegistry {
     ///
     /// # Panics
     ///
-    /// Panics only if the global string interner is exhausted while interning
-    /// the fixed, static procedure-name segments. The set is small and known at
-    /// compile time; an interner with any spare capacity at engine startup
-    /// admits it. (The historical pack surfaced this as a recoverable
-    /// `InternerCapExhausted`; the native registry's name set is a closed
-    /// compile-time constant, so exhaustion here is a startup-environment bug,
-    /// not an operational input.)
+    /// Panics only if a fixed, static procedure-name segment exceeds the
+    /// per-string byte cap (IL013). The native registry's name set is a closed
+    /// compile-time constant, so this would be a source invariant bug, not an
+    /// operational input.
     #[must_use]
     pub fn new() -> Self {
         let mut by_name = HashMap::new();
@@ -74,14 +104,14 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 5 `selene.*`
-        // platform built-ins (handles 20..=24), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 46 `selene.*`
+        // platform built-ins (handles 20..=65), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
             let handle = ProcedureHandle::new(next_handle);
             next_handle += 1;
-            let name = intern_name(spec.name);
+            let name = procedure_name_segments(spec.name);
             let metadata = spec.kind.metadata(handle, spec.description);
 
             by_handle.insert(handle, Dispatch::Algo(spec.kind));
@@ -91,7 +121,7 @@ impl BuiltinProcedureRegistry {
         for spec in &BUILTIN_SPECS {
             let handle = ProcedureHandle::new(next_handle);
             next_handle += 1;
-            let name = intern_name(spec.name);
+            let name = procedure_name_segments(spec.name);
             let metadata = spec
                 .kind
                 .metadata(handle, spec.description, spec.since_version);
@@ -126,7 +156,7 @@ impl Default for BuiltinProcedureRegistry {
 }
 
 impl ProcedureRegistry for BuiltinProcedureRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
         self.by_name.get(name).cloned()
     }
 
@@ -134,7 +164,7 @@ impl ProcedureRegistry for BuiltinProcedureRegistry {
         REGISTRY_VERSION
     }
 
-    fn iter_handles(&self) -> Box<dyn Iterator<Item = (Vec<IStr>, ProcedureMetadata)> + '_> {
+    fn iter_handles(&self) -> Box<dyn Iterator<Item = (Vec<DbString>, ProcedureMetadata)> + '_> {
         Box::new(
             self.ordered
                 .iter()
@@ -191,6 +221,10 @@ impl ProcedureRegistry for BuiltinProcedureRegistry {
                     (crate::ProcedureTier::Mutation, ProcedureContext::Mutation(mut_ctx)) => {
                         kind.execute_mutation(mut_ctx, args)
                     }
+                    (
+                        crate::ProcedureTier::Maintenance,
+                        ProcedureContext::Maintenance(maintenance_ctx),
+                    ) => kind.execute_maintenance(maintenance_ctx, args),
                     (expected, ctx) => Err(ProcedureError::TierMismatch {
                         expected,
                         actual: ctx.tier(),
@@ -217,68 +251,30 @@ fn builtin_name(kind: BuiltinKind) -> String {
         .map_or_else(String::new, |spec| spec.name.join("."))
 }
 
-fn intern_name(raw: &'static [&'static str]) -> Vec<IStr> {
+fn procedure_name_segments(raw: &'static [&'static str]) -> Vec<DbString> {
     raw.iter()
         .map(|segment| {
-            intern_with_admission(segment)
-                .map(|(istr, _was_new)| istr)
-                .expect("static procedure name segment interns")
+            db_string(segment).expect("static procedure name segment fits DB string cap")
         })
         .collect()
 }
 
 #[cfg(test)]
+#[path = "builtin_registry_surface_tests.rs"]
+mod surface_tests;
+
+#[cfg(test)]
 mod tests {
-    use selene_core::intern_with_admission;
+    use selene_core::db_string;
 
     use super::*;
     use crate::{ProcedureMutability, ProcedureTier};
 
-    // Admission-based interning keeps the runtime-path DoS guard
-    // (`tests/dos_guard.rs::no_unbudgeted_intern_call_in_selene_gql`) green: the
-    // guard forbids the bare interner-admission shorthand in any `src/` file.
-    fn name(segments: &[&str]) -> Vec<IStr> {
+    fn name(segments: &[&str]) -> Vec<DbString> {
         segments
             .iter()
-            .map(|segment| intern_with_admission(segment).expect("interns").0)
+            .map(|segment| db_string(segment).expect("string fits DB string cap"))
             .collect()
-    }
-
-    #[test]
-    fn registers_all_twenty_four_procedures() {
-        let registry = BuiltinProcedureRegistry::new();
-        let handles: Vec<_> = registry.iter_handles().collect();
-        assert_eq!(
-            handles.len(),
-            24,
-            "expected 19 algo procedures + 5 platform built-ins"
-        );
-    }
-
-    #[test]
-    fn iter_handles_yields_all_five_platform_builtins() {
-        let registry = BuiltinProcedureRegistry::new();
-        let names: Vec<Vec<String>> = registry
-            .iter_handles()
-            .map(|(name, _)| {
-                name.iter()
-                    .map(|segment| segment.as_str().to_owned())
-                    .collect()
-            })
-            .collect();
-        for expected in [
-            ["selene", "health"],
-            ["selene", "feature_status"],
-            ["selene", "verify"],
-            ["selene", "create_index"],
-            ["selene", "drop_index"],
-        ] {
-            let expected: Vec<String> = expected.iter().map(|s| (*s).to_owned()).collect();
-            assert!(
-                names.contains(&expected),
-                "SHOW PROCEDURES must list {expected:?}"
-            );
-        }
     }
 
     #[test]
@@ -289,6 +285,32 @@ mod tests {
             &["selene", "health"][..],
             &["selene", "feature_status"][..],
             &["selene", "verify"][..],
+            &["selene", "compaction_stats"][..],
+            &["selene", "vector_search_nodes"][..],
+            &["selene", "vector_search_nodes_batch"][..],
+            &["selene", "vector_score_nodes"][..],
+            &["selene", "vector_score_nodes_batch"][..],
+            &["selene", "vector_score_neighbors"][..],
+            &["selene", "vector_score_neighbors_batch"][..],
+            &["selene", "vector_score_candidate_state"][..],
+            &["selene", "vector_score_candidate_state_nodes"][..],
+            &["selene", "vector_score_candidate_state_expanded"][..],
+            &["selene", "vector_score_candidate_state_expanded_batch"][..],
+            &["selene", "vector_candidate_states"][..],
+            &["selene", "vector_score_expanded_candidates"][..],
+            &["selene", "vector_score_expanded_candidates_batch"][..],
+            &["selene", "vector_search_nodes_ann"][..],
+            &["selene", "vector_search_nodes_ann_batch"][..],
+            &["selene", "vector_search_expanded_candidates_ann"][..],
+            &["selene", "vector_search_candidate_state_expanded_ann"][..],
+            &["selene", "vector_search_expanded_candidates_ann_batch"][..],
+            &["selene", "vector_index_stats"][..],
+            &["selene", "text_index_stats"][..],
+            &["selene", "text_search_nodes"][..],
+            &["selene", "text_score_nodes"][..],
+            &["selene", "text_score_nodes_batch"][..],
+            &["selene", "text_score_candidate_state_expanded_batch"][..],
+            &["selene", "reciprocal_rank_fusion"][..],
         ] {
             let metadata = registry.lookup(&name(builtin)).expect("resolves");
             assert_eq!(metadata.tier, ProcedureTier::Graph, "{builtin:?}");
@@ -302,6 +324,8 @@ mod tests {
         for builtin in [
             &["selene", "create_index"][..],
             &["selene", "drop_index"][..],
+            &["selene", "create_vector_index"][..],
+            &["selene", "drop_vector_index"][..],
         ] {
             let metadata = registry.lookup(&name(builtin)).expect("resolves");
             assert_eq!(metadata.tier, ProcedureTier::Mutation, "{builtin:?}");
@@ -311,6 +335,21 @@ mod tests {
                 "{builtin:?}"
             );
         }
+        let metadata = registry
+            .lookup(&name(&["selene", "rebuild_vector_indexes"]))
+            .expect("rebuild_vector_indexes resolves");
+        assert_eq!(metadata.tier, ProcedureTier::Maintenance);
+        assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
+        let metadata = registry
+            .lookup(&name(&["selene", "rebuild_recommended_vector_indexes"]))
+            .expect("rebuild_recommended_vector_indexes resolves");
+        assert_eq!(metadata.tier, ProcedureTier::Maintenance);
+        assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
+        let metadata = registry
+            .lookup(&name(&["selene", "compact"]))
+            .expect("compact resolves");
+        assert_eq!(metadata.tier, ProcedureTier::Maintenance);
+        assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
     }
 
     #[test]
@@ -339,6 +378,390 @@ mod tests {
         let arity = metadata.signature.arity();
         assert_eq!(arity.minimum, 3);
         assert_eq!(arity.maximum, 3);
+        assert!(metadata.output_schema.columns.is_empty());
+    }
+
+    #[test]
+    fn vector_search_signature_has_optional_metric_arg() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "vector_search_nodes"]))
+            .expect("vector_search_nodes resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 4);
+        assert_eq!(arity.maximum, 5);
+
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 5);
+        assert_eq!(parameters[0].name.as_str(), "label");
+        assert_eq!(parameters[0].ty, crate::GqlType::String);
+        assert_eq!(parameters[1].name.as_str(), "property");
+        assert_eq!(parameters[1].ty, crate::GqlType::String);
+        assert_eq!(parameters[2].name.as_str(), "query");
+        assert_eq!(parameters[2].ty, crate::GqlType::Vector);
+        assert_eq!(parameters[3].name.as_str(), "k");
+        assert_eq!(parameters[3].ty, crate::GqlType::Integer);
+        assert_eq!(parameters[4].name.as_str(), "metric");
+        assert_eq!(parameters[4].ty, crate::GqlType::String);
+        assert_eq!(parameters[4].default_doc, Some("squared_euclidean"));
+        assert!(parameters[4].default.is_some());
+
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].name.as_str(), "node_id");
+        assert_eq!(columns[0].ty, crate::GqlType::NodeRef);
+        assert_eq!(columns[1].name.as_str(), "distance");
+        assert_eq!(columns[1].ty, crate::GqlType::Float64);
+    }
+
+    #[test]
+    fn vector_search_ann_signature_has_metric_and_ef_search_args() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "vector_search_nodes_ann"]))
+            .expect("vector_search_nodes_ann resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 4);
+        assert_eq!(arity.maximum, 6);
+
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 6);
+        assert_eq!(parameters[0].name.as_str(), "label");
+        assert_eq!(parameters[0].ty, crate::GqlType::String);
+        assert_eq!(parameters[1].name.as_str(), "property");
+        assert_eq!(parameters[1].ty, crate::GqlType::String);
+        assert_eq!(parameters[2].name.as_str(), "query");
+        assert_eq!(parameters[2].ty, crate::GqlType::Vector);
+        assert_eq!(parameters[3].name.as_str(), "k");
+        assert_eq!(parameters[3].ty, crate::GqlType::Integer);
+        assert_eq!(parameters[4].name.as_str(), "metric");
+        assert_eq!(parameters[4].ty, crate::GqlType::String);
+        assert!(parameters[4].nullable);
+        assert_eq!(
+            parameters[4].default_doc,
+            Some("NULL (matching index metric, otherwise squared_euclidean)")
+        );
+        assert_eq!(
+            parameters[4].default,
+            Some(crate::ProcedureDefaultValue::Null)
+        );
+        assert_eq!(parameters[5].name.as_str(), "ef_search");
+        assert_eq!(parameters[5].ty, crate::GqlType::Integer);
+        assert!(parameters[5].nullable);
+        assert_eq!(
+            parameters[5].default_doc,
+            Some("NULL (HNSW 64, IVF 2, TurboQuant 512)")
+        );
+        assert_eq!(
+            parameters[5].default,
+            Some(crate::ProcedureDefaultValue::Null)
+        );
+    }
+
+    #[test]
+    fn vector_search_batch_signature_has_list_vector_query_arg() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "vector_search_nodes_batch"]))
+            .expect("vector_search_nodes_batch resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 4);
+        assert_eq!(arity.maximum, 5);
+
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 5);
+        assert_eq!(parameters[0].name.as_str(), "label");
+        assert_eq!(parameters[0].ty, crate::GqlType::String);
+        assert_eq!(parameters[1].name.as_str(), "property");
+        assert_eq!(parameters[1].ty, crate::GqlType::String);
+        assert_eq!(parameters[2].name.as_str(), "queries");
+        assert_eq!(
+            parameters[2].ty,
+            crate::GqlType::List(Box::new(crate::GqlType::Vector))
+        );
+        assert_eq!(parameters[3].name.as_str(), "k");
+        assert_eq!(parameters[3].ty, crate::GqlType::Integer);
+        assert_eq!(parameters[4].name.as_str(), "metric");
+        assert_eq!(parameters[4].ty, crate::GqlType::String);
+        assert_eq!(parameters[4].default_doc, Some("squared_euclidean"));
+        assert!(parameters[4].default.is_some());
+
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 3);
+        assert_eq!(columns[0].name.as_str(), "query_index");
+        assert_eq!(columns[0].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[1].name.as_str(), "node_id");
+        assert_eq!(columns[1].ty, crate::GqlType::NodeRef);
+        assert_eq!(columns[2].name.as_str(), "distance");
+        assert_eq!(columns[2].ty, crate::GqlType::Float64);
+    }
+
+    #[test]
+    fn vector_score_nodes_signature_has_list_node_candidates_arg() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "vector_score_nodes"]))
+            .expect("vector_score_nodes resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 4);
+        assert_eq!(arity.maximum, 5);
+
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 5);
+        assert_eq!(parameters[0].name.as_str(), "property");
+        assert_eq!(parameters[0].ty, crate::GqlType::String);
+        assert_eq!(parameters[1].name.as_str(), "query");
+        assert_eq!(parameters[1].ty, crate::GqlType::Vector);
+        assert_eq!(parameters[2].name.as_str(), "nodes");
+        assert_eq!(
+            parameters[2].ty,
+            crate::GqlType::List(Box::new(crate::GqlType::NodeRef))
+        );
+        assert_eq!(parameters[3].name.as_str(), "k");
+        assert_eq!(parameters[3].ty, crate::GqlType::Integer);
+        assert_eq!(parameters[4].name.as_str(), "metric");
+        assert_eq!(parameters[4].ty, crate::GqlType::String);
+        assert_eq!(parameters[4].default_doc, Some("squared_euclidean"));
+        assert!(parameters[4].default.is_some());
+
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].name.as_str(), "node_id");
+        assert_eq!(columns[0].ty, crate::GqlType::NodeRef);
+        assert_eq!(columns[1].name.as_str(), "distance");
+        assert_eq!(columns[1].ty, crate::GqlType::Float64);
+    }
+
+    #[test]
+    fn vector_search_ann_batch_signature_has_list_vector_query_arg() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "vector_search_nodes_ann_batch"]))
+            .expect("vector_search_nodes_ann_batch resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 4);
+        assert_eq!(arity.maximum, 6);
+
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 6);
+        assert_eq!(parameters[0].name.as_str(), "label");
+        assert_eq!(parameters[0].ty, crate::GqlType::String);
+        assert_eq!(parameters[1].name.as_str(), "property");
+        assert_eq!(parameters[1].ty, crate::GqlType::String);
+        assert_eq!(parameters[2].name.as_str(), "queries");
+        assert_eq!(
+            parameters[2].ty,
+            crate::GqlType::List(Box::new(crate::GqlType::Vector))
+        );
+        assert_eq!(parameters[3].name.as_str(), "k");
+        assert_eq!(parameters[3].ty, crate::GqlType::Integer);
+        assert_eq!(parameters[4].name.as_str(), "metric");
+        assert_eq!(parameters[4].ty, crate::GqlType::String);
+        assert!(parameters[4].nullable);
+        assert_eq!(
+            parameters[4].default_doc,
+            Some("NULL (matching index metric, otherwise squared_euclidean)")
+        );
+        assert_eq!(
+            parameters[4].default,
+            Some(crate::ProcedureDefaultValue::Null)
+        );
+        assert_eq!(parameters[5].name.as_str(), "ef_search");
+        assert_eq!(parameters[5].ty, crate::GqlType::Integer);
+        assert!(parameters[5].nullable);
+        assert_eq!(
+            parameters[5].default_doc,
+            Some("NULL (HNSW 64, IVF 2, TurboQuant 512)")
+        );
+        assert_eq!(
+            parameters[5].default,
+            Some(crate::ProcedureDefaultValue::Null)
+        );
+
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 3);
+        assert_eq!(columns[0].name.as_str(), "query_index");
+        assert_eq!(columns[0].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[1].name.as_str(), "node_id");
+        assert_eq!(columns[1].ty, crate::GqlType::NodeRef);
+        assert_eq!(columns[2].name.as_str(), "distance");
+        assert_eq!(columns[2].ty, crate::GqlType::Float64);
+    }
+
+    #[test]
+    fn vector_index_stats_signature_is_zero_arg_read() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "vector_index_stats"]))
+            .expect("vector_index_stats resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 0);
+        assert_eq!(arity.maximum, 0);
+        assert_eq!(metadata.tier, ProcedureTier::Graph);
+        assert_eq!(metadata.mutability, ProcedureMutability::Read);
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 43);
+        assert_eq!(columns[0].name.as_str(), "name");
+        assert_eq!(columns[0].ty, crate::GqlType::String);
+        assert_eq!(columns[4].name.as_str(), "dimension");
+        assert_eq!(columns[4].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[14].name.as_str(), "hnsw_level_zero_link_count");
+        assert_eq!(columns[14].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[19].name.as_str(), "ivf_index_bytes");
+        assert_eq!(columns[19].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[26].name.as_str(), "ivf_non_empty_list_count");
+        assert_eq!(columns[26].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[28].name.as_str(),
+            "ivf_average_list_len_basis_points"
+        );
+        assert_eq!(columns[28].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[30].name.as_str(), "ivf_pending_retrain_entries");
+        assert_eq!(columns[30].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[31].name.as_str(),
+            "ivf_pending_retrain_basis_points"
+        );
+        assert_eq!(columns[31].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[32].name.as_str(), "ivf_rebuild_recommended");
+        assert_eq!(columns[32].ty, crate::GqlType::Boolean);
+        assert_eq!(columns[34].name.as_str(), "estimated_reachable_bytes");
+        assert_eq!(columns[34].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[35].name.as_str(), "turbo_quant_index_bytes");
+        assert_eq!(columns[35].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[42].name.as_str(), "turbo_quant_calibration_bytes");
+        assert_eq!(columns[42].ty, crate::GqlType::Uint64);
+    }
+
+    #[test]
+    fn rebuild_vector_indexes_signature_is_zero_arg_maintenance() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "rebuild_vector_indexes"]))
+            .expect("rebuild_vector_indexes resolves");
+        assert_rebuild_vector_indexes_metadata(&metadata);
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 0);
+        assert_eq!(arity.maximum, 0);
+    }
+
+    #[test]
+    fn rebuild_recommended_vector_indexes_signature_accepts_optional_cap() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "rebuild_recommended_vector_indexes"]))
+            .expect("rebuild_recommended_vector_indexes resolves");
+        assert_rebuild_vector_indexes_metadata(&metadata);
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 0);
+        assert_eq!(arity.maximum, 1);
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(parameters[0].name.as_str(), "max_indexes");
+        assert_eq!(parameters[0].ty, crate::GqlType::Integer);
+        assert!(parameters[0].nullable);
+        assert_eq!(parameters[0].default_doc, Some("NULL"));
+        assert!(parameters[0].default.is_some());
+    }
+
+    fn assert_rebuild_vector_indexes_metadata(metadata: &crate::ProcedureMetadata) {
+        assert_eq!(metadata.tier, ProcedureTier::Maintenance);
+        assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 71);
+        assert_eq!(columns[0].name.as_str(), "name");
+        assert_eq!(columns[0].ty, crate::GqlType::String);
+        assert_eq!(columns[19].name.as_str(), "before_hnsw_deleted_entries");
+        assert_eq!(columns[19].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[23].name.as_str(),
+            "before_hnsw_level_zero_link_count"
+        );
+        assert_eq!(columns[23].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[33].name.as_str(), "before_ivf_index_bytes");
+        assert_eq!(columns[33].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[47].name.as_str(), "before_ivf_non_empty_list_count");
+        assert_eq!(columns[47].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[51].name.as_str(),
+            "before_ivf_average_list_len_basis_points"
+        );
+        assert_eq!(columns[51].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[55].name.as_str(),
+            "before_ivf_pending_retrain_entries"
+        );
+        assert_eq!(columns[55].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[56].name.as_str(),
+            "after_ivf_pending_retrain_entries"
+        );
+        assert_eq!(columns[56].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[57].name.as_str(),
+            "before_ivf_pending_retrain_basis_points"
+        );
+        assert_eq!(columns[57].ty, crate::GqlType::Uint64);
+        assert_eq!(
+            columns[58].name.as_str(),
+            "after_ivf_pending_retrain_basis_points"
+        );
+        assert_eq!(columns[58].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[59].name.as_str(), "before_ivf_rebuild_recommended");
+        assert_eq!(columns[59].ty, crate::GqlType::Boolean);
+        assert_eq!(columns[60].name.as_str(), "after_ivf_rebuild_recommended");
+        assert_eq!(columns[60].ty, crate::GqlType::Boolean);
+        assert_eq!(columns[70].name.as_str(), "reclaimed_reachable_bytes");
+        assert_eq!(columns[70].ty, crate::GqlType::Uint64);
+    }
+
+    #[test]
+    fn create_vector_index_signature_has_optional_kind_and_name_args() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "create_vector_index"]))
+            .expect("create_vector_index resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 3);
+        assert_eq!(arity.maximum, 9);
+
+        let parameters = &metadata.signature.parameters;
+        assert_eq!(parameters.len(), 9);
+        assert_eq!(parameters[0].name.as_str(), "label");
+        assert_eq!(parameters[0].ty, crate::GqlType::String);
+        assert_eq!(parameters[1].name.as_str(), "property");
+        assert_eq!(parameters[1].ty, crate::GqlType::String);
+        assert_eq!(parameters[2].name.as_str(), "dimension");
+        assert_eq!(parameters[2].ty, crate::GqlType::Integer);
+        assert_eq!(parameters[3].name.as_str(), "kind");
+        assert_eq!(parameters[3].ty, crate::GqlType::String);
+        assert_eq!(parameters[3].default_doc, Some("ivf_cosine"));
+        assert!(parameters[3].default.is_some());
+        assert_eq!(parameters[4].name.as_str(), "name");
+        assert_eq!(parameters[4].ty, crate::GqlType::String);
+        assert!(parameters[4].nullable);
+        assert_eq!(parameters[4].default_doc, Some("NULL"));
+        assert!(parameters[4].default.is_some());
+        assert_eq!(parameters[5].name.as_str(), "metric");
+        assert_eq!(parameters[5].ty, crate::GqlType::String);
+        assert!(parameters[5].nullable);
+        assert_eq!(parameters[5].default_doc, Some("NULL"));
+        assert!(parameters[5].default.is_some());
+        assert_eq!(parameters[6].name.as_str(), "hnsw_max_neighbors");
+        assert_eq!(parameters[6].ty, crate::GqlType::Integer);
+        assert!(parameters[6].nullable);
+        assert_eq!(parameters[6].default_doc, Some("NULL"));
+        assert!(parameters[6].default.is_some());
+        assert_eq!(parameters[7].name.as_str(), "hnsw_ef_construction");
+        assert_eq!(parameters[7].ty, crate::GqlType::Integer);
+        assert!(parameters[7].nullable);
+        assert_eq!(parameters[7].default_doc, Some("NULL"));
+        assert!(parameters[7].default.is_some());
+        assert_eq!(parameters[8].name.as_str(), "ivf_target_centroids");
+        assert_eq!(parameters[8].ty, crate::GqlType::Integer);
+        assert!(parameters[8].nullable);
+        assert_eq!(parameters[8].default_doc, Some("NULL"));
+        assert!(parameters[8].default.is_some());
         assert!(metadata.output_schema.columns.is_empty());
     }
 
@@ -383,40 +806,13 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=24).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=65).collect::<Vec<_>>());
     }
 
     #[test]
     fn unknown_name_returns_none() {
         let registry = BuiltinProcedureRegistry::new();
         assert!(registry.lookup(&name(&["algo", "nonexistent"])).is_none());
-    }
-
-    #[test]
-    fn pagerank_signature_matches_pack_shape() {
-        let registry = BuiltinProcedureRegistry::new();
-        let metadata = registry
-            .lookup(&name(&["algo", "pagerank"]))
-            .expect("pagerank resolves");
-        // projection_name, damping, max_iterations, tolerance, parallelism
-        assert_eq!(metadata.signature.parameters.len(), 5);
-        // The pack attached `default_doc` (not an executable `default`) to the
-        // nullable params, so arity is exact (5..5): the CALL site must still
-        // pass all five positional args; nullability is enforced per-arg, not by
-        // omission. Preserving this keeps the procedure signature unchanged.
-        let arity = metadata.signature.arity();
-        assert_eq!(arity.minimum, 5);
-        assert_eq!(arity.maximum, 5);
-        // The four optional params are nullable and carry the pack default-doc.
-        for parameter in &metadata.signature.parameters[1..] {
-            assert!(parameter.nullable, "{} should be nullable", parameter.name);
-            assert_eq!(parameter.default_doc, Some("NULL (use procedure default)"));
-            assert!(parameter.default.is_none());
-        }
-        // Output columns: node_id, score.
-        assert_eq!(metadata.output_schema.columns.len(), 2);
-        assert_eq!(metadata.output_schema.columns[0].name.as_str(), "node_id");
-        assert_eq!(metadata.output_schema.columns[1].name.as_str(), "score");
     }
 
     #[test]

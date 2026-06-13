@@ -77,7 +77,10 @@ fn lowers_match_return_scan() {
     assert_eq!(scan.kind, ScanKind::Node);
     assert!(scan.binding.is_some());
     assert_eq!(variant_names(&plan), ["Project"]);
-    assert_eq!(plan.output_schema.columns[0].name.unwrap().as_str(), "n");
+    assert_eq!(
+        plan.output_schema.columns[0].name.clone().unwrap().as_str(),
+        "n"
+    );
 }
 
 #[test]
@@ -89,7 +92,7 @@ fn anonymous_node_scan_has_no_binding() {
     };
     assert_eq!(scan.binding, None);
     assert!(matches!(
-        scan.label_predicate,
+        &scan.label_predicate,
         Some(LabelExpr::Single(label)) if label.as_str() == "Person"
     ));
 }
@@ -135,7 +138,10 @@ fn bounded_quantified_edge_lowers_to_repeat_with_group_list_binding() {
         group.ty,
         AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
     );
-    assert_eq!(plan.output_schema.columns[0].name.unwrap().as_str(), "r");
+    assert_eq!(
+        plan.output_schema.columns[0].name.clone().unwrap().as_str(),
+        "r"
+    );
     assert_eq!(
         plan.output_schema.columns[0].ty,
         AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
@@ -165,7 +171,7 @@ fn property_maps_and_inline_where_are_preserved() {
     };
     assert_eq!(scan.property_predicates.len(), 1);
     assert!(matches!(
-        scan.property_predicates[0].kind,
+        &scan.property_predicates[0].kind,
         FilterPredicateKind::PropertyEquals { key, .. } if key.as_str() == "age"
     ));
     assert_eq!(pattern.filters.len(), 1);
@@ -224,12 +230,12 @@ fn unaliased_derived_projection_column_has_no_name() {
 #[test]
 fn return_star_keeps_visible_binding_columns() {
     let plan = plan_one("MATCH (n) RETURN *");
-    assert!(
-        plan.output_schema
-            .columns
-            .iter()
-            .any(|column| column.name.is_some_and(|name| name.as_str() == "n"))
-    );
+    assert!(plan.output_schema.columns.iter().any(|column| {
+        column
+            .name
+            .as_ref()
+            .is_some_and(|name| name.as_str() == "n")
+    }));
 }
 
 #[test]
@@ -287,9 +293,35 @@ fn restrictive_path_mode_single_node_lowers_to_filter() {
 }
 
 #[test]
-fn unsupported_match_modes_emit_42n01() {
-    let err = parse("MATCH DIFFERENT EDGES (n) RETURN n").expect_err("unsupported match mode");
-    assert_eq!(err.gqlstatus().as_str(), "42N01");
+fn different_edges_match_mode_lowers_to_match_mode_filter() {
+    // ISO 39075:2024 §16.4 GR8(a): an explicit DIFFERENT EDGES installs the
+    // pattern-wide edge-uniqueness wrapper.
+    let plan = plan_one("MATCH DIFFERENT EDGES (a)-[:K]->(b) RETURN a");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    assert!(matches!(
+        pattern.join_tree,
+        JoinTree::MatchModeFilter { .. }
+    ));
+}
+
+#[test]
+fn repeatable_elements_and_default_install_no_match_mode_filter() {
+    // ISO 39075:2024 §16.4 GR8(b): REPEATABLE ELEMENTS is BINDINGS = INNER, so
+    // it installs no wrapper. selene's ID086 default is REPEATABLE ELEMENTS, so
+    // a no-prefix MATCH installs none either. Both lower to a bare Expand.
+    for source in [
+        "MATCH REPEATABLE ELEMENTS (a)-[:K]->(b) RETURN a",
+        "MATCH (a)-[:K]->(b) RETURN a",
+    ] {
+        let plan = plan_one(source);
+        let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+        assert!(
+            !matches!(pattern.join_tree, JoinTree::MatchModeFilter { .. }),
+            "{source} must not install a MatchModeFilter; got {:?}",
+            pattern.join_tree
+        );
+        assert!(matches!(pattern.join_tree, JoinTree::Expand { .. }));
+    }
 }
 
 #[test]
@@ -308,6 +340,31 @@ fn quantifier_max_exceeding_cap_emits_program_limit() {
 }
 
 #[test]
+fn gp03_subquery_label_does_not_leak_to_outer_binding() {
+    // GP03 regression: a body pattern that reuses an imported binding with a
+    // label must NOT refine the OUTER declaration's labels. `binding_defs`
+    // (match_clause.rs) copies `decl.label_expr()` into the outer pattern plan,
+    // so a leak would conjunct `:Sensor` onto the outer `a` and corrupt its scan
+    // — invisible at execution (the same label also empties the inner semi-join)
+    // but a real plan corruption. Imports are read-only, so outer `a` keeps
+    // exactly the single `:Person` label, never a Conjunction.
+    let plan = plan_one(
+        "MATCH (a:Person) CALL (a) { MATCH (a:Sensor) RETURN 1 AS n LIMIT 1 } YIELD n RETURN n",
+    );
+    let pattern = plan.pattern_plan.as_ref().expect("outer pattern plan");
+    let a = pattern
+        .bindings
+        .iter()
+        .find(|binding| binding.name.as_str() == "a")
+        .expect("outer binding a");
+    assert!(
+        matches!(&a.label_predicate, Some(LabelExpr::Single(label)) if label.as_str() == "Person"),
+        "outer `a` label must stay the single :Person (no subquery leak), got {:?}",
+        a.label_predicate
+    );
+}
+
+#[test]
 fn return_star_after_with_uses_with_projection() {
     // Why: prior planner walked `analyzed.scopes.declarations()` for RETURN *,
     // leaking bindings discarded by a WITH boundary into the output schema.
@@ -316,7 +373,7 @@ fn return_star_after_with_uses_with_projection() {
         .output_schema
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str().to_string()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str().to_string()))
         .collect();
     assert!(
         names.iter().any(|name| name == "x"),
@@ -341,10 +398,10 @@ fn return_star_does_not_emit_empty_project() {
         .count();
     assert_eq!(empty_projects, 0, "got pipeline {:?}", variant_names(&plan));
     assert!(
-        plan.output_schema
-            .columns
-            .iter()
-            .any(|column| column.name.is_some_and(|name| name.as_str() == "n")),
+        plan.output_schema.columns.iter().any(|column| column
+            .name
+            .as_ref()
+            .is_some_and(|name| name.as_str() == "n")),
         "RETURN * output_schema must still expose visible bindings"
     );
 }
@@ -359,7 +416,7 @@ fn chained_plan_output_schema_uses_last_block() {
         .output_schema
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str().to_string()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str().to_string()))
         .collect();
     assert_eq!(names, vec!["b".to_string()]);
 }
@@ -466,10 +523,11 @@ fn anonymous_intermediate_node_does_not_leak_to_next_edge() {
 #[test]
 fn scalar_functions_are_not_classified_as_aggregates_in_group_by() {
     // Why: prior `aggregate_name` returned Some for any single-segment
-    // function call, so scalar functions like `length` were lifted into
+    // function call, so scalar functions like `char_length` were lifted into
     // `GroupBy.aggregates` even though they are pure scalars.
-    let plan =
-        plan_one("MATCH (n) RETURN length(n.name) AS l, count(*) AS c GROUP BY length(n.name)");
+    let plan = plan_one(
+        "MATCH (n) RETURN char_length(n.name) AS l, count(*) AS c GROUP BY char_length(n.name)",
+    );
     let mut aggregate_names: Vec<String> = Vec::new();
     for op in &plan.pipeline {
         if let PipelineOp::GroupBy { aggregates, .. } = op {
@@ -483,8 +541,8 @@ fn scalar_functions_are_not_classified_as_aggregates_in_group_by() {
         "count must remain an aggregate: {aggregate_names:?}"
     );
     assert!(
-        !aggregate_names.iter().any(|name| name == "length"),
-        "length must not be classified as an aggregate: {aggregate_names:?}"
+        !aggregate_names.iter().any(|name| name == "char_length"),
+        "char_length must not be classified as an aggregate: {aggregate_names:?}"
     );
 }
 
@@ -505,7 +563,7 @@ fn let_uses_dedicated_pipeline_op_so_prior_bindings_remain_visible() {
         .output_schema
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str().to_string()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str().to_string()))
         .collect();
     assert!(
         names.iter().any(|name| name == "n"),

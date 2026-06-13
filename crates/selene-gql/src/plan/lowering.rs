@@ -6,6 +6,7 @@ mod call;
 mod catalog;
 mod expr;
 mod match_clause;
+mod match_mode;
 mod mutation;
 mod path_mode;
 mod path_search;
@@ -26,7 +27,20 @@ use crate::{
     },
 };
 
-/// Lower an analyzed statement into a literal, unoptimized execution plan.
+/// Lower an analyzed statement into a literal, unoptimized execution plan
+/// using the default implementation-defined caps ([`ImplDefinedCaps::DEFAULT`]).
+///
+/// Thin wrapper over [`plan_with_caps`]; call that to inject caller-configured
+/// caps (see [`crate::runtime::Session::with_impl_defined_caps`]).
+pub fn plan(
+    analyzed: &AnalyzedStatement,
+    registry: &dyn ProcedureRegistry,
+) -> Result<ExecutionPlan, PlannerError> {
+    plan_with_caps(analyzed, registry, &ImplDefinedCaps::DEFAULT)
+}
+
+/// Lower an analyzed statement into a literal, unoptimized execution plan,
+/// stamping the caller-supplied implementation-defined caps.
 ///
 /// Dispatches by [`AnalyzedStatementKind`]: queries / set-composed / NEXT-chained
 /// pipelines walk the read pipeline; mutations lower from the analyzer's
@@ -34,20 +48,33 @@ use crate::{
 /// transaction control lowers to a single [`PipelineOp::Tx`]; top-level CALL
 /// looks up procedure metadata in `registry` and lowers to [`PipelineOp::Call`].
 ///
+/// `caps` reach the plan two ways: the plan-time variable-length quantifier gate
+/// consults `caps.max_quantifier` *during* lowering (threaded as `max_quantifier`),
+/// and the finished top-level plan carries `*caps` in `impl_defined_caps` for the
+/// runtime context and optimizer. Nested plans (set-op / NEXT / CALL-subquery
+/// bodies) execute under the parent context, so only the top-level stamp is read.
+///
 /// [`MutationWriteSet`]: crate::analyze::MutationWriteSet
 #[tracing::instrument(
     name = "selene.gql.plan",
-    skip(analyzed, registry),
+    skip(analyzed, registry, caps),
     fields(category = ?analyzed.category)
 )]
-pub fn plan(
+pub fn plan_with_caps(
     analyzed: &AnalyzedStatement,
     registry: &dyn ProcedureRegistry,
+    caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
-    let mut plan = lower_statement_kind(&analyzed.statement, registry, analyzed)?;
+    let mut plan = lower_statement_kind(&analyzed.statement, registry, analyzed, caps)?;
     plan.category = analyzed.category;
     plan.expr_ids = analyzed.expr_ids.clone();
-    expr::populate_plan_subqueries(&mut plan, analyzed, registry)?;
+    expr::populate_plan_subqueries(&mut plan, analyzed, registry, caps.max_quantifier)?;
+    // Why: only the top-level plan's caps are consumed — statement.rs builds the
+    // runtime TxContext and the optimizer's OptimizeContext from
+    // `plan.impl_defined_caps`, and nested plans execute under that same context.
+    // The one cap needed mid-lowering (the quantifier gate) is threaded above as
+    // `max_quantifier`, so a post-lowering stamp here covers every statement kind.
+    plan.impl_defined_caps = *caps;
     plan.refresh_pipeline_op_high_water();
     Ok(plan)
 }
@@ -56,15 +83,20 @@ fn lower_statement_kind(
     statement: &AnalyzedStatementKind,
     registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
+    caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
+    // The quantifier gate is the only cap threaded recursively mid-lowering; the
+    // DDL key-label-set IL003 gate needs the full caps, so `lower_ddl` receives
+    // `caps` directly.
+    let max_quantifier = caps.max_quantifier;
     match statement {
         AnalyzedStatementKind::Query(pipeline) => {
-            lower_query_pipeline(pipeline, registry, analyzed)
+            lower_query_pipeline(pipeline, registry, analyzed, max_quantifier)
         }
         AnalyzedStatementKind::Composite { first, rest, .. } => {
-            let mut plan = lower_query_pipeline(first, registry, analyzed)?;
+            let mut plan = lower_query_pipeline(first, registry, analyzed, max_quantifier)?;
             for (op, rhs) in rest {
-                let rhs_plan = lower_query_pipeline(rhs, registry, analyzed)?;
+                let rhs_plan = lower_query_pipeline(rhs, registry, analyzed, max_quantifier)?;
                 // ISO §14.2 SR v: set-composition arms must be column
                 // name-equal. The binder binds each arm independently, so the
                 // names are first available here on the lowered output schemas.
@@ -81,12 +113,16 @@ fn lower_statement_kind(
             }
             Ok(plan)
         }
-        AnalyzedStatementKind::Chained { blocks, .. } => lower_chained(blocks, registry, analyzed),
-        AnalyzedStatementKind::Mutate(pipeline) => mutation::lower_mutation(pipeline, analyzed),
-        AnalyzedStatementKind::Ddl(statement) => catalog::lower_ddl(statement, analyzed),
+        AnalyzedStatementKind::Chained { blocks, .. } => {
+            lower_chained(blocks, registry, analyzed, max_quantifier)
+        }
+        AnalyzedStatementKind::Mutate(pipeline) => {
+            mutation::lower_mutation(pipeline, analyzed, max_quantifier)
+        }
+        AnalyzedStatementKind::Ddl(statement) => catalog::lower_ddl(statement, analyzed, caps),
         AnalyzedStatementKind::Call(call) => call::lower_top_level_call(call, registry, analyzed),
         AnalyzedStatementKind::Explain { inner, span } => {
-            lower_explain(inner, *span, registry, analyzed)
+            lower_explain(inner, *span, registry, analyzed, caps)
         }
         AnalyzedStatementKind::StartTransaction(span) => Ok(tx_plan(TxOp::Start { span: *span })),
         AnalyzedStatementKind::Commit(span) => Ok(tx_plan(TxOp::Commit { span: *span })),
@@ -97,7 +133,7 @@ fn lower_statement_kind(
             if_not_exists,
             span,
         } => Ok(session_plan(SessionOp::SetValue {
-            param: *param,
+            param: param.clone(),
             value: value.clone(),
             if_not_exists: *if_not_exists,
             span: *span,
@@ -124,7 +160,7 @@ fn session_reset_op(target: &crate::SessionResetTarget, span: SourceSpan) -> Ses
         SessionResetTarget::Parameters => SessionOp::ResetParameters { span },
         SessionResetTarget::TimeZone => SessionOp::ResetTimeZone { span },
         SessionResetTarget::Parameter(param) => SessionOp::ResetParameter {
-            param: *param,
+            param: param.clone(),
             span,
         },
     }
@@ -135,8 +171,9 @@ fn lower_explain(
     span: SourceSpan,
     registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
+    caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
-    let inner = lower_statement_kind(inner, registry, analyzed)?;
+    let inner = lower_statement_kind(inner, registry, analyzed, caps)?;
     Ok(ExecutionPlan {
         category: StatementCategory::ReadOnly,
         pattern_plan: None,
@@ -157,18 +194,19 @@ fn lower_chained(
     blocks: &[QueryPipeline],
     registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<ExecutionPlan, PlannerError> {
     let Some((first, rest)) = blocks.split_first() else {
         return Ok(empty_plan());
     };
-    let mut plan = lower_query_pipeline(first, registry, analyzed)?;
+    let mut plan = lower_query_pipeline(first, registry, analyzed, max_quantifier)?;
     // NEXT's output_schema must reflect the final block's projection because
     // each NEXT discards the prior block's columns. Correlated NEXT (rhs
     // references prior-block bindings) is rejected here rather than silently
     // losing carried bindings at runtime.
     for block in rest {
         assert_no_correlated_next(block.span, analyzed)?;
-        let inner = lower_query_pipeline(block, registry, analyzed)?;
+        let inner = lower_query_pipeline(block, registry, analyzed, max_quantifier)?;
         plan.output_schema = inner.output_schema.clone();
         plan.pipeline.push(PipelineOp::Chain(Box::new(inner)));
     }
@@ -204,9 +242,10 @@ fn lower_query_pipeline(
     pipeline: &QueryPipeline,
     registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<ExecutionPlan, PlannerError> {
     let (matches, tail_start) = leading_matches(&pipeline.statements);
-    let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed)?;
+    let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed, max_quantifier)?;
     let mut visible = visible_after_pattern(pattern_plan.as_ref());
     let mut ops = Vec::new();
     let tail = &pipeline.statements[tail_start..];
@@ -214,7 +253,7 @@ fn lower_query_pipeline(
     while index < tail.len() {
         match &tail[index] {
             PipelineStatement::Match(clause) => {
-                sequential_match::lower(clause, analyzed, &mut ops, &mut visible)?;
+                sequential_match::lower(clause, analyzed, &mut ops, &mut visible, max_quantifier)?;
             }
             PipelineStatement::Filter(value) => {
                 ops.push(PipelineOp::Filter(expr::filter_predicate(value, analyzed)?));
@@ -223,12 +262,12 @@ fn lower_query_pipeline(
                 let projects = bindings
                     .iter()
                     .map(|binding| {
-                        expr::project_expr(&binding.value, Some(binding.alias), analyzed)
+                        expr::project_expr(&binding.value, Some(binding.alias.clone()), analyzed)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 for project in &projects {
                     visible.push(BindingTableColumn {
-                        name: project.alias,
+                        name: project.alias.clone(),
                         hidden: None,
                         ty: project.ty.clone(),
                     });
@@ -241,13 +280,13 @@ fn lower_query_pipeline(
             PipelineStatement::Unwind(unwind) => {
                 let source = expr::project_expr(&unwind.source, None, analyzed)?;
                 visible.push(BindingTableColumn {
-                    name: Some(unwind.alias),
+                    name: Some(unwind.alias.clone()),
                     hidden: None,
                     ty: AnalyzedType::DYNAMIC,
                 });
                 ops.push(PipelineOp::Unwind {
                     source,
-                    alias: unwind.alias,
+                    alias: unwind.alias.clone(),
                     span: unwind.span,
                 });
             }
@@ -301,9 +340,14 @@ fn lower_query_pipeline(
                 let planned = call::plan_call(call, registry, analyzed)?;
                 visible.extend(planned.yield_schema.clone());
                 ops.push(PipelineOp::Call(planned));
+                if let Some(filter) = &call.yield_filter {
+                    ops.push(PipelineOp::Filter(expr::filter_predicate(
+                        filter, analyzed,
+                    )?));
+                }
             }
             PipelineStatement::CallSubquery(call) => {
-                let planned = lower_call_subquery(call, registry, analyzed)?;
+                let planned = lower_call_subquery(call, registry, analyzed, max_quantifier)?;
                 visible.extend(planned.yield_schema.clone());
                 ops.push(PipelineOp::CallSubquery(Box::new(planned)));
             }
@@ -328,28 +372,27 @@ fn lower_call_subquery(
     call: &InlineProcedureCall,
     registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<PlannedTableSubquery, PlannerError> {
-    if call.variable_scope.is_some() {
-        return Err(PlannerError::NotImplemented {
-            feature: "explicit variable-scope CALL subquery (GP03)",
-            span: call.span,
-        });
-    }
     if call.in_transactions {
         return Err(PlannerError::NotImplemented {
             feature: "CALL { ... } IN TRANSACTIONS",
             span: call.span,
         });
     }
-    let mut body = lower_query_pipeline(&call.body, registry, analyzed)?;
-    expr::populate_plan_subqueries(&mut body, analyzed, registry)?;
+    // GP03: explicit variable scope is bound in the analyzer (the body sees only
+    // the named imports); the import set flows into `outer_binding_refs` below
+    // via `outer_binding_refs_in_span` because body references resolve to the
+    // outer bindings' ids. No planner-side scope handling is required.
+    let mut body = lower_query_pipeline(&call.body, registry, analyzed, max_quantifier)?;
+    expr::populate_plan_subqueries(&mut body, analyzed, registry, max_quantifier)?;
     let yield_items = table_subquery_yields(call, &body.output_schema)?;
     let yield_schema = yield_items
         .iter()
         .map(|item| {
-            let column = body_column(&body.output_schema, item.source, item.span)?;
+            let column = body_column(&body.output_schema, item.source.clone(), item.span)?;
             Ok(BindingTableColumn {
-                name: Some(item.output),
+                name: Some(item.output.clone()),
                 hidden: None,
                 ty: column.ty.clone(),
             })
@@ -370,25 +413,25 @@ fn table_subquery_yields(
 ) -> Result<Vec<PlannedTableSubqueryYield>, PlannerError> {
     let mut yields = Vec::new();
     for item in &call.yield_items {
-        match item.column {
+        match &item.column {
             YieldColumn::Star => {
                 for column in output_schema
                     .columns
                     .iter()
-                    .filter_map(|column| column.name)
+                    .filter_map(|column| column.name.clone())
                 {
                     yields.push(PlannedTableSubqueryYield {
-                        source: column,
+                        source: column.clone(),
                         output: column,
                         span: item.span,
                     });
                 }
             }
             YieldColumn::Named(source) => {
-                let output = item.alias.unwrap_or(source);
-                body_column(output_schema, source, item.span)?;
+                let output = item.alias.clone().unwrap_or_else(|| source.clone());
+                body_column(output_schema, source.clone(), item.span)?;
                 yields.push(PlannedTableSubqueryYield {
-                    source,
+                    source: source.clone(),
                     output,
                     span: item.span,
                 });
@@ -400,13 +443,13 @@ fn table_subquery_yields(
 
 fn body_column(
     schema: &BindingTableSchema,
-    name: selene_core::IStr,
+    name: selene_core::DbString,
     span: SourceSpan,
 ) -> Result<&BindingTableColumn, PlannerError> {
     schema
         .columns
         .iter()
-        .find(|column| column.name == Some(name))
+        .find(|column| column.name == Some(name.clone()))
         .ok_or(PlannerError::ProcedureMetadataMismatch {
             procedure: Box::new([]),
             detail: "CALL subquery yield column missing from body output schema",
@@ -489,7 +532,7 @@ fn projects_to_columns(projects: &[ProjectExpr]) -> Vec<BindingTableColumn> {
     projects
         .iter()
         .map(|project| BindingTableColumn {
-            name: project.alias,
+            name: project.alias.clone(),
             hidden: None,
             ty: project.ty.clone(),
         })
@@ -505,7 +548,7 @@ pub(super) fn visible_after_pattern(
                 .iter()
                 .filter(|binding| binding.element != BindingElement::Path)
                 .map(|binding| BindingTableColumn {
-                    name: Some(binding.name),
+                    name: Some(binding.name.clone()),
                     hidden: None,
                     ty: binding.ty.clone(),
                 })
@@ -515,8 +558,8 @@ pub(super) fn visible_after_pattern(
 }
 
 fn explain_output_schema(span: SourceSpan) -> Result<BindingTableSchema, PlannerError> {
-    let (name, _was_new) = selene_core::intern_with_admission("plan").map_err(|_err| {
-        PlannerError::InternerCapExhausted {
+    let name = selene_core::db_string("plan").map_err(|_err| {
+        PlannerError::StaticStringConstructionFailed {
             detail: "static EXPLAIN column 'plan'",
             span,
         }
@@ -550,7 +593,7 @@ fn limit_amount(value: &LimitValue) -> LimitAmount {
             declared_type,
             span,
         } => LimitAmount::Parameter {
-            name: *name,
+            name: name.clone(),
             declared_type: declared_type.clone(),
             span: *span,
         },
@@ -658,9 +701,10 @@ mod defensive_tests {
         let PipelineStatement::Return(parsed_return) = parsed_query.statements[0].clone() else {
             unreachable!("parser returns return");
         };
-        let ValueExpr::Variable { name, .. } = parsed_return.items[0].expr else {
+        let ValueExpr::Variable { name, .. } = &parsed_return.items[0].expr else {
             unreachable!("test projection is variable");
         };
+        let name = name.clone();
         let mut expr_types = ExprTypeTable::default();
         let expr_id = expr_types.push(crate::AnalyzedType::DYNAMIC);
         let mut statement = AnalyzedStatement {

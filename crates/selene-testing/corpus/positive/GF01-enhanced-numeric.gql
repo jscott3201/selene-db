@@ -3,7 +3,7 @@
 // expects: parse-ok
 RETURN abs(-3) AS absolute_value,
        mod(7, 4) AS remainder,
-       floor(1.8) AS floored,
-       ceil(1.2) AS ceiled,
-       ceiling(1.2) AS ceiling_alias,
+       floor(18e-1) AS floored,
+       ceil(12e-1) AS ceiled,
+       ceiling(12e-1) AS ceiling_alias,
        sqrt(9) AS square_root

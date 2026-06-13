@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use selene_core::{
-    CancellationChecker, CancellationToken, GraphId, IStr, LabelSet, NodeId, PropertyMap, intern,
+    CancellationChecker, CancellationToken, DbString, GraphId, LabelSet, NodeId, PropertyMap,
 };
 use selene_graph::{SeleneGraph, SharedGraph};
 
 use crate::api::{self, ApiError, GraphAlgorithms, ProjectionInfo};
 use crate::catalog::ProjectionCatalog;
-use crate::centrality::{BetweennessConfig, PageRankConfig};
+use crate::centrality::{BetweennessConfig, PageRankConfig, PageRankOrientation};
 use crate::community::TriangleCountConfig;
 use crate::error::AlgorithmsError;
 use crate::pathfinding::{ApspConfig, PathfindingError};
@@ -20,8 +20,8 @@ use crate::{Parallelism, centrality, pathfinding, structural};
 const LABEL: &str = "T";
 const LINK: &str = "link";
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 /// Build a directed graph from `edges` (pairs of creation-order indices) over
@@ -29,8 +29,8 @@ fn istr(name: &str) -> IStr {
 /// graph plus the created NodeIds in creation order.
 fn build_graph(node_count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(9_100));
-    let label = istr(LABEL);
-    let link = istr(LINK);
+    let label = db_string(LABEL);
+    let link = db_string(LINK);
 
     let mut nodes = Vec::with_capacity(node_count);
     {
@@ -38,13 +38,13 @@ fn build_graph(node_count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec
         for _ in 0..node_count {
             nodes.push(
                 txn.mutator()
-                    .create_node(LabelSet::single(label), PropertyMap::new())
+                    .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                     .unwrap(),
             );
         }
         for &(a, b) in edges {
             txn.mutator()
-                .create_edge(link, nodes[a], nodes[b], PropertyMap::new())
+                .create_edge(link.clone(), nodes[a], nodes[b], PropertyMap::new())
                 .unwrap();
         }
         txn.commit().unwrap();
@@ -55,7 +55,7 @@ fn build_graph(node_count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec
 fn config() -> ProjectionConfig {
     ProjectionConfig {
         name: "p".to_string(),
-        node_labels: vec![istr(LABEL)],
+        node_labels: vec![db_string(LABEL)],
         edge_labels: vec![],
         weight_property: None,
     }
@@ -67,6 +67,8 @@ fn pagerank_config() -> PageRankConfig {
         max_iter: 100,
         tolerance: 1e-6,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
+        personalization: None,
     }
 }
 
@@ -387,7 +389,7 @@ fn runner_refreshes_stale_projection_after_graph_mutation() {
     {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_edge(istr(LINK), ids[1], ids[2], PropertyMap::new())
+            .create_edge(db_string(LINK), ids[1], ids[2], PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
     }

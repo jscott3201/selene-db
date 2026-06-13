@@ -3,7 +3,7 @@
 mod labels;
 mod properties;
 
-use selene_core::IStr;
+use selene_core::DbString;
 use selene_graph::{EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef};
 
 use self::{
@@ -93,25 +93,25 @@ fn validate_insert_node(
     let Some(node_type) = graph_type.find_node_type(&labels) else {
         return Err(AnalysisError::SchemaUnknownNodeType {
             labels,
-            graph_type: graph_type.name,
+            graph_type: graph_type.name.clone(),
             span: node.span,
         });
     };
     let binding = fresh_binding(
-        node.binding,
+        node.binding.clone(),
         node.span,
         BindingDeclKind::InsertNode,
         analyzed,
     );
     validate_property_values(
         graph_type,
-        node_type.name,
+        node_type.name.clone(),
         &node_type.properties,
         &node.properties,
         analyzed,
     )?;
     validate_required_properties(RequiredPropertyCheck {
-        declared_in: node_type.name,
+        declared_in: node_type.name.clone(),
         declarations: &node_type.properties,
         properties: &node.properties,
         stmt_index,
@@ -130,10 +130,13 @@ fn validate_insert_edge(
     graph_type: &GraphTypeDef,
 ) -> Result<(), AnalysisError> {
     let label = insert_edge_label(edge)?;
-    if graph_type.first_edge_type_with_label(label).is_none() {
+    if graph_type
+        .first_edge_type_with_label(label.clone())
+        .is_none()
+    {
         return Err(AnalysisError::SchemaUnknownEdgeType {
             label,
-            graph_type: graph_type.name,
+            graph_type: graph_type.name.clone(),
             span: edge.span,
         });
     }
@@ -162,16 +165,16 @@ fn validate_insert_edge(
         return Ok(());
     };
 
-    let Some(edge_type) = graph_type.find_edge_type(label, source_type, target_type) else {
+    let Some(edge_type) = graph_type.find_edge_type(label.clone(), source_type, target_type) else {
         let expected = graph_type
-            .first_edge_type_with_label(label)
+            .first_edge_type_with_label(label.clone())
             .expect("edge label existence was checked before endpoint validation");
         return Err(AnalysisError::SchemaEdgeEndpointMismatch {
             label,
             expected_source: endpoint_name(graph_type, &expected.source_node_type),
             expected_target: endpoint_name(graph_type, &expected.target_node_type),
-            observed_source: source_labels,
-            observed_target: target_labels,
+            observed_source: Box::new(source_labels),
+            observed_target: Box::new(target_labels),
             span: edge.span,
         });
     };
@@ -206,20 +209,20 @@ fn validate_insert_edge_properties(
     analyzed: &AnalyzedStatement,
 ) -> Result<(), AnalysisError> {
     let binding = fresh_binding(
-        edge.binding,
+        edge.binding.clone(),
         edge.span,
         BindingDeclKind::InsertEdge,
         analyzed,
     );
     validate_property_values(
         graph_type,
-        edge_type.name,
+        edge_type.name.clone(),
         &edge_type.properties,
         &edge.properties,
         analyzed,
     )?;
     validate_required_properties(RequiredPropertyCheck {
-        declared_in: edge_type.name,
+        declared_in: edge_type.name.clone(),
         declarations: &edge_type.properties,
         properties: &edge.properties,
         stmt_index,
@@ -244,7 +247,7 @@ fn validate_non_insert_entry(
         } => validate_set_property(
             *target,
             *element,
-            *key,
+            key.clone(),
             *value_span,
             entry.span,
             analyzed,
@@ -255,17 +258,38 @@ fn validate_non_insert_entry(
             target,
             element,
             label,
-        } => validate_set_label(*target, *element, *label, entry.span, analyzed, graph_type),
+        } => validate_set_label(
+            *target,
+            *element,
+            label.clone(),
+            entry.span,
+            analyzed,
+            graph_type,
+        ),
         WriteKind::RemoveProperty {
             target,
             element,
             key,
-        } => validate_remove_property(*target, *element, *key, entry.span, analyzed, graph_type),
+        } => validate_remove_property(
+            *target,
+            *element,
+            key.clone(),
+            entry.span,
+            analyzed,
+            graph_type,
+        ),
         WriteKind::RemoveLabel {
             target,
             element,
             label,
-        } => validate_remove_label(*target, *element, *label, entry.span, analyzed, graph_type),
+        } => validate_remove_label(
+            *target,
+            *element,
+            label.clone(),
+            entry.span,
+            analyzed,
+            graph_type,
+        ),
         WriteKind::DeleteTarget { .. }
         | WriteKind::InsertNode { .. }
         | WriteKind::InsertEdge { .. } => Ok(()),
@@ -276,7 +300,7 @@ fn validate_non_insert_entry(
 fn validate_set_property(
     target: BindingId,
     element: ElementKind,
-    key: IStr,
+    key: DbString,
     value_span: SourceSpan,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
@@ -287,19 +311,20 @@ fn validate_set_property(
         return Ok(());
     };
     match target_declaration(analyzed, target, element, graph_type)? {
-        Some(TargetDeclaration::Node(types)) => match property_agreement(&types, key) {
+        Some(TargetDeclaration::Node(types)) => match property_agreement(&types, key.clone()) {
             PropertyAgreement::Declared(decl, declared_in) => {
                 validate_one_property_value(declared_in, decl, key, value, analyzed)
             }
             PropertyAgreement::Undeclared(declared_in) => {
-                undeclared_property(key, declared_in, graph_type.name, span)
+                undeclared_property(key, declared_in, graph_type.name.clone(), span)
             }
             PropertyAgreement::Disagree => Ok(()),
         },
         Some(TargetDeclaration::Edge(edge_type)) => {
-            validate_declared_property(edge_type, key, graph_type.name, span).and_then(|decl| {
-                validate_one_property_value(edge_type.name, decl, key, value, analyzed)
-            })
+            validate_declared_property(edge_type, key.clone(), graph_type.name.clone(), span)
+                .and_then(|decl| {
+                    validate_one_property_value(edge_type.name.clone(), decl, key, value, analyzed)
+                })
         }
         None => Ok(()),
     }
@@ -308,13 +333,13 @@ fn validate_set_property(
 fn validate_remove_property(
     target: BindingId,
     element: ElementKind,
-    key: IStr,
+    key: DbString,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
 ) -> Result<(), AnalysisError> {
     match target_declaration(analyzed, target, element, graph_type)? {
-        Some(TargetDeclaration::Node(types)) => match property_agreement(&types, key) {
+        Some(TargetDeclaration::Node(types)) => match property_agreement(&types, key.clone()) {
             PropertyAgreement::Declared(decl, declared_in) if decl.required => {
                 Err(AnalysisError::SchemaRequiredPropertyRemoved {
                     property: key,
@@ -324,15 +349,16 @@ fn validate_remove_property(
             }
             PropertyAgreement::Declared(..) | PropertyAgreement::Disagree => Ok(()),
             PropertyAgreement::Undeclared(declared_in) => {
-                undeclared_property(key, declared_in, graph_type.name, span)
+                undeclared_property(key, declared_in, graph_type.name.clone(), span)
             }
         },
         Some(TargetDeclaration::Edge(edge_type)) => {
-            let decl = validate_declared_property(edge_type, key, graph_type.name, span)?;
+            let decl =
+                validate_declared_property(edge_type, key.clone(), graph_type.name.clone(), span)?;
             if decl.required {
                 Err(AnalysisError::SchemaRequiredPropertyRemoved {
                     property: key,
-                    declared_in: edge_type.name,
+                    declared_in: edge_type.name.clone(),
                     span,
                 })
             } else {
@@ -346,7 +372,7 @@ fn validate_remove_property(
 fn validate_set_label(
     target: BindingId,
     element: ElementKind,
-    label: IStr,
+    label: DbString,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
@@ -354,14 +380,17 @@ fn validate_set_label(
     match target_declaration(analyzed, target, element, graph_type)? {
         Some(TargetDeclaration::Node(types)) => {
             validate_node_label_transition(types, graph_type, span, |labels| {
-                labels.insert(label);
+                labels.insert(label.clone());
             })
         }
         Some(TargetDeclaration::Edge(_)) => {
-            if graph_type.first_edge_type_with_label(label).is_none() {
+            if graph_type
+                .first_edge_type_with_label(label.clone())
+                .is_none()
+            {
                 Err(AnalysisError::SchemaUnknownEdgeType {
                     label,
-                    graph_type: graph_type.name,
+                    graph_type: graph_type.name.clone(),
                     span,
                 })
             } else {
@@ -375,7 +404,7 @@ fn validate_set_label(
 fn validate_remove_label(
     target: BindingId,
     element: ElementKind,
-    label: IStr,
+    label: DbString,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
@@ -389,7 +418,7 @@ fn validate_remove_label(
         Some(TargetDeclaration::Edge(edge_type)) if label == edge_type.label => {
             Err(AnalysisError::SchemaRequiredEdgeLabelRemoved {
                 label,
-                declared_in: edge_type.name,
+                declared_in: edge_type.name.clone(),
                 span,
             })
         }
@@ -436,7 +465,7 @@ fn node_types_for_decl<'a>(
             let Some((_, node_type)) = exact_node_type(graph_type, &labels) else {
                 return Err(AnalysisError::SchemaUnknownNodeType {
                     labels,
-                    graph_type: graph_type.name,
+                    graph_type: graph_type.name.clone(),
                     span: decl.span(),
                 });
             };
@@ -447,7 +476,7 @@ fn node_types_for_decl<'a>(
             if candidates.is_empty() {
                 Err(AnalysisError::SchemaUnknownNodeType {
                     labels,
-                    graph_type: graph_type.name,
+                    graph_type: graph_type.name.clone(),
                     span: decl.span(),
                 })
             } else {
@@ -471,8 +500,8 @@ fn edge_type_for_decl<'a>(
         .filter(|edge_type| edge_type.label == *label);
     let Some(first) = matches.next() else {
         return Err(AnalysisError::SchemaUnknownEdgeType {
-            label: *label,
-            graph_type: graph_type.name,
+            label: label.clone(),
+            graph_type: graph_type.name.clone(),
             span: decl.span(),
         });
     };

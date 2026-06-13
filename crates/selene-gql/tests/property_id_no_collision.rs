@@ -1,18 +1,18 @@
 //! Regression guard for property `id` vs. element identity lookups.
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};
 use selene_graph::{GraphTypeDef, SharedGraph};
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 #[test]
 fn node_property_named_id_wins_property_access() {
     let graph = SharedGraph::builder(GraphId::new(128_101))
         .bound_to(GraphTypeDef {
-            name: istr("id.collision.graph"),
+            name: db_string("id.collision.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -41,7 +41,7 @@ fn node_property_named_id_wins_property_access() {
     );
 
     assert_eq!(table.row_count(), 1);
-    assert_eq!(table.rows()[0].values(), &[Value::String(istr("abc"))]);
+    assert_eq!(table.rows()[0].values(), &[Value::String(db_string("abc"))]);
 }
 
 fn rows(output: StatementOutput) -> selene_gql::BindingTable {

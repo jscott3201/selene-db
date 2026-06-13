@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, JoinTree, NodeOrEdgeScan, PatternPlan, ScanAccess,
     TxContext, analyze, execute_pattern as execute_pattern_plan, execute_pipeline, optimize, parse,
@@ -16,111 +16,124 @@ pub const LARGE_COUNTER_B: i64 = 9_007_199_254_740_993;
 
 pub struct ExecFixture {
     pub graph: SharedGraph,
-    pub person: IStr,
-    pub sensor: IStr,
-    pub counter: IStr,
-    pub age: IStr,
-    pub count: IStr,
-    pub name: IStr,
-    pub email: IStr,
-    pub tenant: IStr,
-    pub kind: IStr,
-    pub score: IStr,
+    pub person: DbString,
+    pub sensor: DbString,
+    pub counter: DbString,
+    pub age: DbString,
+    pub count: DbString,
+    pub name: DbString,
+    pub email: DbString,
+    pub tenant: DbString,
+    pub kind: DbString,
+    pub score: DbString,
 }
 
 impl ExecFixture {
     pub fn build() -> Self {
-        let person = istr("Person");
-        let sensor = istr("Sensor");
-        let counter = istr("Counter");
-        let knows = istr("KNOWS");
-        let age = istr("age");
-        let count = istr("count");
-        let name = istr("name");
-        let email = istr("email");
-        let tenant = istr("tenant");
-        let kind = istr("kind");
-        let score = istr("score");
+        let person = db_string("Person");
+        let sensor = db_string("Sensor");
+        let counter = db_string("Counter");
+        let knows = db_string("KNOWS");
+        let age = db_string("age");
+        let count = db_string("count");
+        let name = db_string("name");
+        let email = db_string("email");
+        let tenant = db_string("tenant");
+        let kind = db_string("kind");
+        let score = db_string("score");
         let graph = SharedGraph::new(GraphId::new(31));
         {
             let mut txn = graph.begin_write();
             let mut mutator = txn.mutator();
             let alice = mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     props([
-                        (age, Value::Int(30)),
-                        (name, Value::String(istr("Alice"))),
-                        (email, Value::String(istr("alice@example.com"))),
-                        (tenant, Value::String(istr("t1"))),
-                        (kind, Value::String(istr("person"))),
-                        (score, Value::Int(7)),
+                        (age.clone(), Value::Int(30)),
+                        (name.clone(), Value::String(db_string("Alice"))),
+                        (email.clone(), Value::String(db_string("alice@example.com"))),
+                        (tenant.clone(), Value::String(db_string("t1"))),
+                        (kind.clone(), Value::String(db_string("person"))),
+                        (score.clone(), Value::Int(7)),
                     ]),
                 )
                 .expect("alice inserts");
             let bob = mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     props([
-                        (age, Value::Int(42)),
-                        (name, Value::String(istr("Bob"))),
-                        (email, Value::String(istr("bob@example.com"))),
-                        (tenant, Value::String(istr("t1"))),
-                        (kind, Value::String(istr("person"))),
-                        (score, Value::Int(3)),
+                        (age.clone(), Value::Int(42)),
+                        (name.clone(), Value::String(db_string("Bob"))),
+                        (email.clone(), Value::String(db_string("bob@example.com"))),
+                        (tenant.clone(), Value::String(db_string("t1"))),
+                        (kind.clone(), Value::String(db_string("person"))),
+                        (score.clone(), Value::Int(3)),
                     ]),
                 )
                 .expect("bob inserts");
             mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     props([
-                        (age, Value::Int(55)),
-                        (name, Value::String(istr("Cara"))),
-                        (email, Value::String(istr("cara@example.com"))),
-                        (tenant, Value::String(istr("t2"))),
-                        (kind, Value::String(istr("person"))),
-                        (score, Value::Int(9)),
+                        (age.clone(), Value::Int(55)),
+                        (name.clone(), Value::String(db_string("Cara"))),
+                        (email.clone(), Value::String(db_string("cara@example.com"))),
+                        (tenant.clone(), Value::String(db_string("t2"))),
+                        (kind.clone(), Value::String(db_string("person"))),
+                        (score.clone(), Value::Int(9)),
                     ]),
                 )
                 .expect("cara inserts");
             let sensor_node = mutator
                 .create_node(
-                    LabelSet::single(sensor),
-                    props([(age, Value::Int(5)), (score, Value::Int(99))]),
+                    LabelSet::single(sensor.clone()),
+                    props([
+                        (age.clone(), Value::Int(5)),
+                        (score.clone(), Value::Int(99)),
+                    ]),
                 )
                 .expect("sensor inserts");
             mutator
                 .create_node(
-                    LabelSet::single(counter),
-                    props([(count, Value::Int(LARGE_COUNTER_A))]),
+                    LabelSet::single(counter.clone()),
+                    props([(count.clone(), Value::Int(LARGE_COUNTER_A))]),
                 )
                 .expect("counter A inserts");
             mutator
                 .create_node(
-                    LabelSet::single(counter),
-                    props([(count, Value::Int(LARGE_COUNTER_B))]),
+                    LabelSet::single(counter.clone()),
+                    props([(count.clone(), Value::Int(LARGE_COUNTER_B))]),
                 )
                 .expect("counter B inserts");
             mutator
-                .create_edge(knows, alice, bob, props([(score, Value::Int(1))]))
+                .create_edge(
+                    knows.clone(),
+                    alice,
+                    bob,
+                    props([(score.clone(), Value::Int(1))]),
+                )
                 .expect("edge inserts");
             mutator
-                .create_edge(knows, bob, sensor_node, props([(score, Value::Int(2))]))
+                .create_edge(
+                    knows,
+                    bob,
+                    sensor_node,
+                    props([(score.clone(), Value::Int(2))]),
+                )
                 .expect("edge inserts");
             txn.commit().expect("fixture commits");
         }
         graph
-            .create_property_index(person, age, TypedIndexKind::I64)
+            .create_property_index(person.clone(), age.clone(), TypedIndexKind::I64)
             .expect("age index builds");
         graph
-            .create_property_index(person, email, TypedIndexKind::String)
+            .create_property_index(person.clone(), email.clone(), TypedIndexKind::String)
             .expect("email index builds");
         graph
-            .create_property_index(person, tenant, TypedIndexKind::String)
+            .create_property_index(person.clone(), tenant.clone(), TypedIndexKind::String)
             .expect("tenant index builds");
         graph
-            .create_property_index(person, kind, TypedIndexKind::String)
+            .create_property_index(person.clone(), kind.clone(), TypedIndexKind::String)
             .expect("kind index builds");
         Self {
             graph,
@@ -149,23 +162,39 @@ impl ExecFixture {
 
     pub fn index_catalog(&self) -> MockIndexCatalog {
         MockIndexCatalog::new()
-            .with_node_label_index(self.person)
-            .with_node_typed_index(self.person, self.age, selene_gql::IndexKind::Integer)
-            .with_node_typed_index(self.person, self.email, selene_gql::IndexKind::String)
-            .with_node_typed_index(self.person, self.tenant, selene_gql::IndexKind::String)
-            .with_node_typed_index(self.person, self.kind, selene_gql::IndexKind::String)
+            .with_node_label_index(self.person.clone())
+            .with_node_typed_index(
+                self.person.clone(),
+                self.age.clone(),
+                selene_gql::IndexKind::Integer,
+            )
+            .with_node_typed_index(
+                self.person.clone(),
+                self.email.clone(),
+                selene_gql::IndexKind::String,
+            )
+            .with_node_typed_index(
+                self.person.clone(),
+                self.tenant.clone(),
+                selene_gql::IndexKind::String,
+            )
+            .with_node_typed_index(
+                self.person.clone(),
+                self.kind.clone(),
+                selene_gql::IndexKind::String,
+            )
             .with_node_composite_index(
-                self.person,
+                self.person.clone(),
                 vec![
-                    (self.tenant, selene_gql::IndexKind::String),
-                    (self.kind, selene_gql::IndexKind::String),
+                    (self.tenant.clone(), selene_gql::IndexKind::String),
+                    (self.kind.clone(), selene_gql::IndexKind::String),
                 ],
             )
     }
 }
 
-pub fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+pub fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 pub fn planned(source: &str) -> ExecutionPlan {
@@ -278,7 +307,12 @@ pub fn column_values(table: &selene_gql::BindingTable, name: &str) -> Vec<Value>
         .schema()
         .columns
         .iter()
-        .position(|column| column.name.is_some_and(|column| column.as_str() == name))
+        .position(|column| {
+            column
+                .name
+                .clone()
+                .is_some_and(|column| column.as_str() == name)
+        })
         .expect("column exists");
     table
         .rows()
@@ -315,7 +349,7 @@ pub fn set_first_scan_access(pattern: &mut PatternPlan, access: ScanAccess) {
         .access = access;
 }
 
-pub fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+pub fn props<const N: usize>(pairs: [(DbString, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 

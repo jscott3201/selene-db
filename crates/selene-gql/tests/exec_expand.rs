@@ -2,7 +2,9 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, edge_ids_for, execute_pattern, istr, node_ids_for, planned, props};
+use exec_common::{
+    ExecFixture, db_string, edge_ids_for, execute_pattern, node_ids_for, planned, props,
+};
 use selene_core::{GraphId, LabelSet};
 use selene_gql::{EmptyProcedureRegistry, ImplDefinedCaps, TxContext};
 use selene_graph::SharedGraph;
@@ -60,8 +62,8 @@ fn expand_both_includes_outgoing_and_incoming() {
 
 #[test]
 fn expand_both_dedups_self_loops_to_one_row() {
-    let loop_label = istr("LoopNode");
-    let edge_label = istr("LOOPS");
+    let loop_label = db_string("LoopNode");
+    let edge_label = db_string("LOOPS");
     let graph = SharedGraph::new(GraphId::new(3201));
     {
         let mut txn = graph.begin_write();

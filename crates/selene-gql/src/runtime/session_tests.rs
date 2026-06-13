@@ -1,8 +1,6 @@
-use std::{num::NonZeroUsize, thread, time::Instant};
+use std::{num::NonZeroUsize, time::Instant};
 
-use selene_core::{
-    BindingTableId, GraphId, IStr, IStrAdmissionPolicy, Value, intern_with_admission,
-};
+use selene_core::{BindingTableId, DbString, GraphId, Value, db_string};
 use selene_graph::{GraphTypeDef, SharedGraph, TypedIndexKind};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
@@ -28,8 +26,8 @@ fn execute(source: &str, session: &mut Session<'_>) -> Result<StatementOutput, E
     execute_statement(&plan, session, &EmptyProcedureRegistry)
 }
 
-fn admitted(value: &str) -> IStr {
-    intern_with_admission(value).expect("test name admits").0
+fn admitted(value: &str) -> DbString {
+    db_string(value).expect("test name admits")
 }
 
 fn empty_closed_graph(id: u64) -> SharedGraph {
@@ -56,15 +54,19 @@ fn table_parameter_replacements_share_scalar_namespace() {
     let mut session = Session::new(&graph);
     let name = admitted("t");
 
-    assert_eq!(session.bind_parameter(name, Value::Int(1)), None);
+    assert_eq!(session.bind_parameter(name.clone(), Value::Int(1)), None);
     assert!(matches!(
-        session.bind_table_parameter(name, empty_table()),
+        session.bind_table_parameter(name.clone(), empty_table()),
         Some(SessionParameterValue::Scalar(Value::Int(1)))
     ));
-    assert_eq!(session.bind_parameter(name, Value::Int(2)), None);
+    assert_eq!(session.bind_parameter(name.clone(), Value::Int(2)), None);
     assert_eq!(session.clear_parameter(&name), Some(Value::Int(2)));
 
-    assert!(session.bind_table_parameter(name, empty_table()).is_none());
+    assert!(
+        session
+            .bind_table_parameter(name.clone(), empty_table())
+            .is_none()
+    );
     assert_eq!(session.clear_parameter(&name), None);
     assert!(session.parameters().is_empty());
 
@@ -80,7 +82,7 @@ fn scalar_only_materialization_borrows_parameter_map() {
     let name = admitted("x");
     let registry = BindingTableRegistry::new();
 
-    session.bind_parameter(name, Value::Int(7));
+    session.bind_parameter(name.clone(), Value::Int(7));
 
     let parameters = session.materialize_parameters(&registry);
 
@@ -96,8 +98,8 @@ fn materialize_parameters_registers_table_values() {
     let table = admitted("t");
     let registry = BindingTableRegistry::new();
 
-    session.bind_parameter(scalar, Value::Int(7));
-    session.bind_table_parameter(table, empty_table());
+    session.bind_parameter(scalar.clone(), Value::Int(7));
+    session.bind_table_parameter(table.clone(), empty_table());
 
     let parameters = session.materialize_parameters(&registry);
 
@@ -130,28 +132,6 @@ fn statement_execution_materializes_table_parameter_refs() {
         panic!("table parameter should surface as TableRef");
     };
     assert_ne!(*id, BindingTableId::TOMBSTONE);
-}
-
-#[test]
-fn istr_admission_policy_is_session_scoped_across_threads() {
-    let graph = SharedGraph::new(GraphId::new(3896));
-    thread::scope(|scope| {
-        let reject = scope.spawn(|| Session::new(&graph).istr_admission_policy);
-        let fallback = scope.spawn(|| {
-            Session::new(&graph)
-                .with_istr_admission_policy(IStrAdmissionPolicy::FallbackToExternal)
-                .istr_admission_policy
-        });
-
-        assert_eq!(
-            reject.join().expect("reject session joins"),
-            IStrAdmissionPolicy::Reject
-        );
-        assert_eq!(
-            fallback.join().expect("fallback session joins"),
-            IStrAdmissionPolicy::FallbackToExternal
-        );
-    });
 }
 
 #[test]

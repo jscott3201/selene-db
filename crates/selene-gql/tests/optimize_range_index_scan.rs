@@ -1,14 +1,14 @@
 //! BRIEF-29 range-index optimizer tests.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     EmptyProcedureRegistry, IndexKey, IndexKind, JoinTree, NodeOrEdgeScan, ScanAccess,
     TypedIndexBounds, analyze, optimize, parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::ExecutionPlan {
@@ -21,8 +21,38 @@ fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::Execut
 
 fn person_catalog() -> MockIndexCatalog {
     MockIndexCatalog::new()
-        .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
-        .with_node_typed_index(istr("Person"), istr("name"), IndexKind::String)
+        .with_node_typed_index(db_string("Person"), db_string("age"), IndexKind::Integer)
+        .with_node_typed_index(db_string("Person"), db_string("name"), IndexKind::String)
+}
+
+fn event_catalog() -> MockIndexCatalog {
+    MockIndexCatalog::new()
+        .with_node_typed_index(db_string("Event"), db_string("event_date"), IndexKind::Date)
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("started_at"),
+            IndexKind::LocalDateTime,
+        )
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("occurred_at"),
+            IndexKind::ZonedDateTime,
+        )
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("wall_time"),
+            IndexKind::LocalTime,
+        )
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("clock_time"),
+            IndexKind::ZonedTime,
+        )
+        .with_node_typed_index(
+            db_string("Event"),
+            db_string("elapsed"),
+            IndexKind::Duration,
+        )
 }
 
 fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
@@ -74,6 +104,100 @@ fn combines_lower_and_upper_range_bounds() {
             ..
         }
     ));
+}
+
+#[test]
+fn temporal_literals_fire_typed_index_ranges() {
+    let catalog = event_catalog();
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.event_date >= DATE '2026-05-01' AND n.event_date < DATE '2026-06-01' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::Date,
+            bounds: TypedIndexBounds::Range { .. },
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.started_at = LOCAL DATETIME '2026-05-07T12:34:56' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::LocalDateTime,
+            bounds: TypedIndexBounds::Equality(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.occurred_at >= ZONED DATETIME '2026-05-07T12:00:00-04:00' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::ZonedDateTime,
+            bounds: TypedIndexBounds::GreaterEqual(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.wall_time = LOCAL TIME '12:34:56' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::LocalTime,
+            bounds: TypedIndexBounds::Equality(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.clock_time = TIME '12:34:56-04:00' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::ZonedTime,
+            bounds: TypedIndexBounds::Equality(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+
+    let plan = optimized_one(
+        "MATCH (n:Event) WHERE n.elapsed >= DURATION 'PT1H' AND n.elapsed < DURATION 'PT3H' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::Duration,
+            bounds: TypedIndexBounds::Range { .. },
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
 }
 
 #[test]
@@ -280,8 +404,8 @@ fn float_width_generic_typed_param_against_float_index_falls_back_to_linear() {
     // by treating `GqlType::Float` as typed-incompatible with
     // `IndexKind::Float` at plan time, falling back to Linear.
     let catalog = MockIndexCatalog::new().with_node_typed_index(
-        istr("Person"),
-        istr("score"),
+        db_string("Person"),
+        db_string("score"),
         IndexKind::Float,
     );
     let plan = optimized_one(
@@ -304,8 +428,8 @@ fn float64_typed_param_against_float_index_fires() {
     // `parameter_type::validate_declared_type`), so it admits at plan
     // time and the indexed path fires.
     let catalog = MockIndexCatalog::new().with_node_typed_index(
-        istr("Person"),
-        istr("score"),
+        db_string("Person"),
+        db_string("score"),
         IndexKind::Float,
     );
     let plan = optimized_one(
@@ -318,6 +442,52 @@ fn float64_typed_param_against_float_index_fires() {
         "expected TypedIndexRange for `$p :: FLOAT64`, got {:?}",
         scan.access
     );
+}
+
+#[test]
+fn float32_typed_param_against_float32_index_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("score"),
+        IndexKind::Float32,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.score = $score :: FLOAT32 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Float32);
+    assert!(matches!(
+        bounds,
+        TypedIndexBounds::Equality(IndexKey::Parameter {
+            declared_type: Some(selene_gql::GqlType::Float32),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn generic_float_typed_param_against_float32_index_falls_back_to_linear() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("score"),
+        IndexKind::Float32,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.score = $score :: FLOAT RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(
+        matches!(scan.access, ScanAccess::Linear),
+        "expected Linear fallback for `$p :: FLOAT` against IndexKind::Float32, got {:?}",
+        scan.access
+    );
+    assert_eq!(scan.property_predicates.len(), 1);
 }
 
 #[test]
@@ -343,6 +513,171 @@ fn typed_parameter_with_compatible_declaration_fires() {
     };
     assert_eq!(name.as_str(), "name");
     assert_eq!(*declared_type, Some(selene_gql::GqlType::String));
+}
+
+#[test]
+fn boolean_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("active"),
+        IndexKind::Boolean,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.active = $active :: BOOLEAN RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Boolean);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "active");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Boolean));
+}
+
+#[test]
+fn uint_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Person"),
+        db_string("reading_count"),
+        IndexKind::UnsignedInteger,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.reading_count = $count :: UINT64 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::UnsignedInteger);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "count");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Uint64));
+}
+
+#[test]
+fn int128_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Metric"),
+        db_string("signed"),
+        IndexKind::Integer128,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Metric) WHERE n.signed = $signed :: INT128 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Integer128);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "signed");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Int128));
+}
+
+#[test]
+fn uint128_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Metric"),
+        db_string("unsigned"),
+        IndexKind::UnsignedInteger128,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Metric) WHERE n.unsigned = $unsigned :: UINT128 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::UnsignedInteger128);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "unsigned");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Uint128));
+}
+
+#[test]
+fn decimal_typed_parameter_with_compatible_declaration_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Metric"),
+        db_string("amount"),
+        IndexKind::Decimal,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Metric) WHERE n.amount = $amount :: DECIMAL RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Decimal);
+    let TypedIndexBounds::Equality(IndexKey::Parameter {
+        name,
+        declared_type,
+        ..
+    }) = bounds
+    else {
+        panic!("expected parameterized equality bound, got {bounds:?}");
+    };
+    assert_eq!(name.as_str(), "amount");
+    assert_eq!(*declared_type, Some(selene_gql::GqlType::Decimal));
+}
+
+#[test]
+fn decimal_literal_with_decimal_index_fires() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        db_string("Metric"),
+        db_string("amount"),
+        IndexKind::Decimal,
+    );
+    let plan = optimized_one("MATCH (n:Metric) WHERE n.amount = 1.25 RETURN n", &catalog);
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { kind, bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    assert_eq!(*kind, IndexKind::Decimal);
+    assert!(matches!(
+        bounds,
+        TypedIndexBounds::Equality(IndexKey::Literal(selene_gql::Literal::Decimal(..)))
+    ));
 }
 
 #[test]

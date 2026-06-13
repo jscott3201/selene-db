@@ -9,7 +9,7 @@ use std::{
 };
 
 use selene_core::{
-    Change, GraphId, HlcTimestamp, IStr, Origin, Value,
+    Change, DbString, GraphId, HlcTimestamp, Origin, Value,
     feature_register::{FeatureId, SUPPORTED_FEATURES},
 };
 use selene_gql::{
@@ -20,7 +20,7 @@ use selene_gql::{
 use selene_graph::{CommitOutcome, GraphTypeDef, SharedGraph, TypedIndexKind};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
 
-use exec_common::istr;
+use exec_common::db_string;
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -47,7 +47,7 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 
 fn empty_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("catalog.index.graph"),
+        name: db_string("catalog.index.graph"),
         node_types: Vec::new(),
         edge_types: Vec::new(),
     }
@@ -96,7 +96,7 @@ fn graph_type_violation(graph: &SharedGraph, source: &str) -> String {
     message
 }
 
-fn duplicate_name(graph: &SharedGraph, source: &str) -> IStr {
+fn duplicate_name(graph: &SharedGraph, source: &str) -> DbString {
     let err = run_ddl(graph, source).expect_err("statement rejects");
     let ExecutorError::DuplicateObject { name, .. } = err else {
         panic!("expected DuplicateObject");
@@ -108,7 +108,7 @@ fn index_entry(
     graph: &SharedGraph,
     label: &str,
     property: &str,
-) -> Option<(TypedIndexKind, Option<IStr>)> {
+) -> Option<(TypedIndexKind, Option<DbString>)> {
     graph
         .read()
         .iter_property_index_entries()
@@ -120,14 +120,13 @@ fn index_entry(
 
 fn column_strings(table: &BindingTable, column: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(column))
+        .column_index(db_string(column))
         .unwrap_or_else(|| panic!("missing column {column}"));
     table
         .rows()
         .iter()
         .map(|row| match row.values().get(index) {
             Some(Value::String(value)) => value.as_str().to_owned(),
-            Some(Value::ExternalString(value)) => value.as_ref().to_owned(),
             other => panic!("expected string column {column}, got {other:?}"),
         })
         .collect()
@@ -182,7 +181,10 @@ fn create_show_drop_and_idempotency_paths_work() {
     run_ddl(&graph, "CREATE INDEX sensor_ts_idx ON :Sensor(ts)").unwrap();
     assert_eq!(
         index_entry(&graph, "Sensor", "ts"),
-        Some((TypedIndexKind::LocalDateTime, Some(istr("sensor_ts_idx"))))
+        Some((
+            TypedIndexKind::LocalDateTime,
+            Some(db_string("sensor_ts_idx"))
+        ))
     );
     run_ddl(
         &graph,
@@ -212,7 +214,7 @@ fn create_index_rejects_deferred_or_invalid_shapes_with_precise_errors() {
     run_ddl(
         &graph,
         "CREATE NODE TYPE :Sensor (ts :: LOCAL DATETIME, value :: STRING, \
-         tags :: LIST<STRING>, zdt :: ZONED DATETIME, active :: BOOLEAN)",
+         tags :: LIST<STRING>, active :: BOOLEAN)",
     )
     .unwrap();
     run_ddl(&graph, "CREATE EDGE TYPE :Likes (score :: INT)").unwrap();
@@ -226,23 +228,11 @@ fn create_index_rejects_deferred_or_invalid_shapes_with_precise_errors() {
         graph_type_violation(&graph, "CREATE INDEX missing_prop ON :Sensor(nope)");
     assert!(missing_property.contains("property 'nope' is not declared on type ':Sensor'"));
 
-    for (source, expected) in [
-        (
-            "CREATE INDEX list_idx ON :Sensor(tags)",
-            "property kind List is not supported",
-        ),
-        (
-            "CREATE INDEX zdt_idx ON :Sensor(zdt)",
-            "property kind ZonedDateTime is not supported",
-        ),
-        (
-            "CREATE INDEX bool_idx ON :Sensor(active)",
-            "property kind Bool is not supported",
-        ),
-    ] {
-        let message = graph_type_violation(&graph, source);
-        assert!(message.contains(expected), "{source}: {message}");
-    }
+    let message = graph_type_violation(&graph, "CREATE INDEX list_idx ON :Sensor(tags)");
+    assert!(
+        message.contains("property kind List is not supported"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -251,22 +241,38 @@ fn create_index_infers_all_supported_storage_kinds() {
     run_ddl(
         &graph,
         "CREATE NODE TYPE :T \
-         (i :: INT64, f :: FLOAT64, s :: STRING, d :: DATE, ldt :: LOCAL DATETIME, u :: UUID)",
+         (b :: BOOLEAN, i :: INT64, n :: UINT64, i128 :: INT128, u128 :: UINT128, \
+          dec :: DECIMAL, f32 :: FLOAT32, f :: FLOAT64, s :: STRING, d :: DATE, \
+          ldt :: LOCAL DATETIME, zdt :: ZONED DATETIME, lt :: LOCAL TIME, \
+          zt :: ZONED TIME, dur :: DURATION, ym :: DURATION (YEAR TO MONTH), \
+          dt :: DURATION (DAY TO SECOND), u :: UUID)",
     )
     .unwrap();
 
     for (name, property, kind) in [
+        ("t_b", "b", TypedIndexKind::Bool),
         ("t_i", "i", TypedIndexKind::I64),
+        ("t_n", "n", TypedIndexKind::U64),
+        ("t_i128", "i128", TypedIndexKind::I128),
+        ("t_u128", "u128", TypedIndexKind::U128),
+        ("t_dec", "dec", TypedIndexKind::Decimal),
+        ("t_f32", "f32", TypedIndexKind::F32),
         ("t_f", "f", TypedIndexKind::F64),
         ("t_s", "s", TypedIndexKind::String),
         ("t_d", "d", TypedIndexKind::Date),
         ("t_ldt", "ldt", TypedIndexKind::LocalDateTime),
+        ("t_zdt", "zdt", TypedIndexKind::ZonedDateTime),
+        ("t_lt", "lt", TypedIndexKind::LocalTime),
+        ("t_zt", "zt", TypedIndexKind::ZonedTime),
+        ("t_dur", "dur", TypedIndexKind::Duration),
+        ("t_ym", "ym", TypedIndexKind::Duration),
+        ("t_dt", "dt", TypedIndexKind::Duration),
         ("t_u", "u", TypedIndexKind::Uuid),
     ] {
         run_ddl(&graph, &format!("CREATE INDEX {name} ON :T({property})")).unwrap();
         assert_eq!(
             index_entry(&graph, "T", property),
-            Some((kind, Some(istr(name))))
+            Some((kind, Some(db_string(name))))
         );
     }
 }
@@ -283,21 +289,28 @@ fn named_index_survives_wal_recovery() {
         .unwrap();
     let mut changes = Vec::new();
     changes.extend(
-        run_ddl(&graph, "CREATE NODE TYPE :Sensor (ts :: LOCAL DATETIME)")
-            .unwrap()
-            .changes,
+        run_ddl(
+            &graph,
+            "CREATE NODE TYPE :Sensor (reading_total :: DECIMAL)",
+        )
+        .unwrap()
+        .changes,
     );
     changes.extend(
-        run_ddl(&graph, "CREATE INDEX sensor_ts_idx ON :Sensor(ts)")
-            .unwrap()
-            .changes,
+        run_ddl(
+            &graph,
+            "CREATE INDEX sensor_total_idx ON :Sensor(reading_total)",
+        )
+        .unwrap()
+        .changes,
     );
     append_wal(&dir, &changes);
 
     let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    assert_eq!(index_entry(&recovered, "Sensor", "active"), None);
     assert_eq!(
-        index_entry(&recovered, "Sensor", "ts"),
-        Some((TypedIndexKind::LocalDateTime, Some(istr("sensor_ts_idx"))))
+        index_entry(&recovered, "Sensor", "reading_total"),
+        Some((TypedIndexKind::Decimal, Some(db_string("sensor_total_idx"))))
     );
     let _ = fs::remove_dir_all(dir);
 }
@@ -370,7 +383,7 @@ fn duplicate_names_and_same_pair_conflicts_follow_brief_matrix() {
     run_ddl(&graph, "CREATE INDEX IF NOT EXISTS new_name ON :Sensor(ts)").unwrap();
     assert_eq!(
         index_entry(&graph, "Sensor", "ts"),
-        Some((TypedIndexKind::LocalDateTime, Some(istr("foo"))))
+        Some((TypedIndexKind::LocalDateTime, Some(db_string("foo"))))
     );
     assert_eq!(
         duplicate_name(&graph, "CREATE INDEX new_name ON :Sensor(ts)").as_str(),
@@ -381,15 +394,20 @@ fn duplicate_names_and_same_pair_conflicts_follow_brief_matrix() {
 #[test]
 fn drop_index_refuses_ambiguous_rendered_name_matches() {
     let graph = SharedGraph::new(GraphId::new(14_007));
-    let sensor = istr("Sensor");
-    let meter = istr("Meter");
-    let ts = istr("ts");
-    let collision = istr("colliding_name");
+    let sensor = db_string("Sensor");
+    let meter = db_string("Meter");
+    let ts = db_string("ts");
+    let collision = db_string("colliding_name");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
-            .create_property_index_named(sensor, ts, TypedIndexKind::I64, Some(collision))
+            .create_property_index_named(
+                sensor,
+                ts.clone(),
+                TypedIndexKind::I64,
+                Some(collision.clone()),
+            )
             .unwrap();
         mutator
             .create_property_index_named(meter, ts, TypedIndexKind::I64, Some(collision))

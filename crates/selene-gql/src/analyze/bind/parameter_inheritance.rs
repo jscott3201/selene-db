@@ -199,6 +199,9 @@ fn inherit_call_parameter_declarations(call: &mut ProcedureCall, declarations: &
     for arg in &mut call.args {
         inherit_value_parameter_declarations(arg, declarations);
     }
+    if let Some(filter) = &mut call.yield_filter {
+        inherit_value_parameter_declarations(filter, declarations);
+    }
 }
 
 fn inherit_match_clause_parameter_declarations(
@@ -279,9 +282,16 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
                 stack.push(target.as_mut());
             }
             ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::PathConstructor {
+                elements: items, ..
+            }
             | ValueExpr::AllDifferent { items, .. }
             | ValueExpr::Same { items, .. }
             | ValueExpr::FunctionCall { args: items, .. } => stack.extend(items.iter_mut()),
+            ValueExpr::DurationBetween { start, end, .. } => {
+                stack.push(end.as_mut());
+                stack.push(start.as_mut());
+            }
             ValueExpr::RecordLiteral { fields, .. } => {
                 stack.extend(fields.iter_mut().map(|(_, value)| value));
             }
@@ -305,6 +315,10 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
             }
             ValueExpr::InList { operand, list, .. } => {
                 stack.extend(list.iter_mut());
+                stack.push(operand.as_mut());
+            }
+            ValueExpr::InListExpression { operand, list, .. } => {
+                stack.push(list.as_mut());
                 stack.push(operand.as_mut());
             }
             ValueExpr::Case {

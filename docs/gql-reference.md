@@ -69,18 +69,18 @@ parsing or analysis, never at runtime.
 | `BOOLEAN` | `TRUE`, `FALSE`, `UNKNOWN` | `Value::Bool` | Three-valued logic applies to `=`, `<>`, comparisons, and Boolean composition. |
 | `INTEGER` / `INT` | `42`, `-17`, `0`, `1_000` (underscores allowed) | `Value::Int` (i64) | Default integer is i64. Implementation-defined IA037 / ID028 set i64 default with i128 promotion when context demands. |
 | `FLOAT` | `3.14`, `-0.5`, `1.0e6`, `2.5e-3` | `Value::Float` (f64) | IEEE 754 binary64 (feature `GA01`). |
-| `STRING` | `'single quotes only'`, `'it''s ok'`, `'\n'` escapes | `Value::String(IStr)` | Single quotes only — double quotes are delimited identifiers. `''` and backslash escapes are honored. |
+| `STRING` | `'single quotes only'`, `'it''s ok'`, `'\n'` escapes | `Value::String(DbString)` | Single quotes only — double quotes are delimited identifiers. `''` and backslash escapes are honored. |
 
 ### Optional types claimed in v1.0
 
 | GQL type | Literal syntax | `Value` variant | Feature |
 |:---|:---|:---|:---|
 | `INT8`, `INT16`, `INT32` | `CAST(x AS INT32)` | `Value::Int` | `GV02`, `GV04`, `GV07` |
-| `UINT8`, `UINT16`, `UINT32`, `UINT64` | `42u`, `CAST(x AS UINT32)` | `Value::Uint` | `GV01`, `GV03`, `GV06`, `GV11` |
-| `INT128`, `UINT128` | hex/oct/bin literals or `CAST` | `Value::Int128`, `Value::Uint128` | `GV13`, `GV14` |
+| `UINT8`, `UINT16`, `UINT32`, `UINT64` | `CAST(x AS UINT32)` | `Value::Uint` | `GV01`, `GV03`, `GV06`, `GV11` |
+| `INT128`, `UINT128` | `CAST(x AS INT128)`, `CAST(x AS UINT128)` | `Value::Int128`, `Value::Uint128` | `GV13`, `GV14` |
 | `DECIMAL` | `CAST('1.23' AS DECIMAL)` | `Value::Decimal` (`rust_decimal::Decimal`) | `GV17`, 28 significant digits |
 | `FLOAT32` | `1.5f` | `Value::Float32` | `GV21` |
-| `BYTES` | `CAST(x AS BYTES)` | `Value::Bytes` | `GV35` |
+| `BYTES` / bare `BINARY` / bare `VARBINARY` | `CAST(x AS BYTES)` | `Value::Bytes` | `GV35`; Selene normalizes all three unqualified spellings to the unbounded `BYTES` form. |
 | `DATE` | `DATE '2026-05-16'` | `Value::Date` | `GV39` |
 | `LOCAL DATETIME` | `LOCAL DATETIME '2026-05-16T08:30:00'` | `Value::LocalDateTime` | `GV39` |
 | `LOCAL TIME` | `LOCAL TIME '08:30:00'` | `Value::LocalTime` | `GV39` |
@@ -90,17 +90,22 @@ parsing or analysis, never at runtime.
 | `LIST<T>` | `[1, 2, 3]`, `CAST(x AS LIST<INTEGER>)` | `Value::List` | `GV50` |
 | `PATH` | constructed by `MATCH` path variables | `Value::Path` | `GV55` |
 
+String-source numeric casts follow the ISO signed/unsigned numeric literal image
+rules. Digit separators and radix integer images are accepted where the target
+feature is claimed, for example `CAST('0x10' AS INTEGER)`,
+`CAST('0o777' AS UINT64)`, and `CAST('0b1010' AS DECIMAL)`.
+
 `NULL` and `UNKNOWN` are first-class. `NULL` represents missing data;
 `UNKNOWN` is the three-valued-logic Boolean. Three-valued logic flows
 through every Boolean operator (`AND`, `OR`, `XOR`, `NOT`) and through
 the comparison family.
 
-### Optional types deliberately not claimed in v1.0
+### Optional type surfaces deliberately not claimed
 
-`RECORD` (open / closed / nested, `GV45`-`GV48`), graph and binding-table
-reference types (`GV60`-`GV61`), explicit value-type nullability syntax
-(`GV90`), `FLOAT16` / `FLOAT128` / `FLOAT256`, 256-bit integers, and the
-`REAL` synonym all carry rationale entries in
+Graph and binding-table reference types (`GV60`-`GV61`), explicit value-type
+nullability syntax (`GV90`), length-qualified byte-string types (`GV36`-`GV38`),
+`FLOAT16` / `FLOAT128` / `FLOAT256`, 256-bit integers, and the
+`REAL`/`DOUBLE` synonyms all carry rationale entries in
 `feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of
 these types is rejected at parse or analyze time.
 
@@ -109,11 +114,11 @@ these types is rejected at parse or analyze time.
 | Form | Example | Notes |
 |---|---|---|
 | Decimal integer | `1234`, `-1234`, `1_000_000` | i64 unless explicit cast. |
-| Unsigned suffix | `42u` | Parses to `Value::Uint`. |
-| Hex | `0xCAFE`, `-0x1A` | Feature `GL01` (selene extension). |
-| Oct | `0o777` | Feature `GL02`. |
-| Bin | `0b1010` | Feature `GL03`. |
-| Float | `1.5`, `1.5e10`, `1.5f` (f32), `1.5d` (f64 explicit) | Default f64. |
+| Hex | `0xCAFE`, `-0x1A` | Feature `GL01`; normalizes to i64 unless explicitly cast. |
+| Oct | `0o777` | Feature `GL02`; normalizes to i64 unless explicitly cast. |
+| Bin | `0b1010` | Feature `GL03`; normalizes to i64 unless explicitly cast. |
+| Exact decimal | `1.5`, `.5`, `1.`, `1.5M`, `1e2M` | Features `GL04`-`GL06`; lowers to `DECIMAL`. |
+| Approximate float | `1e2`, `1.5F`, `1.5D`, `1e2F`, `1e2D` | Features `GL07`-`GL10` for suffix forms; lowers to f64. |
 
 ### Identifiers and delimited identifiers
 
@@ -158,6 +163,20 @@ Label expressions support `:Foo|Bar` (or), `:Foo&Bar` (and), `:!Foo`
 `*2..`) control variable-length matching with an implementation-defined
 upper bound of 100 (Annex B `IL018`).
 
+Quantified edge variables are bound as path-ordered lists of edge references.
+Property access over that binding maps across the list and preserves path
+order:
+
+```gql
+MATCH (p:Person)-[r:KNOWS*1..3]->(friend)
+RETURN r.score AS path_scores
+```
+
+Each row's `path_scores` value is a list. Missing edge properties become
+`NULL` at the corresponding list position. `PROPERTY_EXISTS` remains scalar
+over graph elements and records; use `UNWIND` when per-element existence checks
+are needed.
+
 ### `OPTIONAL MATCH`
 
 ```gql
@@ -190,8 +209,9 @@ LIMIT 10
 ```
 
 Projections may be aliased (`expr AS name`). `RETURN *` returns every
-in-scope binding. `RETURN NO BINDINGS` produces an empty binding table
-(useful for write pipelines that don't need to surface rows).
+in-scope binding. ISO defines `RETURN NO BINDINGS` only as an internal
+specification device for transformations; Selene rejects it as user syntax.
+Use `FINISH` for write pipelines that intentionally omit a result.
 
 ### `WITH`
 
@@ -642,13 +662,24 @@ output before it joins the surrounding pipeline.
 
 | Procedure | Tier | Purpose |
 |---|---|---|
-| `selene.health` | Graph | Liveness/readiness probe. Returns engine version, snapshot count, WAL state. |
+| `selene.health` | Graph | Basic graph health counters. |
 | `selene.feature_status` | Graph | Surfaces the claimed ISO feature register at runtime. |
-| `selene.verify('deep')` | Graph | Integrity check over the live graph. The optional `deep` flag defaults to `false`. |
-| `selene.create_index('name', ':Label', 'prop')` | Mutation | Create a secondary index. Audits through the mutation funnel. |
-| `selene.drop_index('name')` | Mutation | Drop a secondary index. Audits through the mutation funnel. |
+| `selene.verify` | Graph | Integrity check over graph invariants. |
+| `selene.compaction_stats` | Graph | Graph row compaction pressure counters. |
+| `selene.create_index`, `selene.drop_index` | Mutation | Create or drop scalar property indexes through the mutation funnel. |
+| `selene.create_vector_index`, `selene.drop_vector_index` | Mutation | Register or drop vector indexes over `(label, property)`. |
+| `selene.vector_search_*`, `selene.vector_score_*` | Graph | Exact, ANN, candidate-scoped, neighbor, expanded-candidate, and batched vector retrieval. |
+| `selene.vector_candidate_states` | Graph | Discover maintained graph-derived candidate states. |
+| `selene.vector_index_stats` | Graph | Vector index memory and cardinality statistics. |
+| `selene.rebuild_vector_indexes`, `selene.rebuild_recommended_vector_indexes` | Maintenance | Rebuild derived in-memory vector index state from primary graph values. |
+| `selene.create_text_index`, `selene.drop_text_index` | Mutation | Register or drop maintained BM25 text indexes. |
+| `selene.text_index_stats` | Graph | Text index memory and cardinality statistics. |
+| `selene.text_search_nodes`, `selene.text_score_nodes`, `selene.text_score_nodes_batch`, `selene.text_score_candidate_state_expanded_batch` | Graph | Exact BM25 search and candidate-scoped text scoring. |
+| `selene.json_contains_nodes`, `selene.json_path_*_nodes` | Graph | Exact JSON containment, path-existence, path-containment, and path-value search over node properties. |
+| `selene.json_contains_candidate_nodes`, `selene.json_path_*_candidate_nodes` | Graph | Candidate-scoped JSON filters over explicit `LIST<NODE>` inputs. |
+| `selene.compact` | Maintenance | Compact dead graph rows out of the live store. |
 
-The 5 platform built-ins are registered by the native
+The 45 platform built-ins are registered by the native
 `selene-gql` `BuiltinProcedureRegistry` (the sole frozen production
 `ProcedureRegistry` impl) and documented in its rustdoc.
 
@@ -740,6 +771,7 @@ Examples of rejected constructs:
 | `MATCH ... RETURN ... EXCEPT MATCH ...` | Feature `GQ04` not claimed. | Flagger error. |
 | `RECORD<a INTEGER, b STRING>` in a type position | Features `GV45`-`GV48` not claimed. | Flagger error. |
 | `CAST(x AS FLOAT16)` | Feature `GV20` not claimed. | Flagger error. |
+| `CAST(x AS BYTES(16))`, `BINARY(16)`, `VARBINARY(16)` | Byte-string length features `GV36`-`GV38` not claimed. | Flagger error. |
 | Cypher-only `CREATE (n:Foo)-[:R]->(m:Bar)` (without the `INSERT` keyword) | Not ISO GQL surface. | Parser error. |
 | Cypher-only `WHERE n.x =~ '.*foo.*'` (regex match) | Not ISO GQL surface. | Parser error. |
 
@@ -787,10 +819,10 @@ explicitly absent. The canonical rationale is
 | Procedure-local variables | Not claimed (features `GP05`-`GP15`). |
 | Mixed catalog/data transactions | Not claimed (feature `GP18`). |
 | Multi-graph transactions | Not claimed (feature `GT03`). |
-| `RECORD` type expressions | Not claimed (features `GV45`-`GV48`). The `Value::Record` variant exists in core but is not exposed in the type grammar. |
 | Graph / table reference type spellings (`GRAPH`, `TABLE` as types) | Not claimed (features `GV60`-`GV61`). |
 | Explicit value-type nullability syntax (`STRING NOT NULL` in type expressions) | Not claimed (feature `GV90`). The DDL `NOT NULL` property constraint is supported separately. |
-| `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL` synonym | Not claimed. |
+| Length-qualified byte-string types (`BYTES(max)`, `BYTES(min,max)`, `BINARY(n)`, `VARBINARY(n)`) | Not claimed (features `GV36`-`GV38`). Bare `BYTES`, `BINARY`, and `VARBINARY` all normalize to unbounded `BYTES`. |
+| `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL`/`DOUBLE` synonyms | Not claimed. |
 | 256-bit integers (`INT256`, `UINT256`) | Not claimed. |
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |
 | RDF / SPARQL bridge syntax | Out of scope. Future first-party extension allocation `GRPR`. |

@@ -23,12 +23,19 @@ pub(crate) fn execute(
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     if path_mode != PathMode::Walk && max.is_some() {
-        return Err(ExecutorError::FeatureNotInV1_1 {
+        return Err(ExecutorError::FeatureNotSupportedYet {
             feature: "non-WALK variable-length edge execution",
             span: edge.span,
         });
     }
 
+    let source_index = pattern::source_index(
+        env.pattern,
+        env.schema,
+        edge.left_binding,
+        edge.left_hidden_binding,
+        "repeat source binding column missing",
+    )?;
     let child_rows = pattern::walk_join_tree(child, env)?;
     let mut state = RepeatState {
         edge,
@@ -39,6 +46,29 @@ pub(crate) fn execute(
         cap: env.ctx.impl_defined_caps().max_quantifier,
         pattern_plan: env.pattern,
         schema: env.schema,
+        source_index,
+        final_slot: pattern::ColumnSlot::binding(
+            env.pattern,
+            env.schema,
+            edge.final_binding,
+            "repeat final binding column missing",
+        )?,
+        final_hidden_slot: pattern::ColumnSlot::hidden(
+            env.schema,
+            edge.final_hidden_binding,
+            "repeat final hidden binding column missing",
+        )?,
+        group_slot: pattern::ColumnSlot::binding(
+            env.pattern,
+            env.schema,
+            edge.group_binding,
+            "repeat group binding column missing",
+        )?,
+        group_hidden_slot: pattern::ColumnSlot::hidden(
+            env.schema,
+            edge.group_hidden_binding,
+            "repeat group hidden binding column missing",
+        )?,
         ctx: env.ctx,
         output: Vec::new(),
         steps_since_check: 0,
@@ -48,11 +78,16 @@ pub(crate) fn execute(
             .ctx
             .tx
             .check_cancellation_stride(&mut state.steps_since_check, 1)?;
-        let Some(source) = source_node(edge, env.pattern, env.schema, &row)? else {
+        let Some(source) = pattern::node_at_index(
+            &row,
+            state.source_index,
+            "repeat source binding is not a node",
+        )?
+        else {
             continue;
         };
         let mut path_edges = Vec::new();
-        traverse(source, &row, &mut path_edges, 0, &mut state)?;
+        traverse(source, source, &row, &mut path_edges, 0, &mut state)?;
     }
     Ok(state.output)
 }
@@ -66,12 +101,18 @@ struct RepeatState<'a, 'eval, 'ctx, 'g, 'plan> {
     cap: u32,
     pattern_plan: &'a PatternPlan,
     schema: &'a BindingTableSchema,
+    source_index: usize,
+    final_slot: pattern::ColumnSlot,
+    final_hidden_slot: pattern::ColumnSlot,
+    group_slot: pattern::ColumnSlot,
+    group_hidden_slot: pattern::ColumnSlot,
     ctx: &'a EvalCtx<'eval, 'ctx, 'g, 'plan>,
     output: Vec<Binding>,
     steps_since_check: usize,
 }
 
 fn traverse(
+    source: NodeId,
     current: NodeId,
     row: &Binding,
     path_edges: &mut Vec<EdgeId>,
@@ -97,11 +138,7 @@ fn traverse(
         let step = visited_set::repeat_step(
             visited_set::RepeatStepInput {
                 path_mode: state.path_mode,
-                source: source_node(state.edge, state.pattern_plan, state.schema, row)?.ok_or(
-                    ExecutorError::ImplementationDefined {
-                        detail: "repeat source binding column missing",
-                    },
-                )?,
+                source,
                 target: adjacent.neighbor,
                 edge: adjacent.edge_id,
                 direction: state.direction,
@@ -129,7 +166,14 @@ fn traverse(
         if step.terminal {
             maybe_emit_path(adjacent.neighbor, row, path_edges, state)?;
         } else {
-            traverse(adjacent.neighbor, row, path_edges, next_depth, state)?;
+            traverse(
+                source,
+                adjacent.neighbor,
+                row,
+                path_edges,
+                next_depth,
+                state,
+            )?;
         }
         path_edges.pop();
     }
@@ -148,39 +192,23 @@ fn maybe_emit_path(
 
     let mut values = row.values().to_vec();
     values.resize(state.schema.columns.len(), Value::Null);
-    if !pattern::set_binding_value(
-        &mut values,
-        state.pattern_plan,
-        state.schema,
-        state.edge.final_binding,
-        Value::NodeRef(final_node),
-    )? {
+    if !state
+        .final_slot
+        .set(&mut values, Value::NodeRef(final_node))
+    {
         return Ok(());
     }
-    if !pattern::set_hidden_value(
-        &mut values,
-        state.schema,
-        state.edge.final_hidden_binding,
-        Value::NodeRef(final_node),
-    )? {
+    if !state
+        .final_hidden_slot
+        .set(&mut values, Value::NodeRef(final_node))
+    {
         return Ok(());
     }
     let group_value = edge_list_value(path_edges);
-    if !pattern::set_binding_value(
-        &mut values,
-        state.pattern_plan,
-        state.schema,
-        state.edge.group_binding,
-        group_value.clone(),
-    )? {
+    if !state.group_slot.set(&mut values, group_value.clone()) {
         return Ok(());
     }
-    if !pattern::set_hidden_value(
-        &mut values,
-        state.schema,
-        state.edge.group_hidden_binding,
-        group_value,
-    )? {
+    if !state.group_hidden_slot.set(&mut values, group_value) {
         return Ok(());
     }
 
@@ -250,13 +278,7 @@ fn current_step_row(
         .chain(std::iter::once(edge_id))
         .map(Value::EdgeRef)
         .collect();
-    if !pattern::set_binding_value(
-        &mut values,
-        state.pattern_plan,
-        state.schema,
-        state.edge.group_binding,
-        Value::List(edge_list),
-    )? {
+    if !state.group_slot.set(&mut values, Value::List(edge_list)) {
         return Ok(None);
     }
     Ok(Some(Binding::new(values)))
@@ -287,33 +309,6 @@ fn predicates_pass(
     Ok(true)
 }
 
-fn source_node(
-    edge: &RepeatEdgeMatch,
-    pattern_plan: &PatternPlan,
-    schema: &BindingTableSchema,
-    row: &Binding,
-) -> Result<Option<NodeId>, ExecutorError> {
-    let index = if let Some(binding) = edge.left_binding {
-        pattern::binding_index(pattern_plan, schema, binding)
-    } else if let Some(hidden) = edge.left_hidden_binding {
-        pattern::hidden_index(schema, hidden)
-    } else {
-        None
-    };
-    let Some(index) = index else {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "repeat source binding column missing",
-        });
-    };
-    match row.get(index).cloned().unwrap_or(Value::Null) {
-        Value::NodeRef(id) => Ok(Some(id)),
-        Value::Null => Ok(None),
-        _ => Err(ExecutorError::ImplementationDefined {
-            detail: "repeat source binding is not a node",
-        }),
-    }
-}
-
 fn adjacent_edges(
     node: NodeId,
     direction: EdgeDirection,
@@ -324,26 +319,26 @@ fn adjacent_edges(
             .tx
             .snapshot()
             .outgoing_edges(node)
-            .map(|entry| entry.iter().copied().collect())
+            .map(|entry| entry.iter().cloned().collect())
             .unwrap_or_default(),
         EdgeDirection::Left => ctx
             .tx
             .snapshot()
             .incoming_edges(node)
-            .map(|entry| entry.iter().copied().collect())
+            .map(|entry| entry.iter().cloned().collect())
             .unwrap_or_default(),
         EdgeDirection::Undirected => {
             let mut seen = BTreeSet::new();
             let mut edges = Vec::new();
             if let Some(entry) = ctx.tx.snapshot().outgoing_edges(node) {
-                for adjacent in entry.iter().copied() {
+                for adjacent in entry.iter().cloned() {
                     if seen.insert(adjacent.edge_id) {
                         edges.push(adjacent);
                     }
                 }
             }
             if let Some(entry) = ctx.tx.snapshot().incoming_edges(node) {
-                for adjacent in entry.iter().copied() {
+                for adjacent in entry.iter().cloned() {
                     if seen.insert(adjacent.edge_id) {
                         edges.push(adjacent);
                     }
@@ -365,7 +360,7 @@ fn edge_label_matches(
     ctx.tx
         .snapshot()
         .edge_label(edge_id)
-        .is_some_and(|label| scan::label_matches_edge(label_expr, *label))
+        .is_some_and(|label| scan::label_matches_edge(label_expr, label.clone()))
 }
 
 fn final_node_label_matches(

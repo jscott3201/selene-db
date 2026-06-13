@@ -10,19 +10,22 @@ use std::{
     time::Instant,
 };
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{
-    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, IStr,
-    IStrAdmissionPolicy, Value, metrics,
+    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, DbString, Value,
+    metrics,
 };
-use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
+use selene_graph::{IndexProvider, Mutator, SeleneGraph, SharedGraph, WriteTxn};
 
 use crate::{
     GqlStatus, ProcedureRegistry, SourceSpan,
-    analyze::ExprIdLookup,
+    analyze::{ExprId, ExprIdLookup},
     plan::SubqueryRegistry,
     plan::{ImplDefinedCaps, PipelineOpId},
-    runtime::{BindingTable, BindingTableRegistry, ExecutorError, ExecutorWarning, WarningSink},
+    runtime::{
+        BindingTable, BindingTableRegistry, BindingTableSchema, ExecutorError, ExecutorWarning,
+        WarningSink,
+    },
 };
 
 /// Adaptive re-optimization hook reserved for future executor phases.
@@ -31,7 +34,7 @@ pub trait AdaptiveOptimizer: Send + Sync {
     fn observe_cardinality(&self, _op: PipelineOpId, _rows: u64) {}
 }
 
-static EMPTY_PARAMETERS: BTreeMap<IStr, Value> = BTreeMap::new();
+static EMPTY_PARAMETERS: BTreeMap<DbString, Value> = BTreeMap::new();
 
 /// Row cadence for cooperative cancellation checkpoints.
 pub(crate) const CANCEL_CHECK_STRIDE: usize = 1024;
@@ -48,7 +51,7 @@ pub struct TxContext<'a, 'g> {
     impl_defined_caps: &'a ImplDefinedCaps,
     registry: &'a dyn ProcedureRegistry,
     providers: &'a [Arc<dyn IndexProvider>],
-    parameters: Cow<'a, BTreeMap<IStr, Value>>,
+    parameters: Cow<'a, BTreeMap<DbString, Value>>,
     binding_tables: Rc<BindingTableRegistry>,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     plan_expr_ids: Option<&'a ExprIdLookup>,
@@ -56,12 +59,21 @@ pub struct TxContext<'a, 'g> {
     cancellation: Option<&'a CancellationToken>,
     deadline: Option<Instant>,
     row_cap: Option<usize>,
-    istr_admission_policy: IStrAdmissionPolicy,
     warning_sink: Option<&'a RefCell<Box<dyn WarningSink>>>,
     emitted_warnings: RefCell<FxHashSet<(GqlStatus, SourceSpan)>>,
     result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
+    maintenance_graph: Option<&'g SharedGraph>,
     session_time_zone: jiff::tz::TimeZone,
+    request_timestamp: jiff::Timestamp,
+    /// GQLRT-05 per-statement memo of correlated-subquery target schemas, keyed
+    /// by the subquery expression id. Within one statement an EXISTS/COUNT
+    /// expression is evaluated by exactly one filter/project op whose input
+    /// schema is loop-invariant, so the target schema is identical for every
+    /// outer row — caching it elides the per-row `schema_for_pattern` join-tree
+    /// walk + `BTreeMap` of hidden slots. The id is 1:1 with the source schema
+    /// within a statement, so the expression id alone is a sufficient key.
+    subquery_target_schema: RefCell<FxHashMap<ExprId, BindingTableSchema>>,
 }
 
 /// Expression-evaluation context for one planned execution point.
@@ -124,7 +136,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: &'a BTreeMap<IStr, Value>,
+        parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
         Self {
             snapshot,
@@ -139,12 +151,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -173,7 +187,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
         reopt_hook: &'a dyn AdaptiveOptimizer,
-        parameters: &'a BTreeMap<IStr, Value>,
+        parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
         Self {
             snapshot,
@@ -188,12 +202,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -222,7 +238,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         txn: &'a mut WriteTxn<'g>,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: &'a BTreeMap<IStr, Value>,
+        parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
         Self {
             snapshot,
@@ -237,12 +253,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -251,7 +269,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: Cow<'a, BTreeMap<IStr, Value>>,
+        parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
@@ -267,12 +285,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -282,7 +302,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         txn: &'a mut WriteTxn<'g>,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: Cow<'a, BTreeMap<IStr, Value>>,
+        parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
@@ -298,12 +318,47 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
+        }
+    }
+
+    pub(crate) fn maintenance_with_owned_parameters_and_registry(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+        graph: &'g SharedGraph,
+        providers: &'a [Arc<dyn IndexProvider>],
+        parameters: Cow<'a, BTreeMap<DbString, Value>>,
+        binding_tables: Rc<BindingTableRegistry>,
+    ) -> Self {
+        Self {
+            snapshot,
+            impl_defined_caps,
+            registry,
+            providers,
+            parameters,
+            binding_tables,
+            reopt_hook: None,
+            plan_expr_ids: None,
+            plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
+            warning_sink: None,
+            emitted_warnings: RefCell::new(FxHashSet::default()),
+            result_rows_emitted: Cell::new(0),
+            write_txn: None,
+            maintenance_graph: Some(graph),
+            session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -318,13 +373,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
         self.cancellation = cancellation;
         self.deadline = deadline;
         self.row_cap = row_cap;
-        self
-    }
-
-    /// Attach the per-session string-admission policy visible to runtime helpers.
-    #[must_use]
-    pub const fn with_istr_admission_policy(mut self, policy: IStrAdmissionPolicy) -> Self {
-        self.istr_admission_policy = policy;
         self
     }
 
@@ -355,6 +403,41 @@ impl<'a, 'g> TxContext<'a, 'g> {
     #[must_use]
     pub fn session_time_zone(&self) -> &jiff::tz::TimeZone {
         &self.session_time_zone
+    }
+
+    /// Render this statement's request timestamp in the session time zone.
+    ///
+    /// ISO/IEC 39075:2024 section 20.27 sets the current request timestamp once
+    /// before evaluating a datetime value function, so all current-datetime
+    /// reads within this statement share this instant.
+    #[must_use]
+    pub fn request_timestamp_zoned(&self) -> jiff::Zoned {
+        self.request_timestamp
+            .to_zoned(self.session_time_zone.clone())
+    }
+
+    /// Return the cached target schema for the correlated subquery `expr_id`,
+    /// computing and memoizing it on first use within this statement (GQLRT-05).
+    ///
+    /// The target schema is loop-invariant across the outer rows that drive a
+    /// correlated `EXISTS`/`COUNT` subquery (its source schema is the enclosing
+    /// op's input schema), so this avoids rebuilding it — and the relatively
+    /// expensive `schema_for_pattern` join-tree walk it performs — per row.
+    /// `compute` is invoked at most once per `expr_id` per statement and must
+    /// not re-enter this method (it does not: schema construction is pure).
+    pub(crate) fn cached_subquery_schema(
+        &self,
+        expr_id: ExprId,
+        compute: impl FnOnce() -> Result<BindingTableSchema, ExecutorError>,
+    ) -> Result<BindingTableSchema, ExecutorError> {
+        if let Some(schema) = self.subquery_target_schema.borrow().get(&expr_id) {
+            return Ok(schema.clone());
+        }
+        let schema = compute()?;
+        self.subquery_target_schema
+            .borrow_mut()
+            .insert(expr_id, schema.clone());
+        Ok(schema)
     }
 
     /// Emit one runtime warning if the session opted into warning collection.
@@ -425,12 +508,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
     #[must_use]
     pub(crate) const fn deadline(&self) -> Option<Instant> {
         self.deadline
-    }
-
-    /// Return the policy used when runtime code admits engine-created strings.
-    #[must_use]
-    pub const fn istr_admission_policy(&self) -> IStrAdmissionPolicy {
-        self.istr_admission_policy
     }
 
     pub(crate) fn cancellation_error(
@@ -531,6 +608,21 @@ impl<'a, 'g> TxContext<'a, 'g> {
         }
     }
 
+    /// Borrow the shared graph attached to a maintenance statement context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutorError::InvalidTransactionState`] when the current
+    /// context is not a top-level maintenance statement context.
+    pub fn maintenance_graph_with_span(
+        &self,
+        detail: &'static str,
+        span: SourceSpan,
+    ) -> Result<&'g SharedGraph, ExecutorError> {
+        self.maintenance_graph
+            .ok_or(ExecutorError::InvalidTransactionState { detail, span })
+    }
+
     /// Borrow the planner/executor implementation-defined caps.
     #[must_use]
     pub const fn impl_defined_caps(&self) -> &'a ImplDefinedCaps {
@@ -551,7 +643,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
 
     /// Borrow the session-local query parameters visible to this statement.
     #[must_use]
-    pub fn parameters(&self) -> &BTreeMap<IStr, Value> {
+    pub fn parameters(&self) -> &BTreeMap<DbString, Value> {
         self.parameters.as_ref()
     }
 
@@ -600,9 +692,9 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("cancellation", &self.cancellation.is_some())
             .field("deadline", &self.deadline.is_some())
             .field("row_cap", &self.row_cap)
-            .field("istr_admission_policy", &self.istr_admission_policy)
             .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
+            .field("maintenance_graph", &self.maintenance_graph.is_some())
             .finish()
     }
 }
@@ -621,6 +713,20 @@ mod tests {
         registry: &'a EmptyProcedureRegistry,
     ) -> TxContext<'a, 'a> {
         TxContext::read_only(graph.clone(), caps, registry, &[])
+    }
+
+    #[test]
+    fn request_timestamp_is_stable_within_context() {
+        let graph = Arc::new(SeleneGraph::new(GraphId::new(8_808)));
+        let caps = ImplDefinedCaps::default();
+        let registry = EmptyProcedureRegistry;
+        let ctx = read_only_ctx(&graph, &caps, &registry);
+
+        let first = ctx.request_timestamp_zoned();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let second = ctx.request_timestamp_zoned();
+
+        assert_eq!(first, second);
     }
 
     #[test]

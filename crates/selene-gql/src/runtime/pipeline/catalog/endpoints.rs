@@ -1,6 +1,6 @@
 //! Edge-endpoint helpers for catalog DDL.
 
-use selene_core::{IStr, LabelSet};
+use selene_core::{DbString, LabelSet};
 use selene_graph::{EdgeEndpointDef, GraphTypeDef};
 
 use crate::{EdgeEndpointSpec, ExecutorError, SourceSpan};
@@ -17,7 +17,7 @@ pub(super) fn resolve_endpoints(
 }
 
 fn single_endpoint(
-    labels: &[IStr],
+    labels: &[DbString],
     graph_type: &GraphTypeDef,
     span: SourceSpan,
 ) -> Result<EdgeEndpointDef, ExecutorError> {
@@ -32,14 +32,14 @@ fn single_endpoint(
     //            collapse.
     //   row 4:   on any per-label miss, emit the existing GraphTypeViolation.
     // Single-label inputs never produce OneOf (per the cascade).
-    let label_set = labels.iter().copied().collect::<LabelSet>();
+    let label_set = labels.iter().cloned().collect::<LabelSet>();
     if let Some(index) = graph_type.find_node_type_index(&label_set) {
         return Ok(EdgeEndpointDef::NodeType(index));
     }
     if labels.len() >= 2 {
         let mut resolved: Vec<u32> = Vec::with_capacity(labels.len());
         for label in labels {
-            let single = LabelSet::single(*label);
+            let single = LabelSet::single(label.clone());
             let Some(index) = graph_type.find_node_type_index(&single) else {
                 return Err(unknown_endpoint_error(&label_set, span));
             };

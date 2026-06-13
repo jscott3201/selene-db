@@ -5,8 +5,12 @@
 mod exec_common;
 
 use exec_common::{column_values, execute_read, execute_read_result};
-use selene_core::{Value, feature_register::FeatureId};
-use selene_gql::{EmptyProcedureRegistry, analyze, feature_walk, parse};
+use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_gql::{
+    EmptyProcedureRegistry, ExecutorError, ImplDefinedCaps, Session, StatementOutput, analyze,
+    feature_walk, parse,
+};
+use selene_graph::SharedGraph;
 
 fn single_value(source: &str, column: &str) -> Value {
     let table = execute_read(source);
@@ -26,9 +30,33 @@ fn assert_status(source: &str, expected: &str) {
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
 }
 
-fn external_string(value: Value) -> String {
-    let Value::ExternalString(value) = value else {
-        panic!("expected ExternalString, got {value:?}");
+fn single_value_with_caps(source: &str, column: &str, caps: ImplDefinedCaps) -> Value {
+    let graph = SharedGraph::new(GraphId::new(24_001));
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .unwrap_or_else(|err| panic!("execute failed for `{source}`: {err:?}"));
+    let StatementOutput::Rows(table) = output else {
+        panic!("expected rows for `{source}`");
+    };
+    let mut values = column_values(&table, column);
+    assert_eq!(values.len(), 1);
+    values.pop().expect("one row")
+}
+
+fn status_with_caps(source: &str, caps: ImplDefinedCaps) -> String {
+    let graph = SharedGraph::new(GraphId::new(24_002));
+    let mut session = Session::new(&graph).with_impl_defined_caps(caps);
+    session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("query should fail")
+        .gqlstatus()
+        .to_string()
+}
+
+fn string_value(value: Value) -> String {
+    let Value::String(value) = value else {
+        panic!("expected String, got {value:?}");
     };
     value.to_string()
 }
@@ -46,9 +74,39 @@ fn assert_feature_recorded(source: &str, expected: FeatureId) {
 }
 
 #[test]
-fn normalize_defaults_to_nfc_and_returns_external_string() {
+fn character_string_concatenation_truncates_only_whitespace_overflow() {
+    let caps = ImplDefinedCaps::default().with_max_string_length(3);
     assert_eq!(
-        external_string(single_value(
+        string_value(single_value_with_caps(
+            "RETURN 'ab' || 'c  ' AS value",
+            "value",
+            caps,
+        )),
+        "abc"
+    );
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN '\u{00e9}' || 'x ' AS value",
+            "value",
+            ImplDefinedCaps::default().with_max_string_length(2),
+        )),
+        "\u{00e9}x"
+    );
+}
+
+#[test]
+fn character_string_concatenation_reports_right_truncation() {
+    let caps = ImplDefinedCaps::default().with_max_string_length(3);
+    assert_eq!(
+        status_with_caps("RETURN 'ab' || 'cd' AS value", caps),
+        "22001"
+    );
+}
+
+#[test]
+fn normalize_defaults_to_nfc_and_returns_string() {
+    assert_eq!(
+        string_value(single_value(
             "RETURN NORMALIZE('e\u{301}') AS value",
             "value"
         )),
@@ -70,8 +128,27 @@ fn normalize_accepts_all_unicode_normal_forms() {
         } else {
             format!("RETURN NORMALIZE('e\u{301}', {form}) AS value")
         };
-        assert_eq!(external_string(single_value(&source, "value")), expected);
+        assert_eq!(string_value(single_value(&source, "value")), expected);
     }
+}
+
+#[test]
+fn normalize_reports_right_truncation_when_result_exceeds_cap() {
+    assert_eq!(
+        status_with_caps(
+            "RETURN NORMALIZE('\u{00e9}', NFD) AS value",
+            ImplDefinedCaps::default().with_max_string_length(1),
+        ),
+        "22001"
+    );
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN NORMALIZE('\u{00e9}', NFD) AS value",
+            "value",
+            ImplDefinedCaps::default().with_max_string_length(2),
+        )),
+        "e\u{301}"
+    );
 }
 
 #[test]
@@ -121,9 +198,15 @@ fn left_and_right_return_unicode_prefixes_and_suffixes() {
         ("RETURN right('café', 2) AS value", "fé"),
         ("RETURN left('日本語', 2) AS value", "日本"),
         ("RETURN right('日本語', 99) AS value", "日本語"),
+        ("RETURN left('abcdef', CAST('2' AS INT128)) AS value", "ab"),
+        (
+            "RETURN right('abcdef', CAST('2' AS UINT128)) AS value",
+            "ef",
+        ),
+        ("RETURN left('abcdef', 2M) AS value", "ab"),
     ];
     for (source, expected) in cases {
-        assert_eq!(external_string(single_value(source, "value")), expected);
+        assert_eq!(string_value(single_value(source, "value")), expected);
     }
 }
 
@@ -143,8 +226,82 @@ fn left_and_right_propagate_nulls_and_reject_bad_lengths() {
     }
     assert_status("RETURN left('abc', -1) AS value", "22011");
     assert_status("RETURN right('abc', -1) AS value", "22011");
+    assert_status("RETURN left('abc', -1M) AS value", "22011");
+    assert_status("RETURN left('abc', 1.5M) AS value", "22G03");
     assert_status("RETURN left('abc', 'x') AS value", "22G03");
     assert_status("RETURN right(7, 1) AS value", "22G03");
+}
+
+#[test]
+fn substring_function_is_not_in_the_iso_scalar_set() {
+    let err = execute_read_result("RETURN substring('abcdef', 2, 3) AS value")
+        .expect_err("substring is not in the closed scalar-function set");
+    assert!(matches!(
+        &err,
+        ExecutorError::UnknownFunction { name, .. } if name == "substring"
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
+fn coalesce_requires_at_least_two_arguments() {
+    let err =
+        execute_read_result("RETURN coalesce('x') AS value").expect_err("single argument rejects");
+    assert!(matches!(
+        &err,
+        ExecutorError::FunctionArityMismatch { name, .. } if name == "coalesce"
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
+fn fold_normalizes_result_when_source_is_nfc() {
+    assert_eq!(
+        string_value(single_value("RETURN UPPER('\u{0390}') AS value", "value")),
+        "\u{03aa}\u{0301}"
+    );
+}
+
+#[test]
+fn fold_keeps_non_normalized_source_result_unforced() {
+    assert_eq!(
+        string_value(single_value("RETURN UPPER('e\u{0301}') AS value", "value")),
+        "E\u{0301}"
+    );
+}
+
+#[test]
+fn fold_functions_report_right_truncation_when_result_exceeds_cap() {
+    assert_eq!(
+        status_with_caps(
+            "RETURN UPPER('\u{00df}') AS value",
+            ImplDefinedCaps::default().with_max_string_length(1),
+        ),
+        "22001"
+    );
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN UPPER('\u{00df}') AS value",
+            "value",
+            ImplDefinedCaps::default().with_max_string_length(2),
+        )),
+        "SS"
+    );
+    assert_eq!(
+        status_with_caps(
+            "RETURN LOWER('\u{0130}') AS value",
+            ImplDefinedCaps::default().with_max_string_length(1),
+        ),
+        "22001"
+    );
+    assert_eq!(
+        string_value(single_value_with_caps(
+            "RETURN LOWER('\u{0130}') AS value",
+            "value",
+            ImplDefinedCaps::default().with_max_string_length(2),
+        )),
+        "i\u{0307}"
+    );
 }
 
 #[test]
@@ -158,7 +315,7 @@ fn multi_character_trim_family_trims_default_and_custom_character_sets() {
         ("RETURN rtrim('helloxy', 'xy') AS value", "hello"),
     ];
     for (source, expected) in cases {
-        assert_eq!(external_string(single_value(source, "value")), expected);
+        assert_eq!(string_value(single_value(source, "value")), expected);
     }
 }
 
@@ -192,9 +349,22 @@ fn multi_character_trim_family_records_gf05() {
 }
 
 #[test]
+fn ordinary_trim_defaults_to_space_character_only() {
+    let cases = [
+        ("RETURN trim('  hello  ') AS value", "hello"),
+        (r"RETURN trim(' \thello\t ') AS value", "\thello\t"),
+        (r"RETURN trim(' \nhello\n ') AS value", "\nhello\n"),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(string_value(single_value(source, "value")), expected);
+    }
+}
+
+#[test]
 fn explicit_trim_supports_both_leading_trailing_and_defaults() {
     let cases = [
         ("RETURN TRIM(BOTH 'x' FROM 'xxhellox') AS value", "hello"),
+        ("RETURN TRIM('x' FROM 'xxhellox') AS value", "hello"),
         (
             "RETURN TRIM(LEADING 'x' FROM 'xxhellox') AS value",
             "hellox",
@@ -203,11 +373,18 @@ fn explicit_trim_supports_both_leading_trailing_and_defaults() {
             "RETURN TRIM(TRAILING 'x' FROM 'xxhellox') AS value",
             "xxhello",
         ),
-        ("RETURN TRIM(FROM ' hello ') AS value", "hello"),
+        ("RETURN TRIM(BOTH FROM ' hello ') AS value", "hello"),
     ];
     for (source, expected) in cases {
-        assert_eq!(external_string(single_value(source, "value")), expected);
+        assert_eq!(string_value(single_value(source, "value")), expected);
     }
+}
+
+#[test]
+fn explicit_trim_rejects_empty_from_operands() {
+    let err = parse("RETURN TRIM(FROM ' hello ') AS value")
+        .expect_err("FROM requires trim spec or character");
+    assert!(matches!(err, selene_gql::ParserError::SyntaxError { .. }));
 }
 
 #[test]
@@ -223,7 +400,7 @@ fn explicit_trim_propagates_null_and_reports_iso_errors() {
         );
     }
     assert_status("RETURN TRIM(BOTH 'xy' FROM 'xyhelloxy') AS value", "22027");
-    assert_status("RETURN TRIM(BOTH 7 FROM 'abc') AS value", "22G04");
+    assert_analysis_status("RETURN TRIM(BOTH 7 FROM 'abc') AS value", "22G03");
     assert_analysis_status("RETURN TRIM(BOTH 'x' FROM 7) AS value", "22G03");
 }
 

@@ -6,7 +6,7 @@
 //! `SchemaChange::PropertyIndexCreated` through the single mutation funnel (Hard
 //! Rule 11). It never bypasses the funnel and never re-enters `begin_write`.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use selene_graph::{GraphError, TypedIndexKind};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -51,7 +51,10 @@ pub(super) fn execute(
     let property = string_arg(&args[1], "property")?;
     let kind = parse_kind(string_arg(&args[2], "kind")?)?;
 
-    match ctx.mutator().create_property_index(label, property, kind) {
+    match ctx
+        .mutator()
+        .create_property_index(label.clone(), property.clone(), kind)
+    {
         Ok(()) => Ok(unit_result()),
         Err(GraphError::PropertyIndexAlreadyExists { .. }) => Err(invalid_arg(format!(
             "index for ({label}, {property}) already exists"
@@ -59,17 +62,13 @@ pub(super) fn execute(
         Err(GraphError::IndexValueRejected { .. }) => Err(invalid_arg(
             "existing nodes contain values incompatible with the requested index kind",
         )),
-        Err(GraphError::IndexAdmissionExhausted { .. }) => Err(invalid_arg(
-            "existing nodes contain string values that cannot be admitted to the IStr pool \
-             (cap exceeded); raise the cap or shed admitted strings before retrying",
-        )),
         Err(other) => Err(ProcedureError::Internal {
             detail: format!("unexpected graph error during index creation: {other}"),
         }),
     }
 }
 
-fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError> {
+fn string_arg(value: &Value, name: &'static str) -> Result<DbString, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!(
             "selene.create_index {name} must be a non-empty STRING"
@@ -80,20 +79,30 @@ fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError>
             "selene.create_index {name} must be a non-empty STRING"
         )));
     }
-    Ok(*value)
+    Ok(value.clone())
 }
 
-fn parse_kind(value: IStr) -> Result<TypedIndexKind, ProcedureError> {
+fn parse_kind(value: DbString) -> Result<TypedIndexKind, ProcedureError> {
     let raw = value.as_str();
     match raw.to_ascii_lowercase().as_str() {
+        "bool" | "boolean" => Ok(TypedIndexKind::Bool),
         "i64" | "integer" | "int" => Ok(TypedIndexKind::I64),
+        "u64" | "uint" | "uint64" => Ok(TypedIndexKind::U64),
+        "i128" | "int128" => Ok(TypedIndexKind::I128),
+        "u128" | "uint128" => Ok(TypedIndexKind::U128),
+        "decimal" | "dec" => Ok(TypedIndexKind::Decimal),
+        "f32" | "float32" => Ok(TypedIndexKind::F32),
         "f64" | "float" => Ok(TypedIndexKind::F64),
         "string" => Ok(TypedIndexKind::String),
         "date" => Ok(TypedIndexKind::Date),
         "local_datetime" | "localdatetime" => Ok(TypedIndexKind::LocalDateTime),
+        "zoned_datetime" | "zoneddatetime" => Ok(TypedIndexKind::ZonedDateTime),
+        "local_time" | "localtime" => Ok(TypedIndexKind::LocalTime),
+        "zoned_time" | "zonedtime" => Ok(TypedIndexKind::ZonedTime),
+        "duration" => Ok(TypedIndexKind::Duration),
         "uuid" => Ok(TypedIndexKind::Uuid),
         _ => Err(invalid_arg(format!(
-            "unknown index kind '{raw}'; expected one of i64, f64, string, date, local_datetime, uuid"
+            "unknown index kind '{raw}'; expected one of bool, i64, u64, i128, u128, decimal, f32, f64, string, date, local_datetime, zoned_datetime, local_time, zoned_time, duration, uuid"
         ))),
     }
 }

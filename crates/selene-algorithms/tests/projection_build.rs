@@ -3,37 +3,37 @@
 use proptest::prelude::*;
 use roaring::RoaringBitmap;
 use selene_algorithms::{GraphProjection, ProjectionConfig};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn weight_props(value: f64) -> PropertyMap {
-    PropertyMap::from_pairs([(istr("weight"), Value::Float(value))]).unwrap()
+    PropertyMap::from_pairs([(db_string("weight"), Value::Float(value))]).unwrap()
 }
 
 fn props_with_weight(value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(istr("weight"), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string("weight"), value)]).unwrap()
 }
 
 /// Build a small fixture:
 ///   Person(1) -- friend(weight=2.5) --> Person(2)
 ///   Person(2) -- friend(weight=4.0) --> Company(3)
 ///   Company(3) -- employs(weight=missing) --> Person(1)
-fn fixture_small() -> (SharedGraph, [NodeId; 3], [IStr; 2]) {
+fn fixture_small() -> (SharedGraph, [NodeId; 3], [DbString; 2]) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let person = istr("Person");
-    let company = istr("Company");
-    let friend = istr("friend");
-    let employs = istr("employs");
-    let weight = istr("weight");
+    let person = db_string("Person");
+    let company = db_string("Company");
+    let friend = db_string("friend");
+    let employs = db_string("employs");
+    let weight = db_string("weight");
 
     let mut txn = shared.begin_write();
     let n1 = txn
         .mutator()
-        .create_node(LabelSet::single(person), PropertyMap::new())
+        .create_node(LabelSet::single(person.clone()), PropertyMap::new())
         .unwrap();
     let n2 = txn
         .mutator()
@@ -45,14 +45,14 @@ fn fixture_small() -> (SharedGraph, [NodeId; 3], [IStr; 2]) {
         .unwrap();
 
     txn.mutator()
-        .create_edge(friend, n1, n2, weight_props(2.5))
+        .create_edge(friend.clone(), n1, n2, weight_props(2.5))
         .unwrap();
     txn.mutator()
-        .create_edge(friend, n2, n3, weight_props(4.0))
+        .create_edge(friend.clone(), n2, n3, weight_props(4.0))
         .unwrap();
     // Edge with no weight property — exercises §O.2 default-to-1.0.
     txn.mutator()
-        .create_edge(employs, n3, n1, PropertyMap::new())
+        .create_edge(employs.clone(), n3, n1, PropertyMap::new())
         .unwrap();
 
     txn.commit().unwrap();
@@ -88,7 +88,7 @@ fn projection_all_nodes_all_edges() {
 fn projection_label_filter() {
     let (shared, nodes, _) = fixture_small();
     let snapshot = shared.read();
-    let person = istr("Person");
+    let person = db_string("Person");
     let proj = GraphProjection::build(
         &snapshot,
         &ProjectionConfig {
@@ -120,7 +120,7 @@ fn projection_edge_label_filter() {
         &ProjectionConfig {
             name: "friends".to_string(),
             node_labels: vec![],
-            edge_labels: vec![friend],
+            edge_labels: vec![friend.clone()],
             weight_property: None,
         },
         None,
@@ -138,21 +138,26 @@ fn projection_edge_label_filter() {
 #[test]
 fn projection_transpose_invariant_holds_on_directed_dag() {
     let shared = SharedGraph::new(GraphId::new(96_001));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
 
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(4);
     for _ in 0..4 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     for (source, target) in [(0, 1), (1, 2), (2, 3)] {
         txn.mutator()
-            .create_edge(rel, nodes[source], nodes[target], PropertyMap::new())
+            .create_edge(
+                rel.clone(),
+                nodes[source],
+                nodes[target],
+                PropertyMap::new(),
+            )
             .unwrap();
     }
     txn.commit().unwrap();
@@ -179,29 +184,29 @@ fn projection_transpose_invariant_holds_on_directed_dag() {
 #[test]
 fn projection_transpose_invariant_holds_on_label_filtered_non_reciprocal() {
     let shared = SharedGraph::new(GraphId::new(96_002));
-    let label = istr("N");
-    let knows = istr("KNOWS");
-    let owns = istr("OWNS");
+    let label = db_string("N");
+    let knows = db_string("KNOWS");
+    let owns = db_string("OWNS");
 
     let mut txn = shared.begin_write();
     let a = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let b = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let c = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let d = txn
         .mutator()
         .create_node(LabelSet::single(label), PropertyMap::new())
         .unwrap();
     txn.mutator()
-        .create_edge(knows, a, b, PropertyMap::new())
+        .create_edge(knows.clone(), a, b, PropertyMap::new())
         .unwrap();
     txn.mutator()
         .create_edge(owns, c, d, PropertyMap::new())
@@ -237,7 +242,7 @@ fn projection_transpose_invariant_holds_on_label_filtered_non_reciprocal() {
 fn projection_weight_extraction() {
     let (shared, nodes, _) = fixture_small();
     let snapshot = shared.read();
-    let weight = istr("weight");
+    let weight = db_string("weight");
     let proj = GraphProjection::build(
         &snapshot,
         &ProjectionConfig {
@@ -266,7 +271,7 @@ fn projection_weight_missing_defaults_to_one() {
     // §E04 (and §O.2) the projection MUST default to 1.0, not error.
     let (shared, nodes, _) = fixture_small();
     let snapshot = shared.read();
-    let weight = istr("weight");
+    let weight = db_string("weight");
     let proj = GraphProjection::build(
         &snapshot,
         &ProjectionConfig {
@@ -295,13 +300,13 @@ fn projection_weight_uint_coerced_to_f64() {
     // ALGO-13: a `Value::Uint` weight goes through `extract_weight`'s Uint
     // coercion branch (`*u as f64`), distinct from the Int and Float branches.
     let shared = SharedGraph::new(GraphId::new(13_001));
-    let label = istr("N");
-    let rel = istr("R");
-    let weight = istr("weight");
+    let label = db_string("N");
+    let rel = db_string("R");
+    let weight = db_string("weight");
     let mut txn = shared.begin_write();
     let a = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let b = txn
         .mutator()
@@ -341,17 +346,17 @@ fn projection_weight_null_or_non_numeric_defaults_to_one() {
     // `properties.get(prop)` returns `None`) — here `get` returns `Some(..)`
     // but the variant is not Float/Int/Uint.
     let shared = SharedGraph::new(GraphId::new(13_002));
-    let label = istr("N");
-    let rel = istr("R");
-    let weight = istr("weight");
+    let label = db_string("N");
+    let rel = db_string("R");
+    let weight = db_string("weight");
     let mut txn = shared.begin_write();
     let a = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let b = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let c = txn
         .mutator()
@@ -359,7 +364,7 @@ fn projection_weight_null_or_non_numeric_defaults_to_one() {
         .unwrap();
     // a -> b: weight present but Null.
     txn.mutator()
-        .create_edge(rel, a, b, props_with_weight(Value::Null))
+        .create_edge(rel.clone(), a, b, props_with_weight(Value::Null))
         .unwrap();
     // b -> c: weight present but non-numeric (Bool).
     txn.mutator()
@@ -442,7 +447,7 @@ fn projection_generation_pinned() {
 
     // Mutate the graph: append one more Person node and commit.
     let mut txn = shared.begin_write();
-    let person = istr("Person");
+    let person = db_string("Person");
     txn.mutator()
         .create_node(LabelSet::single(person), PropertyMap::new())
         .unwrap();
@@ -471,15 +476,15 @@ proptest! {
         edge_count in 0usize..32usize,
     ) {
         let shared = SharedGraph::new(GraphId::new(1));
-        let label = istr("N");
-        let rel = istr("R");
+        let label = db_string("N");
+        let rel = db_string("R");
 
         let mut txn = shared.begin_write();
         let mut nodes: Vec<NodeId> = Vec::with_capacity(8);
         for _ in 0..8 {
             let id = txn
                 .mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap();
             nodes.push(id);
         }
@@ -494,7 +499,7 @@ proptest! {
             let tgt_idx = ((state >> 8) % 8) as usize;
             txn
                 .mutator()
-                .create_edge(rel, nodes[src_idx], nodes[tgt_idx], PropertyMap::new())
+                .create_edge(rel.clone(), nodes[src_idx], nodes[tgt_idx], PropertyMap::new())
                 .unwrap();
         }
         txn.commit().unwrap();

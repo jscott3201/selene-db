@@ -33,18 +33,48 @@ impl GqlStatus {
     /// Maps to GQLSTATUS 42N10, a selene-db implementation-defined subclass
     /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
     pub const DUPLICATE_OBJECT: Self = Self(*b"42N10");
+    /// Maps to GQLSTATUS 42012 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// ("number of node type key labels below supported minimum"). Raised when
+    /// the cardinality of an explicit `<node type key label set>` effective key
+    /// label set is below the implementation-defined (IL003) node-type key
+    /// label set minimum cardinality (§18.2 SR10).
+    pub const NODE_TYPE_KEY_LABELS_BELOW_MINIMUM: Self = Self(*b"42012");
+    /// Maps to GQLSTATUS 42013 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// ("number of node type key labels exceeds supported maximum"). Raised when
+    /// the cardinality of an explicit `<node type key label set>` effective key
+    /// label set exceeds the implementation-defined (IL003) node-type key label
+    /// set maximum cardinality (§18.2 SR11).
+    pub const NODE_TYPE_KEY_LABELS_EXCEED_MAXIMUM: Self = Self(*b"42013");
+    /// Maps to GQLSTATUS 42014 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// ("number of edge type key labels below supported minimum"). Raised when
+    /// the cardinality of an explicit `<edge type key label set>` effective key
+    /// label set is below the implementation-defined (IL003) edge-type key label
+    /// set minimum cardinality (§18.3 SR11).
+    pub const EDGE_TYPE_KEY_LABELS_BELOW_MINIMUM: Self = Self(*b"42014");
+    /// Maps to GQLSTATUS 42015 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// ("number of edge type key labels exceeds supported maximum"). Raised when
+    /// the cardinality of an explicit `<edge type key label set>` effective key
+    /// label set exceeds the implementation-defined (IL003) edge-type key label
+    /// set maximum cardinality (§18.3 SR12).
+    pub const EDGE_TYPE_KEY_LABELS_EXCEED_MAXIMUM: Self = Self(*b"42015");
     /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DATATYPE_MISMATCH: Self = Self(*b"22G03");
     /// Maps to GQLSTATUS 22000 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DATA_EXCEPTION: Self = Self(*b"22000");
     /// Maps to GQLSTATUS 22003 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const NUMERIC_VALUE_OUT_OF_RANGE: Self = Self(*b"22003");
+    /// Maps to GQLSTATUS 22004 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NULL_VALUE_NOT_ALLOWED: Self = Self(*b"22004");
+    /// Maps to GQLSTATUS 22007 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DATETIME_FORMAT: Self = Self(*b"22007");
     /// Maps to GQLSTATUS 22011 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const SUBSTRING_ERROR: Self = Self(*b"22011");
     /// Maps to GQLSTATUS 22012 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DIVISION_BY_ZERO: Self = Self(*b"22012");
     /// Maps to GQLSTATUS 22018 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_CHARACTER_VALUE_FOR_CAST: Self = Self(*b"22018");
+    /// Maps to GQLSTATUS 22001 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const STRING_DATA_RIGHT_TRUNCATION: Self = Self(*b"22001");
     /// Maps to GQLSTATUS 22009 per ISO/IEC 39075:2024 section 23.1 Table 8
     /// (data exception — invalid time zone displacement value).
     pub const INVALID_TIME_ZONE: Self = Self(*b"22009");
@@ -54,12 +84,41 @@ impl GqlStatus {
     pub const INVALID_ARGUMENT_FOR_POWER_FUNCTION: Self = Self(*b"2201F");
     /// Maps to GQLSTATUS 22027 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const TRIM_ERROR: Self = Self(*b"22027");
+    /// Maps to GQLSTATUS 22G02 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NEGATIVE_LIMIT_VALUE: Self = Self(*b"22G02");
     /// Maps to GQLSTATUS 22G04 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const VALUES_NOT_COMPARABLE: Self = Self(*b"22G04");
+    /// Maps to GQLSTATUS 22G05 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DATETIME_FUNCTION_FIELD_NAME: Self = Self(*b"22G05");
+    /// Maps to GQLSTATUS 22G06 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DATETIME_FUNCTION_VALUE: Self = Self(*b"22G06");
+    /// Maps to GQLSTATUS 22G07 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DURATION_FUNCTION_FIELD_NAME: Self = Self(*b"22G07");
+    /// Maps to GQLSTATUS 22G0B per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const LIST_DATA_RIGHT_TRUNCATION: Self = Self(*b"22G0B");
     /// Maps to GQLSTATUS 22G0C per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const LIST_ELEMENT_ERROR: Self = Self(*b"22G0C");
+    /// Maps to GQLSTATUS 22G0F per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// (data exception — invalid number of paths or groups). Raised when a
+    /// counted shortest path/group count (§16.6, §22.4 GR7) is not a positive
+    /// integer.
+    pub const INVALID_NUMBER_OF_PATHS_OR_GROUPS: Self = Self(*b"22G0F");
+    /// Maps to GQLSTATUS 22G0H per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_DURATION_FORMAT: Self = Self(*b"22G0H");
+    /// Maps to GQLSTATUS 22G10 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const PATH_DATA_RIGHT_TRUNCATION: Self = Self(*b"22G10");
+    /// Maps to GQLSTATUS 22G14 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS: Self = Self(*b"22G14");
     /// Maps to GQLSTATUS 22G0M per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY: Self = Self(*b"22G0M");
+    /// Maps to GQLSTATUS 22G0N per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NODE_LABELS_BELOW_SUPPORTED_MINIMUM: Self = Self(*b"22G0N");
+    /// Maps to GQLSTATUS 22G0P per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NODE_LABELS_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0P");
+    /// Maps to GQLSTATUS 22G0Q per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const EDGE_LABELS_BELOW_SUPPORTED_MINIMUM: Self = Self(*b"22G0Q");
+    /// Maps to GQLSTATUS 22G0R per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const EDGE_LABELS_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0R");
     /// Maps to GQLSTATUS 22G0S per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const NODE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0S");
     /// Maps to GQLSTATUS 22G0T per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -68,6 +127,8 @@ impl GqlStatus {
     pub const RECORD_FIELDS_DO_NOT_MATCH: Self = Self(*b"22G0U");
     /// Maps to GQLSTATUS 22G0X per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const RECORD_DATA_FIELD_UNASSIGNABLE: Self = Self(*b"22G0X");
+    /// Maps to GQLSTATUS 22G0Z per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const MALFORMED_PATH: Self = Self(*b"22G0Z");
     /// Maps to GQLSTATUS 25000 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_TRANSACTION_STATE: Self = Self(*b"25000");
     /// Maps to GQLSTATUS 25G01 per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -170,20 +231,6 @@ pub enum ParserError {
         hint: &'static str,
     },
 
-    /// Query introduced more distinct interner admissions than the parser cap allows.
-    #[error("interner-admission budget exceeded ({limit})")]
-    #[diagnostic(
-        code(SLENE_GQL_5GQL1),
-        help("queries are bounded to 8192 distinct new interner admissions per parse")
-    )]
-    InternerBudgetExceeded {
-        /// Distinct admission limit.
-        limit: u32,
-        /// Source span that crossed the limit.
-        #[label("introduces too many new interned strings")]
-        span: SourceSpan,
-    },
-
     /// Query nesting exceeded the parser's recursion cap.
     #[error("parser nesting limit exceeded ({limit})")]
     #[diagnostic(
@@ -195,6 +242,67 @@ pub enum ParserError {
         limit: u32,
         /// Source span that crossed the limit.
         #[label("exceeds parser nesting limit")]
+        span: SourceSpan,
+    },
+
+    /// Query exceeded a parser complexity cap that bounds pest's recursive
+    /// descent before it begins.
+    ///
+    /// Maps to GQLSTATUS 5GQL1 (PROGRAM_LIMIT_EXCEEDED), a selene-db
+    /// implementation-defined class per ISO/IEC 39075:2024 section 23.1 (see
+    /// [`GqlStatus::PROGRAM_LIMIT_EXCEEDED`]).
+    ///
+    /// Distinct from [`Self::NestingLimitExceeded`], which bounds *all-bracket*
+    /// net delimiter nesting depth at a looser cap. This variant covers the
+    /// parser's complexity guards, each of which would otherwise drive
+    /// pathological pest behavior or overflow the native stack on a small
+    /// hostile input:
+    ///
+    /// - **`[`-depth** (pre-pest byte scan). pest is not packrat-memoized, so a
+    ///   run of *unclosed* `[` nests the three ambiguous `[`-prefixed grammar
+    ///   rules and recomputes their failed branches at every level, driving
+    ///   super-linear backtracking. Balanced, promptly closed `[` (an edge
+    ///   pattern, a flat list) never accrue depth, so legitimate wide paths and
+    ///   lists are unaffected.
+    /// - **Zero-delimiter recursion depth** (pre-pest byte scan). A long run of
+    ///   leading unary signs (`unary`), `NOT` keywords (`not_expr`), or nested
+    ///   `CASE … END` expressions (`case_expr`) recurses pest's descent one stack
+    ///   frame per level with no `(`/`[`/`{` delimiter to bound it, overflowing
+    ///   the native stack (a non-unwindable crash) on a small input. Signs and
+    ///   `NOT` are bounded as runs; `CASE` is bounded by a *monotone*
+    ///   over-approximation — a real opener (counted only outside identifier
+    ///   positions: property names, map keys, aliases, `YIELD` columns, params)
+    ///   adds 1 plus its wrapping run and never decrements, because an identifier
+    ///   `END` cannot be soundly distinguished from the keyword closer. The
+    ///   conformant cost is that a statement whose combined `CASE`-count and
+    ///   nesting pressure exceeds the ceiling (256) is rejected.
+    /// - **Expression nesting depth** (post-build, iterative scan). A flat
+    ///   left-associative operator fold (`a OR a OR …`) or postfix chain
+    ///   (`a.b.c.…`) parses and builds iteratively but yields a depth-N
+    ///   `Box<ValueExpr>` tree whose *recursive* consumers (the Flagger,
+    ///   `Drop`, the analyzer) overflow the native stack at ~130k deep. The
+    ///   parser rejects any expression deeper than the shared recursion ceiling
+    ///   (256) before the Flagger walks it.
+    ///
+    /// The pre-pest guards reject before recursive descent begins; the
+    /// expression-depth guard runs after AST construction and before the
+    /// Flagger. All are deterministic and cheap.
+    #[error("parser complexity limit exceeded (limit {limit})")]
+    #[diagnostic(
+        code(SLENE_GQL_5GQL1),
+        help(
+            "queries are bounded in `[` (list, index, comprehension) nesting depth, in \
+             zero-delimiter recursion depth (consecutive unary signs or `NOT` keywords, or nested \
+             `CASE … END` expressions), and in expression nesting depth (deep operator folds or \
+             access chains); deep nesting of any of these drives pathological parser recursion or \
+             overflows the native stack"
+        )
+    )]
+    ComplexityLimitExceeded {
+        /// Maximum admitted depth for the complexity dimension that was exceeded.
+        limit: u32,
+        /// Source span of the token that crossed the limit.
+        #[label("exceeds parser complexity limit")]
         span: SourceSpan,
     },
 
@@ -227,7 +335,7 @@ impl ParserError {
             Self::UnsupportedFeature { .. } | Self::NotImplemented { .. } => {
                 GqlStatus::FEATURE_NOT_SUPPORTED
             }
-            Self::InternerBudgetExceeded { .. } | Self::NestingLimitExceeded { .. } => {
+            Self::NestingLimitExceeded { .. } | Self::ComplexityLimitExceeded { .. } => {
                 GqlStatus::PROGRAM_LIMIT_EXCEEDED
             }
         }
@@ -240,6 +348,24 @@ impl ParserError {
     ) -> Self {
         Self::SyntaxError {
             status: GqlStatus::SYNTAX_ERROR,
+            message: message.into(),
+            span,
+            hint,
+        }
+    }
+
+    /// Build a [`Self::SyntaxError`] carrying an explicit GQLSTATUS code rather
+    /// than the default `42001`. Used by builder-level static validations whose
+    /// ISO diagnostic is a specific data-exception subclass (e.g. counted
+    /// shortest path/group count `22G0F`, §22.4 GR7).
+    pub(crate) fn syntax_with_status(
+        status: GqlStatus,
+        message: impl Into<String>,
+        span: SourceSpan,
+        hint: Option<String>,
+    ) -> Self {
+        Self::SyntaxError {
+            status,
             message: message.into(),
             span,
             hint,
@@ -282,12 +408,35 @@ mod tests {
             (GqlStatus::UNDEFINED_REFERENCE, "42N03", *b"42"),
             (GqlStatus::INVALID_REFERENCE, "42002", *b"42"),
             (GqlStatus::DUPLICATE_OBJECT, "42N10", *b"42"),
+            (
+                GqlStatus::NODE_TYPE_KEY_LABELS_BELOW_MINIMUM,
+                "42012",
+                *b"42",
+            ),
+            (
+                GqlStatus::NODE_TYPE_KEY_LABELS_EXCEED_MAXIMUM,
+                "42013",
+                *b"42",
+            ),
+            (
+                GqlStatus::EDGE_TYPE_KEY_LABELS_BELOW_MINIMUM,
+                "42014",
+                *b"42",
+            ),
+            (
+                GqlStatus::EDGE_TYPE_KEY_LABELS_EXCEED_MAXIMUM,
+                "42015",
+                *b"42",
+            ),
             (GqlStatus::DATATYPE_MISMATCH, "22G03", *b"22"),
             (GqlStatus::DATA_EXCEPTION, "22000", *b"22"),
             (GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE, "22003", *b"22"),
+            (GqlStatus::NULL_VALUE_NOT_ALLOWED, "22004", *b"22"),
+            (GqlStatus::INVALID_DATETIME_FORMAT, "22007", *b"22"),
             (GqlStatus::SUBSTRING_ERROR, "22011", *b"22"),
             (GqlStatus::DIVISION_BY_ZERO, "22012", *b"22"),
             (GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST, "22018", *b"22"),
+            (GqlStatus::STRING_DATA_RIGHT_TRUNCATION, "22001", *b"22"),
             (GqlStatus::INVALID_TIME_ZONE, "22009", *b"22"),
             (
                 GqlStatus::INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM,
@@ -300,11 +449,56 @@ mod tests {
                 *b"22",
             ),
             (GqlStatus::TRIM_ERROR, "22027", *b"22"),
+            (GqlStatus::NEGATIVE_LIMIT_VALUE, "22G02", *b"22"),
             (GqlStatus::VALUES_NOT_COMPARABLE, "22G04", *b"22"),
+            (
+                GqlStatus::INVALID_DATETIME_FUNCTION_FIELD_NAME,
+                "22G05",
+                *b"22",
+            ),
+            (GqlStatus::INVALID_DATETIME_FUNCTION_VALUE, "22G06", *b"22"),
+            (
+                GqlStatus::INVALID_DURATION_FUNCTION_FIELD_NAME,
+                "22G07",
+                *b"22",
+            ),
+            (GqlStatus::LIST_DATA_RIGHT_TRUNCATION, "22G0B", *b"22"),
             (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
+            (
+                GqlStatus::INVALID_NUMBER_OF_PATHS_OR_GROUPS,
+                "22G0F",
+                *b"22",
+            ),
+            (GqlStatus::INVALID_DURATION_FORMAT, "22G0H", *b"22"),
+            (GqlStatus::PATH_DATA_RIGHT_TRUNCATION, "22G10", *b"22"),
+            (
+                GqlStatus::INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS,
+                "22G14",
+                *b"22",
+            ),
             (
                 GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY,
                 "22G0M",
+                *b"22",
+            ),
+            (
+                GqlStatus::NODE_LABELS_BELOW_SUPPORTED_MINIMUM,
+                "22G0N",
+                *b"22",
+            ),
+            (
+                GqlStatus::NODE_LABELS_EXCEED_SUPPORTED_MAXIMUM,
+                "22G0P",
+                *b"22",
+            ),
+            (
+                GqlStatus::EDGE_LABELS_BELOW_SUPPORTED_MINIMUM,
+                "22G0Q",
+                *b"22",
+            ),
+            (
+                GqlStatus::EDGE_LABELS_EXCEED_SUPPORTED_MAXIMUM,
+                "22G0R",
                 *b"22",
             ),
             (
@@ -319,6 +513,7 @@ mod tests {
             ),
             (GqlStatus::RECORD_FIELDS_DO_NOT_MATCH, "22G0U", *b"22"),
             (GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE, "22G0X", *b"22"),
+            (GqlStatus::MALFORMED_PATH, "22G0Z", *b"22"),
             (GqlStatus::INVALID_TRANSACTION_STATE, "25000", *b"25"),
             (GqlStatus::ACTIVE_TRANSACTION, "25G01", *b"25"),
             (GqlStatus::INVALID_TRANSACTION_STATE_MIXING, "25G02", *b"25"),
@@ -343,6 +538,10 @@ mod tests {
         for (status, code, class) in cases {
             assert_eq!(status.as_str(), code);
             assert_eq!(status.class(), class);
+            assert!(
+                selene_core::gqlstatus_name(code).is_some(),
+                "GQLSTATUS {code} is public in selene-gql but missing from selene-core names"
+            );
         }
     }
 

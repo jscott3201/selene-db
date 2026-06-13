@@ -1,28 +1,29 @@
 //! Scalar function evaluation.
 //!
-//! Dispatches the v1.1 closed scalar-function set case-insensitively. Each
+//! Dispatches the current closed scalar-function set case-insensitively. Each
 //! function owns arity checking; `NULL` propagates except where short-circuit
 //! functions (`coalesce`, `nullif`) define different behavior.
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
-    BinaryOp, NonEmpty, SourceSpan, ValueExpr,
+    BinaryOp, NonEmpty, SourceSpan, TemporalDurationQualifier, ValueExpr,
     runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
 use super::{
     binary_ops::{
         data_exception, data_exception_value, data_exception_value_with, data_exception_with,
-        eval_binary, numeric_to_f64,
+        eval_binary, eval_float_power, numeric_to_f64,
     },
-    identity_length_fns,
+    concat_ops::ConcatCaps,
+    duration_fns, identity_length_fns, json_fns, modulus_fns,
     string_fns::{self, eval_fixed_args, eval_range_args},
     temporal_fns, uuid_fns,
 };
 
 pub(super) fn eval_function_call(
-    name: &NonEmpty<IStr>,
+    name: &NonEmpty<DbString>,
     args: &[ValueExpr],
     (star, distinct): (bool, bool),
     span: SourceSpan,
@@ -60,12 +61,12 @@ pub(super) fn eval_function_call(
         "ceil" | "ceiling" => eval_unary_numeric(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
-            f64::ceil,
+            NumericUnaryOp::Ceil,
         ),
         "floor" => eval_unary_numeric(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
-            f64::floor,
+            NumericUnaryOp::Floor,
         ),
         "sin" => eval_unary_float(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
@@ -151,22 +152,24 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
-        "round" => eval_unary_numeric(
-            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+        "mod" => modulus_fns::eval_mod(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
             span,
-            f64::round,
+            ctx,
         ),
-        "mod" => {
-            let args = eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?;
-            eval_binary(BinaryOp::Mod, args[0].clone(), args[1].clone(), span)
-        }
         "sqrt" => eval_sqrt(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
         "power" => {
             let args = eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?;
-            eval_binary(BinaryOp::Power, args[0].clone(), args[1].clone(), span)
+            eval_binary(
+                BinaryOp::Power,
+                args[0].clone(),
+                args[1].clone(),
+                span,
+                ConcatCaps::from_impl_defined(ctx.impl_defined_caps()),
+            )
         }
         "element_id" => identity_length_fns::eval_element_id(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
@@ -177,12 +180,35 @@ pub(super) fn eval_function_call(
             span,
             ctx,
         ),
-        "length" | "char_length" | "character_length" => string_fns::eval_length(
+        "path_length" => identity_length_fns::eval_path_length(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
-        "substring" => string_fns::eval_substring(
-            eval_range_args(&display_name, args, 2..=3, span, binding, schema, ctx)?,
+        "elements" => identity_length_fns::eval_elements(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "labels" => identity_length_fns::eval_labels(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            ctx,
+        ),
+        "duration" => duration_fns::eval_duration_function(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "duration_between" => duration_fns::eval_duration_between_function(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            TemporalDurationQualifier::DayToSecond,
+            span,
+        ),
+        "char_length" | "character_length" => string_fns::eval_length(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "byte_length" | "octet_length" => string_fns::eval_byte_length(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
         "left" => string_fns::eval_left_right(
@@ -214,16 +240,15 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             str::to_uppercase,
+            ctx.impl_defined_caps().max_string_length,
         ),
         "lower" => string_fns::eval_string_transform(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             str::to_lowercase,
+            ctx.impl_defined_caps().max_string_length,
         ),
-        "trim" => string_fns::eval_trim(
-            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
-            span,
-        ),
+        "trim" => string_fns::eval_trim_function(&display_name, args, span, binding, schema, ctx),
         "coalesce" => string_fns::eval_coalesce(&display_name, args, span, binding, schema, ctx),
         "nullif" => string_fns::eval_nullif(
             eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
@@ -255,28 +280,164 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
-        // ISO/IEC 39075:2024 section 20.27 current-datetime functions. Each is
-        // niladic and reads the session time zone threaded into the context.
-        "current_timestamp" | "now" => {
+        "json" | "json_parse" => json_fns::eval_json_parse(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_stringify" => json_fns::eval_json_stringify(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_type" => json_fns::eval_json_type(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_array" => json_fns::eval_json_array(
+            eval_range_args(
+                &display_name,
+                args,
+                0..=json_fns::JSON_ARRAY_MAX_ARGS,
+                span,
+                binding,
+                schema,
+                ctx,
+            )?,
+            span,
+        ),
+        "json_object" => json_fns::eval_json_object(
+            eval_range_args(
+                &display_name,
+                args,
+                0..=json_fns::JSON_OBJECT_MAX_ARGS,
+                span,
+                binding,
+                schema,
+                ctx,
+            )?,
+            span,
+        ),
+        "json_array_length" => json_fns::eval_json_array_length(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_object_keys" => json_fns::eval_json_object_keys(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_contains" => json_fns::eval_json_contains(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_merge_patch" => json_fns::eval_json_merge_patch(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_patch" => json_fns::eval_json_patch(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_get" => json_fns::eval_json_get(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_get_text" => json_fns::eval_json_get_text(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_get_scalar" => json_fns::eval_json_get_scalar(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
+        "json_get_path" => json_fns::eval_json_get_path(
+            eval_range_args(
+                &display_name,
+                args,
+                2..=json_fns::JSON_PATH_MAX_ARGS,
+                span,
+                binding,
+                schema,
+                ctx,
+            )?,
+            span,
+        ),
+        "json_get_path_text" => json_fns::eval_json_get_path_text(
+            eval_range_args(
+                &display_name,
+                args,
+                2..=json_fns::JSON_PATH_MAX_ARGS,
+                span,
+                binding,
+                schema,
+                ctx,
+            )?,
+            span,
+        ),
+        "json_get_path_scalar" => json_fns::eval_json_get_path_scalar(
+            eval_range_args(
+                &display_name,
+                args,
+                2..=json_fns::JSON_PATH_MAX_ARGS,
+                span,
+                binding,
+                schema,
+                ctx,
+            )?,
+            span,
+        ),
+        "json_has_path" => json_fns::eval_json_has_path(
+            eval_range_args(
+                &display_name,
+                args,
+                2..=json_fns::JSON_PATH_MAX_ARGS,
+                span,
+                binding,
+                schema,
+                ctx,
+            )?,
+            span,
+        ),
+        // ISO/IEC 39075:2024 section 20.27 current-datetime functions and
+        // constructor forms. Niladic paths read the session time zone threaded
+        // into the context; constructor paths may parse one string argument.
+        "current_timestamp" => {
             eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
             temporal_fns::eval_current_timestamp(ctx)
         }
-        "localtimestamp" => {
-            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
-            temporal_fns::eval_localtimestamp(ctx)
-        }
-        "current_date" => {
-            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
-            temporal_fns::eval_current_date(ctx)
-        }
-        "current_time" => {
-            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
-            temporal_fns::eval_current_time(ctx)
-        }
-        "localtime" => {
-            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
-            temporal_fns::eval_localtime(ctx)
-        }
+        "zoned_datetime" => temporal_fns::eval_zoned_datetime_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "datetime" | "local_datetime" => temporal_fns::eval_local_datetime_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "date" => temporal_fns::eval_date_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "current_date" => temporal_fns::eval_date_constructor(
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "zoned_time" => temporal_fns::eval_zoned_time_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "current_time" => temporal_fns::eval_zoned_time_constructor(
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
+        "time" | "local_time" => temporal_fns::eval_local_time_constructor(
+            eval_range_args(&display_name, args, 0..=1, span, binding, schema, ctx)?,
+            ctx,
+            span,
+        ),
         _ => Err(ExecutorError::UnknownFunction {
             name: display_name,
             span,
@@ -301,34 +462,59 @@ fn eval_abs(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> 
                 span,
             )
         }),
+        Value::Decimal(value) => Ok(Value::Decimal(value.abs())),
         Value::Uint(value) => Ok(Value::Uint(value)),
         Value::Uint128(value) => Ok(Value::Uint128(value)),
         Value::Float(value) if value.is_finite() => Ok(Value::Float(value.abs())),
-        Value::Float32(value) if value.is_finite() => Ok(Value::Float(f64::from(value).abs())),
+        Value::Float32(value) if value.is_finite() => Ok(Value::Float32(value.abs())),
         Value::Float(_) | Value::Float32(_) => data_exception_with(
             DataExceptionSubclass::NumericValueOutOfRange,
             "numeric result is non-finite",
             span,
         ),
-        _ => data_exception("abs argument is not numeric", span),
+        Value::Duration(value) => Ok(Value::Duration(Box::new(value.abs()))),
+        _ => data_exception("abs argument is not numeric or duration", span),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NumericUnaryOp {
+    Ceil,
+    Floor,
+}
+
+impl NumericUnaryOp {
+    fn apply_float(self, value: f64) -> f64 {
+        match self {
+            Self::Ceil => value.ceil(),
+            Self::Floor => value.floor(),
+        }
+    }
+
+    fn apply_decimal(self, value: rust_decimal::Decimal) -> rust_decimal::Decimal {
+        match self {
+            Self::Ceil => value.ceil(),
+            Self::Floor => value.floor(),
+        }
     }
 }
 
 fn eval_unary_numeric(
     args: Vec<Value>,
     span: SourceSpan,
-    op: fn(f64) -> f64,
+    op: NumericUnaryOp,
 ) -> Result<Value, ExecutorError> {
     match args.into_iter().next().expect("arity checked") {
         Value::Null => Ok(Value::Null),
         value @ (Value::Int(_) | Value::Uint(_) | Value::Int128(_) | Value::Uint128(_)) => {
             Ok(value)
         }
+        Value::Decimal(value) => Ok(Value::Decimal(op.apply_decimal(value))),
         value => {
             let Some(value) = numeric_to_f64(&value) else {
                 return data_exception("numeric function argument is not numeric", span);
             };
-            let value = op(value);
+            let value = op.apply_float(value);
             if value.is_finite() {
                 Ok(Value::Float(value))
             } else {
@@ -480,30 +666,14 @@ fn eval_sqrt(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError>
     let Some(value) = numeric_to_f64(&value) else {
         return data_exception("sqrt argument is not numeric", span);
     };
-    if value < 0.0 {
-        return data_exception_with(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "sqrt argument is negative",
-            span,
-        );
-    }
-    let value = value.sqrt();
-    if value.is_finite() {
-        Ok(Value::Float(value))
-    } else {
-        data_exception_with(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "sqrt result is non-finite",
-            span,
-        )
-    }
+    eval_float_power(value, 0.5, span)
 }
 
-fn single_segment_name(name: &NonEmpty<IStr>) -> Option<String> {
+fn single_segment_name(name: &NonEmpty<DbString>) -> Option<String> {
     (name.len() == 1).then(|| name.first().as_str().to_ascii_lowercase())
 }
 
-fn display_name(name: &NonEmpty<IStr>) -> String {
+fn display_name(name: &NonEmpty<DbString>) -> String {
     name.iter()
         .map(|segment| segment.as_str())
         .collect::<Vec<_>>()

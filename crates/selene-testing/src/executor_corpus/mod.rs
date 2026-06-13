@@ -4,7 +4,7 @@
 pub mod coverage;
 pub mod fixtures;
 
-use selene_core::{IStr, Value, intern};
+use selene_core::{DbString, Value};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, IndexHandle, IndexKind, JoinTree, ProcedureRegistry,
     ProcedureResult, ScanAccess, analyze, optimize, parse, plan,
@@ -71,18 +71,18 @@ impl ExecutorCorpus {
 
     #[must_use]
     pub fn standard_mock_catalog() -> MockIndexCatalog {
-        let person = istr("Person");
+        let person = db_string("Person");
         MockIndexCatalog::new()
-            .with_node_label_index(person)
-            .with_node_typed_index(person, istr("age"), IndexKind::Integer)
-            .with_node_typed_index(person, istr("email"), IndexKind::String)
-            .with_node_typed_index(person, istr("kind"), IndexKind::String)
-            .with_node_typed_index(person, istr("tenant"), IndexKind::String)
+            .with_node_label_index(person.clone())
+            .with_node_typed_index(person.clone(), db_string("age"), IndexKind::Integer)
+            .with_node_typed_index(person.clone(), db_string("email"), IndexKind::String)
+            .with_node_typed_index(person.clone(), db_string("kind"), IndexKind::String)
+            .with_node_typed_index(person.clone(), db_string("tenant"), IndexKind::String)
             .with_node_composite_index(
                 person,
                 vec![
-                    (istr("tenant"), IndexKind::String),
-                    (istr("kind"), IndexKind::String),
+                    (db_string("tenant"), IndexKind::String),
+                    (db_string("kind"), IndexKind::String),
                 ],
             )
     }
@@ -94,7 +94,7 @@ impl ExecutorCorpus {
 }
 
 fn with_standard_call_result(mut registry: MockProcedureRegistry) -> MockProcedureRegistry {
-    let pkg_all = [istr("pkg"), istr("all")];
+    let pkg_all = [db_string("pkg"), db_string("all")];
     let handle = registry
         .lookup(&pkg_all)
         .expect("standard mock registry registers pkg.all")
@@ -103,8 +103,8 @@ fn with_standard_call_result(mut registry: MockProcedureRegistry) -> MockProcedu
         handle,
         ProcedureResult {
             rows: vec![
-                vec![Value::String(istr("alpha")), Value::Int(10)],
-                vec![Value::String(istr("beta")), Value::Int(20)],
+                vec![Value::String(db_string("alpha")), Value::Int(10)],
+                vec![Value::String(db_string("beta")), Value::Int(20)],
             ],
         },
     );
@@ -440,8 +440,8 @@ fn first_scan_mut(tree: &mut JoinTree) -> Option<&mut selene_gql::NodeOrEdgeScan
     }
 }
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("executor fixture strings fit the interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("executor fixture strings fit DB string cap")
 }
 
 #[cfg(test)]
@@ -454,19 +454,23 @@ mod tests {
     fn standard_call_result_uses_lookup_handle_not_raw_literal() {
         let registry = with_standard_call_result(
             MockProcedureRegistry::new()
-                .with_procedure(vec![istr("pkg"), istr("before")], Vec::new(), Vec::new())
                 .with_procedure(
-                    vec![istr("pkg"), istr("all")],
+                    vec![db_string("pkg"), db_string("before")],
+                    Vec::new(),
+                    Vec::new(),
+                )
+                .with_procedure(
+                    vec![db_string("pkg"), db_string("all")],
                     Vec::new(),
                     vec![
-                        ProcedureOutputColumn::new(istr("outA"), GqlType::String),
-                        ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
+                        ProcedureOutputColumn::new(db_string("outA"), GqlType::String),
+                        ProcedureOutputColumn::new(db_string("outB"), GqlType::Integer),
                     ],
                 ),
         );
 
         let handle = registry
-            .lookup(&[istr("pkg"), istr("all")])
+            .lookup(&[db_string("pkg"), db_string("all")])
             .expect("pkg.all is registered")
             .handle;
         assert_eq!(handle.raw(), 2);

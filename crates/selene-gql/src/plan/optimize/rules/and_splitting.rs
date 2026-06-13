@@ -165,16 +165,34 @@ fn split_predicate(
 }
 
 fn flatten_and(expr: ValueExpr, out: &mut Vec<ValueExpr>) {
-    match expr {
-        ValueExpr::BinaryOp {
+    // Iterative depth-first flatten. `ValueExpr` carries a manual iterative
+    // `Drop` (see `ast::expr`), so its child `Box<ValueExpr>`s cannot be moved
+    // out of an owned node by a by-value `match` arm (E0509). Extract the
+    // conjuncts in place with `mem::replace` and walk a worklist instead, which
+    // also keeps the flatten itself non-recursive. A `lhs`-then-`rhs` push order
+    // (rhs pushed first, popped last) preserves the original left-to-right
+    // conjunct ordering in `out`.
+    let mut stack = vec![expr];
+    while let Some(mut expr) = stack.pop() {
+        if let ValueExpr::BinaryOp {
             op: BinaryOp::And,
             lhs,
             rhs,
             ..
-        } => {
-            flatten_and(*lhs, out);
-            flatten_and(*rhs, out);
+        } = &mut expr
+        {
+            let lhs = std::mem::replace(lhs.as_mut(), placeholder_expr());
+            let rhs = std::mem::replace(rhs.as_mut(), placeholder_expr());
+            stack.push(rhs);
+            stack.push(lhs);
+        } else {
+            out.push(expr);
         }
-        other => out.push(other),
     }
+}
+
+/// A childless placeholder swapped into an `AND` node's operand slots while its
+/// real conjuncts are hoisted out (the node itself is then discarded).
+fn placeholder_expr() -> ValueExpr {
+    ValueExpr::Literal(crate::ast::expr::Literal::Null(crate::SourceSpan::default()))
 }

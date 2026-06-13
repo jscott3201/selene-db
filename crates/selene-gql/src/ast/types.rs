@@ -1,6 +1,10 @@
 //! GQL type AST nodes.
 
-use selene_core::IStr;
+use std::hash::{Hash, Hasher};
+
+use selene_core::{
+    DbString, DecimalType, MAX_BYTE_STRING_TYPE_LENGTH, MAX_CHARACTER_STRING_TYPE_LENGTH,
+};
 
 /// Parsed GQL type.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -8,6 +12,8 @@ use selene_core::IStr;
 pub enum GqlType {
     /// `STRING`.
     String,
+    /// Bounded character-string type.
+    CharacterString(CharacterStringType),
     /// `BOOLEAN`.
     Boolean,
     /// `INTEGER`.
@@ -38,20 +44,40 @@ pub enum GqlType {
     Uint64,
     /// `UINT128`.
     Uint128,
+    /// `USMALLINT`.
+    USmallInt,
+    /// `UINT`.
+    Uint,
+    /// `UBIGINT`.
+    UBigInt,
     /// `SMALLINT`.
     SmallInt,
     /// `BIGINT`.
     BigInt,
     /// `DECIMAL`.
     Decimal,
+    /// `DECIMAL(p)` or `DECIMAL(p, s)`.
+    DecimalExact(DecimalType),
     /// `FLOAT32`.
     Float32,
     /// `FLOAT64`.
     Float64,
+    /// `REAL`.
+    ///
+    /// ISO floating-point type-name synonym with `FLOAT32` semantics.
+    Real,
+    /// `DOUBLE` or `DOUBLE PRECISION`.
+    ///
+    /// ISO floating-point type-name synonym with `FLOAT64` semantics.
+    Double,
     /// Byte-string type.
     Bytes,
+    /// Bounded byte-string type.
+    ByteString(ByteStringType),
     /// `UUID`.
     Uuid,
+    /// Native JSON value.
+    Json,
     /// `ZONED DATETIME`.
     ZonedDateTime,
     /// `LOCAL DATETIME`.
@@ -64,10 +90,22 @@ pub enum GqlType {
     LocalTime,
     /// `DURATION`.
     Duration,
+    /// `DURATION (YEAR TO MONTH)`.
+    DurationYearToMonth,
+    /// `DURATION (DAY TO SECOND)`.
+    DurationDayToSecond,
+    /// Native dense-vector value.
+    ///
+    /// This internal type is used by procedure metadata and typed parameter
+    /// validation. It is not parsed as a GQL type name; vector syntax remains
+    /// outside the ISO grammar surface.
+    Vector,
     /// `RECORD`.
     Record(RecordType),
     /// `LIST<T>`.
     List(Box<GqlType>),
+    /// Explicitly non-null value type (`<value type> NOT NULL`).
+    NotNull(Box<GqlType>),
     /// `PATH`.
     Path,
     /// Graph reference.
@@ -84,6 +122,132 @@ pub enum GqlType {
     Nothing,
 }
 
+/// Parsed bounded character-string type metadata.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct CharacterStringType {
+    /// Minimum character length accepted by the type.
+    pub min_len: u64,
+    /// Maximum character length accepted by the type.
+    pub max_len: u64,
+    /// Parsed syntactic form used for feature stamping.
+    pub form: CharacterStringTypeForm,
+}
+
+/// Parsed bounded character-string syntactic form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum CharacterStringTypeForm {
+    /// `STRING(max)`.
+    StringMax,
+    /// `STRING(min,max)`.
+    StringMinMax,
+    /// `CHAR(fixed)` or bare `CHAR`.
+    CharFixed,
+    /// `VARCHAR(max)`.
+    VarcharMax,
+}
+
+impl CharacterStringType {
+    /// Construct a character-string type when the length bounds are valid
+    /// and within [`MAX_CHARACTER_STRING_TYPE_LENGTH`]. Fixed-length coercion
+    /// pads up to `min_len`, so the declared-length cap is the allocation
+    /// bound for every downstream CAST/assignment/default funnel.
+    #[must_use]
+    pub const fn new(min_len: u64, max_len: u64, form: CharacterStringTypeForm) -> Option<Self> {
+        if max_len == 0 || min_len > max_len || max_len > MAX_CHARACTER_STRING_TYPE_LENGTH {
+            return None;
+        }
+        Some(Self {
+            min_len,
+            max_len,
+            form,
+        })
+    }
+
+    /// Return true if this type is fixed-length.
+    #[must_use]
+    pub const fn is_fixed_length(&self) -> bool {
+        self.min_len == self.max_len
+    }
+}
+
+impl PartialEq for CharacterStringType {
+    fn eq(&self, other: &Self) -> bool {
+        self.min_len == other.min_len && self.max_len == other.max_len
+    }
+}
+
+impl Eq for CharacterStringType {}
+
+impl Hash for CharacterStringType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.min_len.hash(state);
+        self.max_len.hash(state);
+    }
+}
+
+/// Parsed bounded byte-string type metadata.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct ByteStringType {
+    /// Minimum byte length accepted by the type.
+    pub min_len: u64,
+    /// Maximum byte length accepted by the type.
+    pub max_len: u64,
+    /// Parsed syntactic form used for feature stamping.
+    pub form: ByteStringTypeForm,
+}
+
+/// Parsed bounded byte-string syntactic form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum ByteStringTypeForm {
+    /// `BYTES(max)`.
+    BytesMax,
+    /// `BYTES(min,max)`.
+    BytesMinMax,
+    /// `BINARY(fixed)`.
+    BinaryFixed,
+    /// `VARBINARY(max)`.
+    VarbinaryMax,
+}
+
+impl ByteStringType {
+    /// Construct a byte-string type when the length bounds are valid and
+    /// within [`MAX_BYTE_STRING_TYPE_LENGTH`]. Fixed-length coercion pads up
+    /// to `min_len`, so the declared-length cap is the allocation bound for
+    /// every downstream CAST/assignment/default funnel.
+    #[must_use]
+    pub const fn new(min_len: u64, max_len: u64, form: ByteStringTypeForm) -> Option<Self> {
+        if max_len == 0 || min_len > max_len || max_len > MAX_BYTE_STRING_TYPE_LENGTH {
+            return None;
+        }
+        Some(Self {
+            min_len,
+            max_len,
+            form,
+        })
+    }
+
+    /// Return true if this type is fixed-length.
+    #[must_use]
+    pub const fn is_fixed_length(&self) -> bool {
+        self.min_len == self.max_len
+    }
+}
+
+impl PartialEq for ByteStringType {
+    fn eq(&self, other: &Self) -> bool {
+        self.min_len == other.min_len && self.max_len == other.max_len
+    }
+}
+
+impl Eq for ByteStringType {}
+
+impl Hash for ByteStringType {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.min_len.hash(state);
+        self.max_len.hash(state);
+    }
+}
+
 /// Parsed record type.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
@@ -91,5 +255,26 @@ pub enum RecordType {
     /// Open record.
     Open,
     /// Closed record with named fields.
-    Closed(Vec<(IStr, GqlType)>),
+    Closed(Vec<(DbString, GqlType)>),
+}
+
+impl GqlType {
+    /// Return the underlying value type after removing explicit `NOT NULL` wrappers.
+    #[must_use]
+    pub fn strip_not_null(&self) -> &Self {
+        let mut ty = self;
+        while let Self::NotNull(inner) = ty {
+            ty = inner;
+        }
+        ty
+    }
+
+    /// Return true when this type is any duration family.
+    #[must_use]
+    pub fn is_duration(&self) -> bool {
+        matches!(
+            self.strip_not_null(),
+            Self::Duration | Self::DurationYearToMonth | Self::DurationDayToSecond
+        )
+    }
 }

@@ -1,6 +1,6 @@
 //! Core error types and ISO GQLSTATUS mappings.
 
-use crate::istr::IStr;
+use crate::db_string::DbString;
 
 /// Result alias for `selene-core` operations.
 pub type CoreResult<T> = Result<T, CoreError>;
@@ -12,16 +12,6 @@ pub type CoreResult<T> = Result<T, CoreError>;
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum CoreError {
-    /// The process-global string interner reached its distinct-string cap.
-    #[error("interner cap exceeded: {count} distinct strings (max {max})")]
-    #[diagnostic(code(SLENE_C_001), help("see Spec 02 §5.1"))]
-    IStrCapExceeded {
-        /// Number of distinct strings currently interned.
-        count: usize,
-        /// Maximum allowed distinct interned strings.
-        max: usize,
-    },
-
     /// A string or byte-string exceeded the implementation-defined length.
     #[error("string too long: {got} bytes (max {max})")]
     #[diagnostic(code(SLENE_C_002))]
@@ -52,6 +42,49 @@ pub enum CoreError {
         max: u32,
     },
 
+    /// A native dense vector was constructed without components.
+    #[error("vector must contain at least one component")]
+    #[diagnostic(code(SLENE_C_010))]
+    VectorEmpty,
+
+    /// A native dense vector exceeded the implementation-defined dimension cap.
+    #[error("vector dimension too large: {got} components (max {max})")]
+    #[diagnostic(code(SLENE_C_011))]
+    VectorTooLarge {
+        /// Observed component count.
+        got: usize,
+        /// Maximum component count.
+        max: usize,
+    },
+
+    /// A native dense vector component was NaN or infinite.
+    #[error("vector component {index} is not finite: {value}")]
+    #[diagnostic(code(SLENE_C_012))]
+    VectorComponentNotFinite {
+        /// Zero-based component index.
+        index: usize,
+        /// Rejected component value.
+        value: f32,
+    },
+
+    /// Two native dense vectors had incompatible dimensions for metric work.
+    #[error("vector dimensions do not match: lhs has {lhs} components, rhs has {rhs}")]
+    #[diagnostic(code(SLENE_C_013))]
+    VectorDimensionMismatch {
+        /// Left-hand vector dimension.
+        lhs: usize,
+        /// Right-hand vector dimension.
+        rhs: usize,
+    },
+
+    /// A cosine-distance vector had zero magnitude.
+    #[error("cosine distance is undefined for zero-norm vector on {side}")]
+    #[diagnostic(code(SLENE_C_014))]
+    VectorZeroNorm {
+        /// Which side of the comparison was zero magnitude.
+        side: &'static str,
+    },
+
     /// Identifier value zero is reserved as the tombstone sentinel.
     #[error("invalid identifier: zero is reserved as tombstone sentinel")]
     #[diagnostic(code(SLENE_C_007))]
@@ -74,7 +107,23 @@ pub enum CoreError {
         /// `"label"` or `"property"`.
         kind: &'static str,
         /// The contradicting key.
-        key: IStr,
+        key: DbString,
+    },
+
+    /// JSON text could not be parsed.
+    #[error("invalid JSON text: {message}")]
+    #[diagnostic(code(SLENE_C_015))]
+    JsonParse {
+        /// Parser diagnostic.
+        message: String,
+    },
+
+    /// A JSON Patch document or operation is invalid.
+    #[error("invalid JSON Patch: {message}")]
+    #[diagnostic(code(SLENE_C_016))]
+    JsonPatch {
+        /// Patch diagnostic.
+        message: String,
     },
 }
 
@@ -86,14 +135,18 @@ impl CoreError {
     #[must_use]
     pub const fn gqlstatus(&self) -> &'static str {
         match self {
-            // Mirrors selene-gql::error::GqlStatus::PROGRAM_LIMIT_EXCEEDED
-            // without introducing a dependency from selene-core to selene-gql.
-            Self::IStrCapExceeded { .. } => "5GQL1",
             Self::StringTooLong { .. } | Self::ConstructedValueTooLarge { .. } => "22G03",
-            Self::DecimalPrecisionExceeded { .. } => "22003",
+            Self::DecimalPrecisionExceeded { .. } | Self::VectorComponentNotFinite { .. } => {
+                "22003"
+            }
+            Self::VectorEmpty | Self::VectorTooLarge { .. } => "22G03",
+            Self::VectorDimensionMismatch { .. } => "22G04",
+            Self::VectorZeroNorm { .. } => "22012",
             Self::ZeroIdentifier => "0G003",
             Self::CompactKeyValueLengthMismatch { .. } => "0G008",
             Self::OverlappingDiff { .. } => "0G009",
+            Self::JsonParse { .. } => "22018",
+            Self::JsonPatch { .. } => "22G03",
         }
     }
 }
@@ -106,7 +159,6 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case(CoreError::IStrCapExceeded { count: 2, max: 1 }, "5GQL1", "SLENE_C_001")]
     #[case(CoreError::StringTooLong { got: 2, max: 1 }, "22G03", "SLENE_C_002")]
     #[case(
         CoreError::ConstructedValueTooLarge { got: 2, max: 1 },
@@ -118,6 +170,27 @@ mod tests {
         "22003",
         "SLENE_C_004"
     )]
+    #[case(CoreError::VectorEmpty, "22G03", "SLENE_C_010")]
+    #[case(
+        CoreError::VectorTooLarge { got: 65_536, max: 65_535 },
+        "22G03",
+        "SLENE_C_011"
+    )]
+    #[case(
+        CoreError::VectorComponentNotFinite { index: 1, value: f32::INFINITY },
+        "22003",
+        "SLENE_C_012"
+    )]
+    #[case(
+        CoreError::VectorDimensionMismatch { lhs: 2, rhs: 3 },
+        "22G04",
+        "SLENE_C_013"
+    )]
+    #[case(
+        CoreError::VectorZeroNorm { side: "lhs" },
+        "22012",
+        "SLENE_C_014"
+    )]
     #[case(CoreError::ZeroIdentifier, "0G003", "SLENE_C_007")]
     #[case(
         CoreError::CompactKeyValueLengthMismatch { keys: 2, values: 1 },
@@ -125,9 +198,19 @@ mod tests {
         "SLENE_C_008"
     )]
     #[case(
-        CoreError::OverlappingDiff { kind: "label", key: crate::intern("err.test.overlap").unwrap() },
+        CoreError::OverlappingDiff { kind: "label", key: crate::db_string("err.test.overlap").unwrap() },
         "0G009",
         "SLENE_C_009"
+    )]
+    #[case(
+        CoreError::JsonParse { message: "expected value".to_owned() },
+        "22018",
+        "SLENE_C_015"
+    )]
+    #[case(
+        CoreError::JsonPatch { message: "missing op".to_owned() },
+        "22G03",
+        "SLENE_C_016"
     )]
     fn gqlstatus_and_diagnostic_code_match(
         #[case] error: CoreError,
@@ -147,7 +230,7 @@ mod tests {
 
     #[test]
     fn display_includes_structured_field_values() {
-        let error = CoreError::IStrCapExceeded { count: 7, max: 3 };
+        let error = CoreError::StringTooLong { got: 7, max: 3 };
         let rendered = error.to_string();
         assert!(rendered.contains('7'));
         assert!(rendered.contains('3'));

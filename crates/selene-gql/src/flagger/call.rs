@@ -11,4 +11,7 @@ pub(crate) fn procedure_call(call: &ProcedureCall, uses: &mut Vec<FeatureUse>) {
     for arg in &call.args {
         expr::value(arg, uses);
     }
+    if let Some(filter) = &call.yield_filter {
+        expr::value(filter, uses);
+    }
 }

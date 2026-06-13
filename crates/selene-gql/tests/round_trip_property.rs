@@ -21,6 +21,16 @@ fn representative_read_shapes_round_trip() {
 }
 
 #[test]
+fn explicit_trim_default_character_formats_with_specification() {
+    let parsed = parse("RETURN TRIM(BOTH FROM ' hello ') AS trimmed")
+        .expect("default-character trim parses");
+    let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+    assert_eq!(formatted, "RETURN TRIM(BOTH FROM ' hello ') AS trimmed");
+    let reparsed = parse(&formatted).expect("formatted source parses");
+    assert!(structurally_eq(&parsed, &reparsed));
+}
+
+#[test]
 fn typed_list_predicate_preserves_element_type() {
     // Regression for Codex P2 on PR #24: fmt_type was hard-coding every
     // List(_) to "LIST<STRING>" so `IS TYPED LIST<INT8>` round-tripped
@@ -53,6 +63,33 @@ fn reserved_word_aliases_are_quoted_in_formatted_output() {
         "RETURN 1 AS \"AND\"",
     ] {
         assert_round_trip(source);
+    }
+}
+
+#[test]
+fn contextual_keyword_aliases_are_quoted_in_formatted_output() {
+    // Contextual grammar tokens still parse as bare identifiers in some slots,
+    // so structural round-trip alone cannot prove the formatter made the
+    // identifier role explicit. Pin the emitted quotes directly.
+    for keyword in [
+        "EXPLAIN",
+        "INDEXES",
+        "PROCEDURES",
+        "TRANSACTIONS",
+        "VALUE",
+        "NORMALIZE",
+        "PERCENTILE_CONT",
+        "PERCENTILE_DISC",
+    ] {
+        let source = format!("RETURN 1 AS \"{keyword}\"");
+        let parsed = parse(&source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert_eq!(formatted, source, "{keyword} alias remains quoted");
+        let reparsed = parse(&formatted).expect("formatted source parses");
+        assert!(
+            structurally_eq(&parsed, &reparsed),
+            "{keyword} alias round-trips structurally"
+        );
     }
 }
 

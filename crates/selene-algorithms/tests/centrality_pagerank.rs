@@ -1,12 +1,14 @@
 //! Integration tests for `pagerank` per spec 16 §E19–§E23.
 
 use roaring::RoaringBitmap;
-use selene_algorithms::{GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_algorithms::{
+    GraphProjection, PageRankConfig, PageRankOrientation, Parallelism, ProjectionConfig, pagerank,
+};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -26,20 +28,20 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
 
 fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         nodes.push(id);
     }
     for &(s, t) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();
@@ -52,6 +54,8 @@ fn default_config() -> PageRankConfig {
         max_iter: 100,
         tolerance: 1e-6,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
+        personalization: None,
     }
 }
 
@@ -85,6 +89,8 @@ fn pagerank_max_iter_zero_returns_initial_uniform_scores() {
         max_iter: 0,
         tolerance: 1e-9,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
+        personalization: None,
     };
     let result = pagerank(&proj, cfg);
     assert_eq!(result.len(), 3);
@@ -226,6 +232,8 @@ fn pagerank_convergence_threshold_terminates_early() {
         max_iter: 1000,
         tolerance: 1e-3,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
+        personalization: None,
     };
     let result = pagerank(&proj, cfg);
     let total: f64 = result.iter().map(|&(_, s)| s).sum();
@@ -251,22 +259,22 @@ fn pagerank_directed_edge_propagates_score_one_way() {
 fn pagerank_handles_sparse_row_projection() {
     // §E20 — state arrays sized by RowIndex, not max_row + 1.
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(100);
     for _ in 0..100 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     txn.mutator()
-        .create_edge(rel, nodes[0], nodes[50], PropertyMap::new())
+        .create_edge(rel.clone(), nodes[0], nodes[50], PropertyMap::new())
         .unwrap();
     txn.mutator()
-        .create_edge(rel, nodes[50], nodes[99], PropertyMap::new())
+        .create_edge(rel.clone(), nodes[50], nodes[99], PropertyMap::new())
         .unwrap();
     txn.mutator()
         .create_edge(rel, nodes[99], nodes[0], PropertyMap::new())
@@ -333,6 +341,8 @@ fn pagerank_zero_damping_pure_teleport() {
         max_iter: 50,
         tolerance: 1e-9,
         parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
+        personalization: None,
     };
     let result = pagerank(&proj, cfg);
     let expected = 1.0 / 4.0;
@@ -342,4 +352,91 @@ fn pagerank_zero_damping_pure_teleport() {
             "damping=0 → pure teleport 1/N"
         );
     }
+}
+
+#[test]
+fn pagerank_zero_damping_uses_personalized_teleport() {
+    let (shared, nodes) = build_graph(3, &[(0, 1), (1, 2), (2, 0)]);
+    let proj = build_proj(&shared);
+    let cfg = PageRankConfig {
+        damping: 0.0,
+        max_iter: 50,
+        tolerance: 1e-12,
+        parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
+        personalization: Some(vec![(nodes[0], 3.0), (nodes[2], 1.0)]),
+    };
+
+    let result = pagerank(&proj, cfg);
+    let score_n0 = result.iter().find(|&&(n, _)| n == nodes[0]).unwrap().1;
+    let score_n1 = result.iter().find(|&&(n, _)| n == nodes[1]).unwrap().1;
+    let score_n2 = result.iter().find(|&&(n, _)| n == nodes[2]).unwrap().1;
+
+    assert!((score_n0 - 0.75).abs() < 1e-12);
+    assert!((score_n1 - 0.0).abs() < 1e-12);
+    assert!((score_n2 - 0.25).abs() < 1e-12);
+    assert_eq!(
+        result.iter().map(|&(node, _)| node).collect::<Vec<_>>(),
+        vec![nodes[0], nodes[2], nodes[1]]
+    );
+}
+
+#[test]
+fn pagerank_personalized_dangling_mass_returns_to_seed_distribution() {
+    let (shared, nodes) = build_graph(3, &[]);
+    let proj = build_proj(&shared);
+    let cfg = PageRankConfig {
+        damping: 0.85,
+        max_iter: 10,
+        tolerance: 0.0,
+        parallelism: Parallelism::Sequential,
+        orientation: PageRankOrientation::Natural,
+        personalization: Some(vec![(nodes[2], 1.0)]),
+    };
+
+    let result = pagerank(&proj, cfg);
+    let score_n0 = result.iter().find(|&&(n, _)| n == nodes[0]).unwrap().1;
+    let score_n1 = result.iter().find(|&&(n, _)| n == nodes[1]).unwrap().1;
+    let score_n2 = result.iter().find(|&&(n, _)| n == nodes[2]).unwrap().1;
+
+    assert!((score_n0 - 0.0).abs() < 1e-12);
+    assert!((score_n1 - 0.0).abs() < 1e-12);
+    assert!((score_n2 - 1.0).abs() < 1e-12);
+    let total: f64 = result.iter().map(|&(_, score)| score).sum();
+    assert!((total - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn pagerank_personalized_sink_spreads_under_undirected_orientation() {
+    let (shared, nodes) = build_graph(3, &[(0, 1), (2, 1)]);
+    let proj = build_proj(&shared);
+    let seed = Some(vec![(nodes[1], 1.0)]);
+    let natural = pagerank(
+        &proj,
+        PageRankConfig {
+            max_iter: 1,
+            tolerance: 0.0,
+            personalization: seed.clone(),
+            ..default_config()
+        },
+    );
+    let undirected = pagerank(
+        &proj,
+        PageRankConfig {
+            max_iter: 1,
+            tolerance: 0.0,
+            orientation: PageRankOrientation::Undirected,
+            personalization: seed,
+            ..default_config()
+        },
+    );
+
+    let score = |rows: &[(NodeId, f64)], node| rows.iter().find(|&&(n, _)| n == node).unwrap().1;
+    assert!((score(&natural, nodes[1]) - 1.0).abs() < 1e-12);
+    assert!((score(&natural, nodes[0]) - 0.0).abs() < 1e-12);
+    assert!((score(&natural, nodes[2]) - 0.0).abs() < 1e-12);
+
+    assert!((score(&undirected, nodes[1]) - 0.15).abs() < 1e-12);
+    assert!((score(&undirected, nodes[0]) - 0.425).abs() < 1e-12);
+    assert!((score(&undirected, nodes[2]) - 0.425).abs() < 1e-12);
 }

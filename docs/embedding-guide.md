@@ -240,14 +240,14 @@ The full surface:
 ### 5.1 Create a node
 
 ```rust
-use selene_core::{LabelSet, PropertyMap, Value, intern};
+use selene_core::{LabelSet, PropertyMap, Value, db_string};
 
-let person = intern("Person")?;
-let name = intern("name")?;
+let person = db_string("Person")?;
+let name = db_string("name")?;
 
 let mut tx = graph.begin_write();
 let mut props = PropertyMap::new();
-props.set(name, Value::String(intern("Ada")?))?;
+props.set(name, Value::String(db_string("Ada")?))?;
 let node_id = tx.mutator()
     .create_node(LabelSet::single(person), props)?;
 tx.commit()?;
@@ -258,9 +258,9 @@ Emits `Change::NodeCreated`. Returns the assigned `NodeId`.
 ### 5.2 Create an edge
 
 ```rust
-use selene_core::{intern, PropertyMap};
+use selene_core::{PropertyMap, db_string};
 
-let knows = intern("KNOWS")?;
+let knows = db_string("KNOWS")?;
 
 let mut tx = graph.begin_write();
 let edge_id = tx.mutator().create_edge(
@@ -277,15 +277,20 @@ Emits `Change::EdgeCreated`. Verifies both endpoints are alive; returns `GraphEr
 ### 5.3 Update a node
 
 ```rust
-use selene_core::{LabelDiff, PropertyDiff, Value, intern};
+use selene_core::{DbString, LabelDiff, PropertyDiff, Value, db_string};
 
-let mut props_diff = PropertyDiff::default();
-props_diff.set.insert(intern("status")?, Value::String(intern("active")?));
-props_diff.removed.push(intern("draft_until")?);
+let label_diff = LabelDiff::new(
+    std::iter::empty::<DbString>(),
+    std::iter::empty::<DbString>(),
+)?;
+let props_diff = PropertyDiff::new(
+    [(db_string("status")?, Value::String(db_string("active")?))],
+    [db_string("draft_until")?],
+)?;
 
 let mut tx = graph.begin_write();
 tx.mutator()
-    .update_node(node_id, LabelDiff::default(), props_diff)?;
+    .update_node(node_id, label_diff, props_diff)?;
 tx.commit()?;
 ```
 
@@ -294,8 +299,12 @@ Emits `Change::NodeUpdated`. Label adds/removes and property set/remove are appl
 ### 5.4 Update an edge
 
 ```rust
-let mut props_diff = PropertyDiff::default();
-props_diff.set.insert(intern("weight")?, Value::Float(0.42));
+use selene_core::{DbString, PropertyDiff, Value, db_string};
+
+let props_diff = PropertyDiff::new(
+    [(db_string("weight")?, Value::Float(0.42))],
+    std::iter::empty::<DbString>(),
+)?;
 
 let mut tx = graph.begin_write();
 tx.mutator().update_edge(edge_id, props_diff)?;
@@ -336,20 +345,6 @@ tx.commit()?;
 
 Appends `Change::SchemaChanged` to the WAL stream. Catalog graph mutation and closed-graph validation are run at commit time when a `bound_type` is present.
 
-### 5.8 Index-provider event
-
-```rust
-use std::sync::Arc;
-use selene_core::intern;
-
-let payload: Arc<[u8]> = my_provider_payload.into();
-let mut tx = graph.begin_write();
-tx.mutator().extension_event(intern("my-provider")?, payload);
-tx.commit()?;
-```
-
-`extension_event` emits a `Change::IndexExtensionEvent` — how an embedder's own `IndexProvider` injects provider-specific change records into the WAL. Replay is owned by the registered `IndexProvider` whose `provider_tag` matches the event's logical owner. Application code rarely calls this directly; it is the escape hatch for a custom index provider that maintains derived state across recovery.
-
 ## 6. Running GQL
 
 The full pipeline is `parse → analyze → plan → execute_statement`. Optimization runs as a refinement pass on the lowered plan and is folded into typical execution flows by callers.
@@ -388,7 +383,6 @@ A `Session` also tracks explicit transaction state for `START TRANSACTION` / `CO
 ### 6.3 The full flow
 
 ```rust
-use selene_core::{Value, intern};
 use selene_gql::{
     EmptyProcedureRegistry, Session, StatementOutput,
     analyze, execute_statement, parse, plan,
@@ -463,18 +457,21 @@ Mutation statistics (rows inserted, edges updated, &c.) are not exposed as a sep
 
 ### 6.7 Extracting values
 
-`Value` is a non-exhaustive enum (`Bool`, `Int`, `Uint`, `Float`, `String`, `ExternalString`, `Bytes`, `List`, `Record`, `RecordTyped`, `Path`, `NodeRef`, `EdgeRef`, `GraphRef`, plus the temporal types). For interned strings:
+`Value` is a non-exhaustive enum with scalar, composite, graph-reference,
+temporal, byte-string, vector, and JSON variants. Strings are stored as
+`Value::String(DbString)`:
 
 ```rust
-use selene_core::{Value, resolve};
+use selene_core::Value;
 
-let Some(Value::String(istr)) = row.get(0) else {
+let Some(Value::String(value)) = row.values().first() else {
     return Err(...);
 };
-let s: &str = resolve(*istr);
+let s: &str = value.as_str();
 ```
 
-For non-interned strings (free-form text from outside the global interner namespace), use `Value::ExternalString(Arc<str>)`.
+Construct graph labels, property keys, aliases, and string values through
+`selene_core::db_string(...)` so the IL013 string-size guard is applied.
 
 ### 6.8 Reusing a plan
 
@@ -658,7 +655,7 @@ use selene_gql::{
     analyze, parse,
 };
 
-fn write_keys(analyzed: &selene_gql::AnalyzedStatement) -> Vec<&selene_core::IStr> {
+fn write_keys(analyzed: &selene_gql::AnalyzedStatement) -> Vec<&selene_core::DbString> {
     match &analyzed.statement {
         AnalyzedStatementKind::Mutate(pipeline) => {
             let write_set: &MutationWriteSet = &pipeline.write_set;
@@ -837,13 +834,12 @@ The workspace is `#![forbid(unsafe_code)]` and pulls in no async runtime at any 
 |:---|:---|
 | Mutate `SeleneGraph` fields directly | Bypasses the mutation funnel; corrupts label indexes, property indexes, adjacency, and the WAL stream. Only `Mutator` writes are sound. |
 | Construct `Change` values and feed them directly into an `IndexProvider` | The provider expects the engine's published snapshot to already reflect the change; out-of-band events drift the provider. |
-| Skip the IStr interner for label / property keys | Label and property keys are interned by identity; raw `&str` comparisons will not match. Always go through `selene_core::intern`. |
+| Bypass `db_string` when constructing label / property keys | Label and property keys are owned `DbString` values guarded by IL013. Construct keys through `selene_core::db_string` and clone the `DbString` when an API consumes the key. |
 | Take a long-running lock inside a `Mutator` callback | The write lock is held; readers continue, but the next writer blocks for the full duration. Keep transactions short. |
 | Block on async I/O on a read thread | `SharedGraph::read()` is lock-free, but a thread blocked on async I/O still holds its `Arc<SeleneGraph>`. Use `spawn_blocking`. |
 | Re-enter `SharedGraph::begin_write` from inside an `IndexProvider::on_change` callback | Engine panics fast on same-thread re-entry; the outer commit still completes but the chained mutation does not. Cross-thread re-entry is documented misuse. |
 | Open two `WalWriter`s on the same path | Exclusive OS-level file lock fails the second writer with `PersistError::WriterLockHeld`. |
 | Reorder `Value` enum variants in a custom serializer | The variant order is canonical and append-only (Spec 02). Reordering breaks durability. |
-| Treat `Value::String == Value::ExternalString` as equal | Equality is variant-strict. GQL string-content equality goes through the executor comparator. |
 | Embed a per-tenant database with one `SharedGraph` and trust the wrapper layer for isolation | One bug in the wrapper exposes cross-tenant data. Per-tenant `SharedGraph` is the safe default. |
 
 ## See also

@@ -167,14 +167,12 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use selene_algorithms::Parallelism;
-    use selene_core::{Value, intern_with_admission};
+    use selene_core::{Value, db_string};
 
     use super::*;
 
-    // `intern_with_admission` (not bare `intern`) keeps the runtime-path DoS
-    // guard `tests/dos_guard.rs::no_unbudgeted_intern_call_in_selene_gql` green.
     fn projection_name() -> Value {
-        Value::String(intern_with_admission("p").expect("test string interns").0)
+        Value::String(db_string("p").expect("test string fits DB string cap"))
     }
 
     #[test]

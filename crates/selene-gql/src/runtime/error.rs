@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError, SourceSpan};
 
@@ -15,8 +15,14 @@ use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError,
 pub enum DataExceptionSubclass {
     /// Generic data exception fallback for genuinely unclassified runtime data failures.
     DataException,
+    /// String data, right truncation (`22001`).
+    StringDataRightTruncation,
     /// Numeric value out of range (`22003`).
     NumericValueOutOfRange,
+    /// Null value not allowed (`22004`).
+    NullValueNotAllowed,
+    /// Invalid datetime format (`22007`).
+    InvalidDatetimeFormat,
     /// Substring error (`22011`).
     SubstringError,
     /// Division by zero (`22012`).
@@ -31,14 +37,38 @@ pub enum DataExceptionSubclass {
     InvalidCharacterValueForCast,
     /// Invalid time zone displacement value (`22009`).
     InvalidTimeZone,
+    /// Negative limit value (`22G02`).
+    NegativeLimitValue,
     /// Invalid value type (`22G03`).
     InvalidValueType,
     /// Values not comparable (`22G04`).
     ValuesNotComparable,
+    /// Invalid date, time, or datetime function field name (`22G05`).
+    InvalidDatetimeFunctionFieldName,
+    /// Invalid date, time, or datetime function value (`22G06`).
+    InvalidDatetimeFunctionValue,
+    /// Invalid duration function field name (`22G07`).
+    InvalidDurationFunctionFieldName,
+    /// List data, right truncation (`22G0B`).
+    ListDataRightTruncation,
     /// List element error (`22G0C`).
     ListElementError,
+    /// Invalid duration format (`22G0H`).
+    InvalidDurationFormat,
+    /// Path data, right truncation (`22G10`).
+    PathDataRightTruncation,
+    /// Incompatible temporal instant unit groups (`22G14`).
+    IncompatibleTemporalInstantUnitGroups,
     /// Multiple assignments to a graph element property (`22G0M`).
     MultipleAssignmentsToGraphElementProperty,
+    /// Number of node labels below supported minimum (`22G0N`).
+    NodeLabelsBelowSupportedMinimum,
+    /// Number of node labels exceeds supported maximum (`22G0P`).
+    NodeLabelsExceedSupportedMaximum,
+    /// Number of edge labels below supported minimum (`22G0Q`).
+    EdgeLabelsBelowSupportedMinimum,
+    /// Number of edge labels exceeds supported maximum (`22G0R`).
+    EdgeLabelsExceedSupportedMaximum,
     /// Number of node properties exceeds supported maximum (`22G0S`).
     NodePropertiesExceedSupportedMaximum,
     /// Number of edge properties exceeds supported maximum (`22G0T`).
@@ -47,6 +77,8 @@ pub enum DataExceptionSubclass {
     RecordFieldsDoNotMatch,
     /// Record data field unassignable (`22G0X`).
     RecordDataFieldUnassignable,
+    /// Malformed path (`22G0Z`).
+    MalformedPath,
 }
 
 impl DataExceptionSubclass {
@@ -55,7 +87,10 @@ impl DataExceptionSubclass {
     pub const fn gqlstatus(self) -> GqlStatus {
         match self {
             Self::DataException => GqlStatus::DATA_EXCEPTION,
+            Self::StringDataRightTruncation => GqlStatus::STRING_DATA_RIGHT_TRUNCATION,
             Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
+            Self::NullValueNotAllowed => GqlStatus::NULL_VALUE_NOT_ALLOWED,
+            Self::InvalidDatetimeFormat => GqlStatus::INVALID_DATETIME_FORMAT,
             Self::SubstringError => GqlStatus::SUBSTRING_ERROR,
             Self::DivisionByZero => GqlStatus::DIVISION_BY_ZERO,
             Self::InvalidArgumentForNaturalLogarithm => {
@@ -65,11 +100,33 @@ impl DataExceptionSubclass {
             Self::TrimError => GqlStatus::TRIM_ERROR,
             Self::InvalidCharacterValueForCast => GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST,
             Self::InvalidTimeZone => GqlStatus::INVALID_TIME_ZONE,
+            Self::NegativeLimitValue => GqlStatus::NEGATIVE_LIMIT_VALUE,
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
             Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
+            Self::InvalidDatetimeFunctionFieldName => {
+                GqlStatus::INVALID_DATETIME_FUNCTION_FIELD_NAME
+            }
+            Self::InvalidDatetimeFunctionValue => GqlStatus::INVALID_DATETIME_FUNCTION_VALUE,
+            Self::InvalidDurationFunctionFieldName => {
+                GqlStatus::INVALID_DURATION_FUNCTION_FIELD_NAME
+            }
+            Self::ListDataRightTruncation => GqlStatus::LIST_DATA_RIGHT_TRUNCATION,
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
+            Self::InvalidDurationFormat => GqlStatus::INVALID_DURATION_FORMAT,
+            Self::PathDataRightTruncation => GqlStatus::PATH_DATA_RIGHT_TRUNCATION,
+            Self::IncompatibleTemporalInstantUnitGroups => {
+                GqlStatus::INCOMPATIBLE_TEMPORAL_INSTANT_UNIT_GROUPS
+            }
             Self::MultipleAssignmentsToGraphElementProperty => {
                 GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY
+            }
+            Self::NodeLabelsBelowSupportedMinimum => GqlStatus::NODE_LABELS_BELOW_SUPPORTED_MINIMUM,
+            Self::NodeLabelsExceedSupportedMaximum => {
+                GqlStatus::NODE_LABELS_EXCEED_SUPPORTED_MAXIMUM
+            }
+            Self::EdgeLabelsBelowSupportedMinimum => GqlStatus::EDGE_LABELS_BELOW_SUPPORTED_MINIMUM,
+            Self::EdgeLabelsExceedSupportedMaximum => {
+                GqlStatus::EDGE_LABELS_EXCEED_SUPPORTED_MAXIMUM
             }
             Self::NodePropertiesExceedSupportedMaximum => {
                 GqlStatus::NODE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM
@@ -79,6 +136,7 @@ impl DataExceptionSubclass {
             }
             Self::RecordFieldsDoNotMatch => GqlStatus::RECORD_FIELDS_DO_NOT_MATCH,
             Self::RecordDataFieldUnassignable => GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE,
+            Self::MalformedPath => GqlStatus::MALFORMED_PATH,
         }
     }
 }
@@ -188,7 +246,7 @@ pub enum ExecutorError {
     #[diagnostic(code(SLENE_X_22G03))]
     UnboundParameter {
         /// Parameter name without the leading `$`.
-        name: IStr,
+        name: DbString,
         /// Source span requiring the parameter.
         #[label("unbound parameter")]
         span: SourceSpan,
@@ -201,7 +259,7 @@ pub enum ExecutorError {
     #[diagnostic(code(SLENE_X_22G03))]
     InvalidParameterType {
         /// Parameter name without the leading `$`.
-        name: IStr,
+        name: DbString,
         /// Human-readable expected type.
         expected: Cow<'static, str>,
         /// Human-readable actual type.
@@ -256,17 +314,18 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
-    /// Expression feature is intentionally outside the v1.1 evaluator surface.
+    /// Construct is ISO-legal but not yet implemented in the evaluator surface.
     ///
     /// Maps to GQLSTATUS 42N01, a selene-db implementation-defined subclass
-    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
-    #[error("feature not supported in v1.1: {feature}")]
+    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1. The message
+    /// is deliberately version-agnostic so it does not go stale across releases.
+    #[error("feature not yet supported: {feature}")]
     #[diagnostic(code(SLENE_X_42N01))]
-    FeatureNotInV1_1 {
+    FeatureNotSupportedYet {
         /// Stable feature tag.
         feature: &'static str,
         /// Source span requiring the feature.
-        #[label("feature not supported")]
+        #[label("feature not yet supported")]
         span: SourceSpan,
     },
 
@@ -277,7 +336,7 @@ pub enum ExecutorError {
         /// Object class.
         kind: &'static str,
         /// Colliding object name.
-        name: IStr,
+        name: DbString,
         /// Source span of the duplicate name.
         #[label("duplicate object name")]
         span: SourceSpan,
@@ -438,7 +497,7 @@ impl ExecutorError {
             Self::UnknownFunction { .. }
             | Self::FunctionArityMismatch { .. }
             | Self::InvalidFunctionModifier { .. } => GqlStatus::DATATYPE_MISMATCH,
-            Self::FeatureNotInV1_1 { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            Self::FeatureNotSupportedYet { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::DuplicateObject { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::InvalidTransactionState { .. } => GqlStatus::READ_ONLY_TRANSACTION_VIOLATION,
             Self::TransactionAlreadyActive { .. } => GqlStatus::ACTIVE_TRANSACTION,

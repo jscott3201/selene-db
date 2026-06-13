@@ -4,27 +4,47 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
 use roaring::RoaringBitmap;
-use selene_core::{CoreError, IStr, Value};
+use selene_core::{DbString, DurationOrderKey, Value, duration_order_key};
 use smallvec::SmallVec;
 
-use crate::typed_index::{NotNanError, NotNanF64, TypedIndexKind, TypedIndexValueError};
+use crate::typed_index::{NotNanError, NotNanF32, NotNanF64, TypedIndexKind, TypedIndexValueError};
 
 /// Composite key used by a composite-property index.
 pub type CompositeKey = SmallVec<[CompositeKeyComponent; 4]>;
 
 /// One ordered component in a [`CompositeKey`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompositeKeyComponent {
+    /// Boolean component.
+    Bool(bool),
     /// Signed integer component.
     I64(i64),
+    /// Unsigned integer component.
+    U64(u64),
+    /// Signed 128-bit integer component.
+    I128(i128),
+    /// Unsigned 128-bit integer component.
+    U128(u128),
+    /// Fixed-precision decimal component.
+    Decimal(rust_decimal::Decimal),
+    /// 32-bit floating-point component with NaN excluded.
+    F32(NotNanF32),
     /// Floating-point component with NaN excluded.
     F64(NotNanF64),
-    /// Interned string component.
-    String(IStr),
+    /// Database-string component.
+    String(DbString),
     /// Civil date component.
     Date(jiff::civil::Date),
     /// Civil local date-time component.
     LocalDateTime(jiff::civil::DateTime),
+    /// Zoned date-time component.
+    ZonedDateTime(jiff::Zoned),
+    /// Civil local time component.
+    LocalTime(jiff::civil::Time),
+    /// Zoned time component.
+    ZonedTime(jiff::Zoned),
+    /// Duration component.
+    Duration(DurationOrderKey),
     /// UUID component.
     Uuid(uuid::Uuid),
 }
@@ -33,11 +53,21 @@ impl Ord for CompositeKeyComponent {
     fn cmp(&self, rhs: &Self) -> std::cmp::Ordering {
         use CompositeKeyComponent as K;
         match (self, rhs) {
+            (K::Bool(lhs), K::Bool(rhs)) => lhs.cmp(rhs),
             (K::I64(lhs), K::I64(rhs)) => lhs.cmp(rhs),
+            (K::U64(lhs), K::U64(rhs)) => lhs.cmp(rhs),
+            (K::I128(lhs), K::I128(rhs)) => lhs.cmp(rhs),
+            (K::U128(lhs), K::U128(rhs)) => lhs.cmp(rhs),
+            (K::Decimal(lhs), K::Decimal(rhs)) => lhs.cmp(rhs),
+            (K::F32(lhs), K::F32(rhs)) => lhs.cmp(rhs),
             (K::F64(lhs), K::F64(rhs)) => lhs.cmp(rhs),
             (K::String(lhs), K::String(rhs)) => lhs.cmp(rhs),
             (K::Date(lhs), K::Date(rhs)) => lhs.cmp(rhs),
             (K::LocalDateTime(lhs), K::LocalDateTime(rhs)) => lhs.cmp(rhs),
+            (K::ZonedDateTime(lhs), K::ZonedDateTime(rhs)) => lhs.cmp(rhs),
+            (K::LocalTime(lhs), K::LocalTime(rhs)) => lhs.cmp(rhs),
+            (K::ZonedTime(lhs), K::ZonedTime(rhs)) => lhs.cmp(rhs),
+            (K::Duration(lhs), K::Duration(rhs)) => lhs.cmp(rhs),
             (K::Uuid(lhs), K::Uuid(rhs)) => lhs.cmp(rhs),
             _ => self.discriminant().cmp(&rhs.discriminant()),
         }
@@ -54,25 +84,45 @@ impl Hash for CompositeKeyComponent {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.discriminant().hash(state);
         match self {
+            Self::Bool(value) => value.hash(state),
             Self::I64(value) => value.hash(state),
+            Self::U64(value) => value.hash(state),
+            Self::I128(value) => value.hash(state),
+            Self::U128(value) => value.hash(state),
+            Self::Decimal(value) => value.hash(state),
+            Self::F32(value) => value.hash(state),
             Self::F64(value) => value.hash(state),
             Self::String(value) => value.hash(state),
             Self::Date(value) => value.hash(state),
             Self::LocalDateTime(value) => value.hash(state),
+            Self::ZonedDateTime(value) => value.hash(state),
+            Self::LocalTime(value) => value.hash(state),
+            Self::ZonedTime(value) => value.hash(state),
+            Self::Duration(value) => value.hash(state),
             Self::Uuid(value) => value.hash(state),
         }
     }
 }
 
 impl CompositeKeyComponent {
-    const fn discriminant(self) -> u8 {
+    const fn discriminant(&self) -> u8 {
         match self {
-            Self::I64(_) => 0,
-            Self::F64(_) => 1,
-            Self::String(_) => 2,
-            Self::Date(_) => 3,
-            Self::LocalDateTime(_) => 4,
-            Self::Uuid(_) => 5,
+            Self::Bool(_) => 0,
+            Self::I64(_) => 1,
+            Self::U64(_) => 2,
+            Self::I128(_) => 3,
+            Self::U128(_) => 4,
+            Self::Decimal(_) => 5,
+            Self::F32(_) => 6,
+            Self::F64(_) => 7,
+            Self::String(_) => 8,
+            Self::Date(_) => 9,
+            Self::LocalDateTime(_) => 10,
+            Self::ZonedDateTime(_) => 11,
+            Self::LocalTime(_) => 12,
+            Self::ZonedTime(_) => 13,
+            Self::Duration(_) => 14,
+            Self::Uuid(_) => 15,
         }
     }
 }
@@ -149,24 +199,15 @@ impl CompositeTypedIndex {
     }
 
     /// Insert `row` under the composite key formed from `values`.
-    ///
-    /// `STRING`-component values that arrive as [`Value::ExternalString`]
-    /// are admitted into the global [`IStr`] pool here (see
-    /// [`composite_key_from_values_admit`]). Cap exhaustion surfaces as
-    /// [`CompositeIndexValueError::ComponentAdmissionFailed`].
     pub fn insert(&mut self, values: &[&Value], row: u32) -> Result<(), CompositeIndexValueError> {
-        let key = self.key_from_values_admit(values)?;
+        let key = self.key_from_values(values)?;
         self.entries.entry(key).or_default().insert(row);
         Ok(())
     }
 
     /// Remove `row` from the composite key formed from `values`.
-    ///
-    /// Uses the admit path so a removal whose only difference is
-    /// `String`/`ExternalString` variant still locates the bucket inserted
-    /// by the write path.
     pub fn remove(&mut self, values: &[&Value], row: u32) -> Result<(), CompositeIndexValueError> {
-        let key = self.key_from_values_admit(values)?;
+        let key = self.key_from_values(values)?;
         if let Some(bitmap) = self.entries.get_mut(&key) {
             bitmap.remove(row);
             if bitmap.is_empty() {
@@ -182,55 +223,33 @@ impl CompositeTypedIndex {
         self.entries.get(key)
     }
 
-    /// Build a lookup key from the index's ordered component kinds, admitting
-    /// new `STRING`-component content into the global [`IStr`] pool if needed.
+    /// Build a composite key from the index's ordered component kinds.
     ///
-    /// Use this from write/maintenance paths. Read paths must call
-    /// [`Self::key_from_values_lookup`] instead.
-    pub fn key_from_values_admit(
+    /// This is the single coercion shared by write/maintenance and read paths.
+    /// Every coercible `STRING` component resolves directly to a
+    /// database-string key; an arity or per-component kind mismatch raises
+    /// [`CompositeIndexValueError`].
+    pub fn key_from_values(
         &self,
         values: &[&Value],
     ) -> Result<CompositeKey, CompositeIndexValueError> {
-        composite_key_from_values_admit(&self.kinds, values)
-    }
-
-    /// Build a lookup key from the index's ordered component kinds **without
-    /// admitting any new content** to the global [`IStr`] pool.
-    ///
-    /// Returns `Ok(None)` when any `STRING` component is a
-    /// [`Value::ExternalString`] whose content has never been admitted —
-    /// because no row could be keyed on that content, callers render this
-    /// as an empty result rather than admitting just to probe.
-    pub fn key_from_values_lookup(
-        &self,
-        values: &[&Value],
-    ) -> Result<Option<CompositeKey>, CompositeIndexValueError> {
-        composite_key_from_values_lookup(&self.kinds, values)
+        composite_key_from_values(&self.kinds, values)
     }
 
     /// Return true when two value tuples address the same key.
     ///
-    /// Uses the lookup path so the diff never admits to compare keys; when
-    /// either side has a `STRING` component whose content is not yet pooled,
-    /// falls through to a pairwise content compare on the raw values.
+    /// Uses [`Self::key_from_values`]; when either side cannot be coerced to a
+    /// key it falls through to a pairwise content compare on the raw values.
     pub fn values_share_key(&self, lhs: &[&Value], rhs: &[&Value]) -> bool {
-        match (
-            self.key_from_values_lookup(lhs),
-            self.key_from_values_lookup(rhs),
-        ) {
-            (Ok(Some(lhs_key)), Ok(Some(rhs_key))) => lhs_key == rhs_key,
+        match (self.key_from_values(lhs), self.key_from_values(rhs)) {
+            (Ok(lhs_key), Ok(rhs_key)) => lhs_key == rhs_key,
             (Err(_), Err(_)) => true,
-            (Ok(_), Ok(_)) => vec_raw_value_same(lhs, rhs),
             _ => false,
         }
     }
 }
 
 /// Value-admission error for composite index mutation.
-///
-/// `Clone + Copy + Eq + PartialEq` are intentionally NOT derived: the
-/// `ComponentAdmissionFailed` variant carries [`selene_core::CoreError`],
-/// which is non-`Copy`/`Clone` by design.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum CompositeIndexValueError {
@@ -250,35 +269,15 @@ pub enum CompositeIndexValueError {
         /// Observed value kind or `"NaN"`.
         observed: &'static str,
     },
-    /// A component value's content could not be admitted to the global
-    /// [`IStr`] pool (typically because the pool reached its cap).
-    ///
-    /// Parallel to [`TypedIndexValueError::AdmissionFailed`] for composite
-    /// indexes. Promoted by the mutator to a hard
-    /// [`crate::error::GraphError::IndexAdmissionExhausted`].
-    ComponentAdmissionFailed {
-        /// Zero-based component index.
-        index: usize,
-        /// Registered component kind (always [`TypedIndexKind::String`]
-        /// today).
-        expected_kind: TypedIndexKind,
-        /// Underlying admission failure source.
-        reason: CoreError,
-    },
 }
 
-/// Build a composite key from ordered component kinds and values, admitting
-/// new `STRING`-component content into the global [`IStr`] pool when needed.
+/// Build a composite key from ordered component kinds and values.
 ///
-/// Runs two passes (BRIEF-153 fix-cycle C4): pass 1 validates **every**
-/// component's kind via the non-admitting [`component_from_value_lookup`]
-/// helper, so a kind mismatch on a later component cannot trigger an
-/// admission on an earlier `STRING` component. Pass 2 admits and builds
-/// the key only when pass 1 cleared. Without this split, the tuple
-/// `(ExternalString("x"), Date("bad"))` against `(STRING, I64)` would
-/// admit `"x"` to the pool and then error on component 1 — a pool growth
-/// DoS amplifier near cap exhaustion.
-pub(crate) fn composite_key_from_values_admit(
+/// This is the single coercion shared by write/maintenance and read paths. Every
+/// coercible `STRING` component resolves directly to a database-string key; an
+/// arity mismatch or a per-component kind/NaN mismatch raises
+/// [`CompositeIndexValueError`].
+pub(crate) fn composite_key_from_values(
     kinds: &[TypedIndexKind],
     values: &[&Value],
 ) -> Result<CompositeKey, CompositeIndexValueError> {
@@ -288,102 +287,63 @@ pub(crate) fn composite_key_from_values_admit(
             observed: values.len(),
         });
     }
-    // Pass 1 — admission-free kind check. `Ok(Some(_))` and `Ok(None)`
-    // both indicate the value's kind is compatible with the component
-    // kind (Ok(None) means a STRING component with unpooled
-    // ExternalString content; the kind matches, only admission is
-    // deferred).
-    for (index, (kind, value)) in kinds.iter().zip(values).enumerate() {
-        if let Err(source) = component_from_value_lookup(*kind, value) {
-            return Err(CompositeIndexValueError::Component {
-                index,
-                expected_kind: source.expected_kind(),
-                observed: source.observed(),
-            });
-        }
-    }
-    // Pass 2 — admit and build the key. Admission errors now surface
-    // intact via `ComponentAdmissionFailed`; kind mismatches are
-    // impossible because pass 1 cleared them.
     kinds
         .iter()
         .zip(values)
         .enumerate()
         .map(|(index, (kind, value))| {
-            component_from_value_admit(*kind, value).map_err(|source| match source {
-                TypedIndexValueError::AdmissionFailed { reason, .. } => {
-                    CompositeIndexValueError::ComponentAdmissionFailed {
-                        index,
-                        expected_kind: TypedIndexKind::String,
-                        reason,
-                    }
-                }
-                other => CompositeIndexValueError::Component {
+            component_from_value(*kind, value).map_err(|source| {
+                CompositeIndexValueError::Component {
                     index,
-                    expected_kind: other.expected_kind(),
-                    observed: other.observed(),
-                },
+                    expected_kind: source.expected_kind(),
+                    observed: source.observed(),
+                }
             })
         })
         .collect()
 }
 
-/// Build a composite key from ordered component kinds and values **without
-/// admitting new content** to the global [`IStr`] pool.
-///
-/// Returns `Ok(None)` when any `STRING` component is a
-/// [`Value::ExternalString`] whose content has never been admitted.
-pub(crate) fn composite_key_from_values_lookup(
-    kinds: &[TypedIndexKind],
-    values: &[&Value],
-) -> Result<Option<CompositeKey>, CompositeIndexValueError> {
-    if kinds.len() != values.len() {
-        return Err(CompositeIndexValueError::ArityMismatch {
-            expected: kinds.len(),
-            observed: values.len(),
-        });
-    }
-    let mut key: CompositeKey = SmallVec::with_capacity(kinds.len());
-    for (index, (kind, value)) in kinds.iter().zip(values).enumerate() {
-        match component_from_value_lookup(*kind, value) {
-            Ok(Some(component)) => key.push(component),
-            Ok(None) => return Ok(None),
-            Err(source) => {
-                return Err(CompositeIndexValueError::Component {
-                    index,
-                    expected_kind: source.expected_kind(),
-                    observed: source.observed(),
-                });
-            }
-        }
-    }
-    Ok(Some(key))
-}
-
-fn component_from_value_admit(
+fn component_from_value(
     kind: TypedIndexKind,
     value: &Value,
 ) -> Result<CompositeKeyComponent, TypedIndexValueError> {
     match (kind, value) {
+        (TypedIndexKind::Bool, Value::Bool(value)) => Ok(CompositeKeyComponent::Bool(*value)),
         (TypedIndexKind::I64, Value::Int(value)) => Ok(CompositeKeyComponent::I64(*value)),
+        (TypedIndexKind::U64, Value::Uint(value)) => Ok(CompositeKeyComponent::U64(*value)),
+        (TypedIndexKind::I128, Value::Int128(value)) => Ok(CompositeKeyComponent::I128(*value)),
+        (TypedIndexKind::U128, Value::Uint128(value)) => Ok(CompositeKeyComponent::U128(*value)),
+        (TypedIndexKind::Decimal, Value::Decimal(value)) => {
+            Ok(CompositeKeyComponent::Decimal(*value))
+        }
+        (TypedIndexKind::F32, Value::Float32(value)) => NotNanF32::new(*value)
+            .map(CompositeKeyComponent::F32)
+            .map_err(|NotNanError| TypedIndexValueError::NaN {
+                expected_kind: TypedIndexKind::F32,
+            }),
         (TypedIndexKind::F64, Value::Float(value)) => NotNanF64::new(*value)
             .map(CompositeKeyComponent::F64)
             .map_err(|NotNanError| TypedIndexValueError::NaN {
                 expected_kind: TypedIndexKind::F64,
             }),
-        (TypedIndexKind::String, Value::String(value)) => Ok(CompositeKeyComponent::String(*value)),
-        (TypedIndexKind::String, Value::ExternalString(value)) => {
-            match selene_core::intern(value.as_ref()) {
-                Ok(interned) => Ok(CompositeKeyComponent::String(interned)),
-                Err(reason) => Err(TypedIndexValueError::AdmissionFailed {
-                    expected_kind: TypedIndexKind::String,
-                    reason,
-                }),
-            }
+        (TypedIndexKind::String, Value::String(value)) => {
+            Ok(CompositeKeyComponent::String(value.clone()))
         }
         (TypedIndexKind::Date, Value::Date(value)) => Ok(CompositeKeyComponent::Date(*value)),
         (TypedIndexKind::LocalDateTime, Value::LocalDateTime(value)) => {
             Ok(CompositeKeyComponent::LocalDateTime(*value))
+        }
+        (TypedIndexKind::ZonedDateTime, Value::ZonedDateTime(value)) => {
+            Ok(CompositeKeyComponent::ZonedDateTime((**value).clone()))
+        }
+        (TypedIndexKind::LocalTime, Value::LocalTime(value)) => {
+            Ok(CompositeKeyComponent::LocalTime(*value))
+        }
+        (TypedIndexKind::ZonedTime, Value::ZonedTime(value)) => {
+            Ok(CompositeKeyComponent::ZonedTime((**value).clone()))
+        }
+        (TypedIndexKind::Duration, Value::Duration(value)) => {
+            Ok(CompositeKeyComponent::Duration(duration_order_key(value)))
         }
         (TypedIndexKind::Uuid, Value::Uuid(value)) => Ok(CompositeKeyComponent::Uuid(*value)),
         (expected_kind, value) => Err(TypedIndexValueError::KindMismatch {
@@ -393,129 +353,112 @@ fn component_from_value_admit(
     }
 }
 
-fn component_from_value_lookup(
-    kind: TypedIndexKind,
-    value: &Value,
-) -> Result<Option<CompositeKeyComponent>, TypedIndexValueError> {
-    match (kind, value) {
-        (TypedIndexKind::I64, Value::Int(value)) => Ok(Some(CompositeKeyComponent::I64(*value))),
-        (TypedIndexKind::F64, Value::Float(value)) => NotNanF64::new(*value)
-            .map(|key| Some(CompositeKeyComponent::F64(key)))
-            .map_err(|NotNanError| TypedIndexValueError::NaN {
-                expected_kind: TypedIndexKind::F64,
-            }),
-        (TypedIndexKind::String, Value::String(value)) => {
-            Ok(Some(CompositeKeyComponent::String(*value)))
-        }
-        (TypedIndexKind::String, Value::ExternalString(value)) => {
-            Ok(selene_core::lookup(value.as_ref()).map(CompositeKeyComponent::String))
-        }
-        (TypedIndexKind::Date, Value::Date(value)) => Ok(Some(CompositeKeyComponent::Date(*value))),
-        (TypedIndexKind::LocalDateTime, Value::LocalDateTime(value)) => {
-            Ok(Some(CompositeKeyComponent::LocalDateTime(*value)))
-        }
-        (TypedIndexKind::Uuid, Value::Uuid(value)) => Ok(Some(CompositeKeyComponent::Uuid(*value))),
-        (expected_kind, value) => Err(TypedIndexValueError::KindMismatch {
-            expected_kind,
-            observed: crate::typed_index::observed_value_kind(value),
-        }),
-    }
-}
-
-/// Pairwise raw-value comparison used by [`CompositeTypedIndex::values_share_key`]
-/// when at least one side has an unpoolable `STRING` component. Matches the
-/// content-equality semantics of the single-key
-/// [`crate::typed_index`]`::raw_value_same` helper.
-fn vec_raw_value_same(lhs: &[&Value], rhs: &[&Value]) -> bool {
-    if lhs.len() != rhs.len() {
-        return false;
-    }
-    lhs.iter().zip(rhs).all(|(l, r)| raw_value_same(l, r))
-}
-
-fn raw_value_same(lhs: &Value, rhs: &Value) -> bool {
-    match (lhs, rhs) {
-        (Value::Float(lhs), Value::Float(rhs)) => lhs.to_bits() == rhs.to_bits(),
-        (Value::Float32(lhs), Value::Float32(rhs)) => lhs.to_bits() == rhs.to_bits(),
-        (Value::String(lhs), Value::String(rhs)) => lhs == rhs,
-        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => lhs.as_ref() == rhs.as_ref(),
-        (Value::String(lhs), Value::ExternalString(rhs)) => lhs.as_str() == rhs.as_ref(),
-        (Value::ExternalString(lhs), Value::String(rhs)) => lhs.as_ref() == rhs.as_str(),
-        _ => lhs == rhs,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use selene_core::{intern, lookup};
+    use selene_core::db_string;
     use smallvec::smallvec;
 
     use super::*;
 
+    fn decimal(value: &str) -> rust_decimal::Decimal {
+        value.parse().expect("test decimal parses")
+    }
+
     #[test]
-    fn component_from_value_admit_external_string_string_kind() {
-        let probe = "component_admit.external.unique-1";
-        assert!(lookup(probe).is_none());
-        let value = Value::ExternalString(Arc::<str>::from(probe));
+    fn component_from_value_string_kind() {
+        let probe = "component_admit.string.unique-1";
+        let value = Value::String(db_string(probe).unwrap());
 
-        let component = component_from_value_admit(TypedIndexKind::String, &value)
-            .expect("admission succeeds under cap");
+        let component =
+            component_from_value(TypedIndexKind::String, &value).expect("string component coerces");
 
-        let CompositeKeyComponent::String(istr) = component else {
+        let CompositeKeyComponent::String(db_string) = component else {
             panic!("expected String component, got {component:?}");
         };
-        assert_eq!(istr.as_str(), probe);
-        assert!(lookup(probe).is_some());
+        assert_eq!(db_string.as_str(), probe);
     }
 
     #[test]
-    fn component_from_value_lookup_external_string_not_in_pool_returns_none() {
-        let probe = "component_lookup.external.unique-not-admitted";
-        assert!(lookup(probe).is_none());
-        let value = Value::ExternalString(Arc::<str>::from(probe));
+    fn component_from_value_bool_kind() {
+        let value = Value::Bool(true);
 
-        let result =
-            component_from_value_lookup(TypedIndexKind::String, &value).expect("kind matches");
+        let component =
+            component_from_value(TypedIndexKind::Bool, &value).expect("bool component coerces");
 
-        assert!(result.is_none());
-        assert!(lookup(probe).is_none(), "lookup must not admit");
+        assert_eq!(component, CompositeKeyComponent::Bool(true));
     }
 
     #[test]
-    fn composite_key_from_values_lookup_returns_none_when_any_component_missing() {
-        let kinds: SmallVec<[TypedIndexKind; 4]> =
-            smallvec![TypedIndexKind::I64, TypedIndexKind::String];
-        // Component 1 (STRING) is unpoolable; whole key resolves to None.
-        let probe = "composite_lookup.external.unique-not-admitted";
-        assert!(lookup(probe).is_none());
-        let ts = Value::Int(5);
-        let location = Value::ExternalString(Arc::<str>::from(probe));
-        let refs: Vec<&Value> = vec![&ts, &location];
+    fn component_from_value_u64_kind() {
+        let value = Value::Uint(42);
 
-        let result = composite_key_from_values_lookup(&kinds, &refs).expect("arity + kinds match");
+        let component =
+            component_from_value(TypedIndexKind::U64, &value).expect("u64 component coerces");
 
-        assert!(result.is_none());
-        assert!(lookup(probe).is_none());
+        assert_eq!(component, CompositeKeyComponent::U64(42));
     }
 
     #[test]
-    fn composite_key_admit_does_not_admit_when_later_component_kind_mismatches() {
-        // BRIEF-153 fix-cycle C4: two-pass admission. The tuple's later
-        // component is kind-mismatched, so the earlier STRING component's
-        // ExternalString content MUST NOT be admitted to the global pool.
+    fn component_from_value_exact_numeric_kinds() {
+        let signed = Value::Int128(i128::MIN + 42);
+        let unsigned = Value::Uint128(u128::MAX - 42);
+        let amount = Value::Decimal(decimal("42.25"));
+
+        assert_eq!(
+            component_from_value(TypedIndexKind::I128, &signed).expect("i128 component coerces"),
+            CompositeKeyComponent::I128(i128::MIN + 42)
+        );
+        assert_eq!(
+            component_from_value(TypedIndexKind::U128, &unsigned).expect("u128 component coerces"),
+            CompositeKeyComponent::U128(u128::MAX - 42)
+        );
+        assert_eq!(
+            component_from_value(TypedIndexKind::Decimal, &amount)
+                .expect("decimal component coerces"),
+            CompositeKeyComponent::Decimal(decimal("42.25"))
+        );
+    }
+
+    #[test]
+    fn component_from_value_float32_kind() {
+        let value = Value::Float32(1.25_f32);
+
+        let component =
+            component_from_value(TypedIndexKind::F32, &value).expect("f32 component coerces");
+
+        assert_eq!(
+            component,
+            CompositeKeyComponent::F32(NotNanF32::new(1.25_f32).unwrap())
+        );
+    }
+
+    #[test]
+    fn component_from_value_duration_kind() {
+        let value = Value::Duration(Box::new("PT1H2S".parse().unwrap()));
+
+        let component = component_from_value(TypedIndexKind::Duration, &value)
+            .expect("duration component coerces");
+
+        assert_eq!(
+            component,
+            CompositeKeyComponent::Duration(selene_core::duration_order_key(match &value {
+                Value::Duration(value) => value,
+                _ => unreachable!("test value is duration"),
+            }))
+        );
+    }
+
+    #[test]
+    fn composite_key_rejects_when_later_component_kind_mismatches() {
         let kinds: SmallVec<[TypedIndexKind; 4]> =
             smallvec![TypedIndexKind::String, TypedIndexKind::I64];
-        let probe = "composite_admit.left_to_right.unique-never-pooled";
-        assert!(lookup(probe).is_none());
-        let location = Value::ExternalString(Arc::<str>::from(probe));
+        let location = Value::String(db_string("composite_admit.left_to_right.loc").unwrap());
         // Component 1 is kind-mismatched — a String value bound to an I64
         // index component triggers `KindMismatch` on the second component.
-        let bad = Value::String(intern("composite_admit.left_to_right.bad").unwrap());
+        let bad = Value::String(db_string("composite_admit.left_to_right.bad").unwrap());
         let refs: Vec<&Value> = vec![&location, &bad];
 
-        let err = composite_key_from_values_admit(&kinds, &refs)
+        let err = composite_key_from_values(&kinds, &refs)
             .expect_err("tuple kind mismatch on later component rejects whole tuple");
 
         assert!(matches!(
@@ -526,44 +469,35 @@ mod tests {
                 observed: "String",
             }
         ));
-        assert!(
-            lookup(probe).is_none(),
-            "pass-1 kind check must run before any STRING admission"
-        );
     }
 
     #[test]
-    fn composite_key_from_values_admit_admits_string_component() {
+    fn composite_key_from_values_admits_string_component() {
         let kinds: SmallVec<[TypedIndexKind; 4]> =
             smallvec![TypedIndexKind::I64, TypedIndexKind::String];
-        let probe = "composite_admit.external.unique-1";
-        assert!(lookup(probe).is_none());
         let ts = Value::Int(7);
-        let location = Value::ExternalString(Arc::<str>::from(probe));
+        let location = Value::String(db_string("composite_admit.string.unique-1").unwrap());
         let refs: Vec<&Value> = vec![&ts, &location];
 
-        let key =
-            composite_key_from_values_admit(&kinds, &refs).expect("admission succeeds under cap");
+        let key = composite_key_from_values(&kinds, &refs).expect("string component coerces");
 
         assert_eq!(key.len(), 2);
-        assert!(lookup(probe).is_some());
     }
 
     #[test]
-    fn values_share_key_uses_raw_compare_when_string_component_unpoolable() {
+    fn values_share_key_matches_equal_string_components() {
         let index =
             CompositeTypedIndex::new(smallvec![TypedIndexKind::I64, TypedIndexKind::String]);
-        let probe = "values_share_key.composite.external.unique-1";
-        assert!(lookup(probe).is_none());
         let ts_lhs = Value::Int(1);
         let ts_rhs = Value::Int(1);
-        let loc_lhs = Value::ExternalString(Arc::<str>::from(probe));
-        let loc_rhs = Value::ExternalString(Arc::<str>::from(probe));
+        let loc_lhs =
+            Value::String(db_string("values_share_key.composite.string.unique-1").unwrap());
+        let loc_rhs =
+            Value::String(db_string("values_share_key.composite.string.unique-1").unwrap());
         let lhs: Vec<&Value> = vec![&ts_lhs, &loc_lhs];
         let rhs: Vec<&Value> = vec![&ts_rhs, &loc_rhs];
 
         assert!(index.values_share_key(&lhs, &rhs));
-        assert!(lookup(probe).is_none(), "diff must not admit");
     }
 
     #[test]
@@ -572,7 +506,7 @@ mod tests {
             CompositeTypedIndex::new(smallvec![TypedIndexKind::I64, TypedIndexKind::String]);
         assert_eq!(index.distinct_keys(), 0, "empty index");
 
-        let k1 = intern("k1").unwrap();
+        let k1 = db_string("k1").unwrap();
         let v_k1 = Value::String(k1);
         let one = Value::Int(1);
         let two = Value::Int(2);
@@ -596,22 +530,16 @@ mod tests {
     }
 
     #[test]
-    fn values_share_key_returns_false_for_distinct_unpoolable_strings() {
+    fn values_share_key_returns_false_for_distinct_strings() {
         let index =
             CompositeTypedIndex::new(smallvec![TypedIndexKind::I64, TypedIndexKind::String]);
-        let lhs_content = "values_share_key.composite.external.lhs-unique";
-        let rhs_content = "values_share_key.composite.external.rhs-unique";
-        assert!(lookup(lhs_content).is_none());
-        assert!(lookup(rhs_content).is_none());
         let ts_lhs = Value::Int(1);
         let ts_rhs = Value::Int(1);
-        let loc_lhs = Value::ExternalString(Arc::<str>::from(lhs_content));
-        let loc_rhs = Value::ExternalString(Arc::<str>::from(rhs_content));
+        let loc_lhs = Value::String(db_string("values_share_key.composite.lhs-unique").unwrap());
+        let loc_rhs = Value::String(db_string("values_share_key.composite.rhs-unique").unwrap());
         let lhs: Vec<&Value> = vec![&ts_lhs, &loc_lhs];
         let rhs: Vec<&Value> = vec![&ts_rhs, &loc_rhs];
 
         assert!(!index.values_share_key(&lhs, &rhs));
-        assert!(lookup(lhs_content).is_none());
-        assert!(lookup(rhs_content).is_none());
     }
 }

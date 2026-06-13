@@ -5,7 +5,7 @@
 //! (CLAUDE.md hard rule #5). The constants and helpers here are private
 //! to `selene_gql::ast` and consumed only by `format.rs`.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 /// Aggregate-op keywords reserved by the `aggregate_expr` grammar rule.
 ///
@@ -16,13 +16,13 @@ use selene_core::IStr;
 /// argument list shape diverges. [`fmt_call_segment`] consults this set
 /// to opt out of quoting in the call-name context.
 const AGGREGATE_OPS: &[&str] = &[
-    "AVERAGE",
     "AVG",
-    "COLLECT",
     "COLLECT_LIST",
     "COUNT",
     "MAX",
     "MIN",
+    "PERCENTILE_CONT",
+    "PERCENTILE_DISC",
     "STDDEV_POP",
     "STDDEV_SAMP",
     "SUM",
@@ -45,17 +45,11 @@ const AGGREGATE_OPS: &[&str] = &[
 // removed for ISO faithfulness (LIKE, BETWEEN, GRANT, REVOKE, ROLE, USER,
 // PASSWORD, PROCEDURE, TRIGGER, TRIGGERS, MATERIALIZED, VIEW, VIEWS, AT, AFTER,
 // EXECUTE) were dropped from this set so it again mirrors grammar.pest.
-// Known pre-existing under-list gap (NOT introduced by the purge): a few
-// CONTEXTUAL keywords added by later briefs — EXPLAIN, INDEXES, PROCEDURES,
-// TRANSACTIONS, VALUE, NORMALIZE, PERCENTILE_CONT/DISC — are grammar tokens not
-// listed here. They are contextual (e.g. `VALUE {`, `NORMALIZE(`), so a bare
-// identifier of the same spelling still parses; adding them needs per-token
-// aggregate-vs-call analysis (cf. AGGREGATE_OPS) and is tracked separately.
 #[rustfmt::skip]
 const KEYWORDS: &[&str] = &[
     "ACYCLIC", "ALL", "ALL_DIFFERENT", "AND", "ANY", "ARRAY", "AS", "ASC",
-    "AVERAGE", "AVG", "BIGINT", "BINDING", "BINDINGS", "BOOL", "BOOLEAN", "BOTH",
-    "BY", "BYTEA", "BYTES", "CALL", "CASE", "CAST", "COLLECT", "COLLECT_LIST",
+    "AVG", "BIGINT", "BINDING", "BINDINGS", "BOOL", "BOOLEAN", "BOTH",
+    "BY", "BYTEA", "BYTES", "CALL", "CASE", "CAST", "COLLECT_LIST",
     "COMMIT", "CONNECTING", "CONTAINS", "COUNT", "CREATE", "DATE", "DATETIME",
     "DAY", "DEC", "DECIMAL", "DEFAULT", "DELETE", "DESC", "DESTINATION",
     "DETACH", "DICTIONARY", "DIFFERENT", "DIRECTED", "DISTINCT", "DOUBLE",
@@ -78,14 +72,30 @@ const KEYWORDS: &[&str] = &[
     "WALK", "WARN", "WHEN", "WHERE", "WITH", "XOR", "YEAR", "YIELD", "ZONED",
 ];
 
+/// Contextual keyword tokens that must be quoted in identifier slots.
+///
+/// These tokens are not globally reserved by the parser because each appears
+/// only in a specific grammar context (`EXPLAIN`, `SHOW INDEXES`,
+/// `NORMALIZE(...)`, `PERCENTILE_CONT(...)`, ...). A bare identifier with the
+/// same spelling can still parse as an identifier, but emitting it bare hides
+/// its identifier role in formatted output and leaves future grammar additions
+/// room to break round trips. Keep them out of [`KEYWORDS`] so function-call
+/// formatting can continue to apply call-specific rules.
+#[rustfmt::skip]
+const CONTEXTUAL_IDENTIFIER_KEYWORDS: &[&str] = &[
+    "EXPLAIN", "INDEXES", "NORMALIZE", "PERCENTILE_CONT", "PERCENTILE_DISC",
+    "PROCEDURES", "TRANSACTIONS", "VALUE",
+];
+
 /// Format an identifier slot (binding name, alias name, property key).
 ///
 /// Returns the bare identifier when it is a simple ASCII ident and not a
 /// grammar-reserved keyword; otherwise returns the double-quoted form
 /// with embedded `"` escaped as `""`.
-pub(super) fn fmt_ident(value: IStr) -> String {
+pub(super) fn fmt_ident(value: DbString) -> String {
     let value = value.as_str();
-    if is_simple_ident(value) && !KEYWORDS.contains(&value.to_ascii_uppercase().as_str()) {
+    let upper = value.to_ascii_uppercase();
+    if is_simple_ident(value) && !is_identifier_keyword(&upper) {
         return value.to_owned();
     }
     format!("\"{}\"", value.replace('"', "\"\""))
@@ -99,7 +109,7 @@ pub(super) fn fmt_ident(value: IStr) -> String {
 /// the COUNT aggregate; quoting any of those names breaks the parse.
 /// Aggregate ops are not safe identifier names anyway — they are
 /// grammar-reserved at every site where this function is consulted.
-pub(super) fn fmt_call_segment(value: IStr) -> String {
+pub(super) fn fmt_call_segment(value: DbString) -> String {
     let value = value.as_str();
     if is_simple_ident(value) {
         let upper = value.to_ascii_uppercase();
@@ -128,4 +138,8 @@ fn is_simple_ident(value: &str) -> bool {
         return false;
     };
     (first == '_' || first.is_alphabetic()) && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
+}
+
+fn is_identifier_keyword(upper: &str) -> bool {
+    KEYWORDS.contains(&upper) || CONTEXTUAL_IDENTIFIER_KEYWORDS.contains(&upper)
 }

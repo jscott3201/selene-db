@@ -147,6 +147,9 @@ pub(super) fn validate_procedure_call(call: &ProcedureCall) -> Result<(), Format
     for arg in &call.args {
         validate_expr(arg)?;
     }
+    if let Some(filter) = &call.yield_filter {
+        validate_expr(filter)?;
+    }
     Ok(())
 }
 
@@ -156,13 +159,20 @@ pub(super) fn validate_inline_call(call: &InlineProcedureCall) -> Result<(), For
 
 fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
     match expr {
-        ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => Ok(()),
+        ValueExpr::Literal(_) | ValueExpr::Variable { .. } => Ok(()),
+        ValueExpr::Parameter { declared_type, .. } => {
+            if let Some(ty) = declared_type {
+                validate_type(ty)?;
+            }
+            Ok(())
+        }
         ValueExpr::PropertyAccess { target, .. } => validate_expr(target),
         ValueExpr::ListAccess { target, index, .. } => {
             validate_expr(target)?;
             validate_expr(index)
         }
         ValueExpr::ListLiteral { items, .. } => validate_exprs(items),
+        ValueExpr::PathConstructor { elements, .. } => validate_exprs(elements),
         ValueExpr::RecordLiteral { fields, .. } => {
             for (_, value) in fields {
                 validate_expr(value)?;
@@ -175,6 +185,10 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
         }
         ValueExpr::UnaryOp { operand, .. } => validate_expr(operand),
         ValueExpr::FunctionCall { args, .. } => validate_exprs(args),
+        ValueExpr::DurationBetween { start, end, .. } => {
+            validate_expr(start)?;
+            validate_expr(end)
+        }
         ValueExpr::Normalize { source, .. } => validate_expr(source),
         ValueExpr::Trim {
             character, source, ..
@@ -191,6 +205,10 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
         ValueExpr::InList { operand, list, .. } => {
             validate_expr(operand)?;
             validate_exprs(list)
+        }
+        ValueExpr::InListExpression { operand, list, .. } => {
+            validate_expr(operand)?;
+            validate_expr(list)
         }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             validate_exprs(items)
@@ -248,6 +266,7 @@ fn validate_type(ty: &GqlType) -> Result<(), FormatError> {
     }
     match ty {
         GqlType::List(inner) => validate_type(inner)?,
+        GqlType::NotNull(inner) => validate_type(inner)?,
         // Closed record types render their field structure, so each field's
         // value type must also be formattable (a nested reference type would
         // otherwise slip past the gate). The open form has no fields to check.
@@ -263,6 +282,7 @@ fn validate_type(ty: &GqlType) -> Result<(), FormatError> {
 
 fn ast_only_type_variant(ty: &GqlType) -> Option<&'static str> {
     match ty {
+        GqlType::NotNull(inner) => ast_only_type_variant(inner),
         GqlType::GraphRef => Some("GraphRef"),
         GqlType::NodeRef => Some("NodeRef"),
         GqlType::EdgeRef => Some("EdgeRef"),
@@ -286,12 +306,22 @@ mod tests {
         validate_formattable(&statement_with_type(GqlType::Record(RecordType::Open)))
             .expect("open record type is formattable");
         let closed = GqlType::Record(RecordType::Closed(vec![(
-            selene_core::intern_with_admission("name")
-                .expect("intern name")
-                .0,
+            selene_core::db_string("name").expect("db_string name"),
             GqlType::String,
         )]));
         validate_formattable(&statement_with_type(closed)).expect("closed record type formattable");
+    }
+
+    #[test]
+    fn preflight_accepts_vector_types() {
+        validate_formattable(&statement_with_type(GqlType::Vector))
+            .expect("vector type is formattable");
+        validate_formattable(&statement_with_type(GqlType::List(Box::new(
+            GqlType::Vector,
+        ))))
+        .expect("list of vector type is formattable");
+        validate_formattable(&parameter_statement_with_type(GqlType::Vector))
+            .expect("typed vector parameter is formattable");
     }
 
     #[test]
@@ -299,9 +329,7 @@ mod tests {
         // A reference type nested in a closed-record field is still AST-only and
         // must be caught by the recursive field walk.
         let closed = GqlType::Record(RecordType::Closed(vec![(
-            selene_core::intern_with_admission("ref")
-                .expect("intern ref")
-                .0,
+            selene_core::db_string("ref").expect("db_string ref"),
             GqlType::NodeRef,
         )]));
         assert_unsupported(closed, "NodeRef");
@@ -346,6 +374,29 @@ mod tests {
                         operand: Box::new(ValueExpr::Literal(Literal::Null(span))),
                         kind: IsCheckKind::Typed(ty),
                         negated: false,
+                        span,
+                    },
+                    alias: None,
+                    span,
+                }],
+                group_by: None,
+                having: None,
+                span,
+            })],
+            span,
+        })
+    }
+
+    fn parameter_statement_with_type(ty: GqlType) -> Statement {
+        let span = SourceSpan::default();
+        Statement::Query(QueryPipeline {
+            statements: vec![PipelineStatement::Return(ReturnClause {
+                distinct: false,
+                star: false,
+                items: vec![ReturnItem {
+                    expr: ValueExpr::Parameter {
+                        name: selene_core::db_string("value").expect("db_string parameter name"),
+                        declared_type: Some(ty),
                         span,
                     },
                     alias: None,

@@ -1,6 +1,6 @@
 //! Shared helpers for index-aware optimizer rules.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     FilterPredicate, GqlType, LabelExpr, Literal, ValueExpr,
@@ -9,9 +9,9 @@ use crate::{
 };
 
 /// Return the single label carried by a label expression.
-pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::IStr> {
+pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::DbString> {
     match label {
-        Some(LabelExpr::Single(label)) => Some(*label),
+        Some(LabelExpr::Single(label)) => Some(label.clone()),
         _ => None,
     }
 }
@@ -44,14 +44,14 @@ pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::ISt
 /// `parts.len() >= 2` — no empty/1-element edge case to handle.
 pub(super) fn flat_disjunction_singles(
     label: &Option<LabelExpr>,
-) -> Option<Vec<selene_core::IStr>> {
+) -> Option<Vec<selene_core::DbString>> {
     let Some(LabelExpr::Disjunction(parts)) = label else {
         return None;
     };
     parts
         .iter()
         .map(|part| match part {
-            LabelExpr::Single(label) => Some(*label),
+            LabelExpr::Single(label) => Some(label.clone()),
             _ => None,
         })
         .collect()
@@ -70,7 +70,7 @@ pub(super) fn target_for_element(element: BindingElement) -> Option<IndexTarget>
 pub(super) fn binding_index_target(
     bindings: &[BindingDef],
     binding_id: BindingId,
-) -> Option<(IndexTarget, selene_core::IStr)> {
+) -> Option<(IndexTarget, selene_core::DbString)> {
     let binding = bindings
         .iter()
         .find(|binding| binding.binding == binding_id)?;
@@ -83,11 +83,19 @@ pub(super) fn binding_index_target(
 /// Return the index kind represented by a literal.
 pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
     match literal {
-        Literal::Integer(_, _) => Some(IndexKind::Integer),
-        Literal::Float(_, _) => Some(IndexKind::Float),
+        Literal::Bool(_, _) => Some(IndexKind::Boolean),
+        Literal::Integer(_, _) | Literal::RadixInteger(_, _, _) => Some(IndexKind::Integer),
+        Literal::Decimal(_, _, _) => Some(IndexKind::Decimal),
+        Literal::Float(_, _, _) => Some(IndexKind::Float),
         Literal::String(_, _) => Some(IndexKind::String),
+        Literal::Date(_, _) => Some(IndexKind::Date),
+        Literal::LocalDateTime(_, _) => Some(IndexKind::LocalDateTime),
+        Literal::ZonedDateTime(_, _) => Some(IndexKind::ZonedDateTime),
+        Literal::LocalTime(_, _) => Some(IndexKind::LocalTime),
+        Literal::ZonedTime(_, _) => Some(IndexKind::ZonedTime),
+        Literal::Duration(_, _) => Some(IndexKind::Duration),
         Literal::Uuid(_, _) => Some(IndexKind::Uuid),
-        Literal::Bool(_, _) | Literal::Null(_) => None,
+        Literal::Bytes(_, _) | Literal::Null(_) => None,
     }
 }
 
@@ -121,6 +129,28 @@ pub(super) fn compatible_value(value: &ValueExpr, kind: IndexKind) -> Option<Ind
     })
 }
 
+/// Resolve `value` to a declared list-parameter [`IndexKey`] admissible for
+/// bitmap-union fanout over the given index kind.
+///
+/// Unlike scalar parameters, list parameters must declare `LIST<T>` so this
+/// rule does not change untyped dynamic-list semantics. The element type must
+/// map to the indexed storage key kind.
+pub(super) fn compatible_list_parameter(value: &ValueExpr, kind: IndexKind) -> Option<IndexKey> {
+    let param = binding_refs::parameter(value)?;
+    let declared = param.declared_type?;
+    let GqlType::List(inner) = declared else {
+        return None;
+    };
+    if !gql_type_compatible_with_index_kind(inner, kind) {
+        return None;
+    }
+    Some(IndexKey::ParameterList {
+        name: param.name,
+        declared_type: declared.clone(),
+        span: param.span,
+    })
+}
+
 /// One equality-shaped property predicate against a node binding.
 ///
 /// Carries the candidate's `property_predicates` index, the property key, and
@@ -135,7 +165,7 @@ pub(super) struct EqualityCandidate<'a> {
     /// Position of the candidate within the scan's `property_predicates`.
     pub(super) index: usize,
     /// Property key the equality predicate references.
-    pub(super) key: IStr,
+    pub(super) key: DbString,
     /// Equality value (literal or parameter slot).
     pub(super) value: &'a ValueExpr,
 }
@@ -198,23 +228,30 @@ pub(super) fn equality_candidates<'a>(
 ///
 /// The mapping mirrors which [`selene_core::Value`] variants the indexed
 /// storage actually probes against:
+/// - `IndexKind::Boolean` keys are `Value::Bool`, which maps 1:1 to
+///   `GqlType::Boolean`.
 /// - `IndexKind::Integer` keys are `Value::Int` (i64). `GqlType` variants that
 ///   bind to `Value::Int` per [`crate::runtime::parameter_type::validate_declared_type`]
 ///   are admissible: `INTEGER | INT8 | INT16 | INT32 | INT64 | SMALLINT | BIGINT`.
 ///   `INT128` (`Value::Int128`), the unsigned family (`Value::Uint{,128}`), and
 ///   `DECIMAL` are NOT `Value::Int` — reject.
-/// - `IndexKind::Float` keys are `Value::Float` (f64). `FLOAT` and `FLOAT64`
-///   bind to `Value::Float`; `FLOAT32` binds to `Value::Float32` and would
-///   need an explicit cast, so it is rejected.
-/// - `IndexKind::String`, `Date`, `LocalDateTime`, `Uuid` are 1:1 with the
-///   matching GqlType variant. `STRING` admits both `Value::String` and
-///   `Value::ExternalString`; ExternalString carve-out is handled at execute
-///   time via [`selene_core::lookup`] (see BRIEF-153 + §B.3 F4).
+/// - `IndexKind::UnsignedInteger` keys are `Value::Uint` (u64), which maps to
+///   the fixed-width unsigned family up to `UINT64` plus the regular/small/big
+///   unsigned category names.
+/// - `IndexKind::Integer128`, `UnsignedInteger128`, and `Decimal` keys are
+///   `Value::Int128`, `Value::Uint128`, and `Value::Decimal` respectively.
+///   They intentionally admit only their exact typed parameter declarations.
+/// - `IndexKind::Float32` keys are `Value::Float32`; `IndexKind::Float` keys
+///   are `Value::Float` (f64). `FLOAT` is width-generic, so both float index
+///   kinds reject it and only admit precise width declarations.
+/// - `IndexKind::String`, `Date`, temporal time/datetime, `Uuid` are 1:1 with the
+///   matching GqlType variant. `STRING` binds to `Value::String`.
 ///
 /// Untyped parameters (no `$id :: TYPE` declaration) bypass this check and
 /// defer to the execute-time `IndexKind` probe on the resolved Value.
 pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind) -> bool {
     match kind {
+        IndexKind::Boolean => matches!(ty, GqlType::Boolean),
         IndexKind::Integer => matches!(
             ty,
             GqlType::Integer
@@ -225,7 +262,23 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
                 | GqlType::SmallInt
                 | GqlType::BigInt
         ),
-        // BRIEF-154 PR #175 F2 (Codex P2): admit only `FLOAT64` for
+        IndexKind::UnsignedInteger => {
+            matches!(
+                ty,
+                GqlType::Uint8
+                    | GqlType::Uint16
+                    | GqlType::Uint32
+                    | GqlType::Uint64
+                    | GqlType::USmallInt
+                    | GqlType::Uint
+                    | GqlType::UBigInt
+            )
+        }
+        IndexKind::Integer128 => matches!(ty, GqlType::Int128),
+        IndexKind::UnsignedInteger128 => matches!(ty, GqlType::Uint128),
+        IndexKind::Decimal => matches!(ty, GqlType::Decimal | GqlType::DecimalExact(_)),
+        IndexKind::Float32 => matches!(ty, GqlType::Float32 | GqlType::Real),
+        // BRIEF-154 PR #175 F2 (Codex P2): admit only concrete f64 type names for
         // `IndexKind::Float`. `GqlType::Float` is width-generic per
         // `parameter_type::validate_declared_type`, which accepts both
         // `Value::Float` and `Value::Float32`; but the runtime index
@@ -236,10 +289,19 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
         // while the non-indexed equivalent query would compare normally
         // via `value_compare`. Reject `FLOAT` so it falls back to
         // Linear at plan time and the two paths agree.
-        IndexKind::Float => matches!(ty, GqlType::Float64),
-        IndexKind::String => matches!(ty, GqlType::String),
+        IndexKind::Float => matches!(ty, GqlType::Float64 | GqlType::Double),
+        IndexKind::String => matches!(ty, GqlType::String | GqlType::CharacterString(_)),
         IndexKind::Date => matches!(ty, GqlType::Date),
         IndexKind::LocalDateTime => matches!(ty, GqlType::LocalDateTime),
+        IndexKind::ZonedDateTime => matches!(ty, GqlType::ZonedDateTime),
+        IndexKind::LocalTime => matches!(ty, GqlType::LocalTime),
+        IndexKind::ZonedTime => matches!(ty, GqlType::ZonedTime),
+        IndexKind::Duration => {
+            matches!(
+                ty,
+                GqlType::Duration | GqlType::DurationYearToMonth | GqlType::DurationDayToSecond
+            )
+        }
         IndexKind::Uuid => matches!(ty, GqlType::Uuid),
     }
 }

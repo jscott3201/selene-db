@@ -5,11 +5,11 @@
 mod exec_common;
 
 use exec_common::empty_graph_context;
-use selene_core::{Value, intern};
+use selene_core::{Value, db_string};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
-    GqlType, ImplDefinedCaps, IsCheckKind, Literal, NonEmpty, RecordType, SourceSpan, TruthValue,
-    UnaryOp, ValueExpr,
+    FloatLiteralKind, GqlType, ImplDefinedCaps, IsCheckKind, Literal, NonEmpty, RecordType,
+    SourceSpan, TruthValue, UnaryOp, ValueExpr,
 };
 
 fn span() -> SourceSpan {
@@ -33,10 +33,14 @@ fn int_lit(value: i64) -> ValueExpr {
 }
 
 fn float_lit(value: f64) -> ValueExpr {
-    lit(Literal::Float(value, span()))
+    lit(Literal::Float(
+        value,
+        span(),
+        FloatLiteralKind::CommonOrIntegerWithDoubleSuffix,
+    ))
 }
 
-fn var(name: selene_core::IStr) -> ValueExpr {
+fn var(name: selene_core::DbString) -> ValueExpr {
     ValueExpr::Variable { name, span: span() }
 }
 
@@ -65,7 +69,7 @@ fn eval_with_binding(
     selene_gql::runtime::evaluate_for_test(expr, binding, schema, &ctx)
 }
 
-fn named_column(name: selene_core::IStr) -> BindingTableColumn {
+fn named_column(name: selene_core::DbString) -> BindingTableColumn {
     BindingTableColumn {
         name: Some(name),
         hidden: None,
@@ -74,12 +78,12 @@ fn named_column(name: selene_core::IStr) -> BindingTableColumn {
 }
 
 fn eval_binary_values(op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, ExecutorError> {
-    let lhs_name = intern("lhs").unwrap();
-    let rhs_name = intern("rhs").unwrap();
+    let lhs_name = db_string("lhs").unwrap();
+    let rhs_name = db_string("rhs").unwrap();
     let expr = ValueExpr::BinaryOp {
         op,
-        lhs: Box::new(var(lhs_name)),
-        rhs: Box::new(var(rhs_name)),
+        lhs: Box::new(var(lhs_name.clone())),
+        rhs: Box::new(var(rhs_name.clone())),
         span: span(),
     };
     let binding = Binding::new([lhs, rhs]);
@@ -285,7 +289,7 @@ fn lossy_integer_float_ordering_is_data_exception() {
 #[test]
 fn unknown_scalar_function_returns_22g03() {
     let expr = ValueExpr::FunctionCall {
-        name: NonEmpty::try_from_vec(vec![intern("unsupported").unwrap()]).expect("non-empty"),
+        name: NonEmpty::try_from_vec(vec![db_string("unsupported").unwrap()]).expect("non-empty"),
         args: Vec::new(),
         star: false,
         distinct: false,
@@ -309,10 +313,10 @@ fn unknown_scalar_function_returns_22g03() {
 fn record_field_access_reads_named_field() {
     // C1: property access on an open `RECORD{...}` value reads the named field
     // (ISO/IEC 39075:2024 clause 20.11 `<property reference>`).
-    let score = intern("score").unwrap();
-    let rank = intern("rank").unwrap();
+    let score = db_string("score").unwrap();
+    let rank = db_string("rank").unwrap();
     let record = ValueExpr::RecordLiteral {
-        fields: vec![(score, int_lit(7)), (rank, int_lit(2))],
+        fields: vec![(score.clone(), int_lit(7)), (rank, int_lit(2))],
         span: span(),
     };
     let access = ValueExpr::PropertyAccess {
@@ -328,8 +332,8 @@ fn record_field_access_reads_named_field() {
 fn record_field_access_absent_field_is_null() {
     // An open record yields NULL for a field it does not carry (open-record
     // property-reference declared type is the nullable open dynamic union type).
-    let score = intern("score").unwrap();
-    let missing = intern("missing").unwrap();
+    let score = db_string("score").unwrap();
+    let missing = db_string("missing").unwrap();
     let record = ValueExpr::RecordLiteral {
         fields: vec![(score, int_lit(7))],
         span: span(),
@@ -347,14 +351,14 @@ fn record_field_access_absent_field_is_null() {
 fn nested_record_field_access_reads_inner_field() {
     // Field access composes: the outer field resolves to a record value, and a
     // second property access reads a field from that inner record.
-    let inner_key = intern("inner").unwrap();
-    let leaf = intern("leaf").unwrap();
+    let inner_key = db_string("inner").unwrap();
+    let leaf = db_string("leaf").unwrap();
     let inner = ValueExpr::RecordLiteral {
-        fields: vec![(leaf, int_lit(42))],
+        fields: vec![(leaf.clone(), int_lit(42))],
         span: span(),
     };
     let outer = ValueExpr::RecordLiteral {
-        fields: vec![(inner_key, inner)],
+        fields: vec![(inner_key.clone(), inner)],
         span: span(),
     };
     let access = ValueExpr::PropertyAccess {
@@ -373,14 +377,14 @@ fn nested_record_field_access_reads_inner_field() {
 // --- IS [NOT] TYPED RECORD / LIST structural runtime (Group J) ---
 
 fn string_lit(value: &str) -> ValueExpr {
-    lit(Literal::String(intern(value).unwrap(), span()))
+    lit(Literal::String(db_string(value).unwrap(), span()))
 }
 
 fn record_lit(fields: Vec<(&str, ValueExpr)>) -> ValueExpr {
     ValueExpr::RecordLiteral {
         fields: fields
             .into_iter()
-            .map(|(name, expr)| (intern(name).unwrap(), expr))
+            .map(|(name, expr)| (db_string(name).unwrap(), expr))
             .collect(),
         span: span(),
     }
@@ -397,8 +401,8 @@ fn is_typed(operand: ValueExpr, ty: GqlType, negated: bool) -> ValueExpr {
 
 fn closed_ab() -> GqlType {
     GqlType::Record(RecordType::Closed(vec![
-        (intern("a").unwrap(), GqlType::Integer),
-        (intern("b").unwrap(), GqlType::String),
+        (db_string("a").unwrap(), GqlType::Integer),
+        (db_string("b").unwrap(), GqlType::String),
     ]))
 }
 
@@ -451,9 +455,9 @@ fn is_typed_closed_record_is_structural() {
 fn is_typed_nested_and_open_record() {
     // Nested closed record (GV48): RECORD{ inner :: RECORD{ flag :: BOOL } }.
     let ty = GqlType::Record(RecordType::Closed(vec![(
-        intern("inner").unwrap(),
+        db_string("inner").unwrap(),
         GqlType::Record(RecordType::Closed(vec![(
-            intern("flag").unwrap(),
+            db_string("flag").unwrap(),
             GqlType::Boolean,
         )])),
     )]));
@@ -511,10 +515,10 @@ fn is_typed_list_enforces_element_type() {
 /// Evaluate `- <value>` by binding the operand to a variable (so non-literal
 /// numeric `Value` variants can be exercised) and negating it.
 fn negate_value(value: Value) -> Result<Value, ExecutorError> {
-    let name = intern("v").unwrap();
+    let name = db_string("v").unwrap();
     let expr = ValueExpr::UnaryOp {
         op: UnaryOp::Negate,
-        operand: Box::new(var(name)),
+        operand: Box::new(var(name.clone())),
         span: span(),
     };
     let binding = Binding::new([value]);
@@ -591,7 +595,7 @@ fn negate_over_each_numeric_value_type() {
 fn property_access_expr(target: ValueExpr, key: &str) -> ValueExpr {
     ValueExpr::PropertyAccess {
         target: Box::new(target),
-        key: intern(key).unwrap(),
+        key: db_string(key).unwrap(),
         span: span(),
     }
 }
@@ -606,6 +610,36 @@ fn property_access_on_list_target_is_data_exception() {
     };
     let err = eval_result(&property_access_expr(list, "foo"))
         .expect_err("property access on a list errors");
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
+fn property_exists_on_list_target_is_data_exception() {
+    let list = ValueExpr::ListLiteral {
+        items: vec![record_lit(vec![("foo", int_lit(1))])],
+        span: span(),
+    };
+    let expr = ValueExpr::PropertyExists {
+        target: Box::new(list),
+        key: db_string("foo").unwrap(),
+        span: span(),
+    };
+
+    let err = eval_result(&expr).expect_err("PROPERTY_EXISTS rejects list targets");
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
+fn property_exists_on_record_target_is_data_exception() {
+    let expr = ValueExpr::PropertyExists {
+        target: Box::new(record_lit(vec![("foo", int_lit(1))])),
+        key: db_string("foo").unwrap(),
+        span: span(),
+    };
+
+    let err = eval_result(&expr).expect_err("PROPERTY_EXISTS rejects record targets");
     assert!(matches!(err, ExecutorError::DataException { .. }));
     assert_eq!(err.gqlstatus().as_str(), "22G03");
 }

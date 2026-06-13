@@ -8,6 +8,7 @@
 mod exec_common;
 
 use selene_core::Value;
+use selene_gql::{GqlStatus, parse};
 
 use exec_common::{column_values, execute_read};
 
@@ -62,4 +63,37 @@ fn group_by_collapses_permuted_record_keys() {
     let counts = column_values(&table, "n");
     assert!(counts.contains(&Value::Int(2)));
     assert!(counts.contains(&Value::Int(1)));
+}
+
+#[test]
+fn closed_record_type_rejects_duplicate_field_names() {
+    for source in [
+        "RETURN CAST({a: 1} AS RECORD{a :: INT, a :: STRING}) AS r",
+        "RETURN {a: 1} IS TYPED RECORD{a :: INT, a :: STRING} AS ok",
+        "RETURN $r :: RECORD{a :: INT, a :: STRING} AS r",
+        "CREATE NODE TYPE :Host (config :: RECORD{a :: INT, a :: STRING})",
+    ] {
+        let err = parse(source).unwrap_err();
+        assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+        assert!(
+            err.to_string()
+                .contains("duplicate record field type name: a"),
+            "{source}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn nested_closed_record_type_rejects_duplicate_field_names() {
+    let err = parse(
+        "RETURN CAST({outer: {a: 1}} AS RECORD{outer :: RECORD{a :: INT, a :: STRING}}) AS r",
+    )
+    .unwrap_err();
+
+    assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
+    assert!(
+        err.to_string()
+            .contains("duplicate record field type name: a"),
+        "{err:?}"
+    );
 }

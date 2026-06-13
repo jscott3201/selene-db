@@ -15,10 +15,28 @@ pub const SNAPSHOT_VERSION_MAJOR: u16 = 1;
 /// sections now persist the explicit external `NodeId` / `EdgeId` per row
 /// instead of synthesizing `row + 1`, and recovery places rows positionally so
 /// a future 4b-compacted snapshot (ids != row+1) round-trips. The version gate
-/// ([`SnapshotFileHeader::read_from`]) rejects any mismatch, so pre-STEP-9
+/// (`SnapshotFileHeader::read_from`) rejects any mismatch, so pre-STEP-9
 /// (minor 0) snapshots are cleanly rejected with [`crate::PersistError::UnsupportedVersion`]
 /// — a clean break, not a dual decoder (deferred to 4c per the D14 amendment).
-pub const SNAPSHOT_VERSION_MINOR: u16 = 1;
+///
+/// Bumped `1 -> 2` when the serialized `Value` enum layout changed. Snapshot
+/// rows embed property values as postcard `PropertyMap` blobs inside the rkyv
+/// `CORE/NODE` / `CORE/EDGE` sections. Older snapshots are rejected by the same
+/// exact-match gate rather than mis-decoding shifted variant discriminants —
+/// another clean greenfield break.
+///
+/// Bumped `2 -> 3` by first-class IVF config: `CORE/VIDX` rows now persist
+/// optional IVF construction parameters beside HNSW construction parameters.
+/// The exact-match gate rejects older vector-index schema rows rather than
+/// decoding them against the wrong rkyv shape.
+///
+/// Bumped `3 -> 4` by the typed-descriptor stream: the rkyv `PropertyTypeDef`
+/// rows archived inside `CORE/GTYP` gained mid-struct `decimal_type` /
+/// `character_string_type` / `byte_string_type` descriptor fields, and the
+/// `PropertyElementType` / `RecordFieldType` enums gained descriptor variants
+/// ahead of existing ones. The exact-match gate rejects pre-descriptor
+/// snapshots rather than decoding them against the wrong archived shape.
+pub const SNAPSHOT_VERSION_MINOR: u16 = 4;
 /// Fixed snapshot file-header length.
 pub const SNAPSHOT_FILE_HEADER_LEN: usize = 32;
 /// Whole-body compression flag, reserved in v1.0.
@@ -81,7 +99,7 @@ impl SnapshotFileHeader {
         Ok(())
     }
 
-    /// Read and validate a fixed 32-byte snapshot header.
+    /// Read and validate a fixed 32-byte snapshot header from a reader.
     pub(crate) fn read_from(reader: &mut impl Read) -> PersistResult<Self> {
         let mut bytes = [0_u8; SNAPSHOT_FILE_HEADER_LEN];
         reader
@@ -90,21 +108,37 @@ impl SnapshotFileHeader {
                 std::io::ErrorKind::UnexpectedEof => PersistError::TruncatedSnapshotHeader,
                 _ => PersistError::Io(error),
             })?;
-        let observed = [bytes[0], bytes[1], bytes[2], bytes[3]];
+        Self::from_bytes(&bytes).map(|(header, _)| header)
+    }
+
+    /// Decode and validate the fixed 32-byte header from the front of `bytes`,
+    /// returning the header and the offset just past it (always
+    /// [`SNAPSHOT_FILE_HEADER_LEN`]). The pure-slice core of [`Self::read_from`].
+    ///
+    /// # Errors
+    ///
+    /// [`PersistError::TruncatedSnapshotHeader`] for a slice shorter than the
+    /// 32-byte header, plus the same magic/version/flag/reserved errors as
+    /// [`Self::read_from`].
+    pub(crate) fn from_bytes(bytes: &[u8]) -> PersistResult<(Self, usize)> {
+        let header = bytes
+            .get(..SNAPSHOT_FILE_HEADER_LEN)
+            .ok_or(PersistError::TruncatedSnapshotHeader)?;
+        let observed = [header[0], header[1], header[2], header[3]];
         if observed != SNAPSHOT_MAGIC {
             return Err(PersistError::MagicMismatch { observed });
         }
-        let version_major = u16::from_le_bytes([bytes[4], bytes[5]]);
-        let version_minor = u16::from_le_bytes([bytes[6], bytes[7]]);
+        let version_major = u16::from_le_bytes([header[4], header[5]]);
+        let version_minor = u16::from_le_bytes([header[6], header[7]]);
         if version_major != SNAPSHOT_VERSION_MAJOR || version_minor != SNAPSHOT_VERSION_MINOR {
             return Err(PersistError::UnsupportedVersion {
                 major: version_major,
                 minor: version_minor,
             });
         }
-        let flags = u16::from_le_bytes([bytes[8], bytes[9]]);
+        let flags = u16::from_le_bytes([header[8], header[9]]);
         validate_flags(flags)?;
-        for (index, byte) in bytes[12..16].iter().enumerate() {
+        for (index, byte) in header[12..16].iter().enumerate() {
             if *byte != 0 {
                 return Err(PersistError::ReservedBytesNonZero {
                     offset: RESERVED_START_OFFSET + index as u64,
@@ -112,14 +146,17 @@ impl SnapshotFileHeader {
             }
         }
         let mut body_hash = [0_u8; 16];
-        body_hash.copy_from_slice(&bytes[16..32]);
-        Ok(Self {
-            version_major,
-            version_minor,
-            flags,
-            section_count: u16::from_le_bytes([bytes[10], bytes[11]]),
-            body_hash,
-        })
+        body_hash.copy_from_slice(&header[16..32]);
+        Ok((
+            Self {
+                version_major,
+                version_minor,
+                flags,
+                section_count: u16::from_le_bytes([header[10], header[11]]),
+                body_hash,
+            },
+            SNAPSHOT_FILE_HEADER_LEN,
+        ))
     }
 
     /// Return true if the reserved whole-body compression flag is set.
@@ -188,11 +225,11 @@ mod tests {
             .write_to(&mut bytes)
             .unwrap();
         bytes[4..6].copy_from_slice(&2_u16.to_le_bytes());
-        // `new()` writes the current minor (1 after the STEP 9 bump); patching
+        // `new()` writes the current minor (4 after the descriptor bump); patching
         // only the major byte leaves minor at its written value.
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 1 })
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 4 })
         ));
     }
 
@@ -212,6 +249,24 @@ mod tests {
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
             Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
+        ));
+    }
+
+    #[test]
+    fn pre_descriptor_minor_three_is_rejected() {
+        // Typed-descriptor clean break: a snapshot written at the previous minor
+        // version (3) carries `CORE/GTYP` `PropertyTypeDef` archives WITHOUT the
+        // descriptor fields, so it must fail the exact-match gate with a clean
+        // UnsupportedVersion rather than mis-decoding the shifted rkyv layout.
+        let mut bytes = Vec::new();
+        SnapshotFileHeader::new(0, 0, [0; 16])
+            .unwrap()
+            .write_to(&mut bytes)
+            .unwrap();
+        bytes[6..8].copy_from_slice(&3_u16.to_le_bytes());
+        assert!(matches!(
+            SnapshotFileHeader::read_from(&mut bytes.as_slice()),
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 3 })
         ));
     }
 

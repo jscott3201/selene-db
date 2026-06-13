@@ -22,6 +22,14 @@ use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
 
+/// Minimum projection size before [`Parallelism::Auto`] pays Rayon overhead for
+/// per-node triangle counting on the common sparse path.
+const AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS: usize = 16_384;
+
+/// Dense-neighborhood escape hatch for small projections where row count alone
+/// understates the pair-check work.
+const AUTO_PARALLEL_TRIANGLE_COUNT_MIN_DEGREE: usize = 16;
+
 /// Configuration for per-node triangle count.
 ///
 /// Literal construction via struct expression is part of the ergonomic
@@ -51,7 +59,7 @@ pub fn triangle_count(proj: &GraphProjection, config: TriangleCountConfig) -> Ve
 /// Count triangles per node with cooperative cancellation checkpoints.
 ///
 /// A disabled checker takes the cheap early-return path inside every checkpoint
-/// (see [`check_algorithm`] / [`check_algorithm_stride`]), so the single
+/// (see `check_algorithm` / `check_algorithm_stride`), so the single
 /// checker-threaded impl is the crate-standard shape used by every other
 /// algorithm — there is no hand-duplicated fast path.
 pub fn triangle_count_with_checker(
@@ -59,18 +67,43 @@ pub fn triangle_count_with_checker(
     config: TriangleCountConfig,
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, usize)>, AlgorithmAborted> {
-    let adjacency = build_dense_adjacency(proj, checker)?;
+    let track_max_degree = matches!(config.parallelism, Parallelism::Auto)
+        && proj.node_count() < AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS;
+    let adjacency = build_dense_adjacency(proj, checker, track_max_degree)?;
     if adjacency.is_empty() {
         return Ok(Vec::new());
     }
 
     let result = match config.parallelism {
         Parallelism::Sequential => count_triangles_sequential(&adjacency, checker)?,
-        Parallelism::Auto | Parallelism::Threads(_) => {
+        parallelism
+            if should_count_triangles_parallel(
+                adjacency.row_count(),
+                adjacency.max_degree(),
+                parallelism,
+            ) =>
+        {
             count_triangles_parallel(&adjacency, config.parallelism, checker)?
         }
+        Parallelism::Auto => count_triangles_sequential(&adjacency, checker)?,
+        Parallelism::Threads(_) => unreachable!("explicit threads are handled above"),
     };
     Ok(sort_triangle_count_results(result))
+}
+
+fn should_count_triangles_parallel(
+    row_count: usize,
+    max_degree: usize,
+    parallelism: Parallelism,
+) -> bool {
+    match parallelism {
+        Parallelism::Sequential => false,
+        Parallelism::Auto => {
+            row_count >= AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS
+                || max_degree >= AUTO_PARALLEL_TRIANGLE_COUNT_MIN_DEGREE
+        }
+        Parallelism::Threads(_) => true,
+    }
 }
 
 fn count_triangles_sequential(
@@ -113,6 +146,7 @@ fn count_triangles_parallel(
 struct DenseAdjacency<'a> {
     idx: &'a RowIndex,
     adj: Vec<Vec<u32>>,
+    max_degree: usize,
 }
 
 impl DenseAdjacency<'_> {
@@ -131,11 +165,16 @@ impl DenseAdjacency<'_> {
     fn neighbors(&self, row: usize) -> &[u32] {
         &self.adj[row]
     }
+
+    fn max_degree(&self) -> usize {
+        self.max_degree
+    }
 }
 
 fn build_dense_adjacency<'a>(
     proj: &'a GraphProjection,
     checker: CancellationChecker<'_>,
+    track_max_degree: bool,
 ) -> Result<DenseAdjacency<'a>, AlgorithmAborted> {
     check_algorithm(checker)?;
     let idx = proj.row_index();
@@ -144,29 +183,33 @@ fn build_dense_adjacency<'a>(
     // Build sorted+deduped undirected adjacency per dense index. Self-loops
     // are filtered (a triangle requires 3 distinct vertices per §E29).
     let mut adj = vec![Vec::new(); n];
+    let mut max_degree = 0usize;
     let mut rows_since_check = 0usize;
     for d in 0..n as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         let neighbors = &mut adj[d as usize];
         for nb in proj.out_neighbors(node) {
-            if let Some(nd) = idx.dense_of_node(nb.node_id)
-                && nd != d
-            {
-                neighbors.push(nd);
+            if nb.dense != d {
+                neighbors.push(nb.dense);
             }
         }
         for nb in proj.in_neighbors(node) {
-            if let Some(nd) = idx.dense_of_node(nb.node_id)
-                && nd != d
-            {
-                neighbors.push(nd);
+            if nb.dense != d {
+                neighbors.push(nb.dense);
             }
         }
         neighbors.sort_unstable();
         neighbors.dedup();
+        if track_max_degree {
+            max_degree = max_degree.max(neighbors.len());
+        }
     }
-    Ok(DenseAdjacency { idx, adj })
+    Ok(DenseAdjacency {
+        idx,
+        adj,
+        max_degree,
+    })
 }
 
 fn count_triangles_at_row(row: usize, adjacency: &DenseAdjacency) -> usize {
@@ -192,4 +235,48 @@ fn sort_triangle_count_results(mut result: Vec<(NodeId, usize)>) -> Vec<(NodeId,
     // `feedback_dijkstra_tie_break_needs_both_rules`.
     result.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use super::*;
+
+    #[test]
+    fn auto_parallel_triangle_count_row_threshold_is_explicit() {
+        assert!(!should_count_triangles_parallel(
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS - 1,
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_DEGREE - 1,
+            Parallelism::Auto
+        ));
+        assert!(should_count_triangles_parallel(
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS,
+            0,
+            Parallelism::Auto
+        ));
+    }
+
+    #[test]
+    fn auto_parallel_triangle_count_dense_threshold_is_explicit() {
+        assert!(should_count_triangles_parallel(
+            1,
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_DEGREE,
+            Parallelism::Auto
+        ));
+    }
+
+    #[test]
+    fn explicit_parallelism_policies_override_auto_threshold() {
+        assert!(!should_count_triangles_parallel(
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_ROWS,
+            AUTO_PARALLEL_TRIANGLE_COUNT_MIN_DEGREE,
+            Parallelism::Sequential
+        ));
+        assert!(should_count_triangles_parallel(
+            1,
+            0,
+            Parallelism::Threads(NonZeroUsize::new(2).expect("non-zero"))
+        ));
+    }
 }

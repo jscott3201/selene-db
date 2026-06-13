@@ -118,7 +118,7 @@ impl ExprTypeTable {
 /// The shape key is a span + a structural fingerprint (content dedup: two
 /// `ValueExpr`s with identical structure but different spans get different
 /// keys, and the span disambiguates synthetic default-arg literals that reuse
-/// a call's span — see [`ExprKey`]).
+/// a call's span — see `ExprKey`).
 ///
 /// Parent fingerprinting folds each child's fingerprint rather than re-hashing
 /// the child's raw bytes; a memo created fresh **per `insert` call** caches the
@@ -264,6 +264,11 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             }
             span.hash(state);
         }
+        ValueExpr::PathConstructor { elements, span } => {
+            25u8.hash(state);
+            hash_exprs(elements, state, memo);
+            span.hash(state);
+        }
         ValueExpr::BinaryOp { op, lhs, rhs, span } => {
             7u8.hash(state);
             op.hash(state);
@@ -289,6 +294,18 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             hash_exprs(args, state, memo);
             star.hash(state);
             distinct.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::DurationBetween {
+            start,
+            end,
+            qualifier,
+            span,
+        } => {
+            24u8.hash(state);
+            hash_child(start, state, memo);
+            hash_child(end, state, memo);
+            qualifier.hash(state);
             span.hash(state);
         }
         ValueExpr::Normalize { source, form, span } => {
@@ -333,6 +350,18 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             11u8.hash(state);
             hash_child(operand, state, memo);
             hash_exprs(list, state, memo);
+            negated.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::InListExpression {
+            operand,
+            list,
+            negated,
+            span,
+        } => {
+            12u8.hash(state);
+            hash_child(operand, state, memo);
+            hash_child(list, state, memo);
             negated.hash(state);
             span.hash(state);
         }
@@ -427,13 +456,31 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
             value.hash(state);
             span.hash(state);
         }
-        Literal::Float(value, span) => {
+        Literal::RadixInteger(value, span, kind) => {
+            15u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+            kind.hash(state);
+        }
+        Literal::Decimal(value, span, kind) => {
+            18u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+            kind.hash(state);
+        }
+        Literal::Float(value, span, kind) => {
             2u8.hash(state);
             value.to_bits().hash(state);
             span.hash(state);
+            kind.hash(state);
         }
         Literal::String(value, span) => {
             3u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::Bytes(value, span) => {
+            12u8.hash(state);
             value.hash(state);
             span.hash(state);
         }
@@ -444,6 +491,48 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
         Literal::Uuid(value, span) => {
             5u8.hash(state);
             value.hash(state);
+            span.hash(state);
+        }
+        Literal::ZonedDateTime(value, span) => {
+            6u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::LocalDateTime(value, span) => {
+            7u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::Date(value, span) => {
+            8u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::ZonedTime(value, span) => {
+            9u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::LocalTime(value, span) => {
+            10u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::Duration(value, span) => {
+            11u8.hash(state);
+            (
+                value.get_years(),
+                value.get_months(),
+                value.get_weeks(),
+                value.get_days(),
+                value.get_hours(),
+                value.get_minutes(),
+                value.get_seconds(),
+                value.get_milliseconds(),
+                value.get_microseconds(),
+                value.get_nanoseconds(),
+            )
+                .hash(state);
             span.hash(state);
         }
     }
@@ -573,6 +662,10 @@ fn hash_match_clause<H: Hasher>(
 fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
     match ty {
         GqlType::String => 0u8.hash(state),
+        GqlType::CharacterString(character) => {
+            48u8.hash(state);
+            character.hash(state);
+        }
         GqlType::Boolean => 1u8.hash(state),
         GqlType::Integer => 2u8.hash(state),
         GqlType::Float => 3u8.hash(state),
@@ -586,24 +679,43 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::Uint32 => 11u8.hash(state),
         GqlType::Uint64 => 12u8.hash(state),
         GqlType::Uint128 => 13u8.hash(state),
+        GqlType::USmallInt => 43u8.hash(state),
+        GqlType::Uint => 44u8.hash(state),
+        GqlType::UBigInt => 45u8.hash(state),
         GqlType::SmallInt => 14u8.hash(state),
         GqlType::BigInt => 15u8.hash(state),
         GqlType::Decimal => 16u8.hash(state),
+        GqlType::DecimalExact(decimal) => {
+            47u8.hash(state);
+            decimal.hash(state);
+        }
         GqlType::Float32 => 17u8.hash(state),
         GqlType::Float64 => 18u8.hash(state),
+        GqlType::Real => 40u8.hash(state),
+        GqlType::Double => 41u8.hash(state),
         GqlType::Bytes => 19u8.hash(state),
+        GqlType::ByteString(bytes) => {
+            42u8.hash(state);
+            bytes.hash(state);
+        }
         GqlType::ZonedDateTime => 22u8.hash(state),
         GqlType::LocalDateTime => 23u8.hash(state),
         GqlType::Date => 24u8.hash(state),
         GqlType::ZonedTime => 25u8.hash(state),
         GqlType::LocalTime => 26u8.hash(state),
         GqlType::Duration => 27u8.hash(state),
+        GqlType::DurationYearToMonth => 35u8.hash(state),
+        GqlType::DurationDayToSecond => 36u8.hash(state),
         GqlType::Record(record) => {
             28u8.hash(state);
             hash_record_type(record, state);
         }
         GqlType::List(inner) => {
             29u8.hash(state);
+            hash_gql_type(inner, state);
+        }
+        GqlType::NotNull(inner) => {
+            46u8.hash(state);
             hash_gql_type(inner, state);
         }
         GqlType::Path => 30u8.hash(state),
@@ -614,6 +726,8 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::Null => 35u8.hash(state),
         GqlType::Nothing => 36u8.hash(state),
         GqlType::Uuid => 37u8.hash(state),
+        GqlType::Vector => 38u8.hash(state),
+        GqlType::Json => 39u8.hash(state),
     }
 }
 

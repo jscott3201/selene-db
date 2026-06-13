@@ -20,7 +20,7 @@ use std::thread;
 use selene_algorithms::{
     GraphProjection, ProjectionConfig, articulation_points, bridges, scc, scc_count,
 };
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
 /// Line-graph depth. Large enough that a recursive DFS would overflow the
@@ -35,28 +35,28 @@ const DEPTH: usize = 100_000;
 /// `O(DEPTH)` native frames and overflow this.
 const WORKER_STACK_BYTES: usize = 512 * 1024;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 /// Build a directed line graph `n0 -> n1 -> ... -> n_{depth-1}` in a single
 /// transaction. Returns the shared graph and the ordered NodeIds.
 fn build_line(depth: usize) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(4_004));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(depth);
     for _ in 0..depth {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     for i in 0..depth - 1 {
         txn.mutator()
-            .create_edge(rel, nodes[i], nodes[i + 1], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[i], nodes[i + 1], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();

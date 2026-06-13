@@ -1,40 +1,27 @@
 //! Built-in per-`(label, property)` value index. See spec 03 section 5.2.
 //!
-//! # Caller classes (BRIEF-153)
+//! # Value coercion
 //!
-//! `typed_key_admit` and `typed_key_lookup` split the `Value`→`TypedKey`
-//! conversion into three caller classes, each chosen at every call site:
+//! `typed_key` is the single `Value`→`TypedKey` coercion shared by write, read,
+//! and diff callers. Kind-mismatched reads return `None` so callers can scan.
 //!
-//! - **Write side** ([`TypedIndex::insert`], [`TypedIndex::remove`]):
-//!   `typed_key_admit`. Cap exhaustion surfaces as
-//!   [`TypedIndexValueError::AdmissionFailed`] and the mutator promotes it
-//!   to a hard [`crate::error::GraphError::IndexAdmissionExhausted`]
-//!   (GQLSTATUS `5GQL1`).
-//! - **Read side** ([`TypedIndex::lookup_eq`], the per-type closures in
-//!   [`TypedIndex::lookup_range`]): `typed_key_lookup`. Returning
-//!   `Ok(None)` for `STRING` content that is not in the pool renders as an
-//!   empty result; the read path MUST NOT admit a new `IStr` just to probe.
-//! - **Diff side** ([`TypedIndex::values_share_key`]): `typed_key_lookup`,
-//!   with `Ok(None)` falling through to [`raw_value_same`] so the diff
-//!   path never charges admission against a no-op update. If the values
-//!   genuinely differ, the resulting remove+insert pair admits through the
-//!   write path.
-//!
-//! See `selene_core::value::Value::ExternalString` rustdoc for the
-//! variant-strict storage carve-out this enables.
-//!
-//! The same three-helper split is mirrored in
-//! [`crate::composite_typed_index`] for composite indexes.
+//! The same collapse is mirrored in [`crate::composite_typed_index`] for
+//! composite indexes.
 
 use std::borrow::Cow;
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::ops::{Bound, RangeBounds};
 
 use roaring::RoaringBitmap;
-use selene_core::{CoreError, IStr, Value};
+use selene_core::{DbString, DurationOrderKey, Value};
 use serde::{Deserialize, Serialize};
+
+mod keying;
+
+pub(crate) use keying::{TypedIndexValueError, observed_value_kind};
+use keying::{TypedKey, raw_value_same, typed_key, typed_range_union};
+
+pub use crate::typed_float_key::{NotNanError, NotNanF32, NotNanF64};
 
 /// Indexable value kind for v1.0 built-in node property indexes.
 #[derive(
@@ -51,93 +38,73 @@ use serde::{Deserialize, Serialize};
     Serialize,
 )]
 pub enum TypedIndexKind {
+    /// Boolean value. Backs [`Value::Bool`].
+    Bool,
     /// Signed 64-bit integer. Backs [`Value::Int`].
     I64,
+    /// Unsigned 64-bit integer. Backs [`Value::Uint`].
+    U64,
+    /// Signed 128-bit integer. Backs [`Value::Int128`].
+    I128,
+    /// Unsigned 128-bit integer. Backs [`Value::Uint128`].
+    U128,
+    /// Fixed-precision decimal. Backs [`Value::Decimal`].
+    Decimal,
+    /// Finite `f32`. Backs [`Value::Float32`]; NaN is rejected.
+    F32,
     /// Finite `f64`. Backs [`Value::Float`]; NaN is rejected.
     F64,
-    /// Interned string. Backs [`Value::String`].
+    /// Database string. Backs [`Value::String`].
     String,
     /// Civil date. Backs [`Value::Date`].
     Date,
     /// Civil local date-time. Backs [`Value::LocalDateTime`].
     LocalDateTime,
+    /// Zoned date-time. Backs [`Value::ZonedDateTime`].
+    ZonedDateTime,
+    /// Civil local time. Backs [`Value::LocalTime`].
+    LocalTime,
+    /// Zoned time. Backs [`Value::ZonedTime`].
+    ZonedTime,
+    /// Duration. Backs [`Value::Duration`].
+    Duration,
     /// UUID. Backs [`Value::Uuid`].
     Uuid,
-}
-
-/// Marker error returned when a raw `f64` cannot be admitted to [`NotNanF64`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("NaN is not an indexable f64 value")]
-pub struct NotNanError;
-
-/// `f64` wrapper with total ordering via [`f64::total_cmp`].
-///
-/// The constructor rejects NaN because NaN has no useful equality or range
-/// semantics for a graph property index. `+0.0` and `-0.0` remain distinct
-/// keys because equality and hashing use the underlying bit pattern.
-#[derive(Clone, Copy, Debug)]
-pub struct NotNanF64(f64);
-
-impl NotNanF64 {
-    /// Construct a finite-or-infinite ordered f64 key.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NotNanError`] when `value` is NaN.
-    pub fn new(value: f64) -> Result<Self, NotNanError> {
-        if value.is_nan() {
-            Err(NotNanError)
-        } else {
-            Ok(Self(value))
-        }
-    }
-
-    /// Return the underlying `f64`.
-    #[must_use]
-    pub const fn get(self) -> f64 {
-        self.0
-    }
-}
-
-impl PartialEq for NotNanF64 {
-    fn eq(&self, rhs: &Self) -> bool {
-        self.0.to_bits() == rhs.0.to_bits()
-    }
-}
-
-impl Eq for NotNanF64 {}
-
-impl PartialOrd for NotNanF64 {
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        Some(self.cmp(rhs))
-    }
-}
-
-impl Ord for NotNanF64 {
-    fn cmp(&self, rhs: &Self) -> Ordering {
-        self.0.total_cmp(&rhs.0)
-    }
-}
-
-impl Hash for NotNanF64 {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
-    }
 }
 
 /// Built-in per-`(label, property)` node value index.
 #[derive(Clone, Debug)]
 pub enum TypedIndex {
+    /// Boolean index.
+    Bool(BTreeMap<bool, RoaringBitmap>),
     /// Signed integer index.
     I64(BTreeMap<i64, RoaringBitmap>),
+    /// Unsigned integer index.
+    U64(BTreeMap<u64, RoaringBitmap>),
+    /// Signed 128-bit integer index.
+    I128(BTreeMap<i128, RoaringBitmap>),
+    /// Unsigned 128-bit integer index.
+    U128(BTreeMap<u128, RoaringBitmap>),
+    /// Fixed-precision decimal index.
+    Decimal(BTreeMap<rust_decimal::Decimal, RoaringBitmap>),
+    /// 32-bit floating-point index with NaN excluded.
+    F32(BTreeMap<NotNanF32, RoaringBitmap>),
     /// Floating-point index with NaN excluded.
     F64(BTreeMap<NotNanF64, RoaringBitmap>),
-    /// Interned string index.
-    String(BTreeMap<IStr, RoaringBitmap>),
+    /// Database-string index.
+    String(BTreeMap<DbString, RoaringBitmap>),
     /// Civil date index.
     Date(BTreeMap<jiff::civil::Date, RoaringBitmap>),
     /// Civil local date-time index.
     LocalDateTime(BTreeMap<jiff::civil::DateTime, RoaringBitmap>),
+    /// Zoned date-time index.
+    ZonedDateTime(BTreeMap<jiff::Zoned, RoaringBitmap>),
+    /// Civil local time index.
+    LocalTime(BTreeMap<jiff::civil::Time, RoaringBitmap>),
+    /// Zoned time index.
+    ZonedTime(BTreeMap<jiff::Zoned, RoaringBitmap>),
+    /// Duration index.
+    Duration(BTreeMap<DurationOrderKey, RoaringBitmap>),
     /// UUID index.
     Uuid(BTreeMap<uuid::Uuid, RoaringBitmap>),
 }
@@ -147,11 +114,21 @@ impl TypedIndex {
     #[must_use]
     pub fn new(kind: TypedIndexKind) -> Self {
         match kind {
+            TypedIndexKind::Bool => Self::Bool(BTreeMap::new()),
             TypedIndexKind::I64 => Self::I64(BTreeMap::new()),
+            TypedIndexKind::U64 => Self::U64(BTreeMap::new()),
+            TypedIndexKind::I128 => Self::I128(BTreeMap::new()),
+            TypedIndexKind::U128 => Self::U128(BTreeMap::new()),
+            TypedIndexKind::Decimal => Self::Decimal(BTreeMap::new()),
+            TypedIndexKind::F32 => Self::F32(BTreeMap::new()),
             TypedIndexKind::F64 => Self::F64(BTreeMap::new()),
             TypedIndexKind::String => Self::String(BTreeMap::new()),
             TypedIndexKind::Date => Self::Date(BTreeMap::new()),
             TypedIndexKind::LocalDateTime => Self::LocalDateTime(BTreeMap::new()),
+            TypedIndexKind::ZonedDateTime => Self::ZonedDateTime(BTreeMap::new()),
+            TypedIndexKind::LocalTime => Self::LocalTime(BTreeMap::new()),
+            TypedIndexKind::ZonedTime => Self::ZonedTime(BTreeMap::new()),
+            TypedIndexKind::Duration => Self::Duration(BTreeMap::new()),
             TypedIndexKind::Uuid => Self::Uuid(BTreeMap::new()),
         }
     }
@@ -160,11 +137,21 @@ impl TypedIndex {
     #[must_use]
     pub const fn kind(&self) -> TypedIndexKind {
         match self {
+            Self::Bool(_) => TypedIndexKind::Bool,
             Self::I64(_) => TypedIndexKind::I64,
+            Self::U64(_) => TypedIndexKind::U64,
+            Self::I128(_) => TypedIndexKind::I128,
+            Self::U128(_) => TypedIndexKind::U128,
+            Self::Decimal(_) => TypedIndexKind::Decimal,
+            Self::F32(_) => TypedIndexKind::F32,
             Self::F64(_) => TypedIndexKind::F64,
             Self::String(_) => TypedIndexKind::String,
             Self::Date(_) => TypedIndexKind::Date,
             Self::LocalDateTime(_) => TypedIndexKind::LocalDateTime,
+            Self::ZonedDateTime(_) => TypedIndexKind::ZonedDateTime,
+            Self::LocalTime(_) => TypedIndexKind::LocalTime,
+            Self::ZonedTime(_) => TypedIndexKind::ZonedTime,
+            Self::Duration(_) => TypedIndexKind::Duration,
             Self::Uuid(_) => TypedIndexKind::Uuid,
         }
     }
@@ -178,11 +165,21 @@ impl TypedIndex {
     #[must_use]
     pub fn cardinality(&self) -> u64 {
         match self {
+            Self::Bool(index) => cardinality(index),
             Self::I64(index) => cardinality(index),
+            Self::U64(index) => cardinality(index),
+            Self::I128(index) => cardinality(index),
+            Self::U128(index) => cardinality(index),
+            Self::Decimal(index) => cardinality(index),
+            Self::F32(index) => cardinality(index),
             Self::F64(index) => cardinality(index),
             Self::String(index) => cardinality(index),
             Self::Date(index) => cardinality(index),
             Self::LocalDateTime(index) => cardinality(index),
+            Self::ZonedDateTime(index) => cardinality(index),
+            Self::LocalTime(index) => cardinality(index),
+            Self::ZonedTime(index) => cardinality(index),
+            Self::Duration(index) => cardinality(index),
             Self::Uuid(index) => cardinality(index),
         }
     }
@@ -197,11 +194,21 @@ impl TypedIndex {
     #[must_use]
     pub fn distinct_keys(&self) -> u64 {
         match self {
+            Self::Bool(index) => index.len() as u64,
             Self::I64(index) => index.len() as u64,
+            Self::U64(index) => index.len() as u64,
+            Self::I128(index) => index.len() as u64,
+            Self::U128(index) => index.len() as u64,
+            Self::Decimal(index) => index.len() as u64,
+            Self::F32(index) => index.len() as u64,
             Self::F64(index) => index.len() as u64,
             Self::String(index) => index.len() as u64,
             Self::Date(index) => index.len() as u64,
             Self::LocalDateTime(index) => index.len() as u64,
+            Self::ZonedDateTime(index) => index.len() as u64,
+            Self::LocalTime(index) => index.len() as u64,
+            Self::ZonedTime(index) => index.len() as u64,
+            Self::Duration(index) => index.len() as u64,
             Self::Uuid(index) => index.len() as u64,
         }
     }
@@ -219,11 +226,21 @@ impl TypedIndex {
     #[must_use]
     pub(crate) fn buckets_eq(&self, reference: &Self) -> bool {
         match (self, reference) {
+            (Self::Bool(lhs), Self::Bool(rhs)) => lhs == rhs,
             (Self::I64(lhs), Self::I64(rhs)) => lhs == rhs,
+            (Self::U64(lhs), Self::U64(rhs)) => lhs == rhs,
+            (Self::I128(lhs), Self::I128(rhs)) => lhs == rhs,
+            (Self::U128(lhs), Self::U128(rhs)) => lhs == rhs,
+            (Self::Decimal(lhs), Self::Decimal(rhs)) => lhs == rhs,
+            (Self::F32(lhs), Self::F32(rhs)) => lhs == rhs,
             (Self::F64(lhs), Self::F64(rhs)) => lhs == rhs,
             (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
             (Self::Date(lhs), Self::Date(rhs)) => lhs == rhs,
             (Self::LocalDateTime(lhs), Self::LocalDateTime(rhs)) => lhs == rhs,
+            (Self::ZonedDateTime(lhs), Self::ZonedDateTime(rhs)) => lhs == rhs,
+            (Self::LocalTime(lhs), Self::LocalTime(rhs)) => lhs == rhs,
+            (Self::ZonedTime(lhs), Self::ZonedTime(rhs)) => lhs == rhs,
+            (Self::Duration(lhs), Self::Duration(rhs)) => lhs == rhs,
             (Self::Uuid(lhs), Self::Uuid(rhs)) => lhs == rhs,
             _ => false,
         }
@@ -237,11 +254,21 @@ impl TypedIndex {
     #[must_use]
     pub(crate) fn has_empty_bucket(&self) -> bool {
         match self {
+            Self::Bool(index) => index.values().any(RoaringBitmap::is_empty),
             Self::I64(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::U64(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::I128(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::U128(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::Decimal(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::F32(index) => index.values().any(RoaringBitmap::is_empty),
             Self::F64(index) => index.values().any(RoaringBitmap::is_empty),
             Self::String(index) => index.values().any(RoaringBitmap::is_empty),
             Self::Date(index) => index.values().any(RoaringBitmap::is_empty),
             Self::LocalDateTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::ZonedDateTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::LocalTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::ZonedTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::Duration(index) => index.values().any(RoaringBitmap::is_empty),
             Self::Uuid(index) => index.values().any(RoaringBitmap::is_empty),
         }
     }
@@ -249,8 +276,32 @@ impl TypedIndex {
     /// Insert `row` into the bitmap for `value`.
     pub(crate) fn insert(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
-        match (self, typed_key_admit(value, expected_kind)?) {
+        match (self, typed_key(value, expected_kind)?) {
+            (Self::Bool(index), TypedKey::Bool(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
             (Self::I64(index), TypedKey::I64(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::U64(index), TypedKey::U64(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::I128(index), TypedKey::I128(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::U128(index), TypedKey::U128(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::Decimal(index), TypedKey::Decimal(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::F32(index), TypedKey::F32(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
             }
@@ -267,6 +318,22 @@ impl TypedIndex {
                 Ok(())
             }
             (Self::LocalDateTime(index), TypedKey::LocalDateTime(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::ZonedDateTime(index), TypedKey::ZonedDateTime(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::LocalTime(index), TypedKey::LocalTime(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::ZonedTime(index), TypedKey::ZonedTime(key)) => {
+                index.entry(key).or_default().insert(row);
+                Ok(())
+            }
+            (Self::Duration(index), TypedKey::Duration(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
             }
@@ -287,8 +354,32 @@ impl TypedIndex {
     /// is pruned from the inner map.
     pub(crate) fn remove(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
-        match (self, typed_key_admit(value, expected_kind)?) {
+        match (self, typed_key(value, expected_kind)?) {
+            (Self::Bool(index), TypedKey::Bool(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
             (Self::I64(index), TypedKey::I64(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::U64(index), TypedKey::U64(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::I128(index), TypedKey::I128(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::U128(index), TypedKey::U128(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::Decimal(index), TypedKey::Decimal(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::F32(index), TypedKey::F32(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
             }
@@ -308,6 +399,22 @@ impl TypedIndex {
                 remove_row(index, &key, row);
                 Ok(())
             }
+            (Self::ZonedDateTime(index), TypedKey::ZonedDateTime(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::LocalTime(index), TypedKey::LocalTime(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::ZonedTime(index), TypedKey::ZonedTime(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
+            (Self::Duration(index), TypedKey::Duration(key)) => {
+                remove_row(index, &key, row);
+                Ok(())
+            }
             (Self::Uuid(index), TypedKey::Uuid(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
@@ -322,36 +429,38 @@ impl TypedIndex {
     /// Return the rows matching `value` exactly.
     ///
     /// Returns `None` for kind-mismatched values (callers fall back to a
-    /// runtime scan). For a [`Self::String`] index probed with a
-    /// [`Value::ExternalString`] whose content is not in the global
-    /// [`IStr`] pool, returns `Some(empty)` — kind matches, content can't
-    /// possibly be in the index, no admission. For any other kind the
-    /// `Ok(None)` case is treated as kind-mismatch (return `None`) so the
-    /// caller drops to a linear scan; under open-graph drift a row whose
-    /// stored value is `Value::String("foo")` would otherwise be lost from
-    /// an I64 index probed with `Value::ExternalString("foo")`.
+    /// runtime scan). With a single string space every `STRING` value resolves
+    /// to its key directly through [`typed_key`].
     #[must_use]
     pub(crate) fn lookup_eq(&self, value: &Value) -> Option<Cow<'_, RoaringBitmap>> {
-        let key = match typed_key_lookup(value) {
-            Ok(Some(key)) => key,
-            // Only String-kind indexes treat "ExternalString content not in
-            // the pool" as a definitive empty result. Other index kinds drop
-            // to scan fallback so open-graph drift remains discoverable via
-            // cross-variant `value_compare`.
-            Ok(None) if matches!(self, Self::String(_)) => {
-                return Some(Cow::Owned(RoaringBitmap::new()));
-            }
-            Ok(None) => return None,
+        let key = match typed_key(value, self.kind()) {
+            Ok(key) => key,
             Err(_) => return None,
         };
         match (self, key) {
+            (Self::Bool(index), TypedKey::Bool(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::I64(index), TypedKey::I64(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::U64(index), TypedKey::U64(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::I128(index), TypedKey::I128(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::U128(index), TypedKey::U128(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::Decimal(index), TypedKey::Decimal(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::F32(index), TypedKey::F32(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::F64(index), TypedKey::F64(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::String(index), TypedKey::String(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::Date(index), TypedKey::Date(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::LocalDateTime(index), TypedKey::LocalDateTime(key)) => {
                 Some(cow_or_empty(index.get(&key)))
             }
+            (Self::ZonedDateTime(index), TypedKey::ZonedDateTime(key)) => {
+                Some(cow_or_empty(index.get(&key)))
+            }
+            (Self::LocalTime(index), TypedKey::LocalTime(key)) => {
+                Some(cow_or_empty(index.get(&key)))
+            }
+            (Self::ZonedTime(index), TypedKey::ZonedTime(key)) => {
+                Some(cow_or_empty(index.get(&key)))
+            }
+            (Self::Duration(index), TypedKey::Duration(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::Uuid(index), TypedKey::Uuid(key)) => Some(cow_or_empty(index.get(&key))),
             _ => None,
         }
@@ -364,93 +473,152 @@ impl TypedIndex {
         R: RangeBounds<Value>,
     {
         match self {
-            Self::I64(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::I64(key))) => Some(key),
-                        _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::I64(key))) => Some(key),
+            Self::Bool(index) => {
+                typed_range_union(index, &range, TypedIndexKind::Bool, |key| match key {
+                    TypedKey::Bool(key) => Some(key),
                     _ => None,
-                })?;
-                Some(range_union(index, &start, &end))
+                })
+            }
+            Self::I64(index) => {
+                typed_range_union(index, &range, TypedIndexKind::I64, |key| match key {
+                    TypedKey::I64(key) => Some(key),
+                    _ => None,
+                })
+            }
+            Self::U64(index) => {
+                typed_range_union(index, &range, TypedIndexKind::U64, |key| match key {
+                    TypedKey::U64(key) => Some(key),
+                    _ => None,
+                })
+            }
+            Self::I128(index) => {
+                typed_range_union(index, &range, TypedIndexKind::I128, |key| match key {
+                    TypedKey::I128(key) => Some(key),
+                    _ => None,
+                })
+            }
+            Self::U128(index) => {
+                typed_range_union(index, &range, TypedIndexKind::U128, |key| match key {
+                    TypedKey::U128(key) => Some(key),
+                    _ => None,
+                })
+            }
+            Self::Decimal(index) => {
+                typed_range_union(index, &range, TypedIndexKind::Decimal, |key| match key {
+                    TypedKey::Decimal(key) => Some(key),
+                    _ => None,
+                })
+            }
+            Self::F32(index) => {
+                typed_range_union(index, &range, TypedIndexKind::F32, |key| match key {
+                    TypedKey::F32(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::F64(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::F64(key))) => Some(key),
-                        _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::F64(key))) => Some(key),
+                typed_range_union(index, &range, TypedIndexKind::F64, |key| match key {
+                    TypedKey::F64(key) => Some(key),
                     _ => None,
-                })?;
-                Some(range_union(index, &start, &end))
+                })
             }
-            // Why: `IStr` ordering is admission-order, not lexicographic, so
-            // string ranges fall back to runtime scans until a string-bytes
-            // secondary index exists.
-            Self::String(_) => None,
+            // String ranges walk the now-lexicographic `BTreeMap<DbString, _>`
+            // range directly — result-identical to the old `None` linear-scan
+            // fallback (the linear scan compared `Value::String` rows
+            // lexicographically, and `DbString` Ord is lexicographic), just
+            // O(log n + matched) instead of O(total cardinality).
+            Self::String(index) => {
+                typed_range_union(index, &range, TypedIndexKind::String, |key| match key {
+                    TypedKey::String(key) => Some(key),
+                    _ => None,
+                })
+            }
             Self::Date(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::Date(key))) => Some(key),
-                        _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::Date(key))) => Some(key),
+                typed_range_union(index, &range, TypedIndexKind::Date, |key| match key {
+                    TypedKey::Date(key) => Some(key),
                     _ => None,
-                })?;
-                Some(range_union(index, &start, &end))
+                })
             }
-            Self::LocalDateTime(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::LocalDateTime(key))) => Some(key),
-                        _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::LocalDateTime(key))) => Some(key),
+            Self::LocalDateTime(index) => typed_range_union(
+                index,
+                &range,
+                TypedIndexKind::LocalDateTime,
+                |key| match key {
+                    TypedKey::LocalDateTime(key) => Some(key),
                     _ => None,
-                })?;
-                Some(range_union(index, &start, &end))
+                },
+            ),
+            Self::ZonedDateTime(index) => typed_range_union(
+                index,
+                &range,
+                TypedIndexKind::ZonedDateTime,
+                |key| match key {
+                    TypedKey::ZonedDateTime(key) => Some(key),
+                    _ => None,
+                },
+            ),
+            Self::LocalTime(index) => {
+                typed_range_union(index, &range, TypedIndexKind::LocalTime, |key| match key {
+                    TypedKey::LocalTime(key) => Some(key),
+                    _ => None,
+                })
+            }
+            Self::ZonedTime(index) => {
+                typed_range_union(index, &range, TypedIndexKind::ZonedTime, |key| match key {
+                    TypedKey::ZonedTime(key) => Some(key),
+                    _ => None,
+                })
+            }
+            Self::Duration(index) => {
+                typed_range_union(index, &range, TypedIndexKind::Duration, |key| match key {
+                    TypedKey::Duration(key) => Some(key),
+                    _ => None,
+                })
             }
             Self::Uuid(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::Uuid(key))) => Some(key),
-                        _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::Uuid(key))) => Some(key),
+                typed_range_union(index, &range, TypedIndexKind::Uuid, |key| match key {
+                    TypedKey::Uuid(key) => Some(key),
                     _ => None,
-                })?;
-                Some(range_union(index, &start, &end))
+                })
             }
         }
     }
 
     /// Return the union of string-key rows whose key starts with `prefix`.
     ///
-    /// This scans every key in the BTreeMap and runs `starts_with` per
-    /// entry — O(total cardinality), not O(matching prefix span). The
-    /// reason is that `IStr` ordering is **interner-key order** (allocation
-    /// order), not lexicographic — see `selene_core::IStr` rustdoc. So a
-    /// `BTreeMap<IStr, _>::range` walk over a string-prefix interval is
-    /// not possible; lex-equivalent keys can be scattered throughout the
-    /// map. String range lookups return `None` from [`Self::lookup_range`],
-    /// letting runtime scan fallback preserve query semantics until a
-    /// string-bytes secondary index exists.
+    /// `DbString` orders **lexicographically**, so every key starting with
+    /// `prefix` forms a contiguous run beginning at
+    /// the first key `>= prefix`. This seeks that run with `BTreeMap::range`
+    /// (`Included(prefix)`, [`Bound::Unbounded`]) and stops at the first key
+    /// that no longer starts with `prefix` — O(log n + matched) rather than the
+    /// O(total cardinality) full scan, and result-identical to a per-key
+    /// `starts_with` filter because it applies the exact same predicate over a
+    /// sorted-order seek.
+    ///
+    /// Seeking from `Included(prefix)` (rather than computing an exclusive upper
+    /// bound) sidesteps the encoding hazards an explicit successor key carries:
+    /// an empty prefix or an all-`0xFF` prefix has no finite successor, and a
+    /// byte-incremented successor can fall out of valid UTF-8. The break-on-
+    /// first-mismatch walk handles all of those uniformly — an empty prefix
+    /// matches every key (every key seeks to the start and `starts_with("")` is
+    /// always true), and no matching tail is ever dropped.
     #[must_use]
     pub(crate) fn lookup_prefix(&self, prefix: &str) -> Option<RoaringBitmap> {
         match self {
             Self::String(index) => {
+                // `BTreeMap<DbString, _>` keys are owned `DbString`, so seek with an
+                // owned `DbString` lower bound. A prefix within the IL013 cap always
+                // constructs; an over-cap prefix matches nothing (no stored key can
+                // exceed the cap) — return empty rather than panic.
+                let Ok(lo_key) = selene_core::db_string(prefix) else {
+                    return Some(RoaringBitmap::new());
+                };
                 let mut result = RoaringBitmap::new();
-                for (key, bitmap) in index {
-                    if key.as_str().starts_with(prefix) {
-                        result |= bitmap;
+                for (key, bitmap) in index.range((Bound::Included(lo_key), Bound::Unbounded)) {
+                    if !key.as_str().starts_with(prefix) {
+                        // Keys are sorted; the first non-match ends the run.
+                        break;
                     }
+                    result |= bitmap;
                 }
                 Some(result)
             }
@@ -461,208 +629,47 @@ impl TypedIndex {
     /// Return true when two values address the same key in this index.
     ///
     /// This lets update maintenance avoid touching an index when a mutation
-    /// changed unrelated node columns. Uses [`typed_key_lookup`] (no
-    /// admission); when either side cannot be resolved through the existing
-    /// IStr pool the diff falls through to [`raw_value_same`] so we never
-    /// admit just to compare keys. If raw values differ the update path
-    /// fires remove+insert, which then admit through [`typed_key_admit`].
+    /// changed unrelated node columns. Uses [`typed_key`]; when either side
+    /// cannot be coerced to this index's kind the diff falls through to
+    /// [`raw_value_same`] so we compare raw content. If raw values differ the
+    /// update path fires remove+insert, which re-coerce through [`typed_key`].
     pub(crate) fn values_share_key(&self, lhs: &Value, rhs: &Value) -> bool {
-        match (self, typed_key_lookup(lhs), typed_key_lookup(rhs)) {
-            (Self::I64(_), Ok(Some(TypedKey::I64(lhs))), Ok(Some(TypedKey::I64(rhs)))) => {
+        let kind = self.kind();
+        match (self, typed_key(lhs, kind), typed_key(rhs, kind)) {
+            (Self::Bool(_), Ok(TypedKey::Bool(lhs)), Ok(TypedKey::Bool(rhs))) => lhs == rhs,
+            (Self::I64(_), Ok(TypedKey::I64(lhs)), Ok(TypedKey::I64(rhs))) => lhs == rhs,
+            (Self::U64(_), Ok(TypedKey::U64(lhs)), Ok(TypedKey::U64(rhs))) => lhs == rhs,
+            (Self::I128(_), Ok(TypedKey::I128(lhs)), Ok(TypedKey::I128(rhs))) => lhs == rhs,
+            (Self::U128(_), Ok(TypedKey::U128(lhs)), Ok(TypedKey::U128(rhs))) => lhs == rhs,
+            (Self::Decimal(_), Ok(TypedKey::Decimal(lhs)), Ok(TypedKey::Decimal(rhs))) => {
                 lhs == rhs
             }
-            (Self::F64(_), Ok(Some(TypedKey::F64(lhs))), Ok(Some(TypedKey::F64(rhs)))) => {
-                lhs == rhs
-            }
-            (Self::String(_), Ok(Some(TypedKey::String(lhs))), Ok(Some(TypedKey::String(rhs)))) => {
-                lhs == rhs
-            }
-            (Self::Date(_), Ok(Some(TypedKey::Date(lhs))), Ok(Some(TypedKey::Date(rhs)))) => {
-                lhs == rhs
-            }
+            (Self::F32(_), Ok(TypedKey::F32(lhs)), Ok(TypedKey::F32(rhs))) => lhs == rhs,
+            (Self::F64(_), Ok(TypedKey::F64(lhs)), Ok(TypedKey::F64(rhs))) => lhs == rhs,
+            (Self::String(_), Ok(TypedKey::String(lhs)), Ok(TypedKey::String(rhs))) => lhs == rhs,
+            (Self::Date(_), Ok(TypedKey::Date(lhs)), Ok(TypedKey::Date(rhs))) => lhs == rhs,
             (
                 Self::LocalDateTime(_),
-                Ok(Some(TypedKey::LocalDateTime(lhs))),
-                Ok(Some(TypedKey::LocalDateTime(rhs))),
+                Ok(TypedKey::LocalDateTime(lhs)),
+                Ok(TypedKey::LocalDateTime(rhs)),
             ) => lhs == rhs,
-            (Self::Uuid(_), Ok(Some(TypedKey::Uuid(lhs))), Ok(Some(TypedKey::Uuid(rhs)))) => {
+            (
+                Self::ZonedDateTime(_),
+                Ok(TypedKey::ZonedDateTime(lhs)),
+                Ok(TypedKey::ZonedDateTime(rhs)),
+            ) => lhs == rhs,
+            (Self::LocalTime(_), Ok(TypedKey::LocalTime(lhs)), Ok(TypedKey::LocalTime(rhs))) => {
                 lhs == rhs
             }
+            (Self::ZonedTime(_), Ok(TypedKey::ZonedTime(lhs)), Ok(TypedKey::ZonedTime(rhs))) => {
+                lhs == rhs
+            }
+            (Self::Duration(_), Ok(TypedKey::Duration(lhs)), Ok(TypedKey::Duration(rhs))) => {
+                lhs == rhs
+            }
+            (Self::Uuid(_), Ok(TypedKey::Uuid(lhs)), Ok(TypedKey::Uuid(rhs))) => lhs == rhs,
             _ => raw_value_same(lhs, rhs),
         }
-    }
-}
-
-/// Internal value-admission error for index mutation.
-///
-/// `Clone + Copy + Eq + PartialEq` are intentionally NOT derived: the
-/// `AdmissionFailed` variant carries [`selene_core::CoreError`] which is a
-/// `Diagnostic`-bearing source-error type and is non-`Copy`/`Clone` by
-/// design.
-#[derive(Debug)]
-pub(crate) enum TypedIndexValueError {
-    /// Value kind did not match the index kind.
-    KindMismatch {
-        /// The index kind being updated.
-        expected_kind: TypedIndexKind,
-        /// The observed value kind.
-        observed: &'static str,
-    },
-    /// A `Value::Float` was NaN.
-    NaN {
-        /// The index kind being updated.
-        expected_kind: TypedIndexKind,
-    },
-    /// A [`Value::ExternalString`] could not be admitted to the global
-    /// [`IStr`] pool for use as a `STRING`-kind index key (typically because
-    /// the pool reached [`selene_core::MAX_INTERNED_STRINGS`]).
-    ///
-    /// Per D20 and the BRIEF-153 carve-out, DDL `INDEXED` is the user's
-    /// consent to admit a column's content to the pool; cap exhaustion at
-    /// that boundary is a hard error rather than a silent skip. The
-    /// mutator promotes this to [`crate::error::GraphError::IndexAdmissionExhausted`].
-    AdmissionFailed {
-        /// The index kind being updated (always [`TypedIndexKind::String`]
-        /// today; future non-STRING admissions could broaden this).
-        expected_kind: TypedIndexKind,
-        /// Underlying admission failure source.
-        reason: CoreError,
-    },
-}
-
-impl TypedIndexValueError {
-    /// Return the expected index kind.
-    pub(crate) fn expected_kind(&self) -> TypedIndexKind {
-        match self {
-            Self::KindMismatch { expected_kind, .. }
-            | Self::NaN { expected_kind }
-            | Self::AdmissionFailed { expected_kind, .. } => *expected_kind,
-        }
-    }
-
-    /// Return the observed value description.
-    pub(crate) fn observed(&self) -> &'static str {
-        match self {
-            Self::KindMismatch { observed, .. } => observed,
-            Self::NaN { .. } => "NaN",
-            Self::AdmissionFailed { .. } => "ExternalString",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TypedKey {
-    I64(i64),
-    F64(NotNanF64),
-    String(IStr),
-    Date(jiff::civil::Date),
-    LocalDateTime(jiff::civil::DateTime),
-    Uuid(uuid::Uuid),
-}
-
-impl TypedKey {
-    const fn observed(self) -> &'static str {
-        match self {
-            Self::I64(_) => "Int",
-            Self::F64(_) => "Float",
-            Self::String(_) => "String",
-            Self::Date(_) => "Date",
-            Self::LocalDateTime(_) => "LocalDateTime",
-            Self::Uuid(_) => "Uuid",
-        }
-    }
-}
-
-/// Write-side coercion of `value` into a [`TypedKey`].
-///
-/// [`Value::ExternalString`] admission is **gated on `expected_kind` being
-/// [`TypedIndexKind::String`]**. Probing a non-STRING index with an
-/// `ExternalString` would otherwise grow the global [`IStr`] pool just
-/// for the outer `match (self, key)` to reject it on kind mismatch — a
-/// DoS amplifier near pool-cap exhaustion (BRIEF-153 fix-cycle C3). For
-/// any other (kind, value) pair the function routes through the
-/// non-admitting body. Cap exhaustion on the admit branch surfaces as
-/// [`TypedIndexValueError::AdmissionFailed`], which the mutator promotes
-/// to [`crate::error::GraphError::IndexAdmissionExhausted`].
-fn typed_key_admit(
-    value: &Value,
-    expected_kind: TypedIndexKind,
-) -> Result<TypedKey, TypedIndexValueError> {
-    if let Value::ExternalString(content) = value {
-        if expected_kind == TypedIndexKind::String {
-            return match selene_core::intern(content.as_ref()) {
-                Ok(interned) => Ok(TypedKey::String(interned)),
-                Err(reason) => Err(TypedIndexValueError::AdmissionFailed {
-                    expected_kind: TypedIndexKind::String,
-                    reason,
-                }),
-            };
-        }
-        // Non-STRING target — short-circuit BEFORE admitting so the global
-        // pool never grows on a kind-mismatched probe.
-        return Err(TypedIndexValueError::KindMismatch {
-            expected_kind,
-            observed: "ExternalString",
-        });
-    }
-    match value {
-        Value::Int(value) => Ok(TypedKey::I64(*value)),
-        Value::Float(value) => NotNanF64::new(*value)
-            .map(TypedKey::F64)
-            .map_err(|NotNanError| TypedIndexValueError::NaN {
-                expected_kind: TypedIndexKind::F64,
-            }),
-        Value::String(value) => Ok(TypedKey::String(*value)),
-        Value::Date(value) => Ok(TypedKey::Date(*value)),
-        Value::LocalDateTime(value) => Ok(TypedKey::LocalDateTime(*value)),
-        Value::Uuid(value) => Ok(TypedKey::Uuid(*value)),
-        _ => Err(TypedIndexValueError::KindMismatch {
-            expected_kind,
-            observed: observed_value_kind(value),
-        }),
-    }
-}
-
-/// Read-side coercion of `value` into a [`TypedKey`] **without admitting
-/// new strings to the global [`IStr`] pool**.
-///
-/// Returns `Ok(None)` when `value` is a [`Value::ExternalString`] whose
-/// content is not yet in the pool — because no row could be keyed on that
-/// content, callers render this as an empty result rather than admitting
-/// just to probe. `Ok(Some(_))` matches [`typed_key_admit`] for all
-/// already-admissible inputs. `Err` retains the kind-mismatch / NaN
-/// semantics from the admit path.
-fn typed_key_lookup(value: &Value) -> Result<Option<TypedKey>, TypedIndexValueError> {
-    match value {
-        Value::Int(value) => Ok(Some(TypedKey::I64(*value))),
-        Value::Float(value) => NotNanF64::new(*value)
-            .map(|key| Some(TypedKey::F64(key)))
-            .map_err(|NotNanError| TypedIndexValueError::NaN {
-                expected_kind: TypedIndexKind::F64,
-            }),
-        Value::String(value) => Ok(Some(TypedKey::String(*value))),
-        Value::ExternalString(value) => {
-            Ok(selene_core::lookup(value.as_ref()).map(TypedKey::String))
-        }
-        Value::Date(value) => Ok(Some(TypedKey::Date(*value))),
-        Value::LocalDateTime(value) => Ok(Some(TypedKey::LocalDateTime(*value))),
-        Value::Uuid(value) => Ok(Some(TypedKey::Uuid(*value))),
-        _ => Err(TypedIndexValueError::KindMismatch {
-            expected_kind: TypedIndexKind::I64,
-            observed: observed_value_kind(value),
-        }),
-    }
-}
-
-pub(crate) fn observed_value_kind(value: &Value) -> &'static str {
-    value.variant_name()
-}
-
-fn raw_value_same(lhs: &Value, rhs: &Value) -> bool {
-    match (lhs, rhs) {
-        (Value::Float(lhs), Value::Float(rhs)) => lhs.to_bits() == rhs.to_bits(),
-        (Value::Float32(lhs), Value::Float32(rhs)) => lhs.to_bits() == rhs.to_bits(),
-        _ => lhs == rhs,
     }
 }
 
@@ -683,50 +690,6 @@ fn remove_row<K: Ord>(index: &mut BTreeMap<K, RoaringBitmap>, key: &K, row: u32)
             index.remove(key);
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum KeyBound<K> {
-    Unbounded,
-    Included(K),
-    Excluded(K),
-}
-
-fn bound_to_key<K>(
-    bound: Bound<&Value>,
-    convert: impl FnOnce(&Value) -> Option<K>,
-) -> Option<KeyBound<K>> {
-    match bound {
-        Bound::Included(value) => convert(value).map(KeyBound::Included),
-        Bound::Excluded(value) => convert(value).map(KeyBound::Excluded),
-        Bound::Unbounded => Some(KeyBound::Unbounded),
-    }
-}
-
-fn range_union<K: Ord>(
-    index: &BTreeMap<K, RoaringBitmap>,
-    start: &KeyBound<K>,
-    end: &KeyBound<K>,
-) -> RoaringBitmap {
-    // Use BTreeMap's ordered range iteration so a narrow window touches
-    // O(log n + matched) keys rather than scanning the entire map.
-    let start_bound = match start {
-        KeyBound::Unbounded => Bound::Unbounded,
-        KeyBound::Included(key) => Bound::Included(key),
-        KeyBound::Excluded(key) => Bound::Excluded(key),
-    };
-    let end_bound = match end {
-        KeyBound::Unbounded => Bound::Unbounded,
-        KeyBound::Included(key) => Bound::Included(key),
-        KeyBound::Excluded(key) => Bound::Excluded(key),
-    };
-    let mut result = RoaringBitmap::new();
-    for (_key, bitmap) in index.range::<K, _>((start_bound, end_bound)) {
-        // RoaringBitmap bulk OR (`BitOrAssign<&RoaringBitmap>`) is the union
-        // primitive — far cheaper than a per-element scan-and-insert.
-        result |= bitmap;
-    }
-    result
 }
 
 #[cfg(test)]

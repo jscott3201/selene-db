@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GA05
+// expects: parse-ok
+RETURN CAST('42' AS INTEGER) AS n

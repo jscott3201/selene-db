@@ -5,7 +5,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, intern};
+use selene_core::{
+    Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, db_string,
+};
 use selene_gql::{
     BuiltinProcedureRegistry, OptimizeContext, Session, analyze, optimize, parse, plan,
 };
@@ -86,7 +88,7 @@ fn tracing_spans_emit_for_write_and_call() {
         .expect("wal opens");
         let changes = [Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(intern("trace.node").expect("label interns")),
+            labels: LabelSet::single(db_string("trace.node").expect("label fits DB string cap")),
             properties: PropertyMap::new(),
         }];
         writer

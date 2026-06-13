@@ -62,8 +62,8 @@ fn record_type_features_are_claimed_supported() {
 
 #[test]
 fn deferred_reference_value_type_features_remain_unsupported() {
-    // GRAPH/TABLE reference types and explicit nullability stay deferred.
-    for feature in [FeatureId::GV60, FeatureId::GV61, FeatureId::GV90] {
+    // GRAPH/TABLE reference types stay deferred.
+    for feature in [FeatureId::GV60, FeatureId::GV61] {
         assert!(!SUPPORTED_FEATURES.contains(&feature), "{feature}");
         assert!(
             NOT_SUPPORTED_RATIONALE
@@ -72,6 +72,17 @@ fn deferred_reference_value_type_features_remain_unsupported() {
             "{feature}"
         );
     }
+}
+
+#[test]
+fn explicit_value_type_nullability_is_claimed_supported() {
+    assert!(SUPPORTED_FEATURES.contains(&FeatureId::GV90));
+    assert!(
+        !NOT_SUPPORTED_RATIONALE
+            .iter()
+            .any(|(unsupported, _)| *unsupported == FeatureId::GV90),
+        "GV90 must not remain in NOT_SUPPORTED_RATIONALE"
+    );
 }
 
 #[test]
@@ -102,11 +113,54 @@ fn quantifier_features_are_claimed_supported() {
 }
 
 #[test]
-fn match_mode_features_remain_rationalized_unsupported() {
-    for feature in [FeatureId::G002, FeatureId::G003] {
-        assert!(!SUPPORTED_FEATURES.contains(&feature));
+fn numeric_literal_features_are_claimed_supported() {
+    for feature in [
+        FeatureId::GL01,
+        FeatureId::GL02,
+        FeatureId::GL03,
+        FeatureId::GL04,
+        FeatureId::GL05,
+        FeatureId::GL06,
+        FeatureId::GL07,
+        FeatureId::GL08,
+        FeatureId::GL09,
+        FeatureId::GL10,
+    ] {
+        assert!(SUPPORTED_FEATURES.contains(&feature));
         assert!(
-            NOT_SUPPORTED_RATIONALE
+            !NOT_SUPPORTED_RATIONALE
+                .iter()
+                .any(|(unsupported, _)| *unsupported == feature)
+        );
+    }
+}
+
+#[test]
+fn approximate_numeric_type_features_are_claimed_supported() {
+    for feature in [
+        FeatureId::GV21,
+        FeatureId::GV22,
+        FeatureId::GV23,
+        FeatureId::GV24,
+    ] {
+        assert!(SUPPORTED_FEATURES.contains(&feature));
+        assert!(
+            !NOT_SUPPORTED_RATIONALE
+                .iter()
+                .any(|(unsupported, _)| *unsupported == feature)
+        );
+    }
+}
+
+#[test]
+fn match_mode_features_are_claimed_supported() {
+    // ISO 39075:2024 §16.4 CR1/CR2: G002 (DIFFERENT EDGES) and G003 (REPEATABLE
+    // ELEMENTS) are claimed. They must be in SUPPORTED_FEATURES and must NOT
+    // carry a NOT_SUPPORTED_RATIONALE entry.
+    for feature in [FeatureId::G002, FeatureId::G003] {
+        assert!(SUPPORTED_FEATURES.contains(&feature));
+        assert!(
+            !NOT_SUPPORTED_RATIONALE
                 .iter()
                 .any(|(unsupported, _)| *unsupported == feature)
         );

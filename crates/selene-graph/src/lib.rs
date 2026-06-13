@@ -12,6 +12,8 @@
 #![deny(missing_docs)]
 
 pub mod adjacency;
+pub mod candidate_state;
+mod candidate_state_shared;
 pub mod chunked_vec;
 pub(crate) mod committer;
 pub(crate) mod committer_batch;
@@ -25,45 +27,84 @@ pub mod error;
 pub mod graph;
 pub mod graph_types;
 pub mod id_allocator;
+pub(crate) mod id_map;
 pub mod index_provider;
+pub mod json_search;
+mod json_search_candidates;
 pub mod mutator;
 pub(crate) mod panic_payload;
+pub(crate) mod parallel_scan;
 pub(crate) mod property_index;
+pub(crate) mod provider_fanout;
 mod recover;
 pub(crate) mod reentry;
+pub(crate) mod schema_index_kind;
 pub mod shared;
+mod shared_snapshot;
 pub mod store;
+pub mod text_index;
+pub mod text_search;
 pub mod type_validator;
+mod typed_float_key;
 pub mod typed_index;
+pub mod vector_index;
+pub mod vector_search;
 pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
+pub use candidate_state::{
+    CANDIDATE_STATE_PROVIDER_TAG, CANDIDATE_STATE_SUB, CandidateStateSpec,
+    MaintainedCandidateStateProvider,
+};
 pub use chunked_vec::ChunkedVec;
 pub use committer_batch::CommitBatching;
-pub use compaction::{CompactedCore, CompactionReport, compact_core};
+pub use compaction::{CompactedCore, CompactionReport, CompactionStats, compact_core};
 pub use composite_typed_index::{
     CompositeIndexValueError, CompositeKey, CompositeKeyComponent, CompositeTypedIndex,
 };
 pub use core_provider::{
     CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_PROVIDER_TAG, CORE_SCMA_SUB,
-    CoreProvider, DurableState,
+    CORE_TIDX_SUB, CORE_VIDX_SUB, CoreProvider, DurableState,
 };
 pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
-pub use graph::{CompositePropertyIndexEntry, GraphMeta, SeleneGraph};
+pub use graph::{
+    CompositePropertyIndexEntry, GraphMeta, SeleneGraph, TextIndexEntry, VectorIndexEntry,
+};
 pub use graph_types::{
     DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_RECORD_TYPE_NESTING, NodeTypeDef,
-    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
-    RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
+    PropertyDefaultRecordField, PropertyDefaultValue, PropertyElementType, PropertyTypeDef,
+    RecordFieldType, RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 pub use id_allocator::IdAllocator;
-pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
+pub use index_provider::{
+    IndexProvider, ProviderError, ProviderTag, SubTag, VectorCandidateStateInfo,
+};
+pub use json_search::{
+    JSON_PATH_SELECTOR_LIMIT, JsonContainmentHit, JsonPathContainmentHit, JsonPathHit,
+    JsonPathValueHit, JsonSearchError,
+};
+pub use json_search_candidates::JsonPathContainmentCandidateOptions;
 pub use mutator::Mutator;
+pub use selene_core::JsonPathSelector;
+pub use selene_core::{HnswIndexConfig, IvfIndexConfig};
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
 pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
+pub use text_index::{TextIndex, TextIndexMemoryUsage, TextIndexStats};
+pub use text_search::{TextSearchError, TextSearchHit};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
-pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
+pub use typed_float_key::{NotNanError, NotNanF32, NotNanF64};
+pub use typed_index::{TypedIndex, TypedIndexKind};
+pub use vector_index::{
+    IVF_REBUILD_MIN_PENDING_RETRAIN_ENTRIES, IVF_REBUILD_PENDING_RETRAIN_BASIS_POINTS, VectorIndex,
+    VectorIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMemoryUsage,
+    VectorIndexRebuildEntry, VectorIndexRebuildReport, VectorIndexValueError,
+};
+pub use vector_search::{
+    ApproximateVectorExpansionOptions, ApproximateVectorSearchOptions, VectorCandidateSet,
+    VectorNeighborDirection, VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError,
+};
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 
 #[cfg(test)]

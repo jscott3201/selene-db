@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use selene_core::{
-    Change, EdgeTypeDefV1, GraphId, GraphTypeId, LabelSet, NodeId, NodeTypeDefV1, NodeTypeRef,
-    PredefinedValueType, PropertyDefV1, PropertyMap, SchemaChange, SchemaPropertyIndexKind, Value,
-    ValueType, ValueTypeCardinality, intern,
+    Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, LabelSet, NodeId, NodeTypeDefV1,
+    NodeTypeRef, PredefinedValueType, PropertyDefV1, PropertyMap, SchemaChange,
+    SchemaPropertyIndexKind, Value, ValueType, ValueTypeCardinality, VectorValue, db_string,
 };
 use selene_persist::RecoveryProvider;
 use smallvec::smallvec;
@@ -24,18 +24,18 @@ fn test_graph_type_id() -> GraphTypeId {
 
 fn empty_runtime_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: intern("core.recovery.graph").unwrap(),
+        name: db_string("core.recovery.graph").unwrap(),
         node_types: Vec::new(),
         edge_types: Vec::new(),
     }
 }
 
 fn person_runtime_graph_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
+    let person = db_string("Person").unwrap();
     GraphTypeDef {
-        name: intern("core.recovery.person.graph").unwrap(),
+        name: db_string("core.recovery.person.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
@@ -45,10 +45,10 @@ fn person_runtime_graph_type() -> GraphTypeDef {
 }
 
 fn person_knows_runtime_graph_type() -> GraphTypeDef {
-    let knows = intern("KNOWS").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     let mut graph_type = person_runtime_graph_type();
     graph_type.edge_types.push(EdgeTypeDef {
-        name: knows,
+        name: knows.clone(),
         label: knows,
         source_node_type: EdgeEndpointDef::NodeType(0),
         target_node_type: EdgeEndpointDef::NodeType(0),
@@ -86,9 +86,12 @@ fn load_closed_snapshot(provider: &CoreProvider, graph: &crate::SeleneGraph) {
 
 fn core_string_property(name: &str, required: bool) -> PropertyDefV1 {
     PropertyDefV1 {
-        name: intern(name).unwrap(),
+        name: db_string(name).unwrap(),
         value_type: ValueType {
             predefined: Some(PredefinedValueType::String),
+            decimal_type: None,
+            character_string_type: None,
+            byte_string_type: None,
             union: None,
             list_of: None,
             record: None,
@@ -100,8 +103,12 @@ fn core_string_property(name: &str, required: bool) -> PropertyDefV1 {
     }
 }
 
-fn props(pairs: impl IntoIterator<Item = (selene_core::IStr, Value)>) -> PropertyMap {
+fn props(pairs: impl IntoIterator<Item = (selene_core::DbString, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
+}
+
+fn vector(values: &[f32]) -> Value {
+    Value::Vector(VectorValue::new(values.to_vec()).unwrap())
 }
 
 #[test]
@@ -110,7 +117,7 @@ fn wal_replay_applies_node_type_added_to_graph_type() {
     let snapshot = closed_graph_snapshot(base.clone());
     let provider = CoreProvider::new_for_recovery();
     load_closed_snapshot(provider.as_ref(), &snapshot);
-    let sensor = intern("Sensor").unwrap();
+    let sensor = db_string("Sensor").unwrap();
 
     RecoveryProvider::on_change(
         provider.as_ref(),
@@ -118,9 +125,9 @@ fn wal_replay_applies_node_type_added_to_graph_type() {
             graph: GraphId::new(1),
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
-                label: sensor,
+                label: sensor.clone(),
                 def: NodeTypeDefV1 {
-                    labels: LabelSet::single(sensor),
+                    labels: LabelSet::single(sensor.clone()),
                     properties: smallvec![core_string_property("serial", true)],
                     key: None,
                 },
@@ -147,7 +154,7 @@ fn wal_replay_applies_edge_type_added() {
     let snapshot = closed_graph_snapshot(base.clone());
     let provider = CoreProvider::new_for_recovery();
     load_closed_snapshot(provider.as_ref(), &snapshot);
-    let knows = intern("KNOWS").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     let since = core_string_property("since", false);
 
     RecoveryProvider::on_change(
@@ -156,11 +163,11 @@ fn wal_replay_applies_edge_type_added() {
             graph: GraphId::new(1),
             change: SchemaChange::EdgeTypeAdded {
                 graph_type: test_graph_type_id(),
-                label: knows,
+                label: knows.clone(),
                 def: EdgeTypeDefV1 {
-                    label: knows,
-                    source_node_type: NodeTypeRef(intern("Person").unwrap()),
-                    target_node_type: NodeTypeRef(intern("Person").unwrap()),
+                    label: knows.clone(),
+                    source_node_type: NodeTypeRef(db_string("Person").unwrap()),
+                    target_node_type: NodeTypeRef(db_string("Person").unwrap()),
                     properties: smallvec![since],
                 },
             },
@@ -192,7 +199,7 @@ fn wal_replay_applies_node_type_dropped() {
             graph: GraphId::new(1),
             change: SchemaChange::NodeTypeDropped {
                 graph_type: test_graph_type_id(),
-                name: intern("Person").unwrap(),
+                name: db_string("Person").unwrap(),
             },
         },
     )
@@ -225,7 +232,7 @@ fn wal_replay_applies_edge_type_dropped() {
             graph: GraphId::new(1),
             change: SchemaChange::EdgeTypeDropped {
                 graph_type: test_graph_type_id(),
-                name: intern("KNOWS").unwrap(),
+                name: db_string("KNOWS").unwrap(),
             },
         },
     )
@@ -254,8 +261,8 @@ fn wal_replay_node_type_added_against_open_snapshot_returns_inconsistent() {
             graph: GraphId::new(1),
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
-                label: intern("Sensor").unwrap(),
-                def: NodeTypeDefV1::new(LabelSet::single(intern("Sensor").unwrap())),
+                label: db_string("Sensor").unwrap(),
+                def: NodeTypeDefV1::new(LabelSet::single(db_string("Sensor").unwrap())),
             },
         },
     )
@@ -275,14 +282,14 @@ fn wal_replay_node_type_added_against_open_snapshot_returns_inconsistent() {
 #[test]
 fn wal_replay_restores_property_index_created_after_node_state() {
     let provider = CoreProvider::new_for_recovery();
-    let label = intern("RecoveredPerson").unwrap();
-    let property = intern("age").unwrap();
+    let label = db_string("RecoveredPerson").unwrap();
+    let property = db_string("age").unwrap();
     RecoveryProvider::on_change(
         provider.as_ref(),
         &Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(label),
-            properties: props([(property, Value::Int(42))]),
+            labels: LabelSet::single(label.clone()),
+            properties: props([(property.clone(), Value::Int(42))]),
         },
     )
     .unwrap();
@@ -291,8 +298,8 @@ fn wal_replay_restores_property_index_created_after_node_state() {
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::PropertyIndexCreated {
-                label,
-                property,
+                label: label.clone(),
+                property: property.clone(),
                 kind: SchemaPropertyIndexKind::I64,
             },
         },
@@ -314,20 +321,97 @@ fn wal_replay_restores_property_index_created_after_node_state() {
 }
 
 #[test]
+fn wal_replay_delete_clears_dead_node_payload() {
+    let provider = CoreProvider::new_for_recovery();
+    let id = NodeId::new(1);
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::NodeCreated {
+            id,
+            labels: LabelSet::single(db_string("WalPayloadNode").unwrap()),
+            properties: props([(db_string("embedding").unwrap(), vector(&[1.0, 2.0, 3.0]))]),
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(provider.as_ref(), &Change::NodeDeleted { id }).unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    let row = recovered
+        .row_for_node_id(id)
+        .expect("deleted id stays mapped")
+        .get() as usize;
+    assert!(!recovered.is_node_alive(id));
+    assert_eq!(recovered.node_store.row_to_id.get(row).copied(), Some(id));
+    assert!(recovered.node_store.labels.get(row).unwrap().is_empty());
+    assert!(recovered.node_store.properties.get(row).unwrap().is_empty());
+}
+
+#[test]
+fn wal_replay_delete_clears_dead_edge_payload() {
+    let provider = CoreProvider::new_for_recovery();
+    let source = NodeId::new(1);
+    let target = NodeId::new(2);
+    let edge = EdgeId::new(1);
+    for id in [source, target] {
+        RecoveryProvider::on_change(
+            provider.as_ref(),
+            &Change::NodeCreated {
+                id,
+                labels: LabelSet::new(),
+                properties: PropertyMap::new(),
+            },
+        )
+        .unwrap();
+    }
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::EdgeCreated {
+            id: edge,
+            label: db_string("WalPayloadEdge").unwrap(),
+            source,
+            target,
+            properties: props([(db_string("embedding").unwrap(), vector(&[4.0, 5.0, 6.0]))]),
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(provider.as_ref(), &Change::EdgeDeleted { id: edge }).unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    let row = recovered
+        .row_for_edge_id(edge)
+        .expect("deleted id stays mapped")
+        .get() as usize;
+    assert!(recovered.is_node_alive(source));
+    assert!(recovered.is_node_alive(target));
+    assert!(!recovered.is_edge_alive(edge));
+    assert_eq!(recovered.edge_store.row_to_id.get(row).copied(), Some(edge));
+    assert_eq!(recovered.edge_store.label.get(row).unwrap().as_str(), "");
+    assert_eq!(
+        recovered.edge_store.source.get(row).copied(),
+        Some(NodeId::TOMBSTONE)
+    );
+    assert_eq!(
+        recovered.edge_store.target.get(row).copied(),
+        Some(NodeId::TOMBSTONE)
+    );
+    assert!(recovered.edge_store.properties.get(row).unwrap().is_empty());
+}
+
+#[test]
 fn wal_replay_restores_named_property_index_metadata() {
     let provider = CoreProvider::new_for_recovery();
-    let label = intern("NamedWalPerson").unwrap();
-    let property = intern("name").unwrap();
-    let name = intern("named_wal_person_name_idx").unwrap();
+    let label = db_string("NamedWalPerson").unwrap();
+    let property = db_string("name").unwrap();
+    let name = db_string("named_wal_person_name_idx").unwrap();
     RecoveryProvider::on_change(
         provider.as_ref(),
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::PropertyIndexCreatedNamed {
-                label,
-                property,
+                label: label.clone(),
+                property: property.clone(),
                 kind: SchemaPropertyIndexKind::String,
-                name: Some(name),
+                name: Some(name.clone()),
             },
         },
     )
@@ -344,10 +428,10 @@ fn wal_replay_restores_named_property_index_metadata() {
 #[test]
 fn wal_replay_drops_property_index_registered_in_snapshot_scma() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = intern("SnapshotPerson").unwrap();
-    let property = intern("age").unwrap();
+    let label = db_string("SnapshotPerson").unwrap();
+    let property = db_string("age").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
     let snapshot = shared.read();
     let provider = CoreProvider::new_for_recovery();
@@ -361,7 +445,10 @@ fn wal_replay_drops_property_index_registered_in_snapshot_scma() {
         provider.as_ref(),
         &Change::SchemaChanged {
             graph: GraphId::new(1),
-            change: SchemaChange::PropertyIndexDropped { label, property },
+            change: SchemaChange::PropertyIndexDropped {
+                label: label.clone(),
+                property: property.clone(),
+            },
         },
     )
     .unwrap();
@@ -374,18 +461,21 @@ fn wal_replay_drops_property_index_registered_in_snapshot_scma() {
 #[test]
 fn wal_replay_property_index_create_drop_create_sequence_uses_last_event() {
     let provider = CoreProvider::new_for_recovery();
-    let label = intern("SequencePerson").unwrap();
-    let property = intern("age").unwrap();
+    let label = db_string("SequencePerson").unwrap();
+    let property = db_string("age").unwrap();
     for change in [
         SchemaChange::PropertyIndexCreated {
-            label,
-            property,
+            label: label.clone(),
+            property: property.clone(),
             kind: SchemaPropertyIndexKind::I64,
         },
-        SchemaChange::PropertyIndexDropped { label, property },
+        SchemaChange::PropertyIndexDropped {
+            label: label.clone(),
+            property: property.clone(),
+        },
         SchemaChange::PropertyIndexCreated {
-            label,
-            property,
+            label: label.clone(),
+            property: property.clone(),
             kind: SchemaPropertyIndexKind::I64,
         },
     ] {
@@ -410,16 +500,16 @@ fn wal_replay_applies_catalog_ddl_before_property_index_queue() {
     let snapshot = closed_graph_snapshot(base.clone());
     let provider = CoreProvider::new_for_recovery();
     load_closed_snapshot(provider.as_ref(), &snapshot);
-    let label = intern("IndexedSensor").unwrap();
-    let property = intern("reading").unwrap();
+    let label = db_string("IndexedSensor").unwrap();
+    let property = db_string("reading").unwrap();
     RecoveryProvider::on_change(
         provider.as_ref(),
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
-                label,
-                def: NodeTypeDefV1::new(LabelSet::single(label)),
+                label: label.clone(),
+                def: NodeTypeDefV1::new(LabelSet::single(label.clone())),
             },
         },
     )
@@ -429,8 +519,8 @@ fn wal_replay_applies_catalog_ddl_before_property_index_queue() {
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::PropertyIndexCreated {
-                label,
-                property,
+                label: label.clone(),
+                property: property.clone(),
                 kind: SchemaPropertyIndexKind::I64,
             },
         },
@@ -450,15 +540,15 @@ fn wal_replay_applies_catalog_ddl_before_property_index_queue() {
 #[test]
 fn wal_replay_property_index_create_is_lenient_for_later_kind_drift() {
     let provider = CoreProvider::new_for_recovery();
-    let label = intern("DriftPerson").unwrap();
-    let property = intern("age").unwrap();
+    let label = db_string("DriftPerson").unwrap();
+    let property = db_string("age").unwrap();
     RecoveryProvider::on_change(
         provider.as_ref(),
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::PropertyIndexCreated {
-                label,
-                property,
+                label: label.clone(),
+                property: property.clone(),
                 kind: SchemaPropertyIndexKind::I64,
             },
         },
@@ -468,8 +558,11 @@ fn wal_replay_property_index_create_is_lenient_for_later_kind_drift() {
         provider.as_ref(),
         &Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(label),
-            properties: props([(property, Value::String(intern("not-an-int").unwrap()))]),
+            labels: LabelSet::single(label.clone()),
+            properties: props([(
+                property.clone(),
+                Value::String(db_string("not-an-int").unwrap()),
+            )]),
         },
     )
     .unwrap();

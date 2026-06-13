@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: G019
+// expects: parse-ok
+MATCH SHORTEST 3 (a:Person)-[:KNOWS]->(b:Person) RETURN b

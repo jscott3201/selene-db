@@ -35,7 +35,7 @@ fn create_node_type_preserves_properties_default_and_validation() {
         panic!("expected create node type");
     };
     assert!(*if_not_exists);
-    assert_eq!(extends.expect("extends").as_str(), "Entity");
+    assert_eq!(extends.clone().expect("extends").as_str(), "Entity");
     assert_eq!(*validation_mode, Some(selene_gql::ValidationMode::Strict));
     assert_eq!(properties.len(), 2);
     assert!(matches!(
@@ -61,7 +61,7 @@ fn create_edge_type_preserves_endpoints() {
         panic!("expected create edge type");
     };
     assert_eq!(label.as_str(), "KNOWS");
-    assert_eq!(extends.expect("parent").as_str(), "RELATIONSHIP");
+    assert_eq!(extends.clone().expect("parent").as_str(), "RELATIONSHIP");
     let endpoints = endpoints.as_ref().expect("endpoint spec");
     assert_eq!(endpoints.from_labels[0].as_str(), "Person");
     assert_eq!(endpoints.to_labels[0].as_str(), "Person");
@@ -82,9 +82,12 @@ fn drop_type_and_show_type_plans() {
     let plan = plan_one("SHOW NODE TYPES");
     assert!(matches!(catalog_op(&plan), CatalogOp::ShowNodeTypes(_)));
     let columns = &plan.output_schema.columns;
-    assert_eq!(columns[0].name.expect("label").as_str(), "label");
+    assert_eq!(columns[0].name.clone().expect("label").as_str(), "label");
     assert_eq!(columns[0].ty, AnalyzedType::Resolved(GqlType::String));
-    assert_eq!(columns[1].name.expect("definition").as_str(), "definition");
+    assert_eq!(
+        columns[1].name.clone().expect("definition").as_str(),
+        "definition"
+    );
     assert_eq!(columns[1].ty, AnalyzedType::DYNAMIC);
 }
 
@@ -129,9 +132,11 @@ fn drop_index_plan_preserves_name_and_if_exists() {
 #[test]
 fn all_property_constraints_lower() {
     // The ISO/IEC 39075:2024 §18 property constraints the engine accepts:
-    // NOT NULL, DEFAULT, IMMUTABLE, UNIQUE, INDEXED. (Donor full-text/time-series
-    // constraints — SEARCHABLE/DICTIONARY/FILL/INTERVAL/ENCODING — were removed
-    // from the grammar; they are now clean 42001 syntax errors.)
+    // DEFAULT, IMMUTABLE, UNIQUE, INDEXED. Explicit value-type nullability is
+    // carried on the GqlType and lowered to the required-property bit at the
+    // catalog boundary. Donor full-text/time-series constraints —
+    // SEARCHABLE/DICTIONARY/FILL/INTERVAL/ENCODING — were removed from the
+    // grammar; they are now clean 42001 syntax errors.
     let plan = plan_one(
         "CREATE NODE TYPE :Sensor \
          (v :: STRING NOT NULL DEFAULT 'x' IMMUTABLE UNIQUE INDEXED)",
@@ -139,12 +144,16 @@ fn all_property_constraints_lower() {
     let CatalogOp::CreateNodeType { properties, .. } = catalog_op(&plan) else {
         panic!("expected create node type");
     };
-    assert_eq!(properties[0].constraints.len(), 5);
+    assert!(matches!(
+        &properties[0].gql_type,
+        GqlType::NotNull(inner) if **inner == GqlType::String
+    ));
+    assert_eq!(properties[0].constraints.len(), 4);
 }
 
 #[test]
 fn ddl_ast_or_replace_path_still_lowers_for_forward_compat() {
-    let name = selene_core::intern("g").expect("test interner");
+    let name = selene_core::db_string("g").expect("test string fits DB string cap");
     let analyzed = selene_gql::AnalyzedStatement {
         statement: selene_gql::AnalyzedStatementKind::Ddl(DdlStatement::CreateGraph {
             name,
@@ -180,9 +189,14 @@ fn sentinel_ddl_plan_shape_snapshot() {
         } else {
             "other"
         },
-        plan.output_schema.columns[0].name.expect("label").as_str(),
+        plan.output_schema.columns[0]
+            .name
+            .clone()
+            .expect("label")
+            .as_str(),
         plan.output_schema.columns[1]
             .name
+            .clone()
             .expect("definition")
             .as_str(),
     );

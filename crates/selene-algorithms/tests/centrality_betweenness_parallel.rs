@@ -6,13 +6,13 @@ use std::num::NonZeroUsize;
 use selene_algorithms::{
     BetweennessConfig, GraphProjection, Parallelism, ProjectionConfig, betweenness,
 };
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
 const PARALLEL_BETWEENNESS_RELATIVE_TOLERANCE: f64 = 1e-9;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -36,20 +36,25 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> SharedGraph {
 
 fn build_graph_with_nodes(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(84_001));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     for &(source, target) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[source], nodes[target], PropertyMap::new())
+            .create_edge(
+                rel.clone(),
+                nodes[source],
+                nodes[target],
+                PropertyMap::new(),
+            )
             .unwrap();
     }
     txn.commit().unwrap();

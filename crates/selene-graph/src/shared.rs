@@ -9,7 +9,7 @@ use std::sync::{
 use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
-use selene_core::{Change, GraphId, IStr, SchemaChange, SchemaPropertyIndexKind};
+use selene_core::{Change, DbString, GraphId, HnswIndexConfig, SchemaChange};
 use selene_persist::{AuditLog, SyncPolicy, WalConfig, WalWriter};
 
 use crate::adjacency::AdjacencyEdge;
@@ -21,14 +21,18 @@ use crate::graph::{PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
+use crate::schema_index_kind::schema_kind_from;
 use crate::store::{EdgeStore, RowIndex};
 use crate::typed_index::TypedIndexKind;
+use crate::vector_index::{
+    VectorIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
+};
 use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
 ///
 /// Since v1.2 (BRIEF 1) every snapshot publish is funneled through a single
-/// per-graph committer thread ([`crate::committer::CommitterThread`]), which is
+/// per-graph committer thread (`CommitterThread`), which is
 /// the **sole writer** of the `snapshot` [`ArcSwap`] cell. `begin_write` hands
 /// each [`WriteTxn`] a cheap submit handle; `commit`/`compact` seal-and-submit
 /// to the committer and block until it publishes. This single-committer +
@@ -40,7 +44,10 @@ pub struct SharedGraph {
     snapshot: Arc<ArcSwap<SeleneGraph>>,
     schema_version: Arc<AtomicU64>,
     allocator: Arc<Mutex<IdAllocator>>,
-    providers: Vec<Arc<dyn IndexProvider>>,
+    /// Fixed provider registry, frozen at construction. Shared as one
+    /// allocation so `begin_write` hands the registry to each transaction
+    /// with a single refcount bump instead of a per-transaction `Vec` clone.
+    providers: Arc<[Arc<dyn IndexProvider>]>,
     durable_providers: Vec<Arc<dyn DurableProvider>>,
     /// The single per-graph committer thread; sole publisher of `snapshot`.
     /// Dropped last via [`SharedGraph`]'s implicit drop order, which joins the
@@ -210,10 +217,15 @@ impl SharedGraph {
         batching: CommitBatching,
     ) -> GraphResult<Self> {
         validate_unique_provider_tags(&providers)?;
+        // Freeze the registry into one shared allocation: the committer and
+        // every `begin_write` transaction clone the `Arc`, not the `Vec`.
+        let providers: Arc<[Arc<dyn IndexProvider>]> = providers.into();
         let mut graph = graph;
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
         crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
+        crate::vector_index::rebuild_vector_indexes(&mut graph)?;
+        crate::text_index::rebuild_text_indexes(&mut graph)?;
         if let Some(type_def) = graph.meta.bound_type.as_deref() {
             // Why: GraphMeta is publicly constructible, so SharedGraph::from_graph
             // can land a malformed bound_type that bypassed builder().bound_to()'s
@@ -251,7 +263,7 @@ impl SharedGraph {
             crate::committer::CommitterThread::spawn(crate::committer::CommitterHandles {
                 snapshot: Arc::clone(&snapshot),
                 schema_version: Arc::clone(&schema_version),
-                providers: providers.clone(),
+                providers: Arc::clone(&providers),
                 durable_providers: durable_providers.clone(),
                 batching,
             });
@@ -272,6 +284,15 @@ impl SharedGraph {
         self.snapshot.load_full()
     }
 
+    /// Return compaction pressure for the current published snapshot.
+    ///
+    /// This is a lock-free read of row counts and liveness counters. It does not
+    /// compact, rebuild indexes, or take the writer lock.
+    #[must_use]
+    pub fn compaction_stats(&self) -> crate::compaction::CompactionStats {
+        self.read().compaction_stats()
+    }
+
     /// Compact the live graph in place: reclaim every dead / hole row, renumber
     /// rows dense, and atomically republish the result so the RAM held by deleted
     /// rows is reclaimed immediately (BRIEF-Item-4c — the live-densify half of
@@ -279,7 +300,7 @@ impl SharedGraph {
     ///
     /// This is pure space reclamation: it changes only the internal row layout,
     /// never external `NodeId`/`EdgeId`, properties, or labels, so it emits **no**
-    /// [`Change`](selene_core::Change) and writes **no** WAL entry. Durability
+    /// [`Change`] and writes **no** WAL entry. Durability
     /// comes from the next snapshot, which encodes the now-dense live graph (the
     /// CORE provider reads the same `snapshot` cell this method publishes into). A
     /// crash before that snapshot simply reloads the pre-compaction state and
@@ -339,6 +360,78 @@ impl SharedGraph {
         committer.submit_compact(seal_seq, dense, report)
     }
 
+    /// Rebuild every registered vector index from primary node values.
+    ///
+    /// HNSW indexes retain stale deleted entries after vector update/delete so
+    /// in-flight search can still traverse the neighbor graph safely. This
+    /// maintenance path reclaims those stale entries by rebuilding only the
+    /// derived vector-index state; it does not change graph data, emit
+    /// [`Change`], write a WAL entry, bump schema epoch, or
+    /// notify providers. The HNSW graph is derived, not durable: snapshots and
+    /// recovery persist only vector-index registrations plus primary values, so
+    /// a reopen rebuilds the index from that authoritative state.
+    ///
+    /// The rebuild is strict on live data: if an indexed row no longer satisfies
+    /// the registered vector dimension/metric invariant, this method returns an
+    /// error instead of silently dropping the row from the index.
+    pub fn rebuild_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
+        let committer = self.committer.handle();
+        let (seal_seq, rebuilt, report) = {
+            let mut guard = self.shared.write();
+            let mut rebuilt = guard.as_ref().clone();
+            let report = crate::vector_index::rebuild_vector_indexes_strict(&mut rebuilt)?;
+            let rebuilt = Arc::new(rebuilt);
+            let seal_seq = committer.next_seal_seq();
+            *guard = Arc::clone(&rebuilt);
+            (seal_seq, rebuilt, report)
+        };
+        committer.submit_vector_index_rebuild(seal_seq, rebuilt, report)
+    }
+
+    /// Rebuild only vector indexes whose diagnostics recommend maintenance.
+    ///
+    /// This is the bounded maintenance variant for IVF drift: it uses each index's current
+    /// [`ivf_rebuild_recommended`](crate::vector_index::VectorIndexMemoryUsage::ivf_rebuild_recommended)
+    /// value to decide whether to rebuild that derived index. Indexes that do not recommend rebuild
+    /// are left untouched, and a no-op call returns an empty report without publishing a maintenance
+    /// item.
+    ///
+    /// The rebuild is strict on live data for selected indexes, matching
+    /// [`Self::rebuild_vector_indexes`].
+    pub fn rebuild_recommended_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
+        self.maintain_vector_indexes(VectorIndexMaintenancePolicy::recommended())
+    }
+
+    /// Maintain recommended vector indexes under a caller-supplied policy.
+    ///
+    /// This is the explicit orchestration API for amortized vector-index maintenance. It rebuilds
+    /// only indexes whose diagnostics currently recommend maintenance and applies the policy cap
+    /// after ordering recommended indexes by pending IVF retrain pressure. It remains a
+    /// maintenance-tier operation: reads never trigger it, and a no-op call returns an empty report
+    /// without publishing a derived-state replacement.
+    ///
+    /// The rebuild is strict on live data for selected indexes, matching
+    /// [`Self::rebuild_vector_indexes`].
+    pub fn maintain_vector_indexes(
+        &self,
+        policy: VectorIndexMaintenancePolicy,
+    ) -> GraphResult<VectorIndexRebuildReport> {
+        let committer = self.committer.handle();
+        let (seal_seq, rebuilt, report) = {
+            let mut guard = self.shared.write();
+            let mut rebuilt = guard.as_ref().clone();
+            let report = crate::vector_index::maintain_vector_indexes_strict(&mut rebuilt, policy)?;
+            if report.entries.is_empty() {
+                return Ok(report);
+            }
+            let rebuilt = Arc::new(rebuilt);
+            let seal_seq = committer.next_seal_seq();
+            *guard = Arc::clone(&rebuilt);
+            (seal_seq, rebuilt, report)
+        };
+        committer.submit_vector_index_rebuild(seal_seq, rebuilt, report)
+    }
+
     /// Return the runtime schema-version epoch used for plan-cache invalidation.
     ///
     /// The epoch starts at zero for each [`SharedGraph`] instance and advances
@@ -366,8 +459,7 @@ impl SharedGraph {
     pub fn index_provider_by_tag(&self, tag: ProviderTag) -> Option<Arc<dyn IndexProvider>> {
         self.providers
             .iter()
-            .find(|provider| provider.provider_tag() == tag)
-            .map(Arc::clone)
+            .find_map(|provider| (provider.provider_tag() == tag).then(|| Arc::clone(provider)))
     }
 
     /// Borrow the fixed provider registry for executor procedure contexts.
@@ -395,8 +487,8 @@ impl SharedGraph {
     /// `kind`.
     pub fn create_property_index(
         &self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: TypedIndexKind,
     ) -> GraphResult<()> {
         self.create_property_index_named(label, property, kind, None)
@@ -405,19 +497,29 @@ impl SharedGraph {
     /// Register a built-in node property index with optional catalog name.
     pub fn create_property_index_named(
         &self,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         kind: TypedIndexKind,
-        name: Option<IStr>,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         let mut txn = self.begin_write();
-        if txn.read().property_index.contains_key(&(label, property)) {
+        if txn
+            .read()
+            .property_index
+            .contains_key(&(label.clone(), property.clone()))
+        {
             return Err(GraphError::PropertyIndexAlreadyExists { label, property });
         }
-        let index = crate::property_index::build_property_index(txn.read(), label, property, kind)?;
-        txn.guard_mut()
-            .property_index
-            .insert((label, property), PropertyIndexEntry::new(index, name));
+        let index = crate::property_index::build_property_index(
+            txn.read(),
+            label.clone(),
+            property.clone(),
+            kind,
+        )?;
+        txn.guard_mut().property_index.insert(
+            (label.clone(), property.clone()),
+            PropertyIndexEntry::new(index, name.clone()),
+        );
         let graph = txn.read().graph_id();
         txn.changes.push(Change::SchemaChanged {
             graph,
@@ -436,17 +538,145 @@ impl SharedGraph {
     ///
     /// The operation is idempotent; dropping an absent index succeeds without
     /// publishing a new snapshot.
-    pub fn drop_property_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+    pub fn drop_property_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
         let mut txn = self.begin_write();
-        if !txn.read().property_index.contains_key(&(label, property)) {
+        if !txn
+            .read()
+            .property_index
+            .contains_key(&(label.clone(), property.clone()))
+        {
             return Ok(());
         }
-        txn.guard_mut().property_index.remove(&(label, property));
+        txn.guard_mut()
+            .property_index
+            .remove(&(label.clone(), property.clone()));
         let graph = txn.read().graph_id();
         txn.changes.push(Change::SchemaChanged {
             graph,
             change: SchemaChange::PropertyIndexDropped { label, property },
         });
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Register a built-in node vector index for `(label, property)`.
+    ///
+    /// The current node columns are scanned under the write lock and the
+    /// published snapshot is updated in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::VectorIndexAlreadyExists`] if the pair is already
+    /// registered, [`GraphError::VectorIndexInvalidDimension`] when `dimension`
+    /// is zero, or [`GraphError::VectorIndexValueRejected`] if any existing
+    /// node with `label` has a non-null value for `property` that is not a
+    /// vector with the declared dimension.
+    pub fn create_vector_index(
+        &self,
+        label: DbString,
+        property: DbString,
+        kind: VectorIndexKind,
+        dimension: u32,
+    ) -> GraphResult<()> {
+        self.create_vector_index_named(label, property, kind, dimension, None)
+    }
+
+    /// Register a built-in node vector index with optional catalog name.
+    pub fn create_vector_index_named(
+        &self,
+        label: DbString,
+        property: DbString,
+        kind: VectorIndexKind,
+        dimension: u32,
+        name: Option<DbString>,
+    ) -> GraphResult<()> {
+        self.create_vector_index_named_with_config(label, property, kind, dimension, name, None)
+    }
+
+    /// Register a built-in node vector index with optional HNSW construction config.
+    pub fn create_vector_index_named_with_config(
+        &self,
+        label: DbString,
+        property: DbString,
+        kind: VectorIndexKind,
+        dimension: u32,
+        name: Option<DbString>,
+        hnsw_config: Option<HnswIndexConfig>,
+    ) -> GraphResult<()> {
+        self.create_vector_index_named_with_configs(
+            label,
+            property,
+            kind,
+            dimension,
+            name,
+            VectorIndexConfig::new(hnsw_config, None),
+        )
+    }
+
+    /// Register a built-in node vector index with optional ANN construction config.
+    pub fn create_vector_index_named_with_configs(
+        &self,
+        label: DbString,
+        property: DbString,
+        kind: VectorIndexKind,
+        dimension: u32,
+        name: Option<DbString>,
+        config: VectorIndexConfig,
+    ) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator().create_vector_index_named_with_configs(
+            label, property, kind, dimension, name, config,
+        )?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Drop a built-in node vector index.
+    ///
+    /// The operation is idempotent; dropping an absent index succeeds without
+    /// publishing a new snapshot.
+    pub fn drop_vector_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator().drop_vector_index(label, property)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Register a built-in node text index for `(label, property)`.
+    ///
+    /// The current node columns are scanned under the write lock and the
+    /// published snapshot is updated in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::TextIndexAlreadyExists`] if the pair is already
+    /// registered, or [`GraphError::Inconsistent`] if index construction
+    /// observes corrupt graph columns.
+    pub fn create_text_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
+        self.create_text_index_named(label, property, None)
+    }
+
+    /// Register a built-in node text index with optional catalog name.
+    pub fn create_text_index_named(
+        &self,
+        label: DbString,
+        property: DbString,
+        name: Option<DbString>,
+    ) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator()
+            .create_text_index_named(label, property, name)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Drop a built-in node text index.
+    ///
+    /// The operation is idempotent; dropping an absent index succeeds without
+    /// publishing a new snapshot.
+    pub fn drop_text_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator().drop_text_index(label, property)?;
         txn.commit()?;
         Ok(())
     }
@@ -495,7 +725,7 @@ impl SharedGraph {
             self.shared.write(),
             self.committer.handle(),
             self.allocator.lock(),
-            self.providers.clone(),
+            Arc::clone(&self.providers),
         )
     }
 
@@ -524,6 +754,15 @@ impl SharedGraph {
         sealed: crate::write_txn::SealedCommit,
     ) -> GraphResult<crate::CommitOutcome> {
         self.committer.handle().submit_commit(sealed)
+    }
+
+    /// Enqueue a sealed commit and return its reply receiver without waiting.
+    #[cfg(test)]
+    pub(crate) fn submit_sealed_async_for_test(
+        &self,
+        sealed: crate::write_txn::SealedCommit,
+    ) -> GraphResult<std::sync::mpsc::Receiver<GraphResult<crate::CommitOutcome>>> {
+        self.committer.handle().submit_commit_async_for_test(sealed)
     }
 }
 
@@ -638,241 +877,8 @@ impl SharedGraphBuilder {
     }
 }
 
-const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
-    match kind {
-        TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
-        TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
-        TypedIndexKind::String => SchemaPropertyIndexKind::String,
-        TypedIndexKind::Date => SchemaPropertyIndexKind::Date,
-        TypedIndexKind::LocalDateTime => SchemaPropertyIndexKind::LocalDateTime,
-        TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
-    }
-}
-
-pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
-    graph.idx_label.clear();
-    graph.idx_edge_label.clear();
-    graph.adjacency_out.clear();
-    graph.adjacency_in.clear();
-
-    let node_count = graph.node_store.labels.len();
-    for row_index in 0..node_count {
-        let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
-            reason: format!(
-                "node store row index {row_index} exceeds u32::MAX; selene-graph \
-                 caps rows at u32::MAX",
-            ),
-        })?;
-        if !graph.node_store.is_alive(row) {
-            continue;
-        }
-        if let Some(labels) = graph.node_store.labels.get(row_index) {
-            for label in labels.iter() {
-                graph.idx_label.entry(*label).or_default().insert(row);
-            }
-        }
-    }
-
-    let edge_count = graph.edge_store.label.len();
-    for row_index in 0..edge_count {
-        let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
-            reason: format!(
-                "edge store row index {row_index} exceeds u32::MAX; selene-graph \
-                 caps rows at u32::MAX",
-            ),
-        })?;
-        if !graph.edge_store.is_alive(row) {
-            continue;
-        }
-        if let Some(label) = graph.edge_store.label.get(row_index) {
-            graph.idx_edge_label.entry(*label).or_default().insert(row);
-        }
-    }
-    // BRIEF-Item-4a: bind external ids to rows BEFORE rebuild_adjacency, which
-    // (from Increment 3) reads the edge id from the row_to_id column.
-    rebuild_id_maps(graph)?;
-    rebuild_adjacency(graph)?;
-    Ok(())
-}
-
-/// Rebuild the external-id <-> [`RowIndex`] maps from the per-store `row_to_id`
-/// columns, as the final id-binding step of a full rebuild (recovery /
-/// [`SharedGraph`] construction).
-///
-/// This is the id-map authority for the recovery path — the live commit path
-/// populates the maps directly in the mutator and never reaches here. The
-/// `row_to_id` column is the persisted source of truth: recovery's
-/// `insert_*_row` writes the real external id for every materialized row (alive
-/// **and** dead — the snapshot persists dead rows so a deleted id stays
-/// resolvable to its dead row -> `NotAlive`, matching the live path) and the
-/// tombstone for never-committed aborted-tx holes. Seeding the maps from the
-/// column therefore preserves the live/recovery id-map equality exactly; only
-/// holes are skipped (-> `None` -> `NotFound`, the accepted refinement).
-///
-/// For an externally-built graph that never populated `row_to_id` (e.g. a test
-/// that pushes store columns directly), an alive row whose column slot is still
-/// the tombstone falls back to the `row + 1` identity binding. That fallback is
-/// the only `row + 1` arithmetic here and is allowlisted in the BRIEF-Item-4a
-/// STEP-8 grep-gate; BRIEF-Item-4b drops it once every construction path
-/// persists ids.
-fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
-    graph.node_id_to_row.clear();
-    graph.edge_id_to_row.clear();
-    // Externally-built graphs may not have populated row_to_id; pad it to the
-    // row-column length with tombstones so every materialized row is in-bounds.
-    let node_len = graph.node_store.len();
-    let edge_len = graph.edge_store.len();
-    pad_row_to_id(
-        &mut graph.node_store.row_to_id,
-        node_len,
-        selene_core::NodeId::TOMBSTONE,
-    );
-    pad_row_to_id(
-        &mut graph.edge_store.row_to_id,
-        edge_len,
-        selene_core::EdgeId::TOMBSTONE,
-    );
-
-    for row in 0..node_len {
-        let raw = row as u32;
-        let mut id = graph
-            .node_store
-            .row_to_id
-            .get(row)
-            .copied()
-            .unwrap_or(selene_core::NodeId::TOMBSTONE);
-        if id == selene_core::NodeId::TOMBSTONE {
-            // Hole (never committed) -> stays out of the map. An alive row with
-            // no persisted id is an externally-built graph; fall back to the
-            // identity binding and repair the column.
-            if !graph.node_store.is_alive(raw) {
-                continue;
-            }
-            id = selene_core::NodeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
-            graph.node_store.row_to_id.set(row, id);
-        }
-        graph.node_id_to_row.insert(id, RowIndex::new(raw));
-    }
-    for row in 0..edge_len {
-        let raw = row as u32;
-        let mut id = graph
-            .edge_store
-            .row_to_id
-            .get(row)
-            .copied()
-            .unwrap_or(selene_core::EdgeId::TOMBSTONE);
-        if id == selene_core::EdgeId::TOMBSTONE {
-            if !graph.edge_store.is_alive(raw) {
-                continue;
-            }
-            id = selene_core::EdgeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
-            graph.edge_store.row_to_id.set(row, id);
-        }
-        graph.edge_id_to_row.insert(id, RowIndex::new(raw));
-    }
-    Ok(())
-}
-
-/// Grow `column` with `tombstone` until it is at least `target_len` long.
-///
-/// [`crate::chunked_vec::ChunkedVec`] supports only push/set, so this pads but
-/// never shrinks. In practice the recovery insert path already keeps the column
-/// at row-column length (this is then a no-op), while an externally-built graph
-/// is padded from empty.
-fn pad_row_to_id<T: Clone>(
-    column: &mut crate::chunked_vec::ChunkedVec<T>,
-    target_len: usize,
-    tombstone: T,
-) {
-    while column.len() < target_len {
-        column.push(tombstone.clone());
-    }
-}
-
-fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
-    let edge_count = graph.edge_store.len();
-    for row_index in 0..edge_count {
-        let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
-            reason: format!(
-                "edge store row index {row_index} exceeds u32::MAX; selene-graph \
-                 caps rows at u32::MAX",
-            ),
-        })?;
-        if !graph.edge_store.is_alive(row) {
-            continue;
-        }
-        let (label, source, target) = edge_row_parts(&graph.edge_store, row_index)?;
-        // rebuild_id_maps ran first, so the edge id is read from the row_to_id
-        // column (the persistence-stable id), never synthesized as row + 1.
-        let edge_id =
-            graph
-                .edge_id_for_row(RowIndex::new(row))
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!(
-                        "alive edge row {row} has no mapped external id during rebuild"
-                    ),
-                })?;
-        graph
-            .adjacency_out
-            .entry(source)
-            .or_default()
-            .add(AdjacencyEdge {
-                label,
-                neighbor: target,
-                edge_id,
-            });
-        graph
-            .adjacency_in
-            .entry(target)
-            .or_default()
-            .add(AdjacencyEdge {
-                label,
-                neighbor: source,
-                edge_id,
-            });
-    }
-    Ok(())
-}
-
-fn edge_row_parts(
-    store: &EdgeStore,
-    row_index: usize,
-) -> GraphResult<(IStr, selene_core::NodeId, selene_core::NodeId)> {
-    let label = *store
-        .label
-        .get(row_index)
-        .ok_or_else(|| GraphError::Inconsistent {
-            reason: format!("edge label column missing row {row_index}"),
-        })?;
-    let source = *store
-        .source
-        .get(row_index)
-        .ok_or_else(|| GraphError::Inconsistent {
-            reason: format!("edge source column missing row {row_index}"),
-        })?;
-    let target = *store
-        .target
-        .get(row_index)
-        .ok_or_else(|| GraphError::Inconsistent {
-            reason: format!("edge target column missing row {row_index}"),
-        })?;
-    Ok((label, source, target))
-}
-
-pub(crate) fn validate_unique_provider_tags(
-    providers: &[Arc<dyn IndexProvider>],
-) -> GraphResult<()> {
-    let mut seen = std::collections::BTreeSet::new();
-    for provider in providers {
-        let tag = provider.provider_tag();
-        if !seen.insert(tag) {
-            return Err(GraphError::Provider(ProviderError::Inconsistent {
-                reason: format!("duplicate provider tag {tag}"),
-            }));
-        }
-    }
-    Ok(())
-}
+mod rebuild;
+pub(crate) use rebuild::{rebuild_derived_state, validate_unique_provider_tags};
 
 #[cfg(test)]
 mod compaction_tests;

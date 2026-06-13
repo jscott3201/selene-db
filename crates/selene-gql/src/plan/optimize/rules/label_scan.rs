@@ -81,9 +81,9 @@ fn rewrite_tree(tree: &mut JoinTree, catalog: &dyn crate::IndexCatalog) -> bool 
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, catalog) | rewrite_tree(right, catalog)
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
-            rewrite_tree(child, catalog)
-        }
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, catalog),
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
         // Each per-label branch (post disjunctive_label_expansion) is a leaf
         // single-label scan; promote each independently.
@@ -107,7 +107,7 @@ fn rewrite_scan(scan: &mut crate::NodeOrEdgeScan, catalog: &dyn crate::IndexCata
         ScanKind::Node => IndexTarget::Node,
         ScanKind::Edge => IndexTarget::Edge,
     };
-    let Some(handle) = catalog.label_index(target, label) else {
+    let Some(handle) = catalog.label_index(target, label.clone()) else {
         return false;
     };
     // OPT-5 cost gate: promote to LabelIndex only when the label bitmap is

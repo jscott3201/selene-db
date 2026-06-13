@@ -10,7 +10,7 @@ mod type_name;
 
 use std::fmt::{self, Write as _};
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use super::format_ident::fmt_ident;
 use crate::ast::{
@@ -24,6 +24,8 @@ use expr::fmt_expr;
 use keywords::{fmt_match_mode, fmt_path_mode, fmt_path_selector, fmt_set_op};
 use preflight::validate_formattable;
 use type_name::fmt_type;
+
+pub(crate) use type_name::fmt_type as format_gql_type;
 
 /// Format a read-side statement as GQL source.
 ///
@@ -136,14 +138,14 @@ pub(super) fn fmt_pipeline(out: &mut String, pipeline: &QueryPipeline) -> fmt::R
                     if index > 0 {
                         out.push_str(", ");
                     }
-                    write!(out, "{} = ", fmt_ident(value.alias))?;
+                    write!(out, "{} = ", fmt_ident(value.alias.clone()))?;
                     fmt_expr(out, &value.value)?;
                 }
             }
             crate::PipelineStatement::Unwind(value) => {
                 out.push_str("UNWIND ");
                 fmt_expr(out, &value.source)?;
-                write!(out, " AS {}", fmt_ident(value.alias))?;
+                write!(out, " AS {}", fmt_ident(value.alias.clone()))?;
             }
             crate::PipelineStatement::Sorting(values) => fmt_order(out, values)?,
             crate::PipelineStatement::Limit(value) => {
@@ -169,7 +171,8 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
     }
     out.push_str("MATCH");
     if let Some(selector) = clause.selector {
-        write!(out, " {}", fmt_path_selector(selector))?;
+        out.push(' ');
+        fmt_path_selector(out, selector)?;
     }
     if let Some(mode) = clause.match_mode {
         write!(out, " {}", fmt_match_mode(mode))?;
@@ -178,6 +181,13 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
         || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit)
     {
         write!(out, " {}", fmt_path_mode(clause.path_mode))?;
+    }
+    // ISO §16.6 <path or paths> (Feature G014): faithfully reproduce the
+    // explicit PATH/PATHS keyword so a parse->format->parse round trip
+    // preserves the AST `path_or_paths` flag (mirrors the explicit-WALK
+    // handling above). Canonical plural `PATHS` per §16.6 SR1.
+    if clause.path_or_paths {
+        out.push_str(" PATHS");
     }
     out.push(' ');
     for (index, pattern) in clause.patterns.iter().enumerate() {
@@ -194,8 +204,8 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
 }
 
 fn fmt_graph_pattern(out: &mut String, pattern: &GraphPattern) -> fmt::Result {
-    if let Some(binding) = pattern.path_binding {
-        write!(out, "{} = ", fmt_ident(binding))?;
+    if let Some(binding) = &pattern.path_binding {
+        write!(out, "{} = ", fmt_ident(binding.clone()))?;
     }
     for element in &pattern.elements {
         match element {
@@ -208,8 +218,8 @@ fn fmt_graph_pattern(out: &mut String, pattern: &GraphPattern) -> fmt::Result {
 
 fn fmt_node_pattern(out: &mut String, node: &NodePattern) -> fmt::Result {
     out.push('(');
-    if let Some(binding) = node.binding {
-        out.push_str(&fmt_ident(binding));
+    if let Some(binding) = &node.binding {
+        out.push_str(&fmt_ident(binding.clone()));
     }
     if let Some(label) = &node.label_expr {
         fmt_label_expr(out, label)?;
@@ -228,8 +238,8 @@ fn fmt_edge_pattern(out: &mut String, edge: &EdgePattern) -> fmt::Result {
         EdgeDirection::Right | EdgeDirection::Undirected => out.push_str("-["),
         EdgeDirection::Left => out.push_str("<-["),
     }
-    if let Some(binding) = edge.binding {
-        out.push_str(&fmt_ident(binding));
+    if let Some(binding) = &edge.binding {
+        out.push_str(&fmt_ident(binding.clone()));
     }
     if let Some(label) = &edge.label_expr {
         fmt_label_expr(out, label)?;
@@ -260,7 +270,7 @@ fn fmt_edge_pattern(out: &mut String, edge: &EdgePattern) -> fmt::Result {
     Ok(())
 }
 
-fn fmt_properties(out: &mut String, properties: &[(IStr, ValueExpr)]) -> fmt::Result {
+fn fmt_properties(out: &mut String, properties: &[(DbString, ValueExpr)]) -> fmt::Result {
     if properties.is_empty() {
         return Ok(());
     }
@@ -269,7 +279,7 @@ fn fmt_properties(out: &mut String, properties: &[(IStr, ValueExpr)]) -> fmt::Re
         if index > 0 {
             out.push_str(", ");
         }
-        write!(out, "{}: ", fmt_ident(*key))?;
+        write!(out, "{}: ", fmt_ident(key.clone()))?;
         fmt_expr(out, value)?;
     }
     out.push('}');
@@ -278,7 +288,7 @@ fn fmt_properties(out: &mut String, properties: &[(IStr, ValueExpr)]) -> fmt::Re
 
 fn fmt_label_expr(out: &mut String, label: &LabelExpr) -> fmt::Result {
     match label {
-        LabelExpr::Single(label) => write!(out, ":{}", fmt_ident(*label)),
+        LabelExpr::Single(label) => write!(out, ":{}", fmt_ident(label.clone())),
         LabelExpr::Conjunction(parts) => fmt_label_parts(out, parts, "&"),
         LabelExpr::Disjunction(parts) => fmt_label_parts(out, parts, "|"),
         LabelExpr::Negation(inner) => {
@@ -294,7 +304,7 @@ fn fmt_label_expr(out: &mut String, label: &LabelExpr) -> fmt::Result {
 
 fn fmt_label_expr_body(out: &mut String, label: &LabelExpr) -> fmt::Result {
     match label {
-        LabelExpr::Single(label) => write!(out, "{}", fmt_ident(*label)),
+        LabelExpr::Single(label) => write!(out, "{}", fmt_ident(label.clone())),
         _ => fmt_label_expr(out, label),
     }
 }
@@ -343,8 +353,8 @@ fn fmt_return_items(out: &mut String, items: &[ReturnItem]) -> fmt::Result {
             out.push_str(", ");
         }
         fmt_expr(out, &item.expr)?;
-        if let Some(alias) = item.alias {
-            write!(out, " AS {}", fmt_ident(alias))?;
+        if let Some(alias) = &item.alias {
+            write!(out, " AS {}", fmt_ident(alias.clone()))?;
         }
     }
     Ok(())
@@ -398,7 +408,7 @@ fn fmt_limit(out: &mut String, value: &LimitValue) -> fmt::Result {
             name,
             declared_type,
             ..
-        } => fmt_parameter(out, *name, declared_type.as_ref()),
+        } => fmt_parameter(out, name.clone(), declared_type.as_ref()),
     }
 }
 
@@ -408,7 +418,7 @@ fn fmt_call(out: &mut String, call: &ProcedureCall) -> fmt::Result {
         if index > 0 {
             out.push('.');
         }
-        out.push_str(&fmt_ident(*part));
+        out.push_str(&fmt_ident(part.clone()));
     }
     out.push('(');
     for (index, arg) in call.args.iter().enumerate() {
@@ -424,14 +434,18 @@ fn fmt_call(out: &mut String, call: &ProcedureCall) -> fmt::Result {
             if index > 0 {
                 out.push_str(", ");
             }
-            match item.column {
+            match &item.column {
                 crate::YieldColumn::Star => out.push('*'),
-                crate::YieldColumn::Named(name) => out.push_str(&fmt_ident(name)),
+                crate::YieldColumn::Named(name) => out.push_str(&fmt_ident(name.clone())),
             }
-            if let Some(alias) = item.alias {
-                write!(out, " AS {}", fmt_ident(alias))?;
+            if let Some(alias) = &item.alias {
+                write!(out, " AS {}", fmt_ident(alias.clone()))?;
             }
         }
+    }
+    if let Some(filter) = &call.yield_filter {
+        out.push_str(" WHERE ");
+        fmt_expr(out, filter)?;
     }
     Ok(())
 }
@@ -444,7 +458,7 @@ fn fmt_inline_call(out: &mut String, call: &InlineProcedureCall) -> fmt::Result 
             if index > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&fmt_ident(*name));
+            out.push_str(&fmt_ident(name.clone()));
         }
         out.push_str(") ");
     }
@@ -466,12 +480,12 @@ fn fmt_yield_items(out: &mut String, items: &[crate::YieldItem]) -> fmt::Result 
         if index > 0 {
             out.push_str(", ");
         }
-        match item.column {
+        match &item.column {
             crate::YieldColumn::Star => out.push('*'),
-            crate::YieldColumn::Named(name) => out.push_str(&fmt_ident(name)),
+            crate::YieldColumn::Named(name) => out.push_str(&fmt_ident(name.clone())),
         }
-        if let Some(alias) = item.alias {
-            write!(out, " AS {}", fmt_ident(alias))?;
+        if let Some(alias) = &item.alias {
+            write!(out, " AS {}", fmt_ident(alias.clone()))?;
         }
     }
     Ok(())
@@ -479,7 +493,7 @@ fn fmt_yield_items(out: &mut String, items: &[crate::YieldItem]) -> fmt::Result 
 
 pub(super) fn fmt_parameter(
     out: &mut String,
-    name: IStr,
+    name: DbString,
     declared_type: Option<&GqlType>,
 ) -> fmt::Result {
     write!(out, "${}", fmt_ident(name))?;

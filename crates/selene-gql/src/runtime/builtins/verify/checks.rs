@@ -5,10 +5,10 @@
 //! summarizing the inconsistencies it found; the orchestration and row shaping
 //! live in the parent [`super`] module.
 
-use selene_core::{EdgeId, IStr, NodeId, Value};
+use selene_core::{DbString, DurationOrderKey, EdgeId, NodeId, Value, duration_order_key};
 use selene_graph::{
-    AdjacencyEntry, CompositeKey, CompositeKeyComponent, CompositeTypedIndex, NotNanF64, RowIndex,
-    SeleneGraph, TypedIndex,
+    AdjacencyEntry, CompositeKey, CompositeKeyComponent, CompositeTypedIndex, NotNanF32, NotNanF64,
+    RowIndex, SeleneGraph, TypedIndex,
 };
 
 use super::CheckResult;
@@ -110,18 +110,11 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
             else {
                 continue;
             };
-            // Read-path MUST NOT admit (BRIEF-153 Q11(a)) — when a stored
-            // `Value::ExternalString` component isn't yet in the global IStr
-            // pool, the row cannot be in the index. BRIEF-153 fix-cycle C5:
-            // verify counts this as an expected row AND an issue so a
-            // bitmap/pool desync does not hide as a silent skip.
-            let key = match entry.index.key_from_values_lookup(&values) {
-                Ok(Some(key)) => key,
-                Ok(None) => {
-                    expected_rows += 1;
-                    issues += 1;
-                    continue;
-                }
+            // With a single string space `key_from_values` resolves every
+            // coercible STRING component directly; an `Err` (arity / kind
+            // mismatch) means this row is not indexable, so skip it.
+            let key = match entry.index.key_from_values(&values) {
+                Ok(key) => key,
                 Err(_) => continue,
             };
             expected_rows += 1;
@@ -220,7 +213,7 @@ pub(super) fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
         }
     }
 
-    for row in &snapshot.edge_store.alive {
+    for row in snapshot.edge_store.alive.iter() {
         live_edges += 1;
         let Some(edge_id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
             issues += 1;
@@ -230,7 +223,12 @@ pub(super) fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
             issues += 1;
             continue;
         };
-        if !adjacency_entry_contains(snapshot.outgoing_edges(source), target, edge_id, label) {
+        if !adjacency_entry_contains(
+            snapshot.outgoing_edges(source),
+            target,
+            edge_id,
+            label.clone(),
+        ) {
             issues += 1;
         }
         if !adjacency_entry_contains(snapshot.incoming_edges(target), source, edge_id, label) {
@@ -252,9 +250,9 @@ pub(super) fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
     )
 }
 
-fn expected_edge(snapshot: &SeleneGraph, edge_id: EdgeId) -> Option<(NodeId, NodeId, IStr)> {
+fn expected_edge(snapshot: &SeleneGraph, edge_id: EdgeId) -> Option<(NodeId, NodeId, DbString)> {
     let (source, target) = snapshot.edge_endpoints(edge_id)?;
-    let label = *snapshot.edge_label(edge_id)?;
+    let label = snapshot.edge_label(edge_id)?.clone();
     Some((source, target, label))
 }
 
@@ -262,7 +260,7 @@ fn adjacency_entry_contains(
     entry: Option<&AdjacencyEntry>,
     neighbor: NodeId,
     edge_id: EdgeId,
-    label: IStr,
+    label: DbString,
 ) -> bool {
     entry.is_some_and(|entry| {
         entry
@@ -275,7 +273,7 @@ pub(super) fn check_edge_endpoint_liveness(snapshot: &SeleneGraph) -> CheckResul
     let mut issues = 0_usize;
     let mut checked = 0_usize;
 
-    for row in &snapshot.edge_store.alive {
+    for row in snapshot.edge_store.alive.iter() {
         checked += 1;
         let Some(edge_id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
             issues += 1;
@@ -303,7 +301,8 @@ pub(super) fn check_typed_index_value_range(snapshot: &SeleneGraph) -> CheckResu
     for ((label, property), entry) in &snapshot.property_index {
         for (bucket, row) in typed_index_entries(&entry.index) {
             checked += 1;
-            if !indexed_property_row_matches(snapshot, *label, *property, row, bucket) {
+            if !indexed_property_row_matches(snapshot, label.clone(), property.clone(), row, bucket)
+            {
                 issues += 1;
             }
         }
@@ -313,7 +312,7 @@ pub(super) fn check_typed_index_value_range(snapshot: &SeleneGraph) -> CheckResu
             checked += 1;
             if !indexed_composite_row_matches(
                 snapshot,
-                *label,
+                label.clone(),
                 &entry.declared_properties,
                 row,
                 &bucket,
@@ -373,9 +372,39 @@ pub(super) fn check_roaring_bitmap_density(snapshot: &SeleneGraph) -> CheckResul
 fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
     let mut entries = Vec::new();
     match index {
+        TypedIndex::Bool(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::Bool(*key), bitmap.iter());
+            }
+        }
         TypedIndex::I64(index) => {
             for (key, bitmap) in index {
                 push_index_entries(&mut entries, IndexedValue::I64(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::U64(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::U64(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::I128(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::I128(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::U128(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::U128(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::Decimal(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::Decimal(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::F32(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::F32(*key), bitmap.iter());
             }
         }
         TypedIndex::F64(index) => {
@@ -385,7 +414,11 @@ fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
         }
         TypedIndex::String(index) => {
             for (key, bitmap) in index {
-                push_index_entries(&mut entries, IndexedValue::String(*key), bitmap.iter());
+                push_index_entries(
+                    &mut entries,
+                    IndexedValue::String(key.clone()),
+                    bitmap.iter(),
+                );
             }
         }
         TypedIndex::Date(index) => {
@@ -400,6 +433,34 @@ fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
                     IndexedValue::LocalDateTime(*key),
                     bitmap.iter(),
                 );
+            }
+        }
+        TypedIndex::ZonedDateTime(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(
+                    &mut entries,
+                    IndexedValue::ZonedDateTime(key.clone()),
+                    bitmap.iter(),
+                );
+            }
+        }
+        TypedIndex::LocalTime(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::LocalTime(*key), bitmap.iter());
+            }
+        }
+        TypedIndex::ZonedTime(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(
+                    &mut entries,
+                    IndexedValue::ZonedTime(key.clone()),
+                    bitmap.iter(),
+                );
+            }
+        }
+        TypedIndex::Duration(index) => {
+            for (key, bitmap) in index {
+                push_index_entries(&mut entries, IndexedValue::Duration(*key), bitmap.iter());
             }
         }
         TypedIndex::Uuid(index) => {
@@ -433,8 +494,8 @@ fn composite_index_entries(index: &CompositeTypedIndex) -> Vec<(CompositeKey, u3
 
 fn indexed_property_row_matches(
     snapshot: &SeleneGraph,
-    label: IStr,
-    property: IStr,
+    label: DbString,
+    property: DbString,
     row: u32,
     bucket: IndexedValue,
 ) -> bool {
@@ -458,8 +519,8 @@ fn indexed_property_row_matches(
 
 fn indexed_composite_row_matches(
     snapshot: &SeleneGraph,
-    label: IStr,
-    properties: &[IStr],
+    label: DbString,
+    properties: &[DbString],
     row: u32,
     bucket: &CompositeKey,
 ) -> bool {
@@ -484,7 +545,7 @@ fn indexed_composite_row_matches(
 
 fn composite_property_values<'a>(
     row_properties: &'a selene_core::PropertyMap,
-    properties: &[IStr],
+    properties: &[DbString],
 ) -> Option<Vec<&'a Value>> {
     properties
         .iter()
@@ -494,17 +555,35 @@ fn composite_property_values<'a>(
 
 #[derive(Clone, Debug)]
 enum IndexedValue {
+    Bool(bool),
     I64(i64),
+    U64(u64),
+    I128(i128),
+    U128(u128),
+    Decimal(rust_decimal::Decimal),
+    F32(NotNanF32),
     F64(NotNanF64),
-    String(IStr),
+    String(DbString),
     Date(jiff::civil::Date),
     LocalDateTime(jiff::civil::DateTime),
+    ZonedDateTime(jiff::Zoned),
+    LocalTime(jiff::civil::Time),
+    ZonedTime(jiff::Zoned),
+    Duration(DurationOrderKey),
     Uuid(String),
 }
 
 fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
     match (bucket, value) {
+        (IndexedValue::Bool(expected), Value::Bool(actual)) => expected == *actual,
         (IndexedValue::I64(expected), Value::Int(actual)) => expected == *actual,
+        (IndexedValue::U64(expected), Value::Uint(actual)) => expected == *actual,
+        (IndexedValue::I128(expected), Value::Int128(actual)) => expected == *actual,
+        (IndexedValue::U128(expected), Value::Uint128(actual)) => expected == *actual,
+        (IndexedValue::Decimal(expected), Value::Decimal(actual)) => expected == *actual,
+        (IndexedValue::F32(expected), Value::Float32(actual)) => {
+            NotNanF32::new(*actual).is_ok_and(|actual| actual == expected)
+        }
         (IndexedValue::F64(expected), Value::Float(actual)) => {
             NotNanF64::new(*actual).is_ok_and(|actual| actual == expected)
         }
@@ -513,6 +592,14 @@ fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
         (IndexedValue::LocalDateTime(expected), Value::LocalDateTime(actual)) => {
             expected == *actual
         }
+        (IndexedValue::ZonedDateTime(expected), Value::ZonedDateTime(actual)) => {
+            expected == **actual
+        }
+        (IndexedValue::LocalTime(expected), Value::LocalTime(actual)) => expected == *actual,
+        (IndexedValue::ZonedTime(expected), Value::ZonedTime(actual)) => expected == **actual,
+        (IndexedValue::Duration(expected), Value::Duration(actual)) => {
+            expected == duration_order_key(actual)
+        }
         (IndexedValue::Uuid(expected), Value::Uuid(actual)) => expected == actual.to_string(),
         _ => false,
     }
@@ -520,7 +607,15 @@ fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
 
 fn component_matches_value(component: &CompositeKeyComponent, value: &Value) -> bool {
     match (component, value) {
+        (CompositeKeyComponent::Bool(expected), Value::Bool(actual)) => expected == actual,
         (CompositeKeyComponent::I64(expected), Value::Int(actual)) => expected == actual,
+        (CompositeKeyComponent::U64(expected), Value::Uint(actual)) => expected == actual,
+        (CompositeKeyComponent::I128(expected), Value::Int128(actual)) => expected == actual,
+        (CompositeKeyComponent::U128(expected), Value::Uint128(actual)) => expected == actual,
+        (CompositeKeyComponent::Decimal(expected), Value::Decimal(actual)) => expected == actual,
+        (CompositeKeyComponent::F32(expected), Value::Float32(actual)) => {
+            NotNanF32::new(*actual).is_ok_and(|actual| actual == *expected)
+        }
         (CompositeKeyComponent::F64(expected), Value::Float(actual)) => {
             NotNanF64::new(*actual).is_ok_and(|actual| actual == *expected)
         }
@@ -528,6 +623,18 @@ fn component_matches_value(component: &CompositeKeyComponent, value: &Value) -> 
         (CompositeKeyComponent::Date(expected), Value::Date(actual)) => expected == actual,
         (CompositeKeyComponent::LocalDateTime(expected), Value::LocalDateTime(actual)) => {
             expected == actual
+        }
+        (CompositeKeyComponent::ZonedDateTime(expected), Value::ZonedDateTime(actual)) => {
+            expected == actual.as_ref()
+        }
+        (CompositeKeyComponent::LocalTime(expected), Value::LocalTime(actual)) => {
+            expected == actual
+        }
+        (CompositeKeyComponent::ZonedTime(expected), Value::ZonedTime(actual)) => {
+            expected == actual.as_ref()
+        }
+        (CompositeKeyComponent::Duration(expected), Value::Duration(actual)) => {
+            *expected == duration_order_key(actual)
         }
         (CompositeKeyComponent::Uuid(expected), Value::Uuid(actual)) => expected == actual,
         _ => false,

@@ -1,5 +1,5 @@
 // corpus: positive
 // feature: GV48
-// also-covers: GV45
+// also-covers: GV45, GA06
 // expects: parse-ok
 RETURN RECORD {inner: RECORD {flag: true}} IS TYPED RECORD{inner :: RECORD{flag :: BOOL}} AS r

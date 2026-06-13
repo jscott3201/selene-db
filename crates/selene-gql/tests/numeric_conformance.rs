@@ -8,12 +8,12 @@
 //! exactly like the 64-bit numerics, reaching the runtime via parameters.
 
 use rust_decimal::Decimal;
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{EmptyProcedureRegistry, ExecutorError, Session, StatementOutput};
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn session_graph(id: u64) -> SharedGraph {
@@ -38,7 +38,7 @@ fn single_value(session: &mut Session<'_>, source: &str) -> Value {
 fn int128_param_equals_int_literal() {
     let graph = session_graph(9001);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("i128"), Value::Int128(1));
+    session.bind_parameter(db_string("i128"), Value::Int128(1));
 
     assert_eq!(
         single_value(&mut session, "RETURN $i128 = 1 AS eq"),
@@ -50,7 +50,7 @@ fn int128_param_equals_int_literal() {
 fn uint128_param_equals_int_literal() {
     let graph = session_graph(9002);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("u128"), Value::Uint128(42));
+    session.bind_parameter(db_string("u128"), Value::Uint128(42));
 
     assert_eq!(
         single_value(&mut session, "RETURN $u128 = 42 AS eq"),
@@ -62,10 +62,68 @@ fn uint128_param_equals_int_literal() {
 fn decimal_param_equals_integer_literal() {
     let graph = session_graph(9003);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("dec"), Value::Decimal(Decimal::from(7)));
+    session.bind_parameter(db_string("dec"), Value::Decimal(Decimal::from(7)));
 
     assert_eq!(
         single_value(&mut session, "RETURN $dec = 7 AS eq"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn exact_decimal_literals_materialize_as_decimal() {
+    let graph = session_graph(9004);
+    let mut session = Session::new(&graph);
+
+    for (source, expected) in [
+        ("RETURN 1.25 AS v", "1.25"),
+        ("RETURN 1.25M AS v", "1.25"),
+        ("RETURN .25 AS v", "0.25"),
+        ("RETURN 1. AS v", "1"),
+        ("RETURN 1e2M AS v", "100"),
+    ] {
+        assert_eq!(
+            single_value(&mut session, source),
+            Value::Decimal(expected.parse().expect("decimal parses")),
+            "source: {source}"
+        );
+    }
+}
+
+#[test]
+fn approximate_numeric_literals_materialize_as_float() {
+    let graph = session_graph(9005);
+    let mut session = Session::new(&graph);
+
+    for (source, expected) in [
+        ("RETURN 1e2 AS v", 100.0),
+        ("RETURN 1e2D AS v", 100.0),
+        ("RETURN 1.25D AS v", 1.25),
+        ("RETURN 1F AS v", 1.0),
+    ] {
+        assert_eq!(
+            single_value(&mut session, source),
+            Value::Float(expected),
+            "source: {source}"
+        );
+    }
+}
+
+#[test]
+fn numeric_literal_typed_predicates_distinguish_exact_and_approximate() {
+    let graph = session_graph(9006);
+    let mut session = Session::new(&graph);
+
+    assert_eq!(
+        single_value(&mut session, "RETURN 1.25 IS TYPED DECIMAL AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        single_value(&mut session, "RETURN 1.25D IS TYPED FLOAT AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        single_value(&mut session, "RETURN 1e2 IS TYPED FLOAT AS ok"),
         Value::Bool(true)
     );
 }
@@ -76,8 +134,8 @@ fn decimal_param_equals_integer_literal() {
 fn sum_over_int128_column() {
     let graph = session_graph(9010);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Int128(10));
-    session.bind_parameter(istr("b"), Value::Int128(20));
+    session.bind_parameter(db_string("a"), Value::Int128(10));
+    session.bind_parameter(db_string("b"), Value::Int128(20));
 
     assert_eq!(
         single_value(&mut session, "UNWIND [$a, $b] AS x RETURN sum(x) AS s"),
@@ -90,8 +148,8 @@ fn sum_over_uint128_column_out_of_i64_range() {
     let graph = session_graph(9011);
     let mut session = Session::new(&graph);
     // Each value exceeds i64::MAX, which the old `numeric_value` rejected.
-    session.bind_parameter(istr("a"), Value::Uint128(u128::from(u64::MAX)));
-    session.bind_parameter(istr("b"), Value::Uint128(1));
+    session.bind_parameter(db_string("a"), Value::Uint128(u128::from(u64::MAX)));
+    session.bind_parameter(db_string("b"), Value::Uint128(1));
 
     assert_eq!(
         single_value(&mut session, "UNWIND [$a, $b] AS x RETURN sum(x) AS s"),
@@ -103,8 +161,8 @@ fn sum_over_uint128_column_out_of_i64_range() {
 fn sum_over_int128_column_overflow_is_numeric_out_of_range() {
     let graph = session_graph(9015);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Int128(i128::MAX));
-    session.bind_parameter(istr("b"), Value::Int128(i128::MAX));
+    session.bind_parameter(db_string("a"), Value::Int128(i128::MAX));
+    session.bind_parameter(db_string("b"), Value::Int128(i128::MAX));
 
     let err = execute(&mut session, "UNWIND [$a, $b] AS x RETURN sum(x) AS s")
         .expect_err("i128 sum overflow errors");
@@ -115,8 +173,8 @@ fn sum_over_int128_column_overflow_is_numeric_out_of_range() {
 fn sum_over_decimal_column() {
     let graph = session_graph(9012);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Decimal("1.5".parse().unwrap()));
-    session.bind_parameter(istr("b"), Value::Decimal("2.5".parse().unwrap()));
+    session.bind_parameter(db_string("a"), Value::Decimal("1.5".parse().unwrap()));
+    session.bind_parameter(db_string("b"), Value::Decimal("2.5".parse().unwrap()));
 
     assert_eq!(
         single_value(&mut session, "UNWIND [$a, $b] AS x RETURN sum(x) AS s"),
@@ -128,8 +186,8 @@ fn sum_over_decimal_column() {
 fn avg_over_decimal_column() {
     let graph = session_graph(9013);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Decimal("1".parse().unwrap()));
-    session.bind_parameter(istr("b"), Value::Decimal("2".parse().unwrap()));
+    session.bind_parameter(db_string("a"), Value::Decimal("1".parse().unwrap()));
+    session.bind_parameter(db_string("b"), Value::Decimal("2".parse().unwrap()));
 
     assert_eq!(
         single_value(&mut session, "UNWIND [$a, $b] AS x RETURN avg(x) AS a"),
@@ -141,8 +199,8 @@ fn avg_over_decimal_column() {
 fn stddev_pop_over_int128_column() {
     let graph = session_graph(9014);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Int128(2));
-    session.bind_parameter(istr("b"), Value::Int128(4));
+    session.bind_parameter(db_string("a"), Value::Int128(2));
+    session.bind_parameter(db_string("b"), Value::Int128(4));
 
     // population stddev of [2,4] = 1.0
     assert_eq!(
@@ -160,8 +218,8 @@ fn stddev_pop_over_int128_column() {
 fn decimal_param_addition() {
     let graph = session_graph(9020);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Decimal("1.25".parse().unwrap()));
-    session.bind_parameter(istr("b"), Value::Decimal("2.75".parse().unwrap()));
+    session.bind_parameter(db_string("a"), Value::Decimal("1.25".parse().unwrap()));
+    session.bind_parameter(db_string("b"), Value::Decimal("2.75".parse().unwrap()));
 
     assert_eq!(
         single_value(&mut session, "RETURN $a + $b AS s"),
@@ -173,8 +231,8 @@ fn decimal_param_addition() {
 fn decimal_param_multiplication() {
     let graph = session_graph(9021);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Decimal("1.5".parse().unwrap()));
-    session.bind_parameter(istr("b"), Value::Decimal("4".parse().unwrap()));
+    session.bind_parameter(db_string("a"), Value::Decimal("1.5".parse().unwrap()));
+    session.bind_parameter(db_string("b"), Value::Decimal("4".parse().unwrap()));
 
     assert_eq!(
         single_value(&mut session, "RETURN $a * $b AS s"),
@@ -186,8 +244,8 @@ fn decimal_param_multiplication() {
 fn uint128_param_addition() {
     let graph = session_graph(9022);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Uint128(3));
-    session.bind_parameter(istr("b"), Value::Uint128(4));
+    session.bind_parameter(db_string("a"), Value::Uint128(3));
+    session.bind_parameter(db_string("b"), Value::Uint128(4));
 
     assert_eq!(
         single_value(&mut session, "RETURN $a + $b AS s"),
@@ -199,8 +257,8 @@ fn uint128_param_addition() {
 fn uint128_addition_overflow_is_numeric_out_of_range() {
     let graph = session_graph(9023);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Uint128(u128::MAX));
-    session.bind_parameter(istr("b"), Value::Uint128(1));
+    session.bind_parameter(db_string("a"), Value::Uint128(u128::MAX));
+    session.bind_parameter(db_string("b"), Value::Uint128(1));
 
     let err = execute(&mut session, "RETURN $a + $b AS s").expect_err("overflow errors");
     assert_eq!(err.gqlstatus().as_str(), "22003");
@@ -210,8 +268,8 @@ fn uint128_addition_overflow_is_numeric_out_of_range() {
 fn decimal_division_by_zero_is_division_by_zero() {
     let graph = session_graph(9024);
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::Decimal("1".parse().unwrap()));
-    session.bind_parameter(istr("b"), Value::Decimal("0".parse().unwrap()));
+    session.bind_parameter(db_string("a"), Value::Decimal("1".parse().unwrap()));
+    session.bind_parameter(db_string("b"), Value::Decimal("0".parse().unwrap()));
 
     let err = execute(&mut session, "RETURN $a / $b AS s").expect_err("division by zero errors");
     assert_eq!(err.gqlstatus().as_str(), "22012");

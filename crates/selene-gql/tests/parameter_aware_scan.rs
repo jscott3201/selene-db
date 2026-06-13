@@ -12,7 +12,7 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::plan::optimize::optimize_summary;
 use selene_gql::{
     BindingTable, EmptyProcedureRegistry, ExecutionPlan, ExecutorError, IndexKind, OptimizeContext,
@@ -21,11 +21,11 @@ use selene_gql::{
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+fn props<const N: usize>(pairs: [(DbString, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 
@@ -49,9 +49,9 @@ fn optimized_plan(source: &str, catalog: &MockIndexCatalog) -> ExecutionPlan {
 /// the returned catalog mirrors it for the optimizer.
 fn person_graph_with_name_index() -> (SharedGraph, MockIndexCatalog) {
     let graph = SharedGraph::new(GraphId::new(15_401));
-    let label = istr("Person");
-    let id_key = istr("id");
-    let name_key = istr("name");
+    let label = db_string("Person");
+    let id_key = db_string("id");
+    let name_key = db_string("name");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
@@ -64,10 +64,10 @@ fn person_graph_with_name_index() -> (SharedGraph, MockIndexCatalog) {
         ] {
             mutator
                 .create_node(
-                    LabelSet::single(label),
+                    LabelSet::single(label.clone()),
                     props([
-                        (id_key, Value::Int(id)),
-                        (name_key, Value::String(istr(name))),
+                        (id_key.clone(), Value::Int(id)),
+                        (name_key.clone(), Value::String(db_string(name))),
                     ]),
                 )
                 .expect("person inserts");
@@ -77,7 +77,7 @@ fn person_graph_with_name_index() -> (SharedGraph, MockIndexCatalog) {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_property_index(label, name_key, TypedIndexKind::String)
+            .create_property_index(label.clone(), name_key.clone(), TypedIndexKind::String)
             .expect("name index registers");
         txn.commit().expect("index commit");
     }
@@ -108,7 +108,7 @@ fn parameterized_equality_executes_against_typed_string_index() {
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("name"), Value::String(istr("cara")));
+    session.bind_parameter(db_string("name"), Value::String(db_string("cara")));
 
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
@@ -127,7 +127,7 @@ fn null_parameter_binding_returns_empty_result_without_erroring() {
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("name"), Value::Null);
+    session.bind_parameter(db_string("name"), Value::Null);
 
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
@@ -137,51 +137,42 @@ fn null_parameter_binding_returns_empty_result_without_erroring() {
 }
 
 #[test]
-fn external_string_parameter_pooled_content_finds_row() {
-    // BRIEF-154 §B.3 F4: when `Value::ExternalString` content has been
-    // admitted to the global IStr pool (here via the literal seed values),
-    // resolve_index_key coerces it to `Value::String(IStr)` and the typed
-    // index probe finds the corresponding row.
+fn computed_string_equality_finds_row_on_indexed_string_column() {
+    // An equality probe on an INDEXED STRING column with a COMPUTED
+    // (CAST-derived) string value must resolve to the indexed row. Computed and
+    // literal strings share the same `Value::String` representation, so the
+    // indexed lookup should find both exactly.
     let (graph, catalog) = person_graph_with_name_index();
     let plan = Arc::new(optimized_plan(
-        "MATCH (n:Person) WHERE n.name = $name RETURN n.id AS id",
+        "MATCH (n:Person) WHERE n.name = CAST('bob' AS STRING) RETURN n.id AS id",
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    // "bob" is already pooled because it appeared in the literal property
-    // seed; an ExternalString carrying the same content should coerce.
-    session.bind_parameter(istr("name"), Value::ExternalString(Arc::from("bob")));
 
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
-            .expect("pooled external string executes"),
+            .expect("computed-string equality executes"),
     );
     assert_eq!(collect_id_column(&table), vec![2]);
 }
 
 #[test]
-fn external_string_parameter_unpooled_content_returns_empty() {
-    // BRIEF-154 §B.3 F4 second leg: ExternalString content never admitted
-    // (here a fresh random suffix) can't possibly match any indexed row —
-    // resolve_index_key returns EmptyResult without admitting the string.
+fn computed_string_parameter_equality_finds_row_on_indexed_string_column() {
+    // Same as above but via a bound STRING parameter rather than a CAST
+    // literal: the indexed-column equality probe finds the matching row.
     let (graph, catalog) = person_graph_with_name_index();
     let plan = Arc::new(optimized_plan(
         "MATCH (n:Person) WHERE n.name = $name RETURN n.id AS id",
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    session.bind_parameter(
-        istr("name"),
-        // The token below must NOT appear in any other test in this binary
-        // before this point, otherwise it would be admitted via the seed.
-        Value::ExternalString(Arc::from("param-aware-scan-unpooled-sentinel-3pXkQv7yLm9")),
-    );
+    session.bind_parameter(db_string("name"), Value::String(db_string("bob")));
 
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
-            .expect("unpooled external string executes"),
+            .expect("string-parameter equality executes"),
     );
-    assert!(table.rows().is_empty());
+    assert_eq!(collect_id_column(&table), vec![2]);
 }
 
 #[test]
@@ -195,7 +186,7 @@ fn wrong_kind_parameter_binding_errors_with_parameter_name() {
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("name"), Value::Int(42));
+    session.bind_parameter(db_string("name"), Value::Int(42));
 
     let err = execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
         .expect_err("wrong-kind parameter errors");
@@ -243,8 +234,8 @@ fn parameterized_in_list_executes_against_bitmap_union() {
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::String(istr("alice")));
-    session.bind_parameter(istr("b"), Value::String(istr("dave")));
+    session.bind_parameter(db_string("a"), Value::String(db_string("alice")));
+    session.bind_parameter(db_string("b"), Value::String(db_string("dave")));
 
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
@@ -265,14 +256,63 @@ fn parameterized_in_list_null_binding_drops_that_branch() {
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("a"), Value::String(istr("alice")));
-    session.bind_parameter(istr("b"), Value::Null);
+    session.bind_parameter(db_string("a"), Value::String(db_string("alice")));
+    session.bind_parameter(db_string("b"), Value::Null);
 
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
             .expect("partial-null in-list executes"),
     );
     assert_eq!(collect_id_column(&table), vec![1]);
+}
+
+#[test]
+fn parameterized_list_in_executes_against_bitmap_union() {
+    let (graph, catalog) = person_graph_with_name_index();
+    let plan = optimized_plan(
+        "MATCH (n:Person) WHERE n.name IN $names :: LIST<STRING> RETURN n.id AS id",
+        &catalog,
+    );
+    let display = optimize_summary(plan.clone(), &OptimizeContext::default()).to_string();
+    assert!(
+        display.contains("BitmapUnion [bounds=Keys [$names...]]"),
+        "expected list-parameter BitmapUnion access path, got:\n{display}",
+    );
+    let plan = Arc::new(plan);
+
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("names"),
+        Value::List(vec![
+            Value::String(db_string("alice")),
+            Value::String(db_string("dave")),
+        ]),
+    );
+
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("list-parameter in-list executes"),
+    );
+    let mut ids = collect_id_column(&table);
+    ids.sort();
+    assert_eq!(ids, vec![1, 4]);
+}
+
+#[test]
+fn parameterized_list_in_empty_binding_returns_empty_bitmap_union() {
+    let (graph, catalog) = person_graph_with_name_index();
+    let plan = Arc::new(optimized_plan(
+        "MATCH (n:Person) WHERE n.name IN $names :: LIST<STRING> RETURN n.id AS id",
+        &catalog,
+    ));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(db_string("names"), Value::List(Vec::new()));
+
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("empty list-parameter in-list executes"),
+    );
+    assert!(collect_id_column(&table).is_empty());
 }
 
 #[test]
@@ -324,7 +364,7 @@ fn session_plan_cache_hits_across_parameter_value_changes() {
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());
     let source = "MATCH (n:Person) WHERE n.name = $name RETURN n.id AS id";
 
-    session.bind_parameter(istr("name"), Value::String(istr("alice")));
+    session.bind_parameter(db_string("name"), Value::String(db_string("alice")));
     let table = rows(
         session
             .execute_source(source, &EmptyProcedureRegistry)
@@ -332,7 +372,7 @@ fn session_plan_cache_hits_across_parameter_value_changes() {
     );
     assert_eq!(collect_id_column(&table), vec![1]);
 
-    session.bind_parameter(istr("name"), Value::String(istr("eve")));
+    session.bind_parameter(db_string("name"), Value::String(db_string("eve")));
     let table = rows(
         session
             .execute_source(source, &EmptyProcedureRegistry)
@@ -346,42 +386,25 @@ fn session_plan_cache_hits_across_parameter_value_changes() {
 }
 
 #[test]
-fn range_with_external_string_parameter_finds_rows_via_linear_fallback() {
-    // BRIEF-154 PR #175 F4 (Codex P1): the BRIEF-153 ExternalString
-    // lookup-coerce carve-out is only valid for *equality* probes
-    // (`nodes_with_property_eq` is variant-strict). STRING range probes
-    // return `None` from `lookup_range` by design (IStr ordering is
-    // admission-order, not lexicographic — see
-    // `selene-graph::typed_index`), falling back to a linear scan where
-    // `value_compare::compare_non_null` handles cross-variant
-    // `String` / `ExternalString` lexicographic comparison natively.
-    //
-    // Pre-fix: `resolve_index_key` short-circuited any unpoolable
-    // `Value::ExternalString` against `IndexKind::String` to `EmptyResult`,
-    // including range probes — zeroing out queries that the linear
-    // fallback would have matched. The fix gates the carve-out on
-    // `ProbeShape::Equality`.
+fn string_range_parameter_finds_rows_via_index_range() {
+    // STRING range probes now resolve through the index: `lookup_range` walks
+    // the `BTreeMap<DbString, _>` over the lexicographically-ordered keys (the
+    // typed-index collapse landed). The matched rows are identical to the old
+    // linear-scan fallback (which compared `Value::String` rows
+    // lexicographically against the range endpoints) — just resolved via the
+    // index instead of a full scan.
     let (graph, catalog) = person_graph_with_name_index();
     let plan = Arc::new(optimized_plan(
         "MATCH (n:Person) WHERE n.name > $lo AND n.name < $hi RETURN n.id AS id",
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    // Bind range endpoints as unpooled ExternalString that bracket the
-    // seeded names alphabetically. Pre-fix this would short-circuit to
-    // empty; the linear fallback compares lexicographically against the
-    // indexed `Value::String` rows.
-    session.bind_parameter(
-        istr("lo"),
-        Value::ExternalString(Arc::from("a-unpooled-sentinel-1")),
-    );
-    session.bind_parameter(
-        istr("hi"),
-        Value::ExternalString(Arc::from("z-unpooled-sentinel-1")),
-    );
+    // Bind range endpoints that bracket the seeded names alphabetically.
+    session.bind_parameter(db_string("lo"), Value::String(db_string("a-sentinel-1")));
+    session.bind_parameter(db_string("hi"), Value::String(db_string("z-sentinel-1")));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
-            .expect("string range with external-string parameter executes"),
+            .expect("string range with string parameter executes"),
     );
     let mut ids = collect_id_column(&table);
     ids.sort();
@@ -400,16 +423,19 @@ fn equality_after_range_keeps_range_as_residual_filter() {
     // to just `[index]`, leaving any earlier range bounds as residual
     // predicates the executor still enforces post-probe.
     let (graph, _catalog) = person_graph_with_name_index();
-    let label = istr("Person");
-    let age_key = istr("age");
+    let label = db_string("Person");
+    let age_key = db_string("age");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         for age in [5_i64, 15, 25] {
             mutator
                 .create_node(
-                    LabelSet::single(label),
-                    props([(istr("id"), Value::Int(age)), (age_key, Value::Int(age))]),
+                    LabelSet::single(label.clone()),
+                    props([
+                        (db_string("id"), Value::Int(age)),
+                        (age_key.clone(), Value::Int(age)),
+                    ]),
                 )
                 .expect("age node inserts");
         }
@@ -418,12 +444,12 @@ fn equality_after_range_keeps_range_as_residual_filter() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_property_index(label, age_key, TypedIndexKind::I64)
+            .create_property_index(label.clone(), age_key.clone(), TypedIndexKind::I64)
             .expect("age index registers");
         txn.commit().expect("index commit");
     }
     let catalog = MockIndexCatalog::new()
-        .with_node_typed_index(label, istr("name"), IndexKind::String)
+        .with_node_typed_index(label.clone(), db_string("name"), IndexKind::String)
         .with_node_typed_index(label, age_key, IndexKind::Integer);
 
     // Parameter equality after range: `$p = 5` AND `age > 10` should be empty
@@ -433,7 +459,7 @@ fn equality_after_range_keeps_range_as_residual_filter() {
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("p"), Value::Int(5));
+    session.bind_parameter(db_string("p"), Value::Int(5));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
             .expect("equality-after-range executes"),
@@ -445,7 +471,7 @@ fn equality_after_range_keeps_range_as_residual_filter() {
     );
 
     // Sanity: `$p = 25` AND `age > 10` should find the age=25 row.
-    session.bind_parameter(istr("p"), Value::Int(25));
+    session.bind_parameter(db_string("p"), Value::Int(25));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
             .expect("equality-after-range matches row above range"),
@@ -479,16 +505,19 @@ fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
     let (graph, _catalog) = person_graph_with_name_index();
     // Build a graph with an INT-typed `age` index so we can exercise a
     // numeric range with inverted parameter bounds.
-    let label = istr("Person");
-    let age_key = istr("age");
+    let label = db_string("Person");
+    let age_key = db_string("age");
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         for age in [20_i64, 35, 50] {
             mutator
                 .create_node(
-                    LabelSet::single(label),
-                    props([(istr("id"), Value::Int(age)), (age_key, Value::Int(age))]),
+                    LabelSet::single(label.clone()),
+                    props([
+                        (db_string("id"), Value::Int(age)),
+                        (age_key.clone(), Value::Int(age)),
+                    ]),
                 )
                 .expect("age node inserts");
         }
@@ -497,12 +526,12 @@ fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_property_index(label, age_key, TypedIndexKind::I64)
+            .create_property_index(label.clone(), age_key.clone(), TypedIndexKind::I64)
             .expect("age index registers");
         txn.commit().expect("index commit");
     }
     let catalog = MockIndexCatalog::new()
-        .with_node_typed_index(label, istr("name"), IndexKind::String)
+        .with_node_typed_index(label.clone(), db_string("name"), IndexKind::String)
         .with_node_typed_index(label, age_key, IndexKind::Integer);
     let plan = Arc::new(optimized_plan(
         "MATCH (n:Person) WHERE n.age > $lo AND n.age < $hi RETURN n.id AS id",
@@ -511,8 +540,8 @@ fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
 
     // $lo > $hi → unsatisfiable. Must return empty without panicking.
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("lo"), Value::Int(100));
-    session.bind_parameter(istr("hi"), Value::Int(0));
+    session.bind_parameter(db_string("lo"), Value::Int(100));
+    session.bind_parameter(db_string("hi"), Value::Int(0));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
             .expect("inverted range executes without panicking"),
@@ -520,8 +549,8 @@ fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
     assert!(table.rows().is_empty());
 
     // Boundary case: $lo == $hi with both exclusive (`> AND <`) also empty.
-    session.bind_parameter(istr("lo"), Value::Int(35));
-    session.bind_parameter(istr("hi"), Value::Int(35));
+    session.bind_parameter(db_string("lo"), Value::Int(35));
+    session.bind_parameter(db_string("hi"), Value::Int(35));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
             .expect("equal-bound exclusive range executes"),
@@ -529,8 +558,8 @@ fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
     assert!(table.rows().is_empty());
 
     // Sanity: $lo < $hi still works.
-    session.bind_parameter(istr("lo"), Value::Int(0));
-    session.bind_parameter(istr("hi"), Value::Int(100));
+    session.bind_parameter(db_string("lo"), Value::Int(0));
+    session.bind_parameter(db_string("hi"), Value::Int(100));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
             .expect("valid range executes"),
@@ -553,13 +582,13 @@ fn plan_arc_is_reusable_across_parameter_value_changes() {
     ));
     let mut session = Session::new(&graph);
 
-    session.bind_parameter(istr("name"), Value::String(istr("alice")));
+    session.bind_parameter(db_string("name"), Value::String(db_string("alice")));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry).expect("first execute"),
     );
     assert_eq!(collect_id_column(&table), vec![1]);
 
-    session.bind_parameter(istr("name"), Value::String(istr("eve")));
+    session.bind_parameter(db_string("name"), Value::String(db_string("eve")));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry).expect("second execute"),
     );

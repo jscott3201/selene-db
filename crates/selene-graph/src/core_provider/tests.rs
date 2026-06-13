@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use arc_swap::ArcSwap;
 use selene_core::{
     Change, EdgeId, GraphId, HlcTimestamp, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    PropertyValueType, Value, intern,
+    PropertyValueType, Value, VectorValue, db_string,
 };
 use selene_persist::{WalConfig, WalReader, WalWriter};
 
@@ -29,9 +29,13 @@ mod cpix;
 mod durable_state;
 #[path = "tests/gtyp.rs"]
 mod gtyp;
+#[path = "tests/recovery_mode.rs"]
+mod recovery_mode;
+#[path = "tests/tidx.rs"]
+mod tidx;
 
 fn prop(name: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(name).unwrap(), value)]).unwrap()
 }
 
 fn temp_wal_path(name: &str) -> PathBuf {
@@ -60,53 +64,57 @@ fn wal_entries(path: &Path) -> Vec<selene_persist::WalEntry> {
 fn full_value_property_map(prefix: &str) -> PropertyMap {
     PropertyMap::from_pairs([
         (
-            intern(&format!("{prefix}.bool")).unwrap(),
+            db_string(&format!("{prefix}.bool")).unwrap(),
             Value::Bool(true),
         ),
-        (intern(&format!("{prefix}.int")).unwrap(), Value::Int(-7)),
+        (db_string(&format!("{prefix}.int")).unwrap(), Value::Int(-7)),
         (
-            intern(&format!("{prefix}.float")).unwrap(),
+            db_string(&format!("{prefix}.float")).unwrap(),
             Value::Float(1.25),
         ),
         (
-            intern(&format!("{prefix}.string")).unwrap(),
-            Value::String(intern("core.values.string").unwrap()),
+            db_string(&format!("{prefix}.string")).unwrap(),
+            Value::String(db_string("core.values.string").unwrap()),
         ),
         (
-            intern(&format!("{prefix}.decimal")).unwrap(),
+            db_string(&format!("{prefix}.decimal")).unwrap(),
             Value::Decimal("123.45".parse().unwrap()),
         ),
         (
-            intern(&format!("{prefix}.bytes")).unwrap(),
+            db_string(&format!("{prefix}.bytes")).unwrap(),
             Value::Bytes(Arc::from([1_u8, 2, 3, 4])),
         ),
         (
-            intern(&format!("{prefix}.uuid")).unwrap(),
+            db_string(&format!("{prefix}.uuid")).unwrap(),
             Value::Uuid(uuid::Uuid::from_u128(42)),
         ),
         (
-            intern(&format!("{prefix}.zoned_datetime")).unwrap(),
-            Value::ZonedDateTime(
+            db_string(&format!("{prefix}.vector")).unwrap(),
+            Value::Vector(VectorValue::new(vec![1.0, 2.0, 3.0]).unwrap()),
+        ),
+        (
+            db_string(&format!("{prefix}.zoned_datetime")).unwrap(),
+            Value::ZonedDateTime(Box::new(
                 "2026-05-07T12:34:56-04:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
+            )),
         ),
         (
-            intern(&format!("{prefix}.date")).unwrap(),
+            db_string(&format!("{prefix}.date")).unwrap(),
             Value::Date("2026-05-07".parse().unwrap()),
         ),
         (
-            intern(&format!("{prefix}.local_datetime")).unwrap(),
+            db_string(&format!("{prefix}.local_datetime")).unwrap(),
             Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap()),
         ),
         (
-            intern(&format!("{prefix}.local_time")).unwrap(),
+            db_string(&format!("{prefix}.local_time")).unwrap(),
             Value::LocalTime("12:34:56".parse().unwrap()),
         ),
         (
-            intern(&format!("{prefix}.duration")).unwrap(),
-            Value::Duration("PT1H2S".parse().unwrap()),
+            db_string(&format!("{prefix}.duration")).unwrap(),
+            Value::Duration(Box::new("PT1H2S".parse().unwrap())),
         ),
     ])
     .unwrap()
@@ -119,7 +127,7 @@ fn graph_with_node() -> SeleneGraph {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(intern("core.node").unwrap()),
+                LabelSet::single(db_string("core.node").unwrap()),
                 prop("core.name", Value::Int(7)),
             )
             .unwrap()
@@ -136,19 +144,19 @@ fn graph_with_edge() -> SeleneGraph {
         let mut mutator = txn.mutator();
         let a = mutator
             .create_node(
-                LabelSet::single(intern("core.a").unwrap()),
+                LabelSet::single(db_string("core.a").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         let b = mutator
             .create_node(
-                LabelSet::single(intern("core.b").unwrap()),
+                LabelSet::single(db_string("core.b").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         mutator
             .create_edge(
-                intern("core.edge").unwrap(),
+                db_string("core.edge").unwrap(),
                 a,
                 b,
                 prop("core.weight", Value::Int(3)),
@@ -161,18 +169,21 @@ fn graph_with_edge() -> SeleneGraph {
 
 fn graph_type() -> crate::GraphTypeDef {
     crate::GraphTypeDef {
-        name: intern("core.gtyp").unwrap(),
+        name: db_string("core.gtyp").unwrap(),
         node_types: vec![crate::NodeTypeDef {
-            name: intern("core.gtyp.node").unwrap(),
-            key_labels: LabelSet::single(intern("CoreTypedNode").unwrap()),
+            name: db_string("core.gtyp.node").unwrap(),
+            key_labels: LabelSet::single(db_string("CoreTypedNode").unwrap()),
             properties: vec![crate::PropertyTypeDef {
-                name: intern("core.gtyp.name").unwrap(),
+                name: db_string("core.gtyp.name").unwrap(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,
-
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: crate::ValidationMode::Strict,
@@ -243,11 +254,11 @@ fn encode_decode_round_trip_empty_graph_types() {
 }
 
 #[test]
-fn scma_decode_resorts_rows_by_receiver_handle() {
-    let zebra = intern("core.scma.zebra").unwrap();
-    let apple = intern("core.scma.apple").unwrap();
-    let zebra_prop = intern("core.scma.zebra.prop").unwrap();
-    let apple_prop = intern("core.scma.apple.prop").unwrap();
+fn scma_decode_resorts_rows_lexicographically() {
+    let zebra = db_string("core.scma.zebra").unwrap();
+    let apple = db_string("core.scma.apple").unwrap();
+    let zebra_prop = db_string("core.scma.zebra.prop").unwrap();
+    let apple_prop = db_string("core.scma.apple.prop").unwrap();
     let zebra_key = SchemaKey {
         label: zebra,
         property: zebra_prop,
@@ -256,20 +267,22 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
         label: apple,
         property: apple_prop,
     };
-    // Out-of-handle-order rows under the current (versioned) layout. `decode_schemas`
-    // must re-sort by the (label, property) key regardless of input order.
+    // Out-of-(label, property)-order rows under the current (versioned) layout.
+    // `decode_schemas` must re-sort by the (label, property) key regardless of
+    // input order; `SchemaKey` Ord is lexicographic through `DbString`, so the
+    // "apple" row sorts ahead of the "zebra" row on decode.
     let rows = vec![
         (
-            apple_key,
+            zebra_key.clone(),
             SchemaEntry {
-                kind: TypedIndexKind::I64,
+                kind: TypedIndexKind::String,
                 name: None,
             },
         ),
         (
-            zebra_key,
+            apple_key.clone(),
             SchemaEntry {
-                kind: TypedIndexKind::String,
+                kind: TypedIndexKind::I64,
                 name: None,
             },
         ),
@@ -287,16 +300,16 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
         decoded,
         vec![
             (
-                zebra_key,
+                apple_key,
                 SchemaEntry {
-                    kind: TypedIndexKind::String,
+                    kind: TypedIndexKind::I64,
                     name: None,
                 }
             ),
             (
-                apple_key,
+                zebra_key,
                 SchemaEntry {
-                    kind: TypedIndexKind::I64,
+                    kind: TypedIndexKind::String,
                     name: None,
                 }
             ),
@@ -306,13 +319,13 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
 
 #[test]
 fn scma_v2_round_trip_preserves_property_index_name() {
-    let label = intern("core.scma.named.label").unwrap();
-    let property = intern("core.scma.named.property").unwrap();
-    let name = intern("core.scma.named.index").unwrap();
+    let label = db_string("core.scma.named.label").unwrap();
+    let property = db_string("core.scma.named.property").unwrap();
+    let name = db_string("core.scma.named.index").unwrap();
     let mut graph = SeleneGraph::new(GraphId::new(9991));
     graph.property_index.insert(
-        (label, property),
-        PropertyIndexEntry::new(TypedIndex::new(TypedIndexKind::String), Some(name)),
+        (label.clone(), property.clone()),
+        PropertyIndexEntry::new(TypedIndex::new(TypedIndexKind::String), Some(name.clone())),
     );
 
     let decoded = decode_schemas(&encode_schemas(&graph).unwrap()).unwrap();
@@ -331,12 +344,12 @@ fn scma_v2_round_trip_preserves_property_index_name() {
 
 #[test]
 fn scma_decode_rejects_duplicate_keys_after_resort() {
-    let label = intern("core.scma.dup.label").unwrap();
-    let property = intern("core.scma.dup.property").unwrap();
+    let label = db_string("core.scma.dup.label").unwrap();
+    let property = db_string("core.scma.dup.property").unwrap();
     let key = SchemaKey { label, property };
     let rows = vec![
         (
-            key,
+            key.clone(),
             SchemaEntry {
                 kind: TypedIndexKind::I64,
                 name: None,
@@ -430,7 +443,7 @@ fn encode_decode_round_trip_nodes() {
         for index in 0..100 {
             mutator
                 .create_node(
-                    LabelSet::single(intern("core.bulk").unwrap()),
+                    LabelSet::single(db_string("core.bulk").unwrap()),
                     prop("core.index", Value::Int(index)),
                 )
                 .unwrap();
@@ -484,7 +497,7 @@ fn properties_blob_round_trips_full_value_set() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(intern("core.values.node").unwrap()),
+                LabelSet::single(db_string("core.values.node").unwrap()),
                 expected.clone(),
             )
             .unwrap();
@@ -525,7 +538,7 @@ fn live_mode_on_change_is_noop() {
         provider.as_ref(),
         &Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(intern("core.noop").unwrap()),
+            labels: LabelSet::single(db_string("core.noop").unwrap()),
             properties: PropertyMap::new(),
         },
     )
@@ -569,17 +582,17 @@ fn core_provider_writes_one_wal_entry_per_commit() {
     let changes = vec![
         Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(intern("core.wal.a").unwrap()),
+            labels: LabelSet::single(db_string("core.wal.a").unwrap()),
             properties: PropertyMap::new(),
         },
         Change::NodeCreated {
             id: NodeId::new(2),
-            labels: LabelSet::single(intern("core.wal.b").unwrap()),
+            labels: LabelSet::single(db_string("core.wal.b").unwrap()),
             properties: PropertyMap::new(),
         },
         Change::EdgeCreated {
             id: EdgeId::new(1),
-            label: intern("core.wal.edge").unwrap(),
+            label: db_string("core.wal.edge").unwrap(),
             source: NodeId::new(1),
             target: NodeId::new(2),
             properties: PropertyMap::new(),
@@ -607,7 +620,7 @@ fn core_provider_threads_principal_through_wal() {
     let provider = CoreProvider::new_for_live_with_wal(snapshot, Some(DurableState::new(writer)));
     let changes = vec![Change::NodeCreated {
         id: NodeId::new(1),
-        labels: LabelSet::single(intern("core.wal.principal").unwrap()),
+        labels: LabelSet::single(db_string("core.wal.principal").unwrap()),
         properties: PropertyMap::new(),
     }];
 
@@ -621,140 +634,4 @@ fn core_provider_threads_principal_through_wal() {
     let entries = wal_entries(&path);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].header.principal.as_deref(), Some(&b"alice"[..]));
-}
-
-#[test]
-fn recovery_mode_read_section_populates_state() {
-    let graph = graph_with_node();
-    let bytes = encode_nodes(&graph).unwrap();
-    let provider = CoreProvider::new_for_recovery();
-    IndexProvider::read_section(provider.as_ref(), SubTag(CORE_NODE_SUB), &bytes).unwrap();
-    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    assert_eq!(recovered.node_count(), 1);
-    assert!(recovered.is_node_alive(NodeId::new(1)));
-}
-
-#[test]
-fn recovery_mode_on_change_applies_node_created() {
-    let provider = CoreProvider::new_for_recovery();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::NodeCreated {
-            id: NodeId::new(1),
-            labels: LabelSet::single(intern("core.created").unwrap()),
-            properties: prop("core.created.prop", Value::Int(1)),
-        },
-    )
-    .unwrap();
-    let graph = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    assert_eq!(graph.node_count(), 1);
-    assert!(graph.is_node_alive(NodeId::new(1)));
-}
-
-#[test]
-fn recovery_mode_on_change_applies_each_change_variant() {
-    let add_label = intern("core.added").unwrap();
-    let base_label = intern("core.base").unwrap();
-    let prop_key = intern("core.k").unwrap();
-    let provider = CoreProvider::new_for_recovery();
-
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::NodeCreated {
-            id: NodeId::new(1),
-            labels: LabelSet::single(base_label),
-            properties: PropertyMap::new(),
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::NodeCreated {
-            id: NodeId::new(2),
-            labels: LabelSet::single(base_label),
-            properties: PropertyMap::new(),
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::EdgeCreated {
-            id: EdgeId::new(1),
-            label: intern("core.connects").unwrap(),
-            source: NodeId::new(1),
-            target: NodeId::new(2),
-            properties: PropertyMap::new(),
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::NodeUpdated {
-            id: NodeId::new(1),
-            labels_diff: LabelDiff::new([add_label], []).unwrap(),
-            properties_diff: PropertyDiff::new([(prop_key, Value::Int(42))], []).unwrap(),
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::EdgeUpdated {
-            id: EdgeId::new(1),
-            properties_diff: PropertyDiff::new([(prop_key, Value::Int(7))], []).unwrap(),
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::EdgeDeleted { id: EdgeId::new(1) },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::NodeDeleted { id: NodeId::new(1) },
-    )
-    .unwrap();
-
-    let graph = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    assert!(!graph.is_node_alive(NodeId::new(1)));
-    assert!(graph.is_node_alive(NodeId::new(2)));
-    assert!(!graph.is_edge_alive(EdgeId::new(1)));
-    assert_eq!(graph.node_store.len(), 2);
-    assert_eq!(graph.edge_store.len(), 1);
-}
-
-#[test]
-fn recovery_mode_write_section_returns_inconsistent_error() {
-    let provider = CoreProvider::new_for_recovery();
-    assert!(matches!(
-        IndexProvider::write_section(provider.as_ref(), SubTag(CORE_NODE_SUB)),
-        Err(ProviderError::Inconsistent { reason })
-            if reason.contains("write_section called on recovery-mode")
-    ));
-}
-
-#[test]
-fn recovery_provider_read_section_round_trips_via_typed_path() {
-    let graph = graph_with_node();
-    let bytes = encode_nodes(&graph).unwrap();
-    let provider = CoreProvider::new_for_recovery();
-    RecoveryProvider::read_section(provider.as_ref(), CORE_NODE_SUB, &bytes).unwrap();
-    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    assert!(recovered.is_node_alive(NodeId::new(1)));
-}
-
-#[test]
-fn recovery_provider_on_change_calls_typed_path() {
-    let provider = CoreProvider::new_for_recovery();
-    RecoveryProvider::on_change(
-        provider.as_ref(),
-        &Change::NodeCreated {
-            id: NodeId::new(1),
-            labels: LabelSet::single(intern("core.raw").unwrap()),
-            properties: PropertyMap::new(),
-        },
-    )
-    .unwrap();
-    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    assert!(recovered.is_node_alive(NodeId::new(1)));
 }

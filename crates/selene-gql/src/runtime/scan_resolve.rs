@@ -7,30 +7,13 @@
 
 use std::cmp::Ordering;
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 use crate::{
-    IndexKey, IndexKind, Literal, SourceSpan, TypedIndexBounds,
+    GqlType, IndexKey, IndexKind, Literal, SourceSpan, TypedIndexBounds,
+    ast::format::format_gql_type,
     runtime::{EvalCtx, ExecutorError, parameter_type, value_compare},
 };
-
-/// Whether a probe site expects an exact-equality value or a comparison
-/// boundary value. Gates the BRIEF-153 `Value::ExternalString` lookup-coerce
-/// carve-out in [`resolve_index_key`]: only `Equality` benefits from
-/// short-circuiting unpoolable ExternalString to `EmptyResult`, because
-/// `nodes_with_property_eq` is variant-strict. `Range` boundaries fall
-/// through to the linear-fallback path (STRING indexes return `None` from
-/// `lookup_range` by design — see `selene-graph::typed_index`), where
-/// `value_compare` handles cross-variant `String`/`ExternalString`
-/// lexicographic comparison natively (Codex PR #175 F4).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ProbeShape {
-    /// Exact-equality probe (`Equality`, `BitmapUnion` key, `CompositeLookup`
-    /// component).
-    Equality,
-    /// Comparison-boundary probe (`>`, `>=`, `<`, `<=`, `Range` endpoint).
-    Range,
-}
 
 /// Result of resolving an [`IndexKey`] against bound parameters.
 pub(super) enum IndexKeyOutcome {
@@ -38,10 +21,27 @@ pub(super) enum IndexKeyOutcome {
     Value(Value),
     /// Probe known to return zero rows because the parameter binding cannot
     /// match any indexed row. Used for NULL bindings (3VL parity with inline
-    /// `WHERE n.x = NULL`, per BRIEF-154 §B.3 F5) and for `Value::ExternalString`
-    /// bindings against `STRING` indexes whose content has never been admitted
-    /// to the global `IStr` pool (BRIEF-153 read-side discipline, §B.3 F4).
+    /// `WHERE n.x = NULL`, per BRIEF-154 §B.3 F5).
     EmptyResult,
+}
+
+/// Resolve one bitmap-union key source into zero or more concrete probe values.
+pub(super) fn resolve_bitmap_union_key_values(
+    key: &IndexKey,
+    expected_kind: IndexKind,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<Value>, ExecutorError> {
+    match key {
+        IndexKey::ParameterList {
+            name,
+            declared_type,
+            span,
+        } => resolve_parameter_list_key(name, declared_type, *span, expected_kind, ctx),
+        _ => match resolve_index_key(key, expected_kind, ctx)? {
+            IndexKeyOutcome::Value(value) => Ok(vec![value]),
+            IndexKeyOutcome::EmptyResult => Ok(Vec::new()),
+        },
+    }
 }
 
 /// A typed-index probe bound, with every key resolved to a concrete
@@ -105,9 +105,6 @@ pub(super) fn range_satisfiable_runtime(resolved: &ResolvedBounds) -> bool {
 /// `IndexKey::Parameter` consults `ctx.tx.parameters()`:
 /// - **Unbound name** → [`ExecutorError::UnboundParameter`] (loud).
 /// - **`Value::Null` binding** → [`IndexKeyOutcome::EmptyResult`] (3VL parity).
-/// - **`Value::ExternalString` against an `IndexKind::String`** → look up via
-///   [`selene_core::lookup`]; `Some(istr)` coerces to `Value::String(istr)`,
-///   `None` returns `EmptyResult` without admitting the string to the pool.
 /// - **Declared type set** → [`parameter_type::validate_declared_type`] (typed
 ///   parameter contract; mismatch errors `InvalidParameterType` / `22G03`).
 /// - **`IndexKind` mismatch on the resolved Value** → loud
@@ -116,7 +113,6 @@ pub(super) fn range_satisfiable_runtime(resolved: &ResolvedBounds) -> bool {
 pub(super) fn resolve_index_key(
     key: &IndexKey,
     expected_kind: IndexKind,
-    probe_shape: ProbeShape,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<IndexKeyOutcome, ExecutorError> {
     match key {
@@ -132,42 +128,64 @@ pub(super) fn resolve_index_key(
                     .get(name)
                     .cloned()
                     .ok_or(ExecutorError::UnboundParameter {
-                        name: *name,
+                        name: name.clone(),
                         span: *span,
                     })?;
             if matches!(raw, Value::Null) {
                 return Ok(IndexKeyOutcome::EmptyResult);
             }
-            // BRIEF-153 read-side carve-out for STRING-indexed EQUALITY
-            // probes: ExternalString must NOT enter the global pool from
-            // the read path. If the content is already admitted, coerce to
-            // a poolable Value::String for variant-strict
-            // `nodes_with_property_eq`; otherwise empty out without
-            // admitting. Range / comparison probes deliberately skip this
-            // carve-out — STRING ranges fall back to the linear scan path
-            // (selene-graph::typed_index::lookup_range returns None for
-            // Self::String — IStr ordering is admission-order, not
-            // lexicographic), where `value_compare::compare_non_null`
-            // handles cross-variant `String`/`ExternalString` comparison
-            // natively. Short-circuiting Range to `EmptyResult` here would
-            // zero out rows the linear fallback would have matched
-            // (Codex PR #175 F4).
-            if probe_shape == ProbeShape::Equality
-                && matches!(expected_kind, IndexKind::String)
-                && let Value::ExternalString(arc) = &raw
-            {
-                return Ok(match selene_core::lookup(arc.as_ref()) {
-                    Some(istr) => IndexKeyOutcome::Value(Value::String(istr)),
-                    None => IndexKeyOutcome::EmptyResult,
-                });
-            }
             if let Some(declared) = declared_type {
-                parameter_type::validate_declared_type(*name, &raw, declared, *span)?;
+                parameter_type::validate_declared_type(name.clone(), &raw, declared, *span)?;
             }
-            check_value_index_kind(&raw, expected_kind, *name, *span)?;
+            check_value_index_kind(&raw, expected_kind, name.clone(), *span)?;
             Ok(IndexKeyOutcome::Value(raw))
         }
+        IndexKey::ParameterList { name, span, .. } => Err(ExecutorError::InvalidParameterType {
+            name: name.clone(),
+            expected: "scalar index key".into(),
+            actual: "LIST",
+            span: *span,
+        }),
     }
+}
+
+fn resolve_parameter_list_key(
+    name: &DbString,
+    declared_type: &GqlType,
+    span: SourceSpan,
+    expected_kind: IndexKind,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<Value>, ExecutorError> {
+    let raw = ctx
+        .tx
+        .parameters()
+        .get(name)
+        .cloned()
+        .ok_or(ExecutorError::UnboundParameter {
+            name: name.clone(),
+            span,
+        })?;
+    if matches!(raw, Value::Null) {
+        return Ok(Vec::new());
+    }
+    parameter_type::validate_declared_type(name.clone(), &raw, declared_type, span)?;
+    let Value::List(items) = raw else {
+        return Err(ExecutorError::InvalidParameterType {
+            name: name.clone(),
+            expected: format_gql_type(declared_type).into(),
+            actual: value_kind_label(&raw),
+            span,
+        });
+    };
+    let mut values = Vec::with_capacity(items.len());
+    for item in items {
+        if matches!(item, Value::Null) {
+            continue;
+        }
+        check_value_index_kind(&item, expected_kind, name.clone(), span)?;
+        values.push(item);
+    }
+    Ok(values)
 }
 
 /// Pre-resolve every [`IndexKey`] in `bounds` against the bound parameters.
@@ -180,40 +198,39 @@ pub(super) fn resolve_bounds(
     expected_kind: IndexKind,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Option<ResolvedBounds>, ExecutorError> {
-    let resolve_one =
-        |key: &IndexKey, probe_shape: ProbeShape| -> Result<Option<Value>, ExecutorError> {
-            match resolve_index_key(key, expected_kind, probe_shape, ctx)? {
-                IndexKeyOutcome::Value(value) => Ok(Some(value)),
-                IndexKeyOutcome::EmptyResult => Ok(None),
-            }
-        };
+    let resolve_one = |key: &IndexKey| -> Result<Option<Value>, ExecutorError> {
+        match resolve_index_key(key, expected_kind, ctx)? {
+            IndexKeyOutcome::Value(value) => Ok(Some(value)),
+            IndexKeyOutcome::EmptyResult => Ok(None),
+        }
+    };
     Ok(Some(match bounds {
         TypedIndexBounds::Equality(key) => {
-            let Some(value) = resolve_one(key, ProbeShape::Equality)? else {
+            let Some(value) = resolve_one(key)? else {
                 return Ok(None);
             };
             ResolvedBounds::Equality(value)
         }
         TypedIndexBounds::GreaterThan(key) => {
-            let Some(value) = resolve_one(key, ProbeShape::Range)? else {
+            let Some(value) = resolve_one(key)? else {
                 return Ok(None);
             };
             ResolvedBounds::GreaterThan(value)
         }
         TypedIndexBounds::GreaterEqual(key) => {
-            let Some(value) = resolve_one(key, ProbeShape::Range)? else {
+            let Some(value) = resolve_one(key)? else {
                 return Ok(None);
             };
             ResolvedBounds::GreaterEqual(value)
         }
         TypedIndexBounds::LessThan(key) => {
-            let Some(value) = resolve_one(key, ProbeShape::Range)? else {
+            let Some(value) = resolve_one(key)? else {
                 return Ok(None);
             };
             ResolvedBounds::LessThan(value)
         }
         TypedIndexBounds::LessEqual(key) => {
-            let Some(value) = resolve_one(key, ProbeShape::Range)? else {
+            let Some(value) = resolve_one(key)? else {
                 return Ok(None);
             };
             ResolvedBounds::LessEqual(value)
@@ -224,10 +241,10 @@ pub(super) fn resolve_bounds(
             hi,
             hi_inclusive,
         } => {
-            let Some(lo_value) = resolve_one(lo, ProbeShape::Range)? else {
+            let Some(lo_value) = resolve_one(lo)? else {
                 return Ok(None);
             };
-            let Some(hi_value) = resolve_one(hi, ProbeShape::Range)? else {
+            let Some(hi_value) = resolve_one(hi)? else {
                 return Ok(None);
             };
             ResolvedBounds::Range {
@@ -244,10 +261,18 @@ pub(super) fn resolve_bounds(
 pub(super) fn literal_to_value(literal: &Literal) -> Value {
     match literal {
         Literal::Bool(value, _) => Value::Bool(*value),
-        Literal::Integer(value, _) => Value::Int(*value),
-        Literal::Float(value, _) => Value::Float(*value),
-        Literal::String(value, _) => Value::String(*value),
+        Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => Value::Int(*value),
+        Literal::Decimal(value, _, _) => Value::Decimal(*value),
+        Literal::Float(value, _, _) => Value::Float(*value),
+        Literal::String(value, _) => Value::String(value.clone()),
+        Literal::Bytes(value, _) => Value::Bytes(value.clone()),
         Literal::Uuid(value, _) => Value::Uuid(*value),
+        Literal::ZonedDateTime(value, _) => Value::ZonedDateTime(value.clone()),
+        Literal::LocalDateTime(value, _) => Value::LocalDateTime(*value),
+        Literal::Date(value, _) => Value::Date(*value),
+        Literal::ZonedTime(value, _) => Value::ZonedTime(value.clone()),
+        Literal::LocalTime(value, _) => Value::LocalTime(*value),
+        Literal::Duration(value, _) => Value::Duration(value.clone()),
         Literal::Null(_) => Value::Null,
     }
 }
@@ -258,15 +283,25 @@ pub(super) fn literal_to_value(literal: &Literal) -> Value {
 fn check_value_index_kind(
     value: &Value,
     expected: IndexKind,
-    name: IStr,
+    name: DbString,
     span: SourceSpan,
 ) -> Result<(), ExecutorError> {
     let matches = match expected {
+        IndexKind::Boolean => matches!(value, Value::Bool(_)),
         IndexKind::Integer => matches!(value, Value::Int(_)),
+        IndexKind::UnsignedInteger => matches!(value, Value::Uint(_)),
+        IndexKind::Integer128 => matches!(value, Value::Int128(_)),
+        IndexKind::UnsignedInteger128 => matches!(value, Value::Uint128(_)),
+        IndexKind::Decimal => matches!(value, Value::Decimal(_)),
+        IndexKind::Float32 => matches!(value, Value::Float32(_)),
         IndexKind::Float => matches!(value, Value::Float(_)),
-        IndexKind::String => matches!(value, Value::String(_) | Value::ExternalString(_)),
+        IndexKind::String => matches!(value, Value::String(_)),
         IndexKind::Date => matches!(value, Value::Date(_)),
         IndexKind::LocalDateTime => matches!(value, Value::LocalDateTime(_)),
+        IndexKind::ZonedDateTime => matches!(value, Value::ZonedDateTime(_)),
+        IndexKind::LocalTime => matches!(value, Value::LocalTime(_)),
+        IndexKind::ZonedTime => matches!(value, Value::ZonedTime(_)),
+        IndexKind::Duration => matches!(value, Value::Duration(_)),
         IndexKind::Uuid => matches!(value, Value::Uuid(_)),
     };
     if matches {
@@ -282,11 +317,21 @@ fn check_value_index_kind(
 
 fn index_kind_label(kind: IndexKind) -> &'static str {
     match kind {
+        IndexKind::Boolean => "BOOLEAN",
         IndexKind::Integer => "INTEGER",
+        IndexKind::UnsignedInteger => "UINT64",
+        IndexKind::Integer128 => "INT128",
+        IndexKind::UnsignedInteger128 => "UINT128",
+        IndexKind::Decimal => "DECIMAL",
+        IndexKind::Float32 => "FLOAT32",
         IndexKind::Float => "FLOAT",
         IndexKind::String => "STRING",
         IndexKind::Date => "DATE",
         IndexKind::LocalDateTime => "LOCAL DATETIME",
+        IndexKind::ZonedDateTime => "ZONED DATETIME",
+        IndexKind::LocalTime => "LOCAL TIME",
+        IndexKind::ZonedTime => "ZONED TIME",
+        IndexKind::Duration => "DURATION",
         IndexKind::Uuid => "UUID",
     }
 }
@@ -301,7 +346,7 @@ fn value_kind_label(value: &Value) -> &'static str {
         Value::Float(_) => "FLOAT64",
         Value::Float32(_) => "FLOAT32",
         Value::Decimal(_) => "DECIMAL",
-        Value::String(_) | Value::ExternalString(_) => "STRING",
+        Value::String(_) => "STRING",
         Value::Bytes(_) => "BYTES",
         Value::List(_) => "LIST",
         Value::Record(_) | Value::RecordTyped(_) => "RECORD",
@@ -317,6 +362,8 @@ fn value_kind_label(value: &Value) -> &'static str {
         Value::LocalTime(_) => "LOCAL TIME",
         Value::Duration(_) => "DURATION",
         Value::Uuid(_) => "UUID",
+        Value::Vector(_) => "VECTOR",
+        Value::Json(_) => "JSON",
         Value::Extended { .. } => "EXTENDED",
         Value::Null => "NULL",
         _ => "UNKNOWN",

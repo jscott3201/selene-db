@@ -1,6 +1,6 @@
 //! Session-control planner IR rows (ISO/IEC 39075:2024 section 7).
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{SourceSpan, ValueExpr};
 
@@ -12,8 +12,8 @@ pub enum SessionOp {
     /// The value is evaluated against an empty binding row at execution time
     /// (restricted to a `<value specification>`; see GS14 rationale).
     SetValue {
-        /// Interned parameter name without the leading `$`.
-        param: IStr,
+        /// Database-string parameter name without the leading `$`.
+        param: DbString,
         /// Value expression bound to the parameter.
         value: Box<ValueExpr>,
         /// When set, leave an existing binding untouched (`IF NOT EXISTS`).
@@ -45,8 +45,8 @@ pub enum SessionOp {
     },
     /// `SESSION RESET [PARAMETER] <param>` (ISO feature GS16).
     ResetParameter {
-        /// Interned parameter name without the leading `$`.
-        param: IStr,
+        /// Database-string parameter name without the leading `$`.
+        param: DbString,
         /// Source span.
         span: SourceSpan,
     },

@@ -2,7 +2,7 @@
 use std::{cmp::Ordering, sync::Arc};
 
 use selene_core::{
-    EdgeId, NodeId, Record, RecordTypeId, RecordTyped, Value, intern_with_admission,
+    EdgeId, NodeId, Record, RecordTypeId, RecordTyped, Value, VectorValue, db_string,
 };
 use smallvec::smallvec;
 
@@ -11,20 +11,31 @@ use super::{
 };
 
 #[test]
-fn string_comparison_accepts_external_string_payloads() {
-    let interned = Value::String(intern_with_admission("same").unwrap().0);
-    let external_same = Value::ExternalString(Arc::from("same"));
-    let external_later = Value::ExternalString(Arc::from("zzz"));
+fn string_comparison_is_content_based() {
+    let same_a = Value::String(db_string("same").unwrap());
+    let same_b = Value::String(db_string("same").unwrap());
+    let later = Value::String(db_string("zzz").unwrap());
 
-    assert!(equal_non_null(&interned, &external_same));
+    assert!(equal_non_null(&same_a, &same_b));
+    assert_eq!(compare_non_null(&same_a, &same_b), Some(Ordering::Equal));
+    assert_eq!(compare_non_null(&same_a, &later), Some(Ordering::Less));
+}
+
+#[test]
+fn vector_comparison_is_componentwise() {
+    let lhs = Value::Vector(VectorValue::new(vec![1.0, -0.0, 3.0]).unwrap());
+    let same = Value::Vector(VectorValue::new(vec![1.0, 0.0, 3.0]).unwrap());
+    let higher_component = Value::Vector(VectorValue::new(vec![1.0, 0.5, 3.0]).unwrap());
+    let longer = Value::Vector(VectorValue::new(vec![1.0, 0.0, 3.0, 4.0]).unwrap());
+
+    assert!(equal_non_null(&lhs, &same));
+    assert_eq!(gql_equal_non_null(&lhs, &same), Some(true));
+    assert_eq!(compare_non_null(&lhs, &same), Some(Ordering::Equal));
     assert_eq!(
-        compare_non_null(&interned, &external_same),
-        Some(Ordering::Equal)
-    );
-    assert_eq!(
-        compare_non_null(&interned, &external_later),
+        compare_non_null(&lhs, &higher_component),
         Some(Ordering::Less)
     );
+    assert_eq!(compare_non_null(&same, &longer), Some(Ordering::Less));
 }
 
 #[test]
@@ -37,9 +48,9 @@ fn equal_non_null_list_nan_returns_true() {
 
 #[test]
 fn equal_non_null_record_nan_returns_true() {
-    let key = intern_with_admission("x").unwrap().0;
+    let key = db_string("x").unwrap();
     let lhs = Value::Record(Box::new(Record::Open(smallvec![(
-        key,
+        key.clone(),
         Value::Float(f64::NAN)
     )])));
     let rhs = Value::Record(Box::new(Record::Open(smallvec![(
@@ -60,8 +71,11 @@ fn numeric_equal_top_level_float_nan_returns_null() {
 
 #[test]
 fn gql_equal_record_null_field_returns_null() {
-    let key = intern_with_admission("x").unwrap().0;
-    let lhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
+    let key = db_string("x").unwrap();
+    let lhs = Value::Record(Box::new(Record::Open(smallvec![(
+        key.clone(),
+        Value::Null
+    )])));
     let rhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
 
     assert!(equal_non_null(&lhs, &rhs));
@@ -85,8 +99,11 @@ fn gql_equal_typed_record_null_slot_returns_null() {
 
 #[test]
 fn compare_record_with_null_field_returns_null() {
-    let key = intern_with_admission("x").unwrap().0;
-    let lhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
+    let key = db_string("x").unwrap();
+    let lhs = Value::Record(Box::new(Record::Open(smallvec![(
+        key.clone(),
+        Value::Null
+    )])));
     let rhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Int(1))])));
 
     assert_eq!(compare_non_null(&lhs, &rhs), None);
@@ -106,7 +123,7 @@ fn compare_list_with_null_element_returns_null() {
 #[test]
 fn compare_list_with_incomparable_element_returns_null() {
     // Cross-type elements are not comparable → None (not a silent ordering).
-    let lhs = Value::List(vec![Value::String(intern_with_admission("a").unwrap().0)]);
+    let lhs = Value::List(vec![Value::String(db_string("a").unwrap())]);
     let rhs = Value::List(vec![Value::Int(1)]);
 
     assert_eq!(compare_non_null(&lhs, &rhs), None);
@@ -165,16 +182,16 @@ fn compare_non_null_local_datetime_eq() {
 fn compare_non_null_zoned_and_time_values() {
     assert_eq!(
         compare_non_null(
-            &Value::ZonedDateTime(
+            &Value::ZonedDateTime(Box::new(
                 "2024-01-01T00:00:00-05:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
-            &Value::ZonedDateTime(
+            )),
+            &Value::ZonedDateTime(Box::new(
                 "2026-01-01T00:00:00-05:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
+            )),
         ),
         Some(Ordering::Less)
     );
@@ -187,16 +204,16 @@ fn compare_non_null_zoned_and_time_values() {
     );
     assert_eq!(
         compare_non_null(
-            &Value::ZonedTime(
+            &Value::ZonedTime(Box::new(
                 "2024-01-01T01:00:00-05:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
-            &Value::ZonedTime(
+            )),
+            &Value::ZonedTime(Box::new(
                 "2024-01-01T02:00:00-05:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
+            )),
         ),
         Some(Ordering::Less)
     );
@@ -206,8 +223,8 @@ fn compare_non_null_zoned_and_time_values() {
 fn compare_non_null_duration_lt() {
     assert_eq!(
         compare_non_null(
-            &Value::Duration("PT1S".parse().unwrap()),
-            &Value::Duration("PT2S".parse().unwrap())
+            &Value::Duration(Box::new("PT1S".parse().unwrap())),
+            &Value::Duration(Box::new("PT2S".parse().unwrap()))
         ),
         Some(Ordering::Less)
     );
@@ -221,6 +238,31 @@ fn compare_non_null_bytes_lex() {
             &Value::Bytes(Arc::from([1_u8, 3]))
         ),
         Some(Ordering::Less)
+    );
+}
+
+#[test]
+fn compare_non_null_orders_uuid_and_references() {
+    assert_eq!(
+        compare_non_null(
+            &Value::Uuid("00000000-0000-0000-0000-000000000001".parse().unwrap()),
+            &Value::Uuid("00000000-0000-0000-0000-000000000002".parse().unwrap()),
+        ),
+        Some(Ordering::Less)
+    );
+    assert_eq!(
+        compare_non_null(
+            &Value::NodeRef(NodeId::new(1)),
+            &Value::NodeRef(NodeId::new(2))
+        ),
+        Some(Ordering::Less)
+    );
+    assert_eq!(
+        compare_non_null(
+            &Value::EdgeRef(EdgeId::new(2)),
+            &Value::EdgeRef(EdgeId::new(1))
+        ),
+        Some(Ordering::Greater)
     );
 }
 
@@ -295,7 +337,7 @@ fn compare_non_null_uint128_negative_int() {
 
 #[test]
 fn compare_non_null_string_vs_date_returns_none() {
-    let string = Value::String(intern_with_admission("2024-01-01").unwrap().0);
+    let string = Value::String(db_string("2024-01-01").unwrap());
     let date = Value::Date("2024-01-01".parse().unwrap());
 
     assert_eq!(compare_non_null(&string, &date), None);
@@ -312,36 +354,36 @@ fn compare_for_sort_orders_temporal_payloads() {
         Value::LocalDateTime("2026-01-01T00:00:00".parse().unwrap()),
     );
     assert_sort_less(
-        Value::ZonedDateTime(
+        Value::ZonedDateTime(Box::new(
             "2024-01-01T00:00:00-05:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
-        Value::ZonedDateTime(
+        )),
+        Value::ZonedDateTime(Box::new(
             "2026-01-01T00:00:00-05:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
+        )),
     );
     assert_sort_less(
         Value::LocalTime("01:00:00".parse().unwrap()),
         Value::LocalTime("02:00:00".parse().unwrap()),
     );
     assert_sort_less(
-        Value::ZonedTime(
+        Value::ZonedTime(Box::new(
             "2024-01-01T01:00:00-05:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
-        Value::ZonedTime(
+        )),
+        Value::ZonedTime(Box::new(
             "2024-01-01T02:00:00-05:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
+        )),
     );
     assert_sort_less(
-        Value::Duration("PT1H".parse().unwrap()),
-        Value::Duration("PT2H".parse().unwrap()),
+        Value::Duration(Box::new("PT1H".parse().unwrap())),
+        Value::Duration(Box::new("PT2H".parse().unwrap())),
     );
 }
 
@@ -369,6 +411,10 @@ fn compare_for_sort_orders_extended_scalar_payloads() {
     );
     assert_sort_less(Value::Int128(1), Value::Int128(2));
     assert_sort_less(Value::Uint128(1), Value::Uint128(2));
+    assert_sort_less(
+        Value::Vector(VectorValue::new(vec![1.0, 2.0]).unwrap()),
+        Value::Vector(VectorValue::new(vec![1.0, 3.0]).unwrap()),
+    );
 }
 
 // --- GQLRT-14: RECORD equality / ordering is field-name-keyed (ISO §4.15) ---
@@ -376,7 +422,7 @@ fn compare_for_sort_orders_extended_scalar_payloads() {
 fn open_record(fields: &[(&str, Value)]) -> Value {
     let mut record = smallvec![];
     for (name, value) in fields {
-        record.push((intern_with_admission(name).unwrap().0, value.clone()));
+        record.push((db_string(name).unwrap(), value.clone()));
     }
     Value::Record(Box::new(Record::Open(record)))
 }

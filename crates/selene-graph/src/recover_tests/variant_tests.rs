@@ -3,7 +3,7 @@ use std::fs;
 use selene_core::{
     Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, LabelDiff, LabelSet, NodeId,
     NodeTypeDefV1, NodeTypeRef, PredefinedValueType, PropertyDefV1, PropertyDiff, PropertyMap,
-    SchemaChange, Value, ValueType, ValueTypeCardinality, intern,
+    SchemaChange, Value, ValueType, ValueTypeCardinality, db_string,
 };
 use smallvec::smallvec;
 
@@ -15,11 +15,11 @@ use crate::{
 use super::{append_wal, empty_closed_graph_type, expect_prop, prop, temp_dir};
 
 fn person_closed_graph_type() -> crate::GraphTypeDef {
-    let person = intern("recover.closed.person").unwrap();
+    let person = db_string("recover.closed.person").unwrap();
     crate::GraphTypeDef {
-        name: intern("recover.closed.person.graph").unwrap(),
+        name: db_string("recover.closed.person.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
@@ -29,19 +29,19 @@ fn person_closed_graph_type() -> crate::GraphTypeDef {
 }
 
 fn colliding_legacy_endpoint_graph_type() -> crate::GraphTypeDef {
-    let legacy_label = intern("recover.legacy.person").unwrap();
+    let legacy_label = db_string("recover.legacy.person").unwrap();
     crate::GraphTypeDef {
-        name: intern("recover.legacy.collision.graph").unwrap(),
+        name: db_string("recover.legacy.collision.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
-                name: intern("recover.legacy.person.type").unwrap(),
-                key_labels: LabelSet::single(legacy_label),
+                name: db_string("recover.legacy.person.type").unwrap(),
+                key_labels: LabelSet::single(legacy_label.clone()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: legacy_label,
-                key_labels: LabelSet::single(intern("recover.legacy.other").unwrap()),
+                key_labels: LabelSet::single(db_string("recover.legacy.other").unwrap()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
@@ -54,9 +54,9 @@ fn colliding_legacy_endpoint_graph_type() -> crate::GraphTypeDef {
 fn recover_from_wal_only_replays_node_updated() {
     let dir = temp_dir("node-updated");
     let shared = SharedGraph::new(GraphId::new(701));
-    let base = intern("recover.node.base").unwrap();
-    let added = intern("recover.node.added").unwrap();
-    let name = intern("recover.node.name").unwrap();
+    let base = db_string("recover.node.base").unwrap();
+    let added = db_string("recover.node.added").unwrap();
+    let name = db_string("recover.node.name").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
@@ -69,11 +69,11 @@ fn recover_from_wal_only_replays_node_updated() {
         mutator
             .update_node(
                 node,
-                LabelDiff::new([added], []).unwrap(),
+                LabelDiff::new([added.clone()], []).unwrap(),
                 PropertyDiff::new(
                     [
-                        (intern("recover.node.age").unwrap(), Value::Int(31)),
-                        (name, Value::String(intern("Alice").unwrap())),
+                        (db_string("recover.node.age").unwrap(), Value::Int(31)),
+                        (name, Value::String(db_string("Alice").unwrap())),
                     ],
                     [],
                 )
@@ -122,19 +122,19 @@ fn recover_from_wal_only_replays_edge_updated() {
         let mut mutator = txn.mutator();
         let left = mutator
             .create_node(
-                LabelSet::single(intern("recover.edge.left").unwrap()),
+                LabelSet::single(db_string("recover.edge.left").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         let right = mutator
             .create_node(
-                LabelSet::single(intern("recover.edge.right").unwrap()),
+                LabelSet::single(db_string("recover.edge.right").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         let edge = mutator
             .create_edge(
-                intern("recover.edge.rel").unwrap(),
+                db_string("recover.edge.rel").unwrap(),
                 left,
                 right,
                 prop("recover.edge.weight", Value::Int(1)),
@@ -144,7 +144,7 @@ fn recover_from_wal_only_replays_edge_updated() {
             .update_edge(
                 edge,
                 PropertyDiff::new(
-                    [(intern("recover.edge.weight").unwrap(), Value::Int(9))],
+                    [(db_string("recover.edge.weight").unwrap(), Value::Int(9))],
                     [],
                 )
                 .unwrap(),
@@ -188,18 +188,18 @@ fn recover_from_wal_only_replays_removed_variants() {
     let dir = temp_dir("removed-variants");
     let graph_id = GraphId::new(703);
     let shared = SharedGraph::new(graph_id);
-    let base = intern("recover.remove.base").unwrap();
-    let removed_label = intern("recover.remove.label").unwrap();
-    let node_prop = intern("recover.remove.node_prop").unwrap();
-    let edge_prop = intern("recover.remove.edge_prop").unwrap();
-    let edge_label = intern("recover.remove.edge").unwrap();
+    let base = db_string("recover.remove.base").unwrap();
+    let removed_label = db_string("recover.remove.label").unwrap();
+    let node_prop = db_string("recover.remove.node_prop").unwrap();
+    let edge_prop = db_string("recover.remove.edge_prop").unwrap();
+    let edge_label = db_string("recover.remove.edge").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
         let left = mutator
             .create_node(
-                LabelSet::from_iter([base, removed_label]),
-                PropertyMap::from_pairs([(node_prop, Value::Int(1))]).unwrap(),
+                LabelSet::from_iter([base.clone(), removed_label.clone()]),
+                PropertyMap::from_pairs([(node_prop.clone(), Value::Int(1))]).unwrap(),
             )
             .unwrap();
         let right = mutator
@@ -210,12 +210,18 @@ fn recover_from_wal_only_replays_removed_variants() {
                 edge_label,
                 left,
                 right,
-                PropertyMap::from_pairs([(edge_prop, Value::Int(2))]).unwrap(),
+                PropertyMap::from_pairs([(edge_prop.clone(), Value::Int(2))]).unwrap(),
             )
             .unwrap();
-        mutator.remove_node_property(left, node_prop).unwrap();
-        mutator.remove_node_label(left, removed_label).unwrap();
-        mutator.remove_edge_property(edge, edge_prop).unwrap();
+        mutator
+            .remove_node_property(left, node_prop.clone())
+            .unwrap();
+        mutator
+            .remove_node_label(left, removed_label.clone())
+            .unwrap();
+        mutator
+            .remove_edge_property(edge, edge_prop.clone())
+            .unwrap();
         txn.commit().unwrap()
     };
     append_wal(&dir, 0, &outcome.changes);
@@ -265,19 +271,19 @@ fn recover_from_wal_only_replays_edge_deleted() {
         let mut mutator = txn.mutator();
         let left = mutator
             .create_node(
-                LabelSet::single(intern("recover.delete.left").unwrap()),
+                LabelSet::single(db_string("recover.delete.left").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         let right = mutator
             .create_node(
-                LabelSet::single(intern("recover.delete.right").unwrap()),
+                LabelSet::single(db_string("recover.delete.right").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         let edge = mutator
             .create_edge(
-                intern("recover.delete.rel").unwrap(),
+                db_string("recover.delete.rel").unwrap(),
                 left,
                 right,
                 PropertyMap::new(),
@@ -315,14 +321,14 @@ fn recover_from_wal_only_replays_edge_type_added_and_dropped() {
         .unwrap()
         .build()
         .unwrap();
-    let rel = intern("recover.closed.knows").unwrap();
+    let rel = db_string("recover.closed.knows").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_edge_type(
-                rel,
-                rel,
+                rel.clone(),
+                rel.clone(),
                 EdgeEndpointDef::NodeType(0),
                 EdgeEndpointDef::NodeType(0),
                 Vec::<PropertyTypeDef>::new(),
@@ -363,9 +369,9 @@ fn recover_closed_legacy_edge_endpoint_prefers_label_set_over_type_name() {
         .key_labels
         .iter()
         .next()
-        .copied()
+        .cloned()
         .unwrap();
-    let rel = intern("recover.legacy.knows").unwrap();
+    let rel = db_string("recover.legacy.knows").unwrap();
     append_wal(
         &dir,
         0,
@@ -373,10 +379,10 @@ fn recover_closed_legacy_edge_endpoint_prefers_label_set_over_type_name() {
             graph: graph_id,
             change: SchemaChange::EdgeTypeAdded {
                 graph_type: GraphTypeId::new(1).unwrap(),
-                label: rel,
+                label: rel.clone(),
                 def: EdgeTypeDefV1 {
                     label: rel,
-                    source_node_type: NodeTypeRef(legacy_label),
+                    source_node_type: NodeTypeRef(legacy_label.clone()),
                     target_node_type: NodeTypeRef(legacy_label),
                     properties: smallvec![],
                 },
@@ -402,7 +408,7 @@ fn recover_from_wal_only_replays_node_type_dropped() {
     let dir = temp_dir("node-type-dropped");
     let graph_id = GraphId::new(705);
     let base = person_closed_graph_type();
-    let person = base.node_types[0].name;
+    let person = base.node_types[0].name.clone();
     let shared = SharedGraph::builder(graph_id)
         .bound_to(base.clone())
         .unwrap()
@@ -439,7 +445,7 @@ fn recover_from_wal_only_replays_cascade_truncate_then_node_type_dropped() {
     let dir = temp_dir("cascade-node-drop-replay");
     let graph_id = GraphId::new(709);
     let base = person_closed_graph_type();
-    let person = base.node_types[0].name;
+    let person = base.node_types[0].name.clone();
     let shared = SharedGraph::builder(graph_id)
         .bound_to(base.clone())
         .unwrap()
@@ -448,10 +454,10 @@ fn recover_from_wal_only_replays_cascade_truncate_then_node_type_dropped() {
     let create_outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         txn.mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         txn.commit().unwrap()
     };
@@ -501,7 +507,7 @@ fn recover_from_wal_only_replays_graph_reset_to_empty_and_open() {
     let dir = temp_dir("graph-reset-replay");
     let graph_id = GraphId::new(710);
     let base = person_closed_graph_type();
-    let person = base.node_types[0].name;
+    let person = base.node_types[0].name.clone();
     let shared = SharedGraph::builder(graph_id)
         .bound_to(base.clone())
         .unwrap()
@@ -510,7 +516,7 @@ fn recover_from_wal_only_replays_graph_reset_to_empty_and_open() {
     let create_outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         txn.mutator()
             .create_node(LabelSet::single(person), PropertyMap::new())
@@ -560,19 +566,28 @@ fn recover_from_wal_only_replays_property_index_created() {
     let dir = temp_dir("property-index-created");
     let graph_id = GraphId::new(706);
     let shared = SharedGraph::new(graph_id);
-    let label = intern("recover.index.created.label").unwrap();
-    let property = intern("recover.index.created.age").unwrap();
+    let label = db_string("recover.index.created.label").unwrap();
+    let property = db_string("recover.index.created.occurred_at").unwrap();
+    let timestamp = Value::ZonedDateTime(Box::new(
+        "2026-05-07T12:34:56-04:00[America/New_York]"
+            .parse()
+            .unwrap(),
+    ));
     let outcome = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(label),
-                PropertyMap::from_pairs([(property, Value::Int(42))]).unwrap(),
+                LabelSet::single(label.clone()),
+                PropertyMap::from_pairs([(property.clone(), timestamp.clone())]).unwrap(),
             )
             .unwrap();
         mutator
-            .create_property_index(label, property, TypedIndexKind::I64)
+            .create_property_index(
+                label.clone(),
+                property.clone(),
+                TypedIndexKind::ZonedDateTime,
+            )
             .unwrap();
         txn.commit().unwrap()
     };
@@ -583,7 +598,7 @@ fn recover_from_wal_only_replays_property_index_created() {
     assert_eq!(snapshot.property_index_count(), 1);
     assert!(snapshot.property_index_for(&label, &property).is_some());
     let rows = snapshot
-        .nodes_with_property_eq(&label, &property, &Value::Int(42))
+        .nodes_with_property_eq(&label, &property, &timestamp)
         .unwrap();
     assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
     assert!(matches!(
@@ -604,21 +619,23 @@ fn recover_from_wal_only_replays_property_index_dropped() {
     let dir = temp_dir("property-index-dropped");
     let graph_id = GraphId::new(707);
     let shared = SharedGraph::new(graph_id);
-    let label = intern("recover.index.dropped.label").unwrap();
-    let property = intern("recover.index.dropped.age").unwrap();
+    let label = db_string("recover.index.dropped.label").unwrap();
+    let property = db_string("recover.index.dropped.age").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(label),
-                PropertyMap::from_pairs([(property, Value::Int(42))]).unwrap(),
+                LabelSet::single(label.clone()),
+                PropertyMap::from_pairs([(property.clone(), Value::Int(42))]).unwrap(),
             )
             .unwrap();
         mutator
-            .create_property_index(label, property, TypedIndexKind::I64)
+            .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
             .unwrap();
-        mutator.drop_property_index(label, property).unwrap();
+        mutator
+            .drop_property_index(label.clone(), property.clone())
+            .unwrap();
         txn.commit().unwrap()
     };
     append_wal(&dir, 0, &outcome.changes);
@@ -647,9 +664,12 @@ fn recover_from_wal_only_replays_property_index_dropped() {
 
 fn legacy_string_property(name: &str, required: bool) -> PropertyDefV1 {
     PropertyDefV1 {
-        name: intern(name).unwrap(),
+        name: db_string(name).unwrap(),
         value_type: ValueType {
             predefined: Some(PredefinedValueType::String),
+            decimal_type: None,
+            character_string_type: None,
+            byte_string_type: None,
             union: None,
             list_of: None,
             record: None,
@@ -667,16 +687,16 @@ fn recover_closed_wal_only_decodes_legacy_catalog_ddl_v1() {
     let graph_id = GraphId::new(20);
     let base = empty_closed_graph_type();
     let graph_type = GraphTypeId::new(1).unwrap();
-    let sensor = intern("LegacySensor").unwrap();
-    let linked = intern("LEGACY_LINKED").unwrap();
+    let sensor = db_string("LegacySensor").unwrap();
+    let linked = db_string("LEGACY_LINKED").unwrap();
     let changes = vec![
         Change::SchemaChanged {
             graph: graph_id,
             change: SchemaChange::NodeTypeAdded {
                 graph_type,
-                label: sensor,
+                label: sensor.clone(),
                 def: NodeTypeDefV1 {
-                    labels: LabelSet::single(sensor),
+                    labels: LabelSet::single(sensor.clone()),
                     properties: smallvec![legacy_string_property("serial", true)],
                     key: None,
                 },
@@ -686,11 +706,11 @@ fn recover_closed_wal_only_decodes_legacy_catalog_ddl_v1() {
             graph: graph_id,
             change: SchemaChange::EdgeTypeAdded {
                 graph_type,
-                label: linked,
+                label: linked.clone(),
                 def: EdgeTypeDefV1 {
-                    label: linked,
-                    source_node_type: NodeTypeRef(sensor),
-                    target_node_type: NodeTypeRef(sensor),
+                    label: linked.clone(),
+                    source_node_type: NodeTypeRef(sensor.clone()),
+                    target_node_type: NodeTypeRef(sensor.clone()),
                     properties: smallvec![legacy_string_property("since", false)],
                 },
             },

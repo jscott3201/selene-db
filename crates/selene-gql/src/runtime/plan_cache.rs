@@ -18,11 +18,16 @@
 //! `generation`; that is out of scope for the structural index-selection
 //! optimizer wired today.
 
-use std::{borrow::Borrow, num::NonZeroUsize, sync::Arc};
+use std::{
+    borrow::Borrow,
+    num::NonZeroUsize,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use lru::LruCache;
+use selene_core::GraphId;
 
-use crate::{ExecutionPlan, PipelineOp, SubqueryBody};
+use crate::{ExecutionPlan, ImplDefinedCaps, PipelineOp, SubqueryBody};
 
 /// LRU-cached execution plans keyed by source text.
 pub struct PlanCache {
@@ -46,6 +51,34 @@ struct CachedPlan {
     schema_version_at_plan: u64,
 }
 
+/// Shared LRU cache for non-CALL source-string execution plans.
+///
+/// The cache is caller-owned so embedders can share one
+/// `Arc<SharedPlanCache>` across short-lived sessions executing against the
+/// same graph. Keys include graph identity, schema epoch, procedure-registry
+/// epoch, source text, implementation-defined caps, and the optimizer
+/// index-selection mode, matching every setting currently baked into a lowered
+/// or optimized plan. Procedure-CALL-containing plans remain owned by
+/// [`crate::CallPlanCache`].
+pub struct SharedPlanCache {
+    inner: Mutex<SharedPlanCacheInner>,
+}
+
+struct SharedPlanCacheInner {
+    plans: LruCache<SharedPlanCacheKey, Arc<ExecutionPlan>>,
+    stats: SharedPlanCacheStats,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SharedPlanCacheKey {
+    graph_id: GraphId,
+    schema_version: u64,
+    registry_version: u64,
+    source: Arc<str>,
+    caps: ImplDefinedCaps,
+    index_selection: bool,
+}
+
 /// Counters for [`PlanCache`] lookup and eviction behavior.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PlanCacheStats {
@@ -55,6 +88,17 @@ pub struct PlanCacheStats {
     pub misses: u64,
     /// Entries found but invalidated because their schema version was stale.
     pub stale_invalidations: u64,
+    /// Entries evicted by LRU capacity pressure.
+    pub capacity_evictions: u64,
+}
+
+/// Counters for [`SharedPlanCache`] lookup and eviction behavior.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SharedPlanCacheStats {
+    /// Successful key lookups.
+    pub hits: u64,
+    /// Keys not present in the cache.
+    pub misses: u64,
     /// Entries evicted by LRU capacity pressure.
     pub capacity_evictions: u64,
 }
@@ -124,6 +168,107 @@ impl PlanCache {
     }
 }
 
+impl SharedPlanCache {
+    /// Create an empty shared source-plan cache with the given entry capacity.
+    #[must_use]
+    pub fn new(capacity: NonZeroUsize) -> Self {
+        Self {
+            inner: Mutex::new(SharedPlanCacheInner {
+                plans: LruCache::new(capacity),
+                stats: SharedPlanCacheStats::default(),
+            }),
+        }
+    }
+
+    pub(crate) fn get(&self, key: SharedPlanCacheLookup<'_>) -> Option<Arc<ExecutionPlan>> {
+        let mut inner = self.lock_inner();
+        let key = SharedPlanCacheKey::from_lookup(key);
+        match inner.plans.get(&key) {
+            Some(plan) => {
+                let plan = Arc::clone(plan);
+                inner.stats.hits = inner.stats.hits.saturating_add(1);
+                Some(plan)
+            }
+            None => {
+                inner.stats.misses = inner.stats.misses.saturating_add(1);
+                None
+            }
+        }
+    }
+
+    pub(crate) fn insert(&self, key: SharedPlanCacheInsert, plan: Arc<ExecutionPlan>) {
+        if !is_cacheable(&plan) {
+            return;
+        }
+
+        let mut inner = self.lock_inner();
+        let key = SharedPlanCacheKey::from_insert(key);
+        let replacing_existing = inner.plans.contains(&key);
+        if inner.plans.push(key, plan).is_some() && !replacing_existing {
+            inner.stats.capacity_evictions = inner.stats.capacity_evictions.saturating_add(1);
+        }
+    }
+
+    /// Return a snapshot of the cache counters.
+    #[must_use]
+    pub fn stats(&self) -> SharedPlanCacheStats {
+        self.lock_inner().stats
+    }
+
+    /// Remove all cached plans while preserving accumulated counters.
+    pub fn clear(&self) {
+        self.lock_inner().plans.clear();
+    }
+
+    fn lock_inner(&self) -> MutexGuard<'_, SharedPlanCacheInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
+pub(crate) struct SharedPlanCacheLookup<'a> {
+    pub(crate) graph_id: GraphId,
+    pub(crate) schema_version: u64,
+    pub(crate) registry_version: u64,
+    pub(crate) source: &'a str,
+    pub(crate) caps: ImplDefinedCaps,
+    pub(crate) index_selection: bool,
+}
+
+pub(crate) struct SharedPlanCacheInsert {
+    pub(crate) graph_id: GraphId,
+    pub(crate) schema_version: u64,
+    pub(crate) registry_version: u64,
+    pub(crate) source: Arc<str>,
+    pub(crate) caps: ImplDefinedCaps,
+    pub(crate) index_selection: bool,
+}
+
+impl SharedPlanCacheKey {
+    fn from_lookup(value: SharedPlanCacheLookup<'_>) -> Self {
+        Self {
+            graph_id: value.graph_id,
+            schema_version: value.schema_version,
+            registry_version: value.registry_version,
+            source: Arc::from(value.source),
+            caps: value.caps,
+            index_selection: value.index_selection,
+        }
+    }
+
+    fn from_insert(value: SharedPlanCacheInsert) -> Self {
+        Self {
+            graph_id: value.graph_id,
+            schema_version: value.schema_version,
+            registry_version: value.registry_version,
+            source: value.source,
+            caps: value.caps,
+            index_selection: value.index_selection,
+        }
+    }
+}
+
 fn is_cacheable(plan: &ExecutionPlan) -> bool {
     !contains_call(plan)
 }
@@ -187,7 +332,7 @@ impl std::fmt::Display for SourcePrefix<'_> {
 mod tests {
     use std::{num::NonZeroUsize, sync::Arc};
 
-    use selene_core::{IStr, intern_with_admission};
+    use selene_core::{DbString, db_string};
 
     use super::*;
     use crate::{
@@ -204,8 +349,8 @@ mod tests {
         Arc::new(plan(&analyzed, &EmptyProcedureRegistry).expect("test source plans"))
     }
 
-    fn admitted(value: &str) -> IStr {
-        intern_with_admission(value).expect("test name admits").0
+    fn admitted(value: &str) -> DbString {
+        db_string(value).expect("test name admits")
     }
 
     fn call_plan() -> Arc<ExecutionPlan> {
@@ -383,5 +528,92 @@ mod tests {
                 .is_none()
         );
         assert_eq!(cache.stats().misses, 1);
+    }
+
+    #[test]
+    fn shared_plan_cache_hits_across_sessions() {
+        let cache = SharedPlanCache::new(NonZeroUsize::new(2).unwrap());
+        let lookup = |source| SharedPlanCacheLookup {
+            graph_id: selene_core::GraphId::new(7),
+            schema_version: 0,
+            registry_version: 0,
+            source,
+            caps: ImplDefinedCaps::DEFAULT,
+            index_selection: true,
+        };
+
+        assert!(cache.get(lookup("RETURN 1")).is_none());
+        cache.insert(
+            SharedPlanCacheInsert {
+                graph_id: selene_core::GraphId::new(7),
+                schema_version: 0,
+                registry_version: 0,
+                source: Arc::from("RETURN 1"),
+                caps: ImplDefinedCaps::DEFAULT,
+                index_selection: true,
+            },
+            planned("RETURN 1"),
+        );
+        assert!(cache.get(lookup("RETURN 1")).is_some());
+
+        assert_eq!(
+            cache.stats(),
+            SharedPlanCacheStats {
+                hits: 1,
+                misses: 1,
+                capacity_evictions: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn shared_plan_cache_keys_planning_settings() {
+        let cache = SharedPlanCache::new(NonZeroUsize::new(4).unwrap());
+        let base = SharedPlanCacheInsert {
+            graph_id: selene_core::GraphId::new(7),
+            schema_version: 0,
+            registry_version: 0,
+            source: Arc::from("RETURN 1"),
+            caps: ImplDefinedCaps::DEFAULT,
+            index_selection: true,
+        };
+        cache.insert(base, planned("RETURN 1"));
+
+        assert!(
+            cache
+                .get(SharedPlanCacheLookup {
+                    graph_id: selene_core::GraphId::new(7),
+                    schema_version: 0,
+                    registry_version: 0,
+                    source: "RETURN 1",
+                    caps: ImplDefinedCaps::DEFAULT,
+                    index_selection: true,
+                })
+                .is_some()
+        );
+        assert!(
+            cache
+                .get(SharedPlanCacheLookup {
+                    graph_id: selene_core::GraphId::new(7),
+                    schema_version: 0,
+                    registry_version: 0,
+                    source: "RETURN 1",
+                    caps: ImplDefinedCaps::DEFAULT.with_max_list_length(1),
+                    index_selection: true,
+                })
+                .is_none()
+        );
+        assert!(
+            cache
+                .get(SharedPlanCacheLookup {
+                    graph_id: selene_core::GraphId::new(7),
+                    schema_version: 0,
+                    registry_version: 0,
+                    source: "RETURN 1",
+                    caps: ImplDefinedCaps::DEFAULT,
+                    index_selection: false,
+                })
+                .is_none()
+        );
     }
 }

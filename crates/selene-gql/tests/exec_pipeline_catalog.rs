@@ -2,22 +2,26 @@
 
 mod exec_common;
 
-// Closed-record catalog end-to-end tests live in a sibling file to keep this test root
-// under the 700-LOC cap; they reuse this binary's `planned`/`run_write`/`empty_closed_graph`.
+// Catalog subdomains live in sibling files to keep this test root under the 700-LOC cap;
+// they reuse this binary's `planned`/`run_write`/`empty_closed_graph`.
+#[path = "exec_pipeline_catalog/inline_indexes.rs"]
+mod inline_indexes;
+#[path = "exec_pipeline_catalog/property_constraints.rs"]
+mod property_constraints;
 #[path = "exec_pipeline_catalog/record_catalog.rs"]
 mod record_catalog;
+#[path = "exec_pipeline_catalog/temporal_indexes.rs"]
+mod temporal_indexes;
 
 use selene_core::{Change, GraphId, LabelSet, SchemaChange, Value};
 use selene_gql::{
-    Binding, BindingTable, BindingTableSchema, CatalogOp, EmptyProcedureRegistry, ExecutionPlan,
-    ExecutorError, GqlStatus, GqlType, PipelineOp, PlannedTypePropertyConstraint,
-    PlannedTypePropertyDef, RecordType, SourceSpan, TxContext, analyze, execute_pipeline, parse,
-    plan,
+    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
+    ExecutorError, PipelineOp, TxContext, analyze, execute_pipeline, parse, plan,
 };
 use selene_graph::{EdgeEndpointDef, EdgeTypeDef};
 use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
-use exec_common::istr;
+use exec_common::db_string;
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -37,7 +41,7 @@ fn seed_table() -> BindingTable {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("catalog.test.graph"),
+            name: db_string("catalog.test.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -47,12 +51,12 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 }
 
 fn person_graph(id: u64) -> SharedGraph {
-    let person = istr("Person");
+    let person = db_string("Person");
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("catalog.person.graph"),
+            name: db_string("catalog.person.graph"),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
@@ -134,164 +138,6 @@ fn create_node_type_creates_type_and_preserves_input_row() {
 }
 
 #[test]
-fn create_node_type_indexed_property_creates_property_index() {
-    let graph = empty_closed_graph(3717);
-    let plan = planned("CREATE NODE TYPE :Sensor (serial :: STRING INDEXED)");
-
-    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
-    let outcome = outcome.expect("commit succeeds");
-
-    let sensor = istr("Sensor");
-    let serial = istr("serial");
-    assert!(graph.read().property_index_for(&sensor, &serial).is_some());
-    assert_eq!(graph.read().property_index_count(), 1);
-    assert!(matches!(
-        outcome.changes.as_slice(),
-        [
-            Change::SchemaChanged {
-                change: SchemaChange::NodeTypeAddedV2 { label, .. },
-                ..
-            },
-            Change::SchemaChanged {
-                change: SchemaChange::PropertyIndexCreatedNamed {
-                    label: index_label,
-                    property,
-                    name: None,
-                    ..
-                },
-                ..
-            }
-        ] if label.as_str() == "Sensor"
-            && index_label.as_str() == "Sensor"
-            && property.as_str() == "serial"
-    ));
-}
-
-#[test]
-fn create_node_type_unindexed_property_does_not_create_property_index() {
-    let graph = empty_closed_graph(3718);
-    let plan = planned("CREATE NODE TYPE :Sensor (serial :: STRING)");
-
-    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
-    outcome.expect("commit succeeds");
-
-    assert_eq!(graph.read().property_index_count(), 0);
-}
-
-#[test]
-fn create_node_type_indexed_unsupported_type_reports_feature_not_supported() {
-    let graph = empty_closed_graph(3719);
-    let plan = planned("CREATE NODE TYPE :Sensor (active :: BOOLEAN INDEXED)");
-
-    let err = run_write(&graph, &plan).expect_err("BOOLEAN inline index unsupported");
-
-    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
-}
-
-#[test]
-fn create_node_type_float_indexed_reports_feature_not_supported() {
-    let graph = empty_closed_graph(3722);
-    let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT INDEXED)");
-
-    let err = run_write(&graph, &plan).expect_err("FLOAT inline index unsupported");
-
-    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
-}
-
-#[test]
-fn create_edge_type_indexed_property_reports_feature_not_supported() {
-    let graph = person_graph(3723);
-    let plan =
-        planned("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person, since :: STRING INDEXED)");
-
-    let err = run_write(&graph, &plan).expect_err("edge inline index unsupported");
-
-    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
-}
-
-#[test]
-fn create_node_type_duplicate_index_names_report_duplicate_object() {
-    let graph = empty_closed_graph(3720);
-    let plan = planned(
-        "CREATE NODE TYPE :Sensor \
-         (serial :: STRING INDEXED AS sensor_lookup, code :: STRING INDEXED AS sensor_lookup)",
-    );
-
-    let err = run_write(&graph, &plan).expect_err("duplicate index name rejected");
-
-    assert_eq!(err.gqlstatus(), GqlStatus::DUPLICATE_OBJECT);
-}
-
-#[test]
-fn show_indexes_renders_auto_and_explicit_inline_index_names() {
-    let graph = empty_closed_graph(3721);
-    let create = planned(
-        "CREATE NODE TYPE :Sensor \
-         (serial :: STRING INDEXED, code :: STRING INDEXED AS sensor_code_lookup)",
-    );
-    run_write(&graph, &create)
-        .expect("catalog executes")
-        .1
-        .expect("commit succeeds");
-
-    let (table, outcome) = run_write(&graph, &planned("SHOW INDEXES")).expect("show executes");
-    outcome.expect("show commit succeeds");
-    let rows = table.rows();
-    assert_eq!(rows.len(), 2);
-    assert_eq!(
-        rows[0].values(),
-        &[
-            Value::String(istr("sensor_code_lookup")),
-            Value::String(istr("Sensor")),
-            Value::String(istr("code")),
-            Value::String(istr("string")),
-        ]
-    );
-    assert_eq!(
-        rows[1].values(),
-        &[
-            Value::String(istr("idx:6:Sensor:6:serial")),
-            Value::String(istr("Sensor")),
-            Value::String(istr("serial")),
-            Value::String(istr("string")),
-        ]
-    );
-}
-
-#[test]
-fn autogenerated_index_names_are_collision_safe() {
-    let graph = empty_closed_graph(3724);
-    run_write(
-        &graph,
-        &planned("CREATE NODE TYPE :A_B (c :: STRING INDEXED)"),
-    )
-    .expect("first catalog op executes")
-    .1
-    .expect("first commit succeeds");
-    run_write(
-        &graph,
-        &planned("CREATE NODE TYPE :A (B_c :: STRING INDEXED)"),
-    )
-    .expect("second catalog op executes")
-    .1
-    .expect("second commit succeeds");
-
-    let (table, outcome) = run_write(&graph, &planned("SHOW INDEXES")).expect("show executes");
-    outcome.expect("show commit succeeds");
-    let names = table
-        .rows()
-        .iter()
-        .map(|row| match &row.values()[0] {
-            Value::String(value) => value.as_str(),
-            other => panic!("expected index name string, got {other:?}"),
-        })
-        .collect::<Vec<_>>();
-
-    assert!(names.contains(&"idx:1:A:3:B_c"));
-    assert!(names.contains(&"idx:3:A_B:1:c"));
-}
-
-#[test]
 fn show_node_types_on_open_graph_returns_empty_schemaful_table() {
     let graph = SharedGraph::new(GraphId::new(3701));
     let plan = planned("SHOW NODE TYPES");
@@ -305,9 +151,12 @@ fn show_node_types_on_open_graph_returns_empty_schemaful_table() {
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
     assert_eq!(table.row_count(), 0);
-    assert_eq!(table.schema().columns[0].name.unwrap().as_str(), "label");
     assert_eq!(
-        table.schema().columns[1].name.unwrap().as_str(),
+        table.schema().columns[0].name.as_ref().unwrap().as_str(),
+        "label"
+    );
+    assert_eq!(
+        table.schema().columns[1].name.as_ref().unwrap().as_str(),
         "definition"
     );
 }
@@ -325,10 +174,44 @@ fn show_node_types_after_create_in_same_statement_includes_new_type() {
     outcome.expect("commit succeeds");
 
     assert_eq!(table.row_count(), 1);
-    assert_eq!(table.rows()[0].values()[0], Value::String(istr("Person")));
+    assert_eq!(
+        table.rows()[0].values()[0],
+        Value::String(db_string("Person"))
+    );
     assert_eq!(
         table.rows()[0].values()[1],
-        Value::String(istr("CREATE NODE TYPE :Person (name :: STRING NOT NULL)"))
+        Value::String(db_string(
+            "CREATE NODE TYPE :Person (name :: STRING NOT NULL)"
+        ))
+    );
+}
+
+#[test]
+fn show_node_types_renders_bytes_default_as_byte_literal() {
+    let graph = empty_closed_graph(3718);
+    run_write(
+        &graph,
+        &planned("CREATE NODE TYPE :Blob (payload :: BYTES DEFAULT X'00ff')"),
+    )
+    .expect("catalog executes")
+    .1
+    .expect("commit succeeds");
+
+    let plan = planned("SHOW NODE TYPES");
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+        graph.index_providers(),
+    );
+
+    let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
+
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Blob (payload :: BYTES DEFAULT X'00FF')"
+        ))
     );
 }
 
@@ -337,10 +220,10 @@ fn show_node_types_renders_key_labels_not_internal_name() {
     let graph = closed_graph_with_type(
         3717,
         GraphTypeDef {
-            name: istr("catalog.asymmetric.graph"),
+            name: db_string("catalog.asymmetric.graph"),
             node_types: vec![NodeTypeDef {
-                name: istr("types.person"),
-                key_labels: LabelSet::single(istr("Person")),
+                name: db_string("types.person"),
+                key_labels: LabelSet::single(db_string("Person")),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
@@ -357,10 +240,13 @@ fn show_node_types_renders_key_labels_not_internal_name() {
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
-    assert_eq!(table.rows()[0].values()[0], Value::String(istr("Person")));
+    assert_eq!(
+        table.rows()[0].values()[0],
+        Value::String(db_string("Person"))
+    );
     assert_eq!(
         table.rows()[0].values()[1],
-        Value::String(istr("CREATE NODE TYPE :Person ()"))
+        Value::String(db_string("CREATE NODE TYPE :Person ()"))
     );
 }
 
@@ -394,7 +280,7 @@ fn show_edge_types_renders_round_trippable_definition() {
     let (table, outcome) = run_write(&graph, &plan).expect("catalog executes");
     outcome.expect("commit succeeds");
 
-    let Value::String(definition) = table.rows()[0].values()[1] else {
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     assert_eq!(
@@ -406,21 +292,21 @@ fn show_edge_types_renders_round_trippable_definition() {
 
 #[test]
 fn show_edge_types_renders_label_not_internal_name() {
-    let person = istr("Person");
-    let knows = istr("KNOWS");
+    let person = db_string("Person");
+    let knows = db_string("KNOWS");
     let graph = closed_graph_with_type(
         3718,
         GraphTypeDef {
-            name: istr("catalog.edge.asymmetric.graph"),
+            name: db_string("catalog.edge.asymmetric.graph"),
             node_types: vec![NodeTypeDef {
-                name: istr("types.person"),
+                name: db_string("types.person"),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
             edge_types: vec![EdgeTypeDef {
-                name: istr("types.knows"),
-                label: knows,
+                name: db_string("types.knows"),
+                label: knows.clone(),
                 source_node_type: EdgeEndpointDef::NodeType(0),
                 target_node_type: EdgeEndpointDef::NodeType(0),
                 properties: Vec::new(),
@@ -438,10 +324,12 @@ fn show_edge_types_renders_label_not_internal_name() {
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
-    assert_eq!(table.rows()[0].values()[0], Value::String(knows));
+    assert_eq!(table.rows()[0].values()[0], Value::String(knows.clone()));
     assert_eq!(
         table.rows()[0].values()[1],
-        Value::String(istr("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person)"))
+        Value::String(db_string(
+            "CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person)"
+        ))
     );
 }
 
@@ -464,7 +352,7 @@ fn show_edge_types_renders_any_endpoints_as_endpoint_less() {
         EdgeEndpointDef::Any
     );
 
-    let Value::String(definition) = table.rows()[0].values()[1] else {
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     assert_eq!(definition.as_str(), "CREATE EDGE TYPE :KNOWS ()");
@@ -473,20 +361,20 @@ fn show_edge_types_renders_any_endpoints_as_endpoint_less() {
 
 #[test]
 fn show_edge_types_renders_multi_label_endpoint_labels() {
-    let knows = istr("KNOWS");
-    let labels = LabelSet::from_iter([istr("Person"), istr("Active")]);
+    let knows = db_string("KNOWS");
+    let labels = LabelSet::from_iter([db_string("Person"), db_string("Active")]);
     let graph = closed_graph_with_type(
         3719,
         GraphTypeDef {
-            name: istr("catalog.edge.multilabel.graph"),
+            name: db_string("catalog.edge.multilabel.graph"),
             node_types: vec![NodeTypeDef {
-                name: istr("types.active_person"),
+                name: db_string("types.active_person"),
                 key_labels: labels,
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
             edge_types: vec![EdgeTypeDef {
-                name: istr("types.knows"),
+                name: db_string("types.knows"),
                 label: knows,
                 source_node_type: EdgeEndpointDef::NodeType(0),
                 target_node_type: EdgeEndpointDef::NodeType(0),
@@ -507,11 +395,11 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
 
     assert_eq!(
         table.rows()[0].values()[1],
-        Value::String(istr(
-            "CREATE EDGE TYPE :KNOWS (FROM :Person,:Active TO :Person,:Active)"
+        Value::String(db_string(
+            "CREATE EDGE TYPE :KNOWS (FROM :Active,:Person TO :Active,:Person)"
         ))
     );
-    let Value::String(definition) = table.rows()[0].values()[1] else {
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     parse(definition.as_str()).expect("multi-label endpoint definition round-trips");
@@ -609,13 +497,13 @@ fn create_edge_type_unknown_endpoint_returns_data_exception() {
 
 #[test]
 fn create_edge_type_multi_label_endpoint_resolves_exact_label_set() {
-    let labels = LabelSet::from_iter([istr("Person"), istr("Employee")]);
+    let labels = LabelSet::from_iter([db_string("Person"), db_string("Employee")]);
     let graph = closed_graph_with_type(
         3709,
         GraphTypeDef {
-            name: istr("catalog.multi.endpoint.graph"),
+            name: db_string("catalog.multi.endpoint.graph"),
             node_types: vec![NodeTypeDef {
-                name: istr("types.employee_person"),
+                name: db_string("types.employee_person"),
                 key_labels: labels,
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
@@ -645,164 +533,5 @@ fn drop_nonexistent_node_type_returns_data_exception() {
         err,
         ExecutorError::GraphTypeViolation { message, .. }
             if message.contains("node type Missing does not exist")
-    ));
-}
-
-#[test]
-fn or_replace_catalog_ddl_is_deferred() {
-    let graph = empty_closed_graph(3714);
-
-    let mut or_replace = planned("CREATE NODE TYPE :Person ()");
-    if let PipelineOp::Catalog(CatalogOp::CreateNodeType { or_replace, .. }) =
-        &mut or_replace.pipeline[0]
-    {
-        *or_replace = true;
-    }
-
-    let err = run_write(&graph, &or_replace).expect_err("OR REPLACE is deferred");
-    assert!(matches!(err, ExecutorError::ImplementationDefined { .. }));
-}
-
-#[test]
-fn unique_property_constraint_is_deferred() {
-    let graph = empty_closed_graph(3714);
-    let plan = planned("CREATE NODE TYPE :Sensor (v :: STRING UNIQUE)");
-
-    // UNIQUE is ISO-relevant but uniqueness enforcement is not yet implemented;
-    // it surfaces as an honest 42N01 capability-gap deferral (not a generic
-    // 5GQL0 internal error), mirroring the inline-INDEXED-on-edge deferral.
-    let err = run_write(&graph, &plan).expect_err("UNIQUE property constraint is deferred");
-    assert!(matches!(
-        err,
-        ExecutorError::FeatureNotInV1_1 {
-            feature: "UNIQUE property constraint",
-            ..
-        }
-    ));
-    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
-}
-
-#[test]
-fn nothing_property_type_is_deferred() {
-    let graph = empty_closed_graph(3715);
-    let mut plan = planned("CREATE NODE TYPE :Person ()");
-    let PipelineOp::Catalog(CatalogOp::CreateNodeType { properties, .. }) = &mut plan.pipeline[0]
-    else {
-        panic!("expected create node type");
-    };
-    properties.push(PlannedTypePropertyDef {
-        name: istr("payload"),
-        gql_type: GqlType::Nothing,
-        constraints: Vec::new(),
-        span: SourceSpan::new(0, 1),
-    });
-
-    let err = run_write(&graph, &plan).expect_err("NOTHING type is deferred");
-
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "type property GQL type not supported as property value type (Phase A)",
-        }
-    ));
-}
-
-#[test]
-fn open_record_property_type_is_supported() {
-    // A bare/open `RECORD` property lowers to a permissive RecordTyped declaration that
-    // accepts any record value.
-    let graph = empty_closed_graph(3716);
-    let mut plan = planned("CREATE NODE TYPE :Person ()");
-    let PipelineOp::Catalog(CatalogOp::CreateNodeType { properties, .. }) = &mut plan.pipeline[0]
-    else {
-        panic!("expected create node type");
-    };
-    properties.push(PlannedTypePropertyDef {
-        name: istr("payload"),
-        gql_type: GqlType::Record(RecordType::Open),
-        constraints: Vec::new(),
-        span: SourceSpan::new(0, 1),
-    });
-
-    let (_table, outcome) = run_write(&graph, &plan).expect("open RECORD type executes");
-    outcome.expect("open RECORD property type commits");
-}
-
-#[test]
-fn default_property_constraint_accepts_supported_literal_ir() {
-    let graph = empty_closed_graph(3716);
-    let mut plan = planned("CREATE NODE TYPE :Person ()");
-    let PipelineOp::Catalog(CatalogOp::CreateNodeType { properties, .. }) = &mut plan.pipeline[0]
-    else {
-        panic!("expected create node type");
-    };
-    let project = planned("RETURN 1 AS x")
-        .pipeline
-        .into_iter()
-        .find_map(|op| match op {
-            PipelineOp::Project(mut items) => items.pop(),
-            _ => None,
-        })
-        .expect("project expr");
-    properties.push(PlannedTypePropertyDef {
-        name: istr("age"),
-        gql_type: GqlType::Integer,
-        constraints: vec![PlannedTypePropertyConstraint::Default(
-            project,
-            SourceSpan::new(0, 1),
-        )],
-        span: SourceSpan::new(0, 1),
-    });
-
-    run_write(&graph, &plan)
-        .expect("default constraint executes")
-        .1
-        .expect("commit succeeds");
-    let graph_type = graph.graph_type().expect("closed graph type");
-    assert_eq!(
-        graph_type.node_types[0].properties[0].default,
-        Some(selene_graph::PropertyDefaultValue::Integer(1))
-    );
-}
-
-#[test]
-fn unsupported_default_literal_returns_feature_not_supported() {
-    let graph = empty_closed_graph(3724);
-    let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5)");
-
-    let err = run_write(&graph, &plan).expect_err("float default unsupported");
-
-    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
-}
-
-#[test]
-fn default_literal_must_match_declared_property_type() {
-    let graph = empty_closed_graph(3725);
-    let plan = planned("CREATE NODE TYPE :Person (active :: BOOLEAN DEFAULT 1)");
-
-    let err = run_write(&graph, &plan).expect_err("default type mismatch");
-
-    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
-    assert!(matches!(
-        err,
-        ExecutorError::DataException { message, .. }
-            if message.contains("DEFAULT literal is not assignable")
-                && message.contains("active")
-    ));
-}
-
-#[test]
-fn not_null_property_rejects_default_null() {
-    let graph = empty_closed_graph(3726);
-    let plan = planned("CREATE NODE TYPE :Person (active :: BOOLEAN NOT NULL DEFAULT NULL)");
-
-    let err = run_write(&graph, &plan).expect_err("not null default null");
-
-    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
-    assert!(matches!(
-        err,
-        ExecutorError::DataException { message, .. }
-            if message.contains("NOT NULL property cannot default to NULL")
-                && message.contains("active")
     ));
 }

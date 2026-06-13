@@ -5,6 +5,7 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 use selene_core::{CancellationToken, Change, metrics};
 use selene_graph::CommitOutcome;
 
+use super::plan_cache::{SharedPlanCacheInsert, SharedPlanCacheLookup};
 use super::session::materialize_parameter_values;
 use crate::{
     ExecutionPlan, GqlStatus, LiveIndexCatalog, OptimizeContext, PipelineOp, ProcedureRegistry,
@@ -13,7 +14,7 @@ use crate::{
     ast::Statement,
     optimize,
     parser::parse,
-    plan::plan as build_plan,
+    plan::plan_with_caps as build_plan,
     runtime::{
         BindingTable, BindingTableRegistry, CallPlanKey, ExecutorError, ExecutorWarning, Session,
         TxContext, execute_plan, pipeline,
@@ -101,6 +102,7 @@ pub fn execute_statement(
         plan.category != StatementCategory::TransactionControl && session.active_txn.is_some();
     let result = match plan.category {
         StatementCategory::ReadOnly => execute_read_only(plan, session, registry),
+        StatementCategory::Maintenance => execute_maintenance(plan, session, registry),
         StatementCategory::DataModifying | StatementCategory::CatalogModifying => {
             execute_write(plan, session, registry)
         }
@@ -123,10 +125,12 @@ impl Session<'_> {
     ///
     /// When the session has a plan cache, source strings whose cached plan was
     /// prepared against the current graph schema version skip parse, analyze,
-    /// and plan. Procedure-call-rooted statements can additionally use the
-    /// opt-in shared CALL plan cache, keyed by graph ID, schema version,
-    /// registry version, and formatter-canonical source. Embedded in-pipeline
-    /// `CALL` remains uncached.
+    /// and plan. Short-lived sessions can additionally use the opt-in shared
+    /// non-CALL source-plan cache, keyed by graph ID, schema version, registry
+    /// version, source text, caps, and optimizer mode. Procedure-call-rooted
+    /// statements use the separate opt-in shared CALL plan cache, keyed by
+    /// graph ID, schema version, registry version, and formatter-canonical
+    /// source. Embedded in-pipeline `CALL` remains uncached.
     /// If an active explicit transaction has uncommitted schema changes, both
     /// caches bypass lookup and insert so analysis sees transaction-local
     /// schema.
@@ -146,6 +150,7 @@ impl Session<'_> {
         }
         let schema_version = self.graph().schema_version();
         let registry_version = registry.registry_version();
+        let top_level_call_candidate = is_top_level_call_candidate(source);
         let active_txn_has_schema_changes = self
             .active_txn
             .as_ref()
@@ -159,14 +164,35 @@ impl Session<'_> {
             return execute_statement(&cached, self, registry);
         }
 
+        let shared_plan_cache = (!active_txn_has_schema_changes)
+            .then(|| self.shared_plan_cache.as_ref().map(Arc::clone))
+            .flatten();
         let call_plan_cache = (!active_txn_has_schema_changes)
             .then(|| self.call_plan_cache.as_ref().map(Arc::clone))
             .flatten();
-        let call_graph_id = call_plan_cache
-            .as_ref()
-            .map(|_| self.graph().read().graph_id());
-        if is_top_level_call_candidate(source)
-            && let (Some(cache), Some(graph_id)) = (call_plan_cache.as_ref(), call_graph_id)
+        let cache_graph_id = if shared_plan_cache.is_some() || call_plan_cache.is_some() {
+            Some(self.graph().read().graph_id())
+        } else {
+            None
+        };
+        if !top_level_call_candidate
+            && let (Some(cache), Some(graph_id)) = (shared_plan_cache.as_ref(), cache_graph_id)
+            && let Some(cached) = cache.get(SharedPlanCacheLookup {
+                graph_id,
+                schema_version,
+                registry_version,
+                source,
+                caps: self.caps,
+                index_selection: self.index_selection,
+            })
+        {
+            if let Some(cache) = self.plan_cache.as_mut() {
+                cache.insert(Arc::from(source), Arc::clone(&cached), schema_version);
+            }
+            return execute_statement(&cached, self, registry);
+        }
+        if top_level_call_candidate
+            && let (Some(cache), Some(graph_id)) = (call_plan_cache.as_ref(), cache_graph_id)
             && let Some(cached) =
                 cache.get_source(graph_id, schema_version, registry_version, source)
         {
@@ -197,7 +223,7 @@ impl Session<'_> {
             });
         }
 
-        let call_plan_key = call_graph_id.and_then(|graph_id| {
+        let call_plan_key = cache_graph_id.and_then(|graph_id| {
             CallPlanKey::for_statement(graph_id, schema_version, registry_version, &statement)
         });
         if let (Some(cache), Some(key)) = (call_plan_cache.as_ref(), call_plan_key.as_ref())
@@ -218,7 +244,7 @@ impl Session<'_> {
             }
             ExecutorError::Analysis { source }
         })?;
-        let lowered = build_plan(&analyzed, registry).map_err(|source| {
+        let lowered = build_plan(&analyzed, registry, &self.caps).map_err(|source| {
             if self.active_txn.is_some() {
                 self.aborted = true;
             }
@@ -229,11 +255,25 @@ impl Session<'_> {
         // plans at hit-cost. EXPLAIN renders the optimized inner plan for free
         // because the optimizer recurses into PipelineOp::ExplainPlan { inner }.
         let plan = Arc::new(self.optimize_plan(lowered));
+        let source_arc = Arc::<str>::from(source);
         if !active_txn_has_schema_changes && let Some(cache) = self.plan_cache.as_mut() {
-            cache.insert(Arc::from(source), Arc::clone(&plan), schema_version);
+            cache.insert(Arc::clone(&source_arc), Arc::clone(&plan), schema_version);
+        }
+        if let (Some(cache), Some(graph_id)) = (shared_plan_cache, cache_graph_id) {
+            cache.insert(
+                SharedPlanCacheInsert {
+                    graph_id,
+                    schema_version,
+                    registry_version,
+                    source: Arc::clone(&source_arc),
+                    caps: self.caps,
+                    index_selection: self.index_selection,
+                },
+                Arc::clone(&plan),
+            );
         }
         if let (Some(cache), Some(key)) = (call_plan_cache, call_plan_key) {
-            cache.insert_with_source(key, Arc::from(source), Arc::clone(&plan));
+            cache.insert_with_source(key, source_arc, Arc::clone(&plan));
         }
         execute_statement(&plan, self, registry)
     }
@@ -316,7 +356,6 @@ fn execute_read_only(
             Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy)
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()?;
@@ -333,7 +372,6 @@ fn execute_read_only(
             Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy)
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()?;
@@ -353,6 +391,46 @@ fn execute_write(
         return execute_inside_explicit_tx(plan, session, registry);
     }
     execute_auto_commit(plan, session, registry)
+}
+
+fn execute_maintenance(
+    plan: &ExecutionPlan,
+    session: &mut Session<'_>,
+    registry: &dyn ProcedureRegistry,
+) -> Result<StatementOutput, ExecutorError> {
+    if session.active_txn.is_some() {
+        return Err(ExecutorError::InvalidTransactionState {
+            detail: "maintenance procedure cannot run inside an explicit transaction",
+            span: SourceSpan::default(),
+        });
+    }
+    let providers = session.graph().index_providers();
+    let snapshot = session.graph().read();
+    let session_tz = session.effective_time_zone();
+    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let parameters = materialize_parameter_values(
+        &session.parameters,
+        &session.scalar_parameters,
+        &binding_tables,
+    );
+    let (cancellation, deadline, row_cap) = resource_limits(session);
+    let warning_sink = session.warning_sink.as_ref();
+    let mut ctx = TxContext::maintenance_with_owned_parameters_and_registry(
+        snapshot,
+        &plan.impl_defined_caps,
+        registry,
+        session.graph(),
+        providers,
+        parameters,
+        Rc::clone(&binding_tables),
+    )
+    .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+    .with_warning_sink(warning_sink)
+    .with_session_time_zone(session_tz);
+    ctx.check_cancellation()?;
+    let table = execute_plan(plan, &mut ctx)?;
+    note_output_rows(plan, &ctx, table.row_count())?;
+    Ok(output_from_table(plan, table))
 }
 
 fn execute_inside_explicit_tx(
@@ -387,7 +465,6 @@ fn execute_inside_explicit_tx(
         Rc::clone(&binding_tables),
     )
     .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-    .with_istr_admission_policy(session.istr_admission_policy)
     .with_warning_sink(warning_sink)
     .with_session_time_zone(session_tz);
     let result = ctx
@@ -432,7 +509,6 @@ fn execute_auto_commit(
             Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy)
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()
@@ -562,6 +638,7 @@ fn statement_kind(plan: &ExecutionPlan) -> &'static str {
         StatementCategory::ReadOnly => "query",
         StatementCategory::DataModifying => "mutation",
         StatementCategory::CatalogModifying => "catalog",
+        StatementCategory::Maintenance => "maintenance",
         StatementCategory::TransactionControl => "transaction",
         StatementCategory::SessionControl => "session",
     }

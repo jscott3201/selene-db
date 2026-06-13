@@ -1,5 +1,5 @@
 use selene_core::{
-    Change, GraphId, LabelSet, PropertyMap, PropertyValueType, SchemaChange, intern,
+    Change, GraphId, LabelSet, PropertyMap, PropertyValueType, SchemaChange, db_string,
 };
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
 fn closed_empty_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: intern("catalog.empty").unwrap(),
+            name: db_string("catalog.empty").unwrap(),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -20,11 +20,11 @@ fn closed_empty_graph(id: u64) -> SharedGraph {
 }
 
 fn person_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
+    let person = db_string("Person").unwrap();
     GraphTypeDef {
-        name: intern("catalog.person.graph").unwrap(),
+        name: db_string("catalog.person.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
@@ -34,27 +34,27 @@ fn person_type() -> GraphTypeDef {
 }
 
 fn person_company_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
-    let company = intern("Company").unwrap();
-    let works_at = intern("WORKS_AT").unwrap();
+    let person = db_string("Person").unwrap();
+    let company = db_string("Company").unwrap();
+    let works_at = db_string("WORKS_AT").unwrap();
     GraphTypeDef {
-        name: intern("catalog.company.graph").unwrap(),
+        name: db_string("catalog.company.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: company,
+                name: company.clone(),
                 key_labels: LabelSet::single(company),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![EdgeTypeDef {
-            name: works_at,
+            name: works_at.clone(),
             label: works_at,
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(1),
@@ -67,16 +67,16 @@ fn person_company_type() -> GraphTypeDef {
 #[test]
 fn create_node_type_updates_bound_type_and_emits_schema_change() {
     let shared = closed_empty_graph(10);
-    let person = intern("Person").unwrap();
-    let name = intern("name").unwrap();
+    let person = db_string("Person").unwrap();
+    let name = db_string("name").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         {
             let mut mutator = txn.mutator();
             mutator
                 .create_node_type(
-                    person,
-                    LabelSet::single(person),
+                    person.clone(),
+                    LabelSet::single(person.clone()),
                     vec![PropertyTypeDef {
                         name,
                         value_type: PropertyValueType::String,
@@ -84,7 +84,10 @@ fn create_node_type_updates_bound_type_and_emits_schema_change() {
                         required: true,
                         default: None,
                         immutable: false,
-
+                        unique: false,
+                        decimal_type: None,
+                        character_string_type: None,
+                        byte_string_type: None,
                         record_field_types: None,
                     }],
                     ValidationMode::Strict,
@@ -123,13 +126,13 @@ fn create_edge_type_resolves_closed_type_and_emits_schema_change() {
         .unwrap()
         .build()
         .unwrap();
-    let knows = intern("KNOWS").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_edge_type(
-                knows,
-                knows,
+                knows.clone(),
+                knows.clone(),
                 EdgeEndpointDef::NodeType(0),
                 EdgeEndpointDef::NodeType(0),
                 Vec::new(),
@@ -160,7 +163,7 @@ fn drop_node_type_refuses_endpoint_reindexing() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("Person").unwrap(), DropBehavior::Restrict)
+        .drop_node_type(db_string("Person").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
     // Person is referenced directly by WORKS_AT's source endpoint, so the
@@ -180,11 +183,11 @@ fn drop_edge_type_removes_type_and_emits_schema_change() {
         .unwrap()
         .build()
         .unwrap();
-    let works_at = intern("WORKS_AT").unwrap();
+    let works_at = db_string("WORKS_AT").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .drop_edge_type(works_at, DropBehavior::Restrict)
+            .drop_edge_type(works_at.clone(), DropBehavior::Restrict)
             .unwrap();
         txn.commit().unwrap()
     };
@@ -203,11 +206,11 @@ fn drop_edge_type_removes_type_and_emits_schema_change() {
 fn catalog_type_ddl_on_open_graph_is_rejected() {
     let shared = SharedGraph::new(GraphId::new(14));
     let mut txn = shared.begin_write();
-    let person = intern("Person").unwrap();
+    let person = db_string("Person").unwrap();
     let err = txn
         .mutator()
         .create_node_type(
-            person,
+            person.clone(),
             LabelSet::single(person),
             Vec::new(),
             ValidationMode::Strict,
@@ -235,7 +238,7 @@ fn drop_node_type_restrict_rejects_early_with_surviving_instances() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(intern("Person").unwrap()),
+                LabelSet::single(db_string("Person").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
@@ -245,7 +248,7 @@ fn drop_node_type_restrict_rejects_early_with_surviving_instances() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("Person").unwrap(), DropBehavior::Restrict)
+        .drop_node_type(db_string("Person").unwrap(), DropBehavior::Restrict)
         .expect_err("RESTRICT rejects the drop op itself");
     assert!(matches!(
         err,
@@ -270,18 +273,18 @@ fn drop_node_type_cascade_truncates_then_drops_in_one_txn() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(intern("Person").unwrap()),
+                LabelSet::single(db_string("Person").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
         txn.commit().unwrap();
     }
 
-    let person = intern("Person").unwrap();
+    let person = db_string("Person").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .drop_node_type(person, DropBehavior::Cascade)
+            .drop_node_type(person.clone(), DropBehavior::Cascade)
             .expect("CASCADE drops a type with surviving instances");
         txn.commit().unwrap()
     };
@@ -309,20 +312,20 @@ fn drop_edge_type_restrict_rejects_early_with_surviving_instances() {
         .unwrap()
         .build()
         .unwrap();
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     {
         let mut txn = shared.begin_write();
         let a = txn
             .mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let b = txn
             .mutator()
             .create_node(LabelSet::single(person), PropertyMap::new())
             .unwrap();
         txn.mutator()
-            .create_edge(knows, a, b, PropertyMap::new())
+            .create_edge(knows.clone(), a, b, PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
     }
@@ -349,20 +352,20 @@ fn drop_edge_type_cascade_truncates_then_drops_in_one_txn() {
         .unwrap()
         .build()
         .unwrap();
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     {
         let mut txn = shared.begin_write();
         let a = txn
             .mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let b = txn
             .mutator()
             .create_node(LabelSet::single(person), PropertyMap::new())
             .unwrap();
         txn.mutator()
-            .create_edge(knows, a, b, PropertyMap::new())
+            .create_edge(knows.clone(), a, b, PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
     }
@@ -370,7 +373,7 @@ fn drop_edge_type_cascade_truncates_then_drops_in_one_txn() {
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .drop_edge_type(knows, DropBehavior::Cascade)
+            .drop_edge_type(knows.clone(), DropBehavior::Cascade)
             .expect("CASCADE drops an edge type with surviving edges");
         txn.commit().unwrap()
     };
@@ -392,18 +395,18 @@ fn drop_edge_type_cascade_truncates_then_drops_in_one_txn() {
 }
 
 fn person_self_knows_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
     GraphTypeDef {
-        name: intern("catalog.person.knows.graph").unwrap(),
+        name: db_string("catalog.person.knows.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
         }],
         edge_types: vec![EdgeTypeDef {
-            name: knows,
+            name: knows.clone(),
             label: knows,
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(0),
@@ -414,34 +417,34 @@ fn person_self_knows_type() -> GraphTypeDef {
 }
 
 fn person_company_school_with_oneof_edge_type() -> GraphTypeDef {
-    let person = intern("Person").unwrap();
-    let company = intern("Company").unwrap();
-    let school = intern("School").unwrap();
-    let affiliated_with = intern("AFFILIATED_WITH").unwrap();
+    let person = db_string("Person").unwrap();
+    let company = db_string("Company").unwrap();
+    let school = db_string("School").unwrap();
+    let affiliated_with = db_string("AFFILIATED_WITH").unwrap();
     GraphTypeDef {
-        name: intern("catalog.oneof.graph").unwrap(),
+        name: db_string("catalog.oneof.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: company,
+                name: company.clone(),
                 key_labels: LabelSet::single(company),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: school,
+                name: school.clone(),
                 key_labels: LabelSet::single(school),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![EdgeTypeDef {
-            name: affiliated_with,
+            name: affiliated_with.clone(),
             label: affiliated_with,
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::one_of([1, 2]),
@@ -465,7 +468,7 @@ fn drop_node_type_rejects_when_oneof_endpoint_references_dropped_type() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("Company").unwrap(), DropBehavior::Restrict)
+        .drop_node_type(db_string("Company").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
     // Company (index 1) is directly carried by OneOf([1, 2]); the dependency
@@ -490,7 +493,7 @@ fn drop_node_type_rejects_when_oneof_endpoint_references_tail_type() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("School").unwrap(), DropBehavior::Restrict)
+        .drop_node_type(db_string("School").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
     // School (index 2) is also directly carried by OneOf([1, 2]); the dependency

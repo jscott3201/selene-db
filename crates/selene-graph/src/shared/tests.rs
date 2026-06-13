@@ -1,7 +1,7 @@
 use super::*;
 use parking_lot::Mutex;
 use selene_core::{
-    Change, HlcTimestamp, LabelSet, PropertyMap, PropertyValueType, SchemaChange, intern,
+    Change, HlcTimestamp, LabelSet, PropertyMap, PropertyValueType, SchemaChange, db_string,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -66,18 +66,21 @@ impl DurableProvider for FailingDurableProvider {
 
 fn sample_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: intern("shared.type").unwrap(),
+        name: db_string("shared.type").unwrap(),
         node_types: vec![crate::NodeTypeDef {
-            name: intern("shared.node").unwrap(),
-            key_labels: LabelSet::single(intern("SharedNode").unwrap()),
+            name: db_string("shared.node").unwrap(),
+            key_labels: LabelSet::single(db_string("SharedNode").unwrap()),
             properties: vec![crate::PropertyTypeDef {
-                name: intern("shared.name").unwrap(),
+                name: db_string("shared.name").unwrap(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,
-
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: crate::ValidationMode::Strict,
@@ -106,7 +109,7 @@ fn shared_graph_schema_version_initial_zero() {
 #[test]
 fn schema_changed_commit_bumps_version() {
     let graph_type = GraphTypeDef {
-        name: intern("schema.version.type").unwrap(),
+        name: db_string("schema.version.type").unwrap(),
         node_types: Vec::new(),
         edge_types: Vec::new(),
     };
@@ -115,11 +118,11 @@ fn schema_changed_commit_bumps_version() {
         .unwrap()
         .build()
         .unwrap();
-    let label = intern("SchemaVersioned").unwrap();
+    let label = db_string("SchemaVersioned").unwrap();
     let mut txn = shared.begin_write();
     txn.mutator()
         .create_node_type(
-            label,
+            label.clone(),
             LabelSet::single(label),
             Vec::new(),
             crate::ValidationMode::Strict,
@@ -137,7 +140,7 @@ fn data_changed_commit_does_not_bump_version() {
     let mut txn = shared.begin_write();
     txn.mutator()
         .create_node(
-            LabelSet::single(intern("schema.version.data").unwrap()),
+            LabelSet::single(db_string("schema.version.data").unwrap()),
             PropertyMap::new(),
         )
         .expect("data mutation succeeds");
@@ -152,8 +155,8 @@ fn direct_create_property_index_bumps_schema_version() {
     let shared = SharedGraph::new(GraphId::new(105));
     shared
         .create_property_index(
-            intern("Person").unwrap(),
-            intern("age").unwrap(),
+            db_string("Person").unwrap(),
+            db_string("age").unwrap(),
             TypedIndexKind::I64,
         )
         .expect("create index succeeds");
@@ -164,10 +167,10 @@ fn direct_create_property_index_bumps_schema_version() {
 #[test]
 fn direct_drop_property_index_bumps_schema_version_when_present() {
     let shared = SharedGraph::new(GraphId::new(106));
-    let label = intern("Person").unwrap();
-    let property = intern("age").unwrap();
+    let label = db_string("Person").unwrap();
+    let property = db_string("age").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .expect("create index succeeds");
 
     shared
@@ -181,7 +184,7 @@ fn direct_drop_property_index_bumps_schema_version_when_present() {
 fn direct_drop_property_index_idempotent_does_not_bump() {
     let shared = SharedGraph::new(GraphId::new(107));
     shared
-        .drop_property_index(intern("Person").unwrap(), intern("age").unwrap())
+        .drop_property_index(db_string("Person").unwrap(), db_string("age").unwrap())
         .expect("absent drop succeeds");
 
     assert_eq!(shared.schema_version(), 0);
@@ -197,8 +200,8 @@ fn schema_version_bump_implies_snapshot_already_reflects_change() {
     // pre-change snapshot. Reverse ordering (bump-before-store) would let this
     // assertion observe epoch 1 with the index still absent.
     let shared = SharedGraph::new(GraphId::new(120));
-    let label = intern("Order").unwrap();
-    let property = intern("age").unwrap();
+    let label = db_string("Order").unwrap();
+    let property = db_string("age").unwrap();
     assert_eq!(shared.schema_version(), 0);
     assert!(
         shared
@@ -208,7 +211,7 @@ fn schema_version_bump_implies_snapshot_already_reflects_change() {
     );
 
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .expect("index create");
 
     // The schema epoch advanced AND the snapshot that caused it is the published
@@ -236,7 +239,7 @@ fn concurrent_reader_never_sees_bumped_epoch_without_the_change() {
     // SAME snapshot it loads right after. A bump-before-store regression would let
     // the reader catch epoch E with < E indexes present.
     let shared = Arc::new(SharedGraph::new(GraphId::new(121)));
-    let label = intern("ConcurrentOrder").unwrap();
+    let label = db_string("ConcurrentOrder").unwrap();
     const CREATES: u64 = 32;
 
     thread::scope(|scope| {
@@ -259,8 +262,8 @@ fn concurrent_reader_never_sees_bumped_epoch_without_the_change() {
         for i in 0..CREATES {
             shared
                 .create_property_index(
-                    label,
-                    intern(format!("prop.{i}").as_str()).unwrap(),
+                    label.clone(),
+                    db_string(format!("prop.{i}").as_str()).unwrap(),
                     TypedIndexKind::I64,
                 )
                 .expect("index create");
@@ -289,7 +292,7 @@ fn failed_commit_does_not_bump_schema_version() {
         GraphId::new(108),
         SchemaChange::GraphCreated {
             id: GraphId::new(109),
-            name: intern("failed.schema.commit").unwrap(),
+            name: db_string("failed.schema.commit").unwrap(),
             graph_type: None,
         },
     );
@@ -328,7 +331,7 @@ fn durable_write_failure_rolls_back_in_memory_state() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(intern("durable.rollback").unwrap()),
+                LabelSet::single(db_string("durable.rollback").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
@@ -494,15 +497,15 @@ fn from_graph_floor_derives_allocator_from_storage_when_meta_is_stale() {
     let mut graph = SeleneGraph::new(GraphId::new(1));
     graph.node_store.labels.push(LabelSet::new());
     graph.node_store.properties.push(PropertyMap::new());
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
     graph
         .edge_store
         .label
-        .push(selene_core::intern("e").unwrap());
+        .push(selene_core::db_string("e").unwrap());
     graph.edge_store.source.push(selene_core::NodeId::new(1));
     graph.edge_store.target.push(selene_core::NodeId::new(1));
     graph.edge_store.properties.push(PropertyMap::new());
-    graph.edge_store.alive.insert(0);
+    graph.edge_store.alive_mut().insert(0);
     // Stale meta: still says next is 1 even though one row of each exists.
     graph.meta.next_node_id = 1;
     graph.meta.next_edge_id = 1;
@@ -523,31 +526,34 @@ fn from_graph_floor_derives_allocator_from_storage_when_meta_is_stale() {
 
 #[test]
 fn from_graph_rebuilds_label_indexes_from_stores() {
-    use selene_core::{LabelSet, NodeId as CoreNodeId, PropertyMap, intern};
+    use selene_core::{LabelSet, NodeId as CoreNodeId, PropertyMap, db_string};
 
-    let label_a = intern("idx.a").unwrap();
-    let label_b = intern("idx.b").unwrap();
+    let label_a = db_string("idx.a").unwrap();
+    let label_b = db_string("idx.b").unwrap();
 
     let mut graph = SeleneGraph::new(GraphId::new(1));
     // Row 0: alive, labels {a, b}.
     let mut labels0 = LabelSet::new();
-    labels0.insert(label_a);
-    labels0.insert(label_b);
+    labels0.insert(label_a.clone());
+    labels0.insert(label_b.clone());
     graph.node_store.labels.push(labels0);
     graph.node_store.properties.push(PropertyMap::new());
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
     // Row 1: dead, label {a} — must NOT appear in the rebuilt index.
-    graph.node_store.labels.push(LabelSet::single(label_a));
+    graph
+        .node_store
+        .labels
+        .push(LabelSet::single(label_a.clone()));
     graph.node_store.properties.push(PropertyMap::new());
     // alive bit deliberately not set on row 1.
 
     // Edge row 0: alive, label.
-    let edge_label = intern("idx.edge").unwrap();
-    graph.edge_store.label.push(edge_label);
+    let edge_label = db_string("idx.edge").unwrap();
+    graph.edge_store.label.push(edge_label.clone());
     graph.edge_store.source.push(CoreNodeId::new(1));
     graph.edge_store.target.push(CoreNodeId::new(1));
     graph.edge_store.properties.push(PropertyMap::new());
-    graph.edge_store.alive.insert(0);
+    graph.edge_store.alive_mut().insert(0);
 
     // Caller-supplied indexes are intentionally empty / stale.
     graph.idx_label.clear();
@@ -568,24 +574,24 @@ fn from_graph_rebuilds_label_indexes_from_stores() {
 
 #[test]
 fn from_graph_rebuilds_adjacency_from_edge_store() {
-    use selene_core::{LabelSet, NodeId as CoreNodeId, PropertyMap, intern};
+    use selene_core::{LabelSet, NodeId as CoreNodeId, PropertyMap, db_string};
 
-    let edge_label = intern("idx.edge.adj").unwrap();
+    let edge_label = db_string("idx.edge.adj").unwrap();
     let mut graph = SeleneGraph::new(GraphId::new(1));
     for label in ["adj.node.a", "adj.node.b"] {
         graph
             .node_store
             .labels
-            .push(LabelSet::single(intern(label).unwrap()));
+            .push(LabelSet::single(db_string(label).unwrap()));
         graph.node_store.properties.push(PropertyMap::new());
     }
-    graph.node_store.alive.insert(0);
-    graph.node_store.alive.insert(1);
-    graph.edge_store.label.push(edge_label);
+    graph.node_store.alive_mut().insert(0);
+    graph.node_store.alive_mut().insert(1);
+    graph.edge_store.label.push(edge_label.clone());
     graph.edge_store.source.push(CoreNodeId::new(1));
     graph.edge_store.target.push(CoreNodeId::new(2));
     graph.edge_store.properties.push(PropertyMap::new());
-    graph.edge_store.alive.insert(0);
+    graph.edge_store.alive_mut().insert(0);
     graph.adjacency_out.clear();
     graph.adjacency_in.clear();
 
@@ -604,13 +610,16 @@ fn from_graph_rebuilds_adjacency_from_edge_store() {
 
 #[test]
 fn try_from_graph_returns_ok_for_well_formed_input() {
-    use selene_core::{LabelSet, PropertyMap, intern};
+    use selene_core::{LabelSet, PropertyMap, db_string};
 
-    let label = intern("idx.ok").unwrap();
+    let label = db_string("idx.ok").unwrap();
     let mut graph = SeleneGraph::new(GraphId::new(1));
-    graph.node_store.labels.push(LabelSet::single(label));
+    graph
+        .node_store
+        .labels
+        .push(LabelSet::single(label.clone()));
     graph.node_store.properties.push(PropertyMap::new());
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
 
     let shared =
         SharedGraph::try_from_graph(graph).expect("well-formed graph rebuilds successfully");
@@ -620,20 +629,25 @@ fn try_from_graph_returns_ok_for_well_formed_input() {
 
 #[test]
 fn from_graph_discards_caller_supplied_index_drift() {
-    use selene_core::{LabelSet, PropertyMap, intern};
+    use selene_core::{LabelSet, PropertyMap, db_string};
 
-    let real_label = intern("idx.real").unwrap();
-    let phantom_label = intern("idx.phantom").unwrap();
+    let real_label = db_string("idx.real").unwrap();
+    let phantom_label = db_string("idx.phantom").unwrap();
 
     let mut graph = SeleneGraph::new(GraphId::new(1));
-    graph.node_store.labels.push(LabelSet::single(real_label));
+    graph
+        .node_store
+        .labels
+        .push(LabelSet::single(real_label.clone()));
     graph.node_store.properties.push(PropertyMap::new());
-    graph.node_store.alive.insert(0);
+    graph.node_store.alive_mut().insert(0);
 
     // Caller injects a phantom index entry that doesn't match storage.
     let mut phantom_bitmap = roaring::RoaringBitmap::new();
     phantom_bitmap.insert(99);
-    graph.idx_label.insert(phantom_label, phantom_bitmap);
+    graph
+        .idx_label
+        .insert(phantom_label.clone(), phantom_bitmap);
 
     let shared = SharedGraph::from_graph(graph);
     let snapshot = shared.read();
@@ -664,4 +678,66 @@ fn read_during_write_lock_held_does_not_block() {
         writer.join().unwrap();
         assert!(start.elapsed() < Duration::from_millis(500));
     });
+}
+
+#[test]
+fn pre_commit_snapshot_is_isolated_from_tail_and_alive_cow_mutations() {
+    // B1 end-to-end: the tail columns and alive bitmaps are now Arc-shared
+    // COW state, so a snapshot taken BEFORE a commit must never observe that
+    // commit's creates or deletes — neither in liveness nor in column values.
+    use selene_core::{LabelSet, PropertyMap, db_string};
+
+    let shared = SharedGraph::new(GraphId::new(1));
+    let label = db_string("Iso").unwrap();
+    let (keep, doomed, edge) = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let keep = mutator
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+            .expect("create keep");
+        let doomed = mutator
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+            .expect("create doomed");
+        let edge = mutator
+            .create_edge(
+                db_string("iso.link").unwrap(),
+                keep,
+                doomed,
+                PropertyMap::new(),
+            )
+            .expect("create edge");
+        txn.commit().expect("seed commit");
+        (keep, doomed, edge)
+    };
+
+    let snapshot = shared.read();
+    assert_eq!(snapshot.node_count(), 2);
+    assert_eq!(snapshot.edge_count(), 1);
+
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        mutator.delete_edge(edge).expect("delete edge");
+        mutator.delete_node(doomed).expect("delete doomed");
+        mutator
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+            .expect("create post-snapshot node");
+        txn.commit().expect("mutating commit");
+    }
+
+    // The pre-commit snapshot still sees the original graph...
+    assert_eq!(snapshot.node_count(), 2);
+    assert_eq!(snapshot.edge_count(), 1);
+    assert!(snapshot.is_node_alive(keep));
+    assert!(snapshot.is_node_alive(doomed));
+    assert!(snapshot.live_nodes().contains(1));
+    assert!(snapshot.live_edges().contains(0));
+    assert!(snapshot.node_properties(doomed).is_some());
+
+    // ...while a fresh read sees the post-commit state.
+    let current = shared.read();
+    assert_eq!(current.node_count(), 2); // keep + the new node
+    assert_eq!(current.edge_count(), 0);
+    assert!(current.is_node_alive(keep));
+    assert!(!current.is_node_alive(doomed));
 }

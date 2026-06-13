@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{
-    Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern,
+    Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, db_string,
 };
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
@@ -96,7 +96,7 @@ fn node_ref(table: &BindingTable, column: &str) -> NodeId {
         .schema()
         .columns
         .iter()
-        .position(|col| col.name.is_some_and(|name| name.as_str() == column))
+        .position(|col| col.name.clone().is_some_and(|name| name.as_str() == column))
         .expect("column exists");
     match table.rows()[0].get(index).expect("row value exists") {
         Value::NodeRef(id) => *id,
@@ -119,9 +119,9 @@ fn recover_from_wal_only_via_runtime_mutation_pipeline() {
 
     let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
     let snapshot = recovered.read();
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
-    let name = intern("name").unwrap();
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
+    let name = db_string("name").unwrap();
 
     assert!(matches!(
         outcome.changes.as_slice(),
@@ -133,19 +133,22 @@ fn recover_from_wal_only_via_runtime_mutation_pipeline() {
     ));
     assert_eq!(snapshot.node_count(), 2);
     assert_eq!(snapshot.edge_count(), 1);
-    assert_eq!(snapshot.node_labels(alice), Some(&LabelSet::single(person)));
+    assert_eq!(
+        snapshot.node_labels(alice),
+        Some(&LabelSet::single(person.clone()))
+    );
     assert_eq!(snapshot.node_labels(bob), Some(&LabelSet::single(person)));
     assert_eq!(
         snapshot
             .node_properties(alice)
             .and_then(|props| props.get(&name)),
-        Some(&Value::String(intern("alice").unwrap()))
+        Some(&Value::String(db_string("alice").unwrap()))
     );
     assert_eq!(
         snapshot
             .node_properties(bob)
             .and_then(|props| props.get(&name)),
-        Some(&Value::String(intern("bob").unwrap()))
+        Some(&Value::String(db_string("bob").unwrap()))
     );
     assert_eq!(
         snapshot.edge_label(selene_core::EdgeId::new(1)),

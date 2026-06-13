@@ -8,26 +8,26 @@
 
 use super::*;
 use selene_core::{
-    EdgeId, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, intern,
+    EdgeId, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, db_string,
 };
 
 use crate::store::RowIndex;
 use crate::{GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode};
 
 fn prop(key: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(key).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(key).unwrap(), value)]).unwrap()
 }
 
 /// 5 nodes (ids 1..=5), then delete ids 2 and 4 — leaving 1, 3, 5 alive across
 /// dead rows 1 and 3.
 fn churned_graph() -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("c4c.node").unwrap();
+    let la = db_string("c4c.node").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
         for i in 1..=5 {
-            m.create_node(LabelSet::single(la), prop("n", Value::Int(i)))
+            m.create_node(LabelSet::single(la.clone()), prop("n", Value::Int(i)))
                 .unwrap();
         }
         m.delete_node(NodeId::new(2)).unwrap();
@@ -68,6 +68,36 @@ fn compact_densifies_live_graph_and_reclaims_dead_rows() {
 }
 
 #[test]
+fn compaction_stats_track_delete_pressure_and_dense_rebuild() {
+    let shared = churned_graph();
+
+    let before = shared.compaction_stats();
+    assert_eq!(before.allocated_nodes, 5);
+    assert_eq!(before.live_nodes, 3);
+    assert_eq!(before.reclaimable_nodes, 2);
+    assert_eq!(before.allocated_edges, 0);
+    assert_eq!(before.live_edges, 0);
+    assert_eq!(before.reclaimable_edges, 0);
+    assert_eq!(before.allocated_rows(), 5);
+    assert_eq!(before.live_rows(), 3);
+    assert_eq!(before.reclaimable_rows(), 2);
+    assert!(!before.is_dense());
+
+    let report = shared.compact().unwrap();
+    assert_eq!(report.reclaimed_nodes, before.reclaimable_nodes);
+    assert_eq!(report.reclaimed_edges, before.reclaimable_edges);
+
+    let after = shared.compaction_stats();
+    assert_eq!(after.allocated_nodes, 3);
+    assert_eq!(after.live_nodes, 3);
+    assert_eq!(after.reclaimable_nodes, 0);
+    assert_eq!(after.allocated_rows(), 3);
+    assert_eq!(after.live_rows(), 3);
+    assert_eq!(after.reclaimable_rows(), 0);
+    assert!(after.is_dense());
+}
+
+#[test]
 fn compact_preserves_observable_reads() {
     let shared = churned_graph();
     let before = shared.read();
@@ -96,7 +126,7 @@ fn create_after_compact_appends_without_rebloat() {
         let id = txn
             .mutator()
             .create_node(
-                LabelSet::single(intern("c4c.node").unwrap()),
+                LabelSet::single(db_string("c4c.node").unwrap()),
                 PropertyMap::new(),
             )
             .unwrap();
@@ -119,12 +149,12 @@ fn create_after_compact_appends_without_rebloat() {
 #[test]
 fn compact_on_a_dense_graph_is_a_noop() {
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("c4c.dense").unwrap();
+    let la = db_string("c4c.dense").unwrap();
     {
         let mut txn = shared.begin_write();
         {
             let mut m = txn.mutator();
-            m.create_node(LabelSet::single(la), PropertyMap::new())
+            m.create_node(LabelSet::single(la.clone()), PropertyMap::new())
                 .unwrap();
             m.create_node(LabelSet::single(la), PropertyMap::new())
                 .unwrap();
@@ -146,26 +176,28 @@ fn compact_preserves_edges_and_adjacency() {
     // surviving edges + adjacency rebuild correctly under the renumber (edges key
     // by stable external NodeId, so endpoints survive; adjacency is rebuilt).
     let shared = SharedGraph::new(GraphId::new(1));
-    let la = intern("c4c.n").unwrap();
-    let el = intern("c4c.e").unwrap();
+    let la = db_string("c4c.n").unwrap();
+    let el = db_string("c4c.e").unwrap();
     let (n1, n3, n4) = {
         let mut txn = shared.begin_write();
         let ids = {
             let mut m = txn.mutator();
             let n1 = m
-                .create_node(LabelSet::single(la), PropertyMap::new())
+                .create_node(LabelSet::single(la.clone()), PropertyMap::new())
                 .unwrap();
             let n2 = m
-                .create_node(LabelSet::single(la), PropertyMap::new())
+                .create_node(LabelSet::single(la.clone()), PropertyMap::new())
                 .unwrap();
             let n3 = m
-                .create_node(LabelSet::single(la), PropertyMap::new())
+                .create_node(LabelSet::single(la.clone()), PropertyMap::new())
                 .unwrap();
             let n4 = m
                 .create_node(LabelSet::single(la), PropertyMap::new())
                 .unwrap();
-            m.create_edge(el, n1, n2, PropertyMap::new()).unwrap(); // id 1 — cascade-deleted
-            m.create_edge(el, n3, n4, PropertyMap::new()).unwrap(); // id 2 — survives
+            m.create_edge(el.clone(), n1, n2, PropertyMap::new())
+                .unwrap(); // id 1 — cascade-deleted
+            m.create_edge(el.clone(), n3, n4, PropertyMap::new())
+                .unwrap(); // id 2 — survives
             m.create_edge(el, n1, n4, PropertyMap::new()).unwrap(); // id 3 — survives
             m.delete_node(n2).unwrap(); // cascades edge id 1
             (n1, n3, n4)
@@ -174,8 +206,14 @@ fn compact_preserves_edges_and_adjacency() {
         ids
     };
 
+    let before = shared.compaction_stats();
+    assert_eq!(before.reclaimable_nodes, 1);
+    assert_eq!(before.reclaimable_edges, 1);
+    assert_eq!(before.reclaimable_rows(), 2);
+
     let report = shared.compact().unwrap();
-    assert!(report.reclaimed_nodes >= 1 && report.reclaimed_edges >= 1);
+    assert_eq!(report.reclaimed_nodes, before.reclaimable_nodes);
+    assert_eq!(report.reclaimed_edges, before.reclaimable_edges);
     let g = shared.read();
 
     // Surviving edges resolve to renumbered dense rows with intact endpoints.
@@ -204,18 +242,21 @@ fn compact_preserves_edges_and_adjacency() {
 /// Minimal GG02 closed graph: one `Person` node type with a required `name`.
 fn person_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: intern("c4c.closed").unwrap(),
+        name: db_string("c4c.closed").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: intern("c4c.person").unwrap(),
-            key_labels: LabelSet::single(intern("Person").unwrap()),
+            name: db_string("c4c.person").unwrap(),
+            key_labels: LabelSet::single(db_string("Person").unwrap()),
             properties: vec![PropertyTypeDef {
-                name: intern("name").unwrap(),
+                name: db_string("name").unwrap(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,
-
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
@@ -234,17 +275,22 @@ fn compact_preserves_closed_graph_binding_on_the_live_path() {
         .unwrap()
         .build()
         .unwrap();
-    let person = intern("Person").unwrap();
-    let name = intern("name").unwrap();
-    let mk =
-        |n: &str| PropertyMap::from_pairs([(name, Value::String(intern(n).unwrap()))]).unwrap();
+    let person = db_string("Person").unwrap();
+    let name = db_string("name").unwrap();
+    let mk = |n: &str| {
+        PropertyMap::from_pairs([(name.clone(), Value::String(db_string(n).unwrap()))]).unwrap()
+    };
     {
         let mut txn = shared.begin_write();
         {
             let mut m = txn.mutator();
-            m.create_node(LabelSet::single(person), mk("ann")).unwrap();
-            let bob = m.create_node(LabelSet::single(person), mk("bob")).unwrap();
-            m.create_node(LabelSet::single(person), mk("cy")).unwrap();
+            m.create_node(LabelSet::single(person.clone()), mk("ann"))
+                .unwrap();
+            let bob = m
+                .create_node(LabelSet::single(person.clone()), mk("bob"))
+                .unwrap();
+            m.create_node(LabelSet::single(person.clone()), mk("cy"))
+                .unwrap();
             m.delete_node(bob).unwrap();
         }
         txn.commit().unwrap();
@@ -263,7 +309,8 @@ fn compact_preserves_closed_graph_binding_on_the_live_path() {
         let mut txn = shared.begin_write();
         {
             let mut m = txn.mutator();
-            m.create_node(LabelSet::single(person), mk("dot")).unwrap();
+            m.create_node(LabelSet::single(person.clone()), mk("dot"))
+                .unwrap();
         }
         txn.commit()
             .expect("conforming insert commits post-compact");

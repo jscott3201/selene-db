@@ -196,6 +196,11 @@ impl AuditLog {
     ///
     /// Returns I/O / header-validation errors.
     pub fn read_all(path: &Path) -> PersistResult<Vec<AuditRecord>> {
+        // Streams record-by-record over the file handle rather than slurping the
+        // whole log into memory first: a long-lived log under unbounded retention
+        // can be large, and peak memory should stay at the decoded records plus a
+        // single payload (the slice twin [`Self::decode_all`] is for fuzzing the
+        // decoder on an already-in-memory buffer, not for reading real files).
         let mut file = match OpenOptions::new().read(true).open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -207,6 +212,28 @@ impl AuditLog {
         }
         verify_file_header(&mut file)?;
         read_records(&mut file, file_len)
+    }
+
+    /// Decode every durable record from an in-memory audit-log byte slice,
+    /// oldest first — the pure-slice twin of [`Self::read_all`] used by the
+    /// decoder fuzz target (it feeds bytes directly, no file handle).
+    ///
+    /// Validates the 8-byte file header, then scans records, stopping at the
+    /// durable tail exactly as [`Self::read_all`] / [`Self::open`] would: a
+    /// short, over-cap, or checksum-failed trailing record is treated as a torn
+    /// tail and silently truncated, never surfaced and never a panic. An empty
+    /// slice (an absent or zero-length file) decodes to an empty vector.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::MagicMismatch`] / [`PersistError::UnsupportedVersion`]
+    /// / [`PersistError::ReservedBytesNonZero`] for a corrupt file header.
+    pub fn decode_all(bytes: &[u8]) -> PersistResult<Vec<AuditRecord>> {
+        if bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+        verify_file_header_bytes(bytes)?;
+        read_records_bytes(bytes)
     }
 
     /// Prune the log per `policy`, where `now_unix_nanos` is the reference time
@@ -297,6 +324,15 @@ fn verify_file_header(file: &mut File) -> PersistResult<()> {
     file.seek(SeekFrom::Start(0))?;
     file.read_exact(&mut header)
         .map_err(|_| PersistError::TruncatedFileHeader)?;
+    verify_file_header_bytes(&header)
+}
+
+/// Validate the 8-byte audit file header at the front of `bytes` — the shared
+/// core of [`verify_file_header`] and [`AuditLog::decode_all`].
+fn verify_file_header_bytes(bytes: &[u8]) -> PersistResult<()> {
+    let header = bytes
+        .get(..AUDIT_FILE_HEADER_LEN)
+        .ok_or(PersistError::TruncatedFileHeader)?;
     let observed = [header[0], header[1], header[2], header[3]];
     if observed != AUDIT_MAGIC {
         return Err(PersistError::MagicMismatch { observed });
@@ -345,6 +381,9 @@ fn scan_durable_end(file: &mut File, file_len: u64) -> PersistResult<u64> {
     }
 }
 
+/// Stream every durable record from the file, oldest first, stopping at the
+/// first torn record. Used by [`AuditLog::read_all`] — peak memory is the
+/// decoded records plus the single payload being read, not the whole file.
 fn read_records(file: &mut File, file_len: u64) -> PersistResult<Vec<AuditRecord>> {
     let mut out = Vec::new();
     let mut offset = AUDIT_FILE_HEADER_LEN as u64;
@@ -393,6 +432,65 @@ fn read_one_record(
     if file.read_exact(&mut payload).is_err() {
         return Ok(None);
     }
+    if xxhash_rust::xxh3::xxh3_64(&payload) as u32 != checksum_lo {
+        return Ok(None); // checksum mismatch: torn / corrupt tail
+    }
+    Ok(Some((
+        AuditRecord {
+            recorded_at_unix_nanos,
+            kind,
+            payload,
+        },
+        payload_end,
+    )))
+}
+
+/// Scan every durable record from an in-memory slice (the slice twin of
+/// [`read_records`]), stopping at the first torn record.
+fn read_records_bytes(bytes: &[u8]) -> PersistResult<Vec<AuditRecord>> {
+    let mut out = Vec::new();
+    let mut offset = AUDIT_FILE_HEADER_LEN;
+    while let Some((record, next)) = read_one_record_bytes(bytes, offset)? {
+        out.push(record);
+        offset = next;
+    }
+    Ok(out)
+}
+
+/// Read the record at `offset` within `bytes` (the slice twin of
+/// [`read_one_record`], indexing the slice in place of `seek` + `read_exact`).
+///
+/// Returns `Ok(Some((record, next_offset)))` for a good record, or `Ok(None)` at
+/// a clean end or the first torn record (short read, over-cap length, or
+/// checksum mismatch) — every bound is checked against `bytes.len()` before the
+/// slice is taken, so the invariant "arbitrary bytes never panic" holds.
+fn read_one_record_bytes(
+    bytes: &[u8],
+    offset: usize,
+) -> PersistResult<Option<(AuditRecord, usize)>> {
+    let file_len = bytes.len();
+    if offset >= file_len {
+        return Ok(None);
+    }
+    if file_len - offset < AUDIT_RECORD_HEADER_LEN {
+        return Ok(None); // torn header
+    }
+    let header = &bytes[offset..offset + AUDIT_RECORD_HEADER_LEN];
+    let recorded_at_unix_nanos = u64::from_le_bytes(header[0..8].try_into().expect("8 bytes"));
+    let kind = u16::from_le_bytes([header[8], header[9]]);
+    // header[10..12) reserved — tolerated on read (forward-compat).
+    let payload_len = u32::from_le_bytes(header[12..16].try_into().expect("4 bytes")) as usize;
+    let checksum_lo = u32::from_le_bytes(header[16..20].try_into().expect("4 bytes"));
+
+    if payload_len > MAX_AUDIT_PAYLOAD_BYTES {
+        return Ok(None); // garbage length: treat as torn tail
+    }
+    let payload_start = offset + AUDIT_RECORD_HEADER_LEN;
+    let payload_end = match payload_start.checked_add(payload_len) {
+        Some(end) if end <= file_len => end,
+        _ => return Ok(None), // torn payload (or arithmetic overflow)
+    };
+    let payload = bytes[payload_start..payload_end].to_vec();
     if xxhash_rust::xxh3::xxh3_64(&payload) as u32 != checksum_lo {
         return Ok(None); // checksum mismatch: torn / corrupt tail
     }

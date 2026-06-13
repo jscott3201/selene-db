@@ -4,7 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Value;
+use crate::{DurationTypeQualifier, Value};
 
 /// Closed-graph property value type tags.
 ///
@@ -49,7 +49,7 @@ pub enum PropertyValueType {
     Float32,
     /// Fixed-precision decimal value.
     Decimal,
-    /// Interned string value.
+    /// Database-string value.
     String,
     /// Byte-string value.
     Bytes,
@@ -81,10 +81,18 @@ pub enum PropertyValueType {
     LocalTime,
     /// Duration value.
     Duration,
+    /// Year-month duration value.
+    DurationYearToMonth,
+    /// Day-time duration value.
+    DurationDayToSecond,
     /// Null value.
     Null,
     /// UUID value.
     Uuid,
+    /// Native dense vector value.
+    Vector,
+    /// Native JSON value.
+    Json,
 }
 
 impl PropertyValueType {
@@ -104,7 +112,6 @@ impl PropertyValueType {
             Value::Float32(_) => Some(Self::Float32),
             Value::Decimal(_) => Some(Self::Decimal),
             Value::String(_) => Some(Self::String),
-            Value::ExternalString(_) => Some(Self::String),
             Value::Bytes(_) => Some(Self::Bytes),
             Value::List(_) => Some(Self::List),
             Value::Record(_) => Some(Self::Record),
@@ -123,13 +130,23 @@ impl PropertyValueType {
             Value::Extended { .. } => None,
             Value::Null => Some(Self::Null),
             Value::Uuid(_) => Some(Self::Uuid),
+            Value::Vector(_) => Some(Self::Vector),
+            Value::Json(_) => Some(Self::Json),
         }
     }
 
     /// Return true when `value` belongs to this type.
     #[must_use]
     pub fn matches(self, value: &Value) -> bool {
-        Self::of(value) == Some(self)
+        match (self, value) {
+            (Self::DurationYearToMonth, Value::Duration(value)) => {
+                DurationTypeQualifier::YearToMonth.matches_span(value)
+            }
+            (Self::DurationDayToSecond, Value::Duration(value)) => {
+                DurationTypeQualifier::DayToSecond.matches_span(value)
+            }
+            _ => Self::of(value) == Some(self),
+        }
     }
 
     /// Stable diagnostic name for an observed value.
@@ -169,8 +186,12 @@ impl PropertyValueType {
             Self::ZonedTime => "ZonedTime",
             Self::LocalTime => "LocalTime",
             Self::Duration => "Duration",
+            Self::DurationYearToMonth => "DurationYearToMonth",
+            Self::DurationDayToSecond => "DurationDayToSecond",
             Self::Null => "Null",
             Self::Uuid => "Uuid",
+            Self::Vector => "Vector",
+            Self::Json => "Json",
         }
     }
 }
@@ -189,8 +210,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        BindingTableId, EdgeDirection, EdgeId, ExtensionTypeId, GraphId, NodeId, Path, PathSegment,
-        Record, RecordTypeId, RecordTyped, intern,
+        BindingTableId, EdgeDirection, EdgeId, ExtensionTypeId, GraphId, JsonValue, NodeId, Path,
+        PathSegment, Record, RecordTypeId, RecordTyped, VectorValue, db_string,
     };
 
     fn sample_values() -> Vec<(PropertyValueType, Value)> {
@@ -208,11 +229,7 @@ mod tests {
             ),
             (
                 PropertyValueType::String,
-                Value::String(intern("property-value-type.string").unwrap()),
-            ),
-            (
-                PropertyValueType::String,
-                Value::ExternalString(Arc::from("property-value-type.external-string")),
+                Value::String(db_string("property-value-type.string").unwrap()),
             ),
             (
                 PropertyValueType::Bytes,
@@ -222,7 +239,7 @@ mod tests {
             (
                 PropertyValueType::Record,
                 Value::Record(Box::new(Record::Open(smallvec![(
-                    intern("property-value-type.field").unwrap(),
+                    db_string("property-value-type.field").unwrap(),
                     Value::Bool(true),
                 )]))),
             ),
@@ -235,7 +252,7 @@ mod tests {
             ),
             (
                 PropertyValueType::Path,
-                Value::Path(Path {
+                Value::Path(Box::new(Path {
                     graph: GraphId::new(1),
                     start: NodeId::new(1),
                     segments: smallvec![PathSegment {
@@ -243,7 +260,7 @@ mod tests {
                         direction: EdgeDirection::Outgoing,
                         node: NodeId::new(2),
                     }],
-                }),
+                })),
             ),
             (PropertyValueType::NodeRef, Value::NodeRef(NodeId::new(1))),
             (PropertyValueType::EdgeRef, Value::EdgeRef(EdgeId::new(1))),
@@ -257,11 +274,11 @@ mod tests {
             ),
             (
                 PropertyValueType::ZonedDateTime,
-                Value::ZonedDateTime(
+                Value::ZonedDateTime(Box::new(
                     "2026-05-07T12:34:56-04:00[America/New_York]"
                         .parse()
                         .unwrap(),
-                ),
+                )),
             ),
             (
                 PropertyValueType::LocalDateTime,
@@ -273,11 +290,11 @@ mod tests {
             ),
             (
                 PropertyValueType::ZonedTime,
-                Value::ZonedTime(
+                Value::ZonedTime(Box::new(
                     "2026-05-07T12:34:56-04:00[America/New_York]"
                         .parse()
                         .unwrap(),
-                ),
+                )),
             ),
             (
                 PropertyValueType::LocalTime,
@@ -285,12 +302,20 @@ mod tests {
             ),
             (
                 PropertyValueType::Duration,
-                Value::Duration("PT1H2S".parse().unwrap()),
+                Value::Duration(Box::new("PT1H2S".parse().unwrap())),
             ),
             (PropertyValueType::Null, Value::Null),
             (
                 PropertyValueType::Uuid,
                 Value::Uuid(uuid::Uuid::from_u128(42)),
+            ),
+            (
+                PropertyValueType::Vector,
+                Value::Vector(VectorValue::new(vec![1.0, 2.0, 3.0]).unwrap()),
+            ),
+            (
+                PropertyValueType::Json,
+                Value::Json(JsonValue::new(serde_json::json!({"kind": "sample"})).unwrap()),
             ),
         ]
     }
@@ -301,6 +326,20 @@ mod tests {
             assert_eq!(PropertyValueType::of(&value), Some(expected));
             assert!(expected.matches(&value));
         }
+    }
+
+    #[test]
+    fn qualified_duration_types_match_field_families() {
+        let year_month = Value::Duration(Box::new("P1Y2M".parse().unwrap()));
+        let day_time = Value::Duration(Box::new("P3DT4H".parse().unwrap()));
+        let zero = Value::Duration(Box::new("PT0S".parse().unwrap()));
+
+        assert!(PropertyValueType::DurationYearToMonth.matches(&year_month));
+        assert!(!PropertyValueType::DurationYearToMonth.matches(&day_time));
+        assert!(PropertyValueType::DurationYearToMonth.matches(&zero));
+        assert!(PropertyValueType::DurationDayToSecond.matches(&day_time));
+        assert!(!PropertyValueType::DurationDayToSecond.matches(&year_month));
+        assert!(PropertyValueType::DurationDayToSecond.matches(&zero));
     }
 
     #[test]

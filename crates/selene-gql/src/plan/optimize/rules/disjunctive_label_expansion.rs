@@ -29,7 +29,7 @@
 //!   expansion is pure overhead (N linear scans vs a single linear scan
 //!   with post-filter), so the rule stays Linear in that case.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     LabelExpr,
@@ -82,7 +82,8 @@ fn rewrite_tree(tree: &mut JoinTree, bindings: &[BindingDef], catalog: &dyn Inde
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
         | JoinTree::PathSearch { child, .. }
-        | JoinTree::PathModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
@@ -147,7 +148,7 @@ fn maybe_expand_scan(
         .iter()
         .map(|label| {
             let mut clone = original.clone();
-            clone.label_predicate = Some(LabelExpr::Single(*label));
+            clone.label_predicate = Some(LabelExpr::Single(label.clone()));
             clone
         })
         .collect();
@@ -168,15 +169,15 @@ fn maybe_expand_scan(
 /// case = 13 probes per cache-miss; amortized via the source-text plan
 /// cache (BRIEF-114).
 fn any_branch_has_applicable_index(
-    labels: &[IStr],
+    labels: &[DbString],
     predicates: &[FilterPredicate],
     bindings: &[BindingDef],
     catalog: &dyn IndexCatalog,
 ) -> bool {
     let eq_candidates = equality_candidates(predicates, bindings);
-    let eq_keys: Vec<IStr> = eq_candidates
+    let eq_keys: Vec<DbString> = eq_candidates
         .iter()
-        .map(|candidate| candidate.key)
+        .map(|candidate| candidate.key.clone())
         .collect();
     labels.iter().any(|label| {
         // Single-property typed index — covers equality, comparison,
@@ -189,7 +190,7 @@ fn any_branch_has_applicable_index(
                 continue;
             };
             if catalog
-                .typed_index(IndexTarget::Node, *label, matched.key)
+                .typed_index(IndexTarget::Node, label.clone(), matched.key)
                 .is_some()
             {
                 return true;
@@ -198,7 +199,7 @@ fn any_branch_has_applicable_index(
         // Composite index — needs ≥ 2 equality candidates.
         if eq_keys.len() >= 2
             && catalog
-                .composite_index(IndexTarget::Node, *label, &eq_keys)
+                .composite_index(IndexTarget::Node, label.clone(), &eq_keys)
                 .is_some()
         {
             return true;
@@ -208,7 +209,4 @@ fn any_branch_has_applicable_index(
 }
 
 // Helper unit tests (`flat_disjunction_singles` shape coverage) live in
-// `tests/optimize_disjunctive_label_expansion.rs` rather than inline here,
-// because the `dos_guard::no_unbudgeted_intern_call_in_selene_gql` test
-// scans for direct interner calls (a textual grep) anywhere under
-// `crates/selene-gql/src/`, including `#[cfg(test)]` blocks.
+// `tests/optimize_disjunctive_label_expansion.rs` rather than inline here.

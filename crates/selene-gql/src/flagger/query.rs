@@ -119,12 +119,13 @@ pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<F
 
 fn limit_value(value: &LimitValue, uses: &mut Vec<FeatureUse>) {
     if let LimitValue::Parameter {
-        declared_type: Some(_),
+        declared_type: Some(ty),
         span,
         ..
     } = value
     {
         record_feature(uses, FeatureId::IM_TYPED_PARAMS, *span);
+        expr::gql_type(ty, *span, uses);
     }
 }
 
@@ -171,6 +172,12 @@ pub(crate) fn match_clause(clause: &MatchClause, uses: &mut Vec<FeatureUse>) {
     if clause.path_mode_explicit && clause.path_mode == PathMode::Walk {
         record_feature(uses, FeatureId::G010, clause.span);
     }
+    // ISO §16.6 <path or paths> (Annex A §16.6 CR5): the explicit PATH/PATHS
+    // keyword is Feature G014. Record it IFF the keyword was written; absent it
+    // is never stamped. Pure surface sugar (§1.2.4) — no runtime effect.
+    if clause.path_or_paths {
+        record_feature(uses, FeatureId::G014, clause.span);
+    }
     match clause.path_mode {
         PathMode::Walk => {}
         PathMode::Trail => record_feature(uses, FeatureId::G011, clause.span),
@@ -183,9 +190,16 @@ pub(crate) fn match_clause(clause: &MatchClause, uses: &mut Vec<FeatureUse>) {
             PathSelector::Any => record_feature(uses, FeatureId::G016, clause.span),
             PathSelector::AllShortest => record_feature(uses, FeatureId::G017, clause.span),
             PathSelector::AnyShortest => record_feature(uses, FeatureId::G018, clause.span),
+            // Per ISO 39075:2024 §16.6 CR10/11: SHORTEST N PATHS is the counted
+            // shortest path search (G019); SHORTEST [N] GROUP[S] is the counted
+            // shortest group search (G020).
+            PathSelector::CountedShortest { .. } => {
+                record_feature(uses, FeatureId::G019, clause.span)
+            }
+            PathSelector::CountedShortestGroup { .. } => {
+                record_feature(uses, FeatureId::G020, clause.span)
+            }
         }
-        // G019/G020 require counted shortest selectors; the current AST has no
-        // reachable variant for those forms, so the Flagger cannot emit them yet.
     }
     for pattern in &clause.patterns {
         graph_pattern(pattern, uses);

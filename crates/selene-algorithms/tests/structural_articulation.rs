@@ -3,11 +3,11 @@
 
 use proptest::prelude::*;
 use selene_algorithms::{GraphProjection, ProjectionConfig, articulation_points, bridges};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -27,20 +27,20 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
 
 fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         nodes.push(id);
     }
     for &(s, t) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();
@@ -204,14 +204,14 @@ proptest! {
         edge_count in 0usize..24usize,
     ) {
         let shared = SharedGraph::new(GraphId::new(1));
-        let label = istr("N");
-        let rel = istr("R");
+        let label = db_string("N");
+        let rel = db_string("R");
         let mut txn = shared.begin_write();
         let mut nodes = Vec::with_capacity(8);
         for _ in 0..8 {
             let id = txn
                 .mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap();
             nodes.push(id);
         }
@@ -223,7 +223,7 @@ proptest! {
             let s = (state % 8) as usize;
             let t = ((state >> 8) % 8) as usize;
             txn.mutator()
-                .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+                .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
                 .unwrap();
         }
         txn.commit().unwrap();

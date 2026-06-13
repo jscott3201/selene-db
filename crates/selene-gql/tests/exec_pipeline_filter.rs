@@ -2,7 +2,7 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, execute_pattern, istr, node_ids_for, planned, props};
+use exec_common::{ExecFixture, db_string, execute_pattern, node_ids_for, planned, props};
 use selene_core::{LabelSet, Value};
 use selene_gql::{ExecutorError, PipelineOp, ValueExpr, execute_pipeline};
 
@@ -53,19 +53,19 @@ fn filter_drops_rows_where_expr_is_null() {
 #[test]
 fn where_date_a_lt_date_b_filters_rows() {
     let fixture = ExecFixture::build();
-    let event = istr("Event");
-    let date_a = istr("date_a");
-    let date_b = istr("date_b");
+    let event = db_string("Event");
+    let date_a = db_string("date_a");
+    let date_b = db_string("date_b");
     let matching;
     {
         let mut txn = fixture.graph.begin_write();
         let mut mutator = txn.mutator();
         matching = mutator
             .create_node(
-                LabelSet::single(event),
+                LabelSet::single(event.clone()),
                 props([
-                    (date_a, Value::Date("2024-01-01".parse().unwrap())),
-                    (date_b, Value::Date("2024-01-02".parse().unwrap())),
+                    (date_a.clone(), Value::Date("2024-01-01".parse().unwrap())),
+                    (date_b.clone(), Value::Date("2024-01-02".parse().unwrap())),
                 ]),
             )
             .expect("matching event inserts");
@@ -93,14 +93,17 @@ fn where_date_a_lt_date_b_filters_rows() {
 #[test]
 fn where_uint_plus_one_gt_int_works() {
     let fixture = ExecFixture::build();
-    let metric = istr("Metric");
-    let u = istr("u");
+    let metric = db_string("Metric");
+    let u = db_string("u");
     let matching;
     {
         let mut txn = fixture.graph.begin_write();
         let mut mutator = txn.mutator();
         matching = mutator
-            .create_node(LabelSet::single(metric), props([(u, Value::Uint(10))]))
+            .create_node(
+                LabelSet::single(metric.clone()),
+                props([(u.clone(), Value::Uint(10))]),
+            )
             .expect("matching metric inserts");
         mutator
             .create_node(LabelSet::single(metric), props([(u, Value::Uint(9))]))
@@ -129,7 +132,7 @@ fn filter_drops_rows_where_expr_is_non_bool() {
         panic!("expected filter");
     };
     predicate.expr = ValueExpr::Literal(selene_gql::Literal::String(
-        exec_common::istr("not boolean"),
+        exec_common::db_string("not boolean"),
         predicate.span,
     ));
 

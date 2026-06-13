@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GL03
+// expects: parse-ok
+RETURN 0b1010 AS value

@@ -37,8 +37,8 @@ fn decode_nodes_rejects_duplicate_committed_id() {
         graph.node_store.properties.push(PropertyMap::new());
         graph.node_store.row_to_id.push(NodeId::new(5)); // DUPLICATE id
     }
-    graph.node_store.alive.insert(0);
-    graph.node_store.alive.insert(1);
+    graph.node_store.alive_mut().insert(0);
+    graph.node_store.alive_mut().insert(1);
 
     let bytes = encode_nodes(&graph).unwrap();
     let err = decode_nodes(&bytes)
@@ -55,16 +55,16 @@ fn decode_edges_rejects_duplicate_committed_id() {
     // EdgeId (5). Faithfully encoded by `encode_edges`, bytecheck-valid, so only
     // the `validate_ids_unique` call wired into `decode_edges` rejects it.
     let mut graph = SeleneGraph::new(GraphId::new(2_001));
-    let label = intern("dup.edge").unwrap();
+    let label = db_string("dup.edge").unwrap();
     for _ in 0..2 {
-        graph.edge_store.label.push(label);
+        graph.edge_store.label.push(label.clone());
         graph.edge_store.source.push(NodeId::new(1));
         graph.edge_store.target.push(NodeId::new(2));
         graph.edge_store.properties.push(PropertyMap::new());
         graph.edge_store.row_to_id.push(EdgeId::new(5)); // DUPLICATE id
     }
-    graph.edge_store.alive.insert(0);
-    graph.edge_store.alive.insert(1);
+    graph.edge_store.alive_mut().insert(0);
+    graph.edge_store.alive_mut().insert(1);
 
     let bytes = encode_edges(&graph).unwrap();
     let err = decode_edges(&bytes)
@@ -157,19 +157,23 @@ fn bytecheck_rejects_corrupted_gtyp_rkyv_body() {
     // garbled GraphTypeDef. Pairs with `gtyp::decode_rejects_unknown_or_empty_version`
     // (which covers the version byte) to give CORE/GTYP the same truncate/flip
     // coverage CORE/NODE already had.
-    let person = intern("CorruptGtypPerson").unwrap();
+    let person = db_string("CorruptGtypPerson").unwrap();
     let graph_type = GraphTypeDef {
-        name: intern("corrupt.gtyp.graph").unwrap(),
+        name: db_string("corrupt.gtyp.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: vec![PropertyTypeDef {
-                name: intern("serial").unwrap(),
+                name: db_string("serial").unwrap(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: false,
                 default: None,
                 immutable: false,
+                unique: false,
+                decimal_type: None,
+                character_string_type: None,
+                byte_string_type: None,
                 record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,

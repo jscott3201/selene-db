@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: G020
+// expects: parse-ok
+MATCH SHORTEST 2 GROUPS (a:Person)-[:KNOWS]->(b:Person) RETURN b

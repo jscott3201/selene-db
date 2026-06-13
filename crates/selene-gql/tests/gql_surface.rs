@@ -5,7 +5,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, CatalogOp, EmptyProcedureRegistry, PipelineOp,
     ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
@@ -14,8 +14,8 @@ use selene_gql::{
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -44,15 +44,42 @@ fn execute_rows(
 
 fn column_strings(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
         .iter()
         .map(|row| match row.values().get(index) {
             Some(Value::String(value)) => value.as_str().to_owned(),
-            Some(Value::ExternalString(value)) => value.as_ref().to_owned(),
             other => panic!("expected string in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
+fn column_uints(table: &BindingTable, name: &str) -> Vec<u64> {
+    let index = table
+        .column_index(db_string(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::Uint(value)) => *value,
+            other => panic!("expected uint in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
+fn column_bools(table: &BindingTable, name: &str) -> Vec<bool> {
+    let index = table
+        .column_index(db_string(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::Bool(value)) => *value,
+            other => panic!("expected bool in {name}, got {other:?}"),
         })
         .collect()
 }
@@ -61,8 +88,34 @@ fn full_registry() -> BuiltinProcedureRegistry {
     BuiltinProcedureRegistry::new()
 }
 
+fn create_deleted_row_pressure(graph: &SharedGraph) {
+    let label = db_string("CompactionSurfaceNode");
+    let edge = db_string("COMPACTION_SURFACE_EDGE");
+    let mut txn = graph.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let a = mutator
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+            .expect("create a");
+        let b = mutator
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+            .expect("create b");
+        let c = mutator
+            .create_node(LabelSet::single(label), PropertyMap::new())
+            .expect("create c");
+        mutator
+            .create_edge(edge.clone(), a, b, PropertyMap::new())
+            .expect("create edge a->b");
+        mutator
+            .create_edge(edge, b, c, PropertyMap::new())
+            .expect("create edge b->c");
+        mutator.delete_node(b).expect("delete middle node");
+    }
+    txn.commit().expect("deleted-row fixture commits");
+}
+
 #[test]
-fn show_indexes_lists_property_indexes_only() {
+fn show_indexes_lists_registered_indexes() {
     let graph = graph(118_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -92,10 +145,120 @@ fn show_procedures_lists_default_registry() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = column_strings(&table, "name");
 
-    assert_eq!(table.row_count(), 24);
+    assert_eq!(table.row_count(), 65);
+    assert!(names.contains(&"selene.compaction_stats".to_owned()));
     assert!(names.contains(&"selene.feature_status".to_owned()));
     assert!(names.contains(&"selene.verify".to_owned()));
+    assert!(names.contains(&"selene.vector_search_nodes".to_owned()));
+    assert!(names.contains(&"selene.vector_search_nodes_batch".to_owned()));
+    assert!(names.contains(&"selene.vector_score_nodes".to_owned()));
+    assert!(names.contains(&"selene.vector_score_nodes_batch".to_owned()));
+    assert!(names.contains(&"selene.text_search_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_contains_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_path_exists_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_path_contains_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_path_value_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_contains_candidate_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_path_exists_candidate_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_path_contains_candidate_nodes".to_owned()));
+    assert!(names.contains(&"selene.json_path_value_candidate_nodes".to_owned()));
+    assert!(names.contains(&"selene.text_score_nodes".to_owned()));
+    assert!(names.contains(&"selene.text_score_nodes_batch".to_owned()));
+    assert!(names.contains(&"selene.text_score_candidate_state_expanded_batch".to_owned()));
+    assert!(names.contains(&"selene.reciprocal_rank_fusion".to_owned()));
+    assert!(names.contains(&"selene.vector_score_neighbors".to_owned()));
+    assert!(names.contains(&"selene.vector_score_neighbors_batch".to_owned()));
+    assert!(names.contains(&"selene.vector_score_expanded_candidates".to_owned()));
+    assert!(names.contains(&"selene.vector_score_expanded_candidates_batch".to_owned()));
+    assert!(names.contains(&"selene.vector_search_nodes_ann".to_owned()));
+    assert!(names.contains(&"selene.vector_search_nodes_ann_batch".to_owned()));
+    assert!(names.contains(&"selene.vector_search_expanded_candidates_ann".to_owned()));
+    assert!(names.contains(&"selene.vector_search_candidate_state_expanded_ann".to_owned()));
+    assert!(names.contains(&"selene.vector_search_expanded_candidates_ann_batch".to_owned()));
+    assert!(names.contains(&"selene.vector_score_candidate_state".to_owned()));
+    assert!(names.contains(&"selene.vector_score_candidate_state_nodes".to_owned()));
+    assert!(names.contains(&"selene.vector_score_candidate_state_expanded".to_owned()));
+    assert!(names.contains(&"selene.vector_score_candidate_state_expanded_batch".to_owned()));
+    assert!(names.contains(&"selene.vector_candidate_states".to_owned()));
+    assert!(names.contains(&"selene.vector_index_stats".to_owned()));
+    assert!(names.contains(&"selene.text_index_stats".to_owned()));
+    assert!(names.contains(&"selene.rebuild_vector_indexes".to_owned()));
+    assert!(names.contains(&"selene.rebuild_recommended_vector_indexes".to_owned()));
+    assert!(names.contains(&"selene.compact".to_owned()));
+    assert!(names.contains(&"selene.create_vector_index".to_owned()));
+    assert!(names.contains(&"selene.drop_vector_index".to_owned()));
+    assert!(names.contains(&"selene.create_text_index".to_owned()));
+    assert!(names.contains(&"selene.drop_text_index".to_owned()));
     assert!(names.contains(&"algo.pagerank".to_owned()));
+}
+
+#[test]
+fn compaction_procedures_execute_through_call_surface() {
+    let graph = graph(118_007);
+    create_deleted_row_pressure(&graph);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    let before = execute_rows(
+        &mut session,
+        "CALL selene.compaction_stats() \
+         YIELD reclaimable_rows, reclaimable_row_basis_points, \
+               compaction_recommended, dense",
+        &registry,
+    );
+    assert_eq!(column_uints(&before, "reclaimable_rows"), vec![3]);
+    assert_eq!(
+        column_uints(&before, "reclaimable_row_basis_points"),
+        vec![6_000]
+    );
+    assert_eq!(column_bools(&before, "compaction_recommended"), vec![false]);
+    assert_eq!(column_bools(&before, "dense"), vec![false]);
+
+    let compact = execute_rows(
+        &mut session,
+        "CALL selene.compact() \
+         YIELD before_reclaimable_rows, before_reclaimable_row_basis_points, \
+               before_compaction_recommended, reclaimed_nodes, reclaimed_edges, \
+               after_reclaimable_rows, after_reclaimable_row_basis_points, \
+               after_compaction_recommended, after_dense",
+        &registry,
+    );
+    assert_eq!(column_uints(&compact, "before_reclaimable_rows"), vec![3]);
+    assert_eq!(
+        column_uints(&compact, "before_reclaimable_row_basis_points"),
+        vec![6_000]
+    );
+    assert_eq!(
+        column_bools(&compact, "before_compaction_recommended"),
+        vec![false]
+    );
+    assert_eq!(column_uints(&compact, "reclaimed_nodes"), vec![1]);
+    assert_eq!(column_uints(&compact, "reclaimed_edges"), vec![2]);
+    assert_eq!(column_uints(&compact, "after_reclaimable_rows"), vec![0]);
+    assert_eq!(
+        column_uints(&compact, "after_reclaimable_row_basis_points"),
+        vec![0]
+    );
+    assert_eq!(
+        column_bools(&compact, "after_compaction_recommended"),
+        vec![false]
+    );
+    assert_eq!(column_bools(&compact, "after_dense"), vec![true]);
+
+    let after = execute_rows(
+        &mut session,
+        "CALL selene.compaction_stats() \
+         YIELD reclaimable_rows, reclaimable_row_basis_points, \
+               compaction_recommended, dense",
+        &registry,
+    );
+    assert_eq!(column_uints(&after, "reclaimable_rows"), vec![0]);
+    assert_eq!(
+        column_uints(&after, "reclaimable_row_basis_points"),
+        vec![0]
+    );
+    assert_eq!(column_bools(&after, "compaction_recommended"), vec![false]);
+    assert_eq!(column_bools(&after, "dense"), vec![true]);
 }
 
 #[test]
@@ -196,8 +359,8 @@ struct CountingRegistry {
 }
 
 impl ProcedureRegistry for CountingRegistry {
-    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
-        (name == [istr("test"), istr("bump")]).then(|| {
+    fn lookup(&self, name: &[DbString]) -> Option<ProcedureMetadata> {
+        (name == [db_string("test"), db_string("bump")]).then(|| {
             ProcedureMetadata::new(
                 ProcedureHandle::new(1),
                 ProcedureSignature::default(),

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::cmp::Ordering;
 
 use rust_decimal::prelude::ToPrimitive;
 use selene_core::Value;
@@ -11,15 +11,26 @@ use crate::{
     },
 };
 
+use super::{
+    boolean_ops,
+    concat_ops::{ConcatCaps, eval_concat},
+};
+
+pub(super) use super::diagnostics::{
+    data_exception, data_exception_value, data_exception_value_with, data_exception_with,
+    string_value,
+};
+
 pub(super) fn eval_binary(
     op: BinaryOp,
     lhs: Value,
     rhs: Value,
     span: SourceSpan,
+    concat_caps: ConcatCaps,
 ) -> Result<Value, ExecutorError> {
     match op {
-        BinaryOp::And => eval_and(lhs, rhs, span),
-        BinaryOp::Or => eval_or(lhs, rhs, span),
+        BinaryOp::And => boolean_ops::eval_and(lhs, rhs, span),
+        BinaryOp::Or => boolean_ops::eval_or(lhs, rhs, span),
         BinaryOp::Eq | BinaryOp::Ne => eval_equality(op, &lhs, &rhs),
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             eval_ordering(op, lhs, rhs, span)
@@ -28,8 +39,8 @@ pub(super) fn eval_binary(
             eval_arithmetic(op, lhs, rhs, span)
         }
         BinaryOp::Power => eval_power(lhs, rhs, span),
-        BinaryOp::Xor => eval_xor(lhs, rhs, span),
-        BinaryOp::Concat => eval_concat(lhs, rhs, span),
+        BinaryOp::Xor => boolean_ops::eval_xor(lhs, rhs, span),
+        BinaryOp::Concat => eval_concat(lhs, rhs, span, concat_caps),
         BinaryOp::Contains => eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.contains(rhs)),
         BinaryOp::StartsWith => {
             eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.starts_with(rhs))
@@ -75,6 +86,7 @@ pub(super) fn eval_unary(
             Value::Float(value) => Ok(Value::Float(-value)),
             Value::Float32(value) => Ok(Value::Float32(-value)),
             Value::Decimal(value) => Ok(Value::Decimal(-value)),
+            Value::Duration(value) => Ok(Value::Duration(Box::new((*value).negate()))),
             Value::Null => Ok(Value::Null),
             _ => data_exception("unary minus operand is not numeric", span),
         },
@@ -87,37 +99,6 @@ fn negate_overflow(span: SourceSpan) -> ExecutorError {
         "negation overflow: result is out of the signed integer range",
         span,
     )
-}
-
-fn eval_and(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match (truth(lhs, span)?, truth(rhs, span)?) {
-        (Some(false), _) | (_, Some(false)) => Ok(Value::Bool(false)),
-        (Some(true), Some(true)) => Ok(Value::Bool(true)),
-        _ => Ok(Value::Null),
-    }
-}
-
-fn eval_or(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match (truth(lhs, span)?, truth(rhs, span)?) {
-        (Some(true), _) | (_, Some(true)) => Ok(Value::Bool(true)),
-        (Some(false), Some(false)) => Ok(Value::Bool(false)),
-        _ => Ok(Value::Null),
-    }
-}
-
-fn truth(value: Value, span: SourceSpan) -> Result<Option<bool>, ExecutorError> {
-    match value {
-        Value::Bool(value) => Ok(Some(value)),
-        Value::Null => Ok(None),
-        _ => data_exception("boolean operator operand is not boolean", span),
-    }
-}
-
-fn eval_xor(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    match (truth(lhs, span)?, truth(rhs, span)?) {
-        (Some(lhs), Some(rhs)) => Ok(Value::Bool(lhs ^ rhs)),
-        _ => Ok(Value::Null),
-    }
 }
 
 pub(super) fn eval_equality(
@@ -173,6 +154,27 @@ fn eval_arithmetic(
         return Ok(Value::Null);
     }
     match (lhs, rhs) {
+        (Value::Duration(lhs), Value::Duration(rhs)) => {
+            super::duration_ops::eval_arithmetic(op, *lhs, *rhs, span)
+        }
+        (Value::Duration(duration), instant) if op == BinaryOp::Add => {
+            super::temporal_ops::eval_duration_plus_temporal(*duration, instant, span)
+        }
+        (instant, Value::Duration(duration)) if matches!(op, BinaryOp::Add | BinaryOp::Sub) => {
+            super::temporal_ops::eval_temporal_duration(op, instant, *duration, span)
+        }
+        (Value::Duration(lhs), rhs) if matches!(op, BinaryOp::Mul | BinaryOp::Div) => {
+            let Some(coefficient) = numeric_to_f64(&rhs) else {
+                return data_exception("duration scaling coefficient is not numeric", span);
+            };
+            super::duration_ops::eval_scaling(op, *lhs, coefficient, span)
+        }
+        (lhs, Value::Duration(rhs)) if op == BinaryOp::Mul => {
+            let Some(coefficient) = numeric_to_f64(&lhs) else {
+                return data_exception("duration scaling coefficient is not numeric", span);
+            };
+            super::duration_ops::eval_scaling(op, *rhs, coefficient, span)
+        }
         (Value::Int(lhs), Value::Int(rhs)) => eval_int_arithmetic(op, lhs, rhs, span),
         (Value::Uint(lhs), Value::Uint(rhs)) => eval_uint_arithmetic(op, lhs, rhs, span),
         (Value::Int128(lhs), Value::Int128(rhs)) => eval_i128_arithmetic(op, lhs, rhs, span),
@@ -279,31 +281,17 @@ fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Executo
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
-    if let (Value::Int(lhs), Value::Int(rhs)) = (&lhs, &rhs)
-        && *rhs >= 0
-    {
-        let exponent = u32::try_from(*rhs).map_err(|_| {
-            data_exception_value_with(
-                DataExceptionSubclass::NumericValueOutOfRange,
-                "integer exponent is negative or too large",
-                span,
-            )
-        })?;
-        return lhs.checked_pow(exponent).map(Value::Int).ok_or_else(|| {
-            data_exception_value_with(
-                DataExceptionSubclass::NumericValueOutOfRange,
-                "integer exponentiation overflow",
-                span,
-            )
-        });
-    }
     let (Some(lhs), Some(rhs)) = (numeric_to_f64(&lhs), numeric_to_f64(&rhs)) else {
         return data_exception("power operands are not numeric", span);
     };
     eval_float_power(lhs, rhs, span)
 }
 
-fn eval_float_power(lhs: f64, rhs: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
+pub(super) fn eval_float_power(
+    lhs: f64,
+    rhs: f64,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     if lhs.is_nan() || rhs.is_nan() {
         return finite_power_result(f64::NAN, span);
     }
@@ -360,34 +348,6 @@ fn is_integral(value: f64) -> bool {
 
 fn is_even_integer(value: f64) -> bool {
     value.rem_euclid(2.0) == 0.0
-}
-
-fn eval_concat(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
-    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
-        return Ok(Value::Null);
-    }
-    match (lhs, rhs) {
-        (Value::String(lhs), Value::String(rhs)) => {
-            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
-        }
-        (Value::String(lhs), Value::ExternalString(rhs)) => {
-            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
-        }
-        (Value::ExternalString(lhs), Value::String(rhs)) => {
-            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
-        }
-        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => {
-            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
-        }
-        (Value::List(mut lhs), Value::List(rhs)) => {
-            lhs.extend(rhs);
-            Ok(Value::List(lhs))
-        }
-        _ => data_exception(
-            "concatenation operands must both be strings or both be lists",
-            span,
-        ),
-    }
 }
 
 fn eval_string_predicate(
@@ -611,22 +571,71 @@ pub(super) fn eval_in_list(
     let mut saw_unknown = false;
     for item in list {
         let item = evaluator::evaluate(item, binding, schema, ctx)?;
-        if matches!(item, Value::Null) {
-            saw_unknown = true;
-            continue;
-        }
-        let comparison = eval_equality(BinaryOp::Eq, &value, &item)?;
-        match comparison {
-            Value::Bool(true) => return Ok(Value::Bool(!negated)),
-            Value::Bool(false) => {}
-            Value::Null => saw_unknown = true,
-            _ => return data_exception("IN comparison did not produce boolean", span),
+        if eval_in_list_item(&value, &item, span, &mut saw_unknown)? {
+            return Ok(Value::Bool(!negated));
         }
     }
     if saw_unknown {
         Ok(Value::Null)
     } else {
         Ok(Value::Bool(negated))
+    }
+}
+
+pub(super) fn eval_in_list_expression(
+    value: Value,
+    list: Value,
+    negated: bool,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match list {
+        Value::Null => Ok(Value::Null),
+        Value::List(items) => eval_in_list_values(value, &items, negated, span),
+        _ => data_exception("IN right-hand side is not a list", span),
+    }
+}
+
+fn eval_in_list_values(
+    value: Value,
+    list: &[Value],
+    negated: bool,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    if matches!(value, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let mut saw_unknown = false;
+    for item in list {
+        if eval_in_list_item(&value, item, span, &mut saw_unknown)? {
+            return Ok(Value::Bool(!negated));
+        }
+    }
+    if saw_unknown {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::Bool(negated))
+    }
+}
+
+fn eval_in_list_item(
+    value: &Value,
+    item: &Value,
+    span: SourceSpan,
+    saw_unknown: &mut bool,
+) -> Result<bool, ExecutorError> {
+    if matches!(item, Value::Null) {
+        *saw_unknown = true;
+        return Ok(false);
+    }
+    let comparison = eval_equality(BinaryOp::Eq, value, item)?;
+    match comparison {
+        Value::Bool(true) => Ok(true),
+        Value::Bool(false) => Ok(false),
+        Value::Null => {
+            *saw_unknown = true;
+            Ok(false)
+        }
+        _ => data_exception("IN comparison did not produce boolean", span),
     }
 }
 
@@ -652,34 +661,6 @@ pub(super) fn numeric_to_f64(value: &Value) -> Option<f64> {
 pub(super) fn string_slice(value: &Value) -> Option<&str> {
     match value {
         Value::String(value) => Some(value.as_str()),
-        Value::ExternalString(value) => Some(value.as_ref()),
         _ => None,
     }
-}
-
-pub(super) fn data_exception<T>(
-    message: impl Into<String>,
-    span: SourceSpan,
-) -> Result<T, ExecutorError> {
-    data_exception_with(DataExceptionSubclass::InvalidValueType, message, span)
-}
-
-pub(super) fn data_exception_with<T>(
-    subclass: DataExceptionSubclass,
-    message: impl Into<String>,
-    span: SourceSpan,
-) -> Result<T, ExecutorError> {
-    Err(data_exception_value_with(subclass, message, span))
-}
-
-pub(super) fn data_exception_value(message: impl Into<String>, span: SourceSpan) -> ExecutorError {
-    data_exception_value_with(DataExceptionSubclass::InvalidValueType, message, span)
-}
-
-pub(super) fn data_exception_value_with(
-    subclass: DataExceptionSubclass,
-    message: impl Into<String>,
-    span: SourceSpan,
-) -> ExecutorError {
-    ExecutorError::data_exception(subclass, message, span)
 }

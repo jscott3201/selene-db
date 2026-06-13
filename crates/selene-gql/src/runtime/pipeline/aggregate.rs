@@ -10,16 +10,16 @@ use crate::{
     },
 };
 
-pub(super) struct AggregateSlot {
-    aggregate: Aggregate,
+pub(super) struct AggregateSlot<'plan> {
+    aggregate: &'plan Aggregate,
     state: AggregateState,
     seen: FxHashSet<RuntimeEqKey>,
 }
 
-impl AggregateSlot {
-    pub(super) fn new(aggregate: &Aggregate) -> Result<Self, ExecutorError> {
+impl<'plan> AggregateSlot<'plan> {
+    pub(super) fn new(aggregate: &'plan Aggregate) -> Result<Self, ExecutorError> {
         Ok(Self {
-            aggregate: aggregate.clone(),
+            aggregate,
             state: AggregateState::new(classify(aggregate)?),
             seen: FxHashSet::default(),
         })
@@ -77,8 +77,8 @@ impl AggregateSlot {
     }
 }
 
-pub(super) fn output_names(aggregate: &Aggregate) -> Vec<selene_core::IStr> {
-    vec![aggregate.output_name]
+pub(super) fn output_names(aggregate: &Aggregate) -> Vec<selene_core::DbString> {
+    vec![aggregate.output_name.clone()]
 }
 
 #[derive(Clone, Copy)]
@@ -236,14 +236,14 @@ impl AggregateState {
                 let value = value.ok_or(ExecutorError::ImplementationDefined {
                     detail: "aggregate value missing",
                 })?;
-                values.push(numeric_sum_to_f64(numeric_value(value, span)?, span)?);
+                values.push(percentile_numeric_to_f64(&value, span)?);
                 Ok(())
             }
             Self::PercentileDisc { values, .. } => {
                 let value = value.ok_or(ExecutorError::ImplementationDefined {
                     detail: "aggregate value missing",
                 })?;
-                numeric_value(value.clone(), span)?;
+                percentile_numeric_to_f64(&value, span)?;
                 values.push(value);
                 Ok(())
             }
@@ -334,7 +334,7 @@ fn classify(aggregate: &Aggregate) -> Result<AggregateFn, ExecutorError> {
         };
     }
     if matches!(name, "percentile_cont" | "percentile_disc") {
-        if aggregate.args.len() != 2 || aggregate.distinct {
+        if aggregate.args.len() != 2 {
             return Err(ExecutorError::ImplementationDefined {
                 detail: "PERCENTILE aggregate arity not implemented",
             });
@@ -353,12 +353,12 @@ fn classify(aggregate: &Aggregate) -> Result<AggregateFn, ExecutorError> {
     match name {
         "count" => Ok(AggregateFn::Count),
         "sum" => Ok(AggregateFn::Sum),
-        "avg" | "average" => Ok(AggregateFn::Avg),
+        "avg" => Ok(AggregateFn::Avg),
         "stddev_pop" => Ok(AggregateFn::StddevPop),
         "stddev_samp" => Ok(AggregateFn::StddevSamp),
         "min" => Ok(AggregateFn::Min),
         "max" => Ok(AggregateFn::Max),
-        "collect" | "collect_list" => Ok(AggregateFn::Collect),
+        "collect_list" => Ok(AggregateFn::Collect),
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "aggregate function not implemented",
         }),
@@ -490,7 +490,7 @@ fn percentile_value(value: Value, span: SourceSpan) -> Result<Option<f64>, Execu
     if matches!(value, Value::Null) {
         return Ok(None);
     }
-    let percentile = numeric_sum_to_f64(numeric_value(value, span)?, span)?;
+    let percentile = percentile_numeric_to_f64(&value, span)?;
     if (0.0..=1.0).contains(&percentile) {
         Ok(Some(percentile))
     } else {
@@ -500,6 +500,34 @@ fn percentile_value(value: Value, span: SourceSpan) -> Result<Option<f64>, Execu
             span,
         ))
     }
+}
+
+fn percentile_numeric_to_f64(value: &Value, span: SourceSpan) -> Result<f64, ExecutorError> {
+    let value = match value {
+        Value::Int(value) => *value as f64,
+        Value::Uint(value) => *value as f64,
+        Value::Int128(value) => *value as f64,
+        Value::Uint128(value) => *value as f64,
+        Value::Decimal(value) => {
+            return value.to_f64().ok_or_else(|| {
+                data_exception_value(
+                    DataExceptionSubclass::NumericValueOutOfRange,
+                    "decimal percentile value is out of float range",
+                    span,
+                )
+            });
+        }
+        Value::Float(value) => *value,
+        Value::Float32(value) => f64::from(*value),
+        _ => {
+            return Err(data_exception_value(
+                DataExceptionSubclass::InvalidValueType,
+                "percentile value is not numeric",
+                span,
+            ));
+        }
+    };
+    finite_float(value, span)
 }
 
 fn numeric_sum_to_f64(value: NumericSum, span: SourceSpan) -> Result<f64, ExecutorError> {
@@ -518,8 +546,8 @@ fn numeric_sum_to_f64(value: NumericSum, span: SourceSpan) -> Result<f64, Execut
                 span,
             )
         }),
-        // DECIMAL → f64 is intrinsically lossy; statistics (STDDEV / percentile)
-        // and the float-collapse SUM path accept the nearest f64.
+        // DECIMAL → f64 is intrinsically lossy; STDDEV and the float-collapse
+        // SUM path accept the nearest f64.
         NumericSum::Decimal(value) => value.to_f64().ok_or_else(|| {
             data_exception_value(
                 DataExceptionSubclass::NumericValueOutOfRange,

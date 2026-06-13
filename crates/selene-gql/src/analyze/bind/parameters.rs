@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     DdlStatement, GqlType, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
@@ -11,7 +11,7 @@ use crate::{
     TypePropertyConstraint, UnwindStatement, ValueExpr, analyze::error::AnalysisError,
 };
 
-pub(super) type DeclarationMap = BTreeMap<IStr, (GqlType, SourceSpan)>;
+pub(super) type DeclarationMap = BTreeMap<DbString, (GqlType, SourceSpan)>;
 
 pub(crate) fn apply_statement_parameter_declarations(
     statement: &mut Statement,
@@ -235,6 +235,9 @@ fn collect_call_parameter_declarations(
     for arg in &call.args {
         collect_value_parameter_declarations(arg, declarations)?;
     }
+    if let Some(filter) = &call.yield_filter {
+        collect_value_parameter_declarations(filter, declarations)?;
+    }
     Ok(())
 }
 
@@ -288,7 +291,7 @@ fn collect_limit_parameter_declarations(
         span,
     } = value
     {
-        record_parameter_declaration(declarations, *name, declared_type, *span)?;
+        record_parameter_declaration(declarations, name.clone(), declared_type, *span)?;
     }
     Ok(())
 }
@@ -305,7 +308,7 @@ fn collect_value_parameter_declarations(
                 declared_type: Some(declared_type),
                 span,
             } => {
-                record_parameter_declaration(declarations, *name, declared_type, *span)?;
+                record_parameter_declaration(declarations, name.clone(), declared_type, *span)?;
             }
             ValueExpr::PropertyAccess { target, .. }
             | ValueExpr::UnaryOp {
@@ -319,9 +322,16 @@ fn collect_value_parameter_declarations(
                 stack.push(target);
             }
             ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::PathConstructor {
+                elements: items, ..
+            }
             | ValueExpr::AllDifferent { items, .. }
             | ValueExpr::Same { items, .. }
             | ValueExpr::FunctionCall { args: items, .. } => stack.extend(items.iter()),
+            ValueExpr::DurationBetween { start, end, .. } => {
+                stack.push(end);
+                stack.push(start);
+            }
             ValueExpr::RecordLiteral { fields, .. } => {
                 stack.extend(fields.iter().map(|(_, value)| value));
             }
@@ -345,6 +355,10 @@ fn collect_value_parameter_declarations(
             }
             ValueExpr::InList { operand, list, .. } => {
                 stack.extend(list.iter());
+                stack.push(operand);
+            }
+            ValueExpr::InListExpression { operand, list, .. } => {
+                stack.push(list);
                 stack.push(operand);
             }
             ValueExpr::Case {
@@ -382,7 +396,7 @@ fn collect_value_parameter_declarations(
 
 fn record_parameter_declaration(
     declarations: &mut DeclarationMap,
-    name: IStr,
+    name: DbString,
     declared_type: &GqlType,
     span: SourceSpan,
 ) -> Result<(), AnalysisError> {

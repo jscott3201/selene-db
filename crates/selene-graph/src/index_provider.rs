@@ -1,14 +1,16 @@
 //! Stateful provider protocol for engine-owned derived state.
 //!
 //! `IndexProvider` is the engine-internal hook through which the CORE storage
-//! provider (and the recovery-side replay providers) participate in snapshot
-//! bootstrap and per-commit mutation observation. selene-db is a single native
-//! engine with no loadable extensions: the only production implementor is
-//! [`crate::CoreProvider`].
+//! provider, maintained candidate-state providers, and recovery-side replay
+//! providers participate in snapshot bootstrap and per-commit mutation
+//! observation. selene-db is a single native engine with no loadable
+//! extensions; providers are first-party engine internals, not loadable packs.
 
 use std::fmt;
 
-use selene_core::Change;
+use selene_core::{Change, DbString};
+
+use crate::{SeleneGraph, VectorCandidateSet};
 
 /// Stable 4-byte ASCII identifier for an [`IndexProvider`] registration.
 ///
@@ -16,7 +18,7 @@ use selene_core::Change;
 /// - `CORE` is reserved for engine-owned snapshot sections.
 /// - `META`/`NODE`/`EDGE`/`SCMA` are reserved sub-tags under `CORE`, not
 ///   provider tags.
-/// - First-party extension allocations include `TIMS`, `GRPR`.
+/// - First-party provider allocations include `CSET`, `TIMS`, `GRPR`.
 /// - Other ASCII uppercase 4-byte sequences are provider-allocated.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProviderTag(
@@ -49,6 +51,19 @@ impl fmt::Display for SubTag {
 /// `&self`: `selene-graph` stores providers as `Arc<dyn IndexProvider>`, so
 /// providers use interior mutability for owned state. The engine guarantees
 /// serialized calls per graph.
+///
+/// ## Change-shape contract
+///
+/// Runtime commit fan-out observes the post-commit graph snapshot. When a
+/// mutation stages per-row tombstone expansions for
+/// [`Change::NodesOfTypeTruncated`], [`Change::EdgesOfTypeTruncated`], or
+/// [`Change::GraphReset`], live fan-out receives the expanded
+/// `NodeDeleted`/`EdgeDeleted` view instead of the persisted declarative change.
+/// WAL replay is different: recovery drives providers with the exact committed
+/// `Change` payloads after CORE applies them. Providers whose derived state
+/// depends on deleted rows must therefore handle the declarative truncate/reset
+/// variants or rebuild their state from the recovered graph before serving
+/// reads.
 ///
 /// ## Re-entrancy contract
 ///
@@ -95,11 +110,128 @@ pub trait IndexProvider: Send + Sync + 'static {
     /// been published.
     fn on_change(&self, change: &Change) -> Result<(), ProviderError>;
 
+    /// Return true when this provider wants one callback per committed change batch.
+    ///
+    /// The default is `false`, preserving per-change panic/error isolation for
+    /// simple observers. Providers that maintain state whose invariants span
+    /// several changes in one commit can opt in and override [`Self::on_changes`]
+    /// to apply the batch under one internal lock.
+    fn handles_change_batches(&self) -> bool {
+        false
+    }
+
+    /// Observe all changes from one committed mutation batch.
+    ///
+    /// The default delegates to [`Self::on_change`] in order. Live fanout calls
+    /// this method only when [`Self::handles_change_batches`] returns true;
+    /// recovery may call it for all providers because no concurrent readers can
+    /// observe recovery-side intermediate state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] for provider-local failures.
+    fn on_changes(&self, changes: &[Change]) -> Result<(), ProviderError> {
+        for change in changes {
+            self.on_change(change)?;
+        }
+        Ok(())
+    }
+
+    /// Rebuild provider-owned derived state from a recovered graph snapshot.
+    ///
+    /// Recovery calls this when a provider declares persisted snapshot sections,
+    /// a graph snapshot was applied, and that snapshot did not contain this
+    /// provider's section. Providers that can derive their complete state from
+    /// CORE graph rows should override this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when the provider cannot rebuild safely.
+    fn rebuild_from_graph(&self, _graph: &SeleneGraph) -> Result<(), ProviderError> {
+        Err(ProviderError::Inconsistent {
+            reason: format!(
+                "provider {} has persisted sections but does not support graph rebuild",
+                self.provider_tag()
+            ),
+        })
+    }
+
+    /// Observe that every change for a committed graph generation was applied.
+    ///
+    /// Live fan-out calls this only after the provider's mutation callback path
+    /// completed without returning an error or panicking. Providers that expose
+    /// read-side state tied to graph generations can use this as their
+    /// visibility watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] for provider-local failures.
+    fn on_commit_applied(&self, _generation: u64) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    /// Return a provider-owned vector candidate set for `name` at `generation`.
+    ///
+    /// Providers that do not own named vector candidate state return `Ok(None)`.
+    /// A provider that owns the name but cannot prove the requested generation
+    /// should return an error instead of serving stale derived state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when the named state exists but is stale or
+    /// internally inconsistent.
+    fn vector_candidate_set(
+        &self,
+        _name: &DbString,
+        _generation: u64,
+    ) -> Result<Option<VectorCandidateSet>, ProviderError> {
+        Ok(None)
+    }
+
+    /// Return provider-owned vector candidate-state descriptors at `generation`.
+    ///
+    /// Providers that do not own named vector candidate state return an empty
+    /// vector. A provider that owns candidate state but cannot prove the
+    /// requested generation should return an error instead of exposing stale
+    /// metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] when provider metadata is stale or internally
+    /// inconsistent.
+    fn vector_candidate_state_infos(
+        &self,
+        _generation: u64,
+    ) -> Result<Vec<VectorCandidateStateInfo>, ProviderError> {
+        Ok(Vec::new())
+    }
+
     /// Provider-owned snapshot subsection tags.
     ///
     /// Empty means the provider consumes mutation events but owns no persisted
     /// snapshot state.
     fn declared_sub_tags(&self) -> &[SubTag];
+}
+
+/// Metadata for one provider-owned vector candidate state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VectorCandidateStateInfo {
+    /// Stable set name used by callers to retrieve candidates.
+    pub name: DbString,
+    /// Graph generation the descriptor was derived from.
+    pub generation: u64,
+    /// Number of nodes currently in the candidate set.
+    pub candidate_count: usize,
+    /// Optional node label required for membership.
+    pub required_label: Option<DbString>,
+    /// Outgoing edge labels required on the source node.
+    pub require_outgoing: Vec<DbString>,
+    /// Incoming edge labels required on the target node.
+    pub require_incoming: Vec<DbString>,
+    /// Outgoing edge labels that disqualify the source node.
+    pub exclude_outgoing: Vec<DbString>,
+    /// Incoming edge labels that disqualify the target node.
+    pub exclude_incoming: Vec<DbString>,
 }
 
 /// Errors returned by [`IndexProvider`] implementations.

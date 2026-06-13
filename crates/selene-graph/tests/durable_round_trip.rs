@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use selene_core::{GraphId, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{GraphId, LabelSet, NodeId, PropertyMap, Value, db_string};
 use selene_graph::SharedGraph;
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
@@ -23,7 +23,7 @@ fn temp_dir(name: &str) -> PathBuf {
 }
 
 fn prop(name: &str, value: Value) -> PropertyMap {
-    PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()
+    PropertyMap::from_pairs([(db_string(name).unwrap(), value)]).unwrap()
 }
 
 #[test]
@@ -31,9 +31,9 @@ fn durable_round_trip_recovery() {
     let dir = temp_dir("round-trip");
     let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
     let graph_id = GraphId::new(77);
-    let label = intern("durable.node").unwrap();
-    let key = intern("durable.name").unwrap();
-    let value = intern("written").unwrap();
+    let label = db_string("durable.node").unwrap();
+    let key = db_string("durable.name").unwrap();
+    let value = db_string("written").unwrap();
 
     {
         let shared = SharedGraph::builder(graph_id)
@@ -47,7 +47,7 @@ fn durable_round_trip_recovery() {
             mutator
                 .create_node(
                     LabelSet::single(label),
-                    prop("durable.name", Value::String(value)),
+                    prop("durable.name", Value::String(value.clone())),
                 )
                 .unwrap()
         };
@@ -73,7 +73,7 @@ fn durable_round_trip_recovery() {
 fn post_recovery_commits_remain_durable() {
     let dir = temp_dir("post-recovery");
     let graph_id = GraphId::new(78);
-    let label = intern("durable.recover.node").unwrap();
+    let label = db_string("durable.recover.node").unwrap();
 
     {
         let shared = SharedGraph::builder(graph_id)
@@ -83,7 +83,7 @@ fn post_recovery_commits_remain_durable() {
             .unwrap();
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         let outcome = txn.commit().unwrap();
         assert_eq!(outcome.durable_at, Some(1));

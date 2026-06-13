@@ -1,4 +1,4 @@
-use selene_core::{Change, EdgeId, IStr, NodeId, PropertyDiff};
+use selene_core::{Change, DbString, EdgeId, NodeId, PropertyDiff};
 
 use super::{
     Mutator, reject_immutable_edge_update, reject_immutable_node_update, remove_index_row,
@@ -9,7 +9,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Remove a property from an alive node and emit `Change::NodePropertyRemoved`.
     ///
     /// The mutation is a no-op when `property` is absent.
-    pub fn remove_node_property(&mut self, id: NodeId, property: IStr) -> GraphResult<()> {
+    pub fn remove_node_property(&mut self, id: NodeId, property: DbString) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
         let labels = self
             .txn
@@ -31,7 +31,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             return Ok(());
         }
 
-        let diff = PropertyDiff::new([], [property])?;
+        let diff = PropertyDiff::new([], [property.clone()])?;
         reject_immutable_node_update(self.txn.read(), id, &labels, &diff)?;
         let mut new_props = old_props.clone();
         new_props.remove(&property);
@@ -54,6 +54,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_props,
                 row as u32,
             )?;
+            crate::vector_index::apply_node_update(
+                &mut graph.vector_index,
+                &labels,
+                &old_props,
+                &labels,
+                &new_props,
+                row as u32,
+            )?;
         }
         self.txn
             .changes
@@ -64,7 +72,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Remove a property from an alive edge and emit `Change::EdgePropertyRemoved`.
     ///
     /// The mutation is a no-op when `property` is absent.
-    pub fn remove_edge_property(&mut self, id: EdgeId, property: IStr) -> GraphResult<()> {
+    pub fn remove_edge_property(&mut self, id: EdgeId, property: DbString) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
         let old_props = self
             .txn
@@ -78,7 +86,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             return Ok(());
         }
 
-        let diff = PropertyDiff::new([], [property])?;
+        let diff = PropertyDiff::new([], [property.clone()])?;
         reject_immutable_edge_update(self.txn.read(), id, &diff)?;
         let mut new_props = old_props;
         new_props.remove(&property);
@@ -96,7 +104,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Remove a label from an alive node and emit `Change::NodeLabelRemoved`.
     ///
     /// The mutation is a no-op when `label` is absent.
-    pub fn remove_node_label(&mut self, id: NodeId, label: IStr) -> GraphResult<()> {
+    pub fn remove_node_label(&mut self, id: NodeId, label: DbString) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
         let old_labels = self
             .txn
@@ -133,6 +141,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
+                &old_labels,
+                &props,
+                &new_labels,
+                &props,
+                row as u32,
+            )?;
+            crate::vector_index::apply_node_update(
+                &mut graph.vector_index,
                 &old_labels,
                 &props,
                 &new_labels,

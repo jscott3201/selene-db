@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GP03
+// also-covers: GP01
+// expects: parse-ok
+MATCH (n) CALL (n) { RETURN 1 AS x }

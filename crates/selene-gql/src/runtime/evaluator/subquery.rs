@@ -10,6 +10,7 @@ use selene_core::Value;
 
 use crate::{
     BindingTableColumn, ExecutionPlan, PatternPlan, PipelineOp, SourceSpan, ValueExpr,
+    analyze::ExprId,
     plan::{OuterBindingRef, PlannedSubquery, SubqueryBody},
     runtime::{
         Binding, BindingTable, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
@@ -68,40 +69,50 @@ fn execute_subquery(
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let planned = planned_subquery(expr, ctx)?;
+    let (expr_id, planned) = planned_subquery(expr, ctx)?;
     match &planned.body {
         SubqueryBody::Pattern(plan) => {
-            execute_pattern_subquery(planned, plan, binding, schema, ctx)
+            execute_pattern_subquery(expr_id, planned, plan, binding, schema, ctx)
         }
-        SubqueryBody::Plan(plan) => execute_plan_subquery(planned, plan, binding, schema, ctx),
+        SubqueryBody::Plan(plan) => {
+            execute_plan_subquery(expr_id, planned, plan, binding, schema, ctx)
+        }
     }
 }
 
 fn planned_subquery<'plan>(
     expr: &ValueExpr,
     ctx: &EvalCtx<'_, '_, '_, 'plan>,
-) -> Result<&'plan PlannedSubquery, ExecutorError> {
+) -> Result<(ExprId, &'plan PlannedSubquery), ExecutorError> {
     let expr_id = ctx
         .expr_ids
         .get(expr)
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "subquery expression id missing -- analyzer/lowering bug",
         })?;
-    ctx.subqueries
+    let planned = ctx
+        .subqueries
         .get(expr_id)
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "subquery plan missing -- analyzer/lowering bug",
-        })
+        })?;
+    Ok((expr_id, planned))
 }
 
 fn execute_pattern_subquery(
+    expr_id: ExprId,
     planned: &PlannedSubquery,
     plan: &crate::PatternPlan,
     binding: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let target_schema = target_schema_for_pattern(planned, plan, schema)?;
+    // GQLRT-05: the target schema is loop-invariant across the outer rows that
+    // drive this correlated subquery, so memoize it per statement instead of
+    // rebuilding it (schema_for_pattern join-tree walk) for every row.
+    let target_schema = ctx
+        .tx
+        .cached_subquery_schema(expr_id, || target_schema_for_pattern(planned, plan, schema))?;
     if null_outer_binding_is_pattern_binding(planned, binding, schema, plan)? {
         return Ok(BindingTable::new(target_schema, Vec::new()));
     }
@@ -110,13 +121,16 @@ fn execute_pattern_subquery(
 }
 
 fn execute_plan_subquery(
+    expr_id: ExprId,
     planned: &PlannedSubquery,
     plan: &ExecutionPlan,
     binding: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let target_schema = target_schema_for_plan(planned, plan, schema)?;
+    let target_schema = ctx
+        .tx
+        .cached_subquery_schema(expr_id, || target_schema_for_plan(planned, plan, schema))?;
     if null_outer_binding_is_plan_pattern_binding(planned, binding, schema, plan)? {
         return Ok(BindingTable::new(target_schema, Vec::new()));
     }
@@ -138,7 +152,7 @@ fn seed_binding(
     for outer in &planned.outer_binding_refs {
         let source_index = source_index(source_schema, outer)?;
         let value = row.get(source_index).cloned().unwrap_or(Value::Null);
-        let target_index = pattern::column_index(target_schema, outer.name).ok_or(
+        let target_index = pattern::column_index(target_schema, &outer.name).ok_or(
             ExecutorError::ImplementationDefined {
                 detail: "subquery outer binding missing from target row",
             },
@@ -155,7 +169,7 @@ fn null_outer_binding_is_pattern_binding(
     pattern: &PatternPlan,
 ) -> Result<bool, ExecutorError> {
     for outer in &planned.outer_binding_refs {
-        if !pattern_binds_name(pattern, outer.name) {
+        if !pattern_binds_name(pattern, outer.name.clone()) {
             continue;
         }
         let source_index = source_index(source_schema, outer)?;
@@ -173,7 +187,7 @@ fn null_outer_binding_is_plan_pattern_binding(
     plan: &ExecutionPlan,
 ) -> Result<bool, ExecutorError> {
     for outer in &planned.outer_binding_refs {
-        if !plan_binds_name(plan, outer.name) {
+        if !plan_binds_name(plan, outer.name.clone()) {
             continue;
         }
         let source_index = source_index(source_schema, outer)?;
@@ -184,14 +198,17 @@ fn null_outer_binding_is_plan_pattern_binding(
     Ok(false)
 }
 
-fn plan_binds_name(plan: &ExecutionPlan, name: selene_core::IStr) -> bool {
+fn plan_binds_name(plan: &ExecutionPlan, name: selene_core::DbString) -> bool {
     plan.pattern_plan
         .as_ref()
-        .is_some_and(|pattern| pattern_binds_name(pattern, name))
-        || plan.pipeline.iter().any(|op| op_binds_name(op, name))
+        .is_some_and(|pattern| pattern_binds_name(pattern, name.clone()))
+        || plan
+            .pipeline
+            .iter()
+            .any(|op| op_binds_name(op, name.clone()))
 }
 
-fn op_binds_name(op: &PipelineOp, name: selene_core::IStr) -> bool {
+fn op_binds_name(op: &PipelineOp, name: selene_core::DbString) -> bool {
     match op {
         PipelineOp::Match(pattern) | PipelineOp::OptionalMatch(pattern) => {
             pattern_binds_name(pattern, name)
@@ -204,7 +221,7 @@ fn op_binds_name(op: &PipelineOp, name: selene_core::IStr) -> bool {
     }
 }
 
-fn pattern_binds_name(pattern: &PatternPlan, name: selene_core::IStr) -> bool {
+fn pattern_binds_name(pattern: &PatternPlan, name: selene_core::DbString) -> bool {
     pattern.bindings.iter().any(|binding| binding.name == name)
 }
 
@@ -240,13 +257,13 @@ fn append_outer_bindings(
     source_schema: &BindingTableSchema,
 ) -> Result<(), ExecutorError> {
     for outer in outer_binding_refs {
-        if pattern::column_index(schema, outer.name).is_some() {
+        if pattern::column_index(schema, &outer.name).is_some() {
             continue;
         }
         let source_index = source_index(source_schema, outer)?;
         let source_column = &source_schema.columns[source_index];
         schema.columns.push(BindingTableColumn {
-            name: Some(outer.name),
+            name: Some(outer.name.clone()),
             hidden: None,
             ty: source_column.ty.clone(),
         });
@@ -258,7 +275,7 @@ fn source_index(
     source_schema: &BindingTableSchema,
     outer: &OuterBindingRef,
 ) -> Result<usize, ExecutorError> {
-    pattern::column_index(source_schema, outer.name).ok_or(ExecutorError::ImplementationDefined {
+    pattern::column_index(source_schema, &outer.name).ok_or(ExecutorError::ImplementationDefined {
         detail: "subquery outer binding missing from source row",
     })
 }

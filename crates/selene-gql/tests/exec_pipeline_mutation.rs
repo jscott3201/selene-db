@@ -4,13 +4,13 @@ mod exec_common;
 
 use selene_core::{Change, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{
-    AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema, EdgeDirection,
-    EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, GqlType, MutationOp,
-    PipelineOp, TxContext, analyze, execute_pattern, execute_pipeline, parse, plan,
+    AnalysisError, AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema,
+    EdgeDirection, EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, GqlType,
+    MutationOp, PipelineOp, TxContext, analyze, execute_pattern, execute_pipeline, parse, plan,
 };
-use selene_graph::{CommitOutcome, SharedGraph};
+use selene_graph::{CommitOutcome, GraphError, SharedGraph};
 
-use exec_common::{column_values, istr, props};
+use exec_common::{column_values, db_string, props};
 
 fn planned(source: &str) -> ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -65,14 +65,17 @@ fn empty_graph() -> SharedGraph {
 fn graph_with_person(name: &str) -> SharedGraph {
     let graph = empty_graph();
     {
-        let person = istr("Person");
-        let name_key = istr("name");
-        let age = istr("age");
+        let person = db_string("Person");
+        let name_key = db_string("name");
+        let age = db_string("age");
         let mut txn = graph.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(person),
-                props([(name_key, Value::String(istr(name))), (age, Value::Int(30))]),
+                props([
+                    (name_key, Value::String(db_string(name))),
+                    (age, Value::Int(30)),
+                ]),
             )
             .expect("person inserts");
         txn.commit().expect("fixture commits");
@@ -83,9 +86,9 @@ fn graph_with_person(name: &str) -> SharedGraph {
 fn graph_with_edge() -> SharedGraph {
     let graph = empty_graph();
     {
-        let victim = istr("Victim");
-        let other = istr("Other");
-        let rel = istr("REL");
+        let victim = db_string("Victim");
+        let other = db_string("Other");
+        let rel = db_string("REL");
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         let a = mutator
@@ -97,6 +100,42 @@ fn graph_with_edge() -> SharedGraph {
         mutator
             .create_edge(rel, a, b, PropertyMap::new())
             .expect("edge inserts");
+        txn.commit().expect("fixture commits");
+    }
+    graph
+}
+
+fn graph_with_extra_incident_edges() -> SharedGraph {
+    let graph = empty_graph();
+    {
+        let victim = db_string("Victim");
+        let other = db_string("Other");
+        let hint = db_string("Hint");
+        let rel = db_string("REL");
+        let extra = db_string("HINT");
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let a = mutator
+            .create_node(LabelSet::single(victim), PropertyMap::new())
+            .expect("victim inserts");
+        let b = mutator
+            .create_node(LabelSet::single(other), PropertyMap::new())
+            .expect("other inserts");
+        let c = mutator
+            .create_node(LabelSet::single(hint.clone()), PropertyMap::new())
+            .expect("hint inserts");
+        let d = mutator
+            .create_node(LabelSet::single(hint), PropertyMap::new())
+            .expect("hint inserts");
+        mutator
+            .create_edge(rel, a, b, PropertyMap::new())
+            .expect("rel inserts");
+        mutator
+            .create_edge(extra.clone(), a, c, PropertyMap::new())
+            .expect("extra inserts");
+        mutator
+            .create_edge(extra, a, d, PropertyMap::new())
+            .expect("extra inserts");
         txn.commit().expect("fixture commits");
     }
     graph
@@ -123,11 +162,31 @@ fn insert_node_with_label_creates_node_in_graph() {
         snapshot
             .node_labels(node)
             .unwrap()
-            .contains(&istr("Person"))
+            .contains(&db_string("Person"))
     );
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::NodeCreated { .. }]
+    ));
+}
+
+#[test]
+fn insert_node_with_label_conjunction_creates_multi_label_node() {
+    let graph = empty_graph();
+    let plan = planned("INSERT (n:Person&Customer {name: 'Alice'}) RETURN n");
+
+    let (table, outcome) = run_write(&graph, &plan).expect("write executes");
+
+    let node = first_node(&table, "n");
+    let snapshot = graph.read();
+    let labels = snapshot.node_labels(node).expect("node labels exist");
+    assert_eq!(labels.len(), 2);
+    assert!(labels.contains(&db_string("Customer")));
+    assert!(labels.contains(&db_string("Person")));
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::NodeCreated { labels, .. }]
+            if labels == &LabelSet::from_iter([db_string("Customer"), db_string("Person")])
     ));
 }
 
@@ -138,8 +197,14 @@ fn insert_node_extends_row_with_new_node_id_at_planner_assigned_column() {
 
     let (table, _) = run_write(&graph, &plan).expect("write executes");
 
-    assert_eq!(table.schema().columns[0].name.unwrap().as_str(), "p");
-    assert_eq!(table.schema().columns[1].name.unwrap().as_str(), "n");
+    assert_eq!(
+        table.schema().columns[0].name.clone().unwrap().as_str(),
+        "p"
+    );
+    assert_eq!(
+        table.schema().columns[1].name.clone().unwrap().as_str(),
+        "n"
+    );
     assert!(matches!(table.rows()[0].get(0), Some(Value::NodeRef(_))));
     assert!(matches!(table.rows()[0].get(1), Some(Value::NodeRef(_))));
 }
@@ -153,7 +218,7 @@ fn insert_node_with_property_initializers_evaluates_per_row() {
 
     assert_eq!(
         column_values(&table, "name"),
-        [Value::String(istr("Alice"))]
+        [Value::String(db_string("Alice"))]
     );
 }
 
@@ -164,10 +229,10 @@ fn insert_edge_between_two_matched_bindings_creates_edge() {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
-            .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("A")), PropertyMap::new())
             .expect("node inserts");
         mutator
-            .create_node(LabelSet::single(istr("B")), PropertyMap::new())
+            .create_node(LabelSet::single(db_string("B")), PropertyMap::new())
             .expect("node inserts");
         txn.commit().expect("fixture commits");
     }
@@ -176,6 +241,38 @@ fn insert_edge_between_two_matched_bindings_creates_edge() {
     let (_, _) = run_write(&graph, &plan).expect("write executes");
 
     assert_eq!(graph.read().edge_count(), 1);
+}
+
+#[test]
+fn insert_edge_without_label_reports_edge_label_minimum_error() {
+    let graph = empty_graph();
+    let plan = planned("INSERT (:A)-[]->(:B) RETURN 1 AS ok");
+
+    let err = run_write(&graph, &plan).expect_err("unlabeled INSERT edge rejects");
+
+    assert_eq!(
+        err.gqlstatus(),
+        GqlStatus::EDGE_LABELS_BELOW_SUPPORTED_MINIMUM
+    );
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 0);
+    assert_eq!(snapshot.edge_count(), 0);
+}
+
+#[test]
+fn insert_edge_label_conjunction_reports_edge_label_maximum_error() {
+    let graph = empty_graph();
+    let plan = planned("INSERT (:A)-[:REL&ALT]->(:B) RETURN 1 AS ok");
+
+    let err = run_write(&graph, &plan).expect_err("multi-label INSERT edge rejects");
+
+    assert_eq!(
+        err.gqlstatus(),
+        GqlStatus::EDGE_LABELS_EXCEED_SUPPORTED_MAXIMUM
+    );
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 0);
+    assert_eq!(snapshot.edge_count(), 0);
 }
 
 #[test]
@@ -196,7 +293,7 @@ fn undirected_insert_edge_is_rejected_at_runtime() {
 
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotInV1_1 {
+        ExecutorError::FeatureNotSupportedYet {
             feature: "INSERT undirected edge",
             ..
         }
@@ -266,7 +363,11 @@ fn set_property_to_null_stores_explicit_null() {
     let id = first_node(&table, "n");
 
     assert_eq!(
-        graph.read().node_properties(id).unwrap().get(&istr("age")),
+        graph
+            .read()
+            .node_properties(id)
+            .unwrap()
+            .get(&db_string("age")),
         Some(&Value::Null)
     );
 }
@@ -284,7 +385,7 @@ fn set_label_on_existing_node_adds_label_idempotently() {
             .read()
             .node_labels(id)
             .unwrap()
-            .contains(&istr("Person"))
+            .contains(&db_string("Person"))
     );
 }
 
@@ -297,13 +398,17 @@ fn remove_property_removes_when_present() {
     let id = first_node(&table, "n");
 
     assert_eq!(
-        graph.read().node_properties(id).unwrap().get(&istr("age")),
+        graph
+            .read()
+            .node_properties(id)
+            .unwrap()
+            .get(&db_string("age")),
         None
     );
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::NodePropertyRemoved { id: changed, property }]
-            if *changed == id && *property == istr("age")
+            if *changed == id && *property == db_string("age")
     ));
 }
 
@@ -332,12 +437,12 @@ fn remove_label_removes_when_present() {
             .read()
             .node_labels(id)
             .unwrap()
-            .contains(&istr("Person"))
+            .contains(&db_string("Person"))
     );
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::NodeLabelRemoved { id: changed, label }]
-            if *changed == id && *label == istr("Person")
+            if *changed == id && *label == db_string("Person")
     ));
 }
 
@@ -349,7 +454,8 @@ fn remove_edge_property_removes_when_present() {
         txn.mutator()
             .update_edge(
                 EdgeId::new(1),
-                selene_core::PropertyDiff::new([(istr("since"), Value::Int(2026))], []).unwrap(),
+                selene_core::PropertyDiff::new([(db_string("since"), Value::Int(2026))], [])
+                    .unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -363,13 +469,13 @@ fn remove_edge_property_removes_when_present() {
             .read()
             .edge_properties(EdgeId::new(1))
             .unwrap()
-            .get(&istr("since"))
+            .get(&db_string("since"))
             .is_none()
     );
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::EdgePropertyRemoved { id, property }]
-            if *id == EdgeId::new(1) && *property == istr("since")
+            if *id == EdgeId::new(1) && *property == db_string("since")
     ));
 }
 
@@ -382,8 +488,8 @@ fn set_then_remove_emits_dedicated_changes_in_source_order() {
 
     let snapshot = graph.read();
     let properties = snapshot.node_properties(NodeId::new(1)).unwrap();
-    assert_eq!(properties.get(&istr("age")), Some(&Value::Int(31)));
-    assert!(properties.get(&istr("name")).is_none());
+    assert_eq!(properties.get(&db_string("age")), Some(&Value::Int(31)));
+    assert!(properties.get(&db_string("name")).is_none());
     assert!(matches!(
         outcome.changes.as_slice(),
         [
@@ -394,7 +500,7 @@ fn set_then_remove_emits_dedicated_changes_in_source_order() {
             }
         ] if *updated == NodeId::new(1)
             && *removed == NodeId::new(1)
-            && *property == istr("name")
+            && *property == db_string("name")
     ));
 }
 
@@ -437,13 +543,94 @@ fn delete_edge_removes_edge_only() {
 }
 
 #[test]
+fn repeated_delete_of_same_binding_is_noop_after_first_delete() {
+    let graph = graph_with_person("Alice");
+    let plan = planned("MATCH (n:Person) DETACH DELETE n DETACH DELETE n FINISH");
+
+    let (_, outcome) = run_write(&graph, &plan).expect("write executes");
+
+    assert_eq!(outcome.changes.len(), 1);
+    assert_eq!(graph.read().node_count(), 0);
+}
+
+#[test]
+fn set_after_delete_of_same_binding_errors_atomically() {
+    let graph = graph_with_person("Alice");
+    let plan = planned("MATCH (n:Person) DETACH DELETE n SET n.age = 31 FINISH");
+
+    let err = run_write(&graph, &plan).expect_err("stale binding update rejects");
+
+    assert!(matches!(
+        err,
+        ExecutorError::GraphMutation {
+            source: GraphError::NodeNotAlive { id },
+            ..
+        } if id == NodeId::new(1)
+    ));
+    let snapshot = graph.read();
+    assert!(snapshot.is_node_alive(NodeId::new(1)));
+    assert_eq!(
+        snapshot
+            .node_properties(NodeId::new(1))
+            .and_then(|props| props.get(&db_string("age"))),
+        Some(&Value::Int(30))
+    );
+}
+
+#[test]
+fn bare_delete_node_and_its_edge_succeeds_as_one_delete_set() {
+    let graph = graph_with_edge();
+    let plan = planned("MATCH (a:Victim)-[e:REL]->(b:Other) DELETE a, e FINISH");
+
+    let (_, _) = run_write(&graph, &plan).expect("write executes");
+
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 1);
+    assert_eq!(snapshot.edge_count(), 0);
+    assert!(snapshot.node_properties(NodeId::new(2)).is_some());
+}
+
+#[test]
+fn duplicate_delete_edge_rows_are_deduplicated() {
+    let graph = graph_with_extra_incident_edges();
+    let plan = planned("MATCH (a:Victim)-[e:REL]->(:Other), (a)-[:HINT]->(:Hint) DELETE e FINISH");
+
+    let (_, _) = run_write(&graph, &plan).expect("write executes");
+
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 4);
+    assert_eq!(snapshot.edge_count(), 2);
+    assert!(snapshot.edge_properties(EdgeId::new(1)).is_none());
+}
+
+#[test]
+fn bare_delete_node_and_some_edges_rejects_outside_incident_edge_atomically() {
+    let graph = graph_with_extra_incident_edges();
+    let plan = planned("MATCH (a:Victim)-[e:REL]->(:Other) DELETE a, e FINISH");
+
+    let err = run_write(&graph, &plan).expect_err("outside incident edge rejects");
+
+    assert!(matches!(
+        err,
+        ExecutorError::DependentObjectStillExists { .. }
+    ));
+    assert_eq!(err.gqlstatus(), GqlStatus::DEPENDENT_OBJECT_STILL_EXISTS);
+    let snapshot = graph.read();
+    assert_eq!(snapshot.node_count(), 4);
+    assert_eq!(snapshot.edge_count(), 3);
+}
+
+#[test]
 fn match_after_insert_in_same_statement_sees_inserted_node() {
     let graph = empty_graph();
     let plan = planned("INSERT (n:Person {name: 'Zed'}) RETURN n.name AS name");
 
     let (table, _) = run_write(&graph, &plan).expect("write executes");
 
-    assert_eq!(column_values(&table, "name"), [Value::String(istr("Zed"))]);
+    assert_eq!(
+        column_values(&table, "name"),
+        [Value::String(db_string("Zed"))]
+    );
 }
 
 #[test]
@@ -469,7 +656,7 @@ fn mutator_error_surfaces_as_graph_mutation_executor_error() {
     let plan = planned("MATCH (n) SET n.age = 1 FINISH");
     let schema = BindingTableSchema {
         columns: vec![BindingTableColumn {
-            name: Some(istr("n")),
+            name: Some(db_string("n")),
             hidden: None,
             ty: AnalyzedType::Resolved(GqlType::NodeRef),
         }],
@@ -502,7 +689,7 @@ fn insert_with_label_disjunction_returns_feature_not_in_v1_1() {
 
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotInV1_1 {
+        ExecutorError::FeatureNotSupportedYet {
             feature: "INSERT label expression form",
             ..
         }
@@ -510,19 +697,17 @@ fn insert_with_label_disjunction_returns_feature_not_in_v1_1() {
 }
 
 #[test]
-fn delete_path_target_returns_feature_not_in_v1_1() {
-    let graph = graph_with_edge();
-    let plan = planned("MATCH p = (a)-[:REL]->(b) DELETE p FINISH");
+fn delete_path_target_rejects_at_analysis() {
+    let statement = parse("MATCH p = (a)-[:REL]->(b) DELETE p FINISH").expect("parses");
 
-    let err = run_write(&graph, &plan).expect_err("path delete errors");
+    let err = analyze(statement, &EmptyProcedureRegistry, None).expect_err("path delete rejects");
 
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotInV1_1 {
-            feature: "DELETE path target",
-            ..
-        }
+        AnalysisError::InvalidReference { ref message, .. }
+            if message.contains("DELETE target must be a node or edge binding")
     ));
+    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_REFERENCE);
 }
 
 #[test]
@@ -560,7 +745,7 @@ fn mutation_aborts_op_on_first_row_error_no_partial_rollback() {
         .expect("fixture has a node");
     let schema = BindingTableSchema {
         columns: vec![BindingTableColumn {
-            name: Some(istr("n")),
+            name: Some(db_string("n")),
             hidden: None,
             ty: AnalyzedType::Resolved(GqlType::NodeRef),
         }],
@@ -587,7 +772,10 @@ fn mutation_aborts_op_on_first_row_error_no_partial_rollback() {
 
     assert!(matches!(result, Err(ExecutorError::GraphMutation { .. })));
     assert_eq!(
-        txn.read().node_properties(alice).unwrap().get(&istr("age")),
+        txn.read()
+            .node_properties(alice)
+            .unwrap()
+            .get(&db_string("age")),
         Some(&Value::Int(1))
     );
     txn.rollback();

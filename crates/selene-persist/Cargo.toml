@@ -11,7 +11,7 @@ description = "WAL and snapshot persistence formats for selene-db."
 autobenches = false
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.1.0" }
+selene-core = { path = "../selene-core", version = "1.2.0" }
 thiserror.workspace = true
 miette.workspace = true
 serde.workspace = true
@@ -27,12 +27,12 @@ metrics = ["selene-core/metrics"]
 
 [dev-dependencies]
 criterion.workspace = true
-iai-callgrind.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 rust_decimal.workspace = true
-selene-testing = { path = "../selene-testing", version = "1.1.0" }
+selene-testing = { path = "../selene-testing" }
+serde_json.workspace = true
 uuid.workspace = true
 
 [[bench]]
@@ -41,10 +41,6 @@ harness = false
 
 [[bench]]
 name = "snapshot"
-harness = false
-
-[[bench]]
-name = "iai_gates"
 harness = false
 
 [lints]

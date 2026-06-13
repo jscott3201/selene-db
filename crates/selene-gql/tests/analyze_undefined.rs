@@ -1,6 +1,6 @@
 //! Analyzer negative binding tests.
 
-use selene_core::intern;
+use selene_core::db_string;
 use selene_gql::{
     AnalysisError, EmptyProcedureRegistry, GqlType, ProcedureOutputColumn, analyze, parse,
 };
@@ -60,10 +60,10 @@ fn case_branch_uses_outer_scope() {
 #[test]
 fn unknown_name_after_yield_star_expansion_errors() {
     let registry = MockProcedureRegistry::new().with_procedure(
-        vec![intern("pkg").unwrap(), intern("fn").unwrap()],
+        vec![db_string("pkg").unwrap(), db_string("fn").unwrap()],
         Vec::new(),
         vec![ProcedureOutputColumn::new(
-            intern("out").unwrap(),
+            db_string("out").unwrap(),
             GqlType::String,
         )],
     );

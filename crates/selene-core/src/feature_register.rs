@@ -50,6 +50,7 @@ feature_ids! {
     G011 = "G011" => "Advanced path modes: TRAIL";
     G012 = "G012" => "Advanced path modes: SIMPLE";
     G013 = "G013" => "Advanced path modes: ACYCLIC";
+    G014 = "G014" => "Explicit PATH/PATHS keywords";
     G015 = "G015" => "All path search: explicit ALL keyword";
     G016 = "G016" => "Any path search";
     G017 = "G017" => "All shortest path search";
@@ -76,18 +77,46 @@ feature_ids! {
     GD01 = "GD01" => "Updatable graphs";
     GE04 = "GE04" => "Parameters";
     GE05 = "GE05" => "Named parameters";
+    GE06 = "GE06" => "Path value construction";
     GE07 = "GE07" => "XOR operator";
-    GE08 = "GE08" => "CAST operator";
+    // ISO/IEC 39075:2024 Annex D Table D.1 row 77 / subclause 17.7: GE08 is
+    // "Reference parameters", NOT a CAST feature. selene-db does not implement
+    // reference parameters, so GE08 is referenced-but-not-supported (see
+    // NOT_SUPPORTED_RATIONALE). CAST is `<cast specification>` (§20.8 /
+    // Table D.1 row 53 = GA05, "Cast specification"). Per ISO Annex A item 52
+    // (Feature GA05), without GA05 "conforming GQL language shall not contain a
+    // <cast specification>" — CAST is gated behind GA05, NOT baseline. selene-db
+    // implements the cast construct, so it claims GA05 in SUPPORTED_FEATURES and
+    // stamps it on every `ValueExpr::Cast`. GA06 is the sibling construct-level
+    // feature for `IS [NOT] TYPED <value type>` (§19.6); selene-db implements that
+    // value type predicate and stamps it on every typed `IsCheckKind`.
+    GE08 = "GE08" => "Reference parameters";
+    GA05 = "GA05" => "Cast specification";
+    GA06 = "GA06" => "Value type predicate";
     GF01 = "GF01" => "Enhanced numeric functions";
     GF02 = "GF02" => "Trigonometric functions";
     GF03 = "GF03" => "Logarithmic functions";
+    GF04 = "GF04" => "Enhanced path functions";
     GF05 = "GF05" => "Multi-character TRIM function";
     GF06 = "GF06" => "Explicit TRIM function";
+    GF07 = "GF07" => "Byte string TRIM function";
     GF10 = "GF10" => "Advanced aggregate functions: general set functions";
     GF11 = "GF11" => "Advanced aggregate functions: binary set functions";
     GF12 = "GF12" => "CARDINALITY function";
     GF13 = "GF13" => "SIZE function";
+    GL01 = "GL01" => "Hexadecimal literals";
+    GL02 = "GL02" => "Octal literals";
+    GL03 = "GL03" => "Binary literals";
+    GL04 = "GL04" => "Exact number in common notation without suffix";
+    GL05 = "GL05" => "Exact number in common notation or as decimal integer with suffix";
+    GL06 = "GL06" => "Exact number in scientific notation with suffix";
+    GL07 = "GL07" => "Approximate number in common notation or as decimal integer with suffix";
+    GL08 = "GL08" => "Approximate number in scientific notation with suffix";
+    GL09 = "GL09" => "Optional float number suffix";
+    GL10 = "GL10" => "Optional double number suffix";
     IM_UUID = "IM_UUID" => "selene-db UUID extension";
+    IM_JSON = "IM_JSON" => "selene-db JSON extension";
+    IM_VECTOR = "IM_VECTOR" => "selene-db VECTOR extension";
     IM_EXTENDS = "IM_EXTENDS" => "selene-db EXTENDS type composition extension";
     IM_INDEX_DDL = "IM_INDEX_DDL" => "selene-db named index DDL extension";
     IM_TYPED_PARAMS = "IM_TYPED_PARAMS" => "selene-db inline typed parameter declaration extension";
@@ -171,7 +200,13 @@ feature_ids! {
     GV24 = "GV24" => "64 bit floating point numbers";
     GV25 = "GV25" => "128 bit floating point numbers";
     GV26 = "GV26" => "256 bit floating point numbers";
+    GV30 = "GV30" => "Specified character string minimum length";
+    GV31 = "GV31" => "Specified character string maximum length";
+    GV32 = "GV32" => "Specified character string fixed length";
     GV35 = "GV35" => "Byte string types";
+    GV36 = "GV36" => "Specified byte string minimum length";
+    GV37 = "GV37" => "Specified byte string maximum length";
+    GV38 = "GV38" => "Specified byte string fixed length";
     GV39 = "GV39" => "Temporal types: date, local datetime and local time support";
     GV40 = "GV40" => "Temporal types: zoned datetime and zoned time support";
     GV41 = "GV41" => "Temporal types: duration support";
@@ -191,14 +226,24 @@ feature_ids! {
 /// ISO sources: Annex A numbered pp. 522-554; Annex D Table D.1 numbered
 /// pp. 577-586. Implication closure is handled by the flagger/planner.
 pub const SUPPORTED_FEATURES: &[FeatureId] = &[
+    FeatureId::G002,
+    FeatureId::G003,
     FeatureId::G010,
     FeatureId::G011,
     FeatureId::G012,
     FeatureId::G013,
+    // G014 "Explicit PATH/PATHS keywords" (ISO §16.6 <path or paths>, Annex A
+    // §16.6 CR5). The match-prefix grammar parses the optional PATH/PATHS sugar
+    // and the flagger stamps G014 iff it is present. Pure surface sugar per
+    // §1.2.4 — inert at runtime. G014 has NO ISO §24.7 implied-feature
+    // relationship (it appears in neither column of Table 10).
+    FeatureId::G014,
     FeatureId::G015,
     FeatureId::G016,
     FeatureId::G017,
     FeatureId::G018,
+    FeatureId::G019,
+    FeatureId::G020,
     FeatureId::G036,
     FeatureId::G037,
     FeatureId::G060,
@@ -211,23 +256,39 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G114,
     FeatureId::G115,
     FeatureId::GA01,
+    FeatureId::GA05,
+    FeatureId::GA06,
     FeatureId::GA07,
     FeatureId::GC03,
     FeatureId::GD01,
     FeatureId::GE04,
     FeatureId::GE05,
+    FeatureId::GE06,
     FeatureId::GE07,
-    FeatureId::GE08,
     FeatureId::GF01,
     FeatureId::GF02,
     FeatureId::GF03,
+    FeatureId::GF04,
     FeatureId::GF05,
     FeatureId::GF06,
+    FeatureId::GF07,
     FeatureId::GF10,
     FeatureId::GF11,
     FeatureId::GF12,
     FeatureId::GF13,
+    FeatureId::GL01,
+    FeatureId::GL02,
+    FeatureId::GL03,
+    FeatureId::GL04,
+    FeatureId::GL05,
+    FeatureId::GL06,
+    FeatureId::GL07,
+    FeatureId::GL08,
+    FeatureId::GL09,
+    FeatureId::GL10,
     FeatureId::IM_UUID,
+    FeatureId::IM_JSON,
+    FeatureId::IM_VECTOR,
     FeatureId::IM_EXTENDS,
     FeatureId::IM_INDEX_DDL,
     FeatureId::IM_TYPED_PARAMS,
@@ -239,9 +300,19 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GG01,
     FeatureId::GG02,
     FeatureId::GG20,
+    // GG21 "Explicit element type key label sets" — the type-DDL grammar now
+    // parses the explicit `<...type key label set>` (`[ <label set phrase> ]
+    // <implies>`, the `=>` marker, ISO §18.2/18.3) and the flagger stamps it.
+    // Per the §24.7 implied-feature-relationships table GG21 implies GG02
+    // ("Graph with a closed graph type"), which is already claimed above, so
+    // the claim is implication-consistent. selene-db sets the IL003 key-label-
+    // set cardinality cap to 1 (singleton), rejecting cardinality 0 (42012/
+    // 42014) and > 1 (42013/42015) per §18.2 SR10/SR11 + §18.3 SR11/SR12 — a
+    // conforming impl-defined cap, not a missing feature.
     FeatureId::GG21,
     FeatureId::GP01,
     FeatureId::GP02,
+    FeatureId::GP03,
     FeatureId::GP04,
     FeatureId::GQ03,
     FeatureId::GQ04,
@@ -280,8 +351,16 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV18,
     FeatureId::GV19,
     FeatureId::GV21,
+    FeatureId::GV22,
+    FeatureId::GV23,
     FeatureId::GV24,
+    FeatureId::GV30,
+    FeatureId::GV31,
+    FeatureId::GV32,
     FeatureId::GV35,
+    FeatureId::GV36,
+    FeatureId::GV37,
+    FeatureId::GV38,
     FeatureId::GV39,
     FeatureId::GV40,
     FeatureId::GV41,
@@ -291,30 +370,26 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV48,
     FeatureId::GV50,
     FeatureId::GV55,
+    FeatureId::GV90,
 ];
 
 /// Rationale for referenced optional features not currently claimed.
+///
+/// This list is reserved for features that are *parser-reachable but rejected*:
+/// each entry is backed by a negative conformance-corpus case proving the
+/// `UnsupportedFeature` rejection (see `corpus_covers_feature_register`).
+/// Features that have no syntactic surface at all — and so can be neither
+/// claimed nor rejected — are NOT listed here; they remain in
+/// `REFERENCED_FEATURES` only and surface as the `"referenced"` status in
+/// `selene.feature_status()`. GE08 ("Reference parameters", §17.7 —
+/// unimplemented) is deliberately in that referenced-only bucket
+/// (CONFORMANCE-00). GA05 ("Cast specification", §20.8) and GA06 ("Value type
+/// predicate", §19.6) are CLAIMED in `SUPPORTED_FEATURES`: CAST is gated behind
+/// GA05, and `IS [NOT] TYPED` is gated behind GA06. GG21 ("Explicit element type
+/// key label sets", §18.2/18.3) is now CLAIMED as well: the type-DDL grammar
+/// parses the explicit `<...type key label set>` (`=>` marker) and bounds its
+/// cardinality to the IL003 singleton cap.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
-    (
-        FeatureId::G002,
-        "DIFFERENT EDGES match mode is a graph-pattern-wide traversal policy deferred to a future release",
-    ),
-    (
-        FeatureId::G003,
-        "REPEATABLE ELEMENTS match mode is a graph-pattern-wide traversal policy deferred to a future release",
-    ),
-    (
-        FeatureId::G019,
-        "counted shortest selectors require grammar support and counted-path selector semantics",
-    ),
-    (
-        FeatureId::G020,
-        "counted shortest selectors require grammar support and counted-path selector semantics",
-    ),
-    (
-        FeatureId::GP03,
-        "explicit variable-scope inline procedures are deferred to a future release",
-    ),
     (
         FeatureId::GP05,
         "procedure-local definitions require the procedure body parser; not yet supported",
@@ -423,18 +498,7 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
         FeatureId::GV16,
         "256-bit signed integers are not represented in Value v1",
     ),
-    (
-        FeatureId::GV20,
-        "REAL spelling is outside the current claim; FLOAT16 remains deferred",
-    ),
-    (
-        FeatureId::GV22,
-        "specified floating precision syntax is deferred",
-    ),
-    (
-        FeatureId::GV23,
-        "REAL/DOUBLE synonyms are deferred until parser coverage is explicit",
-    ),
+    (FeatureId::GV20, "FLOAT16 remains deferred"),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),
     (
@@ -444,10 +508,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::GV61,
         "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
-    ),
-    (
-        FeatureId::GV90,
-        "explicit value type nullability requires type-level nullability on GqlType; reclaim once the type AST carries the marker",
     ),
 ];
 
@@ -522,6 +582,88 @@ mod tests {
                 "{feature} is in BOTH SUPPORTED_FEATURES and NOT_SUPPORTED_RATIONALE"
             );
         }
+    }
+
+    #[test]
+    fn ge08_is_reference_parameters_referenced_only() {
+        // CONFORMANCE-00: GE08 is ISO Annex D Table D.1 row 77 / §17.7
+        // "Reference parameters" — NOT a CAST feature. It must carry the correct
+        // ISO name, must NOT be claimed (reference parameters are unimplemented),
+        // and — having no syntactic surface to reject — must NOT be in
+        // NOT_SUPPORTED_RATIONALE (which is reserved for parser-rejected
+        // features). It surfaces as the "referenced" status instead.
+        assert_eq!(name_of(FeatureId::GE08), Some("Reference parameters"));
+        assert!(
+            !is_supported(FeatureId::GE08),
+            "GE08 (Reference parameters) is not implemented and must not be claimed"
+        );
+        assert!(
+            non_supported_rationale(FeatureId::GE08).is_none(),
+            "GE08 has no parser surface to reject; it is referenced-only, not rationalized"
+        );
+    }
+
+    #[test]
+    fn ga05_cast_specification_is_supported() {
+        // CONFORMANCE-00 (Codex review follow-up): GA05 "Cast specification"
+        // (Annex D row 53 / §20.8) is the real ISO feature for CAST. Per ISO
+        // Annex A item 52, without GA05 "conforming GQL language shall not
+        // contain a <cast specification>" — CAST is gated behind GA05, not
+        // baseline. selene-db implements the cast construct, so it CLAIMS GA05
+        // (and so GA05 carries no non-supported rationale).
+        assert_eq!(name_of(FeatureId::GA05), Some("Cast specification"));
+        assert!(
+            is_supported(FeatureId::GA05),
+            "GA05 is claimed: selene-db implements <cast specification>"
+        );
+        assert!(
+            non_supported_rationale(FeatureId::GA05).is_none(),
+            "GA05 is supported, so it has no non-supported rationale"
+        );
+    }
+
+    #[test]
+    fn ga06_value_type_predicate_is_supported() {
+        // CONFORMANCE-00 follow-up: GA06 "Value type predicate" (Annex A item 53 /
+        // ISO §19.6) is the construct-level feature for `IS [NOT] TYPED <value
+        // type>`. selene-db implements the typed predicate, so it CLAIMS GA06 and
+        // carries no non-supported rationale.
+        assert_eq!(name_of(FeatureId::GA06), Some("Value type predicate"));
+        assert!(
+            is_supported(FeatureId::GA06),
+            "GA06 is claimed: selene-db implements <value type predicate>"
+        );
+        assert!(
+            non_supported_rationale(FeatureId::GA06).is_none(),
+            "GA06 is supported, so it has no non-supported rationale"
+        );
+    }
+
+    #[test]
+    fn gg21_explicit_key_label_sets_is_claimed() {
+        // 813: GG21 "Explicit element type key label sets" is now CLAIMED. The
+        // type-DDL grammar parses the explicit `<...type key label set>` (the
+        // `=>` <implies> marker, ISO §18.2/18.3) and the flagger stamps it. A
+        // claimed feature carries no non-supported rationale.
+        assert_eq!(
+            name_of(FeatureId::GG21),
+            Some("Explicit element type key label sets")
+        );
+        assert!(
+            is_supported(FeatureId::GG21),
+            "GG21 is claimed: the explicit key-label-set `=>` syntax is parsed and flagged"
+        );
+        assert!(
+            non_supported_rationale(FeatureId::GG21).is_none(),
+            "GG21 is supported, so it has no non-supported rationale"
+        );
+        // §24.7 implied-feature-relationships: GG21 implies GG02 ("Graph with a
+        // closed graph type"). The implication is satisfied — GG02 is claimed —
+        // so claiming GG21 is implication-consistent and not a phantom claim.
+        assert!(
+            is_supported(FeatureId::GG02) && is_supported(FeatureId::GG20),
+            "GG21 implies GG02 (closed graph type); GG02 + GG20 stay claimed"
+        );
     }
 
     #[test]

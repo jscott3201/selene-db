@@ -28,7 +28,7 @@ You do not need a database server, a container, or a wire client. `selene-db` is
 `selene-db` is not yet published to crates.io. Embedders depend on the workspace crates by path:
 
 ```bash
-git clone https://github.com/jscott3201/selene-db.git
+git clone https://github.com/Aionforge-Labs/selene-db.git
 cargo new my-graph-app
 cd my-graph-app
 ```
@@ -65,7 +65,7 @@ This program creates a graph in memory, inserts three `Person` nodes connected b
 Replace `src/main.rs` with:
 
 ```rust
-use selene_core::{GraphId, LabelSet, PropertyMap, Value, intern};
+use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
 use selene_graph::SharedGraph;
 use selene_gql::{
     EmptyProcedureRegistry, Session, StatementOutput, analyze, execute_statement, parse, plan,
@@ -75,12 +75,10 @@ fn main() {
     // Step 1: open a new in-memory graph.
     let graph = SharedGraph::new(GraphId::new(1));
 
-    // Step 2: intern the label and property names once.
-    // IStr is selene-db's interned-string handle; equality and hashing are
-    // O(1) on the handle rather than on the underlying bytes.
-    let person = intern("Person").unwrap();
-    let knows = intern("KNOWS").unwrap();
-    let name = intern("name").unwrap();
+    // Step 2: construct the label and property keys.
+    let person = db_string("Person").unwrap();
+    let knows = db_string("KNOWS").unwrap();
+    let name = db_string("name").unwrap();
 
     // Step 3: open a write transaction. Writes are serialized through a
     // single graph-wide write lock; readers see lock-free immutable snapshots.
@@ -90,30 +88,30 @@ fn main() {
 
         let mut ada_props = PropertyMap::new();
         ada_props
-            .set(name, Value::String(intern("Ada").unwrap()))
+            .set(name.clone(), Value::String(db_string("Ada").unwrap()))
             .unwrap();
         let ada = mutator
-            .create_node(LabelSet::single(person), ada_props)
+            .create_node(LabelSet::single(person.clone()), ada_props)
             .unwrap();
 
         let mut grace_props = PropertyMap::new();
         grace_props
-            .set(name, Value::String(intern("Grace").unwrap()))
+            .set(name.clone(), Value::String(db_string("Grace").unwrap()))
             .unwrap();
         let grace = mutator
-            .create_node(LabelSet::single(person), grace_props)
+            .create_node(LabelSet::single(person.clone()), grace_props)
             .unwrap();
 
         let mut linus_props = PropertyMap::new();
         linus_props
-            .set(name, Value::String(intern("Linus").unwrap()))
+            .set(name, Value::String(db_string("Linus").unwrap()))
             .unwrap();
         let linus = mutator
             .create_node(LabelSet::single(person), linus_props)
             .unwrap();
 
         mutator
-            .create_edge(knows, ada, grace, PropertyMap::new())
+            .create_edge(knows.clone(), ada, grace, PropertyMap::new())
             .unwrap();
         mutator
             .create_edge(knows, grace, linus, PropertyMap::new())
@@ -137,7 +135,7 @@ fn main() {
     println!("found {} person rows", rows.row_count());
     for row in rows.rows() {
         if let Some(Value::String(s)) = row.values().first() {
-            println!("  - {}", selene_core::resolve(*s).unwrap());
+            println!("  - {}", s.as_str());
         }
     }
 }
@@ -173,7 +171,7 @@ found 3 person rows
 This example adds typed properties (`Int`, `Bool`), uses multiple labels, and chains GQL clauses with `WHERE`, `ORDER BY`, and `LIMIT`. It demonstrates the shape you reach for once "open graph, ad-hoc keys" is no longer enough.
 
 ```rust
-use selene_core::{GraphId, LabelSet, PropertyMap, Value, intern};
+use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
 use selene_graph::SharedGraph;
 use selene_gql::{
     EmptyProcedureRegistry, Session, StatementOutput, analyze, execute_statement, parse, plan,
@@ -182,17 +180,17 @@ use selene_gql::{
 fn main() {
     let graph = SharedGraph::new(GraphId::new(1));
 
-    let person = intern("Person").unwrap();
-    let engineer = intern("Engineer").unwrap();
-    let name = intern("name").unwrap();
-    let age = intern("age").unwrap();
-    let active = intern("active").unwrap();
+    let person = db_string("Person").unwrap();
+    let engineer = db_string("Engineer").unwrap();
+    let name = db_string("name").unwrap();
+    let age = db_string("age").unwrap();
+    let active = db_string("active").unwrap();
 
     // Build a LabelSet with two labels for one node.
     // LabelSet::insert returns `bool` (true if the label was newly added);
     // the workspace lints deny `unused_must_use`, so bind or discard explicitly.
     let mut engineer_labels = LabelSet::new();
-    let _ = engineer_labels.insert(person);
+    let _ = engineer_labels.insert(person.clone());
     let _ = engineer_labels.insert(engineer);
 
     let mut tx = graph.begin_write();
@@ -200,24 +198,24 @@ fn main() {
         let mut mutator = tx.mutator();
 
         let mut p1 = PropertyMap::new();
-        p1.set(name, Value::String(intern("Ada").unwrap())).unwrap();
-        p1.set(age, Value::Int(36)).unwrap();
-        p1.set(active, Value::Bool(true)).unwrap();
+        p1.set(name.clone(), Value::String(db_string("Ada").unwrap())).unwrap();
+        p1.set(age.clone(), Value::Int(36)).unwrap();
+        p1.set(active.clone(), Value::Bool(true)).unwrap();
         mutator
             .create_node(engineer_labels.clone(), p1)
             .unwrap();
 
         let mut p2 = PropertyMap::new();
-        p2.set(name, Value::String(intern("Grace").unwrap()))
+        p2.set(name.clone(), Value::String(db_string("Grace").unwrap()))
             .unwrap();
-        p2.set(age, Value::Int(85)).unwrap();
-        p2.set(active, Value::Bool(true)).unwrap();
+        p2.set(age.clone(), Value::Int(85)).unwrap();
+        p2.set(active.clone(), Value::Bool(true)).unwrap();
         mutator
             .create_node(engineer_labels.clone(), p2)
             .unwrap();
 
         let mut p3 = PropertyMap::new();
-        p3.set(name, Value::String(intern("Bob").unwrap())).unwrap();
+        p3.set(name, Value::String(db_string("Bob").unwrap())).unwrap();
         p3.set(age, Value::Int(22)).unwrap();
         p3.set(active, Value::Bool(false)).unwrap();
         mutator
@@ -249,7 +247,7 @@ fn main() {
     for row in rows.rows() {
         let values = row.values();
         let name_str = match &values[0] {
-            Value::String(s) => selene_core::resolve(*s).unwrap().to_string(),
+            Value::String(s) => s.as_str().to_string(),
             other => format!("{other:?}"),
         };
         let age_num = match values[1] {
@@ -273,7 +271,9 @@ Ada (36)
 - `LabelSet::new()` plus `insert` lets a node carry multiple labels. Use `LabelSet::single(label)` when you only need one.
 - `PropertyMap::set` accepts any `Value` variant. The full type list is in [`selene-core/src/value.rs`](../crates/selene-core/src/value.rs); the mandatory ISO types `STRING`, `BOOLEAN`, `INT`, `FLOAT` correspond to `Value::String`, `Value::Bool`, `Value::Int`, `Value::Float`.
 - `(p:Person & Engineer)` requires both labels. `(p:Person | Engineer)` requires at least one. The GQL Flagger rejects label-expression forms outside the optional features selene-db claims; see [the GQL reference](gql-reference.md) for the full surface.
-- `selene-core::resolve(istr)` returns the `&str` backing an interned string. The interner is global per process and lasts for the program lifetime.
+- `DbString::as_str()` returns the string slice for labels, property keys, and
+  `Value::String` payloads. `db_string(...)` applies the IL013 per-string byte
+  limit before constructing the owned database string.
 - For literal parameter binding (`$name`, `$age`, etc.), pass values through `Session` rather than baking them into the query text. The full parameter API is covered in [the embedding guide](embedding-guide.md).
 
 ---
@@ -283,7 +283,7 @@ Ada (36)
 The graph is in-memory by default. Each committed transaction publishes a new snapshot that subsequent readers and writers observe immediately. This example proves that contract end-to-end:
 
 ```rust
-use selene_core::{GraphId, LabelSet, PropertyMap, Value, intern};
+use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
 use selene_graph::SharedGraph;
 use selene_gql::{
     EmptyProcedureRegistry, Session, StatementOutput, analyze, execute_statement, parse, plan,
@@ -303,13 +303,13 @@ fn count_persons(graph: &SharedGraph) -> usize {
 }
 
 fn insert_person(graph: &SharedGraph, who: &str) {
-    let person = intern("Person").unwrap();
-    let name = intern("name").unwrap();
+    let person = db_string("Person").unwrap();
+    let name = db_string("name").unwrap();
 
     let mut tx = graph.begin_write();
     let mut props = PropertyMap::new();
     props
-        .set(name, Value::String(intern(who).unwrap()))
+        .set(name, Value::String(db_string(who).unwrap()))
         .unwrap();
     tx.mutator()
         .create_node(LabelSet::single(person), props)
@@ -351,7 +351,9 @@ This wiring is intentionally explicit so embedders can choose their own commit-t
 - **Re-using parsed plans**: `parse`, `analyze`, and `plan` are pure functions of (query text, registry, schema). Cache the resulting `ExecutionPlan` and re-run it through `execute_statement` with fresh `Session`s when the query text is fixed.
 - **One graph per logical database**: `SharedGraph` is `Clone`-cheap (it wraps an `Arc`). Pass it across threads; reads are lock-free.
 - **Avoiding panics**: every example above uses `.unwrap()` for readability. Production code should pattern-match `GraphError`, `AnalysisError`, `PlannerError`, and `ExecutorError`. Each is a typed `thiserror::Error` with miette-friendly diagnostics.
-- **Interning**: prefer interning label and property names once at startup (or via `lazy_static`/`OnceLock`). `intern` is cheap but not free; reusing handles makes downstream property reads faster.
+- **Database strings**: construct labels, property keys, aliases, and string
+  values with `db_string(...)`. Clone existing `DbString` keys when a mutation
+  API consumes the key and you need to reuse it later.
 - **Mutations from GQL**: examples 1-3 mutate through `Mutator` for clarity. The same effects are available through ISO GQL `INSERT`, `SET`, and `DELETE` clauses; pick the surface that fits your application.
 
 ---

@@ -1,6 +1,6 @@
 //! Closed-graph static schema validation tests.
 
-use selene_core::{IStr, LabelSet, PropertyValueType, intern};
+use selene_core::{DbString, LabelSet, PropertyValueType};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, EdgeDirection, EdgePattern, EmptyProcedureRegistry,
     GraphPattern, InsertStatement, LabelExpr, Literal, MutationPipeline, MutationStatement,
@@ -14,22 +14,26 @@ use selene_testing::{
     mentions_one_of_graph_type, person_company_graph_type, person_only_graph_type,
 };
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test strings fit interner")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test strings fit DB string cap")
 }
 
 fn labels(values: &[&str]) -> LabelSet {
-    values.iter().map(|value| istr(value)).collect()
+    values.iter().map(|value| db_string(value)).collect()
 }
 
 fn property(name: &str, value_type: PropertyValueType, required: bool) -> PropertyTypeDef {
     PropertyTypeDef {
-        name: istr(name),
+        name: db_string(name),
         value_type,
         list_element_type: None,
         required,
         default: None,
         immutable: false,
+        unique: false,
+        decimal_type: None,
+        character_string_type: None,
+        byte_string_type: None,
         record_field_types: None,
     }
 }
@@ -38,30 +42,34 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
 /// `config :: RECORD{host :: STRING, port :: INT}`.
 fn host_record_graph_type() -> GraphTypeDef {
     let config = PropertyTypeDef {
-        name: istr("config"),
+        name: db_string("config"),
         value_type: PropertyValueType::RecordTyped,
         list_element_type: None,
         required: false,
         default: None,
         immutable: false,
+        unique: false,
+        decimal_type: None,
+        character_string_type: None,
+        byte_string_type: None,
         record_field_types: Some(RecordFieldTypes(vec![
             RecordFieldTypeDef {
-                name: istr("host"),
+                name: db_string("host"),
                 field_type: RecordFieldType::Scalar(PropertyValueType::String),
                 required: true,
             },
             RecordFieldTypeDef {
-                name: istr("port"),
+                name: db_string("port"),
                 field_type: RecordFieldType::Scalar(PropertyValueType::Int),
                 required: true,
             },
         ])),
     };
     GraphTypeDef {
-        name: istr("fixture.host_record"),
+        name: db_string("fixture.host_record"),
         node_types: vec![NodeTypeDef {
-            name: istr("Host"),
-            key_labels: LabelSet::single(istr("Host")),
+            name: db_string("Host"),
+            key_labels: LabelSet::single(db_string("Host")),
             properties: vec![config],
             validation_mode: ValidationMode::Strict,
         }],
@@ -69,6 +77,21 @@ fn host_record_graph_type() -> GraphTypeDef {
     }
     .validate()
     .expect("host record fixture graph type is valid")
+}
+
+fn json_graph_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: db_string("fixture.json"),
+        node_types: vec![NodeTypeDef {
+            name: db_string("Thing"),
+            key_labels: LabelSet::single(db_string("Thing")),
+            properties: vec![property("payload", PropertyValueType::Json, true)],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    }
+    .validate()
+    .expect("JSON fixture graph type is valid")
 }
 
 fn analyze_source(
@@ -91,18 +114,18 @@ fn schema_error(source: &str, graph_type: &GraphTypeDef) -> AnalysisError {
 }
 
 fn label_expr(label: &str) -> Option<LabelExpr> {
-    Some(LabelExpr::Single(istr(label)))
+    Some(LabelExpr::Single(db_string(label)))
 }
 
 fn string_expr(value: &str, span: SourceSpan) -> ValueExpr {
-    ValueExpr::Literal(Literal::String(istr(value), span))
+    ValueExpr::Literal(Literal::String(db_string(value), span))
 }
 
 fn node(name: &str, label: &str, name_value: &str, span: SourceSpan) -> PatternElement {
     PatternElement::Node(NodePattern {
-        binding: Some(istr(name)),
+        binding: Some(db_string(name)),
         label_expr: label_expr(label),
-        properties: vec![(istr("name"), string_expr(name_value, span))],
+        properties: vec![(db_string("name"), string_expr(name_value, span))],
         inline_where: None,
         span,
     })
@@ -122,11 +145,11 @@ fn edge(label: &str, direction: EdgeDirection, span: SourceSpan) -> PatternEleme
 
 fn ambiguous_property_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("fixture.ambiguous"),
+        name: db_string("fixture.ambiguous"),
         node_types: vec![
             NodeTypeDef {
-                name: istr("Person"),
-                key_labels: LabelSet::single(istr("Person")),
+                name: db_string("Person"),
+                key_labels: LabelSet::single(db_string("Person")),
                 properties: vec![
                     property("name", PropertyValueType::String, true),
                     property("flag", PropertyValueType::String, false),
@@ -134,7 +157,7 @@ fn ambiguous_property_graph_type() -> GraphTypeDef {
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("ActivePerson"),
+                name: db_string("ActivePerson"),
                 key_labels: labels(&["Person", "Active"]),
                 properties: vec![
                     property("name", PropertyValueType::String, true),
@@ -151,33 +174,33 @@ fn ambiguous_property_graph_type() -> GraphTypeDef {
 
 fn duplicate_edge_label_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("fixture.duplicate_edge_label"),
+        name: db_string("fixture.duplicate_edge_label"),
         node_types: vec![
             NodeTypeDef {
-                name: istr("Person"),
-                key_labels: LabelSet::single(istr("Person")),
+                name: db_string("Person"),
+                key_labels: LabelSet::single(db_string("Person")),
                 properties: vec![property("name", PropertyValueType::String, true)],
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("Company"),
-                key_labels: LabelSet::single(istr("Company")),
+                name: db_string("Company"),
+                key_labels: LabelSet::single(db_string("Company")),
                 properties: vec![property("name", PropertyValueType::String, true)],
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![
             EdgeTypeDef {
-                name: istr("WorksAt"),
-                label: istr("REL"),
+                name: db_string("WorksAt"),
+                label: db_string("REL"),
                 source_node_type: EdgeEndpointDef::NodeType(0),
                 target_node_type: EdgeEndpointDef::NodeType(1),
                 properties: vec![property("since", PropertyValueType::Int, false)],
                 validation_mode: ValidationMode::Strict,
             },
             EdgeTypeDef {
-                name: istr("Knows"),
-                label: istr("REL"),
+                name: db_string("Knows"),
+                label: db_string("REL"),
                 source_node_type: EdgeEndpointDef::NodeType(0),
                 target_node_type: EdgeEndpointDef::NodeType(0),
                 properties: vec![property("strength", PropertyValueType::Int, false)],
@@ -191,28 +214,28 @@ fn duplicate_edge_label_graph_type() -> GraphTypeDef {
 
 fn label_transition_graph_type() -> GraphTypeDef {
     GraphTypeDef {
-        name: istr("fixture.label_transition"),
+        name: db_string("fixture.label_transition"),
         node_types: vec![
             NodeTypeDef {
-                name: istr("Person"),
-                key_labels: LabelSet::single(istr("Person")),
+                name: db_string("Person"),
+                key_labels: LabelSet::single(db_string("Person")),
                 properties: vec![property("name", PropertyValueType::String, true)],
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("ActivePerson"),
+                name: db_string("ActivePerson"),
                 key_labels: labels(&["Person", "Active"]),
                 properties: vec![property("name", PropertyValueType::String, true)],
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("SeniorPerson"),
+                name: db_string("SeniorPerson"),
                 key_labels: labels(&["Person", "Senior"]),
                 properties: vec![property("name", PropertyValueType::String, true)],
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: istr("VisitorPerson"),
+                name: db_string("VisitorPerson"),
                 key_labels: labels(&["Person", "Visitor"]),
                 properties: vec![property("name", PropertyValueType::String, true)],
                 validation_mode: ValidationMode::Strict,
@@ -487,6 +510,35 @@ fn validates_static_candidate_sets_when_candidates_agree() {
         .expect("all Person candidates agree on name");
     analyze_with_schema("MATCH (n:Person) REMOVE n.nickname", &graph_type)
         .expect("all Person candidates agree nickname is optional");
+}
+
+#[test]
+fn validates_resolved_json_property_writes() {
+    let graph_type = json_graph_type();
+    analyze_with_schema(
+        r#"INSERT (:Thing {payload: CAST('{"a":1}' AS JSON)})"#,
+        &graph_type,
+    )
+    .expect("resolved JSON insert satisfies JSON property");
+    analyze_with_schema(
+        r#"MATCH (n:Thing) SET n.payload = CAST('{"a":2}' AS JSON)"#,
+        &graph_type,
+    )
+    .expect("resolved JSON SET satisfies JSON property");
+
+    let mismatch = schema_error(
+        r#"MATCH (n:Thing) SET n.payload = CAST('{"a":2}' AS STRING)"#,
+        &graph_type,
+    );
+    assert!(matches!(
+        mismatch,
+        AnalysisError::SchemaPropertyTypeMismatch { .. }
+    ));
+    let removed = schema_error("MATCH (n:Thing) REMOVE n.payload", &graph_type);
+    assert!(matches!(
+        removed,
+        AnalysisError::SchemaRequiredPropertyRemoved { .. }
+    ));
 }
 
 #[test]

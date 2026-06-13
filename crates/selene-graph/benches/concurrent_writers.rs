@@ -18,6 +18,7 @@
 //! teardown is kept out of the measured region via `BatchSize::LargeInput`
 //! (Criterion runs setup + drop untimed).
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -221,7 +222,7 @@ fn run_writers_with_readers(shared: &SharedGraph, threads: usize) {
 }
 
 fn writer_loop(shared: &SharedGraph, thread_idx: usize, commits: usize) {
-    let score = selene_core::intern("score").expect("score key interns");
+    let score = selene_core::db_string("score").expect("score key fits DB string cap");
     for commit_idx in 0..commits {
         let mut txn = shared.begin_write();
         {
@@ -229,8 +230,8 @@ fn writer_loop(shared: &SharedGraph, thread_idx: usize, commits: usize) {
             for update_idx in 0..UPDATES_PER_COMMIT {
                 let node = node_for(thread_idx, update_idx);
                 let value = ((commit_idx * UPDATES_PER_COMMIT) + update_idx) as i64;
-                let diff =
-                    PropertyDiff::new([(score, Value::Int(value))], []).expect("property diff");
+                let diff = PropertyDiff::new([(score.clone(), Value::Int(value))], [])
+                    .expect("property diff");
                 mutator
                     .update_node(
                         node,
@@ -266,7 +267,7 @@ fn dump_percentiles(fixture: &BenchFixture, threads: usize, label: &str, batchin
             .map(|thread_idx| {
                 let shared = &wal.shared;
                 scope.spawn(move || {
-                    let score = selene_core::intern("score").expect("score interns");
+                    let score = selene_core::db_string("score").expect("score fits DB string cap");
                     let mut samples = Vec::with_capacity(per_thread);
                     for commit_idx in 0..per_thread {
                         let start = Instant::now();
@@ -276,8 +277,9 @@ fn dump_percentiles(fixture: &BenchFixture, threads: usize, label: &str, batchin
                             for update_idx in 0..UPDATES_PER_COMMIT {
                                 let node = node_for(thread_idx, update_idx);
                                 let value = ((commit_idx * UPDATES_PER_COMMIT) + update_idx) as i64;
-                                let diff = PropertyDiff::new([(score, Value::Int(value))], [])
-                                    .expect("property diff");
+                                let diff =
+                                    PropertyDiff::new([(score.clone(), Value::Int(value))], [])
+                                        .expect("property diff");
                                 mutator
                                     .update_node(
                                         node,

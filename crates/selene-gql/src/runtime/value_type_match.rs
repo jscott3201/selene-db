@@ -9,42 +9,79 @@
 //! deliberately stricter than the `CAST` subset/projection rule in
 //! [`crate::runtime::evaluator::cast`].)
 
-use selene_core::{Record, Value};
+use selene_core::{
+    DurationTypeQualifier, Record, Value, character_string_fits_type, decimal_fits_type,
+};
 
 use crate::{GqlType, RecordType};
 
 /// Return true when `value` structurally conforms to the AST type `ty`.
 ///
-/// This is a two-valued (not three-valued) test: a `Value::Null` operand conforms only to
-/// `GqlType::Null`, so `NULL IS TYPED <T>` is `false` for any material `T`.
+/// This is a two-valued (not three-valued) test: a nullable value type accepts
+/// `Value::Null` unless it is explicitly wrapped in [`GqlType::NotNull`].
 pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
     match ty {
-        GqlType::String => matches!(value, Value::String(_) | Value::ExternalString(_)),
-        GqlType::Uuid => matches!(value, Value::Uuid(_)),
-        GqlType::Boolean => matches!(value, Value::Bool(_)),
-        GqlType::Integer
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::SmallInt
-        | GqlType::BigInt => matches!(value, Value::Int(_)),
-        GqlType::Int128 => matches!(value, Value::Int128(_)),
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            matches!(value, Value::Uint(_))
+        GqlType::NotNull(inner) => {
+            !matches!(value, Value::Null) && value_matches_gql_type(value, inner)
         }
+        GqlType::Nothing => false,
+        _ if matches!(value, Value::Null) => true,
+        GqlType::String => matches!(value, Value::String(_)),
+        GqlType::CharacterString(character_type) => {
+            matches!(value, Value::String(value) if character_string_fits_type(
+                value,
+                selene_core::CharacterStringType {
+                    min_len: character_type.min_len,
+                    max_len: character_type.max_len,
+                },
+            ))
+        }
+        GqlType::Uuid => matches!(value, Value::Uuid(_)),
+        GqlType::Json => matches!(value, Value::Json(_)),
+        GqlType::Boolean => matches!(value, Value::Bool(_)),
+        GqlType::Integer | GqlType::Int64 | GqlType::BigInt => matches!(value, Value::Int(_)),
+        GqlType::Int8 => matches!(value, Value::Int(value) if i8::try_from(*value).is_ok()),
+        GqlType::Int16 | GqlType::SmallInt => {
+            matches!(value, Value::Int(value) if i16::try_from(*value).is_ok())
+        }
+        GqlType::Int32 => matches!(value, Value::Int(value) if i32::try_from(*value).is_ok()),
+        GqlType::Int128 => matches!(value, Value::Int128(_)),
+        GqlType::Uint8 => matches!(value, Value::Uint(value) if u8::try_from(*value).is_ok()),
+        GqlType::Uint16 => matches!(value, Value::Uint(value) if u16::try_from(*value).is_ok()),
+        GqlType::Uint32 => matches!(value, Value::Uint(value) if u32::try_from(*value).is_ok()),
+        GqlType::Uint64 => matches!(value, Value::Uint(_)),
+        GqlType::USmallInt => matches!(value, Value::Uint(value) if u16::try_from(*value).is_ok()),
+        GqlType::Uint => matches!(value, Value::Uint(value) if u32::try_from(*value).is_ok()),
+        GqlType::UBigInt => matches!(value, Value::Uint(_)),
         GqlType::Uint128 => matches!(value, Value::Uint128(_)),
         GqlType::Float => matches!(value, Value::Float(_) | Value::Float32(_)),
-        GqlType::Float32 => matches!(value, Value::Float32(_)),
-        GqlType::Float64 => matches!(value, Value::Float(_)),
+        GqlType::Float32 | GqlType::Real => matches!(value, Value::Float32(_)),
+        GqlType::Float64 | GqlType::Double => matches!(value, Value::Float(_)),
         GqlType::Decimal => matches!(value, Value::Decimal(_)),
+        GqlType::DecimalExact(decimal_type) => {
+            matches!(value, Value::Decimal(value) if decimal_fits_type(*value, *decimal_type))
+        }
         GqlType::Bytes => matches!(value, Value::Bytes(_)),
+        GqlType::ByteString(byte_type) => match value {
+            Value::Bytes(value) => {
+                let len = value.len() as u64;
+                len >= byte_type.min_len && len <= byte_type.max_len
+            }
+            _ => false,
+        },
         GqlType::ZonedDateTime => matches!(value, Value::ZonedDateTime(_)),
         GqlType::LocalDateTime => matches!(value, Value::LocalDateTime(_)),
         GqlType::Date => matches!(value, Value::Date(_)),
         GqlType::ZonedTime => matches!(value, Value::ZonedTime(_)),
         GqlType::LocalTime => matches!(value, Value::LocalTime(_)),
         GqlType::Duration => matches!(value, Value::Duration(_)),
+        GqlType::DurationYearToMonth => {
+            matches!(value, Value::Duration(span) if DurationTypeQualifier::YearToMonth.matches_span(span))
+        }
+        GqlType::DurationDayToSecond => {
+            matches!(value, Value::Duration(span) if DurationTypeQualifier::DayToSecond.matches_span(span))
+        }
+        GqlType::Vector => matches!(value, Value::Vector(_)),
         GqlType::Record(record) => value_matches_record_type(value, record),
         GqlType::List(inner) => match value {
             Value::List(values) => values
@@ -58,7 +95,6 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::EdgeRef => matches!(value, Value::EdgeRef(_)),
         GqlType::TableRef => matches!(value, Value::TableRef(_)),
         GqlType::Null => matches!(value, Value::Null),
-        GqlType::Nothing => false,
     }
 }
 
@@ -111,9 +147,7 @@ mod tests {
     fn closed_record_type_rejects_recordtyped_operand_fail_closed() {
         // A catalog-bound RecordTyped cannot be name-verified without the (unbuilt)
         // named-record-type catalog, so a closed record type conservatively does not match.
-        let field = selene_core::intern_with_admission("a")
-            .expect("intern field")
-            .0;
+        let field = selene_core::db_string("a").expect("db_string field");
         let ty = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
         assert!(!value_matches_gql_type(&sample_recordtyped(), &ty));
     }

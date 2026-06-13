@@ -1,21 +1,25 @@
 //! Typed mutation funnel per spec 03 section 4.3.
 
+mod assignment;
 mod catalog;
 mod composite_property_index;
+mod delete;
+mod delete_set;
 mod factory_reset;
 mod property_index;
 mod remove;
+mod text_index;
+mod vector_index;
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use roaring::RoaringBitmap;
 use selene_core::{
-    Change, EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
+    Change, DbString, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
     SchemaChange,
 };
 
-use crate::adjacency::{AdjacencyEdge, AdjacencyEntry};
+use crate::adjacency::AdjacencyEdge;
 use crate::error::{GraphError, GraphResult};
 use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
 use crate::index_provider::{IndexProvider, ProviderTag};
@@ -41,6 +45,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// the v1 row-index range (max 2^32 rows).
     pub fn create_node(&mut self, labels: LabelSet, mut props: PropertyMap) -> GraphResult<NodeId> {
         fill_node_defaults(self.txn.read(), &labels, &mut props)?;
+        assignment::coerce_node_properties(self.txn.read(), &labels, &mut props)?;
         let id = self.txn.allocator.allocate_node();
         {
             let graph = self.txn.guard_mut();
@@ -78,10 +83,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &props,
                 row,
             )?;
+            crate::vector_index::apply_node_create(&mut graph.vector_index, &labels, &props, row)?;
+            crate::text_index::apply_node_create(&mut graph.text_index, &labels, &props, row, id);
             graph.node_store.labels.push(labels.clone());
             graph.node_store.properties.push(props.clone());
             graph.node_store.row_to_id.push(id);
-            graph.node_store.alive.insert(row);
+            graph.node_store.alive_mut().insert(row);
             // BRIEF-Item-4a: bind the external id to its row in both directions.
             // The live commit path never re-runs `rebuild_id_maps`, so the
             // `id -> row` map must be populated here. The row is remappable once
@@ -100,14 +107,21 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Create an edge between two alive nodes.
     pub fn create_edge(
         &mut self,
-        label: IStr,
+        label: DbString,
         source: NodeId,
         target: NodeId,
         mut props: PropertyMap,
     ) -> GraphResult<EdgeId> {
         self.require_live_node(source)?;
         self.require_live_node(target)?;
-        fill_edge_defaults(self.txn.read(), label, source, target, &mut props)?;
+        fill_edge_defaults(self.txn.read(), label.clone(), source, target, &mut props)?;
+        assignment::coerce_edge_properties(
+            self.txn.read(),
+            label.clone(),
+            source,
+            target,
+            &mut props,
+        )?;
         let id = self.txn.allocator.allocate_edge();
         {
             let graph = self.txn.guard_mut();
@@ -120,22 +134,22 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     rows: graph.edge_store.len() as u64,
                     max_rows: u32::MAX as u64,
                 })?;
-            graph.edge_store.label.push(label);
+            graph.edge_store.label.push(label.clone());
             graph.edge_store.source.push(source);
             graph.edge_store.target.push(target);
             graph.edge_store.properties.push(props.clone());
             graph.edge_store.row_to_id.push(id);
-            graph.edge_store.alive.insert(row);
+            graph.edge_store.alive_mut().insert(row);
             // BRIEF-Item-4a: bind the external edge id to its row (live path).
             graph.edge_id_to_row.insert(id, RowIndex::new(row));
-            insert_index_row(&mut graph.idx_edge_label, label, row);
+            insert_index_row(&mut graph.idx_edge_label, label.clone(), row);
 
             graph
                 .adjacency_out
                 .entry(source)
                 .or_default()
                 .add(AdjacencyEdge {
-                    label,
+                    label: label.clone(),
                     neighbor: target,
                     edge_id: id,
                 });
@@ -144,7 +158,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 .entry(target)
                 .or_default()
                 .add(AdjacencyEdge {
-                    label,
+                    label: label.clone(),
                     neighbor: source,
                     edge_id: id,
                 });
@@ -164,7 +178,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         &mut self,
         id: NodeId,
         labels_diff: LabelDiff,
-        props_diff: PropertyDiff,
+        mut props_diff: PropertyDiff,
     ) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
 
@@ -178,7 +192,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .cloned()
             .unwrap_or_default();
         let mut labels = old_labels.clone();
-        for label in labels_diff.added.iter().copied() {
+        for label in labels_diff.added.iter().cloned() {
             labels.insert(label);
         }
         for label in labels_diff.removed.iter() {
@@ -186,6 +200,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         }
         reject_immutable_node_update(self.txn.read(), id, &old_labels, &props_diff)?;
         reject_immutable_node_update(self.txn.read(), id, &labels, &props_diff)?;
+        assignment::coerce_node_property_diff(self.txn.read(), &labels, &mut props_diff)?;
 
         // Apply the property diff up front; if it errors we leave the working
         // graph (including idx_label) untouched so the transaction can still
@@ -203,30 +218,46 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
         // BRIEF-153 fix-cycle C2: run property-index admission BEFORE
         // mutating row state so a cap-exhaustion error rolls back cleanly
-        // with no half-written row.
-        let new_labels = labels.clone();
-        let new_props = props.clone();
+        // with no half-written row. The index updates borrow `labels`/`props`;
+        // both move into the row stores only after every fallible step.
         {
             let graph = self.txn.guard_mut();
             crate::property_index::apply_node_update(
                 &mut graph.property_index,
                 &old_labels,
                 &old_props,
-                &new_labels,
-                &new_props,
+                &labels,
+                &props,
                 row as u32,
             )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
                 &old_labels,
                 &old_props,
-                &new_labels,
-                &new_props,
+                &labels,
+                &props,
                 row as u32,
             )?;
+            crate::vector_index::apply_node_update(
+                &mut graph.vector_index,
+                &old_labels,
+                &old_props,
+                &labels,
+                &props,
+                row as u32,
+            )?;
+            crate::text_index::apply_node_update(
+                &mut graph.text_index,
+                &old_labels,
+                &old_props,
+                &labels,
+                &props,
+                row as u32,
+                id,
+            );
             graph.node_store.labels.set(row, labels);
             graph.node_store.properties.set(row, props);
-            for label in labels_diff.added.iter().copied() {
+            for label in labels_diff.added.iter().cloned() {
                 insert_index_row(&mut graph.idx_label, label, row as u32);
             }
             for label in labels_diff.removed.iter() {
@@ -246,9 +277,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// Edge labels are immutable, so property updates do not touch
     /// `idx_edge_label`.
-    pub fn update_edge(&mut self, id: EdgeId, props_diff: PropertyDiff) -> GraphResult<()> {
+    pub fn update_edge(&mut self, id: EdgeId, mut props_diff: PropertyDiff) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
         reject_immutable_edge_update(self.txn.read(), id, &props_diff)?;
+        assignment::coerce_edge_property_diff(self.txn.read(), id, &mut props_diff)?;
         let mut props = self
             .txn
             .read()
@@ -263,187 +295,6 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             id,
             properties_diff: props_diff,
         });
-        Ok(())
-    }
-
-    /// Delete an alive node and cascade delete incident edges.
-    pub fn delete_node(&mut self, id: NodeId) -> GraphResult<()> {
-        let row = self.require_live_node(id)?;
-        let incident = self.remove_node_row(id, row)?;
-        self.txn.changes.push(Change::NodeDeleted { id });
-        for edge_id in incident {
-            self.delete_edge_inner(edge_id, true)?;
-        }
-        Ok(())
-    }
-
-    /// Remove one node row from every in-memory structure (label index,
-    /// property/composite indexes, liveness) and return its incident edges.
-    ///
-    /// This is the change-free removal core shared by [`Self::delete_node`] and
-    /// [`Self::truncate_node_type`]; callers own the changeset accounting (one
-    /// `NodeDeleted` for DETACH DELETE, one declarative truncate change plus
-    /// staged per-row tombstones for TRUNCATE). The returned incident set spans
-    /// edges of **every** edge type touching the node (derived from both
-    /// adjacency directions) so no dangling edge can survive.
-    fn remove_node_row(&mut self, id: NodeId, row: usize) -> GraphResult<BTreeSet<EdgeId>> {
-        let graph = self.txn.read();
-        let labels = graph
-            .node_store
-            .labels
-            .get(row)
-            .cloned()
-            .unwrap_or_default();
-        let props = graph
-            .node_store
-            .properties
-            .get(row)
-            .cloned()
-            .unwrap_or_default();
-        let mut incident = BTreeSet::new();
-        if let Some(outgoing) = graph.adjacency_out.get(&id) {
-            incident.extend(outgoing.iter().map(|edge| edge.edge_id));
-        }
-        if let Some(incoming) = graph.adjacency_in.get(&id) {
-            incident.extend(incoming.iter().map(|edge| edge.edge_id));
-        }
-        {
-            let graph = self.txn.guard_mut();
-            remove_node_labels(&mut graph.idx_label, row as u32, &labels);
-            crate::property_index::apply_node_delete(
-                &mut graph.property_index,
-                &labels,
-                &props,
-                row as u32,
-            )?;
-            crate::composite_property_index::apply_node_delete(
-                &mut graph.composite_property_index,
-                &labels,
-                &props,
-                row as u32,
-            )?;
-            graph.node_store.alive.remove(row as u32);
-            // BRIEF-Item-4a: KEEP the real external id in row_to_id for the now
-            // dead row (and keep the id -> row map entry). A deleted id stays
-            // resolvable -> its dead row -> NodeNotAlive, identically across the
-            // live and recovery paths: the snapshot persists dead rows with their
-            // id (sections.rs) and STEP 9 encodes that id from this column. Only
-            // never-committed aborted-tx hole rows carry NodeId::TOMBSTONE
-            // (-> None -> NotFound, the accepted refinement).
-        }
-        Ok(incident)
-    }
-
-    /// Delete an alive edge.
-    pub fn delete_edge(&mut self, id: EdgeId) -> GraphResult<()> {
-        self.delete_edge_inner(id, true)
-    }
-
-    /// Remove every node carrying `label` and all of their incident edges in one
-    /// declarative truncate.
-    ///
-    /// Observationally identical to `MATCH (n:L) DETACH DELETE n`: every matched
-    /// node and every incident edge (of **any** edge type, derived from both
-    /// adjacency directions) is removed via the same change-free in-memory path
-    /// `delete_node`/`delete_edge_inner` use, so the resulting graph state is
-    /// byte-identical. The difference is the changeset: exactly **one**
-    /// declarative [`Change::NodesOfTypeTruncated`] is recorded regardless of the
-    /// number of rows removed (O(1) WAL write, deletion-reclamation audit
-    /// Item 11), while the per-row `NodeDeleted`/`EdgeDeleted` tombstones are
-    /// staged for provider/subscriber fan-out so derived state (e.g. extension
-    /// providers) is reclaimed without leaks. An absent label is a clean no-op (no change is
-    /// recorded), matching DETACH DELETE of zero matches; a second truncate of
-    /// the same label is therefore idempotent.
-    ///
-    /// All logic lives in the mutator (the single write funnel, hard rule 11) so
-    /// future `DROP NODE TYPE CASCADE` and `DROP GRAPH` factory-reset paths can
-    /// reuse it without an N+1 change storm.
-    pub fn truncate_node_type(&mut self, label: IStr) -> GraphResult<()> {
-        // Snapshot the matched node rows and derive every incident edge BEFORE
-        // any removal, exactly as delete_node does — removal mutates the
-        // adjacency/label structures we are iterating.
-        let matched_rows: Vec<u32> = match self.txn.read().nodes_with_label(&label) {
-            Some(bitmap) => bitmap.iter().collect(),
-            None => return Ok(()),
-        };
-        if matched_rows.is_empty() {
-            return Ok(());
-        }
-        let mut node_tombstones = Vec::with_capacity(matched_rows.len());
-        let mut incident_edges = BTreeSet::new();
-        for row in matched_rows {
-            // Skip rows that are not alive (defensive: idx_label is kept in
-            // lockstep with liveness, but a dead row must never be re-removed).
-            if !self.txn.read().node_store.is_alive(row) {
-                continue;
-            }
-            let Some(id) = self.txn.read().node_id_for_row(RowIndex::new(row)) else {
-                continue;
-            };
-            incident_edges.append(&mut self.remove_node_row(id, row as usize)?);
-            node_tombstones.push(Change::NodeDeleted { id });
-        }
-        if node_tombstones.is_empty() {
-            return Ok(());
-        }
-        let mut expansion = node_tombstones;
-        for edge_id in incident_edges {
-            let row = self
-                .txn
-                .read()
-                .row_for_edge_id(edge_id)
-                .ok_or(GraphError::EdgeNotFound { id: edge_id })?
-                .get();
-            // An incident edge may already be gone if two truncated endpoints
-            // shared it; remove_edge_row is only called for still-alive rows.
-            if self.txn.read().edge_store.is_alive(row) {
-                self.remove_edge_row(edge_id, row as usize)?;
-                expansion.push(Change::EdgeDeleted { id: edge_id });
-            }
-        }
-        let index = self.txn.changes.len();
-        self.txn
-            .changes
-            .push(Change::NodesOfTypeTruncated { label });
-        self.txn.truncate_expansions.push((index, expansion));
-        Ok(())
-    }
-
-    /// Remove every edge carrying `label` in one declarative truncate.
-    ///
-    /// Observationally identical to `MATCH ()-[e:L]->() DELETE e`: each matched
-    /// edge is removed via the same change-free path `delete_edge` uses, leaving
-    /// the graph dangling-free. Records exactly **one** declarative
-    /// [`Change::EdgesOfTypeTruncated`] (O(1) WAL) and stages per-row
-    /// `EdgeDeleted` tombstones for fan-out. Absent label is a clean idempotent
-    /// no-op.
-    pub fn truncate_edge_type(&mut self, label: IStr) -> GraphResult<()> {
-        let matched_rows: Vec<u32> = match self.txn.read().edges_with_label(&label) {
-            Some(bitmap) => bitmap.iter().collect(),
-            None => return Ok(()),
-        };
-        if matched_rows.is_empty() {
-            return Ok(());
-        }
-        let mut expansion = Vec::with_capacity(matched_rows.len());
-        for row in matched_rows {
-            if !self.txn.read().edge_store.is_alive(row) {
-                continue;
-            }
-            let Some(id) = self.txn.read().edge_id_for_row(RowIndex::new(row)) else {
-                continue;
-            };
-            self.remove_edge_row(id, row as usize)?;
-            expansion.push(Change::EdgeDeleted { id });
-        }
-        if expansion.is_empty() {
-            return Ok(());
-        }
-        let index = self.txn.changes.len();
-        self.txn
-            .changes
-            .push(Change::EdgesOfTypeTruncated { label });
-        self.txn.truncate_expansions.push((index, expansion));
         Ok(())
     }
 
@@ -484,53 +335,6 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn.read()
     }
 
-    fn delete_edge_inner(&mut self, id: EdgeId, record_change: bool) -> GraphResult<()> {
-        let row = self.require_live_edge(id)?;
-        self.remove_edge_row(id, row)?;
-        if record_change {
-            self.txn.changes.push(Change::EdgeDeleted { id });
-        }
-        Ok(())
-    }
-
-    /// Remove one edge row from every in-memory structure (liveness, edge-label
-    /// index, both adjacency directions) without recording any change.
-    ///
-    /// Shared change-free core for [`Self::delete_edge_inner`] and the truncate
-    /// paths; callers own changeset accounting.
-    fn remove_edge_row(&mut self, id: EdgeId, row: usize) -> GraphResult<()> {
-        let graph = self.txn.read();
-        let label = *graph
-            .edge_store
-            .label
-            .get(row)
-            .ok_or(GraphError::EdgeNotFound { id })?;
-        let source = *graph
-            .edge_store
-            .source
-            .get(row)
-            .ok_or(GraphError::EdgeNotFound { id })?;
-        let target = *graph
-            .edge_store
-            .target
-            .get(row)
-            .ok_or(GraphError::EdgeNotFound { id })?;
-        let graph = self.txn.guard_mut();
-        graph.edge_store.alive.remove(row as u32);
-        // BRIEF-Item-4a: keep the real id in row_to_id for the dead row (see
-        // remove_node_row); only never-committed holes carry EdgeId::TOMBSTONE.
-        remove_index_row(&mut graph.idx_edge_label, &label, row as u32);
-        if let Some(mut entry) = graph.adjacency_out.get(&source).cloned() {
-            entry.remove(id);
-            update_or_remove_entry(&mut graph.adjacency_out, source, entry);
-        }
-        if let Some(mut entry) = graph.adjacency_in.get(&target).cloned() {
-            entry.remove(id);
-            update_or_remove_entry(&mut graph.adjacency_in, target, entry);
-        }
-        Ok(())
-    }
-
     fn require_live_node(&self, id: NodeId) -> GraphResult<usize> {
         let graph = self.txn.read();
         // Map-backed: a never-committed (aborted-tx hole) id is absent from the
@@ -564,19 +368,27 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 }
 
-fn insert_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, labels: &LabelSet) {
-    for label in labels.iter().copied() {
+fn insert_node_labels(
+    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
+    row: u32,
+    labels: &LabelSet,
+) {
+    for label in labels.iter().cloned() {
         insert_index_row(index, label, row);
     }
 }
 
-fn remove_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, labels: &LabelSet) {
+fn remove_node_labels(
+    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
+    row: u32,
+    labels: &LabelSet,
+) {
     for label in labels.iter() {
         remove_index_row(index, label, row);
     }
 }
 
-fn insert_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: IStr, row: u32) {
+fn insert_index_row(index: &mut imbl::HashMap<DbString, RoaringBitmap>, label: DbString, row: u32) {
     // In-place insert via `entry().or_default()`: the rebuild path uses the same
     // idiom (see `consistency.rs` / `typed_index.rs`). `guard_mut` already gives
     // unique ownership of the bitmap (Arc::make_mut), so we never clone the whole
@@ -584,14 +396,22 @@ fn insert_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: IStr,
     index.entry(label).or_default().insert(row);
 }
 
-fn remove_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: &IStr, row: u32) {
-    if let Some(mut bitmap) = index.get(label).cloned() {
-        bitmap.remove(row);
-        if bitmap.is_empty() {
-            index.remove(label);
-        } else {
-            index.insert(*label, bitmap);
+fn remove_index_row(
+    index: &mut imbl::HashMap<DbString, RoaringBitmap>,
+    label: &DbString,
+    row: u32,
+) {
+    // Mirror `insert_index_row`: mutate the bitmap behind the imbl entry
+    // instead of cloning the whole RoaringBitmap for every row removed.
+    let now_empty = match index.get_mut(label) {
+        Some(bitmap) => {
+            bitmap.remove(row);
+            bitmap.is_empty()
         }
+        None => false,
+    };
+    if now_empty {
+        index.remove(label);
     }
 }
 
@@ -611,7 +431,7 @@ fn fill_node_defaults(
 
 fn fill_edge_defaults(
     graph: &crate::SeleneGraph,
-    label: IStr,
+    label: DbString,
     source: NodeId,
     target: NodeId,
     props: &mut PropertyMap,
@@ -640,7 +460,7 @@ fn fill_property_defaults(
             continue;
         }
         if let Some(default) = &declaration.default {
-            props.set(declaration.name, default.to_value())?;
+            props.set(declaration.name.clone(), default.to_value()?)?;
         }
     }
     Ok(())
@@ -660,7 +480,7 @@ fn reject_immutable_node_update(
     };
     reject_immutable_property_update(
         EntityId::Node(id),
-        node_type.name,
+        node_type.name.clone(),
         &node_type.properties,
         diff,
     )
@@ -674,7 +494,7 @@ fn reject_immutable_edge_update(
     let Some(graph_type) = graph.meta.bound_type.as_deref() else {
         return Ok(());
     };
-    let Some(label) = graph.edge_label(id).copied() else {
+    let Some(label) = graph.edge_label(id).cloned() else {
         return Ok(());
     };
     let Some((source, target)) = graph.edge_endpoints(id) else {
@@ -691,7 +511,7 @@ fn reject_immutable_edge_update(
     };
     reject_immutable_property_update(
         EntityId::Edge(id),
-        edge_type.name,
+        edge_type.name.clone(),
         &edge_type.properties,
         diff,
     )
@@ -708,24 +528,24 @@ fn node_type_index_for_node(
 
 fn reject_immutable_property_update(
     entity_id: EntityId,
-    declared_in: IStr,
+    declared_in: DbString,
     declarations: &[PropertyTypeDef],
     diff: &PropertyDiff,
 ) -> GraphResult<()> {
     for (key, _) in &diff.set {
-        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+        reject_if_immutable(entity_id, declared_in.clone(), declarations, key.clone())?;
     }
     for key in &diff.removed {
-        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+        reject_if_immutable(entity_id, declared_in.clone(), declarations, key.clone())?;
     }
     Ok(())
 }
 
 fn reject_if_immutable(
     entity_id: EntityId,
-    declared_in: IStr,
+    declared_in: DbString,
     declarations: &[PropertyTypeDef],
-    property: IStr,
+    property: DbString,
 ) -> GraphResult<()> {
     if declarations
         .iter()
@@ -744,24 +564,12 @@ fn reject_if_immutable(
 
 fn apply_property_diff(map: &mut PropertyMap, diff: &PropertyDiff) -> GraphResult<()> {
     for (key, value) in diff.set.iter() {
-        map.set(*key, value.clone())?;
+        map.set(key.clone(), value.clone())?;
     }
     for key in diff.removed.iter() {
         map.remove(key);
     }
     Ok(())
-}
-
-fn update_or_remove_entry(
-    map: &mut imbl::HashMap<NodeId, AdjacencyEntry>,
-    id: NodeId,
-    entry: AdjacencyEntry,
-) {
-    if entry.is_empty() {
-        map.remove(&id);
-    } else {
-        map.insert(id, entry);
-    }
 }
 
 #[cfg(test)]
@@ -778,3 +586,12 @@ mod truncate_tests;
 
 #[cfg(test)]
 mod factory_reset_tests;
+
+#[cfg(test)]
+mod hub_delete_tests;
+
+#[cfg(test)]
+mod delete_set_tests;
+
+#[cfg(test)]
+mod payload_clear_tests;

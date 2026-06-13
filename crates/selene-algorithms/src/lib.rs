@@ -12,7 +12,8 @@
 //! cache with generation-based staleness detection. Algorithm modules cover
 //! structural (WCC, SCC, …), pathfinding (Dijkstra, SSSP, APSP), centrality
 //! (PageRank, betweenness), and community (label propagation, Louvain,
-//! triangle count) algorithms. See Spec 16 §3 for the package shape.
+//! triangle count) algorithms, plus policy-neutral rank-fusion helpers for
+//! retrieval candidate lists. See Spec 16 §3 for the package shape.
 //!
 //! # Dependency boundary
 //!
@@ -30,6 +31,7 @@ pub mod error;
 pub mod parallel;
 pub mod pathfinding;
 pub mod projection;
+pub mod rank_fusion;
 #[cfg(any(test, feature = "test-harness"))]
 pub mod snapshot_summary;
 pub mod structural;
@@ -37,8 +39,8 @@ pub mod structural;
 pub use api::{ApiError, GraphAlgorithms, ProjectionInfo};
 pub use catalog::{ProjectionCatalog, ProjectionRef};
 pub use centrality::{
-    BetweennessConfig, PageRankConfig, betweenness, betweenness_with_checker, pagerank,
-    pagerank_with_checker,
+    BetweennessConfig, PageRankConfig, PageRankOrientation, betweenness, betweenness_with_checker,
+    pagerank, pagerank_with_checker,
 };
 pub use community::{
     TriangleCountConfig, label_propagation, label_propagation_with_checker, louvain,
@@ -51,6 +53,10 @@ pub use pathfinding::{
     dijkstra_with_checker, sssp, sssp_with_checker,
 };
 pub use projection::{GraphProjection, ProjNeighbor, ProjectionConfig};
+pub use rank_fusion::{
+    DEFAULT_RRF_RANK_CONSTANT, ReciprocalRankFusionError, ReciprocalRankFusionHit,
+    reciprocal_rank_fusion,
+};
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{
     AlgoResult, AlgoSnapshot, AlgoSnapshotInput, GraphSummary, algo_summary,

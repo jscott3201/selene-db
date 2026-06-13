@@ -12,9 +12,12 @@
 //! - `TypedIndexRange[bounds=Equality(STRING 'foo')]`
 //! - `TypedIndexRange[bounds=Range([INTEGER 10 .. $upper))]`
 //! - `BitmapUnion[bounds=Keys [STRING 'alice', $b]]`
+//! - `BitmapUnion[bounds=Keys [$names...]]`
 //! - `CompositeLookup[bounds=Composite [tenant=STRING 't1', kind=$k]]`
 
-use selene_core::IStr;
+use std::fmt::Write as _;
+
+use selene_core::DbString;
 
 use crate::{IndexKey, Literal, ScanAccess, TypedIndexBounds};
 
@@ -61,7 +64,7 @@ fn render_bitmap_union_keys(keys: &[IndexKey]) -> String {
     )
 }
 
-fn render_composite_keys(keys: &[(IStr, IndexKey)]) -> String {
+fn render_composite_keys(keys: &[(DbString, IndexKey)]) -> String {
     format!(
         "Composite [{}]",
         keys.iter()
@@ -75,16 +78,45 @@ fn render_index_key(key: &IndexKey) -> String {
     match key {
         IndexKey::Literal(literal) => render_literal(literal),
         IndexKey::Parameter { name, .. } => format!("${}", name.as_str()),
+        IndexKey::ParameterList { name, .. } => format!("${}...", name.as_str()),
     }
 }
 
 fn render_literal(literal: &Literal) -> String {
     match literal {
         Literal::Bool(value, _) => format!("BOOLEAN {value}"),
-        Literal::Integer(value, _) => format!("INTEGER {value}"),
-        Literal::Float(value, _) => format!("FLOAT {value}"),
+        Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => {
+            format!("INTEGER {value}")
+        }
+        Literal::Decimal(value, _, _) => format!("DECIMAL {value}"),
+        Literal::Float(value, _, _) => format!("FLOAT {value}"),
         Literal::String(value, _) => format!("STRING '{}'", value.as_str()),
+        Literal::Bytes(value, _) => format!("BYTES X'{}'", hex_bytes(value)),
         Literal::Uuid(value, _) => format!("UUID '{value}'"),
+        Literal::ZonedDateTime(value, _) => {
+            format!("ZONED DATETIME '{}'", format_zoned_datetime(value))
+        }
+        Literal::LocalDateTime(value, _) => format!("LOCAL DATETIME '{value}'"),
+        Literal::Date(value, _) => format!("DATE '{value}'"),
+        Literal::ZonedTime(value, _) => format!("ZONED TIME '{}'", format_zoned_time(value)),
+        Literal::LocalTime(value, _) => format!("LOCAL TIME '{value}'"),
+        Literal::Duration(value, _) => format!("DURATION '{value}'"),
         Literal::Null(_) => "NULL".to_owned(),
     }
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02X}");
+    }
+    out
+}
+
+fn format_zoned_datetime(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.datetime(), value.offset())
+}
+
+fn format_zoned_time(value: &jiff::Zoned) -> String {
+    format!("{}{}", value.time(), value.offset())
 }

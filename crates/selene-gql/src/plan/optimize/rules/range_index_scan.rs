@@ -53,9 +53,9 @@ fn rewrite_tree(
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
-            rewrite_tree(child, bindings, catalog)
-        }
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
         // Walk each per-label branch; the disjunctive_label_expansion rule
         // runs at slot 5 (before this rule), so DisjunctiveScan only carries
@@ -79,7 +79,8 @@ fn rewrite_scan(
     let Some(label) = single_label(&scan.label_predicate) else {
         return false;
     };
-    let Some(candidate) = best_candidate(&scan.property_predicates, bindings, catalog, label)
+    let Some(candidate) =
+        best_candidate(&scan.property_predicates, bindings, catalog, label.clone())
     else {
         return false;
     };
@@ -94,8 +95,8 @@ fn rewrite_scan(
         cost::typed_index_cost(
             catalog,
             IndexTarget::Node,
-            label,
-            candidate.property,
+            label.clone(),
+            candidate.property.clone(),
             &candidate.bounds,
         ),
         cost::linear_baseline(catalog, IndexTarget::Node, label),
@@ -115,7 +116,7 @@ fn rewrite_scan(
 
 struct Candidate {
     handle: crate::IndexHandle,
-    property: selene_core::IStr,
+    property: selene_core::DbString,
     kind: crate::IndexKind,
     bounds: TypedIndexBounds,
     consumed_indices: Vec<usize>,
@@ -125,7 +126,7 @@ fn best_candidate(
     predicates: &[FilterPredicate],
     bindings: &[BindingDef],
     catalog: &dyn crate::IndexCatalog,
-    label: selene_core::IStr,
+    label: selene_core::DbString,
 ) -> Option<Candidate> {
     for (index, pred) in predicates.iter().enumerate() {
         let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
@@ -134,12 +135,18 @@ fn best_candidate(
         if !binding_is_node(bindings, matched.binding) {
             continue;
         }
-        let Some(lookup) = catalog.typed_index(crate::IndexTarget::Node, label, matched.key) else {
+        let Some(lookup) =
+            catalog.typed_index(crate::IndexTarget::Node, label.clone(), matched.key.clone())
+        else {
             continue;
         };
-        let Some((bounds, mut consumed_indices)) =
-            bounds_for_property(matched.key, predicates, bindings, index, lookup.kind)
-        else {
+        let Some((bounds, mut consumed_indices)) = bounds_for_property(
+            matched.key.clone(),
+            predicates,
+            bindings,
+            index,
+            lookup.kind,
+        ) else {
             continue;
         };
         consumed_indices.sort_unstable();
@@ -156,7 +163,7 @@ fn best_candidate(
 }
 
 fn bounds_for_property(
-    key: selene_core::IStr,
+    key: selene_core::DbString,
     predicates: &[FilterPredicate],
     bindings: &[BindingDef],
     first_index: usize,
@@ -221,7 +228,8 @@ fn bounds_for_property(
                     TightenOutcome::Reject => return None,
                 }
             }
-            binding_refs::PropertyPredicateShape::InList(_) => {}
+            binding_refs::PropertyPredicateShape::InList(_)
+            | binding_refs::PropertyPredicateShape::InListExpression(_) => {}
         }
     }
 
@@ -333,8 +341,23 @@ fn tighten_upper(
 fn compare_literals(a: &Literal, b: &Literal) -> Option<std::cmp::Ordering> {
     match (a, b) {
         (Literal::Integer(lhs, _), Literal::Integer(rhs, _)) => Some(lhs.cmp(rhs)),
-        (Literal::Float(lhs, _), Literal::Float(rhs, _)) => lhs.partial_cmp(rhs),
+        (Literal::Integer(lhs, _), Literal::RadixInteger(rhs, _, _))
+        | (Literal::RadixInteger(lhs, _, _), Literal::Integer(rhs, _))
+        | (Literal::RadixInteger(lhs, _, _), Literal::RadixInteger(rhs, _, _)) => {
+            Some(lhs.cmp(rhs))
+        }
+        (Literal::Float(lhs, _, _), Literal::Float(rhs, _, _)) => lhs.partial_cmp(rhs),
+        (Literal::Decimal(lhs, _, _), Literal::Decimal(rhs, _, _)) => Some(lhs.cmp(rhs)),
         (Literal::String(lhs, _), Literal::String(rhs, _)) => Some(lhs.as_str().cmp(rhs.as_str())),
+        (Literal::Bytes(lhs, _), Literal::Bytes(rhs, _)) => Some(lhs.as_ref().cmp(rhs.as_ref())),
+        (Literal::Date(lhs, _), Literal::Date(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::LocalDateTime(lhs, _), Literal::LocalDateTime(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::ZonedDateTime(lhs, _), Literal::ZonedDateTime(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::LocalTime(lhs, _), Literal::LocalTime(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::ZonedTime(lhs, _), Literal::ZonedTime(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::Duration(lhs, _), Literal::Duration(rhs, _)) => {
+            Some(selene_core::duration_order_key(lhs).cmp(&selene_core::duration_order_key(rhs)))
+        }
         (Literal::Bool(lhs, _), Literal::Bool(rhs, _)) => Some(lhs.cmp(rhs)),
         _ => None,
     }

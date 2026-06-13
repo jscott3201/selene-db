@@ -1,4 +1,0 @@
-// corpus: positive
-// feature: GE08
-// expects: parse-ok
-RETURN CAST(true AS STRING) AS v

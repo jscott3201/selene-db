@@ -11,8 +11,6 @@
 //! State arrays sized by live-node count via `RowIndex` (§E26). Unit weights
 //! only — donor pattern; weighted variants deferred to v1.x per §E25 / §J Q5.
 
-// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
-use rustc_hash::FxHashMap as HashMap;
 use selene_core::{CancellationChecker, NodeId};
 
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
@@ -47,15 +45,15 @@ pub fn label_propagation_with_checker(
     }
     let n = idx.len();
 
-    // labels[d] = current label of dense node d, encoded as the NodeId u64.
-    // Initial label = each node's own NodeId so that converged labels are
-    // directly interpretable as community IDs (smallest surviving NodeId per
-    // component).
-    let mut labels: Vec<u64> = (0..n as u32).map(|d| idx.node_id_of(d).get()).collect();
+    // labels[d] = current label of dense node d, encoded as the dense row of
+    // the node that supplied the label. `RowIndex` dense order is ASC NodeId,
+    // so comparing dense labels preserves the §E30 smallest-NodeId tie-break.
+    let mut labels: Vec<u32> = (0..n as u32).collect();
 
     // Reused per-node scratch; cleared at the top of each node iteration to
     // avoid reallocation in the hot loop.
-    let mut label_counts: HashMap<u64, usize> = HashMap::default();
+    let mut label_counts = vec![0usize; n];
+    let mut touched_labels: Vec<u32> = Vec::new();
 
     for _ in 0..max_iter {
         check_algorithm(checker)?;
@@ -65,39 +63,41 @@ pub fn label_propagation_with_checker(
         for d in 0..n as u32 {
             check_algorithm_stride(checker, &mut rows_since_check)?;
             let node = idx.node_id_of(d);
-            label_counts.clear();
+            touched_labels.clear();
 
             // Multiplicity-faithful: count each directed half-edge separately
             // per §E25. Parallel edges therefore contribute multiple times.
             for nb in proj.out_neighbors(node) {
-                if let Some(nd) = idx.dense_of_node(nb.node_id) {
-                    *label_counts.entry(labels[nd as usize]).or_insert(0) += 1;
-                }
+                bump_label_count(
+                    labels[nb.dense as usize],
+                    &mut label_counts,
+                    &mut touched_labels,
+                );
             }
             for nb in proj.in_neighbors(node) {
-                if let Some(nd) = idx.dense_of_node(nb.node_id) {
-                    *label_counts.entry(labels[nd as usize]).or_insert(0) += 1;
-                }
+                bump_label_count(
+                    labels[nb.dense as usize],
+                    &mut label_counts,
+                    &mut touched_labels,
+                );
             }
 
-            if label_counts.is_empty() {
+            if touched_labels.is_empty() {
                 continue;
             }
 
             // Pick the most common label; on ties, smallest label ID wins
-            // (§E30). `filter(count == max_count).map(label).min()` is the
-            // donor formulation — explicit + deterministic.
-            let max_count = *label_counts.values().max().expect("non-empty");
-            let best_label = label_counts
-                .iter()
-                .filter(|&(_, &count)| count == max_count)
-                .map(|(&label, _)| label)
-                .min()
-                .expect("non-empty after max");
+            // (§E30). Dense labels are assigned ASC by NodeId, so `label <`
+            // means the same tie-break as comparing the external label NodeId.
+            let best_label = select_best_label(&touched_labels, &label_counts);
 
             if labels[d as usize] != best_label {
                 labels[d as usize] = best_label;
                 changed = true;
+            }
+
+            for label in touched_labels.iter().copied() {
+                label_counts[label as usize] = 0;
             }
         }
 
@@ -107,8 +107,29 @@ pub fn label_propagation_with_checker(
     }
 
     let mut result: Vec<(NodeId, u64)> = (0..n as u32)
-        .map(|d| (idx.node_id_of(d), labels[d as usize]))
+        .map(|d| (idx.node_id_of(d), idx.node_id_of(labels[d as usize]).get()))
         .collect();
     result.sort_by_key(|&(nid, _)| nid.get());
     Ok(result)
+}
+
+fn bump_label_count(label: u32, label_counts: &mut [usize], touched_labels: &mut Vec<u32>) {
+    let count = &mut label_counts[label as usize];
+    if *count == 0 {
+        touched_labels.push(label);
+    }
+    *count += 1;
+}
+
+fn select_best_label(touched_labels: &[u32], label_counts: &[usize]) -> u32 {
+    let mut best_label = touched_labels[0];
+    let mut best_count = label_counts[best_label as usize];
+    for label in touched_labels.iter().copied().skip(1) {
+        let count = label_counts[label as usize];
+        if count > best_count || (count == best_count && label < best_label) {
+            best_label = label;
+            best_count = count;
+        }
+    }
+    best_label
 }

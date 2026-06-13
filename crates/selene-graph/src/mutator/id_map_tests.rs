@@ -4,7 +4,7 @@
 //! Increment 2 lands the population divergence guard; Increment 6 adds the
 //! non-identity proof test (a manually constructed map where `id != row + 1`).
 
-use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap, db_string};
 
 use crate::store::RowIndex;
 use crate::{SeleneGraph, SharedGraph};
@@ -18,26 +18,28 @@ fn id_row_maps_round_trip_for_all_alive() {
     // engine maintains — the durable contract is purely that the bidirectional
     // map agrees with the `row_to_id` column. (For this sequential-create graph
     // the rows happen to still be 0,1,2, but the test asserts the map, not the
-    // arithmetic.) Bar: "would this catch the IStr admission race" — it walks
+    // arithmetic.) Bar: "would this catch the DbString admission race" — it walks
     // every alive row through both directions plus the delete-tombstone path.
     let shared = SharedGraph::new(GraphId::new(1));
-    let a = selene_core::intern("inc2.a").unwrap();
-    let b = selene_core::intern("inc2.b").unwrap();
+    let a = selene_core::db_string("inc2.a").unwrap();
+    let b = selene_core::db_string("inc2.b").unwrap();
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
         let n0 = m
-            .create_node(LabelSet::single(a), PropertyMap::new())
+            .create_node(LabelSet::single(a.clone()), PropertyMap::new())
             .unwrap();
         let n1 = m
-            .create_node(LabelSet::single(a), PropertyMap::new())
+            .create_node(LabelSet::single(a.clone()), PropertyMap::new())
             .unwrap();
         let n2 = m
             .create_node(LabelSet::single(b), PropertyMap::new())
             .unwrap();
         // e0/e1 are incident to n1 (cascade-deleted); e2 (n0->n2) survives.
-        m.create_edge(a, n0, n1, PropertyMap::new()).unwrap();
-        m.create_edge(a, n1, n2, PropertyMap::new()).unwrap();
+        m.create_edge(a.clone(), n0, n1, PropertyMap::new())
+            .unwrap();
+        m.create_edge(a.clone(), n1, n2, PropertyMap::new())
+            .unwrap();
         m.create_edge(a, n0, n2, PropertyMap::new()).unwrap();
         m.delete_node(n1).unwrap();
     }
@@ -131,26 +133,32 @@ fn non_identity_map_read_paths_resolve_by_map() {
     // 4b compaction will produce). Every read path must resolve by the map, not
     // by arithmetic; the arithmetic answers are asserted to be WRONG. This is the
     // assertion that would catch any read site Increment 3 failed to migrate.
-    let label = selene_core::intern("ni.node").unwrap();
-    let elabel = selene_core::intern("ni.edge").unwrap();
+    let label = selene_core::db_string("ni.node").unwrap();
+    let elabel = selene_core::db_string("ni.edge").unwrap();
 
     let mut built = SeleneGraph::new(GraphId::new(1));
     // Row 0 -> NodeId(5); Row 1 -> NodeId(8).
-    built.node_store.labels.push(LabelSet::single(label));
+    built
+        .node_store
+        .labels
+        .push(LabelSet::single(label.clone()));
     built.node_store.properties.push(PropertyMap::new());
     built.node_store.row_to_id.push(NodeId::new(5));
-    built.node_store.labels.push(LabelSet::single(label));
+    built
+        .node_store
+        .labels
+        .push(LabelSet::single(label.clone()));
     built.node_store.properties.push(PropertyMap::new());
     built.node_store.row_to_id.push(NodeId::new(8));
-    built.node_store.alive.insert(0);
-    built.node_store.alive.insert(1);
+    built.node_store.alive_mut().insert(0);
+    built.node_store.alive_mut().insert(1);
     // Row 0 -> EdgeId(3): NodeId(5) -> NodeId(8).
-    built.edge_store.label.push(elabel);
+    built.edge_store.label.push(elabel.clone());
     built.edge_store.source.push(NodeId::new(5));
     built.edge_store.target.push(NodeId::new(8));
     built.edge_store.properties.push(PropertyMap::new());
     built.edge_store.row_to_id.push(EdgeId::new(3));
-    built.edge_store.alive.insert(0);
+    built.edge_store.alive_mut().insert(0);
     built.meta.next_node_id = 9;
     built.meta.next_edge_id = 4;
 
@@ -176,9 +184,9 @@ fn non_identity_map_read_paths_resolve_by_map() {
         g.node_labels(NodeId::new(5))
             .unwrap()
             .iter()
-            .copied()
+            .cloned()
             .collect::<Vec<_>>(),
-        vec![label]
+        vec![label.clone()]
     );
     // The label index is row-keyed: rows 0 and 1 carry the label.
     let labelled = g.nodes_with_label(&label).unwrap();
@@ -193,7 +201,7 @@ fn non_identity_map_read_paths_resolve_by_map() {
         g.edge_endpoints(EdgeId::new(3)),
         Some((NodeId::new(5), NodeId::new(8)))
     );
-    assert_eq!(*g.edge_label(EdgeId::new(3)).unwrap(), elabel);
+    assert_eq!(g.edge_label(EdgeId::new(3)).unwrap(), &elabel);
     assert!(
         g.outgoing_edges(NodeId::new(5))
             .unwrap()
@@ -253,7 +261,7 @@ fn create_edge_past_u32_id_space_succeeds_with_append_rows() {
                 .expect("create_node ok");
             mutator
                 .create_edge(
-                    intern("edge.overflow").unwrap(),
+                    db_string("edge.overflow").unwrap(),
                     source,
                     target,
                     PropertyMap::new(),

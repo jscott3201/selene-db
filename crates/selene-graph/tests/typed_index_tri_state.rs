@@ -2,15 +2,15 @@
 
 use std::borrow::Cow;
 
-use selene_core::{GraphId, LabelSet, PropertyMap, Value, intern};
+use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
 use selene_graph::{SharedGraph, TypedIndexKind};
 
 #[test]
 fn typed_index_tri_state_pin() {
     let shared = graph_with_age_index();
-    let person = intern("tri.person").unwrap();
-    let age = intern("tri.age").unwrap();
-    let absent = intern("tri.absent").unwrap();
+    let person = db_string("tri.person").unwrap();
+    let age = db_string("tri.age").unwrap();
+    let absent = db_string("tri.absent").unwrap();
 
     let snapshot = shared.read();
     let hit = snapshot
@@ -35,14 +35,14 @@ fn typed_index_tri_state_pin() {
 
 fn graph_with_age_index() -> SharedGraph {
     let shared = SharedGraph::new(GraphId::new(88));
-    let person = intern("tri.person").unwrap();
-    let age = intern("tri.age").unwrap();
+    let person = db_string("tri.person").unwrap();
+    let age = db_string("tri.age").unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(person),
-                PropertyMap::from_pairs([(age, Value::Int(30))]).unwrap(),
+                LabelSet::single(person.clone()),
+                PropertyMap::from_pairs([(age.clone(), Value::Int(30))]).unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();

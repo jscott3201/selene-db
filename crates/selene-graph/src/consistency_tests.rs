@@ -2,19 +2,19 @@
 //!
 //! These construct a `SeleneGraph` by hand, corrupt exactly one derived index,
 //! and assert the checker catches the drift. This is the "would it catch the
-//! IStr admission race" bar for the safety net itself: a checker that never
+//! DbString admission race" bar for the safety net itself: a checker that never
 //! fails is worthless.
 
 use roaring::RoaringBitmap;
-use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value, db_string};
 use smallvec::smallvec;
 
 use crate::adjacency::AdjacencyEdge;
 use crate::graph::{CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph};
 use crate::{CompositeTypedIndex, SharedGraph, TypedIndex, TypedIndexKind};
 
-fn label(name: &str) -> IStr {
-    intern(name).unwrap()
+fn label(name: &str) -> DbString {
+    db_string(name).unwrap()
 }
 
 /// Build a tiny consistent graph: two alive nodes (one labeled `Person` with
@@ -32,7 +32,7 @@ fn consistent_graph() -> SeleneGraph {
             let mut mutator = txn.mutator();
             a = mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     PropertyMap::from_pairs([(age, Value::Int(30))]).unwrap(),
                 )
                 .unwrap();
@@ -104,14 +104,15 @@ fn drifted_property_index_is_caught() {
     // Register a property index consistent with the data, then corrupt it.
     let index = crate::property_index::build_property_index_lenient(
         &graph,
-        person,
-        age,
+        person.clone(),
+        age.clone(),
         TypedIndexKind::I64,
     )
     .unwrap();
-    graph
-        .property_index
-        .insert((person, age), PropertyIndexEntry::new(index, None));
+    graph.property_index.insert(
+        (person.clone(), age.clone()),
+        PropertyIndexEntry::new(index, None),
+    );
     assert!(graph.assert_indexes_consistent().is_ok());
 
     // Now corrupt: add a stray row to the maintained index.
@@ -154,20 +155,20 @@ fn drifted_composite_index_is_caught() {
     let person = label("consistency.person");
     let age = label("consistency.age");
     let name = label("consistency.name");
-    let props: smallvec::SmallVec<[IStr; 4]> = smallvec![age, name];
+    let props: smallvec::SmallVec<[DbString; 4]> = smallvec![age, name];
     let kinds: smallvec::SmallVec<[TypedIndexKind; 4]> =
         smallvec![TypedIndexKind::I64, TypedIndexKind::String];
     // No node carries both age AND name, so the consistent index is empty.
     let index = crate::composite_property_index::build_composite_property_index_lenient(
         &graph,
-        person,
+        person.clone(),
         props.clone(),
         kinds.clone(),
     )
     .unwrap();
     let key = crate::graph::composite_property_key(&props);
     graph.composite_property_index.insert(
-        (person, key.clone()),
+        (person.clone(), key.clone()),
         CompositePropertyIndexEntry::new(index, props.clone(), None),
     );
     assert!(graph.assert_indexes_consistent().is_ok());
@@ -217,7 +218,7 @@ fn empty_adjacency_entry_is_caught() {
 #[test]
 fn out_of_range_alive_node_is_caught() {
     let mut graph = consistent_graph();
-    graph.node_store.alive.insert(500);
+    graph.node_store.alive_mut().insert(500);
     let err = graph.assert_indexes_consistent().unwrap_err();
     assert!(err.contains("out-of-range"), "got: {err}");
 }

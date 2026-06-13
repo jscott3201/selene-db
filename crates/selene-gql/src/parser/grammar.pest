@@ -18,10 +18,10 @@
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | session_command | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
 
 explain_stmt = { ^"EXPLAIN" ~ explainable_statement }
-explainable_statement = { ddl_statement | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
+explainable_statement = { ddl_statement | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
 
 // -- DDL statements -----------------------------------------------
 
@@ -32,16 +32,40 @@ ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_
 
 create_node_type = {
     ^"CREATE" ~ or_replace? ~ ^"NODE" ~ ^"TYPE" ~ if_not_exists? ~
-    ":" ~ ident ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    node_type_descriptor ~ (^"EXTENDS" ~ ":" ~ ident)? ~
     "(" ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
 create_edge_type = {
     ^"CREATE" ~ or_replace? ~ ^"EDGE" ~ ^"TYPE" ~ if_not_exists? ~
-    ":" ~ ident ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    edge_type_descriptor ~ (^"EXTENDS" ~ ":" ~ ident)? ~
     "(" ~ edge_endpoint_clause? ~ ","? ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
+// ISO/IEC 39075:2024 §18.2/18.3: the element-type descriptor is either the bare
+// `<node/edge type name>` (`:Name` — Feature GG20, key label set *implied* from
+// the name per §18.2 SR5c) or an explicit `<...type key label set>` (Feature
+// GG21). The explicit `node_type_key_label_set` MUST be tried first so `:Name
+// =>` binds the name as the key-label-set phrase rather than a bare type name.
+node_type_descriptor = { node_type_key_label_set | (":" ~ ident) }
+edge_type_descriptor = { edge_type_key_label_set | (":" ~ ident) }
+// `<node/edge type key label set> ::= [ <label set phrase> ] <implies>` (§18.2/
+// §18.3 Format). The optional `<label set phrase>` is an ampersand-joined label
+// set specification (§18.4); the `<implies>` token is `<right double arrow> |
+// IMPLIES` (§21.3) — selene-db accepts BOTH spellings. `IMPLIES` is matched only
+// here (a contextual token after the label phrase, word-boundary-guarded), NOT
+// added to the global `keyword` exclusion set, so `implies` stays usable as an
+// identifier and no global reserved-keyword growth occurs (see memory
+// project_parser_parse_time_dos). The trailing
+// `key_label_implied_labels` accepts the separate-implied-`<label set>` shape
+// (`:Person => :Employee`) at the grammar level only so the builder can raise an
+// honest NotImplemented reject (the containment-identification case is deferred
+// to v1.3) instead of a confusing syntax error.
+node_type_key_label_set = { key_label_set_phrase? ~ implies ~ key_label_implied_labels? }
+edge_type_key_label_set = { key_label_set_phrase? ~ implies ~ key_label_implied_labels? }
+key_label_set_phrase     = { ":" ~ ident ~ ("&" ~ ":" ~ ident)* }
+key_label_implied_labels = { ":" ~ ident ~ ("&" ~ ":" ~ ident)* }
+implies                  = { "=>" | (^"IMPLIES" ~ !(LETTER | NUMBER | "_")) }
 validation_mode_clause = { ^"STRICT" | ^"WARN" }
 or_replace = { ^"OR" ~ ^"REPLACE" }
 drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
@@ -56,7 +80,8 @@ show_procedures  = { ^"SHOW" ~ ^"PROCEDURES" }
 
 type_prop_def_list = { type_prop_def ~ ("," ~ type_prop_def)* }
 type_prop_def      = { ident ~ "::" ~ type_name ~ type_prop_constraint* }
-type_prop_constraint = { ^"NOT" ~ ^"NULL" | ^"DEFAULT" ~ literal | ^"IMMUTABLE" | ^"UNIQUE" | ^"INDEXED" ~ (^"AS" ~ ident)? }
+type_prop_constraint = { ^"NOT" ~ ^"NULL" | ^"DEFAULT" ~ default_value | ^"IMMUTABLE" | ^"UNIQUE" | ^"INDEXED" ~ (^"AS" ~ ident)? }
+default_value = _{ record_constructor | literal }
 edge_endpoint_clause = { ^"FROM" ~ label_list ~ ^"TO" ~ label_list }
 label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
 
@@ -133,7 +158,9 @@ select_from = { ^"FROM" ~ (match_stmt | ident) }
 // -- Query pipeline -------------------------------------------------
 
 query_pipeline     = { pipeline_statement+ }
+call_query_pipeline = { call_stmt ~ post_call_pipeline_statement ~ pipeline_statement* }
 pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
+post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 
 for_stmt    = { ^"FOR" ~ ident ~ ^"IN" ~ expr }
 unwind_stmt = { ^"UNWIND" ~ expr ~ ^"AS" ~ ident }
@@ -141,11 +168,166 @@ with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ ha
 
 // -- MATCH ----------------------------------------------------------
 
-match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ graph_pattern_list ~ where_clause? }
-match_mode        = { ^"DIFFERENT" ~ ^"EDGES" | ^"REPEATABLE" ~ ^"ELEMENTS" }
-path_selector     = { ^"ANY" ~ ^"SHORTEST"? | ^"ALL" ~ ^"SHORTEST"? }
+match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ graph_pattern_list ~ where_clause? }
+// ISO/IEC 39075:2024 §16.4 <match mode>. Verbatim BNF:
+//   <match mode> ::= <repeatable elements match mode> | <different edges match mode>
+//   <repeatable elements match mode> ::= REPEATABLE <element bindings or elements>
+//   <different edges match mode>     ::= DIFFERENT <edge bindings or edges>
+//   <element bindings or elements>   ::= ELEMENT [ BINDINGS ] | ELEMENTS
+//   <edge bindings or edges>         ::= <edge synonym> [ BINDINGS ] | <edges synonym>
+//   <edge synonym>  ::= EDGE | RELATIONSHIP
+//   <edges synonym> ::= EDGES | RELATIONSHIPS
+//
+// Two correctness invariants this rule must encode exactly:
+//
+//  1. BINDINGS is permitted ONLY after the SINGULAR noun (ELEMENT / EDGE /
+//     RELATIONSHIP) and MUST be rejected after the PLURAL noun (ELEMENTS /
+//     EDGES / RELATIONSHIPS). "DIFFERENT EDGE BINDINGS" is legal; "DIFFERENT
+//     EDGES BINDINGS" is not. The singular branches carry the optional
+//     `match_mode_bindings`; the plural branches do not.
+//  2. Prefix-shadow safety: ^"ELEMENT" is a prefix of ^"ELEMENTS" (likewise
+//     EDGE/EDGES, RELATIONSHIP/RELATIONSHIPS). Every keyword token therefore
+//     ends in the Unicode word boundary `!(LETTER | NUMBER | "_")`, and each
+//     alternation tries the longer/plural spelling BEFORE the shorter/singular
+//     one — mirroring the `counted_group_kw` idiom (`(^"GROUPS" | ^"GROUP") ~
+//     !(LETTER | NUMBER | "_")`) so "ELEMENTS" can never parse as
+//     "ELEMENT" + a dangling "S".
+//  3. Token separation: the LEADING mode keywords DIFFERENT / REPEATABLE are
+//     themselves boundary-guarded (different_mode_kw / repeatable_mode_kw), so a
+//     run-together spelling like "DIFFERENTEDGE" / "REPEATABLEELEMENT" cannot
+//     parse as mode + synonym — pest's `~` separator is zero-or-more whitespace,
+//     so without the boundary the bare ^"DIFFERENT" would match the prefix of
+//     "DIFFERENTEDGE" and the singular synonym would consume the rest.
+//  4. BINDINGS vs path variable: BINDINGS stays non-reserved, so a path binding
+//     literally named `bindings` after a singular mode must win — e.g.
+//     `MATCH DIFFERENT EDGE bindings = (n) …`, where path_var_binding is
+//     `ident ~ "="`. The optional match-mode BINDINGS is therefore guarded by
+//     `!("=")`: it binds to the mode only when NOT immediately followed by the
+//     path-binding `=` (and `BINDINGS =` is never a valid ISO match mode).
+//
+// Deliberate no-keyword-growth decision: REPEATABLE / ELEMENT / ELEMENTS / EDGE
+// / EDGES / RELATIONSHIP / RELATIONSHIPS / BINDINGS are NOT added to the global
+// `keyword` rule. They are recognised purely contextually in the match_mode
+// leading position, so they remain usable as ordinary identifiers (property and
+// variable names). This preserves identifier usability and the parser-DoS
+// no-new-reserved-word posture, following the IMPLIES precedent (813). DIFFERENT
+// and BINDING are already reserved and are left untouched.
+// Each keyword token is a COMPOUND-ATOMIC (`@`) sub-rule so the trailing word
+// boundary `!(LETTER | NUMBER | "_")` abuts the keyword directly: inside a
+// non-atomic rule a bare `^"EDGE" ~ !(LETTER…)` would let pest consume the
+// inter-token WHITESPACE before testing the lookahead, making "EDGE BINDINGS"
+// fail the boundary against the following 'B'. Composing the atomic tokens in
+// the non-atomic parent below re-enables WHITESPACE *between* the noun and the
+// optional BINDINGS, where it belongs.
+match_mode        = {
+    repeatable_mode_kw ~ element_bindings_or_elements
+  | different_mode_kw  ~ edge_bindings_or_edges
+}
+// <element bindings or elements> ::= ELEMENT [ BINDINGS ] | ELEMENTS
+// (the optional BINDINGS defers to a path variable named `bindings`; see
+// invariant 4 and the `!("=")` guard).
+element_bindings_or_elements = {
+    elements_synonym
+  | element_synonym ~ (match_mode_bindings ~ !("="))?
+}
+// <edge bindings or edges> ::= (EDGE|RELATIONSHIP) [ BINDINGS ] | (EDGES|RELATIONSHIPS)
+edge_bindings_or_edges = {
+    edges_synonym
+  | edge_synonym ~ (match_mode_bindings ~ !("="))?
+}
+// Plural alternatives are listed BEFORE the singular so the longer spelling
+// wins (mirrors the `counted_group_kw` GROUPS-before-GROUP idiom); the trailing
+// boundary then guarantees "EDGES" cannot be read as "EDGE" + a dangling "S".
+// The leading mode keywords are boundary-guarded for the same reason (so
+// "DIFFERENTEDGE" / "REPEATABLEELEMENT" cannot parse as mode + synonym).
+different_mode_kw   = @{ ^"DIFFERENT" ~ !(LETTER | NUMBER | "_") }
+repeatable_mode_kw  = @{ ^"REPEATABLE" ~ !(LETTER | NUMBER | "_") }
+elements_synonym    = @{ ^"ELEMENTS" ~ !(LETTER | NUMBER | "_") }
+element_synonym     = @{ ^"ELEMENT" ~ !(LETTER | NUMBER | "_") }
+edges_synonym       = @{ (^"EDGES" | ^"RELATIONSHIPS") ~ !(LETTER | NUMBER | "_") }
+edge_synonym        = @{ (^"EDGE" | ^"RELATIONSHIP") ~ !(LETTER | NUMBER | "_") }
+match_mode_bindings = @{ ^"BINDINGS" ~ !(LETTER | NUMBER | "_") }
+// The leading selector keywords are boundary-guarded atomic sub-rules so a
+// run-together spelling like "ALLPATHS" / "ANYSHORTEST" / "SHORTEST5" cannot
+// tokenize as two adjacent tokens (pest's `~` separator is zero-or-more
+// whitespace). Mirrors the match-mode keyword treatment.
+path_selector     = {
+    any_kw ~ shortest_kw?
+  | all_kw ~ shortest_kw?
+  | shortest_kw ~ counted_shortest_tail
+}
+any_kw      = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
+all_kw      = @{ ^"ALL" ~ !(LETTER | NUMBER | "_") }
+shortest_kw = @{ ^"SHORTEST" ~ !(LETTER | NUMBER | "_") }
+// ISO §16.6: counted shortest path (G019) = SHORTEST <n> [<path or paths>] ;
+// counted shortest group (G020) = SHORTEST [<n>] [<path or paths>] {GROUP|GROUPS}.
+// The optional <path or paths> (Feature G014) is parsed HERE, in its ISO position:
+// for the counted-PATH form it trails the count; for the counted-GROUP form it sits
+// BEFORE the GROUP/GROUPS discriminator (so `SHORTEST 2 PATHS GROUPS` — not
+// `... GROUPS PATHS` — is the conforming spelling). The non-counted forms
+// (ALL / ANY [SHORTEST], <path mode prefix>) instead use the separate trailing
+// `path_or_paths?` slot in match_stmt, where <path or paths> is the final token.
+// The `!("=")` guard releases a path variable literally named `path`/`paths`
+// (path_var_binding = ident ~ "=") rather than stealing it. build_match_clause sets
+// MatchClause.path_or_paths from whichever site matched.
+// The count is intentionally a literal `uint` only — ISO's <number of paths>/
+// <number of groups> is a <non-negative integer specification> that may in
+// principle be a dynamic parameter, but selene does not expose a parameter in
+// this position. Consequently §16.6 SR2bii (literal positivity, a static
+// violation -> 22G0F at build time) fully covers the reachable surface, and
+// §22.4 GR7 (dynamic non-positive count -> 22G0F at runtime) is not applicable;
+// add a parameter alternative here if a future brief claims the dynamic form.
+counted_shortest_tail = {
+    uint ~ (path_or_paths ~ !("="))? ~ counted_group_kw?   // SHORTEST n [PATHS] [GROUP[S]]
+  | (path_or_paths ~ !("="))? ~ counted_group_kw           // SHORTEST [PATHS] GROUP[S], n=1
+}
+counted_group_kw = { (^"GROUPS" | ^"GROUP") ~ !(LETTER | NUMBER | "_") }
 optional_modifier = { ^"OPTIONAL" }
-path_modifier     = { ^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL" }
+// Atomic + trailing word boundary so "WALKPATHS" cannot tokenize as WALK + PATHS
+// (and likewise the mode keyword cannot run into a following identifier).
+path_modifier     = @{ (^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL") ~ !(LETTER | NUMBER | "_") }
+// ISO/IEC 39075:2024 §16.6 <path pattern prefix>. Verbatim BNF:
+//   <path or paths> ::= PATH | PATHS
+// In EVERY §16.6 form <path or paths> is the TRAILING token of the prefix:
+//   <path mode prefix>          ::= <path mode> [ <path or paths> ]
+//   <all path search>           ::= ALL [ <path mode> ] [ <path or paths> ]
+//   <any path search>           ::= ANY [ <number of paths> ] [ <path mode> ] [ <path or paths> ]
+//   <all shortest path search>  ::= ALL SHORTEST [ <path mode> ] [ <path or paths> ]
+//   <any shortest path search>  ::= ANY SHORTEST [ <path mode> ] [ <path or paths> ]
+//   <counted shortest path search> ::= SHORTEST <number of paths> [ <path mode> ] [ <path or paths> ]
+// selene FLATTENS the prefix into the three separate optionals
+// `path_selector? ~ match_mode? ~ path_modifier?`, so a SINGLE trailing
+// `path_or_paths?` slot placed AFTER `path_modifier?` reaches every position
+// selene can express: ALL PATHS, ANY PATHS, ALL SHORTEST PATHS,
+// ANY SHORTEST PATH, SHORTEST 2 PATHS, WALK PATHS, TRAIL PATH, etc. (Feature
+// G014, "Explicit PATH/PATHS keywords", ISO Annex A §16.6 CR5.)
+//
+// <path or paths> is NEVER standalone in ISO — it always trails a <path mode>
+// (required in <path mode prefix>) or a search prefix (ALL/ANY/SHORTEST). The
+// flattened grammar makes the slot independently optional, so `build_match_clause`
+// rejects a bare `MATCH PATHS (n)` with neither a selector nor an explicit mode
+// (a §16.4 <match mode> does not satisfy the requirement). This is the same
+// match_stmt used in mutation pipelines, so PATH/PATHS in a MATCH that precedes
+// DELETE/SET is conforming (the prefix belongs to the MATCH clause).
+//
+// Per ISO §1.2.4 the explicit PATH/PATHS keyword is pure surface sugar — it
+// carries no semantic effect over the no-keyword spelling; the parser stamps
+// G014 (flagger) and the runtime treats it as inert.
+//
+// Prefix-shadow safety: ^"PATH" is a prefix of ^"PATHS", so the plural spelling
+// is tried FIRST and every token ends in the Unicode word boundary
+// `!(LETTER | NUMBER | "_")` (mirroring counted_group_kw / match_mode), so
+// "PATHS" can never parse as "PATH" + a dangling "S".
+//
+// Deliberate no-keyword-growth decision: PATH / PATHS are NOT added to the
+// global `keyword` rule. They are recognised purely contextually in this
+// trailing match-prefix position, so they remain usable as ordinary
+// identifiers (e.g. `RETURN n.path`, `MATCH (path) RETURN path`). This is a
+// DIFFERENT grammar position than the `PATH` value-type keyword in `type_name`
+// (:629), so there is no conflict. PATH was not previously reserved; keeping it
+// contextual preserves identifier usability and the parser-DoS
+// no-new-reserved-word posture, following the §16.4 / IMPLIES (813) precedent.
+path_or_paths     = @{ (^"PATHS" | ^"PATH") ~ !(LETTER | NUMBER | "_") }
 graph_pattern_list = { graph_pattern ~ ("," ~ graph_pattern)* }
 
 graph_pattern     = { path_var_binding? ~ pattern_chain }
@@ -259,7 +441,7 @@ qualified_name = { ident ~ ("." ~ prop_ident)* }
 arg_list       = { expr ~ ("," ~ expr)* }
 yield_clause   = { ^"YIELD" ~ yield_item ~ ("," ~ yield_item)* }
 yield_item     = { ("*" | prop_ident) ~ alias? }
-yield_filter   = { (^"WHERE" | ^"FILTER" ~ ^"WHERE"?) ~ expr }
+yield_filter   = { ^"WHERE" ~ expr }
 
 // -- Mutations ------------------------------------------------------
 
@@ -352,7 +534,7 @@ is_suffix = {
   | is_kw ~ not_kw? ~ normal_form? ~ normalized_kw
   | is_kw ~ not_kw? ~ truth_value
   | is_kw ~ not_kw? ~ typed_kw ~ type_name
-  | not_kw? ~ in_kw ~ list_lit
+  | not_kw? ~ in_kw ~ (list_lit | comparison)
   | string_match_op ~ comparison
 }
 labeled_kw        = @{ ^"LABELED" ~ !(LETTER | NUMBER | "_") }
@@ -398,13 +580,17 @@ primary = {
   | case_expr
   | cast_expr
   | labels_expr
+  | path_constructor
   | record_constructor
   | normalize_expr
   | trim_expr
+  | elements_function
   | aggregate_expr
+  | literal
+  | current_datetime_function
+  | duration_between_expr
   | function_call
   | paren_expr
-  | literal
   | typed_param_ref
   | var_ref
 }
@@ -445,14 +631,16 @@ typed_param_ref = { param_ref ~ ("::" ~ type_name)? }
 // Searched CASE: CASE WHEN condition THEN result ... END
 // PEG: try simple_case first (CASE expr WHEN), falls back to searched_case (CASE WHEN)
 case_expr    = { simple_case | searched_case }
-simple_case  = { ^"CASE" ~ expr ~ simple_when+ ~ else_clause? ~ ^"END" }
+case_kw      = @{ ^"CASE" ~ !(LETTER | NUMBER | "_") }
+simple_case  = { case_kw ~ expr ~ simple_when+ ~ else_clause? ~ ^"END" }
 simple_when  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
-searched_case = { ^"CASE" ~ when_clause+ ~ else_clause? ~ ^"END" }
+searched_case = { case_kw ~ when_clause+ ~ else_clause? ~ ^"END" }
 when_clause  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
 else_clause  = { ^"ELSE" ~ expr }
 
 cast_expr     = { ^"CAST" ~ "(" ~ expr ~ ^"AS" ~ type_name ~ ")" }
 labels_expr   = { ^"LABELS" ~ "(" ~ expr ~ ")" }
+path_constructor = { ^"PATH" ~ "[" ~ expr ~ ("," ~ expr ~ "," ~ expr)* ~ "]" }
 
 normalize_expr = { ^"NORMALIZE" ~ "(" ~ expr ~ ("," ~ normal_form)? ~ ")" }
 
@@ -470,40 +658,96 @@ record_field = { prop_ident ~ ":" ~ expr }
 // Distinct from `record_field` above (the value form, which binds with a single `:`).
 record_field_type = { prop_ident ~ "::" ~ type_name }
 
-// Aggregates with optional DISTINCT (spec section20.9)
+// Aggregates with optional set quantifier (spec section20.9)
 aggregate_expr         = { binary_aggregate_expr | general_aggregate_expr }
-general_aggregate_expr = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
-binary_aggregate_expr  = { binary_aggregate_op ~ "(" ~ expr ~ "," ~ expr ~ ")" }
-aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST" | ^"COLLECT"
-                  | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG" | ^"MIN" | ^"MAX" }
+general_aggregate_expr = { aggregate_op ~ "(" ~ (distinct_kw | all_kw)? ~ (star | expr)? ~ ")" }
+binary_aggregate_expr  = { binary_aggregate_op ~ "(" ~ (distinct_kw | all_kw)? ~ expr ~ "," ~ expr ~ ")" }
+aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST"
+                  | ^"COUNT" | ^"SUM" | ^"AVG" | ^"MIN" | ^"MAX" }
 binary_aggregate_op = { ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC" }
 star            = { "*" }
 
+// ISO/IEC 39075:2024 section 20.27 current-datetime value functions.
+// The `!("(")` guards keep existing ordinary niladic function calls such as
+// `current_date()` on the function_call path while admitting keyword syntax.
+current_datetime_function = {
+    current_date_function
+  | current_time_function
+  | current_timestamp_function
+  | local_timestamp_function
+  | local_time_function
+}
+current_date_function      = { current_date_kw ~ !("(") }
+current_time_function      = { current_time_kw ~ !("(") }
+current_timestamp_function = { current_timestamp_kw ~ !("(") }
+local_timestamp_function   = { local_timestamp_kw ~ !("(") }
+local_time_function        = { local_time_kw ~ (empty_parens | !("(")) }
+empty_parens               = { "(" ~ ")" }
+current_date_kw            = @{ ^"CURRENT_DATE" ~ !(LETTER | NUMBER | "_") }
+current_time_kw            = @{ ^"CURRENT_TIME" ~ !(LETTER | NUMBER | "_") }
+current_timestamp_kw       = @{ ^"CURRENT_TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
+local_timestamp_kw         = @{ ^"LOCAL_TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
+local_time_kw              = @{ ^"LOCAL_TIME" ~ !(LETTER | NUMBER | "_") }
+
+// ISO/IEC 39075:2024 §20.28 datetime subtraction. This must be tried before
+// generic `function_call` so the trailing temporal duration qualifier is part
+// of the expression instead of leftover input.
+duration_between_expr = {
+    duration_between_kw ~ "(" ~ expr ~ "," ~ expr ~ ")" ~ temporal_duration_qualifier?
+}
+temporal_duration_qualifier = { year_to_month_qualifier | day_to_second_qualifier }
+year_to_month_qualifier = { ^"YEAR" ~ ^"TO" ~ ^"MONTH" }
+day_to_second_qualifier = { ^"DAY" ~ ^"TO" ~ ^"SECOND" }
+duration_between_kw = @{ ^"DURATION_BETWEEN" ~ !(LETTER | NUMBER | "_") }
+
 function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }
+elements_function = { elements_synonym ~ "(" ~ arg_list? ~ ")" }
 paren_expr      = { "(" ~ expr ~ ")" }
 var_ref         = { ident }
 
 // -- Type names (for CAST) ------------------------------------------
 // PEG ordering: longer alternatives BEFORE shorter to prevent prefix matching.
 
-type_name = {
+type_name = { type_name_base ~ type_not_null? }
+type_not_null = { ^"NOT" ~ ^"NULL" }
+
+type_name_base = {
     ^"BOOLEAN" | ^"BOOL"
+  | signed_integer_precision_type
+  | unsigned_integer_precision_type
+  | ^"SIGNED" ~ ^"SMALL" ~ ^"INTEGER"
+  | ^"SIGNED" ~ ^"BIG" ~ ^"INTEGER"
+  | ^"SIGNED" ~ ^"INTEGER256" | ^"SIGNED" ~ ^"INTEGER128"
+  | ^"SIGNED" ~ ^"INTEGER64" | ^"SIGNED" ~ ^"INTEGER32"
+  | ^"SIGNED" ~ ^"INTEGER16" | ^"SIGNED" ~ ^"INTEGER8"
   | ^"SIGNED" ~ ^"INTEGER"
+  | ^"UNSIGNED" ~ ^"SMALL" ~ ^"INTEGER"
+  | ^"UNSIGNED" ~ ^"BIG" ~ ^"INTEGER"
+  | ^"UNSIGNED" ~ ^"INTEGER256" | ^"UNSIGNED" ~ ^"INTEGER128"
+  | ^"UNSIGNED" ~ ^"INTEGER64" | ^"UNSIGNED" ~ ^"INTEGER32"
+  | ^"UNSIGNED" ~ ^"INTEGER16" | ^"UNSIGNED" ~ ^"INTEGER8"
+  | ^"UNSIGNED" ~ ^"INTEGER"
   | ^"INT256" | ^"INT128" | ^"INT64" | ^"INT32" | ^"INT16" | ^"INT8"
+  | ^"INTEGER256" | ^"INTEGER128" | ^"INTEGER64" | ^"INTEGER32" | ^"INTEGER16" | ^"INTEGER8"
+  | ^"BIG" ~ ^"INTEGER" | ^"SMALL" ~ ^"INTEGER"
   | ^"INTEGER" | ^"BIGINT" | ^"SMALLINT" | ^"INT"
   | ^"UINT256" | ^"UINT128" | ^"UINT64" | ^"UINT32" | ^"UINT16" | ^"UINT8"
-  | ^"UINT"
+  | ^"USMALLINT" | ^"UBIGINT" | ^"UINT"
   | ^"DOUBLE" ~ (^"PRECISION")?
+  | float_precision_type
   | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
   | ^"FLOAT" | ^"REAL"
+  | decimal_precision_type
   | ^"DECIMAL" | ^"DEC"
-  | ^"STRING" | ^"VARCHAR"
+  | character_string_type
   | ^"UUID"
-  | ^"BYTES" | ^"BYTEA"
+  | ^"JSON"
+  | ^"VECTOR"
+  | byte_string_type | ^"BYTEA"
   | ^"ZONED" ~ ^"DATETIME" | ^"LOCAL" ~ ^"DATETIME"
   | ^"ZONED" ~ ^"TIME" | ^"LOCAL" ~ ^"TIME"
   | ^"DATE"
-  | ^"DURATION"
+  | duration_type
   | ^"PATH"
   | ^"LIST" ~ "<" ~ type_name ~ ">"
   // Record types (spec section18.9 <record type>): closed `RECORD { a :: INT }` longest
@@ -512,6 +756,31 @@ type_name = {
   | ^"RECORD"
   | ^"NOTHING" | ^"NULL"
 }
+signed_integer_precision_type = {
+    (^"SIGNED" ~ ^"INTEGER" | ^"INTEGER" | ^"INT") ~ "(" ~ numeric_type_precision ~ ")"
+}
+unsigned_integer_precision_type = {
+    (^"UNSIGNED" ~ ^"INTEGER" | ^"UINT") ~ "(" ~ numeric_type_precision ~ ")"
+}
+float_precision_type = { ^"FLOAT" ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
+decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
+numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
+numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
+duration_type = { ^"DURATION" ~ ("(" ~ temporal_duration_qualifier ~ ")")? }
+
+character_string_type = {
+    ^"STRING" ~ ("(" ~ character_string_length ~ ("," ~ character_string_length)? ~ ")")?
+  | ^"CHAR" ~ ("(" ~ character_string_length ~ ")")?
+  | ^"VARCHAR" ~ ("(" ~ character_string_length ~ ")")?
+}
+character_string_length = @{ ASCII_DIGIT+ }
+
+byte_string_type = {
+    ^"BYTES" ~ ("(" ~ byte_string_length ~ ("," ~ byte_string_length)? ~ ")")?
+  | ^"BINARY" ~ ("(" ~ byte_string_length ~ ")")?
+  | ^"VARBINARY" ~ ("(" ~ byte_string_length ~ ")")?
+}
+byte_string_length = @{ ASCII_DIGIT+ }
 
 // -------------------------------------------------------------------
 // Literals
@@ -530,8 +799,10 @@ literal = {
   | time_lit
   | duration_lit
   | uuid_lit
+  | decimal_lit
   | float_lit
   | int_lit
+  | byte_string_lit
   | string_lit
   | list_lit
 }
@@ -541,13 +812,39 @@ unknown_lit = { ^"UNKNOWN" }
 bool_lit    = { ^"TRUE" | ^"FALSE" }
 uuid_lit    = { ^"UUID" ~ string_lit }
 
-// Integer: optional sign + digits (no suffix)
-int_lit = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+// Integer: optional sign + decimal, hexadecimal, octal, or binary digits.
+// ISO/IEC 39075:2024 §21.2 GL01/GL02/GL03 radix prefixes are lowercase.
+int_lit     = @{ ("+" | "-")? ~ (hex_int_lit | oct_int_lit | bin_int_lit | dec_int_lit) }
+dec_int_lit = { ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+hex_int_lit = { "0x" ~ ("_"? ~ ASCII_HEX_DIGIT)+ }
+oct_int_lit = { "0o" ~ ("_"? ~ ('0'..'7'))+ }
+bin_int_lit = { "0b" ~ ("_"? ~ ("0" | "1"))+ }
 
-// Float: digits.digits with optional exponent and suffix
-float_lit = @{
-    ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? ~ ("f" | "d")?
+// Exact and approximate numerics per ISO/IEC 39075:2024 §21.2.
+decimal_lit = @{
+    ("+" | "-")? ~ (
+        decimal_scientific ~ exact_number_suffix
+      | decimal_common ~ exact_number_suffix
+      | dec_int_lit ~ exact_number_suffix
+      | decimal_common ~ !numeric_continuation
+    )
 }
+
+float_lit = @{
+    ("+" | "-")? ~ (
+        decimal_scientific ~ approximate_number_suffix?
+      | decimal_common ~ approximate_number_suffix
+      | dec_int_lit ~ approximate_number_suffix
+    )
+}
+decimal_scientific = { decimal_mantissa ~ ("e" | "E") ~ signed_dec_int_lit }
+decimal_mantissa = { decimal_common | dec_int_lit }
+decimal_common = { dec_int_lit ~ "." ~ dec_int_lit? | "." ~ dec_int_lit }
+signed_dec_int_lit = { ("+" | "-")? ~ dec_int_lit }
+exact_number_suffix = { "M" | "m" }
+approximate_number_suffix = { "F" | "f" | "D" | "d" }
+numeric_suffix = { exact_number_suffix | approximate_number_suffix }
+numeric_continuation = { numeric_suffix | "e" | "E" }
 
 // Strings: SINGLE-QUOTE ONLY (spec-aligned)
 // Double-quotes are delimited identifiers (see ident rule).
@@ -560,6 +857,14 @@ single_inner      = @{ (escaped_quote | dangling_escape | escape_seq | "''" | !(
 escaped_quote     = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
 dangling_escape   = @{ "\\" ~ &"'" }
 escape_seq        = @{ "\\" ~ ANY }
+
+// Byte strings: ISO-style X'...' hex octets. Spaces inside each quoted chunk
+// are ignored; adjacent chunks require a separator containing at least one
+// newline, matching the standard's separator rule.
+byte_string_lit       = ${ ("X" | "x") ~ byte_string_chunk ~ (byte_string_separator ~ byte_string_chunk)* }
+byte_string_chunk     = { "'" ~ byte_string_inner ~ "'" }
+byte_string_inner     = @{ (ASCII_HEX_DIGIT | " ")* }
+byte_string_separator = @{ (" " | "\t")* ~ ("\r\n" | "\n" | "\r") ~ (" " | "\t" | "\r" | "\n")* }
 
 // List literal
 list_lit = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
@@ -617,9 +922,9 @@ keyword = @{
     | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"ASC" | ^"DESC"
     | ^"START" | ^"COMMIT" | ^"ROLLBACK" | ^"UNION" | ^"INTERSECT" | ^"EXCEPT" | ^"OTHERWISE" | ^"NEXT"
     | ^"CAST" | ^"CASE" | ^"WHEN" | ^"THEN" | ^"ELSE" | ^"END"
-    | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG"
+    | ^"COUNT" | ^"SUM" | ^"AVG"
     | ^"STDDEV_SAMP" | ^"STDDEV_POP"
-    | ^"COLLECT_LIST" | ^"COLLECT"
+    | ^"COLLECT_LIST"
     | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"NULLS"
     | ^"CREATE" | ^"DROP"
     | ^"SELECT" | ^"FROM"

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use selene_core::{IStr, LabelSet, PropertyValueType};
+use selene_core::{DbString, LabelSet, PropertyValueType};
 use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 
 use crate::{
@@ -16,29 +16,35 @@ use crate::{
 
 pub(super) fn validate_property_values(
     graph_type: &GraphTypeDef,
-    declared_in: IStr,
+    declared_in: DbString,
     declarations: &[PropertyTypeDef],
-    properties: &[(IStr, ValueExpr)],
+    properties: &[(DbString, ValueExpr)],
     analyzed: &AnalyzedStatement,
 ) -> Result<(), AnalysisError> {
     for (key, value) in properties {
         let declaration = declarations.iter().find(|decl| decl.name == *key).ok_or(
             AnalysisError::SchemaUndeclaredProperty {
-                property: *key,
-                declared_in,
-                graph_type: graph_type.name,
+                property: key.clone(),
+                declared_in: declared_in.clone(),
+                graph_type: graph_type.name.clone(),
                 span: value.span(),
             },
         )?;
-        validate_one_property_value(declared_in, declaration, *key, value, analyzed)?;
+        validate_one_property_value(
+            declared_in.clone(),
+            declaration,
+            key.clone(),
+            value,
+            analyzed,
+        )?;
     }
     Ok(())
 }
 
 pub(super) fn validate_one_property_value(
-    declared_in: IStr,
+    declared_in: DbString,
     declaration: &PropertyTypeDef,
-    key: IStr,
+    key: DbString,
     value: &ValueExpr,
     analyzed: &AnalyzedStatement,
 ) -> Result<(), AnalysisError> {
@@ -71,9 +77,9 @@ pub(super) fn validate_one_property_value(
 }
 
 pub(super) struct RequiredPropertyCheck<'a> {
-    pub(super) declared_in: IStr,
+    pub(super) declared_in: DbString,
     pub(super) declarations: &'a [PropertyTypeDef],
-    pub(super) properties: &'a [(IStr, ValueExpr)],
+    pub(super) properties: &'a [(DbString, ValueExpr)],
     pub(super) stmt_index: usize,
     pub(super) binding: Option<BindingId>,
     pub(super) span: SourceSpan,
@@ -84,6 +90,9 @@ pub(super) fn validate_required_properties(
     check: RequiredPropertyCheck<'_>,
 ) -> Result<(), AnalysisError> {
     for declaration in check.declarations.iter().filter(|decl| decl.required) {
+        if declaration.default.is_some() {
+            continue;
+        }
         if check
             .properties
             .iter()
@@ -92,12 +101,17 @@ pub(super) fn validate_required_properties(
             continue;
         }
         if check.binding.is_some_and(|binding| {
-            required_property_supplied(check.stmt_index, binding, declaration.name, check.analyzed)
+            required_property_supplied(
+                check.stmt_index,
+                binding,
+                declaration.name.clone(),
+                check.analyzed,
+            )
         }) {
             continue;
         }
         return Err(AnalysisError::SchemaRequiredPropertyMissing {
-            property: declaration.name,
+            property: declaration.name.clone(),
             declared_in: check.declared_in,
             span: check.span,
         });
@@ -108,7 +122,7 @@ pub(super) fn validate_required_properties(
 fn required_property_supplied(
     stmt_index: usize,
     binding: BindingId,
-    property: IStr,
+    property: DbString,
     analyzed: &AnalyzedStatement,
 ) -> bool {
     analyzed.write_set.as_ref().is_some_and(|write_set| {
@@ -155,19 +169,19 @@ pub(super) fn set_value_index(analyzed: &AnalyzedStatement) -> HashMap<SourceSpa
 }
 
 pub(super) enum PropertyAgreement<'a> {
-    Declared(&'a PropertyTypeDef, IStr),
-    Undeclared(IStr),
+    Declared(&'a PropertyTypeDef, DbString),
+    Undeclared(DbString),
     Disagree,
 }
 
 pub(super) fn property_agreement<'a>(
     types: &[&'a NodeTypeDef],
-    key: IStr,
+    key: DbString,
 ) -> PropertyAgreement<'a> {
     let Some(first_type) = types.first() else {
         return PropertyAgreement::Disagree;
     };
-    let mut agreed: Option<(&PropertyTypeDef, IStr)> = None;
+    let mut agreed: Option<(&PropertyTypeDef, DbString)> = None;
     let mut saw_undeclared = false;
     for node_type in types {
         match node_type.properties.iter().find(|decl| decl.name == key) {
@@ -178,7 +192,7 @@ pub(super) fn property_agreement<'a>(
                 {
                     return PropertyAgreement::Disagree;
                 }
-                agreed = Some((decl, node_type.name));
+                agreed = Some((decl, node_type.name.clone()));
             }
             None if agreed.is_some() => return PropertyAgreement::Disagree,
             None => saw_undeclared = true,
@@ -186,13 +200,13 @@ pub(super) fn property_agreement<'a>(
     }
     agreed
         .map(|(decl, name)| PropertyAgreement::Declared(decl, name))
-        .unwrap_or(PropertyAgreement::Undeclared(first_type.name))
+        .unwrap_or(PropertyAgreement::Undeclared(first_type.name.clone()))
 }
 
 pub(super) fn validate_declared_property(
     edge_type: &EdgeTypeDef,
-    key: IStr,
-    graph_type: IStr,
+    key: DbString,
+    graph_type: DbString,
     span: SourceSpan,
 ) -> Result<&PropertyTypeDef, AnalysisError> {
     edge_type
@@ -201,16 +215,16 @@ pub(super) fn validate_declared_property(
         .find(|decl| decl.name == key)
         .ok_or(AnalysisError::SchemaUndeclaredProperty {
             property: key,
-            declared_in: edge_type.name,
+            declared_in: edge_type.name.clone(),
             graph_type,
             span,
         })
 }
 
 pub(super) fn undeclared_property(
-    property: IStr,
-    declared_in: IStr,
-    graph_type: IStr,
+    property: DbString,
+    declared_in: DbString,
+    graph_type: DbString,
     span: SourceSpan,
 ) -> Result<(), AnalysisError> {
     Err(AnalysisError::SchemaUndeclaredProperty {
@@ -238,7 +252,7 @@ pub(super) fn validate_node_label_transition(
     if let Some(labels) = first_invalid {
         return Err(AnalysisError::SchemaUnknownNodeType {
             labels,
-            graph_type: graph_type.name,
+            graph_type: graph_type.name.clone(),
             span,
         });
     }
@@ -248,6 +262,7 @@ pub(super) fn validate_node_label_transition(
 pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlType) -> bool {
     use GqlType as G;
     use PropertyValueType as P;
+    let found = found.strip_not_null();
     matches!(
         (declared, found),
         (P::Bool, G::Boolean)
@@ -255,15 +270,44 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
                 P::Int,
                 G::Integer | G::Int8 | G::Int16 | G::Int32 | G::Int64 | G::SmallInt | G::BigInt
             )
-            | (P::Uint, G::Uint8 | G::Uint16 | G::Uint32 | G::Uint64)
+            | (
+                P::Uint,
+                G::Uint8 | G::Uint16 | G::Uint32 | G::Uint64 | G::USmallInt | G::Uint | G::UBigInt
+            )
             | (P::Int128, G::Int128)
             | (P::Uint128, G::Uint128)
-            | (P::Float, G::Float | G::Float64)
-            | (P::Float32, G::Float32)
-            | (P::Decimal, G::Decimal)
-            | (P::String, G::String)
+            | (P::Float, G::Float | G::Float64 | G::Double)
+            | (P::Float32, G::Float32 | G::Real)
+            | (
+                P::Decimal,
+                G::Integer
+                    | G::Int8
+                    | G::Int16
+                    | G::Int32
+                    | G::Int64
+                    | G::SmallInt
+                    | G::BigInt
+                    | G::Uint8
+                    | G::Uint16
+                    | G::Uint32
+                    | G::Uint64
+                    | G::USmallInt
+                    | G::Uint
+                    | G::UBigInt
+                    | G::Int128
+                    | G::Uint128
+                    | G::Float
+                    | G::Float64
+                    | G::Double
+                    | G::Float32
+                    | G::Real
+                    | G::Decimal
+                    | G::DecimalExact(_),
+            )
+            | (P::String, G::String | G::CharacterString(_))
             | (P::Uuid, G::Uuid)
-            | (P::Bytes, G::Bytes)
+            | (P::Bytes, G::Bytes | G::ByteString(_))
+            | (P::Json, G::Json)
             | (P::List, G::List(_))
             // Every record property declaration — open `RECORD` and closed `RECORD{..}`
             // alike — lowers to `P::RecordTyped` (catalog/property.rs), while a `RECORD{..}`
@@ -280,7 +324,10 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Date, G::Date)
             | (P::ZonedTime, G::ZonedTime)
             | (P::LocalTime, G::LocalTime)
-            | (P::Duration, G::Duration)
+            | (P::Duration, G::Duration | G::DurationYearToMonth | G::DurationDayToSecond)
+            | (P::DurationYearToMonth, G::Duration | G::DurationYearToMonth)
+            | (P::DurationDayToSecond, G::Duration | G::DurationDayToSecond)
+            | (P::Vector, G::Vector)
             | (P::Null, G::Null)
             | (P::Path, G::Path)
             | (P::NodeRef, G::NodeRef)
@@ -294,7 +341,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
 mod tests {
     use std::sync::Arc;
 
-    use selene_core::{BindingTableId, EdgeId, GraphId, NodeId, Value, intern_with_admission};
+    use selene_core::{BindingTableId, EdgeId, GraphId, JsonValue, NodeId, Value, db_string};
 
     use super::*;
 
@@ -334,6 +381,10 @@ mod tests {
             PropertyValueType::Float,
             &GqlType::Float64
         ));
+        assert!(property_type_compatible(
+            PropertyValueType::Float,
+            &GqlType::Double
+        ));
         assert!(!property_type_compatible(
             PropertyValueType::Float,
             &GqlType::Float32
@@ -341,6 +392,10 @@ mod tests {
         assert!(property_type_compatible(
             PropertyValueType::Float32,
             &GqlType::Float32
+        ));
+        assert!(property_type_compatible(
+            PropertyValueType::Float32,
+            &GqlType::Real
         ));
         assert!(!property_type_compatible(
             PropertyValueType::Float32,
@@ -353,6 +408,14 @@ mod tests {
         ));
         assert!(!property_type_compatible(
             PropertyValueType::Bytes,
+            &GqlType::String
+        ));
+        assert!(property_type_compatible(
+            PropertyValueType::Json,
+            &GqlType::Json
+        ));
+        assert!(!property_type_compatible(
+            PropertyValueType::Json,
             &GqlType::String
         ));
 
@@ -432,7 +495,7 @@ mod tests {
             (
                 PropertyValueType::String,
                 GqlType::String,
-                Value::String(intern_with_admission("schema.type.string").unwrap().0),
+                Value::String(db_string("schema.type.string").unwrap()),
             ),
             (
                 PropertyValueType::Uuid,
@@ -443,6 +506,11 @@ mod tests {
                 PropertyValueType::Bytes,
                 GqlType::Bytes,
                 Value::Bytes(Arc::from([1_u8, 2, 3])),
+            ),
+            (
+                PropertyValueType::Json,
+                GqlType::Json,
+                Value::Json(JsonValue::new(serde_json::json!({"a": 1})).unwrap()),
             ),
             (
                 PropertyValueType::NodeRef,
@@ -467,7 +535,7 @@ mod tests {
             (
                 PropertyValueType::ZonedDateTime,
                 GqlType::ZonedDateTime,
-                Value::ZonedDateTime(zoned.parse().unwrap()),
+                Value::ZonedDateTime(Box::new(zoned.parse().unwrap())),
             ),
             (
                 PropertyValueType::LocalDateTime,
@@ -482,7 +550,7 @@ mod tests {
             (
                 PropertyValueType::ZonedTime,
                 GqlType::ZonedTime,
-                Value::ZonedTime(zoned.parse().unwrap()),
+                Value::ZonedTime(Box::new(zoned.parse().unwrap())),
             ),
             (
                 PropertyValueType::LocalTime,
@@ -492,7 +560,17 @@ mod tests {
             (
                 PropertyValueType::Duration,
                 GqlType::Duration,
-                Value::Duration("PT1H2S".parse().unwrap()),
+                Value::Duration(Box::new("PT1H2S".parse().unwrap())),
+            ),
+            (
+                PropertyValueType::DurationYearToMonth,
+                GqlType::Duration,
+                Value::Duration(Box::new("P1Y2M".parse().unwrap())),
+            ),
+            (
+                PropertyValueType::DurationDayToSecond,
+                GqlType::DurationDayToSecond,
+                Value::Duration(Box::new("PT1H2S".parse().unwrap())),
             ),
             (PropertyValueType::Null, GqlType::Null, Value::Null),
         ];

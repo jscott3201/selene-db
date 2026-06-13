@@ -2,7 +2,7 @@
 
 use std::ops::RangeBounds;
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 
 /// Graph element kind targeted by an index lookup.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -24,19 +24,19 @@ pub trait IndexCatalog: Send + Sync {
     fn typed_index(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
     ) -> Option<TypedIndexLookup>;
 
     /// Return a label-only index for `(target, label)`, if any.
-    fn label_index(&self, target: IndexTarget, label: IStr) -> Option<IndexHandle>;
+    fn label_index(&self, target: IndexTarget, label: DbString) -> Option<IndexHandle>;
 
     /// Return a composite-property index for `(target, label, properties)`, if any.
     fn composite_index(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
     ) -> Option<CompositeIndexHandle>;
 
     // ---------------------------------------------------------------------
@@ -65,7 +65,7 @@ pub trait IndexCatalog: Send + Sync {
 
     /// Exact number of rows carrying `label` for `target` (RoaringBitmap
     /// popcount). Defaults to `None`.
-    fn label_cardinality(&self, target: IndexTarget, label: IStr) -> Option<u64> {
+    fn label_cardinality(&self, target: IndexTarget, label: DbString) -> Option<u64> {
         let _ = (target, label);
         None
     }
@@ -75,8 +75,8 @@ pub trait IndexCatalog: Send + Sync {
     fn equality_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         value: &Value,
     ) -> Option<u64> {
         let _ = (target, label, property, value);
@@ -88,8 +88,8 @@ pub trait IndexCatalog: Send + Sync {
     fn range_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         range: (std::ops::Bound<Value>, std::ops::Bound<Value>),
     ) -> Option<u64> {
         let _ = (target, label, property, range);
@@ -99,7 +99,12 @@ pub trait IndexCatalog: Send + Sync {
     /// Expected rows per distinct key for the `(target, label, property)` typed
     /// index = `cardinality / distinct_keys`. Used for parameter equality where
     /// the value is unknown at plan time. Defaults to `None`.
-    fn typed_avg_bucket(&self, target: IndexTarget, label: IStr, property: IStr) -> Option<u64> {
+    fn typed_avg_bucket(
+        &self,
+        target: IndexTarget,
+        label: DbString,
+        property: DbString,
+    ) -> Option<u64> {
         let _ = (target, label, property);
         None
     }
@@ -112,8 +117,8 @@ pub trait IndexCatalog: Send + Sync {
     fn composite_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
         keys: &[Value],
     ) -> Option<u64> {
         let _ = (target, label, properties, keys);
@@ -126,8 +131,8 @@ pub trait IndexCatalog: Send + Sync {
     fn composite_avg_bucket(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
     ) -> Option<u64> {
         let _ = (target, label, properties);
         None
@@ -194,20 +199,20 @@ pub struct CompositeIndexHandle {
     /// kinds. The kinds enable per-component plan-time compatibility checks
     /// when admitting parameter slots into composite-index probes
     /// (BRIEF-154 §B.2 F7/F17 folds).
-    pub properties: Vec<(IStr, IndexKind)>,
+    pub properties: Vec<(DbString, IndexKind)>,
 }
 
 impl CompositeIndexHandle {
     /// Construct composite-index lookup metadata.
     #[must_use]
-    pub fn new(handle: IndexHandle, properties: Vec<(IStr, IndexKind)>) -> Self {
+    pub fn new(handle: IndexHandle, properties: Vec<(DbString, IndexKind)>) -> Self {
         Self { handle, properties }
     }
 
     /// Return the property keys in declaration order, dropping the kind column.
     #[must_use]
-    pub fn property_keys(&self) -> Vec<IStr> {
-        self.properties.iter().map(|(key, _)| *key).collect()
+    pub fn property_keys(&self) -> Vec<DbString> {
+        self.properties.iter().map(|(key, _)| key.clone()).collect()
     }
 }
 
@@ -215,9 +220,21 @@ impl CompositeIndexHandle {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum IndexKind {
+    /// Boolean typed index.
+    Boolean,
     /// Signed integer typed index.
     Integer,
-    /// Floating-point typed index.
+    /// Unsigned integer typed index.
+    UnsignedInteger,
+    /// Signed 128-bit integer typed index.
+    Integer128,
+    /// Unsigned 128-bit integer typed index.
+    UnsignedInteger128,
+    /// Decimal typed index.
+    Decimal,
+    /// 32-bit floating-point typed index.
+    Float32,
+    /// 64-bit floating-point typed index.
     Float,
     /// String typed index.
     String,
@@ -225,6 +242,14 @@ pub enum IndexKind {
     Date,
     /// Local datetime typed index.
     LocalDateTime,
+    /// Zoned datetime typed index.
+    ZonedDateTime,
+    /// Local time typed index.
+    LocalTime,
+    /// Zoned time typed index.
+    ZonedTime,
+    /// Duration typed index.
+    Duration,
     /// UUID typed index.
     Uuid,
 }
@@ -237,21 +262,21 @@ impl IndexCatalog for EmptyIndexCatalog {
     fn typed_index(
         &self,
         _target: IndexTarget,
-        _label: IStr,
-        _property: IStr,
+        _label: DbString,
+        _property: DbString,
     ) -> Option<TypedIndexLookup> {
         None
     }
 
-    fn label_index(&self, _target: IndexTarget, _label: IStr) -> Option<IndexHandle> {
+    fn label_index(&self, _target: IndexTarget, _label: DbString) -> Option<IndexHandle> {
         None
     }
 
     fn composite_index(
         &self,
         _target: IndexTarget,
-        _label: IStr,
-        _properties: &[IStr],
+        _label: DbString,
+        _properties: &[DbString],
     ) -> Option<CompositeIndexHandle> {
         None
     }

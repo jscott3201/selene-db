@@ -5,18 +5,19 @@
 //! machinery), exercising plan-time lookup, tier-checked dispatch, and — for the
 //! mutation-tier built-ins — the single mutation funnel (`SHOW INDEXES` reads
 //! the committed `property_index`, which the procedure populated through
-//! `MutationContext::mutator`). They are the parity guard that the five built-ins
-//! behave identically to the pack era with the registry swapped behind the
-//! `ProcedureRegistry` trait.
+//! `MutationContext::mutator`). They are the parity guard that the relocated
+//! built-ins behave identically to the pack era with the registry swapped behind
+//! the `ProcedureRegistry` trait, plus coverage for new native platform
+//! built-ins added after the pack teardown.
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{DbString, GraphId, Value};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
 fn graph(id: u64) -> SharedGraph {
@@ -45,14 +46,13 @@ fn execute_rows(
 
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
         .iter()
         .map(|row| match row.values().get(index) {
             Some(Value::String(value)) => value.as_str().to_owned(),
-            Some(Value::ExternalString(value)) => value.as_ref().to_owned(),
             other => panic!("expected string in {name}, got {other:?}"),
         })
         .collect()
@@ -60,7 +60,7 @@ fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
 
 fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
     let index = table
-        .column_index(istr(name))
+        .column_index(db_string(name))
         .unwrap_or_else(|| panic!("missing column {name}"));
     table
         .rows()
@@ -73,7 +73,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 }
 
 #[test]
-fn show_procedures_lists_all_twenty_four_procedures() {
+fn show_procedures_lists_all_sixty_five_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -83,15 +83,56 @@ fn show_procedures_lists_all_twenty_four_procedures() {
 
     assert_eq!(
         table.row_count(),
-        24,
-        "19 algo procedures + 5 platform built-ins"
+        65,
+        "19 algo procedures + 46 platform built-ins"
     );
     for expected in [
         "selene.health",
         "selene.feature_status",
         "selene.verify",
+        "selene.compaction_stats",
         "selene.create_index",
         "selene.drop_index",
+        "selene.vector_search_nodes",
+        "selene.vector_search_nodes_batch",
+        "selene.vector_score_nodes",
+        "selene.vector_score_nodes_batch",
+        "selene.vector_score_neighbors",
+        "selene.vector_score_neighbors_batch",
+        "selene.vector_score_expanded_candidates",
+        "selene.vector_score_expanded_candidates_batch",
+        "selene.vector_search_nodes_ann",
+        "selene.vector_search_nodes_ann_batch",
+        "selene.vector_search_expanded_candidates_ann",
+        "selene.vector_search_candidate_state_expanded_ann",
+        "selene.vector_search_expanded_candidates_ann_batch",
+        "selene.vector_score_candidate_state",
+        "selene.vector_score_candidate_state_nodes",
+        "selene.vector_score_candidate_state_expanded",
+        "selene.vector_score_candidate_state_expanded_batch",
+        "selene.vector_candidate_states",
+        "selene.vector_index_stats",
+        "selene.text_index_stats",
+        "selene.json_contains_nodes",
+        "selene.json_path_exists_nodes",
+        "selene.json_path_contains_nodes",
+        "selene.json_path_value_nodes",
+        "selene.json_contains_candidate_nodes",
+        "selene.json_path_exists_candidate_nodes",
+        "selene.json_path_contains_candidate_nodes",
+        "selene.json_path_value_candidate_nodes",
+        "selene.rebuild_vector_indexes",
+        "selene.rebuild_recommended_vector_indexes",
+        "selene.compact",
+        "selene.create_vector_index",
+        "selene.drop_vector_index",
+        "selene.create_text_index",
+        "selene.drop_text_index",
+        "selene.text_search_nodes",
+        "selene.text_score_nodes",
+        "selene.text_score_nodes_batch",
+        "selene.text_score_candidate_state_expanded_batch",
+        "selene.reciprocal_rank_fusion",
         "algo.pagerank",
     ] {
         assert!(
@@ -218,6 +259,110 @@ fn create_index_then_show_indexes_confirms_funnel_commit() {
     assert_eq!(string_column(&table, "label"), vec!["Sensor"]);
     assert_eq!(string_column(&table, "property"), vec!["timestamp"]);
     assert_eq!(string_column(&table, "kind"), vec!["i64"]);
+}
+
+#[test]
+fn create_index_accepts_boolean_kind_alias() {
+    let graph = graph(330_026);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL selene.create_index('Sensor', 'active', 'boolean')",
+            &registry,
+        )
+        .expect("boolean index creation executes");
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    assert_eq!(string_column(&table, "label"), vec!["Sensor"]);
+    assert_eq!(string_column(&table, "property"), vec!["active"]);
+    assert_eq!(string_column(&table, "kind"), vec!["bool"]);
+}
+
+#[test]
+fn create_index_accepts_uint64_kind_alias() {
+    let graph = graph(330_027);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL selene.create_index('Sensor', 'count', 'uint64')",
+            &registry,
+        )
+        .expect("uint64 index creation executes");
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    assert_eq!(string_column(&table, "label"), vec!["Sensor"]);
+    assert_eq!(string_column(&table, "property"), vec!["count"]);
+    assert_eq!(string_column(&table, "kind"), vec!["u64"]);
+}
+
+#[test]
+fn create_index_accepts_numeric_kind_aliases() {
+    let graph = graph(330_028);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    for (property, kind) in [
+        ("signed", "int128"),
+        ("unsigned", "uint128"),
+        ("amount", "decimal"),
+        ("score", "float32"),
+    ] {
+        session
+            .execute_source(
+                &format!("CALL selene.create_index('Metric', '{property}', '{kind}')"),
+                &registry,
+            )
+            .expect("exact numeric index creation executes");
+    }
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    let properties = string_column(&table, "property");
+    let kinds = string_column(&table, "kind");
+    assert!(properties.contains(&"signed".to_owned()));
+    assert!(properties.contains(&"unsigned".to_owned()));
+    assert!(properties.contains(&"amount".to_owned()));
+    assert!(properties.contains(&"score".to_owned()));
+    assert!(kinds.contains(&"i128".to_owned()));
+    assert!(kinds.contains(&"u128".to_owned()));
+    assert!(kinds.contains(&"decimal".to_owned()));
+    assert!(kinds.contains(&"f32".to_owned()));
+}
+
+#[test]
+fn create_index_accepts_temporal_time_kind_aliases() {
+    let graph = graph(330_029);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    for (property, kind) in [
+        ("occurred_at", "zoned_datetime"),
+        ("wall_time", "local_time"),
+        ("clock_time", "zoned_time"),
+        ("span", "duration"),
+    ] {
+        session
+            .execute_source(
+                &format!("CALL selene.create_index('Event', '{property}', '{kind}')"),
+                &registry,
+            )
+            .expect("temporal index creation executes");
+    }
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    let properties = string_column(&table, "property");
+    let kinds = string_column(&table, "kind");
+    assert!(properties.contains(&"occurred_at".to_owned()));
+    assert!(properties.contains(&"wall_time".to_owned()));
+    assert!(properties.contains(&"clock_time".to_owned()));
+    assert!(properties.contains(&"span".to_owned()));
+    assert!(kinds.contains(&"zoned_datetime".to_owned()));
+    assert!(kinds.contains(&"local_time".to_owned()));
+    assert!(kinds.contains(&"zoned_time".to_owned()));
+    assert!(kinds.contains(&"duration".to_owned()));
 }
 
 #[test]

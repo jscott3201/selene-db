@@ -4,7 +4,9 @@
 
 mod exec_common;
 
-use exec_common::{column_values, execute_read, execute_read_result, first_scan, istr, planned};
+use exec_common::{
+    column_values, db_string, execute_read, execute_read_result, first_scan, planned,
+};
 use selene_core::{GraphId, PropertyValueType, Value, feature_register::FeatureId};
 use selene_gql::{
     EmptyProcedureRegistry, IndexKind, Literal, OptimizeContext, ScanAccess, Session,
@@ -46,9 +48,9 @@ fn assert_feature_recorded(source: &str) {
     );
 }
 
-fn external_string(value: Value) -> String {
-    let Value::ExternalString(value) = value else {
-        panic!("expected ExternalString, got {value:?}");
+fn string_value(value: Value) -> String {
+    let Value::String(value) = value else {
+        panic!("expected String, got {value:?}");
     };
     value.to_string()
 }
@@ -63,7 +65,7 @@ fn rows_from_output(output: StatementOutput) -> selene_gql::BindingTable {
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
-            name: istr("uuid.test.graph"),
+            name: db_string("uuid.test.graph"),
             node_types: Vec::new(),
             edge_types: Vec::new(),
         })
@@ -149,6 +151,18 @@ fn uuid_literal_executes_as_uuid_value() {
 }
 
 #[test]
+fn uuid_literals_are_order_comparable() {
+    assert_eq!(
+        single_value(
+            "RETURN UUID '00000000-0000-0000-0000-000000000001' \
+             < UUID '00000000-0000-0000-0000-000000000002' AS value",
+            "value",
+        ),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn is_typed_uuid_matches_uuid_values() {
     assert_eq!(
         single_value(
@@ -179,7 +193,7 @@ fn cast_string_as_uuid_returns_uuid_value() {
 }
 
 #[test]
-fn cast_external_string_as_uuid_returns_uuid_value() {
+fn cast_computed_string_as_uuid_returns_uuid_value() {
     assert_eq!(
         uuid_value(&format!(
             "RETURN CAST(upper('{UUID_TEXT}') AS UUID) AS value"
@@ -189,9 +203,9 @@ fn cast_external_string_as_uuid_returns_uuid_value() {
 }
 
 #[test]
-fn cast_uuid_as_string_returns_external_string() {
+fn cast_uuid_as_string_returns_string() {
     assert_eq!(
-        external_string(single_value(
+        string_value(single_value(
             "RETURN CAST(UUID '018f1b6d-7b89-7cc0-9f40-2c6f8d4df101' AS STRING) AS value",
             "value",
         )),
@@ -235,8 +249,8 @@ fn cast_uuid_to_unsupported_target_returns_42n01() {
 
 #[test]
 fn planner_routes_uuid_literal_equality_to_uuid_typed_index() {
-    let label = istr("Thing");
-    let property = istr("id");
+    let label = db_string("Thing");
+    let property = db_string("id");
     let expected = uuid::Uuid::parse_str(UUID_TEXT).expect("test UUID parses");
     let catalog = MockIndexCatalog::new().with_node_typed_index(label, property, IndexKind::Uuid);
     let plan = planned(&format!(
@@ -272,8 +286,8 @@ fn uuid_indexed_node_type_round_trips_catalog_and_execution() {
         )
         .expect("UUID node type creates");
 
-    let label = istr("Thing");
-    let property = istr("id");
+    let label = db_string("Thing");
+    let property = db_string("id");
     let graph_type = graph.graph_type().expect("graph has type");
     let declaration = &graph_type.node_types[0].properties[0];
     assert_eq!(declaration.value_type, PropertyValueType::Uuid);
@@ -310,14 +324,41 @@ fn uuid_indexed_node_type_round_trips_catalog_and_execution() {
 }
 
 #[test]
-fn uuid_default_literal_is_rejected_until_default_literals_are_expanded() {
+fn uuid_default_literal_materializes_and_round_trips() {
     let graph = empty_closed_graph(13_505);
     let mut session = Session::new(&graph);
-    let err = session
+    session
         .execute_source(
             "CREATE NODE TYPE :Thing (id :: UUID DEFAULT UUID '018f1b6d-7b89-7cc0-9f40-2c6f8d4df101')",
             &EmptyProcedureRegistry,
         )
-        .expect_err("UUID DEFAULT literals are deferred");
-    assert_eq!(err.gqlstatus().as_str(), "42N01");
+        .expect("UUID DEFAULT literal is accepted");
+
+    session
+        .execute_source("INSERT (:Thing)", &EmptyProcedureRegistry)
+        .expect("UUID default materializes on insert");
+    let output = session
+        .execute_source(
+            "MATCH (n:Thing) RETURN n.id AS value",
+            &EmptyProcedureRegistry,
+        )
+        .expect("defaulted UUID property reads");
+    let table = rows_from_output(output);
+    assert_eq!(
+        column_values(&table, "value"),
+        vec![Value::Uuid(
+            uuid::Uuid::parse_str(UUID_TEXT).expect("test UUID parses")
+        )]
+    );
+
+    let output = session
+        .execute_source("SHOW NODE TYPES", &EmptyProcedureRegistry)
+        .expect("SHOW NODE TYPES executes");
+    let table = rows_from_output(output);
+    assert_eq!(
+        column_values(&table, "definition"),
+        vec![Value::String(db_string(
+            "CREATE NODE TYPE :Thing (id :: UUID DEFAULT UUID '018f1b6d-7b89-7cc0-9f40-2c6f8d4df101')"
+        ))]
+    );
 }

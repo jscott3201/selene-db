@@ -1,0 +1,279 @@
+use selene_core::{
+    Change, DbString, GraphId, HnswIndexConfig, IvfIndexConfig, LabelSet, PropertyMap,
+    SchemaChange, SchemaVectorIndexKind, Value, VectorValue,
+};
+
+use crate::{GraphError, SharedGraph, VectorIndexConfig, VectorIndexKind};
+
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).unwrap()
+}
+
+fn vector(components: &[f32]) -> Value {
+    Value::Vector(VectorValue::new(components.to_vec()).unwrap())
+}
+
+fn props(pairs: impl IntoIterator<Item = (DbString, Value)>) -> PropertyMap {
+    PropertyMap::from_pairs(pairs).unwrap()
+}
+
+#[test]
+fn create_vector_index_updates_working_graph_and_emits_schema_change() {
+    let shared = SharedGraph::new(GraphId::new(8201));
+    let label = db_string("mutator.vector.doc");
+    let property = db_string("embedding");
+    let name = db_string("doc_embedding_idx");
+    let outcome = {
+        let mut txn = shared.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(
+                    LabelSet::single(label.clone()),
+                    props([(property.clone(), vector(&[1.0, 2.0, 3.0]))]),
+                )
+                .unwrap();
+            mutator
+                .create_vector_index_named(
+                    label.clone(),
+                    property.clone(),
+                    VectorIndexKind::Flat,
+                    3,
+                    Some(name.clone()),
+                )
+                .unwrap();
+            assert_eq!(
+                mutator
+                    .read()
+                    .vector_index_for(&label, &property)
+                    .unwrap()
+                    .cardinality(),
+                1
+            );
+        }
+        txn.commit().unwrap()
+    };
+
+    assert!(shared.read().vector_index_for(&label, &property).is_some());
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::NodeCreated { .. }, Change::SchemaChanged {
+            graph,
+            change: SchemaChange::VectorIndexCreated {
+                label: changed_label,
+                property: changed_property,
+                kind: SchemaVectorIndexKind::Flat,
+                dimension: 3,
+                name: Some(changed_name),
+                hnsw_config: None,
+                ivf_config: None,
+            },
+        }] if *graph == GraphId::new(8201)
+            && *changed_label == label
+            && *changed_property == property
+            && *changed_name == name
+    ));
+}
+
+#[test]
+fn create_hnsw_vector_index_emits_explicit_config_in_schema_change() {
+    let shared = SharedGraph::new(GraphId::new(8206));
+    let label = db_string("mutator.vector.hnsw.config");
+    let property = db_string("embedding");
+    let config = HnswIndexConfig::new(24, 128);
+    let outcome = {
+        let mut txn = shared.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(
+                    LabelSet::single(label.clone()),
+                    props([(property.clone(), vector(&[1.0, 0.0]))]),
+                )
+                .unwrap();
+            mutator
+                .create_vector_index_named_with_config(
+                    label.clone(),
+                    property.clone(),
+                    VectorIndexKind::HnswCosine,
+                    2,
+                    None,
+                    Some(config),
+                )
+                .unwrap();
+            assert_eq!(
+                mutator
+                    .read()
+                    .vector_index_for(&label, &property)
+                    .unwrap()
+                    .hnsw_config(),
+                Some(config)
+            );
+        }
+        txn.commit().unwrap()
+    };
+
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::NodeCreated { .. }, Change::SchemaChanged {
+            graph,
+            change: SchemaChange::VectorIndexCreated {
+                label: changed_label,
+                property: changed_property,
+                kind: SchemaVectorIndexKind::HnswCosine,
+                dimension: 2,
+                name: None,
+                hnsw_config: Some(changed_config),
+                ivf_config: None,
+            },
+        }] if *graph == GraphId::new(8206)
+            && *changed_label == label
+            && *changed_property == property
+            && *changed_config == config
+    ));
+}
+
+#[test]
+fn create_ivf_vector_index_emits_explicit_config_in_schema_change() {
+    let shared = SharedGraph::new(GraphId::new(8207));
+    let label = db_string("mutator.vector.ivf.config");
+    let property = db_string("embedding");
+    let config = IvfIndexConfig::new(4);
+    let outcome = {
+        let mut txn = shared.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            for idx in 0..6 {
+                mutator
+                    .create_node(
+                        LabelSet::single(label.clone()),
+                        props([(property.clone(), vector(&[idx as f32 + 1.0, 1.0]))]),
+                    )
+                    .unwrap();
+            }
+            mutator
+                .create_vector_index_named_with_configs(
+                    label.clone(),
+                    property.clone(),
+                    VectorIndexKind::IvfCosine,
+                    2,
+                    None,
+                    VectorIndexConfig::ivf(config),
+                )
+                .unwrap();
+            let index = mutator.read().vector_index_for(&label, &property).unwrap();
+            assert_eq!(index.ivf_config(), Some(config));
+            assert_eq!(
+                index.memory_usage().ivf_centroids,
+                usize::from(config.target_centroids)
+            );
+        }
+        txn.commit().unwrap()
+    };
+
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::NodeCreated { .. }, Change::NodeCreated { .. }, Change::NodeCreated { .. },
+            Change::NodeCreated { .. }, Change::NodeCreated { .. }, Change::NodeCreated { .. },
+            Change::SchemaChanged {
+                graph,
+                change: SchemaChange::VectorIndexCreated {
+                    label: changed_label,
+                    property: changed_property,
+                    kind: SchemaVectorIndexKind::IvfCosine,
+                    dimension: 2,
+                    name: None,
+                    hnsw_config: None,
+                    ivf_config: Some(changed_config),
+                },
+            }] if *graph == GraphId::new(8207)
+            && *changed_label == label
+            && *changed_property == property
+            && *changed_config == config
+    ));
+}
+
+#[test]
+fn create_vector_index_rejects_duplicate_in_working_graph() {
+    let shared = SharedGraph::new(GraphId::new(8202));
+    let label = db_string("mutator.vector.duplicate");
+    let property = db_string("embedding");
+    let mut txn = shared.begin_write();
+    let mut mutator = txn.mutator();
+    mutator
+        .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 3)
+        .unwrap();
+
+    let err = mutator
+        .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 3)
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::VectorIndexAlreadyExists {
+            label: err_label,
+            property: err_property,
+        } if err_label == label && err_property == property
+    ));
+}
+
+#[test]
+fn create_vector_index_rejects_zero_dimension() {
+    let shared = SharedGraph::new(GraphId::new(8203));
+    let label = db_string("mutator.vector.zero");
+    let property = db_string("embedding");
+    let err = shared
+        .create_vector_index(label, property, VectorIndexKind::Flat, 0)
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::VectorIndexInvalidDimension { dimension: 0 }
+    ));
+}
+
+#[test]
+fn drop_vector_index_removes_from_working_graph_and_emits_schema_change() {
+    let shared = SharedGraph::new(GraphId::new(8204));
+    let label = db_string("mutator.vector.drop");
+    let property = db_string("embedding");
+    shared
+        .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 3)
+        .unwrap();
+    let outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .drop_vector_index(label.clone(), property.clone())
+            .unwrap();
+        txn.commit().unwrap()
+    };
+
+    assert!(shared.read().vector_index_for(&label, &property).is_none());
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::SchemaChanged {
+            graph,
+            change: SchemaChange::VectorIndexDropped {
+                label: changed_label,
+                property: changed_property,
+            },
+        }] if *graph == GraphId::new(8204)
+            && *changed_label == label
+            && *changed_property == property
+    ));
+}
+
+#[test]
+fn drop_vector_index_is_idempotent_and_emits_no_change_when_absent() {
+    let shared = SharedGraph::new(GraphId::new(8205));
+    let label = db_string("mutator.vector.absent");
+    let property = db_string("embedding");
+    let outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator().drop_vector_index(label, property).unwrap();
+        txn.commit().unwrap()
+    };
+
+    assert!(outcome.changes.is_empty());
+    assert_eq!(shared.read().vector_index_count(), 0);
+}

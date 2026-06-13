@@ -15,17 +15,23 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod byte_string_type;
 pub mod cancellation;
 pub mod change_kind;
 pub mod changeset;
 mod changeset_variants;
+mod character_string_type;
+pub mod db_string;
+mod decimal_type;
+mod duration_type;
 pub mod error;
 pub mod extension_type_ids;
 pub mod feature_register;
 pub mod gqlstatus;
 pub mod hlc;
 pub mod identity;
-pub mod istr;
+mod json_patch;
+mod json_value;
 pub mod label_set;
 pub mod metrics;
 pub mod origin;
@@ -34,10 +40,27 @@ pub mod property_value_type;
 pub mod reserved;
 pub mod schema;
 pub mod value;
+pub mod vector;
+pub mod vector_index;
 
+pub use byte_string_type::{ByteStringType, MAX_BYTE_STRING_TYPE_LENGTH, byte_string_fits_type};
 pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken};
 pub use change_kind::ChangeKind;
-pub use changeset::{Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind};
+pub use changeset::{
+    Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
+};
+pub use character_string_type::{
+    CharacterStringCoercionError, CharacterStringType, MAX_CHARACTER_STRING_TYPE_LENGTH,
+    character_string_fits_type, coerce_character_string_to_type, is_truncating_whitespace,
+};
+pub use db_string::{DbString, db_string};
+pub use decimal_type::{
+    DecimalType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, decimal_fits_type, round_decimal_to_type,
+};
+pub use duration_type::{
+    DurationOrderKey, DurationTypeQualifier, DurationValueFamily, duration_order_key,
+    duration_value_family,
+};
 pub use error::{CoreError, CoreResult};
 pub use extension_type_ids::{
     ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_RDF, SELENE_TIMESERIES,
@@ -45,10 +68,7 @@ pub use extension_type_ids::{
 pub use gqlstatus::{ALL_GQLSTATUS_NAMES, gqlstatus_name};
 pub use hlc::HlcTimestamp;
 pub use identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
-pub use istr::{
-    AdmissionError, IStr, IStrAdmissionPolicy, intern, intern_atomic_admit, intern_or_external,
-    intern_with_admission, lookup, resolve,
-};
+pub use json_value::{JsonPathSelector, JsonValue, JsonValueRef};
 pub use label_set::LabelSet;
 pub use origin::Origin;
 pub use property_map::{PropertyMap, PropertyMapIter, PropertyMapKeys, PropertyMapValues};
@@ -60,7 +80,16 @@ pub use schema::{
     PropertyDefV1, RecordFieldStructure, RecordFieldStructureDef, RecordFieldStructureType,
     RecordTypeDef, RecordTypeRef, ValidationMode, ValueType, ValueTypeCardinality,
 };
-pub use value::{EdgeDirection, Path, PathSegment, Record, RecordTyped, Value};
+pub use value::{
+    EdgeDirection, MAX_VECTOR_DIMENSION, Path, PathSegment, Record, RecordTyped, Value, VectorValue,
+};
+pub use vector::{
+    TURBO_QUANT_BLOCK_ROWS, TurboQuantBitWidth, TurboQuantBlockedCodes, TurboQuantCodebook,
+    TurboQuantCodebookKind, TurboQuantCodecError, TurboQuantCodecResult, TurboQuantPackedCodes,
+    VectorMetric, VectorMetricQuery, VectorSearchHit, VectorTopK, exact_vector_top_k,
+    vector_squared_norm,
+};
+pub use vector_index::{HnswIndexConfig, IvfIndexConfig};
 
 #[cfg(test)]
 mod serde_tests;

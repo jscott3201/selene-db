@@ -172,7 +172,7 @@ index point lookup. Both are measured flat across scales:
 | :------------------------- | :------ | :------ | :------ | :----------------------------------------------- |
 | `graph_node_fetch`         | 2.10 ns | 2.11 ns | 2.09 ns | O(1); columnar fetch by `NodeId`.                |
 | `graph_typed_index_point`  | 4.53 ns | 4.44 ns | 4.67 ns | Flat-curve via tri-state `Cow<'_, RoaringBitmap>` lookup; an `FxHashMap` keyed by typed-value handles. |
-| `graph_label_index_lookup` | 5.20 ns | 4.24 ns | 4.30 ns | `IStr`-keyed hash lookup against the label index. |
+| `graph_label_index_lookup` | 5.20 ns | 4.24 ns | 4.30 ns | `DbString`-keyed hash lookup against the label index. |
 
 These are honest measured numbers — the node fetch is two cache-line probes
 plus a `RoaringBitmap` membership check on the live bitmap; the typed

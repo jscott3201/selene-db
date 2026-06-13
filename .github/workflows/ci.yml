@@ -97,6 +97,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-no-rowid-arith.sh
 
+  version-locked-feature-error-gate:
+    name: version-locked feature-error gate (CONFORMANCE-00 / CW-3)
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-no-version-locked-feature-error.sh
+
   bench-invocation-lint:
     name: bench invocation lint
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
@@ -107,6 +115,8 @@ jobs:
       - run: bash .github/scripts/check-bench-invocation.test.sh
       - run: bash .github/scripts/check-mimalloc-dev-dep.sh .
       - run: bash .github/scripts/check-mimalloc-dev-dep.test.sh
+      - run: bash .github/scripts/check-benchmarks-doc.sh .
+      - run: bash .github/scripts/check-benchmarks-doc.test.sh
       - run: bash scripts/run-benches.test.sh
 
   deny:
@@ -121,7 +131,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check bans licenses sources
+          command: check --exclude-dev bans
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses sources
 
   thirdparty-current:
     name: third-party attribution current

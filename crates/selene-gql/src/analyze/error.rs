@@ -20,10 +20,14 @@
 //!   `gqlstatus()` reports the correct shared G2000 to callers. The ordinals
 //!   are display-only and are *not* a contract — do not parse them.
 
-use selene_core::{IStr, LabelSet, PropertyValueType};
+use selene_core::{DbString, LabelSet, PropertyValueType};
+
+mod context;
+
+pub use context::{ConditionClause, ExpectedType, PatternElementKind, Side, TypeMismatchContext};
 
 use crate::{
-    BinaryOp, GqlStatus, GqlType, PathMode, PathSelector, ProcedureMutability, SourceSpan,
+    GqlStatus, GqlType, PathMode, PathSelector, ProcedureMutability, SourceSpan,
     analyze::binding::BindingDeclKind,
 };
 
@@ -36,7 +40,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N03))]
     UndefinedReference {
         /// Unresolved binding name.
-        name: IStr,
+        name: DbString,
         /// Source span of the unresolved reference.
         #[label("not bound in scope")]
         span: SourceSpan,
@@ -50,7 +54,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N10))]
     Shadow {
         /// Redeclared binding name.
-        name: IStr,
+        name: DbString,
         /// Source span of the redeclaration.
         #[label("conflicts with an earlier binding")]
         span: SourceSpan,
@@ -68,7 +72,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N10))]
     PatternKindMismatch {
         /// Reused binding name.
-        name: IStr,
+        name: DbString,
         /// Element kind of the prior declaration.
         prior: PatternElementKind,
         /// Element kind of the new occurrence.
@@ -88,7 +92,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N10))]
     AliasReusedAsPatternBinding {
         /// Reused binding name.
-        name: IStr,
+        name: DbString,
         /// Prior non-pattern declaration kind.
         prior_kind: BindingDeclKind,
         /// New graph-pattern occurrence kind.
@@ -138,6 +142,18 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// ISO 20.9 forbids aggregate functions directly containing aggregate
+    /// functions.
+    #[error("invalid aggregate expression: {message}")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    AggregateNestingViolation {
+        /// Human-readable ISO 20.9 rule failure.
+        message: String,
+        /// Source span of the nested aggregate expression.
+        #[label("aggregate cannot contain another aggregate")]
+        span: SourceSpan,
+    },
+
     /// A reference is syntactically resolved but not valid in this expression context.
     #[error("invalid reference: {message}")]
     #[diagnostic(code(SLENE_GQL_42002))]
@@ -176,7 +192,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_22G03))]
     ConflictingParameterTypes {
         /// Name without the leading `$`.
-        name: IStr,
+        name: DbString,
         /// Conflicts in encounter order.
         declarations: Vec<(GqlType, SourceSpan)>,
     },
@@ -185,7 +201,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N04))]
     UnknownProcedure {
         /// Qualified procedure name.
-        name: Box<[IStr]>,
+        name: Box<[DbString]>,
         /// Source span of the procedure call.
         #[label("procedure is not registered")]
         span: SourceSpan,
@@ -200,7 +216,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_22G03))]
     WrongArgumentCount {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Maximum expected argument count.
         expected: usize,
         /// Minimum expected argument count.
@@ -220,9 +236,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_42N03))]
     UnknownYieldColumn {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Requested output column.
-        column: IStr,
+        column: DbString,
         /// Source span of the YIELD item.
         #[label("column is not produced by this procedure")]
         span: SourceSpan,
@@ -237,7 +253,7 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_GQL_25G02))]
     MutatingProcedureInReadPipeline {
         /// Qualified procedure name.
-        procedure: Box<[IStr]>,
+        procedure: Box<[DbString]>,
         /// Declared procedure mutability.
         mutability: ProcedureMutability,
         /// Source span of the procedure call.
@@ -252,7 +268,7 @@ pub enum AnalysisError {
         /// Observed static label set.
         labels: LabelSet,
         /// Bound graph type name.
-        graph_type: IStr,
+        graph_type: DbString,
         /// Source span of the offending label expression or pattern.
         #[label("unknown node type")]
         span: SourceSpan,
@@ -263,9 +279,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_011))]
     SchemaUnknownEdgeType {
         /// Edge label.
-        label: IStr,
+        label: DbString,
         /// Bound graph type name.
-        graph_type: IStr,
+        graph_type: DbString,
         /// Source span of the offending edge label.
         #[label("unknown edge type")]
         span: SourceSpan,
@@ -278,15 +294,22 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_012))]
     SchemaEdgeEndpointMismatch {
         /// Edge label.
-        label: IStr,
+        label: DbString,
         /// Expected source node type name.
         expected_source: String,
         /// Expected target node type name.
         expected_target: String,
         /// Observed source label set.
-        observed_source: LabelSet,
-        /// Observed target label set.
-        observed_target: LabelSet,
+        ///
+        /// Boxed (together with `observed_target`) so this variant does not
+        /// inflate `AnalysisError` past clippy's `result_large_err` threshold:
+        /// `LabelSet` wraps `SmallVec<[DbString; 3]>`, so two inline copies
+        /// dominated the variant. The `Box` moves both onto the cold
+        /// error-construction path.
+        observed_source: Box<LabelSet>,
+        /// Observed target label set. Boxed for the same reason as
+        /// `observed_source`.
+        observed_target: Box<LabelSet>,
         /// Source span of the offending edge pattern.
         #[label("endpoint types do not match edge declaration")]
         span: SourceSpan,
@@ -297,11 +320,11 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_013))]
     SchemaUndeclaredProperty {
         /// Undeclared property key.
-        property: IStr,
+        property: DbString,
         /// Node or edge type name that was checked.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Bound graph type name.
-        graph_type: IStr,
+        graph_type: DbString,
         /// Source span of the property write.
         #[label("property is not declared")]
         span: SourceSpan,
@@ -312,9 +335,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_014))]
     SchemaPropertyTypeMismatch {
         /// Property key.
-        property: IStr,
+        property: DbString,
         /// Node or edge type name that declared the property.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Expected runtime storage type.
         expected: PropertyValueType,
         /// Statically inferred GQL type.
@@ -329,9 +352,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_015))]
     SchemaRequiredPropertyMissing {
         /// Required property key.
-        property: IStr,
+        property: DbString,
         /// Node or edge type name that declared the property.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Source span of the insert pattern.
         #[label("required property is not supplied")]
         span: SourceSpan,
@@ -342,9 +365,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_016))]
     SchemaRequiredPropertyRemoved {
         /// Required property key.
-        property: IStr,
+        property: DbString,
         /// Node or edge type name that declared the property.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Source span of the remove item.
         #[label("required property cannot be removed")]
         span: SourceSpan,
@@ -366,9 +389,9 @@ pub enum AnalysisError {
     #[diagnostic(code(SLENE_A_018))]
     SchemaRequiredEdgeLabelRemoved {
         /// Required edge label.
-        label: IStr,
+        label: DbString,
         /// Edge type name that declared the label.
-        declared_in: IStr,
+        declared_in: DbString,
         /// Source span of the remove item.
         #[label("edge label cannot be removed")]
         span: SourceSpan,
@@ -399,122 +422,11 @@ impl std::fmt::Display for InvalidLabelForm {
     }
 }
 
-/// Operation or clause that produced a type mismatch.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TypeMismatchContext {
-    /// Binary arithmetic operator.
-    BinaryArithmetic {
-        /// Operator.
-        op: BinaryOp,
-        /// Offending operand side.
-        side: Side,
-    },
-    /// Binary comparison operator.
-    BinaryComparison {
-        /// Operator.
-        op: BinaryOp,
-        /// Offending operand side.
-        side: Side,
-    },
-    /// Binary boolean operator.
-    BinaryBoolean {
-        /// Operator.
-        op: BinaryOp,
-        /// Offending operand side.
-        side: Side,
-    },
-    /// String/list concatenation.
-    BinaryConcat {
-        /// Offending operand side.
-        side: Side,
-    },
-    /// String predicate operator.
-    BinaryStringPredicate {
-        /// Operator.
-        op: BinaryOp,
-        /// Offending operand side.
-        side: Side,
-    },
-    /// Unary numeric negation.
-    UnaryNegate,
-    /// Unary boolean negation.
-    UnaryNot,
-    /// Unsupported `IS TYPED` target.
-    IsTypedTarget,
-    /// `IS NORMALIZED` operand.
-    IsNormalized,
-    /// `NORMALIZE` source operand.
-    NormalizeFunction,
-    /// Explicit TRIM source operand.
-    TrimSource,
-    /// CASE branch result unification failed.
-    CaseBranchUnification,
-    /// List literal element unification failed.
-    ListLiteralUnification,
-    /// IN-list value unification failed.
-    InListUnification,
-    /// Boolean condition clause check failed.
-    Condition {
-        /// Condition clause kind.
-        clause: ConditionClause,
-    },
-    /// Procedure argument did not match the registered parameter type.
-    ProcedureArgument {
-        /// Qualified procedure name.
-        procedure: Box<[IStr]>,
-        /// Declared parameter name.
-        parameter: IStr,
-        /// Zero-based positional argument index.
-        position: usize,
-    },
-    /// `LIMIT` / `OFFSET` parameter type declaration cannot produce an amount.
-    LimitAmount,
-}
-
-impl std::fmt::Display for TypeMismatchContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::BinaryArithmetic { op, side } => {
-                write!(f, "{side} operand of arithmetic operator {op:?}")
-            }
-            Self::BinaryComparison { op, side } => {
-                write!(f, "{side} operand of comparison operator {op:?}")
-            }
-            Self::BinaryBoolean { op, side } => {
-                write!(f, "{side} operand of boolean operator {op:?}")
-            }
-            Self::BinaryConcat { side } => write!(f, "{side} operand of concat operator"),
-            Self::BinaryStringPredicate { op, side } => {
-                write!(f, "{side} operand of string predicate {op:?}")
-            }
-            Self::UnaryNegate => f.write_str("operand of unary negate"),
-            Self::UnaryNot => f.write_str("operand of unary NOT"),
-            Self::IsTypedTarget => f.write_str("IS TYPED target"),
-            Self::IsNormalized => f.write_str("IS NORMALIZED operand"),
-            Self::NormalizeFunction => f.write_str("NORMALIZE operand"),
-            Self::TrimSource => f.write_str("TRIM source operand"),
-            Self::CaseBranchUnification => f.write_str("CASE branch result"),
-            Self::ListLiteralUnification => f.write_str("list literal element"),
-            Self::InListUnification => f.write_str("IN-list value"),
-            Self::Condition { clause } => write!(f, "{clause} condition"),
-            Self::ProcedureArgument {
-                procedure,
-                parameter,
-                position,
-            } => {
-                write!(f, "argument {position} ({parameter}) of ")?;
-                fmt_qualified_name(f, procedure)
-            }
-            Self::LimitAmount => f.write_str("LIMIT/OFFSET parameter"),
-        }
-    }
-}
-
-fn display_qualified_name(name: &[IStr]) -> QualifiedNameDisplay<'_> {
+fn display_qualified_name(name: &[DbString]) -> QualifiedNameDisplay<'_> {
     QualifiedNameDisplay(name)
 }
 
-struct QualifiedNameDisplay<'a>(&'a [IStr]);
+struct QualifiedNameDisplay<'a>(&'a [DbString]);
 
 impl std::fmt::Display for QualifiedNameDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -522,7 +434,7 @@ impl std::fmt::Display for QualifiedNameDisplay<'_> {
     }
 }
 
-fn fmt_qualified_name(f: &mut std::fmt::Formatter<'_>, name: &[IStr]) -> std::fmt::Result {
+fn fmt_qualified_name(f: &mut std::fmt::Formatter<'_>, name: &[DbString]) -> std::fmt::Result {
     let mut first = true;
     for segment in name {
         if !first {
@@ -547,128 +459,6 @@ fn display_argument_range(minimum: usize, maximum: usize) -> String {
     }
 }
 
-/// Expected type category for a type mismatch.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ExpectedType {
-    /// Any numeric type.
-    Numeric,
-    /// Boolean.
-    Boolean,
-    /// String.
-    String,
-    /// Comparable type.
-    Comparable,
-    /// List or string type.
-    ListOrString,
-    /// Non-negative integer amount.
-    LimitAmount,
-    /// One specific GQL type.
-    Specific(GqlType),
-}
-
-impl std::fmt::Display for ExpectedType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Numeric => f.write_str("numeric"),
-            Self::Boolean => f.write_str("boolean"),
-            Self::String => f.write_str("string"),
-            Self::Comparable => f.write_str("comparable"),
-            Self::ListOrString => f.write_str("list or string"),
-            Self::LimitAmount => f.write_str("non-negative integer"),
-            Self::Specific(ty) => write!(f, "{ty:?}"),
-        }
-    }
-}
-
-/// Operand side for binary type diagnostics.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Side {
-    /// Left-hand side.
-    Lhs,
-    /// Right-hand side.
-    Rhs,
-}
-
-impl std::fmt::Display for Side {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Lhs => "left",
-            Self::Rhs => "right",
-        })
-    }
-}
-
-/// Boolean condition clause kind.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ConditionClause {
-    /// `MATCH ... WHERE`.
-    MatchWhere,
-    /// Node/edge pattern inline `WHERE`.
-    InlineWhere,
-    /// `FILTER`.
-    Filter,
-    /// `HAVING`.
-    Having,
-    /// `WITH ... WHERE`.
-    WithWhere,
-    /// `CASE WHEN`.
-    CaseWhen,
-}
-
-impl std::fmt::Display for ConditionClause {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::MatchWhere => "MATCH WHERE",
-            Self::InlineWhere => "inline WHERE",
-            Self::Filter => "FILTER",
-            Self::Having => "HAVING",
-            Self::WithWhere => "WITH WHERE",
-            Self::CaseWhen => "CASE WHEN",
-        })
-    }
-}
-
-/// Pattern element categories used by [`AnalysisError::PatternKindMismatch`].
-///
-/// The bind pass groups declaration sites by the graph element they introduce
-/// (node, edge, path, value). Cross-category reuse via the same name is a
-/// semantic error; same-category reuse is allowed (e.g., `MATCH (n)` followed
-/// by `INSERT (n)-[:K]->(m)` legitimately reuses `n` as a node variable).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PatternElementKind {
-    /// `MATCH (n)` / `INSERT (n)`.
-    Node,
-    /// `MATCH ()-[e]->()` / `INSERT ()-[e]->()`.
-    Edge,
-    /// `path = (...)`.
-    Path,
-}
-
-impl PatternElementKind {
-    /// Categorize a [`BindingDeclKind`] for compatibility checks.
-    #[must_use]
-    pub const fn from_decl_kind(kind: BindingDeclKind) -> Option<Self> {
-        match kind {
-            BindingDeclKind::NodePattern | BindingDeclKind::InsertNode => Some(Self::Node),
-            BindingDeclKind::EdgePattern | BindingDeclKind::InsertEdge => Some(Self::Edge),
-            BindingDeclKind::PathBinding => Some(Self::Path),
-            BindingDeclKind::LetAlias
-            | BindingDeclKind::UnwindAlias
-            | BindingDeclKind::ProjectionAlias
-            | BindingDeclKind::YieldColumn => None,
-        }
-    }
-}
-
-impl std::fmt::Display for PatternElementKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Node => "node variable",
-            Self::Edge => "edge variable",
-            Self::Path => "path variable",
-        })
-    }
-}
 impl AnalysisError {
     /// Return this error's ISO GQLSTATUS code.
     #[must_use]
@@ -681,6 +471,7 @@ impl AnalysisError {
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::AggregateNestingViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {
@@ -704,7 +495,7 @@ impl AnalysisError {
         }
     }
 
-    pub(crate) fn undefined_reference(name: IStr, span: SourceSpan) -> Self {
+    pub(crate) fn undefined_reference(name: DbString, span: SourceSpan) -> Self {
         Self::UndefinedReference {
             name,
             span,

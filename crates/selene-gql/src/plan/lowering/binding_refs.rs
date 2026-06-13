@@ -1,7 +1,7 @@
 //! Binding-reference collection for planned expressions.
 
 use crate::{
-    IsCheckKind, SourceSpan, ValueExpr,
+    SourceSpan, ValueExpr,
     analyze::{AnalyzedStatement, BindingId},
     plan::PlannerError,
 };
@@ -31,7 +31,8 @@ fn collect_binding_refs_in_expr(
     refs: &mut Vec<(BindingId, SourceSpan)>,
 ) -> Result<(), PlannerError> {
     match expr {
-        ValueExpr::Literal(_) | ValueExpr::Parameter { .. } => {}
+        // A `Variable` resolves to the binding(s) recorded for its exact
+        // name+span by the analyzer; this is leaf work, not child recursion.
         ValueExpr::Variable { name, span } => {
             refs.extend(
                 analyzed
@@ -41,77 +42,9 @@ fn collect_binding_refs_in_expr(
                     .map(|reference| (reference.binding, *span)),
             );
         }
-        ValueExpr::PropertyAccess { target, .. } => {
-            collect_binding_refs_in_expr(target, analyzed, refs)?;
-        }
-        ValueExpr::ListAccess { target, index, .. } => {
-            collect_binding_refs_in_expr(target, analyzed, refs)?;
-            collect_binding_refs_in_expr(index, analyzed, refs)?;
-        }
-        ValueExpr::ListLiteral { items, .. } => {
-            for item in items {
-                collect_binding_refs_in_expr(item, analyzed, refs)?;
-            }
-        }
-        ValueExpr::RecordLiteral { fields, .. } => {
-            for (_, value) in fields {
-                collect_binding_refs_in_expr(value, analyzed, refs)?;
-            }
-        }
-        ValueExpr::BinaryOp { lhs, rhs, .. } => {
-            collect_binding_refs_in_expr(lhs, analyzed, refs)?;
-            collect_binding_refs_in_expr(rhs, analyzed, refs)?;
-        }
-        ValueExpr::UnaryOp { operand, .. } => {
-            collect_binding_refs_in_expr(operand, analyzed, refs)?;
-        }
-        ValueExpr::FunctionCall { args, .. } => {
-            for arg in args {
-                collect_binding_refs_in_expr(arg, analyzed, refs)?;
-            }
-        }
-        ValueExpr::Normalize { source, .. } => {
-            collect_binding_refs_in_expr(source, analyzed, refs)?;
-        }
-        ValueExpr::Trim {
-            character, source, ..
-        } => {
-            if let Some(character) = character {
-                collect_binding_refs_in_expr(character, analyzed, refs)?;
-            }
-            collect_binding_refs_in_expr(source, analyzed, refs)?;
-        }
-        ValueExpr::IsCheck { operand, kind, .. } => {
-            collect_binding_refs_in_expr(operand, analyzed, refs)?;
-            collect_binding_refs_in_is_check(kind, analyzed, refs)?;
-        }
-        ValueExpr::InList { operand, list, .. } => {
-            collect_binding_refs_in_expr(operand, analyzed, refs)?;
-            for item in list {
-                collect_binding_refs_in_expr(item, analyzed, refs)?;
-            }
-        }
-        ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
-            for item in items {
-                collect_binding_refs_in_expr(item, analyzed, refs)?;
-            }
-        }
-        ValueExpr::PropertyExists { target, .. } => {
-            collect_binding_refs_in_expr(target, analyzed, refs)?;
-        }
-        ValueExpr::Case {
-            branches,
-            else_branch,
-            ..
-        } => {
-            for (condition, value) in branches {
-                collect_binding_refs_in_expr(condition, analyzed, refs)?;
-                collect_binding_refs_in_expr(value, analyzed, refs)?;
-            }
-            if let Some(value) = else_branch {
-                collect_binding_refs_in_expr(value, analyzed, refs)?;
-            }
-        }
+        // Subquery bodies are `MatchClause` / `QueryPipeline`, not `ValueExpr`
+        // children: collect the outer-binding uses they reference rather than
+        // recursing through `for_each_child`.
         ValueExpr::Exists { pattern, span, .. } | ValueExpr::CountSubquery { pattern, span } => {
             refs.extend(
                 outer_binding_uses_in_match(pattern, *span, analyzed)?
@@ -126,28 +59,18 @@ fn collect_binding_refs_in_expr(
                     .map(|(binding, _, span)| (binding, span)),
             );
         }
-        ValueExpr::Cast { value, .. } => {
-            collect_binding_refs_in_expr(value, analyzed, refs)?;
+        // Every other variant only recurses into its direct `ValueExpr` children
+        // (including the `IS [SOURCE|DESTINATION] OF` operand, so collected refs
+        // include the edge it binds).
+        _ => {
+            let mut result = Ok(());
+            expr.for_each_child(&mut |child| {
+                if result.is_ok() {
+                    result = collect_binding_refs_in_expr(child, analyzed, refs);
+                }
+            });
+            result?;
         }
-    }
-    Ok(())
-}
-
-fn collect_binding_refs_in_is_check(
-    kind: &IsCheckKind,
-    analyzed: &AnalyzedStatement,
-    refs: &mut Vec<(BindingId, SourceSpan)>,
-) -> Result<(), PlannerError> {
-    match kind {
-        IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-            collect_binding_refs_in_expr(value, analyzed, refs)?;
-        }
-        IsCheckKind::Null
-        | IsCheckKind::Directed
-        | IsCheckKind::Labeled(_)
-        | IsCheckKind::TruthValue(_)
-        | IsCheckKind::Typed(_)
-        | IsCheckKind::Normalized(_) => {}
     }
     Ok(())
 }

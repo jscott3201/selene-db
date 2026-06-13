@@ -8,8 +8,8 @@
 //! snapshot I/O — the snapshot writer wiring is BRIEF-Item-4c, the
 //! create-time row-allocation change (arith → append) and dropping the
 //! `rebuild_id_maps` identity bootstrap land when a compacted graph first goes
-//! live (also 4c), and the global IStr pool is untouched (its reclamation is a
-//! fresh-process reload property, not in-process — see the audit doc, Item 12).
+//! live (also 4c). Database strings are plain owned values, so compaction has no
+//! string-pool reclamation work to perform.
 //!
 //! Because 4a left edges + adjacency keyed by stable external `NodeId`, a row
 //! renumber does not touch edge endpoints or adjacency — only the row-keyed
@@ -41,9 +41,22 @@ use std::collections::HashSet;
 use selene_core::NodeId;
 
 use crate::error::{GraphError, GraphResult};
-use crate::graph::{CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph};
+use crate::graph::{
+    CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, VectorIndexEntry,
+};
 use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::typed_index::TypedIndex;
+
+const BASIS_POINTS_DENOMINATOR: u64 = 10_000;
+
+/// Minimum dead node+edge rows before compaction recommendation can fire.
+///
+/// Compaction rebuilds the whole live graph, so tiny amounts of row churn should
+/// remain explicit caller policy rather than default maintenance advice.
+pub const COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS: u64 = 1_024;
+
+/// Minimum dead-row ratio, scaled by 10,000, for compaction advice.
+pub const COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_BASIS_POINTS: u64 = 2_500;
 
 /// What CORE reclaimed during a compaction pass.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -52,6 +65,94 @@ pub struct CompactionReport {
     pub reclaimed_nodes: u64,
     /// Edge rows (dead + hole) dropped.
     pub reclaimed_edges: u64,
+}
+
+/// Cheap snapshot of row-space pressure before compaction.
+///
+/// Deletes clear heavyweight row payloads immediately, but the row slots and
+/// stable id mappings remain until compaction. These counters let maintenance
+/// policy decide whether a dense rebuild is worth scheduling without first
+/// performing that rebuild.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CompactionStats {
+    /// Allocated node rows, including live rows and reclaimable dead rows.
+    pub allocated_nodes: u64,
+    /// Alive node rows.
+    pub live_nodes: u64,
+    /// Dead node rows that a compaction pass can reclaim.
+    pub reclaimable_nodes: u64,
+    /// Allocated edge rows, including live rows and reclaimable dead rows.
+    pub allocated_edges: u64,
+    /// Alive edge rows.
+    pub live_edges: u64,
+    /// Dead edge rows that a compaction pass can reclaim.
+    pub reclaimable_edges: u64,
+}
+
+impl CompactionStats {
+    /// Build compaction counters for `graph` without rebuilding any rows.
+    #[must_use]
+    pub fn from_graph(graph: &SeleneGraph) -> Self {
+        let allocated_nodes = graph.node_store.len() as u64;
+        let live_nodes = graph.node_count() as u64;
+        let allocated_edges = graph.edge_store.len() as u64;
+        let live_edges = graph.edge_count() as u64;
+        Self {
+            allocated_nodes,
+            live_nodes,
+            reclaimable_nodes: allocated_nodes.saturating_sub(live_nodes),
+            allocated_edges,
+            live_edges,
+            reclaimable_edges: allocated_edges.saturating_sub(live_edges),
+        }
+    }
+
+    /// Total allocated node and edge rows.
+    #[must_use]
+    pub const fn allocated_rows(self) -> u64 {
+        self.allocated_nodes.saturating_add(self.allocated_edges)
+    }
+
+    /// Total alive node and edge rows.
+    #[must_use]
+    pub const fn live_rows(self) -> u64 {
+        self.live_nodes.saturating_add(self.live_edges)
+    }
+
+    /// Total reclaimable dead node and edge rows.
+    #[must_use]
+    pub const fn reclaimable_rows(self) -> u64 {
+        self.reclaimable_nodes
+            .saturating_add(self.reclaimable_edges)
+    }
+
+    /// True when no dead rows remain to compact.
+    #[must_use]
+    pub const fn is_dense(self) -> bool {
+        self.reclaimable_nodes == 0 && self.reclaimable_edges == 0
+    }
+
+    /// Return reclaimable rows divided by allocated rows, scaled by 10,000.
+    #[must_use]
+    pub fn reclaimable_row_basis_points(self) -> u64 {
+        let allocated = self.allocated_rows();
+        if allocated == 0 {
+            return 0;
+        }
+        let scaled = u128::from(self.reclaimable_rows()) * u128::from(BASIS_POINTS_DENOMINATOR);
+        (scaled / u128::from(allocated)) as u64
+    }
+
+    /// Return true when current row-space pressure merits maintenance compaction.
+    ///
+    /// The recommendation is diagnostic only: reads and writes never compact
+    /// automatically, and callers still decide when to run maintenance.
+    #[must_use]
+    pub fn compaction_recommended(self) -> bool {
+        self.reclaimable_rows() >= COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_ROWS
+            && self.reclaimable_row_basis_points()
+                >= COMPACTION_RECOMMENDATION_MIN_RECLAIMABLE_BASIS_POINTS
+    }
 }
 
 /// The product of compacting the CORE store.
@@ -106,8 +207,10 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         live_nodes.insert(id);
     }
     let node_len = nodes.labels.len() as u32;
+    // B1: `alive_mut` is free here — the store is freshly built, so its Arc is
+    // unique and `make_mut` never clones.
     for new_row in 0..node_len {
-        nodes.alive.insert(new_row);
+        nodes.alive_mut().insert(new_row);
     }
 
     let mut edges = EdgeStore::new();
@@ -149,7 +252,7 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
                 .edge_store
                 .label
                 .get(r)
-                .copied()
+                .cloned()
                 .ok_or_else(|| column_missing("label"))?,
         );
         edges.source.push(source);
@@ -165,13 +268,15 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         edges.row_to_id.push(id);
     }
     let edge_len = edges.label.len() as u32;
+    // B1: free `make_mut` on a freshly built store (see node loop above).
     for new_row in 0..edge_len {
-        edges.alive.insert(new_row);
+        edges.alive_mut().insert(new_row);
     }
 
+    let stats = CompactionStats::from_graph(graph);
     let report = CompactionReport {
-        reclaimed_nodes: (graph.node_store.len() as u64).saturating_sub(u64::from(node_len)),
-        reclaimed_edges: (graph.edge_store.len() as u64).saturating_sub(u64::from(edge_len)),
+        reclaimed_nodes: stats.reclaimable_nodes,
+        reclaimed_edges: stats.reclaimable_edges,
     };
 
     // Assemble the dense graph. meta is preserved VERBATIM — the monotonic
@@ -189,8 +294,8 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     // directly would copy stale OLD-row bitmaps.
     for ((label, property), entry) in &graph.property_index {
         dense.property_index.insert(
-            (*label, *property),
-            PropertyIndexEntry::new(TypedIndex::new(entry.kind()), entry.name),
+            (label.clone(), property.clone()),
+            PropertyIndexEntry::new(TypedIndex::new(entry.kind()), entry.name.clone()),
         );
     }
     for (key, entry) in &graph.composite_property_index {
@@ -199,7 +304,30 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
             CompositePropertyIndexEntry::new(
                 crate::CompositeTypedIndex::new(entry.kinds()),
                 entry.declared_properties.clone(),
-                entry.name,
+                entry.name.clone(),
+            ),
+        );
+    }
+    for ((label, property), entry) in &graph.vector_index {
+        dense.vector_index.insert(
+            (label.clone(), property.clone()),
+            VectorIndexEntry::new(
+                crate::VectorIndex::new_with_configs(
+                    entry.kind(),
+                    entry.dimension(),
+                    entry.hnsw_config(),
+                    entry.ivf_config(),
+                )?,
+                entry.name.clone(),
+            ),
+        );
+    }
+    for ((label, property), entry) in &graph.text_index {
+        dense.text_index.insert(
+            (label.clone(), property.clone()),
+            crate::graph::TextIndexEntry::new(
+                crate::TextIndex::empty(label.clone(), property.clone()),
+                entry.name.clone(),
             ),
         );
     }
@@ -209,6 +337,8 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     crate::shared::rebuild_derived_state(&mut dense)?;
     crate::property_index::rebuild_property_indexes(&mut dense)?;
     crate::composite_property_index::rebuild_composite_property_indexes(&mut dense)?;
+    crate::vector_index::rebuild_vector_indexes(&mut dense)?;
+    crate::text_index::rebuild_text_indexes(&mut dense)?;
 
     // Debug-only structural net (matches the snapshot-load publication seam):
     // re-derive every index from the compacted columns and confirm agreement.

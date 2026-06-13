@@ -7,12 +7,20 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
+use crate::db_string::DbString;
+use crate::error::{CoreError, CoreResult};
 use crate::extension_type_ids::ExtensionTypeId;
 use crate::identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
-use crate::istr::IStr;
+use crate::json_value::JsonValue;
+
+/// Maximum component count for a native dense vector value.
+///
+/// The cap keeps dimensions representable in a compact `u16` slot for future
+/// vector-index metadata while allowing common embedding sizes.
+pub const MAX_VECTOR_DIMENSION: usize = u16::MAX as usize;
 
 /// In-memory representation of a GQL value.
 ///
@@ -45,33 +53,8 @@ pub enum Value {
     Float32(f32),
     /// Fixed-precision decimal value.
     Decimal(#[serde(with = "serde_decimal_str")] rust_decimal::Decimal),
-    /// Interned string value.
-    String(IStr),
-    /// Non-interned string sourced from outside the global interner namespace.
-    ///
-    /// Use this variant when surfacing high-cardinality or free-form text from a
-    /// source the engine cannot admit to the global [`IStr`] pool without
-    /// risking cap exhaustion: validation diagnostic strings, per-row content
-    /// hashes, external system payloads.
-    ///
-    /// `Value::ExternalString` and `Value::String` are not equal under
-    /// [`PartialEq`] even if their underlying `&str` content matches. `Value`
-    /// equality is variant-strict; GQL string-content equality is handled by
-    /// executor comparison logic.
-    ///
-    /// # Indexed-column admission carve-out (BRIEF-153)
-    ///
-    /// When a `Value::ExternalString` is stored on a column declared
-    /// `INDEXED` (single or composite, `STRING` kind), the property-index
-    /// commit path admits the content into the global [`IStr`] pool to
-    /// produce the secondary-index key. This is the only carve-out from
-    /// variant-strict storage: the stored property value in the row's
-    /// `PropertyMap` remains `ExternalString`; only the index key space
-    /// sees the admitted `IStr` form. DDL `INDEXED` is the user's explicit
-    /// consent for this admission. Cap exhaustion at the boundary surfaces
-    /// as `GraphError::IndexAdmissionExhausted` (GQLSTATUS `5GQL1`), not a
-    /// silent skip.
-    ExternalString(#[serde(with = "serde_arc_str")] Arc<str>),
+    /// String value.
+    String(DbString),
     /// Byte-string value.
     Bytes(Arc<[u8]>),
     /// List value.
@@ -81,7 +64,11 @@ pub enum Value {
     /// Closed record value tied to a graph-type-defined record type.
     RecordTyped(Box<RecordTyped>),
     /// Path value.
-    Path(Path),
+    ///
+    /// Boxed (CORE-06): an inline `Path` is 120 B and was the `size_of::<Value>`
+    /// ceiling. Paths are ephemeral traversal results, rarely stored, so moving
+    /// one behind a pointer shrinks every `Value` clone/move to a pointer copy.
+    Path(Box<Path>),
     /// Node reference value.
     NodeRef(NodeId),
     /// Edge reference value.
@@ -91,7 +78,10 @@ pub enum Value {
     /// Binding-table reference value.
     TableRef(BindingTableId),
     /// Zoned datetime value.
-    ZonedDateTime(jiff::Zoned),
+    ///
+    /// Boxed (CORE-06): `jiff::Zoned` is 40 B; temporal values are uncommon in
+    /// hot graph data, so the indirection is paid only on temporal access.
+    ZonedDateTime(Box<jiff::Zoned>),
     /// Local datetime value.
     LocalDateTime(jiff::civil::DateTime),
     /// Date value.
@@ -100,11 +90,16 @@ pub enum Value {
     ///
     /// `jiff` 0.2 has no dedicated zoned-time type, so selene-core uses
     /// `jiff::Zoned`; date components are ignored at the GQL boundary.
-    ZonedTime(jiff::Zoned),
+    ///
+    /// Boxed (CORE-06): see [`Value::ZonedDateTime`].
+    ZonedTime(Box<jiff::Zoned>),
     /// Local time value.
     LocalTime(jiff::civil::Time),
     /// Duration value.
-    Duration(jiff::Span),
+    ///
+    /// Boxed (CORE-06): `jiff::Span` is 64 B (the largest time variant); boxing
+    /// it keeps the post-`Path` ceiling off `Value`.
+    Duration(Box<jiff::Span>),
     /// Extension-owned opaque payload.
     Extended {
         /// Registered extension type ID.
@@ -116,7 +111,26 @@ pub enum Value {
     Null,
     /// UUID value.
     Uuid(uuid::Uuid),
+    /// Native dense vector value.
+    Vector(VectorValue),
+    /// Native JSON value.
+    Json(JsonValue),
 }
+
+/// Compile-time ceiling on `size_of::<Value>` — a zero-cost re-bloat tripwire.
+///
+/// `Value` is moved and cloned on every property read, `PropertyMap` copy, and
+/// binding-table row, so its in-memory size is a hot-path cost multiplier (see
+/// the `value_clone` bench). CORE-06 boxed the four oversized variants —
+/// `Path` (120 B, which a `size_of` profile proved was the real former ceiling,
+/// **not** the time variants the design doc assumed), `Duration(jiff::Span)`
+/// (64 B), and the two `jiff::Zoned` variants (40 B) — bringing `Value` from
+/// 128 B down to 32 B. The current ceiling is set by 24-byte payload families
+/// such as `List(Vec)`, plus the discriminant and 16-byte alignment from the
+/// `i128`/`Decimal` variants. This assert fails the build if a future variant
+/// regrows the enum; box the offending payload or lift the ceiling
+/// deliberately.
+const _: () = assert!(core::mem::size_of::<Value>() <= 32);
 
 impl Value {
     /// Factory table with one sample value for each [`Value`] variant.
@@ -133,8 +147,7 @@ impl Value {
         || Self::Float(0.0),
         || Self::Float32(0.0),
         || Self::Decimal(rust_decimal::Decimal::ZERO),
-        || Self::String(value_variant_istr("value.all.string")),
-        || Self::ExternalString(Arc::from("value.all.external")),
+        || Self::String(value_variant_string("value.all.string")),
         || Self::Bytes(Arc::from([0_u8])),
         || Self::List(Vec::new()),
         || Self::Record(Box::new(Record::Open(SmallVec::new()))),
@@ -145,28 +158,30 @@ impl Value {
             }))
         },
         || {
-            Self::Path(Path {
+            Self::Path(Box::new(Path {
                 graph: GraphId::new(1),
                 start: NodeId::new(1),
                 segments: SmallVec::new(),
-            })
+            }))
         },
         || Self::NodeRef(NodeId::new(1)),
         || Self::EdgeRef(EdgeId::new(1)),
         || Self::GraphRef(GraphId::new(1)),
         || Self::TableRef(BindingTableId::new(1)),
-        || Self::ZonedDateTime(value_variant_zoned()),
+        || Self::ZonedDateTime(Box::new(value_variant_zoned())),
         || Self::LocalDateTime("2024-01-01T00:00:00".parse().unwrap()),
         || Self::Date("2024-01-01".parse().unwrap()),
-        || Self::ZonedTime(value_variant_zoned()),
+        || Self::ZonedTime(Box::new(value_variant_zoned())),
         || Self::LocalTime("00:00:00".parse().unwrap()),
-        || Self::Duration("PT1S".parse().unwrap()),
+        || Self::Duration(Box::new("PT1S".parse().unwrap())),
         || Self::Extended {
             type_id: ExtensionTypeId::FIRST_PARTY_MIN,
             payload: Arc::from([0_u8]),
         },
         || Self::Null,
         || Self::Uuid(uuid::Uuid::nil()),
+        || Self::Vector(VectorValue::new(vec![0.0]).expect("fixture vector is valid")),
+        || Self::Json(JsonValue::new(serde_json::json!({"fixture": true})).unwrap()),
     ];
 
     /// Number of known [`Value`] variants in this build.
@@ -188,7 +203,6 @@ impl Value {
             Self::Float32(_) => "Float32",
             Self::Decimal(_) => "Decimal",
             Self::String(_) => "String",
-            Self::ExternalString(_) => "ExternalString",
             Self::Bytes(_) => "Bytes",
             Self::List(_) => "List",
             Self::Record(_) => "Record",
@@ -207,12 +221,14 @@ impl Value {
             Self::Extended { .. } => "Extended",
             Self::Null => "Null",
             Self::Uuid(_) => "Uuid",
+            Self::Vector(_) => "Vector",
+            Self::Json(_) => "Json",
         }
     }
 }
 
-fn value_variant_istr(name: &str) -> IStr {
-    crate::intern(name).expect("Value::ALL fixture strings fit the process interner cap")
+fn value_variant_string(name: &str) -> DbString {
+    crate::db_string(name).expect("Value::ALL fixture strings fit DB string cap")
 }
 
 fn value_variant_zoned() -> jiff::Zoned {
@@ -235,7 +251,6 @@ impl PartialEq for Value {
             }
             (Self::Decimal(lhs), Self::Decimal(rhs)) => lhs == rhs,
             (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
-            (Self::ExternalString(lhs), Self::ExternalString(rhs)) => lhs == rhs,
             (Self::Bytes(lhs), Self::Bytes(rhs)) => lhs == rhs,
             (Self::List(lhs), Self::List(rhs)) => lhs == rhs,
             (Self::Record(lhs), Self::Record(rhs)) => lhs == rhs,
@@ -263,8 +278,88 @@ impl PartialEq for Value {
             ) => lhs_type_id == rhs_type_id && lhs_payload == rhs_payload,
             (Self::Null, Self::Null) => true,
             (Self::Uuid(lhs), Self::Uuid(rhs)) => lhs == rhs,
+            (Self::Vector(lhs), Self::Vector(rhs)) => lhs == rhs,
+            (Self::Json(lhs), Self::Json(rhs)) => lhs == rhs,
             _ => false,
         }
+    }
+}
+
+/// Native dense vector payload stored as a first-class [`Value`].
+///
+/// `VectorValue` validates once at construction and deserialization so every
+/// engine layer can assume a non-empty finite `f32` slice. NaN and infinity are
+/// rejected because they make distance metrics, ordering fallbacks, hashing,
+/// and approximate-nearest-neighbor indexes ambiguous.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct VectorValue {
+    components: Arc<[f32]>,
+}
+
+impl VectorValue {
+    /// Build a validated vector from owned components.
+    pub fn new(components: impl Into<Vec<f32>>) -> CoreResult<Self> {
+        let components = components.into();
+        if components.is_empty() {
+            return Err(CoreError::VectorEmpty);
+        }
+        if components.len() > MAX_VECTOR_DIMENSION {
+            return Err(CoreError::VectorTooLarge {
+                got: components.len(),
+                max: MAX_VECTOR_DIMENSION,
+            });
+        }
+        for (index, value) in components.iter().copied().enumerate() {
+            if !value.is_finite() {
+                return Err(CoreError::VectorComponentNotFinite { index, value });
+            }
+        }
+        Ok(Self {
+            components: Arc::from(components),
+        })
+    }
+
+    /// Number of `f32` components in this vector.
+    #[must_use]
+    pub fn dimension(&self) -> usize {
+        self.components.len()
+    }
+
+    /// Borrow the vector components.
+    #[must_use]
+    pub fn as_slice(&self) -> &[f32] {
+        &self.components
+    }
+
+    /// Clone the shared component storage.
+    #[must_use]
+    pub fn as_arc(&self) -> Arc<[f32]> {
+        Arc::clone(&self.components)
+    }
+}
+
+impl TryFrom<Vec<f32>> for VectorValue {
+    type Error = CoreError;
+
+    fn try_from(value: Vec<f32>) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<VectorValue> for Vec<f32> {
+    fn from(value: VectorValue) -> Self {
+        value.components.as_ref().to_vec()
+    }
+}
+
+impl<'de> Deserialize<'de> for VectorValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<f32>::deserialize(deserializer)
+            .and_then(|components| Self::new(components).map_err(serde::de::Error::custom))
     }
 }
 
@@ -273,7 +368,7 @@ impl PartialEq for Value {
 #[non_exhaustive]
 pub enum Record {
     /// Open `RECORD` literal in expressions.
-    Open(SmallVec<[(IStr, Value); 4]>),
+    Open(SmallVec<[(DbString, Value); 4]>),
 }
 
 /// Closed record value tied to a graph-type-defined record type.
@@ -378,33 +473,12 @@ mod serde_decimal_str {
     }
 }
 
-mod serde_arc_str {
-    use std::sync::Arc;
-
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub(super) fn serialize<S>(value: &Arc<str>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.as_ref().serialize(serializer)
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<str>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let owned = String::deserialize(deserializer)?;
-        Ok(Arc::from(owned.into_boxed_str()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::{PropertyMap, intern};
+    use crate::{PropertyMap, db_string};
 
     fn assert_send_sync<T: Send + Sync>() {}
 
@@ -418,12 +492,13 @@ mod tests {
         let values = [
             Value::Bool(true),
             Value::Int(42),
-            Value::String(intern("name").unwrap()),
-            Value::ExternalString(Arc::from("external name")),
+            Value::String(db_string("name").unwrap()),
             Value::Bytes(Arc::from([1_u8, 2, 3])),
             Value::NodeRef(NodeId::new(1)),
             Value::Null,
             Value::Uuid(uuid::Uuid::nil()),
+            Value::Vector(VectorValue::new(vec![1.0, 2.0]).unwrap()),
+            Value::Json(JsonValue::new(serde_json::json!({"ok": true})).unwrap()),
         ];
         for value in values {
             assert_eq!(value.clone(), value);
@@ -460,7 +535,7 @@ mod tests {
 
     #[test]
     fn value_all_covers_every_variant() {
-        assert_eq!(Value::VARIANT_COUNT, 28);
+        assert_eq!(Value::VARIANT_COUNT, 29);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in Value::ALL {
@@ -476,18 +551,6 @@ mod tests {
         }
         assert_eq!(discriminants.len(), Value::ALL.len());
         assert_eq!(names.len(), Value::ALL.len());
-    }
-
-    #[test]
-    fn external_string_equality_is_variant_strict() {
-        let interned = Value::String(intern("same text").unwrap());
-        let external = Value::ExternalString(Arc::from("same text"));
-
-        assert_eq!(
-            Value::ExternalString(Arc::from("same text")),
-            Value::ExternalString(Arc::from("same text"))
-        );
-        assert_ne!(interned, external);
     }
 
     #[test]
@@ -507,12 +570,66 @@ mod tests {
 
     #[test]
     fn value_property_map_round_trip_nan() {
-        let original = PropertyMap::from_pairs([(intern("x").unwrap(), Value::Float(f64::NAN))])
+        let original = PropertyMap::from_pairs([(db_string("x").unwrap(), Value::Float(f64::NAN))])
             .expect("property map builds");
         let bytes = postcard::to_allocvec(&original).expect("property map serializes");
         let decoded: PropertyMap = postcard::from_bytes(&bytes).expect("property map deserializes");
 
         assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn vector_value_exposes_validated_components() {
+        let vector = VectorValue::new(vec![1.0, -0.0, 3.5]).unwrap();
+        assert_eq!(vector.dimension(), 3);
+        assert_eq!(vector.as_slice(), &[1.0, -0.0, 3.5]);
+        assert_eq!(vector.as_arc().as_ref(), &[1.0, -0.0, 3.5]);
+    }
+
+    #[test]
+    fn vector_value_rejects_empty_payload() {
+        assert!(matches!(
+            VectorValue::new(Vec::<f32>::new()),
+            Err(CoreError::VectorEmpty)
+        ));
+    }
+
+    #[test]
+    fn vector_value_rejects_non_finite_component() {
+        assert!(matches!(
+            VectorValue::new(vec![1.0, f32::NAN]),
+            Err(CoreError::VectorComponentNotFinite { index: 1, .. })
+        ));
+        assert!(matches!(
+            VectorValue::new(vec![f32::NEG_INFINITY]),
+            Err(CoreError::VectorComponentNotFinite { index: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn vector_value_rejects_overlarge_dimension() {
+        let components = vec![0.0; MAX_VECTOR_DIMENSION + 1];
+        assert!(matches!(
+            VectorValue::new(components),
+            Err(CoreError::VectorTooLarge {
+                got,
+                max: MAX_VECTOR_DIMENSION
+            }) if got == MAX_VECTOR_DIMENSION + 1
+        ));
+    }
+
+    #[test]
+    fn json_value_exposes_canonical_rendering_and_type() {
+        let json = JsonValue::new(serde_json::json!({"b": [2, true], "a": null})).unwrap();
+        assert_eq!(json.json_type_name(), "object");
+        assert_eq!(json.to_canonical_string(), r#"{"a":null,"b":[2,true]}"#);
+        assert_eq!(
+            json.as_serde()
+                .as_object()
+                .expect("fixture is object")
+                .get("b"),
+            Some(&serde_json::json!([2, true]))
+        );
     }
 
     proptest! {

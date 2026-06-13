@@ -92,8 +92,6 @@ pub(crate) fn gql_equal_non_null(lhs: &Value, rhs: &Value) -> Option<bool> {
 }
 
 /// Compare non-null values for predicate ordering.
-///
-/// TODO(BRIEF-followup): NodeRef/EdgeRef/Uuid predicate ordering awaits analyzer policy.
 pub(crate) fn compare_non_null(lhs: &Value, rhs: &Value) -> Option<Ordering> {
     debug_assert!(!matches!(lhs, Value::Null));
     debug_assert!(!matches!(rhs, Value::Null));
@@ -132,21 +130,24 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
     Some(match (lhs, rhs) {
         (Value::Bool(lhs), Value::Bool(rhs)) => lhs.cmp(rhs),
         (Value::String(lhs), Value::String(rhs)) => lhs.as_str().cmp(rhs.as_str()),
-        (Value::String(lhs), Value::ExternalString(rhs)) => lhs.as_str().cmp(rhs.as_ref()),
-        (Value::ExternalString(lhs), Value::String(rhs)) => lhs.as_ref().cmp(rhs.as_str()),
-        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => lhs.cmp(rhs),
         (Value::Date(lhs), Value::Date(rhs)) => lhs.cmp(rhs),
         (Value::LocalDateTime(lhs), Value::LocalDateTime(rhs)) => lhs.cmp(rhs),
         (Value::ZonedDateTime(lhs), Value::ZonedDateTime(rhs)) => lhs.cmp(rhs),
         (Value::LocalTime(lhs), Value::LocalTime(rhs)) => lhs.cmp(rhs),
         (Value::ZonedTime(lhs), Value::ZonedTime(rhs)) => lhs.cmp(rhs),
-        (Value::Duration(_), Value::Duration(_)) => duration_key(lhs).cmp(&duration_key(rhs)),
+        (Value::Duration(lhs), Value::Duration(rhs)) => {
+            selene_core::duration_order_key(lhs).cmp(&selene_core::duration_order_key(rhs))
+        }
         (Value::Bytes(lhs), Value::Bytes(rhs)) => lhs.as_ref().cmp(rhs.as_ref()),
+        (Value::Uuid(lhs), Value::Uuid(rhs)) => lhs.cmp(rhs),
+        (Value::NodeRef(lhs), Value::NodeRef(rhs)) => lhs.cmp(rhs),
+        (Value::EdgeRef(lhs), Value::EdgeRef(rhs)) => lhs.cmp(rhs),
         (Value::List(lhs), Value::List(rhs)) => return list_compare(lhs, rhs),
         (Value::Record(lhs), Value::Record(rhs)) => return record_compare(lhs, rhs),
         (Value::RecordTyped(lhs), Value::RecordTyped(rhs)) => {
             return typed_record_compare(lhs, rhs);
         }
+        (Value::Vector(lhs), Value::Vector(rhs)) => vector_compare(lhs.as_slice(), rhs.as_slice()),
         (Value::Decimal(lhs), Value::Decimal(rhs)) => lhs.cmp(rhs),
         (Value::Int128(lhs), Value::Int128(rhs)) => lhs.cmp(rhs),
         (Value::Int128(lhs), Value::Int(rhs)) => lhs.cmp(&i128::from(*rhs)),
@@ -174,6 +175,16 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::Uint128(lhs), Value::Int128(rhs)) => i128_cmp_u128(*rhs, *lhs).reverse(),
         _ => return numeric_compare(lhs, rhs),
     })
+}
+
+fn vector_compare(lhs: &[f32], rhs: &[f32]) -> Ordering {
+    for (&lhs_component, &rhs_component) in lhs.iter().zip(rhs.iter()) {
+        if lhs_component == rhs_component {
+            continue;
+        }
+        return lhs_component.total_cmp(&rhs_component);
+    }
+    lhs.len().cmp(&rhs.len())
 }
 
 fn record_gql_equal(lhs: &Record, rhs: &Record) -> Option<bool> {
@@ -236,8 +247,8 @@ fn record_compare(lhs: &Record, rhs: &Record) -> Option<Ordering> {
         (Record::Open(lhs), Record::Open(rhs)) => {
             // Order over a field-name-sorted view so permuted-equal records
             // compare `Equal` and the ordering agrees with name-keyed equality
-            // (GQLRT-14). Field names sort by string content (not the
-            // non-lexicographic IStr handle order) so the order is stable.
+            // (GQLRT-14). Field names sort by string content so the order is
+            // stable.
             let lhs = sorted_record_fields(lhs);
             let rhs = sorted_record_fields(rhs);
             for (&(lhs_key, lhs_value), &(rhs_key, rhs_value)) in lhs.iter().zip(rhs.iter()) {
@@ -258,10 +269,12 @@ fn record_compare(lhs: &Record, rhs: &Record) -> Option<Ordering> {
 
 /// Borrow a record's fields sorted by field-name string content.
 ///
-/// IStr ordering is handle order, not lexicographic, so the wire codecs and
-/// every name-keyed comparison sort by `as_str()` to stay deterministic.
-fn sorted_record_fields(fields: &[(selene_core::IStr, Value)]) -> Vec<&(selene_core::IStr, Value)> {
-    let mut sorted: Vec<&(selene_core::IStr, Value)> = fields.iter().collect();
+/// Sort by string content so wire codecs and name-keyed comparisons stay
+/// deterministic even if the internal string representation changes again.
+fn sorted_record_fields(
+    fields: &[(selene_core::DbString, Value)],
+) -> Vec<&(selene_core::DbString, Value)> {
+    let mut sorted: Vec<&(selene_core::DbString, Value)> = fields.iter().collect();
     sorted.sort_by(|lhs, rhs| lhs.0.as_str().cmp(rhs.0.as_str()));
     sorted
 }
@@ -306,24 +319,6 @@ fn compare_values(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::Null, _) | (_, Value::Null) => None,
         _ => compare_non_null(lhs, rhs),
     }
-}
-
-fn duration_key(value: &selene_core::Value) -> (i16, i32, i32, i32, i32, i64, i64, i64, i64, i64) {
-    let Value::Duration(value) = value else {
-        unreachable!("duration_key only receives Value::Duration");
-    };
-    (
-        value.get_years(),
-        value.get_months(),
-        value.get_weeks(),
-        value.get_days(),
-        value.get_hours(),
-        value.get_minutes(),
-        value.get_seconds(),
-        value.get_milliseconds(),
-        value.get_microseconds(),
-        value.get_nanoseconds(),
-    )
 }
 
 fn numeric_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
@@ -479,9 +474,6 @@ fn decimal_cmp_f64(lhs: &rust_decimal::Decimal, rhs: f64) -> Option<Ordering> {
 fn string_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
     Some(match (lhs, rhs) {
         (Value::String(lhs), Value::String(rhs)) => lhs.as_str() == rhs.as_str(),
-        (Value::String(lhs), Value::ExternalString(rhs)) => lhs.as_str() == rhs.as_ref(),
-        (Value::ExternalString(lhs), Value::String(rhs)) => lhs.as_ref() == rhs.as_str(),
-        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => lhs == rhs,
         _ => return None,
     })
 }
@@ -518,28 +510,29 @@ fn value_rank(value: &Value) -> u8 {
         Value::Float32(_) => 6,
         Value::Decimal(_) => 7,
         Value::String(_) => 8,
-        Value::ExternalString(_) => 9,
-        Value::Bytes(_) => 10,
-        Value::List(_) => 11,
-        Value::Record(_) => 12,
-        Value::RecordTyped(_) => 13,
-        Value::Path(_) => 14,
-        Value::NodeRef(_) => 15,
-        Value::EdgeRef(_) => 16,
-        Value::GraphRef(_) => 17,
-        Value::TableRef(_) => 18,
-        Value::ZonedDateTime(_) => 19,
-        Value::LocalDateTime(_) => 20,
-        Value::Date(_) => 21,
-        Value::ZonedTime(_) => 22,
-        Value::LocalTime(_) => 23,
-        Value::Duration(_) => 24,
-        Value::Extended { .. } => 25,
-        Value::Null => 26,
-        Value::Uuid(_) => 27,
+        Value::Bytes(_) => 9,
+        Value::List(_) => 10,
+        Value::Record(_) => 11,
+        Value::RecordTyped(_) => 12,
+        Value::Path(_) => 13,
+        Value::NodeRef(_) => 14,
+        Value::EdgeRef(_) => 15,
+        Value::GraphRef(_) => 16,
+        Value::TableRef(_) => 17,
+        Value::ZonedDateTime(_) => 18,
+        Value::LocalDateTime(_) => 19,
+        Value::Date(_) => 20,
+        Value::ZonedTime(_) => 21,
+        Value::LocalTime(_) => 22,
+        Value::Duration(_) => 23,
+        Value::Extended { .. } => 24,
+        Value::Null => 25,
+        Value::Uuid(_) => 26,
+        Value::Vector(_) => 27,
+        Value::Json(_) => 28,
         // Any future `Value` variant ranks after every enumerated one so it
-        // never silently ties with `Uuid` (27) in the sort fallback.
-        _ => 28,
+        // never silently ties with `Json` (28) in the sort fallback.
+        _ => 29,
     }
 }
 

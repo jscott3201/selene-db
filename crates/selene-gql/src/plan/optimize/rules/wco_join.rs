@@ -43,6 +43,7 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
             | JoinTree::Questioned { .. }
             | JoinTree::PathSearch { .. }
             | JoinTree::PathModeFilter { .. }
+            | JoinTree::MatchModeFilter { .. }
             | JoinTree::WorstCaseOptimal { .. }
             | JoinTree::Subplan(_)
     ) {
@@ -73,6 +74,7 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
         | JoinTree::Questioned { .. }
         | JoinTree::PathSearch { .. }
         | JoinTree::PathModeFilter { .. }
+        | JoinTree::MatchModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => false,
         // DisjunctiveScan is a scan-shape leaf; not a cyclic expand chain
@@ -133,6 +135,7 @@ fn detect_cycle(
         | JoinTree::Questioned { .. }
         | JoinTree::PathSearch { .. }
         | JoinTree::PathModeFilter { .. }
+        | JoinTree::MatchModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => None,
         // DisjunctiveScan can't appear inside a cyclic expand chain — it
@@ -177,6 +180,7 @@ fn collect_cycle_nodes(
         | JoinTree::Questioned { .. }
         | JoinTree::PathSearch { .. }
         | JoinTree::PathModeFilter { .. }
+        | JoinTree::MatchModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => None,
         // DisjunctiveScan can't appear inside the cycle the collector walks

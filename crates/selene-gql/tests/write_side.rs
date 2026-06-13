@@ -2,8 +2,8 @@
 
 use selene_gql::{
     DdlStatement, DeleteMode, DropBehavior, GqlStatus, GqlType, MutationStatement,
-    MutationTerminator, PipelineStatement, Statement, TypePropertyConstraint, ValidationMode,
-    YieldColumn, parse,
+    MutationTerminator, ParserError, PipelineStatement, Statement, TypePropertyConstraint,
+    ValidationMode, YieldColumn, parse,
 };
 
 fn parse_mutation(source: &str) -> selene_gql::MutationPipeline {
@@ -124,11 +124,11 @@ fn parse_type_ddl() {
     };
     assert_eq!(label.as_str(), "Person");
     assert_eq!(properties.len(), 2);
-    assert_eq!(properties[1].gql_type, GqlType::Integer);
     assert!(matches!(
-        properties[1].constraints.as_slice(),
-        [TypePropertyConstraint::NotNull(_)]
+        &properties[1].gql_type,
+        GqlType::NotNull(inner) if **inner == GqlType::Integer
     ));
+    assert!(properties[1].constraints.is_empty());
 
     let DdlStatement::CreateNodeType {
         extends,
@@ -205,16 +205,22 @@ fn parse_edge_type_and_show_ddl() {
 
 #[test]
 fn parse_type_property_constraints_exhaustively() {
-    // The five ISO/IEC 39075:2024 §18 property constraints the grammar accepts.
-    // Donor full-text/time-series constraints (SEARCHABLE/DICTIONARY/FILL/
-    // INTERVAL/ENCODING) were removed from the grammar — see
+    // The ISO/IEC 39075:2024 §18 property constraints the engine accepts:
+    // DEFAULT, IMMUTABLE, UNIQUE, INDEXED. Explicit value-type nullability is
+    // carried on the GqlType and lowered to the required-property bit at the
+    // catalog boundary. Donor full-text/time-series constraints (SEARCHABLE/
+    // DICTIONARY/FILL/INTERVAL/ENCODING) were removed from the grammar — see
     // `donor_property_constraints_are_syntax_errors`.
     let DdlStatement::CreateNodeType { properties, .. } = parse_ddl(
         "CREATE NODE TYPE :Sensor (v :: STRING NOT NULL DEFAULT 'x' IMMUTABLE UNIQUE INDEXED)",
     ) else {
         panic!("expected CREATE NODE TYPE");
     };
-    assert_eq!(properties[0].constraints.len(), 5);
+    assert!(matches!(
+        &properties[0].gql_type,
+        GqlType::NotNull(inner) if **inner == GqlType::String
+    ));
+    assert_eq!(properties[0].constraints.len(), 4);
 }
 
 #[test]
@@ -246,7 +252,8 @@ fn parse_indexed_constraint_with_explicit_name() {
         panic!("expected CREATE NODE TYPE");
     };
     let TypePropertyConstraint::Indexed {
-        name: Some(name), ..
+        name: Some(ref name),
+        ..
     } = properties[0].constraints[0]
     else {
         panic!("expected named INDEXED constraint");
@@ -302,12 +309,14 @@ fn parse_top_level_call_variants() {
     );
     assert_eq!(call.args.len(), 2);
     assert_eq!(call.yield_items.len(), 1);
+    assert!(call.yield_filter.is_none());
 
     let Statement::Call(call) = parse("CALL pkg.cleanup()").expect("CALL without YIELD parses")
     else {
         panic!("expected top-level CALL");
     };
     assert!(call.yield_items.is_empty());
+    assert!(call.yield_filter.is_none());
 }
 
 #[test]
@@ -319,7 +328,36 @@ fn parse_call_yield_star_alias_and_quoted_segment() {
     };
     assert_eq!(call.name[1].as_str(), "bar.baz");
     assert!(matches!(call.yield_items[0].column, YieldColumn::Star));
-    assert_eq!(call.yield_items[1].alias.expect("alias").as_str(), "alias");
+    assert_eq!(
+        call.yield_items[1].alias.clone().expect("alias").as_str(),
+        "alias"
+    );
+}
+
+#[test]
+fn parse_call_yield_where_filter() {
+    let Statement::Call(call) =
+        parse("CALL pkg.rank() YIELD score AS s WHERE s >= 0").expect("CALL parses")
+    else {
+        panic!("expected top-level CALL");
+    };
+
+    assert_eq!(call.yield_items.len(), 1);
+    assert!(call.yield_filter.is_some());
+}
+
+#[test]
+fn call_yield_filter_synonym_is_not_iso_syntax() {
+    for source in [
+        "CALL pkg.rank() YIELD score FILTER score >= 0",
+        "CALL pkg.rank() YIELD score FILTER WHERE score >= 0",
+    ] {
+        let error = parse(source).expect_err(source);
+        assert!(
+            matches!(error, ParserError::SyntaxError { .. }),
+            "{source} should be a syntax error, got {error:?}"
+        );
+    }
 }
 
 #[test]

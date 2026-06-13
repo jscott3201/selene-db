@@ -1,12 +1,12 @@
 //! Static metadata builders for the native platform built-ins.
 //!
-//! Ported verbatim from the historical procedure-pack built-in module
-//! (`StaticParameter`, `StaticOutputColumn`) plus the pack registry's
-//! `parameter` / `output_column` storage conversion. Keeping the
-//! `with_description` / `with_default_doc` / `with_default` shape identical means
-//! the relocated built-ins expose byte-identical `SHOW PROCEDURES` metadata.
+//! Ported from the historical procedure-pack built-in module (`StaticParameter`,
+//! `StaticOutputColumn`) plus the pack registry's `parameter` / `output_column`
+//! storage conversion. Keeping the `with_description` / `with_default_doc` /
+//! `with_default` shape aligned preserves the native procedure metadata contract
+//! while catalog rendering stays owned by the current engine.
 
-use selene_core::intern_with_admission;
+use selene_core::db_string;
 
 use crate::{GqlType, ProcedureDefaultValue, ProcedureOutputColumn, ProcedureParameter};
 
@@ -61,8 +61,9 @@ impl StaticParameter {
     /// Convert into planner-visible parameter metadata, preserving the pack's
     /// `description` / `default_doc` / `default` carry-over rules.
     pub(super) fn into_parameter(self) -> ProcedureParameter {
-        let mut result = ProcedureParameter::new(intern_static(self.name), self.ty, self.nullable)
-            .with_description(self.description);
+        let mut result =
+            ProcedureParameter::new(static_db_string(self.name), self.ty, self.nullable)
+                .with_description(self.description);
         if let Some(default_doc) = self.default_doc {
             result = result.with_default_doc(default_doc);
         }
@@ -80,6 +81,8 @@ pub(super) struct StaticOutputColumn {
     pub(super) name: &'static str,
     /// Output column type.
     pub(super) ty: GqlType,
+    /// Whether NULL is accepted.
+    pub(super) nullable: bool,
     /// Human-readable output-column description.
     pub(super) description: &'static str,
 }
@@ -90,8 +93,15 @@ impl StaticOutputColumn {
         Self {
             name,
             ty,
+            nullable: false,
             description: "",
         }
+    }
+
+    /// Set whether this output column accepts NULL values.
+    pub(super) const fn with_nullable(mut self, nullable: bool) -> Self {
+        self.nullable = nullable;
+        self
     }
 
     /// Attach a human-readable output-column description.
@@ -102,21 +112,20 @@ impl StaticOutputColumn {
 
     /// Convert into planner-visible output-column metadata.
     pub(super) fn into_output_column(self) -> ProcedureOutputColumn {
-        ProcedureOutputColumn::new(intern_static(self.name), self.ty)
+        ProcedureOutputColumn::new(static_db_string(self.name), self.ty)
+            .with_nullable(self.nullable)
             .with_description(self.description)
     }
 }
 
-/// Intern a static metadata name through the budget-aware admission path.
+/// Construct a static built-in metadata name.
 ///
 /// # Panics
 ///
-/// Panics only if the global interner is exhausted while interning a static
-/// metadata name. Built-in names/columns are a fixed, compile-time set; this
-/// mirrors the pack registry, which surfaced interner exhaustion as a
-/// construction error. The native registry is built once at engine startup.
-fn intern_static(value: &'static str) -> selene_core::IStr {
-    intern_with_admission(value)
-        .map(|(istr, _was_new)| istr)
-        .expect("static built-in metadata name interns")
+/// Panics only if the name exceeds the per-string byte cap (IL013). Built-in
+/// names/columns are a fixed, compile-time set of short identifiers, so this
+/// never fires in practice; the native registry is built once at engine
+/// startup.
+fn static_db_string(value: &'static str) -> selene_core::DbString {
+    db_string(value).expect("static built-in metadata name fits DB string cap")
 }

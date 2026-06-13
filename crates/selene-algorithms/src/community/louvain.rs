@@ -67,9 +67,7 @@ pub fn louvain_with_checker(
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         for nb in proj.out_neighbors(node) {
-            if idx.dense_of_node(nb.node_id).is_some() {
-                total_weight += nb.weight;
-            }
+            total_weight += nb.weight;
         }
     }
     if total_weight == 0.0 {
@@ -95,26 +93,22 @@ pub fn louvain_with_checker(
         let node = idx.node_id_of(d);
         let mut deg = 0.0;
         for nb in proj.out_neighbors(node) {
-            if idx.dense_of_node(nb.node_id).is_some() {
-                deg += nb.weight;
-            }
+            deg += nb.weight;
         }
         for nb in proj.in_neighbors(node) {
-            if idx.dense_of_node(nb.node_id).is_some() {
-                deg += nb.weight;
-            }
+            deg += nb.weight;
         }
         weighted_degree[d as usize] = deg;
     }
 
     // comm_degree_sum[community_id] = Σ weighted_degree[v] for v ∈ community.
-    // Kept as a `HashMap` because community IDs are sparse (start = N distinct
-    // singletons, may merge down to ≪ N) and the key set changes per move.
-    let mut comm_degree_sum: HashMap<u32, f64> = HashMap::default();
-    comm_degree_sum.reserve(n);
+    // Community IDs are the dense seed rows from 0..n and remain in that range
+    // for this single-level implementation, so a vector avoids hot-loop hash
+    // lookups while still allowing empty community slots after moves.
+    let mut comm_degree_sum = vec![0.0; n];
     for d in 0..n as u32 {
         let c = community[d as usize];
-        *comm_degree_sum.entry(c).or_insert(0.0) += weighted_degree[d as usize];
+        comm_degree_sum[c as usize] += weighted_degree[d as usize];
     }
 
     // Reused per-node scratch.
@@ -139,20 +133,16 @@ pub fn louvain_with_checker(
 
             comm_weights.clear();
             for nb in proj.out_neighbors(node) {
-                if let Some(nd) = idx.dense_of_node(nb.node_id) {
-                    let nb_comm = community[nd as usize];
-                    *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
-                }
+                let nb_comm = community[nb.dense as usize];
+                *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
             }
             for nb in proj.in_neighbors(node) {
-                if let Some(nd) = idx.dense_of_node(nb.node_id) {
-                    let nb_comm = community[nd as usize];
-                    *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
-                }
+                let nb_comm = community[nb.dense as usize];
+                *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
             }
 
             let ki_in_current = comm_weights.get(&current_comm).copied().unwrap_or(0.0);
-            let sigma_current = comm_degree_sum.get(&current_comm).copied().unwrap_or(0.0) - ki;
+            let sigma_current = comm_degree_sum[current_comm as usize] - ki;
 
             // §E30 determinism: iterate candidate communities in sorted order
             // by community ID, not raw HashMap order.
@@ -167,7 +157,7 @@ pub fn louvain_with_checker(
                 if candidate_comm == current_comm {
                     continue;
                 }
-                let sigma_candidate = comm_degree_sum.get(&candidate_comm).copied().unwrap_or(0.0);
+                let sigma_candidate = comm_degree_sum[candidate_comm as usize];
 
                 let delta =
                     compute_modularity_delta(total_weight, ki_in_candidate, ki, sigma_candidate)
@@ -180,10 +170,8 @@ pub fn louvain_with_checker(
             }
 
             if best_comm != current_comm {
-                *comm_degree_sum
-                    .get_mut(&current_comm)
-                    .expect("current community present") -= ki;
-                *comm_degree_sum.entry(best_comm).or_insert(0.0) += ki;
+                comm_degree_sum[current_comm as usize] -= ki;
+                comm_degree_sum[best_comm as usize] += ki;
                 community[idx_d] = best_comm;
                 improved = true;
             }

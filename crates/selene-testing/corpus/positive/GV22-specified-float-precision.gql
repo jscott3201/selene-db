@@ -1,0 +1,8 @@
+// corpus: positive
+// feature: GV22
+// also-covers: GV21, GV24
+// expects: parse-ok
+CREATE NODE TYPE :Metric (
+  small :: FLOAT(23, 7),
+  wide :: FLOAT(52, 10)
+)

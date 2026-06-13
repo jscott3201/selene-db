@@ -44,7 +44,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{IStr, Value};
+use selene_core::{DbString, Value};
 use selene_graph::{SeleneGraph, TypedIndexKind};
 
 use crate::plan::optimize::{
@@ -75,8 +75,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn typed_index(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
     ) -> Option<TypedIndexLookup> {
         // Built-in typed property indexes are node-only at HEAD.
         if target != IndexTarget::Node {
@@ -91,7 +91,7 @@ impl IndexCatalog for LiveIndexCatalog {
         ))
     }
 
-    fn label_index(&self, target: IndexTarget, _label: IStr) -> Option<IndexHandle> {
+    fn label_index(&self, target: IndexTarget, _label: DbString) -> Option<IndexHandle> {
         // The intrinsic RoaringBitmap label index is always available for both
         // node and edge targets; the runtime falls back to linear when a label
         // bitmap is absent. The handle is opaque (runtime re-derives by label).
@@ -103,8 +103,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn composite_index(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
     ) -> Option<CompositeIndexHandle> {
         // Composite indexes are node-only at HEAD.
         if target != IndexTarget::Node {
@@ -119,11 +119,11 @@ impl IndexCatalog for LiveIndexCatalog {
         // Per-component IndexKind in declaration order enables parameter-aware
         // composite probes (BRIEF-154 §B.2). The runtime re-derives the actual
         // index by (label, sorted-properties) at execute time.
-        let component_kinds: Vec<(IStr, IndexKind)> = entry
+        let component_kinds: Vec<(DbString, IndexKind)> = entry
             .declared_properties
             .iter()
             .zip(kinds.iter())
-            .map(|(property, kind)| (*property, index_kind_from(*kind)))
+            .map(|(property, kind)| (property.clone(), index_kind_from(*kind)))
             .collect();
         Some(CompositeIndexHandle::new(
             IndexHandle::new(0),
@@ -146,7 +146,7 @@ impl IndexCatalog for LiveIndexCatalog {
         })
     }
 
-    fn label_cardinality(&self, target: IndexTarget, label: IStr) -> Option<u64> {
+    fn label_cardinality(&self, target: IndexTarget, label: DbString) -> Option<u64> {
         match target {
             // Absent bitmap = zero rows carry the label; report 0 (an exact,
             // maximally-selective count) rather than None so the cost gate can
@@ -165,8 +165,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn equality_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         value: &Value,
     ) -> Option<u64> {
         if target != IndexTarget::Node {
@@ -183,8 +183,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn range_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        property: IStr,
+        label: DbString,
+        property: DbString,
         range: (std::ops::Bound<Value>, std::ops::Bound<Value>),
     ) -> Option<u64> {
         if target != IndexTarget::Node {
@@ -195,7 +195,12 @@ impl IndexCatalog for LiveIndexCatalog {
             .map(|bm| bm.len())
     }
 
-    fn typed_avg_bucket(&self, target: IndexTarget, label: IStr, property: IStr) -> Option<u64> {
+    fn typed_avg_bucket(
+        &self,
+        target: IndexTarget,
+        label: DbString,
+        property: DbString,
+    ) -> Option<u64> {
         if target != IndexTarget::Node {
             return None;
         }
@@ -206,8 +211,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn composite_cardinality(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
         keys: &[Value],
     ) -> Option<u64> {
         if target != IndexTarget::Node {
@@ -221,18 +226,16 @@ impl IndexCatalog for LiveIndexCatalog {
         // The runtime composite index orders components by canonical (sorted)
         // property order; reorder `keys` (given in `properties` order) to match.
         let mut order: Vec<usize> = (0..properties.len()).collect();
-        order.sort_by_key(|&i| properties[i]);
+        order.sort_by_key(|&i| properties[i].clone());
         if keys.len() != properties.len() {
             return None;
         }
         let ordered: Vec<&Value> = order.iter().map(|&i| &keys[i]).collect();
-        // Read-path key build (no IStr admission). `Ok(None)` = an unpoolable
-        // ExternalString component → no row can be keyed → exact count 0.
-        match index.key_from_values_lookup(&ordered) {
-            Ok(Some(key)) => Some(index.lookup_key(&key).map_or(0, |bm| bm.len())),
-            Ok(None) => Some(0),
-            // Arity / kind mismatch — decline so the caller keeps the structural
-            // decision.
+        // Single-coercion key build. A successful coercion yields the exact
+        // bucket count; an arity / kind mismatch (`Err`) declines so the caller
+        // keeps the structural decision.
+        match index.key_from_values(&ordered) {
+            Ok(key) => Some(index.lookup_key(&key).map_or(0, |bm| bm.len())),
             Err(_) => None,
         }
     }
@@ -240,8 +243,8 @@ impl IndexCatalog for LiveIndexCatalog {
     fn composite_avg_bucket(
         &self,
         target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
+        label: DbString,
+        properties: &[DbString],
     ) -> Option<u64> {
         if target != IndexTarget::Node {
             return None;
@@ -268,11 +271,21 @@ fn avg_bucket(cardinality: u64, distinct_keys: u64) -> u64 {
 /// Map a storage-level [`TypedIndexKind`] to the optimizer's [`IndexKind`].
 fn index_kind_from(kind: TypedIndexKind) -> IndexKind {
     match kind {
+        TypedIndexKind::Bool => IndexKind::Boolean,
         TypedIndexKind::I64 => IndexKind::Integer,
+        TypedIndexKind::U64 => IndexKind::UnsignedInteger,
+        TypedIndexKind::I128 => IndexKind::Integer128,
+        TypedIndexKind::U128 => IndexKind::UnsignedInteger128,
+        TypedIndexKind::Decimal => IndexKind::Decimal,
+        TypedIndexKind::F32 => IndexKind::Float32,
         TypedIndexKind::F64 => IndexKind::Float,
         TypedIndexKind::String => IndexKind::String,
         TypedIndexKind::Date => IndexKind::Date,
         TypedIndexKind::LocalDateTime => IndexKind::LocalDateTime,
+        TypedIndexKind::ZonedDateTime => IndexKind::ZonedDateTime,
+        TypedIndexKind::LocalTime => IndexKind::LocalTime,
+        TypedIndexKind::ZonedTime => IndexKind::ZonedTime,
+        TypedIndexKind::Duration => IndexKind::Duration,
         TypedIndexKind::Uuid => IndexKind::Uuid,
     }
 }

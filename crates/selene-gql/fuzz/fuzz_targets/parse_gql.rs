@@ -12,8 +12,8 @@ fuzz_target!(|bytes: &[u8]| {
         Err(ParserError::SyntaxError { .. })
         | Err(ParserError::UnsupportedFeature { .. })
         | Err(ParserError::NotImplemented { .. })
-        | Err(ParserError::InternerBudgetExceeded { .. })
-        | Err(ParserError::NestingLimitExceeded { .. }) => {}
+        | Err(ParserError::NestingLimitExceeded { .. })
+        | Err(ParserError::ComplexityLimitExceeded { .. }) => {}
         Err(_) => {}
     }
 });

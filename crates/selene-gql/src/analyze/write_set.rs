@@ -1,6 +1,6 @@
 //! Mutation write-set enumeration.
 
-use selene_core::IStr;
+use selene_core::DbString;
 
 use crate::{
     DeleteMode, LabelExpr, SourceSpan, ValueExpr,
@@ -42,7 +42,7 @@ pub enum WriteKind {
         /// Static label expression declared on the pattern.
         label_expr: Option<LabelExpr>,
         /// Property keys written by the inline property map.
-        property_keys: Box<[IStr]>,
+        property_keys: Box<[DbString]>,
     },
     /// `INSERT` introduces an edge. Anonymous inserts carry no binding.
     InsertEdge {
@@ -51,7 +51,7 @@ pub enum WriteKind {
         /// Static label expression declared on the pattern.
         label_expr: Option<LabelExpr>,
         /// Property keys written by the inline property map.
-        property_keys: Box<[IStr]>,
+        property_keys: Box<[DbString]>,
     },
     /// `SET n.key = expr` or `SET n = { key: expr }`.
     SetProperty {
@@ -60,7 +60,7 @@ pub enum WriteKind {
         /// Element kind of the resolved target.
         element: ElementKind,
         /// Property key being written.
-        key: IStr,
+        key: DbString,
         /// Source span of the value expression for this specific write.
         value_span: SourceSpan,
     },
@@ -71,7 +71,7 @@ pub enum WriteKind {
         /// Element kind of the resolved target.
         element: ElementKind,
         /// Label being added.
-        label: IStr,
+        label: DbString,
     },
     /// `REMOVE n.key`.
     RemoveProperty {
@@ -80,7 +80,7 @@ pub enum WriteKind {
         /// Element kind of the resolved target.
         element: ElementKind,
         /// Property key being removed.
-        key: IStr,
+        key: DbString,
     },
     /// `REMOVE n :Label`.
     RemoveLabel {
@@ -89,7 +89,7 @@ pub enum WriteKind {
         /// Element kind of the resolved target.
         element: ElementKind,
         /// Label being removed.
-        label: IStr,
+        label: DbString,
     },
     /// `DELETE n` / `DETACH DELETE n` / `NODETACH DELETE n`.
     DeleteTarget {
@@ -131,10 +131,10 @@ impl ElementKind {
     }
 }
 
-pub(crate) fn property_keys(properties: &[(IStr, ValueExpr)]) -> Box<[IStr]> {
+pub(crate) fn property_keys(properties: &[(DbString, ValueExpr)]) -> Box<[DbString]> {
     properties
         .iter()
-        .map(|(key, _)| *key)
+        .map(|(key, _)| key.clone())
         .collect::<Vec<_>>()
         .into_boxed_slice()
 }

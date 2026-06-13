@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GV31
+// expects: parse-ok
+RETURN 'selene' IS TYPED VARCHAR(16)

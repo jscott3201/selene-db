@@ -1,9 +1,10 @@
 //! Composite property-index mutation methods for the transaction mutator.
 
-use selene_core::{Change, IStr, SchemaChange, SchemaPropertyIndexKind};
+use selene_core::{Change, DbString, SchemaChange, SchemaPropertyIndexKind};
 use smallvec::SmallVec;
 
 use crate::graph::{CompositePropertyIndexEntry, composite_property_key};
+use crate::schema_index_kind::schema_kind_from;
 use crate::{GraphError, GraphResult, Mutator, TypedIndexKind};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
@@ -15,10 +16,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// canonical property set already exists.
     pub fn create_composite_property_index_named(
         &mut self,
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
+        label: DbString,
+        properties: SmallVec<[DbString; 4]>,
         kinds: SmallVec<[TypedIndexKind; 4]>,
-        name: Option<IStr>,
+        name: Option<DbString>,
     ) -> GraphResult<()> {
         validate_shape(&properties, &kinds)?;
         let key = composite_property_key(&properties);
@@ -26,20 +27,23 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .txn
             .read()
             .composite_property_index
-            .contains_key(&(label, key.clone()))
+            .contains_key(&(label.clone(), key.clone()))
         {
-            return Err(GraphError::CompositePropertyIndexAlreadyExists { label, properties });
+            return Err(GraphError::CompositePropertyIndexAlreadyExists {
+                label,
+                properties: Box::new(properties),
+            });
         }
         let graph_id = self.txn.read().graph_id();
         let index = crate::composite_property_index::build_composite_property_index(
             self.txn.read(),
-            label,
+            label.clone(),
             properties.clone(),
             kinds.clone(),
         )?;
         self.txn.guard_mut().composite_property_index.insert(
-            (label, key),
-            CompositePropertyIndexEntry::new(index, properties.clone(), name),
+            (label.clone(), key),
+            CompositePropertyIndexEntry::new(index, properties.clone(), name.clone()),
         );
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
@@ -59,15 +63,15 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// no WAL change.
     pub fn drop_composite_property_index(
         &mut self,
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
+        label: DbString,
+        properties: SmallVec<[DbString; 4]>,
     ) -> GraphResult<()> {
         let key = composite_property_key(&properties);
         if !self
             .txn
             .read()
             .composite_property_index
-            .contains_key(&(label, key.clone()))
+            .contains_key(&(label.clone(), key.clone()))
         {
             return Ok(());
         }
@@ -75,7 +79,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn
             .guard_mut()
             .composite_property_index
-            .remove(&(label, key));
+            .remove(&(label.clone(), key));
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
             change: SchemaChange::CompositePropertyIndexDropped { label, properties },
@@ -84,7 +88,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 }
 
-fn validate_shape(properties: &[IStr], kinds: &[TypedIndexKind]) -> Result<(), GraphError> {
+fn validate_shape(properties: &[DbString], kinds: &[TypedIndexKind]) -> Result<(), GraphError> {
     if properties.len() < 2 {
         return Err(GraphError::Inconsistent {
             reason: "composite index requires at least two properties".to_owned(),
@@ -114,20 +118,9 @@ fn schema_kinds_from(kinds: &[TypedIndexKind]) -> SmallVec<[SchemaPropertyIndexK
     kinds.iter().copied().map(schema_kind_from).collect()
 }
 
-const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
-    match kind {
-        TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
-        TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
-        TypedIndexKind::String => SchemaPropertyIndexKind::String,
-        TypedIndexKind::Date => SchemaPropertyIndexKind::Date,
-        TypedIndexKind::LocalDateTime => SchemaPropertyIndexKind::LocalDateTime,
-        TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use selene_core::{GraphId, intern};
+    use selene_core::{GraphId, db_string};
     use smallvec::smallvec;
 
     use crate::{GraphError, SharedGraph, TypedIndexKind};
@@ -139,7 +132,7 @@ mod tests {
         let err = txn
             .mutator()
             .create_composite_property_index_named(
-                intern("CompositeShape").unwrap(),
+                db_string("CompositeShape").unwrap(),
                 smallvec![],
                 smallvec![],
                 None,
@@ -160,8 +153,8 @@ mod tests {
         let err = txn
             .mutator()
             .create_composite_property_index_named(
-                intern("CompositeShape").unwrap(),
-                smallvec![intern("only").unwrap()],
+                db_string("CompositeShape").unwrap(),
+                smallvec![db_string("only").unwrap()],
                 smallvec![TypedIndexKind::I64],
                 None,
             )

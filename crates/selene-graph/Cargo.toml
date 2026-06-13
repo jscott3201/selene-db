@@ -11,7 +11,7 @@ description = "In-memory property-graph storage core (ArcSwap + imbl CoW, label/
 autobenches = false
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.1.0" }
+selene-core = { path = "../selene-core", version = "1.2.0" }
 selene-persist.workspace = true
 arc-swap.workspace = true
 parking_lot.workspace = true
@@ -19,30 +19,67 @@ imbl.workspace = true
 rustc-hash.workspace = true
 jiff.workspace = true
 roaring.workspace = true
+rayon.workspace = true
 smallvec.workspace = true
 triomphe.workspace = true
 serde.workspace = true
-postcard.workspace = true
+# use-std declared here (not inherited via unification with selene-persist)
+# because candidate_state.rs and core_provider/sections/codec.rs call
+# postcard::to_stdvec; a standalone `cargo check -p selene-graph` must build.
+postcard = { workspace = true, features = ["use-std"] }
 rkyv.workspace = true
+rust_decimal.workspace = true
 thiserror.workspace = true
 miette.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+wide.workspace = true
 
 [features]
 metrics = ["selene-core/metrics"]
 
 [dev-dependencies]
 criterion.workspace = true
-iai-callgrind.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
-rust_decimal.workspace = true
-selene-testing = { path = "../selene-testing", version = "1.1.0" }
+selene-testing = { path = "../selene-testing" }
+serde_json.workspace = true
 
 [[bench]]
 name = "single_graph"
+harness = false
+
+[[bench]]
+name = "vector_index_rebuild"
+harness = false
+
+[[bench]]
+name = "vector_pq"
+harness = false
+
+[[bench]]
+name = "vector_ivf_pq"
+harness = false
+
+[[bench]]
+name = "vector_turbo_projection"
+harness = false
+
+[[bench]]
+name = "vector_turbo_churn"
+harness = false
+
+[[bench]]
+name = "vector_ivf_pressure"
+harness = false
+
+[[bench]]
+name = "vector_ivf_insert_drift"
+harness = false
+
+[[bench]]
+name = "vector_mixed_workload"
 harness = false
 
 [[bench]]
@@ -74,7 +111,27 @@ name = "bfs"
 harness = false
 
 [[bench]]
-name = "iai_gates"
+name = "graph_hub_delete"
+harness = false
+
+[[bench]]
+name = "graph_delete_reclamation"
+harness = false
+
+[[bench]]
+name = "graph_snapshot_roundtrip"
+harness = false
+
+[[bench]]
+name = "graph_read_under_write"
+harness = false
+
+[[bench]]
+name = "graph_mixed_workload"
+harness = false
+
+[[bench]]
+name = "text_search_bm25"
 harness = false
 
 [lints]

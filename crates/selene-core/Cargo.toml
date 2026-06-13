@@ -12,24 +12,38 @@ description = "Foundation types for the selene-db ISO/IEC 39075:2024 GQL propert
 thiserror.workspace = true
 parking_lot.workspace = true
 miette.workspace = true
-lasso.workspace = true
 jiff.workspace = true
 rust_decimal.workspace = true
 uuid.workspace = true
 smallvec.workspace = true
 bytes.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 rkyv.workspace = true
+wide.workspace = true
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion.workspace = true
+mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 insta.workspace = true
 postcard.workspace = true
+pollster.workspace = true
+rayon.workspace = true
+wgpu.workspace = true
 
 [features]
 metrics = ["dep:metrics"]
+
+[[bench]]
+name = "value_clone"
+harness = false
+
+[[bench]]
+name = "vector_wgpu"
+harness = false
 
 [lints]
 workspace = true

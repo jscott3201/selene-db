@@ -6,7 +6,9 @@
 //! (`crate::mutator`) and rebuilt wholesale on the snapshot-load /
 //! recovery path (`crate::shared::rebuild_derived_state` +
 //! `crate::property_index::rebuild_property_indexes` +
-//! `crate::composite_property_index::rebuild_composite_property_indexes`). A
+//! `crate::composite_property_index::rebuild_composite_property_indexes` +
+//! `crate::vector_index::rebuild_vector_indexes` +
+//! `crate::text_index::rebuild_text_indexes`). A
 //! bug in either path corrupts query results silently — the engine keeps
 //! answering, just with wrong rows.
 //!
@@ -20,10 +22,12 @@
 
 use roaring::RoaringBitmap;
 
-use selene_core::{EdgeId, IStr, NodeId};
+use selene_core::{DbString, EdgeId, NodeId};
 
 use crate::adjacency::AdjacencyEdge;
 use crate::graph::SeleneGraph;
+use crate::id_map::{EngineIdMap, engine_id_map};
+use crate::vector_index::VectorIndexConfig;
 
 impl SeleneGraph {
     /// Re-derive every built-in index from the authoritative node/edge columns
@@ -40,11 +44,14 @@ impl SeleneGraph {
     ///    label sets and alive edge labels; no bucket is present-but-empty.
     /// 2. **Typed property indexes** match a fresh lenient re-build
     ///    (`build_property_index_lenient`). The lenient policy is reused so
-    ///    open-graph kind drift, NaN, and unpoolable `ExternalString` values —
-    ///    which the commit path legitimately skips — do not false-positive.
+    ///    open-graph kind drift and NaN — which the commit path legitimately
+    ///    skips — do not false-positive.
     /// 3. **Composite typed indexes** match a fresh lenient re-build, same
     ///    skip-aware policy.
-    /// 4. **Store integrity / alive-set parity**: per-store columns share one
+    /// 4. **Vector row-set indexes** match a fresh lenient re-build, same
+    ///    skip-aware policy.
+    /// 5. **Text BM25 indexes** match a fresh re-build from string properties.
+    /// 6. **Store integrity / alive-set parity**: per-store columns share one
     ///    length and every alive row index is in range. Dead rows are
     ///    permitted holes (D11) and are only asserted absent from derived
     ///    state, never from the columns. The snapshot's `meta.next_*_id`
@@ -53,7 +60,7 @@ impl SeleneGraph {
     ///    fields after a `from_graph` / recovery load (the real allocator
     ///    floor is enforced separately by `IdAllocator::from_meta_with_floors`),
     ///    so they are not a derived-index invariant.
-    /// 5. **Adjacency** matches a re-derivation from alive edges in both
+    /// 7. **Adjacency** matches a re-derivation from alive edges in both
     ///    directions, with no present-but-empty entry.
     ///
     /// # Errors
@@ -65,6 +72,8 @@ impl SeleneGraph {
         self.check_edge_label_index()?;
         self.check_property_indexes()?;
         self.check_composite_property_indexes()?;
+        self.check_vector_indexes()?;
+        self.check_text_indexes()?;
         self.check_adjacency()?;
         Ok(())
     }
@@ -112,13 +121,13 @@ impl SeleneGraph {
 
     /// Family (1a): node label bitmaps.
     fn check_label_index(&self) -> Result<(), String> {
-        let mut reference: imbl::HashMap<IStr, RoaringBitmap> = imbl::HashMap::new();
+        let mut reference: imbl::HashMap<DbString, RoaringBitmap> = imbl::HashMap::new();
         for row in self.node_store.alive.iter() {
             let Some(labels) = self.node_store.labels.get(row as usize) else {
                 return Err(format!("alive node row {row} has no label column entry"));
             };
             for label in labels.iter() {
-                reference.entry(*label).or_default().insert(row);
+                reference.entry(label.clone()).or_default().insert(row);
             }
         }
         compare_bitmap_index("node label index", &self.idx_label, &reference)
@@ -126,12 +135,12 @@ impl SeleneGraph {
 
     /// Family (1b): edge label bitmaps.
     fn check_edge_label_index(&self) -> Result<(), String> {
-        let mut reference: imbl::HashMap<IStr, RoaringBitmap> = imbl::HashMap::new();
+        let mut reference: imbl::HashMap<DbString, RoaringBitmap> = imbl::HashMap::new();
         for row in self.edge_store.alive.iter() {
             let Some(label) = self.edge_store.label.get(row as usize) else {
                 return Err(format!("alive edge row {row} has no label column entry"));
             };
-            reference.entry(*label).or_default().insert(row);
+            reference.entry(label.clone()).or_default().insert(row);
         }
         compare_bitmap_index("edge label index", &self.idx_edge_label, &reference)
     }
@@ -146,8 +155,8 @@ impl SeleneGraph {
             }
             let reference = crate::property_index::build_property_index_lenient(
                 self,
-                *label,
-                *property,
+                label.clone(),
+                property.clone(),
                 entry.kind(),
             )
             .map_err(|err| {
@@ -177,7 +186,7 @@ impl SeleneGraph {
             let reference =
                 crate::composite_property_index::build_composite_property_index_lenient(
                     self,
-                    *label,
+                    label.clone(),
                     entry.declared_properties.clone(),
                     entry.kinds(),
                 )
@@ -200,15 +209,60 @@ impl SeleneGraph {
         Ok(())
     }
 
-    /// Family (5): in/out adjacency.
+    /// Family (4): vector row-set indexes.
+    fn check_vector_indexes(&self) -> Result<(), String> {
+        for ((label, property), entry) in &self.vector_index {
+            let reference = crate::vector_index::build_vector_index_lenient_with_configs(
+                self,
+                label.clone(),
+                property.clone(),
+                entry.kind(),
+                entry.dimension(),
+                VectorIndexConfig::new(entry.hnsw_config(), entry.ivf_config()),
+            )
+            .map_err(|err| {
+                format!("failed to re-derive vector index ({label}, {property}): {err}")
+            })?;
+            if !entry.index.rows_eq(&reference) {
+                return Err(format!(
+                    "vector index ({label}, {property}) drifted from a fresh re-derivation \
+                     (maintained cardinality {}, reference cardinality {})",
+                    entry.index.cardinality(),
+                    reference.cardinality(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Family (5): BM25 text indexes.
+    fn check_text_indexes(&self) -> Result<(), String> {
+        for ((label, property), entry) in &self.text_index {
+            let reference = crate::TextIndex::build(self, label.clone(), property.clone())
+                .map_err(|err| {
+                    format!("failed to re-derive text index ({label}, {property}): {err}")
+                })?;
+            if !entry.index.rows_eq(&reference) {
+                return Err(format!(
+                    "text index ({label}, {property}) drifted from a fresh re-derivation \
+                     (maintained documents {}, reference documents {})",
+                    entry.index.document_count(),
+                    reference.document_count(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Family (7): in/out adjacency.
     fn check_adjacency(&self) -> Result<(), String> {
-        let mut out_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();
-        let mut in_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();
+        let mut out_reference: EngineIdMap<NodeId, Vec<AdjacencyEdge>> = engine_id_map();
+        let mut in_reference: EngineIdMap<NodeId, Vec<AdjacencyEdge>> = engine_id_map();
         for row in self.edge_store.alive.iter() {
             let Some(edge_id) = self.edge_id_for_row(crate::store::RowIndex::new(row)) else {
                 return Err(format!("alive edge row {row} has no mapped external id"));
             };
-            let Some(label) = self.edge_store.label.get(row as usize).copied() else {
+            let Some(label) = self.edge_store.label.get(row as usize).cloned() else {
                 return Err(format!("alive edge row {row} has no label column entry"));
             };
             let Some(source) = self.edge_store.source.get(row as usize).copied() else {
@@ -221,7 +275,7 @@ impl SeleneGraph {
                 .entry(source)
                 .or_default()
                 .push(AdjacencyEdge {
-                    label,
+                    label: label.clone(),
                     neighbor: target,
                     edge_id,
                 });
@@ -237,13 +291,13 @@ impl SeleneGraph {
     }
 }
 
-/// Compare a maintained `IStr`-keyed bitmap index against a re-derivation,
+/// Compare a maintained `DbString`-keyed bitmap index against a re-derivation,
 /// failing on any key difference, bitmap difference, or empty maintained
 /// bucket.
 fn compare_bitmap_index(
     name: &str,
-    maintained: &imbl::HashMap<IStr, RoaringBitmap>,
-    reference: &imbl::HashMap<IStr, RoaringBitmap>,
+    maintained: &imbl::HashMap<DbString, RoaringBitmap>,
+    reference: &imbl::HashMap<DbString, RoaringBitmap>,
 ) -> Result<(), String> {
     for (label, bitmap) in maintained {
         if bitmap.is_empty() {
@@ -282,8 +336,8 @@ fn compare_bitmap_index(
 /// match before comparison so parallel edges and ordering are both checked.
 fn compare_adjacency(
     direction: &str,
-    maintained: &imbl::HashMap<NodeId, crate::adjacency::AdjacencyEntry>,
-    reference: &imbl::HashMap<NodeId, Vec<AdjacencyEdge>>,
+    maintained: &EngineIdMap<NodeId, crate::adjacency::AdjacencyEntry>,
+    reference: &EngineIdMap<NodeId, Vec<AdjacencyEdge>>,
 ) -> Result<(), String> {
     for (node, entry) in maintained {
         if entry.is_empty() {
@@ -291,7 +345,7 @@ fn compare_adjacency(
                 "{direction} adjacency: node {node} holds a present-but-empty entry"
             ));
         }
-        let maintained_edges: Vec<AdjacencyEdge> = entry.iter().copied().collect();
+        let maintained_edges: Vec<AdjacencyEdge> = entry.iter().cloned().collect();
         match reference.get(node) {
             None => {
                 return Err(format!(
@@ -322,8 +376,8 @@ fn compare_adjacency(
     Ok(())
 }
 
-fn adjacency_sort_key(edge: &AdjacencyEdge) -> (IStr, NodeId, EdgeId) {
-    (edge.label, edge.neighbor, edge.edge_id)
+fn adjacency_sort_key(edge: &AdjacencyEdge) -> (DbString, NodeId, EdgeId) {
+    (edge.label.clone(), edge.neighbor, edge.edge_id)
 }
 
 #[cfg(test)]

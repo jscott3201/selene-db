@@ -2,7 +2,7 @@
 
 use smallvec::SmallVec;
 
-use selene_core::{IStr, NodeId, Value};
+use selene_core::{DbString, NodeId, Value};
 
 use crate::plan::{BindingTableSchema, InsertSiteId};
 
@@ -134,10 +134,10 @@ impl BindingTable {
 
     /// Return the index of the first named column matching `name`.
     #[must_use]
-    pub fn column_index(&self, name: IStr) -> Option<usize> {
+    pub fn column_index(&self, name: DbString) -> Option<usize> {
         self.schema
             .columns
             .iter()
-            .position(|column| column.name == Some(name))
+            .position(|column| column.name == Some(name.clone()))
     }
 }

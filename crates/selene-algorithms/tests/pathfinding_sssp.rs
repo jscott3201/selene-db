@@ -2,15 +2,15 @@
 
 use roaring::RoaringBitmap;
 use selene_algorithms::{GraphProjection, PathfindingError, ProjectionConfig, sssp};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn weight_props(value: f64) -> PropertyMap {
-    PropertyMap::from_pairs([(istr("w"), Value::Float(value))]).unwrap()
+    PropertyMap::from_pairs([(db_string("w"), Value::Float(value))]).unwrap()
 }
 
 fn build_proj(shared: &SharedGraph, weighted: bool) -> GraphProjection {
@@ -21,7 +21,7 @@ fn build_proj(shared: &SharedGraph, weighted: bool) -> GraphProjection {
             name: "test".to_string(),
             node_labels: vec![],
             edge_labels: vec![],
-            weight_property: weighted.then(|| istr("w")),
+            weight_property: weighted.then(|| db_string("w")),
         },
         None,
     )
@@ -30,20 +30,20 @@ fn build_proj(shared: &SharedGraph, weighted: bool) -> GraphProjection {
 
 fn build_graph(count: usize, edges: &[(usize, usize, f64)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         nodes.push(id);
     }
     for &(s, t, w) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], weight_props(w))
+            .create_edge(rel.clone(), nodes[s], nodes[t], weight_props(w))
             .unwrap();
     }
     txn.commit().unwrap();
@@ -159,20 +159,20 @@ fn sssp_handles_sparse_row_projection() {
     // scope bitmap restricting to rows {0, 50, 99}, expect state arrays
     // sized by 3 not 100.
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(100);
     for _ in 0..100 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     // Connect 0 -> 50 -> 99 within the scope (other rows are filtered out).
     txn.mutator()
-        .create_edge(rel, nodes[0], nodes[50], weight_props(2.5))
+        .create_edge(rel.clone(), nodes[0], nodes[50], weight_props(2.5))
         .unwrap();
     txn.mutator()
         .create_edge(rel, nodes[50], nodes[99], weight_props(3.5))
@@ -190,7 +190,7 @@ fn sssp_handles_sparse_row_projection() {
             name: "sparse-sssp".to_string(),
             node_labels: vec![],
             edge_labels: vec![],
-            weight_property: Some(istr("w")),
+            weight_property: Some(db_string("w")),
         },
         Some(&scope),
     )

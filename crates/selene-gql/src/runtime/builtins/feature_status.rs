@@ -7,12 +7,11 @@
 use std::collections::BTreeMap;
 
 use selene_core::{
-    Value,
+    Value, db_string,
     feature_register::{
         FeatureId, REFERENCED_FEATURES, SUPPORTED_FEATURES, is_supported, name_of,
         non_supported_rationale,
     },
-    intern_with_admission,
 };
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -88,9 +87,9 @@ fn feature_status(id: FeatureId, display: &'static str) -> (&'static str, &'stat
 }
 
 fn string(value: &str) -> Result<Value, ProcedureError> {
-    intern_with_admission(value)
-        .map(|(value, _was_new)| Value::String(value))
+    db_string(value)
+        .map(Value::String)
         .map_err(|_err| ProcedureError::Internal {
-            detail: "interner cap exhausted during selene.feature_status".to_owned(),
+            detail: "string construction failed during selene.feature_status".to_owned(),
         })
 }

@@ -1,12 +1,18 @@
 //! Closed graph type catalog definitions.
 
+mod property_defaults;
+mod property_element_types;
 mod record_types;
 
 use std::{collections::BTreeSet, fmt};
 
-use selene_core::{IStr, LabelSet, PropertyValueType, Value};
+use selene_core::{
+    ByteStringType, CharacterStringType, DbString, DecimalType, LabelSet, PropertyValueType,
+};
 use serde::{Deserialize, Serialize};
 
+pub use property_defaults::{PropertyDefaultRecordField, PropertyDefaultValue};
+pub use property_element_types::PropertyElementType;
 use record_types::validate_record_field_types;
 pub use record_types::{RecordFieldType, RecordFieldTypeDef, RecordFieldTypes};
 
@@ -35,7 +41,7 @@ pub const MAX_RECORD_TYPE_NESTING: u32 = MAX_LIST_TYPE_NESTING;
 )]
 pub struct GraphTypeDef {
     /// Graph type name.
-    pub name: IStr,
+    pub name: DbString,
     /// Node-type elements in graph-type order.
     pub node_types: Vec<NodeTypeDef>,
     /// Edge-type elements in graph-type order.
@@ -74,7 +80,7 @@ impl GraphTypeDef {
 
     /// Return the node-type index matching `name`.
     #[must_use]
-    pub fn node_type_index_for(&self, name: IStr) -> Option<u32> {
+    pub fn node_type_index_for(&self, name: DbString) -> Option<u32> {
         self.node_types
             .iter()
             .position(|node_type| node_type.name == name)
@@ -85,7 +91,7 @@ impl GraphTypeDef {
     #[must_use]
     pub fn find_edge_type(
         &self,
-        label: IStr,
+        label: DbString,
         source_node_type: u32,
         target_node_type: u32,
     ) -> Option<&EdgeTypeDef> {
@@ -102,7 +108,7 @@ impl GraphTypeDef {
 
     /// Return the first edge type carrying `label`.
     #[must_use]
-    pub fn first_edge_type_with_label(&self, label: IStr) -> Option<&EdgeTypeDef> {
+    pub fn first_edge_type_with_label(&self, label: DbString) -> Option<&EdgeTypeDef> {
         self.edge_types
             .iter()
             .find(|edge_type| edge_type.label == label)
@@ -110,7 +116,7 @@ impl GraphTypeDef {
 
     /// Return the edge-type index matching `name`.
     #[must_use]
-    pub fn edge_type_index_for(&self, name: IStr) -> Option<u32> {
+    pub fn edge_type_index_for(&self, name: DbString) -> Option<u32> {
         self.edge_types
             .iter()
             .position(|edge_type| edge_type.name == name)
@@ -123,7 +129,7 @@ impl GraphTypeDef {
     /// cannot tolerate positional drift must reject the drop before using this
     /// helper.
     #[must_use]
-    pub fn without_node_type(&self, name: IStr) -> Option<Self> {
+    pub fn without_node_type(&self, name: DbString) -> Option<Self> {
         let index = self
             .node_types
             .iter()
@@ -135,7 +141,7 @@ impl GraphTypeDef {
 
     /// Return a copy with the named edge type removed.
     #[must_use]
-    pub fn without_edge_type(&self, name: IStr) -> Option<Self> {
+    pub fn without_edge_type(&self, name: DbString) -> Option<Self> {
         let index = self
             .edge_types
             .iter()
@@ -153,11 +159,15 @@ impl GraphTypeDef {
     pub fn validate_ref(&self) -> GraphResult<()> {
         ensure_unique_names(
             "node type",
-            self.node_types.iter().map(|node_type| node_type.name),
+            self.node_types
+                .iter()
+                .map(|node_type| node_type.name.clone()),
         )?;
         ensure_unique_names(
             "edge type",
-            self.edge_types.iter().map(|edge_type| edge_type.name),
+            self.edge_types
+                .iter()
+                .map(|edge_type| edge_type.name.clone()),
         )?;
 
         let mut seen_label_sets = BTreeSet::new();
@@ -172,7 +182,7 @@ impl GraphTypeDef {
             // unreachable AND cause edge / property validation to dispatch
             // against the wrong type. Reject ambiguity at type-construction
             // time rather than letting it manifest as silent mis-typing.
-            let label_key: Vec<IStr> = node_type.key_labels.iter().copied().collect();
+            let label_key: Vec<DbString> = node_type.key_labels.iter().cloned().collect();
             if !seen_label_sets.insert(label_key) {
                 return Err(GraphError::Inconsistent {
                     reason: format!(
@@ -183,20 +193,34 @@ impl GraphTypeDef {
             }
             ensure_unique_names(
                 "node property",
-                node_type.properties.iter().map(|property| property.name),
+                node_type
+                    .properties
+                    .iter()
+                    .map(|property| property.name.clone()),
             )?;
-            validate_property_element_types(node_type.name, &node_type.properties)?;
+            validate_property_element_types(node_type.name.clone(), &node_type.properties)?;
         }
 
         let node_type_count = self.node_types.len();
         for (index, edge_type) in self.edge_types.iter().enumerate() {
-            ensure_endpoint_index(node_type_count, &edge_type.source_node_type, edge_type.name)?;
-            ensure_endpoint_index(node_type_count, &edge_type.target_node_type, edge_type.name)?;
+            ensure_endpoint_index(
+                node_type_count,
+                &edge_type.source_node_type,
+                edge_type.name.clone(),
+            )?;
+            ensure_endpoint_index(
+                node_type_count,
+                &edge_type.target_node_type,
+                edge_type.name.clone(),
+            )?;
             ensure_unique_names(
                 "edge property",
-                edge_type.properties.iter().map(|property| property.name),
+                edge_type
+                    .properties
+                    .iter()
+                    .map(|property| property.name.clone()),
             )?;
-            validate_property_element_types(edge_type.name, &edge_type.properties)?;
+            validate_property_element_types(edge_type.name.clone(), &edge_type.properties)?;
             if self.edge_types[..index].iter().any(|previous| {
                 previous.label == edge_type.label
                     && previous
@@ -219,10 +243,36 @@ impl GraphTypeDef {
 }
 
 fn validate_property_element_types(
-    type_name: IStr,
+    type_name: DbString,
     properties: &[PropertyTypeDef],
 ) -> GraphResult<()> {
     for property in properties {
+        if property.decimal_type.is_some() && property.value_type != PropertyValueType::Decimal {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares decimal precision for non-DECIMAL value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        }
+        if property.character_string_type.is_some()
+            && property.value_type != PropertyValueType::String
+        {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares character-string length for non-STRING value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        }
+        if property.byte_string_type.is_some() && property.value_type != PropertyValueType::Bytes {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares byte-string length for non-BYTES value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        }
         if property.value_type == PropertyValueType::List {
             let Some(element_type) = property.list_element_type.as_ref() else {
                 // Legacy snapshots written before typed LIST<T> descriptors
@@ -231,12 +281,17 @@ fn validate_property_element_types(
                 // catalog DDL always fills the descriptor.
                 continue;
             };
-            validate_property_element_type(type_name, property.name, element_type, 1)?;
+            validate_property_element_type(
+                type_name.clone(),
+                property.name.clone(),
+                element_type,
+                1,
+            )?;
         } else if property.value_type == PropertyValueType::RecordTyped {
             // Bare RecordTyped is permissive (mirrors legacy untyped LIST): with no
             // declared field structure there is nothing to validate.
             if let Some(fields) = property.record_field_types.as_ref() {
-                validate_record_field_types(type_name, property.name, fields, 1)?;
+                validate_record_field_types(type_name.clone(), property.name.clone(), fields, 1)?;
             }
         } else if property.list_element_type.is_some() {
             return Err(GraphError::Inconsistent {
@@ -258,8 +313,8 @@ fn validate_property_element_types(
 }
 
 fn validate_property_element_type(
-    type_name: IStr,
-    property_name: IStr,
+    type_name: DbString,
+    property_name: DbString,
     element_type: &PropertyElementType,
     depth: u32,
 ) -> GraphResult<()> {
@@ -271,6 +326,9 @@ fn validate_property_element_type(
         });
     }
     match element_type {
+        PropertyElementType::NotNull(inner) => {
+            validate_property_element_type(type_name, property_name, inner, depth)
+        }
         PropertyElementType::Scalar(
             PropertyValueType::List | PropertyValueType::Record | PropertyValueType::RecordTyped,
         ) => Err(GraphError::Inconsistent {
@@ -279,7 +337,10 @@ fn validate_property_element_type(
                 element_type.value_type()
             ),
         }),
-        PropertyElementType::Scalar(_) => Ok(()),
+        PropertyElementType::Scalar(_)
+        | PropertyElementType::CharacterString(_)
+        | PropertyElementType::Decimal(_)
+        | PropertyElementType::ByteString(_) => Ok(()),
         PropertyElementType::List(inner) => {
             validate_property_element_type(type_name, property_name, inner, depth + 1)
         }
@@ -299,7 +360,7 @@ fn validate_property_element_type(
 )]
 pub struct NodeTypeDef {
     /// Node type name.
-    pub name: IStr,
+    pub name: DbString,
     /// Defining label set for this node type.
     pub key_labels: LabelSet,
     /// Declared properties.
@@ -446,9 +507,9 @@ fn sorted_slices_intersect(left: &[u32], right: &[u32]) -> bool {
 )]
 pub struct EdgeTypeDef {
     /// Edge type name.
-    pub name: IStr,
+    pub name: DbString,
     /// Edge label.
-    pub label: IStr,
+    pub label: DbString,
     /// Source endpoint definition.
     pub source_node_type: EdgeEndpointDef,
     /// Target endpoint definition.
@@ -472,7 +533,7 @@ pub struct EdgeTypeDef {
 )]
 pub struct PropertyTypeDef {
     /// Property name.
-    pub name: IStr,
+    pub name: DbString,
     /// Declared value type.
     pub value_type: PropertyValueType,
     /// Declared element type when [`PropertyTypeDef::value_type`] is `List`.
@@ -483,121 +544,21 @@ pub struct PropertyTypeDef {
     pub default: Option<PropertyDefaultValue>,
     /// Whether updates to this property are forbidden after creation.
     pub immutable: bool,
+    /// Whether non-null property values must be unique within the declaring type.
+    pub unique: bool,
+    /// Declared decimal precision/scale when [`PropertyTypeDef::value_type`] is
+    /// `Decimal`.
+    pub decimal_type: Option<DecimalType>,
+    /// Declared character-string length when [`PropertyTypeDef::value_type`] is
+    /// `String`.
+    pub character_string_type: Option<CharacterStringType>,
+    /// Declared byte-string length when [`PropertyTypeDef::value_type`] is `Bytes`.
+    pub byte_string_type: Option<ByteStringType>,
     /// Declared field types when [`PropertyTypeDef::value_type`] is `RecordTyped`.
     /// `Some` only for closed/typed `RECORD` declarations; `None` for open `Record`
     /// and every non-record value type (symmetric to
     /// [`PropertyTypeDef::list_element_type`]).
     pub record_field_types: Option<RecordFieldTypes>,
-}
-
-/// Persistable element-type descriptor for `LIST<T>` property declarations.
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Eq,
-    Hash,
-    PartialEq,
-    rkyv::Archive,
-    rkyv::Deserialize,
-    rkyv::Serialize,
-    Serialize,
-)]
-#[rkyv(
-    bytecheck(bounds(__C: rkyv::validation::ArchiveContext)),
-    deserialize_bounds(__D::Error: rkyv::rancor::Source),
-    serialize_bounds(__S: rkyv::ser::Writer)
-)]
-#[non_exhaustive]
-pub enum PropertyElementType {
-    /// Scalar list element type.
-    Scalar(PropertyValueType),
-    /// Nested list element type.
-    List(#[rkyv(omit_bounds)] Box<PropertyElementType>),
-}
-
-impl PropertyElementType {
-    /// Return the coarse property-value type for this descriptor.
-    #[must_use]
-    pub const fn value_type(&self) -> PropertyValueType {
-        match self {
-            Self::Scalar(value_type) => *value_type,
-            Self::List(_) => PropertyValueType::List,
-        }
-    }
-
-    /// Return true when `value` belongs to this element type.
-    ///
-    /// **Element nullability is not representable (GV90 NOT_SUPPORTED).** A
-    /// `LIST<T>` descriptor matches a list element strictly by type, so a
-    /// `Value::Null` element only conforms to a `LIST<NULL>` descriptor — never
-    /// to a `LIST<Int>`. The engine has no way to spell *either* `LIST<T NULL>`
-    /// (element may be null) or `LIST<T NOT NULL>` (element must be non-null):
-    /// per-element nullability is governed by ISO 39075:2024 GV90 (Explicit value
-    /// type nullability), which selene-db does NOT offer. The single strict
-    /// "element matches T" rule below is therefore internally consistent — the
-    /// honest "not offered" path, not a partial implementation. See the pin test
-    /// `list_element_null_is_rejected_strictly` in `graph_types_tests.rs`.
-    #[must_use]
-    pub fn matches(&self, value: &Value) -> bool {
-        match self {
-            Self::Scalar(value_type) => value_type.matches(value),
-            Self::List(element_type) => match value {
-                Value::List(values) => values.iter().all(|value| element_type.matches(value)),
-                _ => false,
-            },
-        }
-    }
-}
-
-/// Persistable default-value descriptor for closed graph property declarations.
-#[derive(
-    Clone,
-    Debug,
-    Deserialize,
-    Eq,
-    Hash,
-    PartialEq,
-    rkyv::Archive,
-    rkyv::Deserialize,
-    rkyv::Serialize,
-    Serialize,
-)]
-#[non_exhaustive]
-pub enum PropertyDefaultValue {
-    /// Null default.
-    Null,
-    /// Boolean default.
-    Boolean(bool),
-    /// Signed integer default.
-    Integer(i64),
-    /// Interned string default.
-    String(IStr),
-}
-
-impl PropertyDefaultValue {
-    /// Materialize this descriptor as a runtime value.
-    #[must_use]
-    pub const fn to_value(&self) -> Value {
-        match self {
-            Self::Null => Value::Null,
-            Self::Boolean(value) => Value::Bool(*value),
-            Self::Integer(value) => Value::Int(*value),
-            Self::String(value) => Value::String(*value),
-        }
-    }
-
-    /// Convert a runtime value into a persistable default descriptor.
-    #[must_use]
-    pub const fn from_value(value: &Value) -> Option<Self> {
-        match value {
-            Value::Null => Some(Self::Null),
-            Value::Bool(value) => Some(Self::Boolean(*value)),
-            Value::Int(value) => Some(Self::Integer(*value)),
-            Value::String(value) => Some(Self::String(*value)),
-            _ => None,
-        }
-    }
 }
 
 /// Closed-graph validation mode.
@@ -645,10 +606,13 @@ pub enum DropBehavior {
     Cascade,
 }
 
-fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) -> GraphResult<()> {
+fn ensure_unique_names(
+    kind: &'static str,
+    names: impl Iterator<Item = DbString>,
+) -> GraphResult<()> {
     let mut seen = BTreeSet::new();
     for name in names {
-        if !seen.insert(name) {
+        if !seen.insert(name.clone()) {
             return Err(GraphError::Inconsistent {
                 reason: format!("duplicate {kind} name {name}"),
             });
@@ -657,7 +621,7 @@ fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) ->
     Ok(())
 }
 
-fn ensure_node_type_index(count: usize, index: u32, edge_name: IStr) -> GraphResult<()> {
+fn ensure_node_type_index(count: usize, index: u32, edge_name: DbString) -> GraphResult<()> {
     if usize::try_from(index).is_ok_and(|index| index < count) {
         return Ok(());
     }
@@ -671,7 +635,7 @@ fn ensure_node_type_index(count: usize, index: u32, edge_name: IStr) -> GraphRes
 fn ensure_endpoint_index(
     count: usize,
     endpoint: &EdgeEndpointDef,
-    edge_name: IStr,
+    edge_name: DbString,
 ) -> GraphResult<()> {
     match endpoint {
         EdgeEndpointDef::Any => Ok(()),
@@ -700,7 +664,7 @@ fn ensure_endpoint_index(
                 }
             }
             for index in indices {
-                ensure_node_type_index(count, *index, edge_name)?;
+                ensure_node_type_index(count, *index, edge_name.clone())?;
             }
             Ok(())
         }
@@ -710,3 +674,7 @@ fn ensure_endpoint_index(
 #[cfg(test)]
 #[path = "graph_types_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "graph_types_property_default_tests.rs"]
+mod property_default_tests;

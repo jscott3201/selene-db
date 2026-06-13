@@ -1,16 +1,23 @@
 //! Value-expression bind and type-inference handling.
 
 use crate::{
-    IsCheckKind, LimitValue, MatchClause, PipelineStatement, QueryPipeline, ReturnClause,
-    ValueExpr,
+    IsCheckKind, LimitValue, PipelineStatement, QueryPipeline, ReturnClause, ValueExpr,
     analyze::{
-        error::{AnalysisError, ConditionClause},
+        error::{AnalysisError, ConditionClause, ExpectedType, TypeMismatchContext},
         infer,
         types::{AnalyzedType, ExprId},
     },
 };
 
-use super::{ANALYZER_MAX_DEPTH, BindContext, pattern, query};
+use super::{
+    BindContext,
+    element_ref::{
+        ElementReferenceRequirement, bind_singleton_element_variable_reference,
+        bind_singleton_element_variable_references, validate_singleton_element_variable_reference,
+    },
+    expr_depth::{check_expr_depth, check_subquery_depth},
+    pattern, query,
+};
 use crate::analyze::{binding::BindingUseKind, scope::ScopeKind};
 
 pub(crate) fn bind_value_expr(
@@ -19,11 +26,14 @@ pub(crate) fn bind_value_expr(
 ) -> Result<ExprId, AnalysisError> {
     // Why: `ValueExpr` recursion fans out to one stack frame per nesting
     // level; the depth-256 contract enforced by `check_expr_depth` is well
-    // above what macOS's 2 MB default thread stack can carry in debug
-    // builds once enum-variant sizes grow. `stacker::maybe_grow` allocates
-    // a fresh 1 MB segment whenever fewer than 64 KB remain, matching the
-    // rustc/syn/serde analyzer pattern.
-    stacker::maybe_grow(64 * 1024, 1024 * 1024, || bind_value_expr_inner(ctx, expr))
+    // above what a small (e.g. 2 MB default, or smaller test-harness) thread
+    // stack can carry in debug builds, and the per-level bind frame carries
+    // several owned `DbString` values.
+    // `stacker::maybe_grow` allocates a fresh 1 MB segment whenever fewer than
+    // 256 KB remain; the red zone is sized to comfortably exceed a single
+    // unoptimized `bind_value_expr_inner` frame so growth always fires before
+    // the next descent can overrun the live segment (rustc/syn/serde pattern).
+    stacker::maybe_grow(256 * 1024, 1024 * 1024, || bind_value_expr_inner(ctx, expr))
 }
 
 fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<ExprId, AnalysisError> {
@@ -35,15 +45,14 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
         let ty = match expr {
             ValueExpr::Literal(literal) => infer::literal(literal),
             ValueExpr::Variable { name, span } => {
-                let binding = ctx.resolve(*name, *span, BindingUseKind::Variable)?;
+                let binding = ctx.resolve(name.clone(), *span, BindingUseKind::Variable)?;
                 ctx.binding_type(binding)
             }
             ValueExpr::Parameter { declared_type, .. } => declared_type
                 .clone()
                 .map_or(AnalyzedType::Dynamic, AnalyzedType::Resolved),
-            ValueExpr::PropertyAccess { target, span, .. } => {
-                let target_id = bind_value_expr(ctx, target)?;
-                reject_group_variable_property_access(ctx.expr_type(target_id), *span)?;
+            ValueExpr::PropertyAccess { target, .. } => {
+                bind_value_expr(ctx, target)?;
                 AnalyzedType::Dynamic
             }
             ValueExpr::ListAccess { target, index, .. } => {
@@ -70,6 +79,10 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 // deferred to the typed-RECORD brief.
                 AnalyzedType::Resolved(crate::GqlType::Record(crate::RecordType::Open))
             }
+            ValueExpr::PathConstructor { elements, span } => {
+                bind_path_constructor(ctx, elements, *span)?;
+                AnalyzedType::Resolved(crate::GqlType::Path)
+            }
             ValueExpr::BinaryOp { op, lhs, rhs, .. } => {
                 let lhs_id = bind_value_expr(ctx, lhs)?;
                 let rhs_id = bind_value_expr(ctx, rhs)?;
@@ -85,9 +98,24 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let operand_id = bind_value_expr(ctx, operand)?;
                 infer::unary(*op, ctx.expr_type(operand_id), operand.span())?
             }
-            ValueExpr::FunctionCall { args, .. } => {
-                bind_many(ctx, args)?;
-                AnalyzedType::Dynamic
+            ValueExpr::FunctionCall { name, args, .. } => {
+                if is_element_id_function(name) && args.len() == 1 {
+                    bind_singleton_element_variable_reference(
+                        ctx,
+                        &args[0],
+                        ElementReferenceRequirement::NodeOrEdge,
+                        "ELEMENT_ID argument",
+                    )?;
+                    AnalyzedType::Resolved(crate::GqlType::String)
+                } else {
+                    bind_many(ctx, args)?;
+                    AnalyzedType::Dynamic
+                }
+            }
+            ValueExpr::DurationBetween { start, end, .. } => {
+                bind_value_expr(ctx, start)?;
+                bind_value_expr(ctx, end)?;
+                AnalyzedType::Resolved(crate::GqlType::Duration)
             }
             ValueExpr::Normalize { source, .. } => {
                 let source_id = bind_value_expr(ctx, source)?;
@@ -96,11 +124,15 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
             ValueExpr::Trim {
                 character, source, ..
             } => {
-                if let Some(character) = character {
-                    bind_value_expr(ctx, character)?;
-                }
+                let character_id = character
+                    .as_deref()
+                    .map(|character| bind_value_expr(ctx, character))
+                    .transpose()?;
                 let source_id = bind_value_expr(ctx, source)?;
-                infer::trim_source(ctx.expr_type(source_id), source.span())?
+                let character_type = character_id
+                    .zip(character.as_deref())
+                    .map(|(id, character)| (ctx.expr_type(id), character.span()));
+                infer::trim(character_type, ctx.expr_type(source_id), source.span())?
             }
             ValueExpr::IsCheck {
                 operand,
@@ -109,7 +141,7 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 ..
             } => {
                 let operand_id = bind_value_expr(ctx, operand)?;
-                bind_is_check(ctx, kind)?;
+                bind_is_check(ctx, operand, operand_id, kind)?;
                 infer::is_check(kind, ctx.expr_type(operand_id), operand.span(), *span)?
             }
             ValueExpr::InList { operand, list, .. } => {
@@ -117,13 +149,26 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let items = bind_many_with_spans(ctx, list)?;
                 infer::in_list(ctx.expr_type(operand_id), operand.span(), &items)?
             }
-            ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
-                bind_many(ctx, items)?;
+            ValueExpr::InListExpression { operand, list, .. } => {
+                let operand_id = bind_value_expr(ctx, operand)?;
+                let list_id = bind_value_expr(ctx, list)?;
+                infer::in_list_expression(
+                    ctx.expr_type(operand_id),
+                    operand.span(),
+                    ctx.expr_type(list_id),
+                    list.span(),
+                )?
+            }
+            ValueExpr::AllDifferent { items, .. } => {
+                bind_singleton_element_variable_references(ctx, items, "ALL_DIFFERENT arguments")?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
-            ValueExpr::PropertyExists { target, span, .. } => {
-                let target_id = bind_value_expr(ctx, target)?;
-                reject_group_variable_property_access(ctx.expr_type(target_id), *span)?;
+            ValueExpr::Same { items, .. } => {
+                bind_singleton_element_variable_references(ctx, items, "SAME arguments")?;
+                AnalyzedType::Resolved(crate::GqlType::Boolean)
+            }
+            ValueExpr::PropertyExists { target, .. } => {
+                bind_property_exists_target(ctx, target)?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
             ValueExpr::Case {
@@ -194,274 +239,54 @@ fn bind_value_subquery(
     Ok(AnalyzedType::DYNAMIC)
 }
 
-fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
-    let mut stack = vec![(expr, 1_u32)];
-    while let Some((expr, depth)) = stack.pop() {
-        if depth > ANALYZER_MAX_DEPTH {
-            return Err(AnalysisError::RecursionLimitExceeded { depth });
-        }
-        let next = depth.saturating_add(1);
-        match expr {
-            ValueExpr::PropertyAccess { target, .. } => stack.push((target, next)),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push((index, next));
-                stack.push((target, next));
-            }
-            ValueExpr::ListLiteral { items, .. } => {
-                stack.extend(items.iter().rev().map(|item| (item, next)));
-            }
-            ValueExpr::RecordLiteral { fields, .. } => {
-                stack.extend(fields.iter().rev().map(|(_, value)| (value, next)));
-            }
-            ValueExpr::BinaryOp { lhs, rhs, .. } => {
-                stack.push((rhs, next));
-                stack.push((lhs, next));
-            }
-            ValueExpr::UnaryOp { operand, .. } => stack.push((operand, next)),
-            ValueExpr::FunctionCall { args, .. } => {
-                stack.extend(args.iter().rev().map(|arg| (arg, next)));
-            }
-            ValueExpr::IsCheck { operand, kind, .. } => {
-                stack.push((operand, next));
-                match kind {
-                    IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-                        stack.push((value, next));
-                    }
-                    IsCheckKind::Null
-                    | IsCheckKind::Directed
-                    | IsCheckKind::Labeled(_)
-                    | IsCheckKind::TruthValue(_)
-                    | IsCheckKind::Typed(_)
-                    | IsCheckKind::Normalized(_) => {}
-                }
-            }
-            ValueExpr::InList { operand, list, .. } => {
-                stack.extend(list.iter().rev().map(|item| (item, next)));
-                stack.push((operand, next));
-            }
-            ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
-                stack.extend(items.iter().rev().map(|item| (item, next)));
-            }
-            ValueExpr::PropertyExists { target, .. } => stack.push((target, next)),
-            ValueExpr::Case {
-                branches,
-                else_branch,
-                ..
-            } => {
-                if let Some(value) = else_branch {
-                    stack.push((value, next));
-                }
-                for (condition, value) in branches.iter().rev() {
-                    stack.push((value, next));
-                    stack.push((condition, next));
-                }
-            }
-            ValueExpr::Cast { value, .. } | ValueExpr::Normalize { source: value, .. } => {
-                stack.push((value, next));
-            }
-            ValueExpr::Trim {
-                character, source, ..
-            } => {
-                stack.push((source, next));
-                if let Some(character) = character {
-                    stack.push((character, next));
-                }
-            }
-            ValueExpr::Literal(_)
-            | ValueExpr::Variable { .. }
-            | ValueExpr::Parameter { .. }
-            | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. }
-            | ValueExpr::ValueSubquery { .. } => {}
-        }
-    }
-    Ok(())
-}
-
-fn check_subquery_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
-    check_expr_subquery_depth(expr, 1)
-}
-
-pub(crate) fn check_query_subquery_depth(
-    pipeline: &QueryPipeline,
-    depth: u32,
+fn bind_property_exists_target(
+    ctx: &mut BindContext,
+    target: &ValueExpr,
 ) -> Result<(), AnalysisError> {
-    if depth > ANALYZER_MAX_DEPTH {
-        return Err(AnalysisError::RecursionLimitExceeded { depth });
-    }
-    for statement in &pipeline.statements {
-        match statement {
-            PipelineStatement::Match(clause) => {
-                check_match_clause_subquery_depth(clause, depth)?;
-            }
-            PipelineStatement::Filter(value) => check_expr_subquery_depth(value, depth)?,
-            PipelineStatement::Let(bindings) => {
-                for binding in bindings {
-                    check_expr_subquery_depth(&binding.value, depth)?;
-                }
-            }
-            PipelineStatement::Unwind(unwind) => check_expr_subquery_depth(&unwind.source, depth)?,
-            PipelineStatement::Sorting(terms) => {
-                for term in terms {
-                    check_expr_subquery_depth(&term.expr, depth)?;
-                }
-            }
-            PipelineStatement::Return(clause) => check_return_subquery_depth(clause, depth)?,
-            PipelineStatement::With(clause) => {
-                for item in &clause.items {
-                    check_expr_subquery_depth(&item.expr, depth)?;
-                }
-                if let Some(group_by) = &clause.group_by {
-                    for value in group_by {
-                        check_expr_subquery_depth(value, depth)?;
-                    }
-                }
-                if let Some(value) = &clause.having {
-                    check_expr_subquery_depth(value, depth)?;
-                }
-                if let Some(value) = &clause.where_clause {
-                    check_expr_subquery_depth(value, depth)?;
-                }
-            }
-            PipelineStatement::Call(call) => {
-                for arg in &call.args {
-                    check_expr_subquery_depth(arg, depth)?;
-                }
-            }
-            PipelineStatement::CallSubquery(call) => {
-                check_query_subquery_depth(&call.body, depth.saturating_add(1))?;
-            }
-            PipelineStatement::Limit(_) | PipelineStatement::Offset(_) => {}
-        }
-    }
-    Ok(())
+    bind_singleton_element_variable_reference(
+        ctx,
+        target,
+        ElementReferenceRequirement::NodeOrEdge,
+        "PROPERTY_EXISTS target",
+    )
 }
 
-fn check_match_clause_subquery_depth(
-    clause: &MatchClause,
-    depth: u32,
+fn bind_path_constructor(
+    ctx: &mut BindContext,
+    elements: &[ValueExpr],
+    span: crate::SourceSpan,
 ) -> Result<(), AnalysisError> {
-    for pattern in &clause.patterns {
-        for element in &pattern.elements {
-            match element {
-                crate::PatternElement::Node(node) => {
-                    for (_, value) in &node.properties {
-                        check_expr_subquery_depth(value, depth)?;
-                    }
-                    if let Some(value) = &node.inline_where {
-                        check_expr_subquery_depth(value, depth)?;
-                    }
-                }
-                crate::PatternElement::Edge(edge) => {
-                    for (_, value) in &edge.properties {
-                        check_expr_subquery_depth(value, depth)?;
-                    }
-                    if let Some(value) = &edge.inline_where {
-                        check_expr_subquery_depth(value, depth)?;
-                    }
-                }
+    if elements.is_empty() || elements.len().is_multiple_of(2) {
+        return Err(AnalysisError::InvalidReference {
+            message: "PATH constructor requires node, edge, node, ... elements".to_owned(),
+            span,
+        });
+    }
+    for (position, element) in elements.iter().enumerate() {
+        let element_id = bind_value_expr(ctx, element)?;
+        let expected = if position % 2 == 0 {
+            crate::GqlType::NodeRef
+        } else {
+            crate::GqlType::EdgeRef
+        };
+        match ctx.expr_type(element_id) {
+            AnalyzedType::Dynamic | AnalyzedType::Resolved(crate::GqlType::Null) => {}
+            AnalyzedType::Resolved(found) if *found == expected => {}
+            AnalyzedType::Resolved(found) => {
+                return Err(AnalysisError::TypeMismatch {
+                    context: TypeMismatchContext::PathConstructorElement { position },
+                    expected: ExpectedType::Specific(expected),
+                    found: found.clone(),
+                    span: element.span(),
+                });
             }
         }
-    }
-    if let Some(value) = &clause.where_clause {
-        check_expr_subquery_depth(value, depth)?;
     }
     Ok(())
 }
 
-fn check_return_subquery_depth(clause: &ReturnClause, depth: u32) -> Result<(), AnalysisError> {
-    for item in &clause.items {
-        check_expr_subquery_depth(&item.expr, depth)?;
-    }
-    if let Some(group_by) = &clause.group_by {
-        for value in group_by {
-            check_expr_subquery_depth(value, depth)?;
-        }
-    }
-    if let Some(value) = &clause.having {
-        check_expr_subquery_depth(value, depth)?;
-    }
-    Ok(())
-}
-
-fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), AnalysisError> {
-    let mut stack = vec![(expr, depth)];
-    while let Some((expr, depth)) = stack.pop() {
-        match expr {
-            ValueExpr::PropertyAccess { target, .. } => stack.push((target, depth)),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push((index, depth));
-                stack.push((target, depth));
-            }
-            ValueExpr::ListLiteral { items, .. }
-            | ValueExpr::AllDifferent { items, .. }
-            | ValueExpr::Same { items, .. } => {
-                stack.extend(items.iter().rev().map(|item| (item, depth)));
-            }
-            ValueExpr::RecordLiteral { fields, .. } => {
-                stack.extend(fields.iter().rev().map(|(_, value)| (value, depth)));
-            }
-            ValueExpr::BinaryOp { lhs, rhs, .. } => {
-                stack.push((rhs, depth));
-                stack.push((lhs, depth));
-            }
-            ValueExpr::UnaryOp { operand, .. }
-            | ValueExpr::PropertyExists {
-                target: operand, ..
-            } => stack.push((operand, depth)),
-            ValueExpr::FunctionCall { args, .. } | ValueExpr::InList { list: args, .. } => {
-                stack.extend(args.iter().rev().map(|arg| (arg, depth)));
-                if let ValueExpr::InList { operand, .. } = expr {
-                    stack.push((operand, depth));
-                }
-            }
-            ValueExpr::IsCheck { operand, kind, .. } => {
-                stack.push((operand, depth));
-                match kind {
-                    IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-                        stack.push((value, depth));
-                    }
-                    IsCheckKind::Null
-                    | IsCheckKind::Directed
-                    | IsCheckKind::Labeled(_)
-                    | IsCheckKind::TruthValue(_)
-                    | IsCheckKind::Typed(_)
-                    | IsCheckKind::Normalized(_) => {}
-                }
-            }
-            ValueExpr::Case {
-                branches,
-                else_branch,
-                ..
-            } => {
-                if let Some(value) = else_branch {
-                    stack.push((value, depth));
-                }
-                for (condition, value) in branches.iter().rev() {
-                    stack.push((value, depth));
-                    stack.push((condition, depth));
-                }
-            }
-            ValueExpr::ValueSubquery { body, .. } => {
-                check_query_subquery_depth(body, depth.saturating_add(1))?;
-            }
-            ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-                check_match_clause_subquery_depth(pattern, depth.saturating_add(1))?;
-            }
-            ValueExpr::Cast { value, .. } => stack.push((value, depth)),
-            ValueExpr::Normalize { source, .. } => stack.push((source, depth)),
-            ValueExpr::Trim {
-                character, source, ..
-            } => {
-                stack.push((source, depth));
-                if let Some(character) = character {
-                    stack.push((character, depth));
-                }
-            }
-            ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => {}
-        }
-    }
-    Ok(())
+fn is_element_id_function(name: &crate::NonEmpty<selene_core::DbString>) -> bool {
+    name.len() == 1 && name.first().as_str().eq_ignore_ascii_case("element_id")
 }
 
 fn validate_value_subquery_shape(
@@ -520,16 +345,14 @@ fn has_effective_final_limit_one(body: &QueryPipeline, return_index: usize) -> b
         .unwrap_or(false)
 }
 
-fn is_aggregate_name(name: &selene_core::IStr) -> bool {
+pub(super) fn is_aggregate_name(name: &selene_core::DbString) -> bool {
     let name = name.as_str();
     [
         "count",
         "sum",
-        "average",
         "avg",
         "min",
         "max",
-        "collect",
         "collect_list",
         "stddev_pop",
         "stddev_samp",
@@ -545,29 +368,6 @@ fn value_shape_error(message: &'static str, span: crate::SourceSpan) -> Analysis
         message: message.to_owned(),
         span,
     }
-}
-
-fn reject_group_variable_property_access(
-    ty: &AnalyzedType,
-    span: crate::SourceSpan,
-) -> Result<(), AnalysisError> {
-    let AnalyzedType::Resolved(crate::GqlType::List(item)) = ty else {
-        return Ok(());
-    };
-    if matches!(
-        item.as_ref(),
-        crate::GqlType::NodeRef | crate::GqlType::EdgeRef
-    ) {
-        return Err(AnalysisError::NotImplemented {
-            message: "group-variable property access is not supported".into(),
-            span,
-            hint: Some(
-                "return the group variable as a list, or unnest it before accessing element properties"
-                    .into(),
-            ),
-        });
-    }
-    Ok(())
 }
 
 pub(crate) fn bind_condition(
@@ -606,17 +406,60 @@ fn bind_many_with_spans(
         .collect()
 }
 
-fn bind_is_check(ctx: &mut BindContext, kind: &IsCheckKind) -> Result<(), AnalysisError> {
+fn bind_is_check(
+    ctx: &mut BindContext,
+    operand: &ValueExpr,
+    operand_id: ExprId,
+    kind: &IsCheckKind,
+) -> Result<(), AnalysisError> {
     match kind {
-        IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-            bind_value_expr(ctx, value)?;
-            Ok(())
+        IsCheckKind::SourceOf(value) => {
+            bind_source_destination(ctx, operand, operand_id, value, "IS SOURCE OF")
         }
+        IsCheckKind::DestinationOf(value) => {
+            bind_source_destination(ctx, operand, operand_id, value, "IS DESTINATION OF")
+        }
+        IsCheckKind::Directed => validate_singleton_element_variable_reference(
+            ctx,
+            operand,
+            operand_id,
+            ElementReferenceRequirement::Edge,
+            "IS DIRECTED",
+        ),
+        IsCheckKind::Labeled(_) => validate_singleton_element_variable_reference(
+            ctx,
+            operand,
+            operand_id,
+            ElementReferenceRequirement::NodeOrEdge,
+            "IS LABELED",
+        ),
         IsCheckKind::Null
-        | IsCheckKind::Directed
-        | IsCheckKind::Labeled(_)
         | IsCheckKind::TruthValue(_)
         | IsCheckKind::Typed(_)
         | IsCheckKind::Normalized(_) => Ok(()),
     }
+}
+
+fn bind_source_destination(
+    ctx: &mut BindContext,
+    node: &ValueExpr,
+    node_id: ExprId,
+    edge: &ValueExpr,
+    context: &'static str,
+) -> Result<(), AnalysisError> {
+    validate_singleton_element_variable_reference(
+        ctx,
+        node,
+        node_id,
+        ElementReferenceRequirement::Node,
+        context,
+    )?;
+    let edge_id = bind_value_expr(ctx, edge)?;
+    validate_singleton_element_variable_reference(
+        ctx,
+        edge,
+        edge_id,
+        ElementReferenceRequirement::Edge,
+        context,
+    )
 }

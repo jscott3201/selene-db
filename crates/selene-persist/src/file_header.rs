@@ -9,7 +9,21 @@ pub const WAL_MAGIC: [u8; 4] = *b"SLDB";
 /// WAL major format version.
 pub const WAL_VERSION_MAJOR: u16 = 2;
 /// WAL minor format version.
-pub const WAL_VERSION_MINOR: u16 = 0;
+///
+/// Bumped `0 -> 1` when the serialized `Value` enum layout changed. WAL change
+/// payloads (`payload.rs`) postcard-encode `Value`, and the version gate
+/// (`WalFileHeader::read_from`) rejects any mismatch rather than silently
+/// mis-decoding shifted variant discriminants — a clean greenfield break, not a
+/// dual decoder.
+///
+/// Bumped `1 -> 2` by the typed-descriptor stream: `ValueType` (postcard-encoded
+/// inside `SchemaChange::NodeTypeAddedV2` / `EdgeTypeAddedV2` definitions in WAL
+/// change payloads) gained mid-struct `decimal_type` / `character_string_type` /
+/// `byte_string_type` fields, and `RecordFieldStructureType` gained descriptor
+/// variants ahead of `List` / `Record`. `#[serde(default)]` is a no-op for
+/// postcard's positional decode, so pre-descriptor WALs must be rejected by the
+/// version gate rather than mis-decoded as shifted fields/discriminants.
+pub const WAL_VERSION_MINOR: u16 = 2;
 /// Fixed WAL file header length.
 pub const WAL_FILE_HEADER_LEN: usize = 16;
 
@@ -108,9 +122,11 @@ mod tests {
         let mut bytes = Vec::new();
         WalFileHeader::new(0).write_to(&mut bytes).unwrap();
         bytes[4..6].copy_from_slice(&1u16.to_le_bytes());
+        // `new()` writes the current minor (2 after the descriptor bump);
+        // patching only the major byte leaves minor at its written value.
         assert!(matches!(
             WalFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 2 })
         ));
     }
 
@@ -121,7 +137,7 @@ mod tests {
         bytes[4..6].copy_from_slice(&3u16.to_le_bytes());
         assert!(matches!(
             WalFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 3, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 3, minor: 2 })
         ));
     }
 
@@ -132,7 +148,24 @@ mod tests {
         bytes[4..6].copy_from_slice(&0u16.to_le_bytes());
         assert!(matches!(
             WalFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 0, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 0, minor: 2 })
+        ));
+    }
+
+    #[test]
+    fn pre_descriptor_minor_one_is_rejected() {
+        // Typed-descriptor clean break: a WAL written at the previous minor
+        // version (1) postcard-encodes `ValueType` WITHOUT the descriptor fields
+        // (and `RecordFieldStructureType` without the descriptor variants), so it
+        // must fail the gate with a clean UnsupportedVersion rather than
+        // mis-decoding shifted fields/discriminants. Patch a freshly written
+        // (minor 2) header's minor bytes [6..8] back to 1.
+        let mut bytes = Vec::new();
+        WalFileHeader::new(0).write_to(&mut bytes).unwrap();
+        bytes[6..8].copy_from_slice(&1u16.to_le_bytes());
+        assert!(matches!(
+            WalFileHeader::read_from(&mut bytes.as_slice()),
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 1 })
         ));
     }
 

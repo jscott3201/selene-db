@@ -15,7 +15,7 @@ fn int_table(name: &str, values: &[i64]) -> BindingTable {
     BindingTable::new(
         BindingTableSchema {
             columns: vec![BindingTableColumn {
-                name: Some(exec_common::istr(name)),
+                name: Some(exec_common::db_string(name)),
                 hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::Integer),
             }],
@@ -135,6 +135,7 @@ fn union_with_matching_arm_column_names_succeeds() {
     assert_eq!(
         table.schema().columns[0]
             .name
+            .clone()
             .expect("shared name")
             .as_str(),
         "shared"
@@ -207,8 +208,11 @@ fn union_rhs_sees_same_snapshot_as_lhs() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(fixture.person),
-                props([(fixture.name, Value::String(exec_common::istr("Dina")))]),
+                LabelSet::single(fixture.person.clone()),
+                props([(
+                    fixture.name.clone(),
+                    Value::String(exec_common::db_string("Dina")),
+                )]),
             )
             .expect("late node inserts");
         txn.commit().expect("late write commits");
@@ -219,7 +223,7 @@ fn union_rhs_sees_same_snapshot_as_lhs() {
     let names = column_values(&table, "name");
 
     assert_eq!(names.len(), 6);
-    assert!(!names.contains(&Value::String(exec_common::istr("Dina"))));
+    assert!(!names.contains(&Value::String(exec_common::db_string("Dina"))));
 }
 
 #[test]
@@ -236,6 +240,7 @@ fn pattern_union_with_matching_alias_composes() {
     assert_eq!(
         table.schema().columns[0]
             .name
+            .clone()
             .expect("shared binding")
             .as_str(),
         "node"

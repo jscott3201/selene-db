@@ -1,4 +1,4 @@
-use selene_core::{IStr, LabelSet};
+use selene_core::{DbString, LabelSet};
 use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef};
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
 
 pub(super) fn static_label_set(expr: &LabelExpr) -> Result<LabelSet, InvalidLabelForm> {
     match expr {
-        LabelExpr::Single(label) => Ok(LabelSet::single(*label)),
+        LabelExpr::Single(label) => Ok(LabelSet::single(label.clone())),
         LabelExpr::Conjunction(parts) => {
             let mut set = LabelSet::new();
             for part in parts {
@@ -26,7 +26,7 @@ pub(super) fn static_label_set(expr: &LabelExpr) -> Result<LabelSet, InvalidLabe
                         }
                     });
                 };
-                set.insert(*label);
+                set.insert(label.clone());
             }
             Ok(set)
         }
@@ -50,7 +50,7 @@ pub(super) fn insert_label_set(
         .map_err(|form| AnalysisError::SchemaInvalidInsertLabelExpr { form, span })
 }
 
-pub(super) fn insert_edge_label(edge: &EdgePattern) -> Result<IStr, AnalysisError> {
+pub(super) fn insert_edge_label(edge: &EdgePattern) -> Result<DbString, AnalysisError> {
     let Some(expr) = edge.label_expr.as_ref() else {
         return Err(AnalysisError::SchemaInvalidInsertLabelExpr {
             form: InvalidLabelForm::Missing,
@@ -58,7 +58,7 @@ pub(super) fn insert_edge_label(edge: &EdgePattern) -> Result<IStr, AnalysisErro
         });
     };
     match expr {
-        LabelExpr::Single(label) => Ok(*label),
+        LabelExpr::Single(label) => Ok(label.clone()),
         LabelExpr::Negation(_) => Err(AnalysisError::SchemaInvalidInsertLabelExpr {
             form: InvalidLabelForm::Negation,
             span: edge.span,
@@ -112,7 +112,7 @@ pub(super) fn endpoint_type(
         };
         return Ok(exact_node_type(graph_type, &labels).map(|(index, _)| (index, labels)));
     }
-    let Some(binding) = reused_binding(node.binding, node.span, analyzed) else {
+    let Some(binding) = reused_binding(node.binding.clone(), node.span, analyzed) else {
         return Ok(None);
     };
     let Some(decl) = analyzed.scopes.declaration(binding) else {
@@ -129,7 +129,7 @@ pub(super) fn endpoint_type(
             Some((index, _)) => Ok(Some((index, labels))),
             None => Err(AnalysisError::SchemaUnknownNodeType {
                 labels,
-                graph_type: graph_type.name,
+                graph_type: graph_type.name.clone(),
                 span: decl.span(),
             }),
         };
@@ -138,7 +138,7 @@ pub(super) fn endpoint_type(
     if candidates.is_empty() {
         return Err(AnalysisError::SchemaUnknownNodeType {
             labels,
-            graph_type: graph_type.name,
+            graph_type: graph_type.name.clone(),
             span: decl.span(),
         });
     }
@@ -175,7 +175,7 @@ pub(super) fn node_at(pattern: &GraphPattern, index: usize) -> Option<&NodePatte
 pub(super) fn is_fresh_node(node: &NodePattern, analyzed: &AnalyzedStatement) -> bool {
     node.binding.is_none()
         || fresh_binding(
-            node.binding,
+            node.binding.clone(),
             node.span,
             BindingDeclKind::InsertNode,
             analyzed,
@@ -186,7 +186,7 @@ pub(super) fn is_fresh_node(node: &NodePattern, analyzed: &AnalyzedStatement) ->
 pub(super) fn is_fresh_edge(edge: &EdgePattern, analyzed: &AnalyzedStatement) -> bool {
     edge.binding.is_none()
         || fresh_binding(
-            edge.binding,
+            edge.binding.clone(),
             edge.span,
             BindingDeclKind::InsertEdge,
             analyzed,
@@ -195,7 +195,7 @@ pub(super) fn is_fresh_edge(edge: &EdgePattern, analyzed: &AnalyzedStatement) ->
 }
 
 pub(super) fn fresh_binding(
-    name: Option<IStr>,
+    name: Option<DbString>,
     span: SourceSpan,
     kind: BindingDeclKind,
     analyzed: &AnalyzedStatement,
@@ -223,7 +223,7 @@ pub(super) fn fresh_binding(
 }
 
 pub(super) fn reused_binding(
-    name: Option<IStr>,
+    name: Option<DbString>,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
 ) -> Option<BindingId> {
@@ -239,7 +239,7 @@ pub(super) fn reused_binding(
         .map(|reference| reference.binding)
 }
 
-pub(super) fn unique_edge_type(graph_type: &GraphTypeDef, label: IStr) -> Option<&EdgeTypeDef> {
+pub(super) fn unique_edge_type(graph_type: &GraphTypeDef, label: DbString) -> Option<&EdgeTypeDef> {
     let mut matches = graph_type
         .edge_types
         .iter()

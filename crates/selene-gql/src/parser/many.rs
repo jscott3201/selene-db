@@ -2,7 +2,7 @@
 
 use crate::{
     ast::{
-        DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause,
+        DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, MatchClause,
         MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
         ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
         TypePropertyConstraint, TypePropertyDef, ValueExpr, WithClause,
@@ -19,17 +19,13 @@ use super::{parse, to_u32};
 ///
 /// # DoS guards are enforced per-statement, not per-call
 ///
-/// Each non-empty segment is handed to [`parse`], which constructs a fresh
-/// [`InternerBudget`](super::budget::InternerBudget) and runs the nesting
-/// [`guard`](super::guard) over that segment alone. The interner-admission
-/// budget therefore **resets at every statement boundary** — a program of N
-/// statements may admit up to `N × MAX_NEW_ADMISSIONS_PER_PARSE` distinct new
-/// strings in aggregate (the global interner cap remains the absolute
-/// backstop), and the syntactic nesting limit applies to each statement's own
-/// delimiter depth rather than the summed depth of the whole input. A single
-/// segment that exceeds either guard is rejected with that segment's error,
-/// span-rebased to the original multi-statement source; preceding statements
-/// that already parsed are discarded with it.
+/// Each non-empty segment is handed to [`parse`], which runs the nesting
+/// nesting guard over that segment alone. The syntactic nesting
+/// limit therefore applies to each statement's own delimiter depth rather
+/// than the summed depth of the whole input. A single segment that exceeds
+/// the guard is rejected with that segment's error, span-rebased to the
+/// original multi-statement source; preceding statements that already parsed
+/// are discarded with it.
 ///
 /// # Errors
 ///
@@ -153,8 +149,8 @@ fn rebase_parser_error(error: &mut ParserError, offset: usize) {
     match error {
         ParserError::SyntaxError { span, .. }
         | ParserError::UnsupportedFeature { span, .. }
-        | ParserError::InternerBudgetExceeded { span, .. }
         | ParserError::NestingLimitExceeded { span, .. }
+        | ParserError::ComplexityLimitExceeded { span, .. }
         | ParserError::NotImplemented { span, .. } => rebase_span(span, offset),
     }
 }
@@ -315,146 +311,18 @@ fn rebase_edge_pattern(pattern: &mut EdgePattern, offset: usize) {
 }
 
 fn rebase_value(value: &mut ValueExpr, offset: usize) {
+    // Rebase this node's own span, then recurse into direct `ValueExpr` children
+    // (which includes `IS [SOURCE|DESTINATION] OF` operands). Subquery bodies
+    // are `MatchClause` / `QueryPipeline`, not `ValueExpr` children, so they are
+    // descended explicitly below.
+    value.for_each_span_mut(&mut |span| rebase_span(span, offset));
+    value.for_each_child_mut(&mut |child| rebase_value(child, offset));
     match value {
-        ValueExpr::Literal(literal) => match literal {
-            crate::Literal::Bool(_, span)
-            | crate::Literal::Integer(_, span)
-            | crate::Literal::Float(_, span)
-            | crate::Literal::String(_, span)
-            | crate::Literal::Uuid(_, span)
-            | crate::Literal::Null(span) => rebase_span(span, offset),
-        },
-        ValueExpr::Variable { span, .. } | ValueExpr::Parameter { span, .. } => {
-            rebase_span(span, offset);
-        }
-        ValueExpr::PropertyAccess { target, span, .. } => {
-            rebase_span(span, offset);
-            rebase_value(target, offset);
-        }
-        ValueExpr::ListAccess {
-            target,
-            index,
-            span,
-        } => {
-            rebase_span(span, offset);
-            rebase_value(target, offset);
-            rebase_value(index, offset);
-        }
-        ValueExpr::ListLiteral { items, span } => {
-            rebase_span(span, offset);
-            for item in items {
-                rebase_value(item, offset);
-            }
-        }
-        ValueExpr::RecordLiteral { fields, span } => {
-            rebase_span(span, offset);
-            for (_, value) in fields {
-                rebase_value(value, offset);
-            }
-        }
-        ValueExpr::BinaryOp { lhs, rhs, span, .. } => {
-            rebase_span(span, offset);
-            rebase_value(lhs, offset);
-            rebase_value(rhs, offset);
-        }
-        ValueExpr::UnaryOp { operand, span, .. } => {
-            rebase_span(span, offset);
-            rebase_value(operand, offset);
-        }
-        ValueExpr::FunctionCall { args, span, .. } => {
-            rebase_span(span, offset);
-            for arg in args {
-                rebase_value(arg, offset);
-            }
-        }
-        ValueExpr::Normalize { source, span, .. } => {
-            rebase_span(span, offset);
-            rebase_value(source, offset);
-        }
-        ValueExpr::Trim {
-            character,
-            source,
-            span,
-            ..
-        } => {
-            rebase_span(span, offset);
-            if let Some(character) = character {
-                rebase_value(character, offset);
-            }
-            rebase_value(source, offset);
-        }
-        ValueExpr::IsCheck {
-            operand,
-            kind,
-            span,
-            ..
-        } => {
-            rebase_span(span, offset);
-            rebase_value(operand, offset);
-            rebase_is_check(kind, offset);
-        }
-        ValueExpr::InList {
-            operand,
-            list,
-            span,
-            ..
-        } => {
-            rebase_span(span, offset);
-            rebase_value(operand, offset);
-            for item in list {
-                rebase_value(item, offset);
-            }
-        }
-        ValueExpr::AllDifferent { items, span } | ValueExpr::Same { items, span } => {
-            rebase_span(span, offset);
-            for item in items {
-                rebase_value(item, offset);
-            }
-        }
-        ValueExpr::PropertyExists { target, span, .. } => {
-            rebase_span(span, offset);
-            rebase_value(target, offset);
-        }
-        ValueExpr::Case {
-            branches,
-            else_branch,
-            span,
-        } => {
-            rebase_span(span, offset);
-            for (condition, result) in branches {
-                rebase_value(condition, offset);
-                rebase_value(result, offset);
-            }
-            if let Some(value) = else_branch {
-                rebase_value(value, offset);
-            }
-        }
-        ValueExpr::Exists { pattern, span, .. } | ValueExpr::CountSubquery { pattern, span } => {
-            rebase_span(span, offset);
+        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
             rebase_match(pattern, offset);
         }
-        ValueExpr::ValueSubquery { body, span } => {
-            rebase_span(span, offset);
-            rebase_query_pipeline(body, offset);
-        }
-        ValueExpr::Cast { value, span, .. } => {
-            rebase_span(span, offset);
-            rebase_value(value, offset);
-        }
-    }
-}
-
-fn rebase_is_check(kind: &mut IsCheckKind, offset: usize) {
-    match kind {
-        IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-            rebase_value(value, offset);
-        }
-        IsCheckKind::Null
-        | IsCheckKind::Directed
-        | IsCheckKind::Labeled(_)
-        | IsCheckKind::TruthValue(_)
-        | IsCheckKind::Typed(_)
-        | IsCheckKind::Normalized(_) => {}
+        ValueExpr::ValueSubquery { body, .. } => rebase_query_pipeline(body, offset),
+        _ => {}
     }
 }
 
@@ -519,12 +387,25 @@ fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
         | DdlStatement::CreateIndex { span, .. }
         | DdlStatement::DropIndex { span, .. } => rebase_span(span, offset),
         DdlStatement::CreateNodeType {
-            properties, span, ..
+            properties,
+            key_label_set,
+            span,
+            ..
         }
         | DdlStatement::CreateEdgeType {
-            properties, span, ..
+            properties,
+            key_label_set,
+            span,
+            ..
         } => {
             rebase_span(span, offset);
+            // The explicit GG21 key-label-set span carries the source location
+            // the planner uses for the IL003 42012–42015 cardinality diagnostics;
+            // rebase it so batch-statement errors point at the original source,
+            // not the segment-local offset.
+            if let Some(key_label_set) = key_label_set {
+                rebase_span(&mut key_label_set.span, offset);
+            }
             for property in properties {
                 rebase_property_def(property, offset);
             }
@@ -561,6 +442,9 @@ fn rebase_call(call: &mut ProcedureCall, offset: usize) {
     }
     for item in &mut call.yield_items {
         rebase_span(&mut item.span, offset);
+    }
+    if let Some(filter) = &mut call.yield_filter {
+        rebase_value(filter, offset);
     }
 }
 

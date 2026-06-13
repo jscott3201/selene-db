@@ -38,7 +38,9 @@ fn final_binding(tree: &JoinTree, span: SourceSpan) -> Result<TailBinding, Plann
             .map(TailBinding::Named)
             .or_else(|| edge.final_hidden_binding.map(TailBinding::Hidden)),
         JoinTree::PathSearch { final_binding, .. } => Some(*final_binding),
-        JoinTree::PathModeFilter { child, .. } => final_binding(child, span).ok(),
+        JoinTree::PathModeFilter { child, .. } | JoinTree::MatchModeFilter { child, .. } => {
+            final_binding(child, span).ok()
+        }
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             final_binding(right, span).ok()
         }
@@ -101,7 +103,7 @@ fn collect_hop_contributors(
             collect_hop_contributors(child, span, contributors)?;
             contributors.extend(hop_contributors.iter().cloned());
         }
-        JoinTree::PathModeFilter { child, .. } => {
+        JoinTree::PathModeFilter { child, .. } | JoinTree::MatchModeFilter { child, .. } => {
             collect_hop_contributors(child, span, contributors)?;
         }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {

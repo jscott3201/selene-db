@@ -3,8 +3,9 @@
 mod exec_common;
 
 use selene_core::Value;
+use selene_gql::{EmptyProcedureRegistry, GqlStatus, analyze, parse};
 
-use exec_common::{column_values, execute_read};
+use exec_common::{column_values, execute_read, execute_read_result};
 
 #[test]
 fn avg_empty_group_returns_null_not_division_by_zero() {
@@ -180,6 +181,47 @@ fn count_distinct_dedups_cross_type_numeric_equivalents() {
 }
 
 #[test]
+fn aggregate_all_quantifier_matches_implicit_all() {
+    let table = execute_read(
+        "UNWIND [1, 1, 3] AS x \
+         RETURN sum(ALL x) AS s, count(ALL x) AS c, collect_list(ALL x) AS xs",
+    );
+
+    assert_eq!(column_values(&table, "s"), vec![Value::Int(5)]);
+    assert_eq!(column_values(&table, "c"), vec![Value::Int(3)]);
+    assert_eq!(
+        column_values(&table, "xs"),
+        vec![Value::List(vec![
+            Value::Int(1),
+            Value::Int(1),
+            Value::Int(3)
+        ])]
+    );
+}
+
+#[test]
+fn aggregate_set_quantifier_does_not_apply_to_count_star() {
+    for source in ["RETURN count(ALL *) AS c", "RETURN count(DISTINCT *) AS c"] {
+        parse(source).expect_err("quantified COUNT(*) is not a valid aggregate shape");
+    }
+}
+
+#[test]
+fn nested_aggregate_calls_reject_during_analysis() {
+    for source in [
+        "UNWIND [1, 2] AS x RETURN sum(count(x)) AS nested",
+        "UNWIND [1, 2] AS x RETURN sum(abs(count(x))) AS nested",
+        "UNWIND [1, 2] AS x RETURN percentile_cont(x, avg(x)) AS nested",
+        "UNWIND [1, 2] AS x RETURN sum(x) AS s HAVING max(count(x)) > 1",
+    ] {
+        let statement = parse(source).expect("source parses");
+        let error = analyze(statement, &EmptyProcedureRegistry, None)
+            .expect_err("nested aggregate should reject during analysis");
+        assert_eq!(error.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+    }
+}
+
+#[test]
 fn aggregate_distinct_uses_runtime_eq_semantics() {
     let table = execute_read("UNWIND [1, 1.0, 1] AS x RETURN count(DISTINCT x) AS c");
 
@@ -203,8 +245,8 @@ fn min_max_skip_null_inputs() {
 }
 
 #[test]
-fn collect_preserves_input_order() {
-    let table = execute_read("UNWIND [3, 1, 2] AS x RETURN collect(x) AS xs");
+fn collect_list_preserves_input_order() {
+    let table = execute_read("UNWIND [3, 1, 2] AS x RETURN collect_list(x) AS xs");
 
     assert_eq!(
         column_values(&table, "xs"),
@@ -217,8 +259,8 @@ fn collect_preserves_input_order() {
 }
 
 #[test]
-fn collect_includes_nulls() {
-    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN collect(x) AS xs");
+fn collect_list_includes_nulls() {
+    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN collect_list(x) AS xs");
 
     assert_eq!(
         column_values(&table, "xs"),
@@ -227,8 +269,8 @@ fn collect_includes_nulls() {
 }
 
 #[test]
-fn collect_distinct_dedups_cross_type_numeric_equivalents() {
-    let table = execute_read("UNWIND [1, 1.0, 2] AS x RETURN collect(DISTINCT x) AS xs");
+fn collect_list_distinct_dedups_cross_type_numeric_equivalents() {
+    let table = execute_read("UNWIND [1, 1.0, 2] AS x RETURN collect_list(DISTINCT x) AS xs");
     let values = column_values(&table, "xs");
 
     assert_eq!(values.len(), 1);
@@ -239,10 +281,21 @@ fn collect_distinct_dedups_cross_type_numeric_equivalents() {
 }
 
 #[test]
-fn collect_empty_returns_empty_list() {
-    let table = execute_read("MATCH (n:Missing) RETURN collect(n.age) AS xs");
+fn collect_list_empty_returns_empty_list() {
+    let table = execute_read("MATCH (n:Missing) RETURN collect_list(n.age) AS xs");
 
     assert_eq!(column_values(&table, "xs"), vec![Value::List(Vec::new())]);
+}
+
+#[test]
+fn non_iso_aggregate_aliases_are_not_in_the_aggregate_set() {
+    for source in [
+        "UNWIND [1, 2] AS x RETURN collect(x) AS xs",
+        "UNWIND [1, 2] AS x RETURN average(x) AS a",
+    ] {
+        let err = execute_read_result(source).expect_err("non-ISO aggregate alias rejects");
+        assert_eq!(err.gqlstatus().as_str(), "22G03", "{source}");
+    }
 }
 
 #[cfg(feature = "test-harness")]
@@ -253,17 +306,17 @@ fn function_call_with_let_shadow_does_not_misread_column() {
         ImplDefinedCaps, NonEmpty, SourceSpan, ValueExpr, runtime::evaluate_for_test,
     };
 
-    let sum = exec_common::istr("sum");
-    let x = exec_common::istr("x");
+    let sum = exec_common::db_string("sum");
+    let x = exec_common::db_string("x");
     let schema = BindingTableSchema {
         columns: vec![
             BindingTableColumn {
-                name: Some(sum),
+                name: Some(sum.clone()),
                 hidden: None,
                 ty: AnalyzedType::DYNAMIC,
             },
             BindingTableColumn {
-                name: Some(x),
+                name: Some(x.clone()),
                 hidden: None,
                 ty: AnalyzedType::DYNAMIC,
             },

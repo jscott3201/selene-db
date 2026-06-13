@@ -251,12 +251,12 @@ fn graph_id(index: usize) -> GraphId {
 
 #[test]
 fn unordered_snapshot_placeholder_assignment_is_stable_after_row_shuffle() {
-    use selene_core::{NodeId, Value, intern};
+    use selene_core::{NodeId, Value, db_string};
     use selene_gql::{AnalyzedType, Binding, BindingTableColumn};
 
     let schema = BindingTableSchema {
         columns: vec![BindingTableColumn {
-            name: Some(intern("n").expect("test string interns")),
+            name: Some(db_string("n").expect("test string fits DB string cap")),
             hidden: None,
             ty: AnalyzedType::Dynamic,
         }],

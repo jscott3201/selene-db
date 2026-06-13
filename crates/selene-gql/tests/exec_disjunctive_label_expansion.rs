@@ -8,7 +8,7 @@
 //!   this test exercises the no-multi-label case where the two forms agree.
 //! - Composition with BRIEF-154 parameterized index selection (acceptance
 //!   bar #7).
-//! - Composition with BRIEF-153 STRING-index ExternalString carve-out.
+//! - Composition with STRING-index equality probes.
 //! - Downstream LIMIT / ORDER BY / GROUP BY — the union happens at
 //!   JoinTree level, so the pipeline operates on the unioned binding
 //!   table, not per branch.
@@ -19,9 +19,8 @@
 //!   invariant for COUNT / LIMIT / aggregates.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{
     BindingTable, EmptyProcedureRegistry, ExecutionPlan, ExecutorError, OptimizeContext, Session,
     StatementOutput, analyze, execute_statement, optimize, parse, plan,
@@ -29,11 +28,11 @@ use selene_gql::{
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::MockIndexCatalog;
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+fn props<const N: usize>(pairs: [(DbString, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 
@@ -88,12 +87,12 @@ struct LabelFamilyFixture {
 
 impl LabelFamilyFixture {
     fn build() -> Self {
-        let person = istr("Person");
-        let robot = istr("Robot");
-        let alien = istr("Alien");
-        let email = istr("email");
-        let age = istr("age");
-        let department = istr("department");
+        let person = db_string("Person");
+        let robot = db_string("Robot");
+        let alien = db_string("Alien");
+        let email = db_string("email");
+        let age = db_string("age");
+        let department = db_string("department");
 
         let graph = SharedGraph::new(GraphId::new(1550));
         {
@@ -107,11 +106,11 @@ impl LabelFamilyFixture {
                 };
                 mutator
                     .create_node(
-                        LabelSet::single(person),
+                        LabelSet::single(person.clone()),
                         props([
-                            (email, Value::String(istr(name))),
-                            (age, Value::Int(person_age)),
-                            (department, Value::String(istr("engineering"))),
+                            (email.clone(), Value::String(db_string(name))),
+                            (age.clone(), Value::Int(person_age)),
+                            (department.clone(), Value::String(db_string("engineering"))),
                         ]),
                     )
                     .expect("Person inserts");
@@ -119,11 +118,11 @@ impl LabelFamilyFixture {
             for (name, robot_age) in [("r2d2", 100), ("wall-e", 125)] {
                 mutator
                     .create_node(
-                        LabelSet::single(robot),
+                        LabelSet::single(robot.clone()),
                         props([
-                            (email, Value::String(istr(name))),
-                            (age, Value::Int(robot_age)),
-                            (department, Value::String(istr("engineering"))),
+                            (email.clone(), Value::String(db_string(name))),
+                            (age.clone(), Value::Int(robot_age)),
+                            (department.clone(), Value::String(db_string("engineering"))),
                         ]),
                     )
                     .expect("Robot inserts");
@@ -132,32 +131,32 @@ impl LabelFamilyFixture {
                 .create_node(
                     LabelSet::single(alien),
                     props([
-                        (email, Value::String(istr("zorblax"))),
-                        (age, Value::Int(99_999)),
-                        (department, Value::String(istr("xenobiology"))),
+                        (email.clone(), Value::String(db_string("zorblax"))),
+                        (age.clone(), Value::Int(99_999)),
+                        (department, Value::String(db_string("xenobiology"))),
                     ]),
                 )
                 .expect("Alien inserts");
             txn.commit().expect("fixture commits");
         }
         graph
-            .create_property_index(person, email, TypedIndexKind::String)
+            .create_property_index(person.clone(), email.clone(), TypedIndexKind::String)
             .expect("Person.email index builds");
         graph
-            .create_property_index(robot, email, TypedIndexKind::String)
+            .create_property_index(robot.clone(), email.clone(), TypedIndexKind::String)
             .expect("Robot.email index builds");
         graph
-            .create_property_index(person, age, TypedIndexKind::I64)
+            .create_property_index(person.clone(), age.clone(), TypedIndexKind::I64)
             .expect("Person.age index builds");
         graph
-            .create_property_index(robot, age, TypedIndexKind::I64)
+            .create_property_index(robot.clone(), age.clone(), TypedIndexKind::I64)
             .expect("Robot.age index builds");
         // No Alien index — confirms expansion still fires when at least
         // one branch has an applicable index.
         let catalog = MockIndexCatalog::new()
-            .with_node_typed_index(person, email, selene_gql::IndexKind::String)
-            .with_node_typed_index(robot, email, selene_gql::IndexKind::String)
-            .with_node_typed_index(person, age, selene_gql::IndexKind::Integer)
+            .with_node_typed_index(person.clone(), email.clone(), selene_gql::IndexKind::String)
+            .with_node_typed_index(robot.clone(), email, selene_gql::IndexKind::String)
+            .with_node_typed_index(person, age.clone(), selene_gql::IndexKind::Integer)
             .with_node_typed_index(robot, age, selene_gql::IndexKind::Integer);
         Self { graph, catalog }
     }
@@ -212,7 +211,7 @@ fn row_set_equivalence_with_manual_union_all() {
 fn composition_with_parameterized_index() {
     let fixture = LabelFamilyFixture::build();
     let mut session = Session::new(&fixture.graph);
-    session.bind_parameter(istr("target"), Value::String(istr("r2d2")));
+    session.bind_parameter(db_string("target"), Value::String(db_string("r2d2")));
 
     let plan = optimized(
         "MATCH (n:Person|Robot) WHERE n.email = $target RETURN n",
@@ -228,7 +227,7 @@ fn composition_with_parameterized_index() {
 fn composition_with_parameterized_typed_range() {
     let fixture = LabelFamilyFixture::build();
     let mut session = Session::new(&fixture.graph);
-    session.bind_parameter(istr("min_age"), Value::Int(50));
+    session.bind_parameter(db_string("min_age"), Value::Int(50));
 
     let plan = optimized(
         "MATCH (n:Person|Robot) WHERE n.age >= $min_age RETURN n",
@@ -241,28 +240,23 @@ fn composition_with_parameterized_typed_range() {
 }
 
 // ---------------------------------------------------------------------------
-// Composition with BRIEF-153 ExternalString carve-out
+// Composition with a string-parameter equality probe
 // ---------------------------------------------------------------------------
 
 #[test]
-fn composition_with_external_string_carve_out() {
+fn composition_with_string_equality_probe() {
     let fixture = LabelFamilyFixture::build();
     let mut session = Session::new(&fixture.graph);
-    session.bind_parameter(istr("target"), Value::ExternalString(Arc::from("alice")));
+    session.bind_parameter(db_string("target"), Value::String(db_string("alice")));
 
     let plan = optimized(
         "MATCH (n:Person|Robot) WHERE n.email = $target RETURN n",
         &fixture.catalog,
     );
-    let table =
-        rows(execute_optimized(&mut session, &plan).expect("ExternalString param executes"));
+    let table = rows(execute_optimized(&mut session, &plan).expect("string param executes"));
 
     let ids = node_ref_ids(&table);
-    assert_eq!(
-        ids.len(),
-        1,
-        "exactly one Person has email == 'alice' (ExternalString equivalence)"
-    );
+    assert_eq!(ids.len(), 1, "exactly one Person has email == 'alice'");
 }
 
 // ---------------------------------------------------------------------------
@@ -325,18 +319,23 @@ fn composition_with_downstream_group_by() {
         .schema()
         .columns
         .iter()
-        .position(|column| column.name.is_some_and(|name| name.as_str() == "dept"))
+        .position(|column| {
+            column
+                .name
+                .clone()
+                .is_some_and(|name| name.as_str() == "dept")
+        })
         .expect("dept column");
     let count_index = table
         .schema()
         .columns
         .iter()
-        .position(|column| column.name.is_some_and(|name| name.as_str() == "c"))
+        .position(|column| column.name.clone().is_some_and(|name| name.as_str() == "c"))
         .expect("c column");
     let row = &table.rows()[0];
     assert_eq!(
         row.get(dept_index).cloned().unwrap_or(Value::Null),
-        Value::String(istr("engineering"))
+        Value::String(db_string("engineering"))
     );
     assert_eq!(
         row.get(count_index).cloned().unwrap_or(Value::Null),
@@ -363,9 +362,9 @@ fn multi_label_node_dedups_at_disjunctive_scan_join_tree_level() {
     // binding table matches the unexpanded
     // `LabelExpr::Disjunction(any(...))` semantics, which visit each node
     // once.
-    let person = istr("Multi1Person");
-    let robot = istr("Multi1Robot");
-    let email = istr("email");
+    let person = db_string("Multi1Person");
+    let robot = db_string("Multi1Robot");
+    let email = db_string("email");
 
     let graph = SharedGraph::new(GraphId::new(1551));
     {
@@ -373,26 +372,26 @@ fn multi_label_node_dedups_at_disjunctive_scan_join_tree_level() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::from_iter([person, robot]),
-                props([(email, Value::String(istr("hybrid")))]),
+                LabelSet::from_iter([person.clone(), robot.clone()]),
+                props([(email.clone(), Value::String(db_string("hybrid")))]),
             )
             .expect("multi-label node inserts");
         mutator
             .create_node(
-                LabelSet::single(person),
-                props([(email, Value::String(istr("hybrid")))]),
+                LabelSet::single(person.clone()),
+                props([(email.clone(), Value::String(db_string("hybrid")))]),
             )
             .expect("Person-only node inserts");
         txn.commit().expect("fixture commits");
     }
     graph
-        .create_property_index(person, email, TypedIndexKind::String)
+        .create_property_index(person.clone(), email.clone(), TypedIndexKind::String)
         .expect("Person.email index builds");
     graph
-        .create_property_index(robot, email, TypedIndexKind::String)
+        .create_property_index(robot.clone(), email.clone(), TypedIndexKind::String)
         .expect("Robot.email index builds");
     let catalog = MockIndexCatalog::new()
-        .with_node_typed_index(person, email, selene_gql::IndexKind::String)
+        .with_node_typed_index(person, email.clone(), selene_gql::IndexKind::String)
         .with_node_typed_index(robot, email, selene_gql::IndexKind::String);
 
     let plan = optimized(
@@ -435,9 +434,9 @@ fn catalog_present_vs_absent_produces_identical_row_set() {
     // matching branch in the expanded plan and exactly once in the
     // unexpanded baseline — directly observable via COUNT / LIMIT /
     // aggregates.
-    let person = istr("InvPerson");
-    let robot = istr("InvRobot");
-    let email = istr("email");
+    let person = db_string("InvPerson");
+    let robot = db_string("InvRobot");
+    let email = db_string("email");
 
     let graph = SharedGraph::new(GraphId::new(1552));
     {
@@ -449,21 +448,21 @@ fn catalog_present_vs_absent_produces_identical_row_set() {
         for tag in ["alpha", "beta"] {
             mutator
                 .create_node(
-                    LabelSet::from_iter([person, robot]),
-                    props([(email, Value::String(istr(tag)))]),
+                    LabelSet::from_iter([person.clone(), robot.clone()]),
+                    props([(email.clone(), Value::String(db_string(tag)))]),
                 )
                 .expect("multi-label node inserts");
         }
         mutator
             .create_node(
-                LabelSet::single(person),
-                props([(email, Value::String(istr("gamma")))]),
+                LabelSet::single(person.clone()),
+                props([(email.clone(), Value::String(db_string("gamma")))]),
             )
             .expect("Person-only node inserts");
         mutator
             .create_node(
-                LabelSet::single(robot),
-                props([(email, Value::String(istr("delta")))]),
+                LabelSet::single(robot.clone()),
+                props([(email.clone(), Value::String(db_string("delta")))]),
             )
             .expect("Robot-only node inserts");
         txn.commit().expect("fixture commits");
@@ -476,16 +475,16 @@ fn catalog_present_vs_absent_produces_identical_row_set() {
     // catalog-absent comparison — the comparison is driven by the
     // optimizer-time `MockIndexCatalog`.
     graph
-        .create_property_index(person, email, TypedIndexKind::String)
+        .create_property_index(person.clone(), email.clone(), TypedIndexKind::String)
         .expect("Person.email index builds");
     graph
-        .create_property_index(robot, email, TypedIndexKind::String)
+        .create_property_index(robot.clone(), email.clone(), TypedIndexKind::String)
         .expect("Robot.email index builds");
 
     // Catalog WITH per-label indexes — rule fires, plan becomes
     // `JoinTree::DisjunctiveScan { branches: [Person, Robot] }`.
     let catalog_with_indexes = MockIndexCatalog::new()
-        .with_node_typed_index(person, email, selene_gql::IndexKind::String)
+        .with_node_typed_index(person, email.clone(), selene_gql::IndexKind::String)
         .with_node_typed_index(robot, email, selene_gql::IndexKind::String);
     // Catalog WITHOUT — rule's `any_branch_has_applicable_index` gate
     // returns false, plan stays as the unexpanded `JoinTree::Scan` with

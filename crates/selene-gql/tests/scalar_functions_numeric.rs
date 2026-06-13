@@ -4,7 +4,8 @@
 
 mod exec_common;
 
-use exec_common::{column_values, execute_read, execute_read_result, istr};
+use exec_common::{column_values, db_string, execute_read, execute_read_result};
+use rust_decimal::Decimal;
 use selene_core::{GraphId, Value, feature_register::FeatureId};
 use selene_gql::{EmptyProcedureRegistry, Session, feature_walk, parse};
 use selene_graph::SharedGraph;
@@ -34,20 +35,138 @@ fn assert_status(source: &str, expected: &str) {
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
 }
 
+fn execute_with_decimal_params(
+    source: &str,
+    params: &[(&str, Decimal)],
+) -> selene_gql::BindingTable {
+    let graph = SharedGraph::new(GraphId::new(13_522));
+    let mut session = Session::new(&graph);
+    for (name, value) in params {
+        session.bind_parameter(db_string(name), Value::Decimal(*value));
+    }
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect("query succeeds");
+    let selene_gql::StatementOutput::Rows(table) = output else {
+        panic!("expected rows");
+    };
+    table
+}
+
 #[test]
 fn scalar_functions_numeric_gf01_enhanced_numeric_functions_return_expected_values() {
     let cases = [
         ("RETURN abs(-3) AS value", Value::Int(3)),
         ("RETURN mod(7, 4) AS value", Value::Int(3)),
-        ("RETURN floor(1.8) AS value", Value::Float(1.0)),
-        ("RETURN ceil(1.2) AS value", Value::Float(2.0)),
-        ("RETURN ceiling(1.2) AS value", Value::Float(2.0)),
+        ("RETURN floor(1.8D) AS value", Value::Float(1.0)),
+        ("RETURN ceil(1.2D) AS value", Value::Float(2.0)),
+        ("RETURN ceiling(1.2D) AS value", Value::Float(2.0)),
         ("RETURN sqrt(9) AS value", Value::Float(3.0)),
     ];
 
     for (source, expected) in cases {
         assert_eq!(single_value(source, "value"), expected, "source: {source}");
     }
+}
+
+#[test]
+fn scalar_functions_numeric_mod_result_uses_divisor_type() {
+    let decimal = execute_with_decimal_params(
+        "RETURN mod($dividend, 4) AS int_divisor, \
+                mod(7, $divisor) AS decimal_divisor",
+        &[
+            ("dividend", Decimal::from(7)),
+            ("divisor", Decimal::from(4)),
+        ],
+    );
+    assert_eq!(column_values(&decimal, "int_divisor"), vec![Value::Int(3)]);
+    assert_eq!(
+        column_values(&decimal, "decimal_divisor"),
+        vec![Value::Decimal(Decimal::from(3))]
+    );
+
+    assert_eq!(
+        single_value("RETURN mod(CAST('7' AS INT128), 4) AS value", "value"),
+        Value::Int(3)
+    );
+    assert_eq!(
+        single_value("RETURN mod(7, CAST('4' AS INT128)) AS value", "value"),
+        Value::Int128(3)
+    );
+    assert_eq!(
+        single_value("RETURN mod(7, CAST('4' AS UINT64)) AS value", "value"),
+        Value::Uint(3)
+    );
+}
+
+#[test]
+fn scalar_functions_numeric_floor_and_ceiling_preserve_exact_numeric_inputs() {
+    let integer = execute_read(
+        "RETURN floor(3) AS floor_value, ceil(3) AS ceil_value, ceiling(3) AS ceiling_value",
+    );
+    assert_eq!(column_values(&integer, "floor_value"), vec![Value::Int(3)]);
+    assert_eq!(column_values(&integer, "ceil_value"), vec![Value::Int(3)]);
+    assert_eq!(
+        column_values(&integer, "ceiling_value"),
+        vec![Value::Int(3)]
+    );
+
+    let decimal = execute_with_decimal_params(
+        "RETURN floor($pos) AS floor_pos, ceil($pos) AS ceil_pos, \
+                floor($neg) AS floor_neg, ceiling($neg) AS ceiling_neg",
+        &[
+            ("pos", "1.8".parse().expect("decimal parses")),
+            ("neg", "-1.2".parse().expect("decimal parses")),
+        ],
+    );
+    assert_eq!(
+        column_values(&decimal, "floor_pos"),
+        vec![Value::Decimal(Decimal::from(1))]
+    );
+    assert_eq!(
+        column_values(&decimal, "ceil_pos"),
+        vec![Value::Decimal(Decimal::from(2))]
+    );
+    assert_eq!(
+        column_values(&decimal, "floor_neg"),
+        vec![Value::Decimal(Decimal::from(-2))]
+    );
+    assert_eq!(
+        column_values(&decimal, "ceiling_neg"),
+        vec![Value::Decimal(Decimal::from(-1))]
+    );
+}
+
+#[test]
+fn scalar_functions_numeric_abs_preserves_decimal_inputs() {
+    let table = execute_with_decimal_params(
+        "RETURN abs($neg) AS neg_abs, abs($pos) AS pos_abs, abs($zero) AS zero_abs",
+        &[
+            ("neg", "-123.45".parse().expect("decimal parses")),
+            ("pos", "123.45".parse().expect("decimal parses")),
+            ("zero", "0.00".parse().expect("decimal parses")),
+        ],
+    );
+    assert_eq!(
+        column_values(&table, "neg_abs"),
+        vec![Value::Decimal("123.45".parse().expect("decimal parses"))]
+    );
+    assert_eq!(
+        column_values(&table, "pos_abs"),
+        vec![Value::Decimal("123.45".parse().expect("decimal parses"))]
+    );
+    assert_eq!(
+        column_values(&table, "zero_abs"),
+        vec![Value::Decimal("0.00".parse().expect("decimal parses"))]
+    );
+}
+
+#[test]
+fn scalar_functions_numeric_abs_preserves_float32_inputs() {
+    assert_eq!(
+        single_value("RETURN abs(CAST('-1.5' AS FLOAT32)) AS value", "value"),
+        Value::Float32(1.5_f32)
+    );
 }
 
 #[test]
@@ -86,8 +205,20 @@ fn scalar_functions_numeric_gf01_enhanced_numeric_functions_reject_non_numeric_a
 
 #[test]
 fn scalar_functions_numeric_gf01_enhanced_numeric_domain_errors_use_iso_statuses() {
-    assert_status("RETURN sqrt(-1) AS value", "22003");
+    assert_status("RETURN sqrt(-1) AS value", "2201F");
     assert_status("RETURN mod(7, 0) AS value", "22012");
+    assert_status("RETURN mod(-7, CAST('4' AS UINT64)) AS value", "22003");
+}
+
+#[test]
+fn scalar_functions_numeric_round_is_not_in_the_iso_numeric_function_set() {
+    let err = execute_read_result("RETURN round(1.6) AS value")
+        .expect_err("round is not in the closed scalar-function set");
+    assert!(matches!(
+        &err,
+        selene_gql::ExecutorError::UnknownFunction { name, .. } if name == "round"
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
 }
 
 #[test]
@@ -189,6 +320,7 @@ fn scalar_functions_numeric_gf03_logarithmic_functions_return_expected_values() 
         ("RETURN log10(100) AS value", 2.0),
         ("RETURN exp(0) AS value", 1.0),
         ("RETURN exp(1) AS value", std::f64::consts::E),
+        ("RETURN power(2, 3) AS value", 8.0),
     ];
 
     for (source, expected) in cases {
@@ -301,7 +433,7 @@ fn scalar_functions_numeric_power_gr11_overflow_uses_22003() {
 fn scalar_functions_numeric_power_zero_base_rejects_nan_exponent() {
     let graph = SharedGraph::new(GraphId::new(13_521));
     let mut session = Session::new(&graph);
-    session.bind_parameter(istr("nan"), Value::Float(f64::NAN));
+    session.bind_parameter(db_string("nan"), Value::Float(f64::NAN));
 
     let err = session
         .execute_source("RETURN power(0, $nan) AS value", &EmptyProcedureRegistry)

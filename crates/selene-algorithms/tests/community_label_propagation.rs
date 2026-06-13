@@ -2,11 +2,11 @@
 
 use roaring::RoaringBitmap;
 use selene_algorithms::{GraphProjection, ProjectionConfig, label_propagation};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
 
-fn istr(name: &str) -> IStr {
-    intern(name).unwrap()
+fn db_string(name: &str) -> DbString {
+    selene_core::db_string(name).unwrap()
 }
 
 fn build_proj(shared: &SharedGraph) -> GraphProjection {
@@ -26,20 +26,20 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
 
 fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(count);
     for _ in 0..count {
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         nodes.push(id);
     }
     for &(s, t) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();
@@ -214,14 +214,14 @@ fn label_propagation_result_sorted_asc_by_node_id() {
 fn label_propagation_handles_sparse_row_projection() {
     // §E26: state arrays sized by RowIndex, not max_row + 1.
     let shared = SharedGraph::new(GraphId::new(1));
-    let label = istr("N");
-    let rel = istr("R");
+    let label = db_string("N");
+    let rel = db_string("R");
     let mut txn = shared.begin_write();
     let mut nodes = Vec::with_capacity(100);
     for _ in 0..100 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
@@ -229,7 +229,7 @@ fn label_propagation_handles_sparse_row_projection() {
     // the scope. Without §E26 RowIndex sizing, state arrays would be 90+
     // wide.
     txn.mutator()
-        .create_edge(rel, nodes[10], nodes[90], PropertyMap::new())
+        .create_edge(rel.clone(), nodes[10], nodes[90], PropertyMap::new())
         .unwrap();
     txn.mutator()
         .create_edge(rel, nodes[90], nodes[10], PropertyMap::new())

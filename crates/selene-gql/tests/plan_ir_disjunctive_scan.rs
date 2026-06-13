@@ -5,16 +5,16 @@
 //! hand-construct the variant via the public IR API to confirm the new
 //! shape is representable, clones round-trip, and debug-formatting works.
 
-use selene_core::{IStr, intern};
+use selene_core::DbString;
 use selene_gql::{
     JoinTree, LabelExpr, NodeOrEdgeScan, ScanAccess, ScanKind, SourceSpan, Vec2OrMore,
 };
 
-fn istr(value: &str) -> IStr {
-    intern(value).expect("test string interns")
+fn db_string(value: &str) -> DbString {
+    selene_core::db_string(value).expect("test string fits DB string cap")
 }
 
-fn linear_node_scan(label: IStr) -> NodeOrEdgeScan {
+fn linear_node_scan(label: DbString) -> NodeOrEdgeScan {
     NodeOrEdgeScan {
         binding: None,
         hidden_binding: None,
@@ -26,10 +26,10 @@ fn linear_node_scan(label: IStr) -> NodeOrEdgeScan {
     }
 }
 
-fn disjunction_anchor(labels: &[IStr]) -> NodeOrEdgeScan {
+fn disjunction_anchor(labels: &[DbString]) -> NodeOrEdgeScan {
     let parts: Vec<LabelExpr> = labels
         .iter()
-        .map(|label| LabelExpr::Single(*label))
+        .map(|label| LabelExpr::Single(label.clone()))
         .collect();
     let disjunction = LabelExpr::Disjunction(
         Vec2OrMore::try_from_vec(parts).expect("≥ 2 labels for a disjunction anchor"),
@@ -47,9 +47,9 @@ fn disjunction_anchor(labels: &[IStr]) -> NodeOrEdgeScan {
 
 #[test]
 fn disjunctive_scan_construction_two_branches() {
-    let a = istr("A");
-    let b = istr("B");
-    let branches = vec![linear_node_scan(a), linear_node_scan(b)];
+    let a = db_string("A");
+    let b = db_string("B");
+    let branches = vec![linear_node_scan(a.clone()), linear_node_scan(b.clone())];
     let scan_anchor = disjunction_anchor(&[a, b]);
 
     let tree = JoinTree::DisjunctiveScan {
@@ -80,12 +80,12 @@ fn disjunctive_scan_construction_two_branches() {
 
 #[test]
 fn disjunctive_scan_clone_and_debug() {
-    let labels: Vec<IStr> = ["Module", "Namespace", "Class"]
+    let labels: Vec<DbString> = ["Module", "Namespace", "Class"]
         .iter()
         .copied()
-        .map(istr)
+        .map(db_string)
         .collect();
-    let branches: Vec<NodeOrEdgeScan> = labels.iter().copied().map(linear_node_scan).collect();
+    let branches: Vec<NodeOrEdgeScan> = labels.iter().cloned().map(linear_node_scan).collect();
     let tree = JoinTree::DisjunctiveScan {
         branches,
         scan_anchor: disjunction_anchor(&labels),
@@ -119,10 +119,10 @@ fn disjunctive_scan_clone_and_debug() {
 fn disjunctive_scan_branches_inherit_scan_kind() {
     // Even though the rule only fires on `ScanKind::Node` (F6), the IR shape
     // itself doesn't restrict the kind — guard against accidental coupling.
-    let label = istr("Foo");
-    let mut branch = linear_node_scan(label);
+    let label = db_string("Foo");
+    let mut branch = linear_node_scan(label.clone());
     branch.kind = ScanKind::Node;
-    let anchor = disjunction_anchor(&[label, istr("Bar")]);
+    let anchor = disjunction_anchor(&[label, db_string("Bar")]);
 
     let tree = JoinTree::DisjunctiveScan {
         branches: vec![branch.clone(), branch],
