@@ -218,6 +218,9 @@ feature_ids! {
     GV55 = "GV55" => "Path value types";
     GV60 = "GV60" => "Graph reference value types";
     GV61 = "GV61" => "Binding table reference value types";
+    GV66 = "GV66" => "Open dynamic union types";
+    GV67 = "GV67" => "Closed dynamic union types";
+    GV68 = "GV68" => "Dynamic property value types";
     GV90 = "GV90" => "Explicit value type nullability";
 }
 
@@ -370,6 +373,9 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV48,
     FeatureId::GV50,
     FeatureId::GV55,
+    FeatureId::GV66,
+    FeatureId::GV67,
+    FeatureId::GV68,
     FeatureId::GV90,
 ];
 

@@ -1,11 +1,11 @@
-//! ISO open dynamic union value type coverage.
+//! ISO dynamic union value type coverage.
 
-use selene_core::{GraphId, Value, db_string};
+use selene_core::{GraphId, Value, db_string, feature_register::FeatureId};
 use selene_gql::{
-    EmptyProcedureRegistry, GqlType, IsCheckKind, PipelineStatement, Session, Statement,
+    EmptyProcedureRegistry, GqlStatus, GqlType, IsCheckKind, PipelineStatement, Session, Statement,
     StatementOutput, ValueExpr,
     ast::{format_read_statement, structurally_eq},
-    parse,
+    feature_walk, parse,
 };
 use selene_graph::SharedGraph;
 
@@ -104,6 +104,157 @@ fn open_dynamic_union_casts_are_identity_membership_checks() {
     );
 }
 
+#[test]
+fn closed_dynamic_union_type_forms_parse_to_ast() {
+    assert_eq!(
+        typed_type("RETURN NULL IS TYPED STRING | INTEGER AS ok"),
+        GqlType::ClosedDynamicUnion(vec![GqlType::String, GqlType::Integer])
+    );
+    assert_eq!(
+        typed_type("RETURN NULL IS TYPED ANY<STRING | INTEGER> AS ok"),
+        GqlType::ClosedDynamicUnion(vec![GqlType::String, GqlType::Integer])
+    );
+    assert_eq!(
+        typed_type("RETURN NULL IS TYPED ANY VALUE < STRING NOT NULL | INTEGER NOT NULL > AS ok"),
+        GqlType::ClosedDynamicUnion(vec![
+            GqlType::NotNull(Box::new(GqlType::String)),
+            GqlType::NotNull(Box::new(GqlType::Integer)),
+        ])
+    );
+    assert_eq!(
+        typed_type("RETURN NULL IS TYPED LIST<STRING | INTEGER> AS ok"),
+        GqlType::List(Box::new(GqlType::ClosedDynamicUnion(vec![
+            GqlType::String,
+            GqlType::Integer,
+        ])))
+    );
+}
+
+#[test]
+fn closed_dynamic_union_type_forms_format_canonically() {
+    for (source, expected) in [
+        (
+            "RETURN NULL IS TYPED ANY<STRING | INTEGER> AS ok",
+            "RETURN null IS TYPED STRING | INTEGER AS ok",
+        ),
+        (
+            "RETURN NULL IS TYPED ANY VALUE < STRING NOT NULL | INTEGER NOT NULL > AS ok",
+            "RETURN null IS TYPED STRING NOT NULL | INTEGER NOT NULL AS ok",
+        ),
+        (
+            "RETURN NULL IS TYPED LIST<STRING | INTEGER> AS ok",
+            "RETURN null IS TYPED LIST<STRING | INTEGER> AS ok",
+        ),
+    ] {
+        let parsed = parse(source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert_eq!(formatted, expected, "{source}");
+        let reparsed =
+            parse(&formatted).unwrap_or_else(|error| panic!("{formatted} reparses: {error:?}"));
+        assert!(
+            structurally_eq(&parsed, &reparsed),
+            "{source} should round-trip through {formatted}"
+        );
+    }
+}
+
+#[test]
+fn closed_dynamic_union_predicates_enforce_membership_and_nullability() {
+    assert_eq!(
+        first_value("RETURN 1 IS TYPED STRING | INTEGER AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN 'x' IS TYPED STRING | INTEGER AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN true IS TYPED STRING | INTEGER AS ok"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        first_value("RETURN NULL IS TYPED STRING | INTEGER AS ok"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        first_value("RETURN NULL IS TYPED STRING NOT NULL | INTEGER NOT NULL AS ok"),
+        Value::Bool(false)
+    );
+    let graph = SharedGraph::new(GraphId::new(16_610));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        db_string("xs").expect("valid parameter name"),
+        Value::List(vec![
+            Value::Int(1),
+            Value::String(db_string("x").expect("valid string")),
+        ]),
+    );
+    let output = session
+        .execute_source(
+            "RETURN $xs IS TYPED LIST<STRING | INTEGER> AS ok",
+            &EmptyProcedureRegistry,
+        )
+        .expect("mixed parameter list can be checked against nested closed union");
+    assert_eq!(first_output_value(output), Value::Bool(true));
+    assert_eq!(
+        first_value("RETURN [true] IS TYPED LIST<STRING | INTEGER> AS ok"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn closed_dynamic_union_casts_are_identity_membership_checks() {
+    assert_eq!(
+        first_value("RETURN CAST(1 AS STRING | INTEGER) AS v"),
+        Value::Int(1)
+    );
+    assert_eq!(
+        status_for("RETURN CAST(true AS STRING | INTEGER) AS v"),
+        GqlStatus::DATATYPE_MISMATCH
+    );
+    assert_eq!(
+        status_for("RETURN CAST(NULL AS STRING NOT NULL | INTEGER NOT NULL) AS v"),
+        GqlStatus::DATATYPE_MISMATCH
+    );
+}
+
+#[test]
+fn closed_dynamic_union_rejects_non_conforming_component_lists() {
+    for source in [
+        "RETURN NULL IS TYPED ANY<STRING> AS ok",
+        "RETURN NULL IS TYPED STRING | INTEGER NOT NULL AS ok",
+        "RETURN NULL IS TYPED ANY<STRING | INTEGER NOT NULL> AS ok",
+    ] {
+        let err = parse(source).expect_err("non-conforming closed union should reject");
+        assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+    }
+}
+
+#[test]
+fn dynamic_union_type_forms_record_iso_features() {
+    let ids = |source: &str| {
+        feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    let open = ids("RETURN NULL IS TYPED ANY AS ok");
+    assert!(open.contains(&FeatureId::GV66), "observed {open:?}");
+
+    let property = ids("RETURN NULL IS TYPED PROPERTY VALUE AS ok");
+    assert!(property.contains(&FeatureId::GV68), "observed {property:?}");
+
+    let closed = ids("RETURN NULL IS TYPED STRING | INTEGER AS ok");
+    assert!(closed.contains(&FeatureId::GV67), "observed {closed:?}");
+
+    let bare_list = ids("RETURN NULL IS TYPED LIST AS ok");
+    assert!(
+        bare_list.contains(&FeatureId::GV50) && bare_list.contains(&FeatureId::GV66),
+        "bare LIST is LIST<ANY> and must flag GV50 + GV66; observed {bare_list:?}"
+    );
+}
+
 fn typed_type(source: &str) -> GqlType {
     let statement =
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
@@ -121,6 +272,15 @@ fn typed_type(source: &str) -> GqlType {
         panic!("{source} should parse as IS TYPED");
     };
     ty.clone()
+}
+
+fn status_for(source: &str) -> GqlStatus {
+    let graph = SharedGraph::new(GraphId::new(16_609));
+    let mut session = Session::new(&graph);
+    session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("statement should fail")
+        .gqlstatus()
 }
 
 fn first_value(source: &str) -> Value {

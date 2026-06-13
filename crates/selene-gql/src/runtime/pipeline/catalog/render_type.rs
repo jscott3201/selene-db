@@ -1,16 +1,14 @@
-//! GQL type-name rendering for the read-side formatter.
+//! Catalog-facing GQL type rendering.
 
-use crate::GqlType;
-use crate::ast::format_ident::fmt_ident;
-use crate::ast::{BindingTableType, RecordType};
+use crate::{BindingTableType, GqlType, RecordType};
 
-pub(crate) fn fmt_type(ty: &GqlType) -> String {
+pub(super) fn render_gql_type(ty: &GqlType) -> String {
     match ty {
         GqlType::Any => "ANY".to_owned(),
         GqlType::AnyProperty => "ANY PROPERTY VALUE".to_owned(),
         GqlType::ClosedDynamicUnion(components) => components
             .iter()
-            .map(fmt_type)
+            .map(render_gql_type)
             .collect::<Vec<_>>()
             .join(" | "),
         GqlType::String => "STRING".to_owned(),
@@ -67,46 +65,43 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         GqlType::DurationYearToMonth => "DURATION (YEAR TO MONTH)".to_owned(),
         GqlType::DurationDayToSecond => "DURATION (DAY TO SECOND)".to_owned(),
         GqlType::Vector => "VECTOR".to_owned(),
-        // Recurse into the element type so `LIST<INT8>` round-trips through
-        // parse-format-parse without rewriting the element type.
-        GqlType::List(inner) => format!("LIST<{}>", fmt_type(inner)),
+        GqlType::Record(RecordType::Open) => "RECORD".to_owned(),
+        GqlType::Record(RecordType::Closed(fields)) => {
+            if fields.is_empty() {
+                return "RECORD {}".to_owned();
+            }
+            let rendered = fields
+                .iter()
+                .map(|(name, ty)| format!("{} :: {}", name.as_str(), render_gql_type(ty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("RECORD {{ {rendered} }}")
+        }
+        GqlType::List(inner) => format!("LIST<{}>", render_gql_type(inner)),
         GqlType::BoundedList {
             element_type,
             max_len,
         } => {
-            format!("LIST<{}>[{}]", fmt_type(element_type), max_len)
+            format!("LIST<{}>[{}]", render_gql_type(element_type), max_len)
         }
-        GqlType::NotNull(inner) => format!("{} NOT NULL", fmt_type(inner)),
+        GqlType::NotNull(inner) => format!("{} NOT NULL", render_gql_type(inner)),
         GqlType::Path => "PATH".to_owned(),
-        GqlType::Null => "NULL".to_owned(),
-        GqlType::Nothing => "NOTHING".to_owned(),
-        // Bare `RECORD` (GV47) carries no field structure; the closed form
-        // (GV46/GV48) renders each `<field name> :: <value type>` pair so a
-        // typed predicate (`IS TYPED RECORD{...}`) or `CAST(x AS RECORD{...})`
-        // round-trips through parse-format-parse. `::` is the field separator
-        // the grammar's `record_field_type` rule accepts (Per ISO 39075:2024
-        // §18.10 <field types specification>).
-        GqlType::Record(RecordType::Open) => "RECORD".to_owned(),
-        GqlType::Record(RecordType::Closed(fields)) => {
-            format!("RECORD{{{}}}", fmt_field_types(fields))
-        }
-        // validate_formattable still rejects graph and binding-table references
-        // before read-side source formatting starts. Graph-element references
-        // are formattable and canonicalize to their primary ISO names.
         GqlType::GraphRef => "GRAPH".to_owned(),
         GqlType::NodeRef => "NODE".to_owned(),
         GqlType::EdgeRef => "EDGE".to_owned(),
         GqlType::TableRef(BindingTableType::Any) => "TABLE".to_owned(),
         GqlType::TableRef(BindingTableType::Closed(fields)) => {
-            format!("TABLE{{{}}}", fmt_field_types(fields))
+            if fields.is_empty() {
+                return "TABLE {}".to_owned();
+            }
+            let rendered = fields
+                .iter()
+                .map(|(name, ty)| format!("{} :: {}", name.as_str(), render_gql_type(ty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("TABLE {{ {rendered} }}")
         }
+        GqlType::Null => "NULL".to_owned(),
+        GqlType::Nothing => "NOTHING".to_owned(),
     }
-}
-
-fn fmt_field_types(fields: &[(selene_core::DbString, GqlType)]) -> String {
-    fields
-        .iter()
-        .map(|(name, field_ty)| format!("{} :: {}", fmt_ident(name.clone()), fmt_type(field_ty)))
-        .collect::<Vec<_>>()
-        .join(", ")
 }

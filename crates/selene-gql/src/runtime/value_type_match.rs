@@ -26,9 +26,15 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
             !matches!(value, Value::Null) && value_matches_gql_type(value, inner)
         }
         GqlType::Nothing => false,
+        GqlType::ClosedDynamicUnion(components) if matches!(value, Value::Null) => components
+            .iter()
+            .any(|component| value_matches_gql_type(value, component)),
         _ if matches!(value, Value::Null) => true,
         GqlType::Any => true,
         GqlType::AnyProperty => PropertyValueType::of(value).is_some(),
+        GqlType::ClosedDynamicUnion(components) => components
+            .iter()
+            .any(|component| value_matches_gql_type(value, component)),
         GqlType::String => matches!(value, Value::String(_)),
         GqlType::CharacterString(character_type) => {
             matches!(value, Value::String(value) if character_string_fits_type(
