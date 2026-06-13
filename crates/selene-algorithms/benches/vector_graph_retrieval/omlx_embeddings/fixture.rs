@@ -27,6 +27,8 @@ mod bm25;
 mod build_support;
 #[path = "fixture/ivf.rs"]
 mod ivf;
+#[path = "fixture/target_hit.rs"]
+mod target_hit;
 #[path = "fixture/turbo_quant.rs"]
 mod turbo_quant;
 
@@ -44,6 +46,7 @@ pub(super) struct OmlxVectorFixture {
     pub(super) dimension: usize,
     documents: Vec<DocumentMeta>,
     topics_by_node: HashMap<NodeId, Topic>,
+    target_by_node: HashMap<NodeId, &'static str>,
     queries: Vec<QueryVector>,
     expanded_hint_sets: Vec<VectorCandidateSet>,
 }
@@ -126,6 +129,7 @@ impl OmlxVectorFixture {
                         node,
                         topic: input.topic,
                         graph_hint,
+                        target_key: input.target_key,
                     });
                 }
                 for source in documents.iter().filter(|document| document.graph_hint) {
@@ -222,6 +226,7 @@ impl OmlxVectorFixture {
                         topic: input.topic,
                         text: input.text.clone(),
                         vector,
+                        target_key: input.target_key,
                     }
                 })
             })
@@ -244,6 +249,10 @@ impl OmlxVectorFixture {
             .iter()
             .map(|document| (document.node, document.topic))
             .collect();
+        let target_by_node = documents
+            .iter()
+            .filter_map(|document| document.target_key.map(|target| (document.node, target)))
+            .collect();
         Self {
             shared,
             graph,
@@ -258,6 +267,7 @@ impl OmlxVectorFixture {
             dimension,
             documents,
             topics_by_node,
+            target_by_node,
             queries,
             expanded_hint_sets,
         }

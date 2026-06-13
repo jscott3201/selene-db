@@ -83,6 +83,10 @@ pub(super) fn bench(c: &mut Criterion) {
             fixture.ann_hint_expansion_state_total_precision(),
             fixture.query_count() * TOP_K,
         );
+        let exact_target_hit = fixture.exact_target_hit_basis_points();
+        let ann_target_hit = fixture.ann_target_hit_basis_points();
+        let turbo_quant_target_hit = fixture.turbo_quant_target_hit_basis_points();
+        let ivf_target_hit = fixture.ivf_target_hit_basis_points();
         let hint_expansion_refresh_candidates =
             fixture.topic_hint_expansion_refresh_total_candidates();
         let mixed_cycle_elements = MIXED_READS_PER_CYCLE
@@ -117,14 +121,17 @@ pub(super) fn bench(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "exact_graph_search",
-                format!(
-                    "{}_{}_q{}_k{}_dim{}_precbp{}",
-                    model_id,
-                    scale_label(fixture.document_count()),
-                    fixture.query_count(),
-                    TOP_K,
-                    fixture.dimension,
-                    fixture.exact_precision_basis_points(),
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_dim{}_precbp{}",
+                        model_id,
+                        scale_label(fixture.document_count()),
+                        fixture.query_count(),
+                        TOP_K,
+                        fixture.dimension,
+                        fixture.exact_precision_basis_points(),
+                    ),
+                    exact_target_hit,
                 ),
             ),
             |b| {
@@ -134,15 +141,18 @@ pub(super) fn bench(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "hnsw_graph_search",
-                format!(
-                    "{}_{}_q{}_k{}_ef{}_dim{}_precbp{}",
-                    model_id,
-                    scale_label(fixture.document_count()),
-                    fixture.query_count(),
-                    TOP_K,
-                    ANN_SEARCH_WIDTH,
-                    fixture.dimension,
-                    fixture.ann_precision_basis_points(),
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_ef{}_dim{}_precbp{}",
+                        model_id,
+                        scale_label(fixture.document_count()),
+                        fixture.query_count(),
+                        TOP_K,
+                        ANN_SEARCH_WIDTH,
+                        fixture.dimension,
+                        fixture.ann_precision_basis_points(),
+                    ),
+                    ann_target_hit,
                 ),
             ),
             |b| {
@@ -152,15 +162,18 @@ pub(super) fn bench(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "turbo_quant_graph_search",
-                format!(
-                    "{}_{}_q{}_k{}_c{}_dim{}_precbp{}",
-                    model_id,
-                    scale_label(fixture.document_count()),
-                    fixture.query_count(),
-                    TOP_K,
-                    TURBO_QUANT_SEARCH_WIDTH,
-                    fixture.dimension,
-                    fixture.turbo_quant_precision_basis_points(),
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_c{}_dim{}_precbp{}",
+                        model_id,
+                        scale_label(fixture.document_count()),
+                        fixture.query_count(),
+                        TOP_K,
+                        TURBO_QUANT_SEARCH_WIDTH,
+                        fixture.dimension,
+                        fixture.turbo_quant_precision_basis_points(),
+                    ),
+                    turbo_quant_target_hit,
                 ),
             ),
             |b| {
@@ -170,15 +183,18 @@ pub(super) fn bench(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "ivf_graph_search",
-                format!(
-                    "{}_{}_q{}_k{}_p{}_dim{}_precbp{}",
-                    model_id,
-                    scale_label(fixture.document_count()),
-                    fixture.query_count(),
-                    TOP_K,
-                    IVF_SEARCH_WIDTH,
-                    fixture.dimension,
-                    fixture.ivf_precision_basis_points(),
+                append_target_hit(
+                    format!(
+                        "{}_{}_q{}_k{}_p{}_dim{}_precbp{}",
+                        model_id,
+                        scale_label(fixture.document_count()),
+                        fixture.query_count(),
+                        TOP_K,
+                        IVF_SEARCH_WIDTH,
+                        fixture.dimension,
+                        fixture.ivf_precision_basis_points(),
+                    ),
+                    ivf_target_hit,
                 ),
             ),
             |b| {
@@ -466,6 +482,13 @@ fn model_id(model: &str) -> String {
             }
         })
         .collect()
+}
+
+fn append_target_hit(mut label: String, target_hit: Option<usize>) -> String {
+    if let Some(target_hit) = target_hit {
+        label.push_str(&format!("_hitbp{target_hit}"));
+    }
+    label
 }
 
 fn precision_basis_points(numerator: usize, denominator: usize) -> usize {
