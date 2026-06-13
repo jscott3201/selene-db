@@ -28,7 +28,7 @@ You do not need a database server, a container, or a wire client. `selene-db` is
 `selene-db` is not yet published to crates.io. Embedders depend on the workspace crates by path:
 
 ```bash
-git clone https://github.com/Aionforge-Labs/selene-db.git
+git clone https://github.com/jscott3201/selene-db.git
 cargo new my-graph-app
 cd my-graph-app
 ```

@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Repository home metadata now points back to the personal
+  `jscott3201/selene-db` namespace. The workspace Cargo `repository` /
+  `homepage` values, getting-started clone URL, local-oMLX default referer,
+  changelog compare/release links, and generated third-party package table use
+  `https://github.com/jscott3201/selene-db`.
+
 ## [1.2.0] — 2026-06-13
 
 ### Packaging
@@ -503,11 +511,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   variant discriminants. There is no dual decoder or migration: stores
   written before the descriptor stream must be re-created from source data
   under the new format.
-- **Repository home moved to Aionforge-Labs.** Workspace `repository` /
-  `homepage` Cargo metadata, the getting-started clone URL, the local-oMLX
-  client's default referer header, and the changelog compare/release links
-  now point at `https://github.com/Aionforge-Labs/selene-db` instead of the
-  personal `jscott3201` namespace.
+- **Repository home metadata was moved for the 1.2.0 release.** Workspace
+  `repository` / `homepage` Cargo metadata, the getting-started clone URL,
+  the local-oMLX client's default referer header, and the changelog
+  compare/release links were updated as part of that release's ownership
+  metadata refresh.
 
 ### Removed
 
@@ -1752,7 +1760,7 @@ The following items are intentionally deferred and tracked for future
 - OPQ rotation inner-allocation tightening.
 - Fresh extension crates beyond `selene-vector` and `selene-algorithms`.
 
-[Unreleased]: https://github.com/Aionforge-Labs/selene-db/compare/v1.2.0...HEAD
-[1.2.0]: https://github.com/Aionforge-Labs/selene-db/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/Aionforge-Labs/selene-db/releases/tag/v1.1.0
-[1.0.0]: https://github.com/Aionforge-Labs/selene-db/releases/tag/v1.0.0
+[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/jscott3201/selene-db/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.1.0
+[1.0.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.0.0
