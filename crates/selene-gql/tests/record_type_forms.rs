@@ -26,15 +26,17 @@ fn iso_record_type_forms_parse_to_open_or_closed_ast() {
     ));
 
     let GqlType::Record(RecordType::Closed(fields)) =
-        typed_type("RETURN NULL IS TYPED {a :: INT, b :: STRING} AS ok")
+        typed_type("RETURN NULL IS TYPED {a :: INT, b TYPED STRING, c BOOL} AS ok")
     else {
         panic!("bare field-types specification must build a closed RECORD type");
     };
-    assert_eq!(fields.len(), 2);
+    assert_eq!(fields.len(), 3);
     assert_eq!(fields[0].0.as_str(), "a");
     assert_eq!(fields[0].1, GqlType::Integer);
     assert_eq!(fields[1].0.as_str(), "b");
     assert_eq!(fields[1].1, GqlType::String);
+    assert_eq!(fields[2].0.as_str(), "c");
+    assert_eq!(fields[2].1, GqlType::Boolean);
 }
 
 #[test]
@@ -51,6 +53,10 @@ fn iso_record_type_forms_format_to_canonical_record_names() {
         (
             "RETURN NULL IS TYPED {a :: INT} AS ok",
             "RETURN null IS TYPED RECORD{a :: INTEGER} AS ok",
+        ),
+        (
+            "RETURN NULL IS TYPED RECORD{a TYPED INT, b STRING} AS ok",
+            "RETURN null IS TYPED RECORD{a :: INTEGER, b :: STRING} AS ok",
         ),
     ] {
         let statement =

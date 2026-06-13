@@ -1,0 +1,7 @@
+// corpus: positive
+// feature: GV66
+// also-covers: GV67, GV68
+// expects: parse-ok
+RETURN NULL IS TYPED ANY AS open_union,
+       NULL IS TYPED STRING | INTEGER AS closed_union,
+       NULL IS TYPED PROPERTY VALUE AS property_union

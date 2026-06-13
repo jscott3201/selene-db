@@ -12,6 +12,8 @@ mod property_constraints;
 mod record_catalog;
 #[path = "exec_pipeline_catalog/temporal_indexes.rs"]
 mod temporal_indexes;
+#[path = "exec_pipeline_catalog/typed_markers.rs"]
+mod typed_markers;
 
 use selene_core::{Change, GraphId, LabelSet, SchemaChange, Value};
 use selene_gql::{
