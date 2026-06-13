@@ -1816,6 +1816,25 @@ root-expansion primitive as the vector companion.
 |---|---:|---:|---|
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_text_score_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536_precbp9375_curbp9375_hitbp10000` | 189.96 µs | 170.90 µs | Repeated per-topic root sets expand once per distinct group before candidate-state composition and BM25 scoring. Criterion reports a 10.19% improvement (`p=0.00`, 95% mean CI -10.47% to -9.91%) while preserving the same precision/currentness/target-hit suffix. |
 
+PR-local OpenRouter maintained-state text/vector RRF composition validation:
+
+Command:
+`set -a; source .env; set +a; SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=mistralai/codestral-embed-2505 SELENE_EMBEDDING_CORPUS=project_code_alias_memory SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench procedure_call_repeat --filter 'query_root_current_state_text_score_batch|query_root_current_state_intersection_batch|query_root_current_state_text_vector_rrf_batch'`,
+then the same command with
+`SELENE_EMBEDDING_CORPUS=project_source_chunk_memory`.
+No before/after implementation p-value is claimed for this section; the useful
+signal is the same-run latency/quality comparison between existing producers
+and the new benchmark-only RRF composition row.
+
+| Corpus / Bench | Median | Notes |
+|---|---:|---|
+| `project_code_alias_memory` `shared_cache_query_root_current_state_text_score_batch/...q16_k4_r2_c8...precbp9218_curbp9218_hitbp9375` | 182.37 µs | Maintained BM25/current-state remains the fastest alias-heavy source row but misses one expected target. One high mild outlier. |
+| `project_code_alias_memory` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c8...basecurbp9687_curbp10000_hitbp10000` | 327.32 µs | Maintained current-state vector scoring restores all targets and current precision. |
+| `project_code_alias_memory` `shared_cache_query_root_current_state_text_vector_rrf_batch/...q16_k4_r2_c8...precbp10000_curbp10000_hitbp10000` | 534.14 µs | RRF over the maintained BM25/current-state and vector/current-state rankings also reaches full quality, but it is slower than the vector quality path and roughly costs the two producers plus small fusion overhead. |
+| `project_source_chunk_memory` `shared_cache_query_root_current_state_text_score_batch/...q16_k4_r2_c6...precbp9375_curbp9375_hitbp10000` | 167.40 µs | Target-complete BM25/current-state guard; one broad/current miss remains. Two outliers, one low mild and one high mild. |
+| `project_source_chunk_memory` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c6...basecurbp9687_curbp10000_hitbp10000` | 309.41 µs | Maintained current-state vector scoring restores full current precision. |
+| `project_source_chunk_memory` `shared_cache_query_root_current_state_text_vector_rrf_batch/...q16_k4_r2_c6...precbp10000_curbp10000_hitbp10000` | 487.45 µs | RRF again reaches full quality but is slower than using the best single maintained-state primitive for the needed quality target. No default fused policy is justified by these rows; keep RRF as a compositional A/B tool. Two outliers, including one high severe. |
+
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
 
 The only read-query **execution** bench in the suite (`expression_eval` is
@@ -2395,7 +2414,7 @@ Current vector-index and retrieval policy matrix from the evidence above:
 | Lowest-latency approximate vector lookup where recall/precision loss is acceptable or can be repaired by a later exact/state stage | HNSW | The 2k Codestral row has HNSW ef64 at 918.94 µs, much faster than exact/TurboQuant, but with lower `precbp8593`. HNSW remains the latency-oriented ANN primitive; use exact rerank, graph/state gating, or wider/tuned settings when quality matters. |
 | Coarse partitioning, cheap rebuild/recommended maintenance, clustered source corpora, or explicit list-count experiments | IVF | IVF rebuild and recommended-rebuild rows are cheap relative to HNSW construction (`ivf_cos_dim128` 2.124 ms at 1k, recommended 12.63 ms at 10k). The 2k live Codestral row now also gives IVF p2 the best latency while preserving the exact topic-precision suffix. This promotes IVF for the omitted native vector-index kind and clustered/source-shaped broad candidate generation, but its `hitbp5000` result means target-specific retrieval should still prefer graph/state/BM25 roots when available. |
 | Tight graph-derived, maintained-state, BM25, JSON, or explicit candidate sets | Exact graph-candidate scoring or maintained candidate-state scoring | Candidate/state rows are microsecond-scale for c32-c128, and live source/code rows show graph-expanded current-state vector scoring around 300 µs with full target/current precision where applicable. This remains the default for agent-memory and source-shaped workflows when graph or text can produce a meaningful candidate set. |
-| Lexical/currentness-rooted retrieval where BM25 already finds the target set | Maintained BM25/current-state, optionally followed by exact vector rerank only when it closes a measured quality gap | Live OpenRouter source/code rows repeatedly show BM25/current-state as fastest (roughly 170-195 µs on q16 source-shaped profiles) and often target-complete. Text/vector fusion usually preserves quality while adding millisecond-scale vector cost; vector-first BM25 often lowers current precision. |
+| Lexical/currentness-rooted retrieval where BM25 already finds the target set | Maintained BM25/current-state, optionally followed by exact vector rerank or RRF only when it closes a measured quality gap | Live OpenRouter source/code rows repeatedly show BM25/current-state as fastest (roughly 170-195 µs on q16 source-shaped profiles) and often target-complete. Text/vector fusion usually preserves quality while adding millisecond-scale vector cost; vector-first BM25 often lowers current precision. RRF can restore full precision/currentness on alias-heavy rows, but the measured composition is slower than the best single maintained-state quality primitive, so it remains an A/B tool rather than a default fused policy. |
 | Partial graph roots/hints without support expansion or maintained state | Expand/intersect roots before final scoring; do not use raw partial hints as final retrieval | Partial graph-hint rows with `*_GRAPH_HINT_DOCS_PER_TOPIC=2` yield only `c2` and `precbp5000` for raw topic-label candidate scoring. Existing graph-expanded and maintained-state rows recover full topic/current precision by expanding roots through support edges and intersecting state before exact rerank. |
 
 PR-local OpenRouter Codestral source-chunk vector-index guard:
