@@ -426,7 +426,9 @@ fn build_simple_case(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<ValueExpr, ParserError> {
-    let mut children = pair.into_inner();
+    let mut children = pair
+        .into_inner()
+        .filter(|child| child.as_rule() != Rule::case_kw);
     let base =
         build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("simple CASE is missing input", source_span, None)
@@ -483,6 +485,7 @@ fn build_searched_case(
     let mut else_branch = None;
     for child in pair.into_inner() {
         match child.as_rule() {
+            Rule::case_kw => {}
             Rule::when_clause => branches.push(searched_when_branch(child)?),
             Rule::else_clause => else_branch = Some(Box::new(expr_from_child(child)?)),
             _ => return Err(unexpected_pair(child, "unexpected CASE child")),
