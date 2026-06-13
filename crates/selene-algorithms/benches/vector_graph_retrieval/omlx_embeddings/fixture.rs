@@ -25,6 +25,8 @@ use selene_testing::local_omlx::{CorpusInput, Topic, topic_label};
 mod bm25;
 #[path = "fixture/build_support.rs"]
 mod build_support;
+#[path = "fixture/ivf.rs"]
+mod ivf;
 #[path = "fixture/turbo_quant.rs"]
 mod turbo_quant;
 
@@ -33,6 +35,7 @@ pub(super) struct OmlxVectorFixture {
     graph: SeleneGraph,
     label: selene_core::DbString,
     embedding_key: selene_core::DbString,
+    ivf_embedding_key: selene_core::DbString,
     turbo_embedding_key: selene_core::DbString,
     dependency_edge: selene_core::DbString,
     support_edge: selene_core::DbString,
@@ -72,6 +75,7 @@ impl OmlxVectorFixture {
         let support_edge = db_string("OmlxSupports");
         let body_key = db_string("body");
         let embedding_key = db_string("embedding");
+        let ivf_embedding_key = db_string("embedding_ivf");
         let turbo_embedding_key = db_string("embedding_turbo");
         let support_state_name = db_string("omlx_support_facts");
         let support_state_provider = Arc::new(
@@ -99,6 +103,7 @@ impl OmlxVectorFixture {
                     let props = PropertyMap::from_pairs([
                         (body_key.clone(), Value::String(db_string(input.text()))),
                         (embedding_key.clone(), Value::Vector(vector.clone())),
+                        (ivf_embedding_key.clone(), Value::Vector(vector.clone())),
                         (turbo_embedding_key.clone(), Value::Vector(vector.clone())),
                     ])
                     .expect("oMLX bench document properties fit");
@@ -179,6 +184,16 @@ impl OmlxVectorFixture {
                 mutator
                     .create_vector_index_named_with_configs(
                         label.clone(),
+                        ivf_embedding_key.clone(),
+                        VectorIndexKind::IvfCosine,
+                        dimension as u32,
+                        None,
+                        VectorIndexConfig::default(),
+                    )
+                    .expect("oMLX bench IVF index builds");
+                mutator
+                    .create_vector_index_named_with_configs(
+                        label.clone(),
                         turbo_embedding_key.clone(),
                         VectorIndexKind::TurboQuantCosine,
                         dimension as u32,
@@ -234,6 +249,7 @@ impl OmlxVectorFixture {
             graph,
             label,
             embedding_key,
+            ivf_embedding_key,
             turbo_embedding_key,
             dependency_edge,
             support_edge,
