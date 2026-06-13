@@ -12,7 +12,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `jscott3201/selene-db` namespace. The workspace Cargo `repository` /
   `homepage` values, getting-started clone URL, local-oMLX default referer,
   changelog compare/release links, release-publish owner gates, crate-publish
-  User-Agent, and generated third-party package table use
+  User-Agent, nightly job owner gates, and generated third-party package table use
   `https://github.com/jscott3201/selene-db`; a cheap repository-home gate keeps
   the legacy organization owner from reappearing in tracked files.
 
