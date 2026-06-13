@@ -46,6 +46,42 @@ fn typed_list_predicate_preserves_element_type() {
 }
 
 #[test]
+fn temporal_type_synonyms_format_to_canonical_types() {
+    for (source, expected) in [
+        (
+            "RETURN $x IS TYPED TIMESTAMP WITH TIME ZONE AS ok",
+            "RETURN $x IS TYPED ZONED DATETIME AS ok",
+        ),
+        (
+            "RETURN $x IS TYPED TIMESTAMP WITHOUT TIME ZONE AS ok",
+            "RETURN $x IS TYPED LOCAL DATETIME AS ok",
+        ),
+        (
+            "RETURN $x IS TYPED TIMESTAMP AS ok",
+            "RETURN $x IS TYPED LOCAL DATETIME AS ok",
+        ),
+        (
+            "RETURN $x IS TYPED TIME WITH TIME ZONE AS ok",
+            "RETURN $x IS TYPED ZONED TIME AS ok",
+        ),
+        (
+            "RETURN $x IS TYPED TIME WITHOUT TIME ZONE AS ok",
+            "RETURN $x IS TYPED LOCAL TIME AS ok",
+        ),
+    ] {
+        let parsed = parse(source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert_eq!(formatted, expected, "{source}");
+        let reparsed =
+            parse(&formatted).unwrap_or_else(|error| panic!("{formatted} reparses: {error:?}"));
+        assert!(
+            structurally_eq(&parsed, &reparsed),
+            "{source} should round-trip through {formatted}"
+        );
+    }
+}
+
+#[test]
 fn reserved_word_aliases_are_quoted_in_formatted_output() {
     // Regression for Codex P2 on PR #24: the formatter's KEYWORDS list
     // was much smaller than the grammar's reserved-word set, so
@@ -61,6 +97,7 @@ fn reserved_word_aliases_are_quoted_in_formatted_output() {
         "RETURN 1 AS \"COUNT\"",
         "RETURN 1 AS \"NULL\"",
         "RETURN 1 AS \"AND\"",
+        "RETURN 1 AS \"WITHOUT\"",
     ] {
         assert_round_trip(source);
     }

@@ -291,7 +291,19 @@ fn cast_strings_to_temporal_values() {
         Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
     );
     assert_eq!(
+        cast_string("2026-05-07T12:34:56", "TIMESTAMP"),
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        cast_string("2026-05-07T12:34:56", "TIMESTAMP WITHOUT TIME ZONE"),
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+    );
+    assert_eq!(
         cast_string("12:34:56", "LOCAL TIME"),
+        Value::LocalTime("12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        cast_string("12:34:56", "TIME WITHOUT TIME ZONE"),
         Value::LocalTime("12:34:56".parse().unwrap())
     );
     assert_eq!(
@@ -310,7 +322,21 @@ fn cast_strings_to_temporal_values() {
     assert_eq!(value.datetime().to_string(), "2026-05-07T12:34:56");
     assert_eq!(value.offset().to_string(), "-04");
 
+    let Value::ZonedDateTime(value) =
+        cast_string("2026-05-07T12:34:56-04:00", "TIMESTAMP WITH TIME ZONE")
+    else {
+        panic!("expected zoned datetime");
+    };
+    assert_eq!(value.datetime().to_string(), "2026-05-07T12:34:56");
+    assert_eq!(value.offset().to_string(), "-04");
+
     let Value::ZonedTime(value) = cast_string("12:34:56-04:00", "ZONED TIME") else {
+        panic!("expected zoned time");
+    };
+    assert_eq!(value.time().to_string(), "12:34:56");
+    assert_eq!(value.offset().to_string(), "-04");
+
+    let Value::ZonedTime(value) = cast_string("12:34:56-04:00", "TIME WITH TIME ZONE") else {
         panic!("expected zoned time");
     };
     assert_eq!(value.time().to_string(), "12:34:56");

@@ -158,6 +158,7 @@ fn implemented_reserved_function_and_temporal_heads_reject_bare_aliases() {
         "TIMESTAMP",
         "LOCAL_TIMESTAMP",
         "ZONED",
+        "WITHOUT",
     ] {
         let source = format!("RETURN 1 AS {keyword}");
         assert!(
