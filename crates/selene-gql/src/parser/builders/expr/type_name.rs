@@ -243,6 +243,17 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         (&["JSON"], GqlType::Json),
         (&["VECTOR"], GqlType::Vector),
         (&["BYTEA"], GqlType::Bytes),
+        (
+            &["TIMESTAMP", "WITH", "TIME", "ZONE"],
+            GqlType::ZonedDateTime,
+        ),
+        (
+            &["TIMESTAMP", "WITHOUT", "TIME", "ZONE"],
+            GqlType::LocalDateTime,
+        ),
+        (&["TIMESTAMP"], GqlType::LocalDateTime),
+        (&["TIME", "WITH", "TIME", "ZONE"], GqlType::ZonedTime),
+        (&["TIME", "WITHOUT", "TIME", "ZONE"], GqlType::LocalTime),
         (&["ZONED", "DATETIME"], GqlType::ZonedDateTime),
         (&["LOCAL", "DATETIME"], GqlType::LocalDateTime),
         (&["ZONED", "TIME"], GqlType::ZonedTime),

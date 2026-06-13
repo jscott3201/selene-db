@@ -137,7 +137,7 @@ const KEYWORDS: &[&str] = &[
     "SUM", "TAN", "TANH", "THEN", "TIME", "TIMESTAMP", "TO", "TRAIL",
     "TRAILING", "TRANSACTION", "TRIM", "TRUE", "TYPE", "TYPED", "TYPES",
     "UINT", "UNION", "UNIQUE", "UNKNOWN", "UNWIND", "UPPER", "UUID",
-    "VARCHAR", "WALK", "WARN", "WHEN", "WHERE", "WITH", "XOR", "YEAR",
+    "VARCHAR", "WALK", "WARN", "WHEN", "WHERE", "WITH", "WITHOUT", "XOR", "YEAR",
     "YIELD", "ZONED", "ZONED_DATETIME", "ZONED_TIME",
 ];
 
