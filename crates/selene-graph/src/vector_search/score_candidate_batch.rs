@@ -1,9 +1,12 @@
 use rayon::prelude::*;
-use selene_core::{CancellationChecker, DbString, Value, VectorMetric, VectorTopK, VectorValue};
+use selene_core::{
+    CancellationChecker, DbString, NodeId, Value, VectorMetric, VectorMetricQuery, VectorTopK,
+    VectorValue,
+};
 
 use crate::error::GraphError;
 use crate::graph::SeleneGraph;
-use crate::parallel_scan::should_parallelize_scan;
+use crate::parallel_scan::{should_parallelize_scan, try_reduce_chunks};
 
 use super::{
     VECTOR_SEARCH_CANCEL_STRIDE, VectorCandidateSet, VectorNodeSearchHit, VectorSearchError,
@@ -14,6 +17,14 @@ use super::{
 const VECTOR_CANDIDATE_BATCH_PARALLEL_MIN_TOTAL_NODES: usize = 4096;
 #[cfg(test)]
 const VECTOR_CANDIDATE_BATCH_PARALLEL_MIN_TOTAL_NODES: usize = 8;
+#[cfg(not(test))]
+const VECTOR_REPEATED_CANDIDATE_BATCH_PARALLEL_MIN_CANDIDATES: usize = 4096;
+#[cfg(test)]
+const VECTOR_REPEATED_CANDIDATE_BATCH_PARALLEL_MIN_CANDIDATES: usize = 4;
+#[cfg(not(test))]
+const VECTOR_REPEATED_CANDIDATE_BATCH_PARALLEL_CHUNK_NODES: usize = 32;
+#[cfg(test)]
+const VECTOR_REPEATED_CANDIDATE_BATCH_PARALLEL_CHUNK_NODES: usize = 2;
 const VECTOR_CANDIDATE_BATCH_GROUP_MAX_SETS: usize = 128;
 
 struct CandidateBatchScore<'a> {
@@ -82,6 +93,36 @@ impl SeleneGraph {
                 top_k.push_distance(node_id, distance);
             }
         }
+
+        Ok(top_ks.into_iter().map(vector_node_hits).collect())
+    }
+
+    pub(super) fn score_repeated_vector_candidate_set_batch_parallel(
+        &self,
+        property: &DbString,
+        queries: &[VectorValue],
+        candidates: &VectorCandidateSet,
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        checker.check()?;
+        if candidates.is_empty() {
+            return Ok(vec![Vec::new(); queries.len()]);
+        }
+
+        let scorers = queries
+            .iter()
+            .map(|query| metric.bind_query(query).map_err(GraphError::from))
+            .collect::<Result<Vec<_>, _>>()?;
+        let top_ks = try_reduce_chunks(
+            candidates.as_nodes(),
+            VECTOR_REPEATED_CANDIDATE_BATCH_PARALLEL_CHUNK_NODES,
+            checker,
+            || new_batch_top_ks(queries.len(), k),
+            |chunk| self.score_repeated_vector_candidate_set_chunk(property, &scorers, chunk, k),
+            merge_batch_top_ks,
+        )?;
 
         Ok(top_ks.into_iter().map(vector_node_hits).collect())
     }
@@ -183,6 +224,29 @@ impl SeleneGraph {
 
         Ok(top_ks.into_iter().map(vector_node_hits).collect())
     }
+
+    fn score_repeated_vector_candidate_set_chunk(
+        &self,
+        property: &DbString,
+        scorers: &[VectorMetricQuery<'_>],
+        candidates: &[NodeId],
+        k: usize,
+    ) -> Result<Vec<VectorTopK<NodeId>>, VectorSearchError> {
+        let mut top_ks = new_batch_top_ks(scorers.len(), k);
+        for node_id in candidates.iter().copied() {
+            let Some(properties) = self.node_properties(node_id) else {
+                continue;
+            };
+            let Some(Value::Vector(vector)) = properties.get(property) else {
+                continue;
+            };
+            for (scorer, top_k) in scorers.iter().zip(top_ks.iter_mut()) {
+                let distance = scorer.distance(vector).map_err(GraphError::from)?;
+                top_k.push_distance(node_id, distance);
+            }
+        }
+        Ok(top_ks)
+    }
 }
 
 pub(super) fn candidate_sets_all_match(candidate_sets: &[VectorCandidateSet]) -> bool {
@@ -222,6 +286,20 @@ pub(super) fn should_parallelize_candidate_batch_scoring(
     )
 }
 
+pub(super) fn should_parallelize_repeated_candidate_batch(
+    query_count: usize,
+    candidate_count: usize,
+    k: usize,
+) -> bool {
+    query_count > 1
+        && candidate_count >= VECTOR_REPEATED_CANDIDATE_BATCH_PARALLEL_MIN_CANDIDATES
+        && should_parallelize_scan(
+            query_count.saturating_mul(candidate_count) as u64,
+            k,
+            VECTOR_CANDIDATE_BATCH_PARALLEL_MIN_TOTAL_NODES as u64,
+        )
+}
+
 fn candidate_sets_match(lhs: &VectorCandidateSet, rhs: &VectorCandidateSet) -> bool {
     let lhs = lhs.as_nodes();
     let rhs = rhs.as_nodes();
@@ -256,4 +334,21 @@ fn repeated_candidate_set_groups(candidate_sets: &[VectorCandidateSet]) -> Vec<V
         }
     }
     groups
+}
+
+fn new_batch_top_ks(query_count: usize, k: usize) -> Vec<VectorTopK<NodeId>> {
+    (0..query_count).map(|_| VectorTopK::new(k)).collect()
+}
+
+fn merge_batch_top_ks(
+    mut lhs: Vec<VectorTopK<NodeId>>,
+    rhs: Vec<VectorTopK<NodeId>>,
+) -> Result<Vec<VectorTopK<NodeId>>, VectorSearchError> {
+    debug_assert_eq!(lhs.len(), rhs.len());
+    for (lhs_top_k, rhs_top_k) in lhs.iter_mut().zip(rhs) {
+        for hit in rhs_top_k.into_hits() {
+            lhs_top_k.push_distance(hit.key, hit.distance);
+        }
+    }
+    Ok(lhs)
 }

@@ -613,8 +613,8 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/adjacency_label_range_l8_k64` | 44.6 ns (quick) | Iterates the sorted label range for 64 matching edges mixed with 8x64 unrelated-label edges. |
 | `graph_vector_candidate_set/adjacency_label_scan_l8_k64` | 374.8 ns (quick) | Benchmark-local old path: scans the same mixed-label adjacency entry and filters by label, showing the range lookup is ~8.4x faster for high-degree mixed-label candidates. |
 | `graph_vector_candidate_set/score_candidate_set_cosine_c64/c256/c1024/c4096_d1024` | 13.7 µs / 54.7 µs / 222.6 µs / 308.3 µs (quick) | Scores canonical candidate sets against one 1024-dim cosine query. Widths below 4,096 stay sequential; the 4,096-row uses chunked Rayon and is the production broad-candidate rerank threshold. |
-| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 97.5 µs / 400.0 µs / 422.9 µs / 1.491 ms (quick) | Scores 8 canonical candidate sets against 8 1024-dim cosine queries. Repeated c64 sets reuse candidate property lookups below the 4,096 total-candidate batch threshold; c1024/c4096 use query-level Rayon. |
-| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 177.9 µs / 611.3 µs / 2.267 ms / 9.557 ms (quick) | Scores 64 canonical candidate sets against 64 queries. Query-level Rayon is now the production many-query batch path once distributed total candidates reach 4,096. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 97.5 µs / 382.0 µs / 428.5 µs / 1.135 ms (quick) | Scores 8 canonical candidate sets against 8 1024-dim cosine queries. Repeated c64/c256 sets reuse candidate property lookups below the batch threshold; c1024 uses query-level Rayon; c4096 uses candidate-major parallel scoring. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 177.1 µs / 604.2 µs / 2.270 ms / 8.461 ms (quick) | Scores 64 canonical candidate sets against 64 queries. Repeated c64/c256/c1024 sets stay on query-level Rayon; c4096 switches to candidate-major parallel scoring to reuse property lookups across queries. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.3 µs / 402.4 µs / 423.1 µs / 1.500 ms (quick) | Scores 8 explicit node-slice candidate sets through the generic API. It now normalizes to canonical sets and follows the same q8 threshold behavior. |
 | `graph_vector_candidate_set/score_nodes_batch_cosine_q64_c64/c256/c1024/c4096_d1024` | 185.3 µs / 631.1 µs / 2.351 ms / 9.561 ms (quick) | Scores 64 explicit node-slice candidate sets through the generic API. The normalization cost is small relative to the query-level batch win. |
 | `graph_vector_candidate_set/score_neighbors_batch_cosine_q8_c64/c256/c1024/c4096_d1024` | 102.2 µs / 404.3 µs / 435.7 µs / 1.529 ms (quick) | Scores 8 graph-neighbor candidate sets through the neighbor batch API. The repeated-anchor fixture reuses one derived candidate set before canonical batch scoring. |
@@ -1733,6 +1733,28 @@ then the same command with `--baseline repeated_candidate_graph_pre`.
 |---|---:|---:|---|
 | `procedure_vector_candidate_state/shared_cache_score_candidate_state_expanded_intersection_batch_8x64...` | 26.584 µs | 21.636 µs | The post-root-reuse procedure row now avoids eight repeated property lookup passes over the same 64-node maintained-state intersection before exact scoring. |
 | `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64_d1024/64` | 102.04 µs | 97.528 µs | The core scorer keeps the existing query-level Rayon path for larger batches, but below threshold flips repeated candidate sets to candidate-major scoring. |
+
+PR-local quick broad repeated candidate-set batch scoring A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench single_graph --filter graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64 --save-baseline repeated_candidate_major_pre`
+on the pre-change batch scorer, then the same command with `--baseline
+repeated_candidate_major_pre` after adding the broad repeated-set
+candidate-major parallel path. q8 guard:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench single_graph --filter graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8 --save-baseline repeated_candidate_major_q8_pre2`,
+then focused 40-sample guard commands with `--baseline
+repeated_candidate_major_q8_pre2`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c64_d1024/64` | 97.500 µs | 97.487 µs | Below the broad repeated-set gate; unchanged. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c256_d1024/256` | 383.60 µs | 381.97 µs | Below the broad repeated-set gate; unchanged. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c1024_d1024/1024` | 423.33 µs | 428.48 µs | Remains on query-level Rayon; focused guard reports the change within noise threshold. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q8_c4096_d1024/4096` | 1.5236 ms | 1.1349 ms | Broad repeated candidate sets now split by candidate chunk, reuse one property lookup pass, and improve 23.65% (`p=0.00`). |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c64_d1024/64` | 182.50 µs | 177.08 µs | Small repeated sets keep the existing query-level Rayon path; Criterion reports the change within noise threshold. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c256_d1024/256` | 591.29 µs | 604.19 µs | Medium repeated sets stay on query-level Rayon; Criterion reports no change. A prototype gate at 256 candidates regressed this row by 31.28%, so the production gate is 4,096 candidates. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c1024_d1024/1024` | 2.2580 ms | 2.2701 ms | Medium-wide repeated sets stay on query-level Rayon; Criterion reports no change. The 256-candidate prototype gate regressed this row by 5.67%. |
+| `graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64_c4096_d1024/4096` | 9.4264 ms | 8.4606 ms | Broad repeated candidate sets now use candidate-major parallel scoring and improve 9.22% (`p=0.00`). |
 
 PR-local quick mixed candidate-set reuse validation:
 
