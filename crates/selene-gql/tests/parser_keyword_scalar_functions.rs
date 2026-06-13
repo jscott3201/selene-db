@@ -57,9 +57,8 @@ fn reserved_iso_function_heads_remain_callable() {
         "RETURN COALESCE(null, 1) AS value",
         "RETURN NULLIF(1, 1) AS value",
         "RETURN CURRENT_DATE AS value",
-        "RETURN CURRENT_DATE() AS value",
-        "RETURN CURRENT_TIME() AS value",
-        "RETURN CURRENT_TIMESTAMP() AS value",
+        "RETURN CURRENT_TIME AS value",
+        "RETURN CURRENT_TIMESTAMP AS value",
         "RETURN DATE('2026-01-01') AS value",
         "RETURN DATETIME('2026-01-01T00:00:00') AS value",
         "RETURN LOCAL_DATETIME('2026-01-01T00:00:00') AS value",
@@ -68,9 +67,24 @@ fn reserved_iso_function_heads_remain_callable() {
         "RETURN ZONED_TIME('12:34:56Z') AS value",
         "RETURN ZONED_DATETIME('2026-01-01T00:00:00Z') AS value",
         "RETURN DURATION(null) AS value",
-        "RETURN DURATION_BETWEEN(null) AS value",
+        "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-02')) AS value",
     ] {
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+    }
+}
+
+#[test]
+fn dedicated_temporal_value_functions_reject_generic_call_shapes() {
+    for source in [
+        "RETURN CURRENT_DATE() AS value",
+        "RETURN CURRENT_TIME() AS value",
+        "RETURN CURRENT_TIMESTAMP() AS value",
+        "RETURN DURATION_BETWEEN(null) AS value",
+    ] {
+        assert!(
+            parse(source).is_err(),
+            "{source} must reject non-ISO generic-call syntax"
+        );
     }
 }
 
@@ -84,7 +98,7 @@ fn keyword_function_calls_format_bare_and_round_trip() {
         ("RETURN labels(n) AS value", "\"labels\"("),
         ("RETURN element_id(null) AS value", "\"element_id\"("),
         ("RETURN coalesce(null, 1) AS value", "\"coalesce\"("),
-        ("RETURN current_date() AS value", "\"current_date\"("),
+        ("RETURN current_date AS value", "\"current_date\""),
         ("RETURN date(null) AS value", "\"date\"("),
         ("RETURN duration(null) AS value", "\"duration\"("),
     ] {

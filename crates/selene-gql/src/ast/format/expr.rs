@@ -129,6 +129,10 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             distinct,
             ..
         } => {
+            if let Some(keyword) = niladic_current_datetime_keyword(name, args, *star, *distinct) {
+                out.push_str(keyword);
+                return Ok(());
+            }
             if let Some(keyword) = keyword_function_name(name) {
                 out.push_str(keyword);
             } else {
@@ -340,6 +344,29 @@ fn keyword_function_name(name: &crate::NonEmpty<selene_core::DbString>) -> Optio
         Some("ELEMENTS")
     } else if segment.eq_ignore_ascii_case("labels") {
         Some("LABELS")
+    } else {
+        None
+    }
+}
+
+fn niladic_current_datetime_keyword(
+    name: &crate::NonEmpty<selene_core::DbString>,
+    args: &[ValueExpr],
+    star: bool,
+    distinct: bool,
+) -> Option<&'static str> {
+    if star || distinct || !args.is_empty() || name.len() != 1 {
+        return None;
+    }
+    let segment = name.first().as_str();
+    if segment.eq_ignore_ascii_case("current_date") {
+        Some("CURRENT_DATE")
+    } else if segment.eq_ignore_ascii_case("current_time") {
+        Some("CURRENT_TIME")
+    } else if segment.eq_ignore_ascii_case("current_timestamp") {
+        Some("CURRENT_TIMESTAMP")
+    } else if segment.eq_ignore_ascii_case("local_time") {
+        Some("LOCAL_TIME")
     } else {
         None
     }

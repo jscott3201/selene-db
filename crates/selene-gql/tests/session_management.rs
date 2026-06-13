@@ -128,7 +128,7 @@ fn default_session_time_zone_is_utc() {
     let graph = graph(7010);
     let mut session = Session::new(&graph);
 
-    let value = single_value(run(&mut session, "RETURN current_timestamp()").expect("now"));
+    let value = single_value(run(&mut session, "RETURN current_timestamp").expect("now"));
     let Value::ZonedDateTime(zoned) = value else {
         panic!("expected zoned datetime, got {value:?}");
     };
@@ -226,7 +226,7 @@ fn set_time_zone_shifts_current_timestamp_offset() {
 
     run(&mut session, "SESSION SET TIME ZONE '+05:00'").expect("set tz");
 
-    let value = single_value(run(&mut session, "RETURN current_timestamp()").expect("now"));
+    let value = single_value(run(&mut session, "RETURN current_timestamp").expect("now"));
     let Value::ZonedDateTime(zoned) = value else {
         panic!("expected zoned datetime, got {value:?}");
     };
@@ -245,7 +245,7 @@ fn set_time_zone_iana_region_is_accepted() {
     // A fixed-offset IANA zone keeps the offset deterministic across DST.
     run(&mut session, "SESSION SET TIME ZONE 'Etc/GMT+5'").expect("set iana tz");
 
-    let value = single_value(run(&mut session, "RETURN current_timestamp()").expect("now"));
+    let value = single_value(run(&mut session, "RETURN current_timestamp").expect("now"));
     let Value::ZonedDateTime(zoned) = value else {
         panic!("expected zoned datetime, got {value:?}");
     };
@@ -272,9 +272,9 @@ fn localtime_reflects_session_time_zone() {
     let graph = graph(7014);
     let mut session = Session::new(&graph);
 
-    let utc = single_value(run(&mut session, "RETURN current_date()").expect("utc date"));
+    let utc = single_value(run(&mut session, "RETURN current_date").expect("utc date"));
     run(&mut session, "SESSION SET TIME ZONE '+14:00'").expect("set tz");
-    let shifted = single_value(run(&mut session, "RETURN current_date()").expect("shifted date"));
+    let shifted = single_value(run(&mut session, "RETURN current_date").expect("shifted date"));
 
     // Both are dates; the assertion is that the call path is wired to the
     // session zone (the +14:00 wall clock can differ from UTC's date).
@@ -344,7 +344,7 @@ fn reset_time_zone_restores_utc_default() {
 
     run(&mut session, "SESSION RESET TIME ZONE").expect("reset tz");
 
-    let value = single_value(run(&mut session, "RETURN current_timestamp()").expect("now"));
+    let value = single_value(run(&mut session, "RETURN current_timestamp").expect("now"));
     let Value::ZonedDateTime(zoned) = value else {
         panic!("expected zoned datetime");
     };
@@ -361,7 +361,7 @@ fn reset_all_characteristics_clears_params_and_time_zone() {
     run(&mut session, "SESSION RESET").expect("bare reset = all characteristics");
 
     assert!(unbound_parameter(&mut session), "params cleared");
-    let value = single_value(run(&mut session, "RETURN current_timestamp()").expect("now"));
+    let value = single_value(run(&mut session, "RETURN current_timestamp").expect("now"));
     let Value::ZonedDateTime(zoned) = value else {
         panic!("expected zoned datetime");
     };
@@ -376,7 +376,7 @@ fn reset_all_characteristics_explicit_keyword() {
 
     run(&mut session, "SESSION RESET ALL CHARACTERISTICS").expect("explicit reset");
 
-    let value = single_value(run(&mut session, "RETURN current_timestamp()").expect("now"));
+    let value = single_value(run(&mut session, "RETURN current_timestamp").expect("now"));
     let Value::ZonedDateTime(zoned) = value else {
         panic!("expected zoned datetime");
     };

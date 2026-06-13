@@ -61,6 +61,12 @@ fn status_for(source: &str) -> GqlStatus {
         .gqlstatus()
 }
 
+fn parse_status_for(source: &str) -> GqlStatus {
+    selene_gql::parse(source)
+        .expect_err("statement fails to parse")
+        .gqlstatus()
+}
+
 fn analysis_status_for(source: &str) -> GqlStatus {
     let statement = selene_gql::parse(source).expect("test source parses");
     selene_gql::analyze(statement, &selene_gql::EmptyProcedureRegistry, None)
@@ -377,11 +383,11 @@ fn duration_between_rejects_non_temporal_and_mixed_temporal_families() {
         "22G03"
     );
     assert_eq!(
-        status_for(
+        parse_status_for(
             "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-02'), \
              'DAY TO SECOND') AS value"
         ),
-        GqlStatus::DATATYPE_MISMATCH
+        GqlStatus::SYNTAX_ERROR
     );
 }
 
