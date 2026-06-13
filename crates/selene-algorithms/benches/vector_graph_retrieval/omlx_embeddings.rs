@@ -13,6 +13,7 @@ mod fixture;
 
 const TOP_K: usize = 4;
 const ANN_SEARCH_WIDTH: usize = 64;
+const IVF_SEARCH_WIDTH: usize = 2;
 const TURBO_QUANT_SEARCH_WIDTH: usize = 512;
 const ANN_UNION_SEED_K: usize = 8;
 const MIXED_READS_PER_CYCLE: usize = 60;
@@ -164,6 +165,24 @@ pub(super) fn bench(c: &mut Criterion) {
             ),
             |b| {
                 b.iter(|| black_box(fixture.turbo_quant_total_precision()));
+            },
+        );
+        group.bench_function(
+            BenchmarkId::new(
+                "ivf_graph_search",
+                format!(
+                    "{}_{}_q{}_k{}_p{}_dim{}_precbp{}",
+                    model_id,
+                    scale_label(fixture.document_count()),
+                    fixture.query_count(),
+                    TOP_K,
+                    IVF_SEARCH_WIDTH,
+                    fixture.dimension,
+                    fixture.ivf_precision_basis_points(),
+                ),
+            ),
+            |b| {
+                b.iter(|| black_box(fixture.ivf_total_precision()));
             },
         );
         group.bench_function(
