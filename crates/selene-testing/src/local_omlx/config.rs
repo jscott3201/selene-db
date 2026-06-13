@@ -4,7 +4,9 @@ use super::client::{EmbeddingClient, EmbeddingProvider};
 use super::corpus::{CorpusInput, CorpusProfile, scale_document_inputs};
 use selene_core::VectorValue;
 
-const ENABLE_ENVS: &[&str] = &["SELENE_EMBEDDING_BENCH", "SELENE_OMLX_EMBEDDING_BENCH"];
+const ENABLE_ENV: &str = "SELENE_EMBEDDING_BENCH";
+const LEGACY_ENABLE_ENV: &str = "SELENE_OMLX_EMBEDDING_BENCH";
+const ENABLE_ENVS: &[&str] = &[ENABLE_ENV, LEGACY_ENABLE_ENV];
 const PROVIDER_ENV: &str = "SELENE_EMBEDDING_PROVIDER";
 const MODELS_ENVS: &[&str] = &["SELENE_EMBEDDING_MODELS", "SELENE_OMLX_EMBEDDING_MODELS"];
 const BATCH_SIZE_ENVS: &[&str] = &[
@@ -62,7 +64,7 @@ impl EmbeddingBenchConfig {
         if !enabled() {
             return None;
         }
-        let provider = EmbeddingProvider::from_env(PROVIDER_ENV);
+        let provider = EmbeddingProvider::from_env(PROVIDER_ENV, default_provider());
         let batch_size = embedding_batch_size();
         let client = match provider {
             EmbeddingProvider::Omlx => {
@@ -109,6 +111,14 @@ fn enabled() -> bool {
     ENABLE_ENVS
         .iter()
         .any(|name| std::env::var(name).ok().as_deref() == Some("1"))
+}
+
+fn default_provider() -> EmbeddingProvider {
+    if std::env::var(ENABLE_ENV).ok().as_deref() == Some("1") {
+        EmbeddingProvider::OpenRouter
+    } else {
+        EmbeddingProvider::Omlx
+    }
 }
 
 fn models(provider: EmbeddingProvider) -> Vec<String> {

@@ -81,8 +81,8 @@ There is no umbrella crate. Keep dependency direction intentional:
 `selene-core -> selene-graph -> selene-algorithms -> selene-gql`
 
 `selene-persist` depends on `selene-core` and stays below graph semantics.
-`selene-testing` provides fixtures, corpus helpers, local oMLX embedding support,
-and benchmark profiles for dev-dependencies.
+`selene-testing` provides fixtures, corpus helpers, OpenRouter/local embedding
+support, and benchmark profiles for dev-dependencies.
 
 | Crate | Owns |
 |---|---|
@@ -91,7 +91,7 @@ and benchmark profiles for dev-dependencies.
 | `selene-persist` | WAL, snapshots, MANIFEST recovery, audit log, retention, and prune. It does not own graph semantics. |
 | `selene-algorithms` | Projection catalog plus native structural, pathfinding, centrality, and community algorithms. It never depends on GQL. |
 | `selene-gql` | Parser, AST, analyzer, planner, optimizer, executor, procedure tiers, and the concrete native `BuiltinProcedureRegistry`. |
-| `selene-testing` | Shared fixtures, graph generators, local oMLX corpus/client support, benchmark profiles, and snapshot-harness support. |
+| `selene-testing` | Shared fixtures, graph generators, OpenRouter/local embedding corpus and client support, benchmark profiles, and snapshot-harness support. |
 
 ## Query And Procedure Surface
 
@@ -192,11 +192,11 @@ composable primitives:
   correctness, or latency.
 
 Do not bake one agent-memory policy into the engine. Build reusable graph/vector
-substrate and benchmark product-shaped retrieval rows. Current local oMLX
-evidence says graph-authored hints and support expansion can restore precision
-where vector-only ANN/exact search fails under ambiguous language; the remaining
-work is better root production, maintained-state ownership, and
-invalidation/recovery, not piling on ANN fallback surfaces.
+substrate and benchmark product-shaped retrieval rows. Current OpenRouter and
+legacy local embedding evidence says graph-authored hints and support expansion
+can restore precision where vector-only ANN/exact search fails under ambiguous
+language; the remaining work is better root production, maintained-state
+ownership, and invalidation/recovery, not piling on ANN fallback surfaces.
 
 ## JSON
 
@@ -313,9 +313,9 @@ Expected workload shape is read-heavy but write-relevant, roughly 60% reads and
   research, replay locality, group commit, and segment/snapshot trade-offs
   before changing the persistence format.
 - Prefer product-shaped benchmark rows once API boundaries are correct.
-- Treat local oMLX rows as local-only validation. CI must compile those code
-  paths but must not require localhost embedding services or secret `.env`
-  material.
+- Treat OpenRouter/live embedding rows as opt-in local validation. CI must
+  compile those code paths but must not require embedding services or secret
+  `.env` material.
 
 ## Validation
 
@@ -381,13 +381,16 @@ The runner is Criterion-only. There is no active iai-callgrind/valgrind layer.
 Every committed bench target must be registered in `scripts/run-benches.sh` and
 documented in `BENCHMARKS.md`.
 
-Local oMLX embedding benches are opt-in:
+OpenRouter embedding benches are the preferred opt-in live validation path;
+local oMLX remains available by setting `SELENE_EMBEDDING_PROVIDER=omlx` or the
+legacy `SELENE_OMLX_*` variables:
 
 ```bash
 set -a; source .env; set +a
-SELENE_OMLX_EMBEDDING_BENCH=1 \
-SELENE_OMLX_CORPUS=scaled_ambiguous_memory \
-SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_PROVIDER=openrouter \
+SELENE_EMBEDDING_CORPUS=project_source_chunk_memory \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
 scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_vector_omlx_query_roots
 ```
 
@@ -478,8 +481,8 @@ Current source, tests, benchmarks, and GitHub state win.
 - Do not treat the exact BM25 scan or transient `TextIndex` builds as durable
   maintained text-index registrations.
 - Do not add BM25/full-text as a grammar shortcut or dependency-first import.
-- Do not use synthetic vector metrics for real-embedding oMLX rows unless the PR
-  is explicitly testing that metric; cosine is the default semantic benchmark
+- Do not use synthetic vector metrics for real-embedding rows unless the PR is
+  explicitly testing that metric; cosine is the default semantic benchmark
   metric.
 - Do not commit `_goalslogs` or any other `_*/` working directory.
 - Do not bypass row-id mapping. External `NodeId`/`EdgeId` are stable; internal
