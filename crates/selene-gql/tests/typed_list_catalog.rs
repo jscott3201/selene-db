@@ -112,3 +112,44 @@ fn create_node_type_accepts_and_renders_typed_list_property() {
         ))
     );
 }
+
+#[test]
+fn create_node_type_canonicalizes_array_and_postfix_list_forms() {
+    let graph = empty_closed_graph(13_101);
+    let plan = planned(
+        "CREATE NODE TYPE :Doc \
+         (tags :: ARRAY<STRING>, scores :: INTEGER ARRAY)",
+    );
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    outcome.expect("commit succeeds");
+
+    let graph_type = graph.graph_type().unwrap();
+    assert_eq!(
+        graph_type.node_types[0].properties[0].list_element_type,
+        Some(PropertyElementType::Scalar(
+            selene_core::PropertyValueType::String
+        ))
+    );
+    assert_eq!(
+        graph_type.node_types[0].properties[1].list_element_type,
+        Some(PropertyElementType::Scalar(
+            selene_core::PropertyValueType::Int
+        ))
+    );
+
+    let show = planned("SHOW NODE TYPES");
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &show.impl_defined_caps,
+        &EmptyProcedureRegistry,
+        graph.index_providers(),
+    );
+    let table = execute_pipeline(&show.pipeline, seed_table(), &mut ctx).expect("show executes");
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(db_string(
+            "CREATE NODE TYPE :Doc (tags :: LIST<STRING>, scores :: LIST<INTEGER>)"
+        ))
+    );
+}

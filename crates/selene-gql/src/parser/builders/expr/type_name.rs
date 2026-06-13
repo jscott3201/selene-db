@@ -38,9 +38,32 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         let base = children.next().ok_or_else(|| {
             ParserError::syntax("type name is missing base type", source_span, None)
         })?;
-        let has_not_null = children.any(|child| child.as_rule() == Rule::type_not_null);
-        let ty = build_type_name_with_depth(base, depth)?;
-        return Ok(if has_not_null {
+        let mut ty = build_type_name_with_depth(base, depth)?;
+        let mut suffix_depth = depth;
+        let mut outer_not_null = false;
+        for child in children {
+            match child.as_rule() {
+                Rule::postfix_list_suffix => {
+                    suffix_depth += 1;
+                    if suffix_depth > MAX_NESTING_DEPTH {
+                        return Err(ParserError::NestingLimitExceeded {
+                            limit: MAX_NESTING_DEPTH,
+                            span: span(&child),
+                        });
+                    }
+                    let element_not_null = child
+                        .into_inner()
+                        .any(|part| part.as_rule() == Rule::type_not_null);
+                    if element_not_null {
+                        ty = GqlType::NotNull(Box::new(ty));
+                    }
+                    ty = GqlType::List(Box::new(ty));
+                }
+                Rule::type_not_null => outer_not_null = true,
+                _ => return Err(unexpected_pair(child, "expected type-name suffix")),
+            }
+        }
+        return Ok(if outer_not_null {
             GqlType::NotNull(Box::new(ty))
         } else {
             ty
@@ -132,12 +155,16 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     if keyword_starts_with(text, "DURATION") {
         return build_duration_type_name(pair);
     }
-    if keyword_starts_with(text, "LIST") {
-        let inner = pair
+    if let Some(list_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::angle_list_type)
+    {
+        let inner = list_type
             .into_inner()
             .find(|child| child.as_rule() == Rule::type_name)
             .ok_or_else(|| {
-                ParserError::syntax("LIST type is missing element type", source_span, None)
+                ParserError::syntax("list type is missing element type", source_span, None)
             })?;
         return Ok(GqlType::List(Box::new(build_type_name_with_depth(
             inner,

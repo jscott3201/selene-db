@@ -751,7 +751,7 @@ var_ref         = { ident }
 // -- Type names (for CAST) ------------------------------------------
 // PEG ordering: longer alternatives BEFORE shorter to prevent prefix matching.
 
-type_name = { type_name_base ~ type_not_null? }
+type_name = { type_name_base ~ postfix_list_suffix* ~ type_not_null? }
 type_not_null = { ^"NOT" ~ ^"NULL" }
 
 type_name_base = {
@@ -798,10 +798,13 @@ type_name_base = {
   | duration_type
   | open_reference_value_type
   | ^"PATH"
-  | ^"LIST" ~ "<" ~ type_name ~ ">"
+  | angle_list_type
   | record_type
   | ^"NOTHING" | ^"NULL"
 }
+angle_list_type = { list_value_type_name_synonym ~ "<" ~ type_name ~ ">" }
+postfix_list_suffix = { type_not_null? ~ list_value_type_name_synonym }
+list_value_type_name_synonym = @{ (^"LIST" | ^"ARRAY") ~ !(LETTER | NUMBER | "_") }
 signed_integer_precision_type = {
     (^"SIGNED" ~ ^"INTEGER" | ^"INTEGER" | ^"INT") ~ "(" ~ numeric_type_precision ~ ")"
 }

@@ -52,6 +52,22 @@ fn rejects_excessive_type_name_list_nesting() {
 }
 
 #[test]
+fn rejects_excessive_postfix_type_name_list_nesting() {
+    // ISO postfix list syntax (`T LIST`) does not recurse through pest the way
+    // `LIST<T>` does, so the builder must count suffix nesting explicitly.
+    let depth = NESTING_LIMIT + 1;
+    let source = format!(
+        "CREATE NODE TYPE :Deep (v :: INTEGER{})",
+        " LIST".repeat(depth)
+    );
+    let error = parse(&source).expect_err("over-nested postfix type name rejects");
+    assert!(matches!(
+        error,
+        ParserError::NestingLimitExceeded { limit: 64, .. }
+    ));
+}
+
+#[test]
 fn moderate_type_name_list_nesting_parses() {
     // A realistically nested `LIST<…>` type (depth 3) parses cleanly.
     parse("RETURN CAST(x AS LIST<LIST<LIST<INTEGER>>>)").expect("triple-nested LIST type parses");
