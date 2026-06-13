@@ -55,6 +55,43 @@ pub(super) fn build_elements_function(pair: Pair<'_, Rule>) -> Result<ValueExpr,
     build_keyword_function(pair, "elements")
 }
 
+pub(super) fn build_scalar_keyword_function_call(
+    pair: Pair<'_, Rule>,
+) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut name = None;
+    let mut args = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::scalar_keyword_function_name => name = Some(lowercase_db_string(child)?),
+            Rule::arg_list => {
+                args = child
+                    .into_inner()
+                    .filter(|arg| arg.as_rule() == Rule::expr)
+                    .map(build_value_expr)
+                    .collect::<Result<Vec<_>, _>>()?;
+            }
+            _ => {
+                return Err(unexpected_pair(
+                    child,
+                    "unexpected scalar keyword function child",
+                ));
+            }
+        }
+    }
+    let name = name.ok_or_else(|| {
+        ParserError::syntax("scalar keyword function is missing name", source_span, None)
+    })?;
+    Ok(ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![name])
+            .expect("scalar keyword function name is non-empty"),
+        args,
+        star: false,
+        distinct: false,
+        span: source_span,
+    })
+}
+
 pub(super) fn build_labels_function(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let arg = build_value_expr(first_child(pair)?)?;

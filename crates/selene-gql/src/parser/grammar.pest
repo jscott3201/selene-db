@@ -589,6 +589,7 @@ primary = {
   | literal
   | current_datetime_function
   | duration_between_expr
+  | scalar_keyword_function_call
   | function_call
   | paren_expr
   | typed_param_ref
@@ -717,7 +718,26 @@ year_to_month_qualifier = { ^"YEAR" ~ ^"TO" ~ ^"MONTH" }
 day_to_second_qualifier = { ^"DAY" ~ ^"TO" ~ ^"SECOND" }
 duration_between_kw = @{ ^"DURATION_BETWEEN" ~ !(LETTER | NUMBER | "_") }
 
-function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }
+// ISO scalar function heads are reserved words, so they cannot travel through
+// `qualified_name` once the identifier guard is spec-aligned. Keep the ordinary
+// AST shape by lowering these keyword calls to `FunctionCall`.
+scalar_keyword_function_call = { scalar_keyword_function_name ~ "(" ~ arg_list? ~ ")" }
+scalar_keyword_function_name = @{
+    ^"CHARACTER_LENGTH" | ^"CHAR_LENGTH"
+  | ^"BYTE_LENGTH" | ^"OCTET_LENGTH"
+  | ^"PATH_LENGTH" | ^"CARDINALITY" | ^"SIZE"
+  | ^"ABS" | ^"MOD"
+  | ^"SINH" | ^"COSH" | ^"TANH"
+  | ^"SIN" | ^"COS" | ^"TAN" | ^"COT"
+  | ^"ASIN" | ^"ACOS" | ^"ATAN"
+  | ^"DEGREES" | ^"RADIANS"
+  | ^"LOG10" | ^"LOG" | ^"LN" | ^"EXP"
+  | ^"POWER" | ^"SQRT" | ^"FLOOR" | ^"CEILING" | ^"CEIL"
+  | ^"LEFT" | ^"RIGHT" | ^"UPPER" | ^"LOWER"
+  | ^"BTRIM" | ^"LTRIM" | ^"RTRIM"
+}
+
+function_call     = { qualified_name ~ "(" ~ arg_list? ~ ")" }
 elements_function = { elements_synonym ~ "(" ~ arg_list? ~ ")" }
 paren_expr      = { "(" ~ expr ~ ")" }
 var_ref         = { ident }
@@ -942,6 +962,12 @@ keyword = @{
     | ^"COUNT" | ^"SUM" | ^"AVG"
     | ^"STDDEV_SAMP" | ^"STDDEV_POP"
     | ^"COLLECT_LIST"
+    | ^"CHARACTER_LENGTH" | ^"CHAR_LENGTH" | ^"BYTE_LENGTH" | ^"OCTET_LENGTH" | ^"PATH_LENGTH" | ^"CARDINALITY" | ^"SIZE"
+    | ^"ABS" | ^"MOD"
+    | ^"SINH" | ^"COSH" | ^"TANH" | ^"SIN" | ^"COS" | ^"TAN" | ^"COT" | ^"ASIN" | ^"ACOS" | ^"ATAN"
+    | ^"DEGREES" | ^"RADIANS" | ^"LOG10" | ^"LOG" | ^"LN" | ^"EXP" | ^"POWER" | ^"SQRT" | ^"FLOOR" | ^"CEILING" | ^"CEIL"
+    | ^"LEFT" | ^"RIGHT" | ^"UPPER" | ^"LOWER" | ^"BTRIM" | ^"LTRIM" | ^"RTRIM"
+    | ^"ALL_DIFFERENT" | ^"SAME" | ^"PROPERTY_EXISTS" | ^"LABELS" | ^"ELEMENTS" | ^"NORMALIZE"
     | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"NULLS"
     | ^"CREATE" | ^"DROP"
     | ^"SELECT" | ^"FROM" | ^"TRIM"
