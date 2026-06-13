@@ -52,11 +52,9 @@ edge_type_descriptor = { edge_type_key_label_set | (":" ~ ident) }
 // `<node/edge type key label set> ::= [ <label set phrase> ] <implies>` (§18.2/
 // §18.3 Format). The optional `<label set phrase>` is an ampersand-joined label
 // set specification (§18.4); the `<implies>` token is `<right double arrow> |
-// IMPLIES` (§21.3) — selene-db accepts BOTH spellings. `IMPLIES` is matched only
-// here (a contextual token after the label phrase, word-boundary-guarded), NOT
-// added to the global `keyword` exclusion set, so `implies` stays usable as an
-// identifier and no global reserved-keyword growth occurs (see memory
-// project_parser_parse_time_dos). The trailing
+// IMPLIES` (§21.3) — selene-db accepts BOTH spellings. `IMPLIES` is an ISO
+// reserved word, so it is also excluded from bare identifier slots by the global
+// `keyword` rule. The trailing
 // `key_label_implied_labels` accepts the separate-implied-`<label set>` shape
 // (`:Person => :Employee`) at the grammar level only so the builder can raise an
 // honest NotImplemented reject (the containment-identification case is deferred
@@ -319,14 +317,9 @@ path_modifier     = @{ (^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL") ~ !(LETTER 
 // `!(LETTER | NUMBER | "_")` (mirroring counted_group_kw / match_mode), so
 // "PATHS" can never parse as "PATH" + a dangling "S".
 //
-// Deliberate no-keyword-growth decision: PATH / PATHS are NOT added to the
-// global `keyword` rule. They are recognised purely contextually in this
-// trailing match-prefix position, so they remain usable as ordinary
-// identifiers (e.g. `RETURN n.path`, `MATCH (path) RETURN path`). This is a
-// DIFFERENT grammar position than the `PATH` value-type keyword in `type_name`
-// (:629), so there is no conflict. PATH was not previously reserved; keeping it
-// contextual preserves identifier usability and the parser-DoS
-// no-new-reserved-word posture, following the §16.4 / IMPLIES (813) precedent.
+// PATH / PATHS are ISO reserved words (§21.3), so they are also excluded from
+// bare identifier slots by the global `keyword` rule. Quoted identifiers still
+// work where a user needs a variable or alias literally named "path".
 path_or_paths     = @{ (^"PATHS" | ^"PATH") ~ !(LETTER | NUMBER | "_") }
 graph_pattern_list = { graph_pattern ~ ("," ~ graph_pattern)* }
 
@@ -1009,16 +1002,22 @@ prop_ident = @{
   | (LETTER | "_") ~ (LETTER | NUMBER | "_")*
 }
 
-// Keywords that begin clauses/statements and cause parsing ambiguity
-// when used as identifiers in expression context.
+// ISO reserved/pre-reserved words plus grammar-reserved implementation tokens.
+// These are excluded from bare identifier slots; delimited identifiers remain
+// available where a user needs a binding or alias with the same spelling.
 // Unicode-aware word boundary: !(LETTER | NUMBER | "_")
 keyword = @{
     ( ^"MATCH" | ^"RETURN" | ^"FILTER" | ^"WHERE" | ^"ORDER"
     | ^"LIMIT" | ^"OFFSET" | ^"GROUP" | ^"LET" | ^"SET" | ^"DELETE"
-    | ^"INSERT" | ^"REMOVE" | ^"MERGE" | ^"CALL" | ^"YIELD" | ^"ASC" | ^"ASIN" | ^"AS" | ^"FINISH" | ^"DETACH" | ^"FOR"
-    | ^"AND" | ^"OR" | ^"NOT" | ^"XOR" | ^"INTERSECT" | ^"IN" | ^"IS" | ^"EXISTS"
+    | ^"INSERT" | ^"REMOVE" | ^"MERGE" | ^"CALL" | ^"YIELD" | ^"ASCENDING" | ^"ASC" | ^"ASIN" | ^"AS" | ^"FINISH" | ^"DETACH" | ^"FOR"
+    | ^"AND" | ^"OR" | ^"NOTHING" | ^"NOT" | ^"XOR"
+    | ^"INTERSECT" | ^"INTEGER256" | ^"INTEGER128" | ^"INTEGER64"
+    | ^"INTEGER32" | ^"INTEGER16" | ^"INTEGER8" | ^"INTEGER"
+    | ^"INTERVAL" | ^"INT256" | ^"INT128" | ^"INT64" | ^"INT32"
+    | ^"INT16" | ^"INT8" | ^"INFINITY" | ^"INSTANT" | ^"INDEXED"
+    | ^"INDEX" | ^"INT" | ^"IN" | ^"IS" | ^"EXISTS"
     | ^"NULLIF" | ^"NULLS" | ^"NULL" | ^"TRUE" | ^"FALSE" | ^"UNKNOWN"
-    | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"DESC"
+    | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"DESCENDING" | ^"DESC"
     | ^"START" | ^"COMMIT" | ^"ROLLBACK" | ^"UNION" | ^"EXCEPT" | ^"OTHERWISE" | ^"NEXT"
     | ^"CAST" | ^"CASE" | ^"WHEN" | ^"THEN" | ^"ELSE" | ^"END"
     | ^"COUNT" | ^"SUM" | ^"AVG"
@@ -1043,6 +1042,33 @@ keyword = @{
     | ^"ARRAY"
     | ^"BINDING" | ^"CONNECTING" | ^"DIFFERENT" | ^"KEEP" | ^"ONLY"
     | ^"STRICT" | ^"WARN"
+    | ^"CURRENT_PROPERTY_GRAPH" | ^"CURRENT_GRAPH" | ^"CURRENT_SCHEMA"
+    | ^"CURRENT_ROLE" | ^"CURRENT_USER" | ^"HOME_PROPERTY_GRAPH"
+    | ^"HOME_GRAPH" | ^"HOME_SCHEMA" | ^"SESSION_USER"
+    | ^"CHARACTERISTICS" | ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC"
+    | ^"UINT256" | ^"UINT128"
+    | ^"UINT64" | ^"UINT32" | ^"UINT16" | ^"UINT8"
+    | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
+    | ^"ABSTRACT" | ^"AGGREGATE" | ^"AGGREGATES" | ^"ALTER"
+    | ^"AT" | ^"BIGINT" | ^"BIG" | ^"BINARY" | ^"BOOL" | ^"BOOLEAN"
+    | ^"BOTH" | ^"BYTEA" | ^"BYTES" | ^"CATALOG" | ^"CHAR"
+    | ^"CLEAR" | ^"CLONE" | ^"CLOSE" | ^"CONSTRAINT" | ^"COPY"
+    | ^"DATA" | ^"DECIMAL" | ^"DEC" | ^"DIRECTORY" | ^"DOUBLE"
+    | ^"DRYRUN" | ^"EXACT"
+    | ^"EXISTING" | ^"FLOAT" | ^"FUNCTION" | ^"GQLSTATUS" | ^"GRANT"
+    | ^"IF" | ^"IMPLIES"
+    | ^"LEADING" | ^"LIKE" | ^"LIST" | ^"MAX" | ^"MIN" | ^"NODETACH"
+    | ^"NUMBER" | ^"NUMERIC" | ^"OF" | ^"ON" | ^"OPEN"
+    | ^"PARAMETERS" | ^"PARAMETER" | ^"PARTITION" | ^"PATHS" | ^"PATH"
+    | ^"PRECISION" | ^"PROCEDURE" | ^"PRODUCT" | ^"PROJECT" | ^"QUERY"
+    | ^"REAL" | ^"RECORDS" | ^"REFERENCE" | ^"RENAME" | ^"REPLACE"
+    | ^"RESET" | ^"REVOKE"
+    | ^"SCHEMA" | ^"SESSION" | ^"SIGNED" | ^"SKIP" | ^"SMALLINT"
+    | ^"SMALL" | ^"STRING" | ^"SUBSTRING" | ^"SYSTEM_USER"
+    | ^"TEMPORAL" | ^"TRAILING" | ^"TYPED" | ^"UBIGINT"
+    | ^"UINT" | ^"UNIQUE" | ^"UNIT" | ^"UNSIGNED" | ^"USE"
+    | ^"USMALLINT" | ^"VALUES" | ^"VARBINARY" | ^"VARCHAR" | ^"VARIABLE"
+    | ^"WHITESPACE"
     ) ~ !(LETTER | NUMBER | "_")
 }
 

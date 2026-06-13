@@ -206,7 +206,7 @@ fn untyped_parameter_ast_and_analyzer_stay_dynamic() {
 
 #[test]
 fn typed_parameter_declaration_inherits_to_bare_references() {
-    let analyzed = analyze_one("RETURN $x :: INT AS typed, $x AS bare");
+    let analyzed = analyze_one("RETURN $x :: INT AS \"typed\", $x AS bare");
     assert_eq!(
         projection_type(&analyzed, "typed"),
         AnalyzedType::Resolved(GqlType::Integer)

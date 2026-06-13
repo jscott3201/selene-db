@@ -4,4 +4,4 @@
 UNWIND [1, 2, 3] AS value
 RETURN stddev_pop(value) AS pop,
        stddev_samp(value) AS samp,
-       collect_list(value) AS values
+       collect_list(value) AS "values"

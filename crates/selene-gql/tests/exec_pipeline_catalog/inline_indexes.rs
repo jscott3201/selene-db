@@ -96,7 +96,7 @@ fn create_node_type_exact_numeric_indexed_properties_create_property_indexes() {
     let graph = empty_closed_graph(3725);
     let plan = planned(
         "CREATE NODE TYPE :Metric \
-         (signed :: INT128 INDEXED, unsigned :: UINT128 INDEXED, amount :: DECIMAL INDEXED)",
+         (\"signed\" :: INT128 INDEXED, \"unsigned\" :: UINT128 INDEXED, amount :: DECIMAL INDEXED)",
     );
 
     let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");

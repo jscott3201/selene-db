@@ -1,6 +1,6 @@
 //! Catalog-facing GQL type rendering.
 
-use crate::{BindingTableType, GqlType, RecordType};
+use crate::{BindingTableType, GqlType, RecordType, ast::format_ident::fmt_ident};
 
 pub(super) fn render_gql_type(ty: &GqlType) -> String {
     match ty {
@@ -72,7 +72,7 @@ pub(super) fn render_gql_type(ty: &GqlType) -> String {
             }
             let rendered = fields
                 .iter()
-                .map(|(name, ty)| format!("{} :: {}", name.as_str(), render_gql_type(ty)))
+                .map(|(name, ty)| format!("{} :: {}", fmt_ident(name.clone()), render_gql_type(ty)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("RECORD {{ {rendered} }}")
@@ -96,7 +96,7 @@ pub(super) fn render_gql_type(ty: &GqlType) -> String {
             }
             let rendered = fields
                 .iter()
-                .map(|(name, ty)| format!("{} :: {}", name.as_str(), render_gql_type(ty)))
+                .map(|(name, ty)| format!("{} :: {}", fmt_ident(name.clone()), render_gql_type(ty)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("TABLE {{ {rendered} }}")

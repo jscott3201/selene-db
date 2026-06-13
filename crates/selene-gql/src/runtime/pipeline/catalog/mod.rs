@@ -30,6 +30,7 @@ use super::catalog_index::{
 };
 use crate::{
     AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, GqlType, SourceSpan,
+    ast::format_ident::fmt_ident,
     runtime::{Binding, BindingTable, ExecutorError, TxContext},
 };
 
@@ -551,7 +552,10 @@ fn render_edge_type_def(
         (false, true) => endpoint_clause,
         (false, false) => format!("{endpoint_clause}, {properties}"),
     };
-    Ok(format!("CREATE EDGE TYPE :{} ({body})", edge_type.label))
+    Ok(format!(
+        "CREATE EDGE TYPE :{} ({body})",
+        fmt_ident(edge_type.label.clone())
+    ))
 }
 
 fn render_edge_endpoint_clause(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
@@ -587,7 +591,7 @@ fn render_endpoint(graph_type: &GraphTypeDef, endpoint: &EdgeEndpointDef) -> Str
 fn render_endpoint_label_set(labels: &LabelSet) -> String {
     labels
         .iter()
-        .map(|label| format!(":{label}"))
+        .map(|label| format!(":{}", fmt_ident(label.clone())))
         .collect::<Vec<_>>()
         .join(",")
 }
@@ -604,7 +608,7 @@ fn render_node_label_set(labels: &LabelSet) -> String {
 fn render_node_label_name(labels: &LabelSet) -> String {
     labels
         .iter()
-        .map(|label| label.as_str())
+        .map(|label| fmt_ident(label.clone()))
         .collect::<Vec<_>>()
         .join(":")
 }
@@ -622,7 +626,7 @@ fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorE
             let unique = if property.unique { " UNIQUE" } else { "" };
             Ok(format!(
                 "{} :: {}{}{}{}{}",
-                property.name,
+                fmt_ident(property.name.clone()),
                 render_property_value_type(
                     property.value_type,
                     property.list_element_type.as_ref(),

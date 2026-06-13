@@ -226,7 +226,7 @@ fn closed_graph_schema_analysis_emits_g2000() {
         }],
         edge_types: Vec::new(),
     };
-    let statement = parse("INSERT (n:Project)").expect("test input parses");
+    let statement = parse("INSERT (n:UnknownProject)").expect("test input parses");
 
     let error = analyze(statement, &EmptyProcedureRegistry, Some(&graph_type))
         .expect_err("unknown node type rejects");

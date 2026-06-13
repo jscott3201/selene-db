@@ -268,7 +268,7 @@ fn validates_insert_node_and_edge_against_schema() {
 #[test]
 fn rejects_unknown_node_type() {
     let graph_type = person_company_graph_type();
-    let error = schema_error("INSERT (n:Project { name: 'X' })", &graph_type);
+    let error = schema_error("INSERT (n:UnknownProject { name: 'X' })", &graph_type);
     assert_eq!(error.gqlstatus().as_str(), "G2000");
     assert!(matches!(error, AnalysisError::SchemaUnknownNodeType { .. }));
 }

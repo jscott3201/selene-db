@@ -212,7 +212,7 @@ fn insert_node_extends_row_with_new_node_id_at_planner_assigned_column() {
 #[test]
 fn insert_node_with_property_initializers_evaluates_per_row() {
     let graph = graph_with_person("Alice");
-    let plan = planned("MATCH (p:Person) INSERT (n:Copy {name: p.name}) RETURN n.name AS name");
+    let plan = planned("MATCH (p:Person) INSERT (n:\"Copy\" {name: p.name}) RETURN n.name AS name");
 
     let (table, _) = run_write(&graph, &plan).expect("write executes");
 
@@ -329,7 +329,7 @@ fn chain_insert_with_anonymous_middle_node_links_correctly() {
 #[test]
 fn multi_row_insert_preserves_input_row_order_in_new_id_column() {
     let fixture = exec_common::ExecFixture::build();
-    let plan = planned("MATCH (p:Person) INSERT (n:Copy {name: p.name}) RETURN n");
+    let plan = planned("MATCH (p:Person) INSERT (n:\"Copy\" {name: p.name}) RETURN n");
 
     let (table, _) = run_write(&fixture.graph, &plan).expect("write executes");
     let ids = column_values(&table, "n")

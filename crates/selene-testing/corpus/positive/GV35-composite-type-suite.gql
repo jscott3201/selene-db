@@ -2,4 +2,4 @@
 // feature: GV35
 // also-covers: GV39, GV40, GV41, GV50, GV55
 // expects: parse-ok
-CREATE NODE TYPE :Values (payload :: BYTES, d :: DATE, local_dt :: LOCAL DATETIME, zoned_dt :: ZONED DATETIME, span :: DURATION (DAY TO SECOND), names :: LIST<STRING>, pval :: PATH)
+CREATE NODE TYPE :"Values" (payload :: BYTES, d :: DATE, local_dt :: LOCAL DATETIME, zoned_dt :: ZONED DATETIME, span :: DURATION (DAY TO SECOND), names :: LIST<STRING>, pval :: PATH)
