@@ -291,15 +291,9 @@ impl TurboQuantCodebook {
         if !value.is_finite() {
             return Err(TurboQuantCodecError::NonFiniteValue { value });
         }
-        let mut code = 0_u8;
-        for boundary in &self.boundaries {
-            if value > *boundary {
-                code += 1;
-            } else {
-                break;
-            }
-        }
-        Ok(code)
+        Ok(self
+            .boundaries
+            .partition_point(|boundary| value > *boundary) as u8)
     }
 
     /// Return an approximate heap allocation footprint for this codebook.

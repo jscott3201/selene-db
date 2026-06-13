@@ -150,6 +150,16 @@ fn codebook_encodes_and_decodes_scalars() {
 }
 
 #[test]
+fn codebook_boundary_ties_choose_lower_code() {
+    let bit_width = TurboQuantBitWidth::new(4).unwrap();
+    let codebook = TurboQuantCodebook::normal_lloyd_max(bit_width, 128).unwrap();
+
+    for (lower_code, boundary) in codebook.boundaries().iter().copied().enumerate() {
+        assert_eq!(codebook.encode_scalar(boundary).unwrap(), lower_code as u8);
+    }
+}
+
+#[test]
 fn codebook_rejects_invalid_dimensions() {
     let bit_width = TurboQuantBitWidth::new(4).unwrap();
     assert!(matches!(
