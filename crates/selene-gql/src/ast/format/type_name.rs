@@ -1,8 +1,8 @@
 //! GQL type-name rendering for the read-side formatter.
 
 use crate::GqlType;
-use crate::ast::RecordType;
 use crate::ast::format_ident::fmt_ident;
+use crate::ast::{BindingTableType, RecordType};
 
 pub(crate) fn fmt_type(ty: &GqlType) -> String {
     match ty {
@@ -75,14 +75,7 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         // §18.10 <field types specification>).
         GqlType::Record(RecordType::Open) => "RECORD".to_owned(),
         GqlType::Record(RecordType::Closed(fields)) => {
-            let body = fields
-                .iter()
-                .map(|(name, field_ty)| {
-                    format!("{} :: {}", fmt_ident(name.clone()), fmt_type(field_ty))
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("RECORD{{{body}}}")
+            format!("RECORD{{{}}}", fmt_field_types(fields))
         }
         // validate_formattable still rejects graph and binding-table references
         // before read-side source formatting starts. Graph-element references
@@ -90,6 +83,17 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         GqlType::GraphRef => "GRAPH".to_owned(),
         GqlType::NodeRef => "NODE".to_owned(),
         GqlType::EdgeRef => "EDGE".to_owned(),
-        GqlType::TableRef => "TABLE".to_owned(),
+        GqlType::TableRef(BindingTableType::Any) => "TABLE".to_owned(),
+        GqlType::TableRef(BindingTableType::Closed(fields)) => {
+            format!("TABLE{{{}}}", fmt_field_types(fields))
+        }
     }
+}
+
+fn fmt_field_types(fields: &[(selene_core::DbString, GqlType)]) -> String {
+    fields
+        .iter()
+        .map(|(name, field_ty)| format!("{} :: {}", fmt_ident(name.clone()), fmt_type(field_ty)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

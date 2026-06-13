@@ -117,11 +117,21 @@ pub enum GqlType {
     /// Edge reference.
     EdgeRef,
     /// Binding-table reference.
-    TableRef,
+    TableRef(BindingTableType),
     /// `NULL`.
     Null,
     /// `NOTHING`.
     Nothing,
+}
+
+/// Binding table type carried by a binding-table reference value type.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum BindingTableType {
+    /// Internal unconstrained table reference used where a procedure surface
+    /// cannot statically describe the returned table's field set.
+    Any,
+    /// ISO `[BINDING] TABLE <field types specification>`.
+    Closed(Vec<(DbString, GqlType)>),
 }
 
 /// Parsed bounded character-string type metadata.

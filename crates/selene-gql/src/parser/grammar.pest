@@ -796,6 +796,7 @@ type_name_base = {
   | ^"ZONED" ~ ^"TIME" | ^"LOCAL" ~ ^"TIME"
   | ^"DATE"
   | duration_type
+  | binding_table_type
   | open_reference_value_type
   | ^"PATH"
   | angle_list_type
@@ -816,6 +817,9 @@ decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision 
 numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 duration_type = { ^"DURATION" ~ "(" ~ temporal_duration_qualifier ~ ")" }
+binding_table_type = { binding_table_type_binding_kw? ~ binding_table_type_table_kw ~ field_types_specification }
+binding_table_type_binding_kw = @{ ^"BINDING" ~ !(LETTER | NUMBER | "_") }
+binding_table_type_table_kw = @{ ^"TABLE" ~ !(LETTER | NUMBER | "_") }
 
 // ISO/IEC 39075:2024 §18.9 open reference value types. Closed graph/node/edge
 // reference value types carry graph-object type specifications and remain

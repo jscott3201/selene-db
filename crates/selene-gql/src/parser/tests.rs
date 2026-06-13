@@ -1,7 +1,7 @@
 use super::*;
 use crate::ast::{
-    BinaryOp, EdgeDirection, IntegerLiteralKind, LabelExpr, Literal, PipelineStatement, SetOp,
-    ValueExpr,
+    BinaryOp, BindingTableType, EdgeDirection, GqlType, IntegerLiteralKind, IsCheckKind, LabelExpr,
+    Literal, PipelineStatement, SetOp, ValueExpr,
 };
 use crate::error::GqlStatus;
 
@@ -16,6 +16,13 @@ fn query(source: &str) -> crate::ast::QueryPipeline {
     query
 }
 
+fn parse_unflagged(source: &str) -> Statement {
+    guard::validate(source).expect("source passes parser guard");
+    let mut pairs = GqlParser::parse(Rule::gql_program, source).expect("pest parse succeeds");
+    let program_pair = pairs.next().expect("program pair exists");
+    builders::build_statement(program_pair).expect("AST build succeeds")
+}
+
 fn return_clause(source: &str) -> crate::ast::ReturnClause {
     let query = query(source);
     assert_eq!(query.statements.len(), 1);
@@ -27,6 +34,18 @@ fn return_clause(source: &str) -> crate::ast::ReturnClause {
 
 fn only_item(source: &str) -> crate::ast::ReturnItem {
     let clause = return_clause(source);
+    assert_eq!(clause.items.len(), 1);
+    clause.items.into_iter().next().unwrap()
+}
+
+fn only_unflagged_item(source: &str) -> crate::ast::ReturnItem {
+    let Statement::Query(query) = parse_unflagged(source) else {
+        panic!("expected query statement");
+    };
+    assert_eq!(query.statements.len(), 1);
+    let PipelineStatement::Return(clause) = query.statements.into_iter().next().unwrap() else {
+        panic!("expected return clause");
+    };
     assert_eq!(clause.items.len(), 1);
     clause.items.into_iter().next().unwrap()
 }
@@ -521,6 +540,25 @@ fn intersect_and_except_modifiers_route_to_set_ops() {
         };
         assert_eq!(rest[0].0, expected, "set op for {source:?}");
     }
+}
+
+#[test]
+fn binding_table_reference_type_preserves_field_types_before_feature_gate() {
+    let item = only_unflagged_item(
+        "RETURN NULL IS TYPED BINDING TABLE { id :: INT, payload :: RECORD { ok :: BOOL } } AS ok",
+    );
+    let ValueExpr::IsCheck {
+        kind: IsCheckKind::Typed(GqlType::TableRef(BindingTableType::Closed(fields))),
+        ..
+    } = &item.expr
+    else {
+        panic!("expected typed predicate over closed binding table reference type");
+    };
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0].0.as_str(), "id");
+    assert_eq!(fields[0].1, GqlType::Integer);
+    assert_eq!(fields[1].0.as_str(), "payload");
+    assert!(matches!(fields[1].1, GqlType::Record(_)));
 }
 
 #[test]

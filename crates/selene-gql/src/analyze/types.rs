@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    GqlType, IsCheckKind, LabelExpr, Literal, MatchClause, NormalForm, PatternElement, RecordType,
-    SourceSpan, TruthValue, ValueExpr,
+    BindingTableType, GqlType, IsCheckKind, LabelExpr, Literal, MatchClause, NormalForm,
+    PatternElement, RecordType, SourceSpan, TruthValue, ValueExpr,
 };
 
 /// Stable, opaque identifier for a `ValueExpr` cell within one analyzer call.
@@ -722,12 +722,29 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::GraphRef => 31u8.hash(state),
         GqlType::NodeRef => 32u8.hash(state),
         GqlType::EdgeRef => 33u8.hash(state),
-        GqlType::TableRef => 34u8.hash(state),
+        GqlType::TableRef(table) => {
+            34u8.hash(state);
+            hash_binding_table_type(table, state);
+        }
         GqlType::Null => 35u8.hash(state),
         GqlType::Nothing => 36u8.hash(state),
         GqlType::Uuid => 37u8.hash(state),
         GqlType::Vector => 38u8.hash(state),
         GqlType::Json => 39u8.hash(state),
+    }
+}
+
+fn hash_binding_table_type<H: Hasher>(table: &BindingTableType, state: &mut H) {
+    match table {
+        BindingTableType::Any => 0u8.hash(state),
+        BindingTableType::Closed(fields) => {
+            1u8.hash(state);
+            fields.len().hash(state);
+            for (name, ty) in fields {
+                name.hash(state);
+                hash_gql_type(ty, state);
+            }
+        }
     }
 }
 

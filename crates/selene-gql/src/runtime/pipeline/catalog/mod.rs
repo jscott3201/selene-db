@@ -605,7 +605,18 @@ fn render_gql_type(ty: &GqlType) -> String {
         GqlType::GraphRef => "GRAPH".to_owned(),
         GqlType::NodeRef => "NODE".to_owned(),
         GqlType::EdgeRef => "EDGE".to_owned(),
-        GqlType::TableRef => "TABLE".to_owned(),
+        GqlType::TableRef(crate::BindingTableType::Any) => "TABLE".to_owned(),
+        GqlType::TableRef(crate::BindingTableType::Closed(fields)) => {
+            if fields.is_empty() {
+                return "TABLE {}".to_owned();
+            }
+            let rendered = fields
+                .iter()
+                .map(|(name, ty)| format!("{} :: {}", name.as_str(), render_gql_type(ty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("TABLE {{ {rendered} }}")
+        }
         GqlType::Null => "NULL".to_owned(),
         GqlType::Nothing => "NOTHING".to_owned(),
     }

@@ -568,7 +568,7 @@ fn cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::GraphRef => "CAST to GRAPH",
         GqlType::NodeRef => "CAST to NODE",
         GqlType::EdgeRef => "CAST to EDGE",
-        GqlType::TableRef => "CAST to TABLE",
+        GqlType::TableRef(_) => "CAST to TABLE",
         _ => "CAST to unsupported target type",
     }
 }

@@ -72,7 +72,7 @@ impl ProcedureRegistry for BindingTableFixtureRegistry {
             ProcedureOutputSchema {
                 columns: vec![ProcedureOutputColumn::new(
                     db_string("t"),
-                    GqlType::TableRef,
+                    GqlType::TableRef(selene_gql::BindingTableType::Any),
                 )],
             },
             ProcedureTier::Graph,
