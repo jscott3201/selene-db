@@ -192,6 +192,20 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             // they reset the unary and `NOT` runs (a primary terminates a
             // leading-sign / `NOT` chain), then the scan resumes after the
             // closing quote.
+            b'@' if next_is(bytes, index, b'\'') => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(b'\'');
+                index = skip_no_escape_quoted(bytes, index + 2, b'\'');
+            }
+            b'@' if next_is(bytes, index, b'"') => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(b'"');
+                index = skip_no_escape_quoted(bytes, index + 2, b'"');
+            }
             b'\'' => {
                 sign_run = 0;
                 not_run = 0;
@@ -580,6 +594,16 @@ fn skip_double_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>)
             b'"' => return index,
             _ => index += 1,
         }
+    }
+    bytes.len()
+}
+
+fn skip_no_escape_quoted(bytes: &[u8], mut index: usize, delimiter: u8) -> usize {
+    while index < bytes.len() {
+        if bytes[index] == delimiter {
+            return index;
+        }
+        index += 1;
     }
     bytes.len()
 }

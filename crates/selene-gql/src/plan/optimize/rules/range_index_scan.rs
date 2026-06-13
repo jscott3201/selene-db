@@ -348,14 +348,20 @@ fn compare_literals(a: &Literal, b: &Literal) -> Option<std::cmp::Ordering> {
         }
         (Literal::Float(lhs, _, _), Literal::Float(rhs, _, _)) => lhs.partial_cmp(rhs),
         (Literal::Decimal(lhs, _, _), Literal::Decimal(rhs, _, _)) => Some(lhs.cmp(rhs)),
-        (Literal::String(lhs, _), Literal::String(rhs, _)) => Some(lhs.as_str().cmp(rhs.as_str())),
+        (Literal::String(lhs, _, _), Literal::String(rhs, _, _)) => {
+            Some(lhs.as_str().cmp(rhs.as_str()))
+        }
         (Literal::Bytes(lhs, _), Literal::Bytes(rhs, _)) => Some(lhs.as_ref().cmp(rhs.as_ref())),
-        (Literal::Date(lhs, _), Literal::Date(rhs, _)) => Some(lhs.cmp(rhs)),
-        (Literal::LocalDateTime(lhs, _), Literal::LocalDateTime(rhs, _)) => Some(lhs.cmp(rhs)),
-        (Literal::ZonedDateTime(lhs, _), Literal::ZonedDateTime(rhs, _)) => Some(lhs.cmp(rhs)),
-        (Literal::LocalTime(lhs, _), Literal::LocalTime(rhs, _)) => Some(lhs.cmp(rhs)),
-        (Literal::ZonedTime(lhs, _), Literal::ZonedTime(rhs, _)) => Some(lhs.cmp(rhs)),
-        (Literal::Duration(lhs, _), Literal::Duration(rhs, _)) => {
+        (Literal::Date(lhs, _, _), Literal::Date(rhs, _, _)) => Some(lhs.cmp(rhs)),
+        (Literal::LocalDateTime(lhs, _, _), Literal::LocalDateTime(rhs, _, _)) => {
+            Some(lhs.cmp(rhs))
+        }
+        (Literal::ZonedDateTime(lhs, _, _), Literal::ZonedDateTime(rhs, _, _)) => {
+            Some(lhs.cmp(rhs))
+        }
+        (Literal::LocalTime(lhs, _, _), Literal::LocalTime(rhs, _, _)) => Some(lhs.cmp(rhs)),
+        (Literal::ZonedTime(lhs, _, _), Literal::ZonedTime(rhs, _, _)) => Some(lhs.cmp(rhs)),
+        (Literal::Duration(lhs, _, _), Literal::Duration(rhs, _, _)) => {
             Some(selene_core::duration_order_key(lhs).cmp(&selene_core::duration_order_key(rhs)))
         }
         (Literal::Bool(lhs, _), Literal::Bool(rhs, _)) => Some(lhs.cmp(rhs)),

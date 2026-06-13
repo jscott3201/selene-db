@@ -4,7 +4,8 @@ use selene_core::{DbString, LabelSet, PropertyValueType};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, EdgeDirection, EdgePattern, EmptyProcedureRegistry,
     GraphPattern, InsertStatement, LabelExpr, Literal, MutationPipeline, MutationStatement,
-    NodePattern, NonEmpty, PatternElement, SourceSpan, Statement, ValueExpr, analyze, parse,
+    NodePattern, NonEmpty, PatternElement, SourceSpan, Statement, ValueExpr, analyze,
+    ast::CharacterStringLiteralKind, parse,
 };
 use selene_graph::{
     EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, RecordFieldType,
@@ -118,7 +119,11 @@ fn label_expr(label: &str) -> Option<LabelExpr> {
 }
 
 fn string_expr(value: &str, span: SourceSpan) -> ValueExpr {
-    ValueExpr::Literal(Literal::String(db_string(value), span))
+    ValueExpr::Literal(Literal::String(
+        db_string(value),
+        span,
+        CharacterStringLiteralKind::Escaped,
+    ))
 }
 
 fn node(name: &str, label: &str, name_value: &str, span: SourceSpan) -> PatternElement {

@@ -114,6 +114,7 @@ feature_ids! {
     GL08 = "GL08" => "Approximate number in scientific notation with suffix";
     GL09 = "GL09" => "Optional float number suffix";
     GL10 = "GL10" => "Optional double number suffix";
+    GL11 = "GL11" => "Opt-out character escaping";
     IM_UUID = "IM_UUID" => "selene-db UUID extension";
     IM_JSON = "IM_JSON" => "selene-db JSON extension";
     IM_VECTOR = "IM_VECTOR" => "selene-db VECTOR extension";
@@ -289,6 +290,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GL08,
     FeatureId::GL09,
     FeatureId::GL10,
+    FeatureId::GL11,
     FeatureId::IM_UUID,
     FeatureId::IM_JSON,
     FeatureId::IM_VECTOR,

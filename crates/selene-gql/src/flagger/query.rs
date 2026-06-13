@@ -51,8 +51,13 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
         Statement::SessionSetValue { span, .. } => {
             record_feature(uses, FeatureId::GS03, *span);
         }
-        Statement::SessionSetTimeZone { span, .. } => {
+        Statement::SessionSetTimeZone {
+            zone_source_kind,
+            span,
+            ..
+        } => {
             record_feature(uses, FeatureId::GS15, *span);
+            expr::character_string_literal(*zone_source_kind, *span, uses);
         }
         Statement::SessionReset { target, span } => match target {
             SessionResetTarget::AllCharacteristics => {

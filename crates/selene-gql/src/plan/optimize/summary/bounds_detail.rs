@@ -90,17 +90,17 @@ fn render_literal(literal: &Literal) -> String {
         }
         Literal::Decimal(value, _, _) => format!("DECIMAL {value}"),
         Literal::Float(value, _, _) => format!("FLOAT {value}"),
-        Literal::String(value, _) => format!("STRING '{}'", value.as_str()),
+        Literal::String(value, _, _) => format!("STRING '{}'", value.as_str()),
         Literal::Bytes(value, _) => format!("BYTES X'{}'", hex_bytes(value)),
-        Literal::Uuid(value, _) => format!("UUID '{value}'"),
-        Literal::ZonedDateTime(value, _) => {
+        Literal::Uuid(value, _, _) => format!("UUID '{value}'"),
+        Literal::ZonedDateTime(value, _, _) => {
             format!("ZONED DATETIME '{}'", format_zoned_datetime(value))
         }
-        Literal::LocalDateTime(value, _) => format!("LOCAL DATETIME '{value}'"),
-        Literal::Date(value, _) => format!("DATE '{value}'"),
-        Literal::ZonedTime(value, _) => format!("ZONED TIME '{}'", format_zoned_time(value)),
-        Literal::LocalTime(value, _) => format!("LOCAL TIME '{value}'"),
-        Literal::Duration(value, _) => format!("DURATION '{value}'"),
+        Literal::LocalDateTime(value, _, _) => format!("LOCAL DATETIME '{value}'"),
+        Literal::Date(value, _, _) => format!("DATE '{value}'"),
+        Literal::ZonedTime(value, _, _) => format!("ZONED TIME '{}'", format_zoned_time(value)),
+        Literal::LocalTime(value, _, _) => format!("LOCAL TIME '{value}'"),
+        Literal::Duration(value, _, _) => format!("DURATION '{value}'"),
         Literal::Null(_) => "NULL".to_owned(),
     }
 }

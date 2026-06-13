@@ -942,20 +942,27 @@ numeric_continuation = { numeric_suffix | "e" | "E" }
 // sequences. In expression/literal slots, "text" is a string literal; in
 // identifier slots, the same double-quoted sequence remains a delimited
 // identifier through the `ident`/`prop_ident` rules below.
-// Supports doubled delimiter escapes ('' or "") and backslash escapes.
-// Escape validation is intentionally left to the AST builder so malformed
-// escapes produce the precise decode_escape diagnostic instead of a generic
-// tokenization failure.
-string_lit             = ${ single_string_lit | double_string_lit }
-single_string_lit      = { "'" ~ single_inner ~ "'" }
-double_string_lit      = { "\"" ~ double_inner ~ "\"" }
-single_inner           = @{ (escaped_single_quote | dangling_single_escape | escape_seq | "''" | !("'" | "\\") ~ ANY)* }
-double_inner           = @{ (escaped_double_quote | dangling_double_escape | escape_seq | "\"\"" | !("\"" | "\\") ~ ANY)* }
-escaped_single_quote   = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
-escaped_double_quote   = @{ "\\" ~ "\"" ~ &((!"\"" ~ ANY)* ~ "\"") }
-dangling_single_escape = @{ "\\" ~ &"'" }
-dangling_double_escape = @{ "\\" ~ &"\"" }
-escape_seq             = @{ "\\" ~ ANY }
+// Standard strings support doubled delimiter escapes ('' or "") and backslash
+// escapes. `@` is ISO `<no escape>` (Feature GL11): it must be adjacent to the
+// quoted sequence and disables both backslash and doubled-delimiter character
+// representations, so the active delimiter cannot occur inside the body.
+// Escape validation for standard strings is intentionally left to the AST
+// builder so malformed escapes produce the precise decode_escape diagnostic
+// instead of a generic tokenization failure.
+string_lit                  = ${ no_escape_single_string_lit | no_escape_double_string_lit | single_string_lit | double_string_lit }
+no_escape_single_string_lit = { "@" ~ "'" ~ no_escape_single_inner ~ "'" }
+no_escape_double_string_lit = { "@" ~ "\"" ~ no_escape_double_inner ~ "\"" }
+single_string_lit           = { "'" ~ single_inner ~ "'" }
+double_string_lit           = { "\"" ~ double_inner ~ "\"" }
+no_escape_single_inner      = @{ (!"'" ~ ANY)* }
+no_escape_double_inner      = @{ (!"\"" ~ ANY)* }
+single_inner                = @{ (escaped_single_quote | dangling_single_escape | escape_seq | "''" | !("'" | "\\") ~ ANY)* }
+double_inner                = @{ (escaped_double_quote | dangling_double_escape | escape_seq | "\"\"" | !("\"" | "\\") ~ ANY)* }
+escaped_single_quote        = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
+escaped_double_quote        = @{ "\\" ~ "\"" ~ &((!"\"" ~ ANY)* ~ "\"") }
+dangling_single_escape      = @{ "\\" ~ &"'" }
+dangling_double_escape      = @{ "\\" ~ &"\"" }
+escape_seq                  = @{ "\\" ~ ANY }
 
 // Byte strings: ISO-style X'...' hex octets. Spaces inside each quoted chunk
 // are ignored; adjacent chunks require a separator containing at least one

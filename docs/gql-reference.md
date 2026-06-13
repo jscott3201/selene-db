@@ -120,6 +120,14 @@ these types is rejected at parse or analyze time.
 | Exact decimal | `1.5`, `.5`, `1.`, `1.5M`, `1e2M` | Features `GL04`-`GL06`; lowers to `DECIMAL`. |
 | Approximate float | `1e2`, `1.5F`, `1.5D`, `1e2F`, `1e2D` | Features `GL07`-`GL10` for suffix forms; lowers to f64. |
 
+### Character string literal forms
+
+| Form | Example | Notes |
+|---|---|---|
+| Single-quoted | `'Ada''s graph'`, `'line\nnext'` | Standard escaped form; doubled delimiters and backslash escapes are decoded. |
+| Double-quoted | `"Ada ""graph"""`, `"line\nnext"` | Expression slots treat this as a string literal; identifier slots still use double quotes for delimited identifiers. |
+| No escape | `@'path\raw'`, `@"path\raw"` | Feature `GL11`; backslashes are literal and the active quote delimiter cannot appear inside the body. |
+
 ### Identifiers and delimited identifiers
 
 | Form | Example | Notes |

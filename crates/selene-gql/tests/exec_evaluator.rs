@@ -9,7 +9,7 @@ use selene_core::{Value, db_string};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
     FloatLiteralKind, GqlType, ImplDefinedCaps, IsCheckKind, Literal, NonEmpty, RecordType,
-    SourceSpan, TruthValue, UnaryOp, ValueExpr,
+    SourceSpan, TruthValue, UnaryOp, ValueExpr, ast::CharacterStringLiteralKind,
 };
 
 fn span() -> SourceSpan {
@@ -377,7 +377,11 @@ fn nested_record_field_access_reads_inner_field() {
 // --- IS [NOT] TYPED RECORD / LIST structural runtime (Group J) ---
 
 fn string_lit(value: &str) -> ValueExpr {
-    lit(Literal::String(db_string(value).unwrap(), span()))
+    lit(Literal::String(
+        db_string(value).unwrap(),
+        span(),
+        CharacterStringLiteralKind::Escaped,
+    ))
 }
 
 fn record_lit(fields: Vec<(&str, ValueExpr)>) -> ValueExpr {
@@ -623,6 +627,7 @@ fn property_exists_on_list_target_is_data_exception() {
     let expr = ValueExpr::PropertyExists {
         target: Box::new(list),
         key: db_string("foo").unwrap(),
+        key_source_kind: CharacterStringLiteralKind::Escaped,
         span: span(),
     };
 
@@ -636,6 +641,7 @@ fn property_exists_on_record_target_is_data_exception() {
     let expr = ValueExpr::PropertyExists {
         target: Box::new(record_lit(vec![("foo", int_lit(1))])),
         key: db_string("foo").unwrap(),
+        key_source_kind: CharacterStringLiteralKind::Escaped,
         span: span(),
     };
 

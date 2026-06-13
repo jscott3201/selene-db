@@ -6,8 +6,8 @@ use crate::{
     NonEmpty, ValueExpr,
     ast::{
         expr::{
-            BinaryOp, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, IsCheckKind,
-            Literal,
+            BinaryOp, CharacterStringLiteralKind, DecimalLiteralKind, FloatLiteralKind,
+            IntegerLiteralKind, IsCheckKind, Literal,
         },
         types::{GqlType, RecordType},
     },
@@ -126,7 +126,14 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
         }
         ValueExpr::AllDifferent { span, .. } => record_feature(uses, FeatureId::G113, *span),
         ValueExpr::Same { span, .. } => record_feature(uses, FeatureId::G114, *span),
-        ValueExpr::PropertyExists { span, .. } => record_feature(uses, FeatureId::G115, *span),
+        ValueExpr::PropertyExists {
+            key_source_kind,
+            span,
+            ..
+        } => {
+            record_feature(uses, FeatureId::G115, *span);
+            character_string_literal(*key_source_kind, *span, uses);
+        }
         ValueExpr::Cast {
             target_type, span, ..
         } => {
@@ -266,18 +273,33 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::GV17, *span);
             decimal_literal(*kind, *span, uses);
         }
-        Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
-        Literal::Duration(_, span) => record_feature(uses, FeatureId::GV41, *span),
-        Literal::String(_, _)
-        | Literal::Bytes(_, _)
-        | Literal::Bool(_, _)
-        | Literal::Integer(_, _)
-        | Literal::ZonedDateTime(_, _)
-        | Literal::LocalDateTime(_, _)
-        | Literal::Date(_, _)
-        | Literal::ZonedTime(_, _)
-        | Literal::LocalTime(_, _)
-        | Literal::Null(_) => {}
+        Literal::String(_, span, kind) => character_string_literal(*kind, *span, uses),
+        Literal::Uuid(_, span, kind) => {
+            record_feature(uses, FeatureId::IM_UUID, *span);
+            character_string_literal(*kind, *span, uses);
+        }
+        Literal::Duration(_, span, kind) => {
+            record_feature(uses, FeatureId::GV41, *span);
+            character_string_literal(*kind, *span, uses);
+        }
+        Literal::ZonedDateTime(_, span, kind)
+        | Literal::LocalDateTime(_, span, kind)
+        | Literal::Date(_, span, kind)
+        | Literal::ZonedTime(_, span, kind)
+        | Literal::LocalTime(_, span, kind) => {
+            character_string_literal(*kind, *span, uses);
+        }
+        Literal::Bytes(_, _) | Literal::Bool(_, _) | Literal::Integer(_, _) | Literal::Null(_) => {}
+    }
+}
+
+pub(super) fn character_string_literal(
+    kind: CharacterStringLiteralKind,
+    span: crate::SourceSpan,
+    uses: &mut Vec<FeatureUse>,
+) {
+    if kind == CharacterStringLiteralKind::NoEscape {
+        record_feature(uses, FeatureId::GL11, span);
     }
 }
 
@@ -501,8 +523,8 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
 mod tests {
     use selene_core::feature_register::FeatureId;
 
-    use crate::ast::ValueExpr;
     use crate::ast::expr::{BinaryOp, IsCheckKind, Literal};
+    use crate::ast::{CharacterStringLiteralKind, ValueExpr};
     use crate::ast::{expr::FloatLiteralKind, span::SourceSpan};
 
     use super::{FeatureUse, value};
@@ -527,6 +549,7 @@ mod tests {
         ValueExpr::Literal(Literal::Duration(
             Box::new(value.parse().expect("duration literal parses")),
             span(offset),
+            CharacterStringLiteralKind::Escaped,
         ))
     }
 

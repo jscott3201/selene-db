@@ -221,7 +221,7 @@ fn default_matches_project_expr(
             ProcedureDefaultValue::Integer(expected),
             Literal::Integer(found, _) | Literal::RadixInteger(found, _, _),
         ) => expected == *found,
-        (ProcedureDefaultValue::String(expected), Literal::String(found, _)) => {
+        (ProcedureDefaultValue::String(expected), Literal::String(found, _, _)) => {
             expected == found.as_str()
         }
         _ => false,

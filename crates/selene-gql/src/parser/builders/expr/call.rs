@@ -444,10 +444,15 @@ pub(super) fn build_property_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, P
     let source_span = span(&pair);
     let mut target = None;
     let mut key = None;
+    let mut key_source_kind = None;
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::expr => target = Some(build_value_expr(child)?),
-            Rule::string_lit => key = Some(literal::parse_string_pair(child)?),
+            Rule::string_lit => {
+                let (parsed_key, parsed_kind) = literal::parse_string_pair_with_kind(child)?;
+                key = Some(parsed_key);
+                key_source_kind = Some(parsed_kind);
+            }
             _ => return Err(unexpected_pair(child, "unexpected PROPERTY_EXISTS child")),
         }
     }
@@ -456,6 +461,9 @@ pub(super) fn build_property_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, P
             ParserError::syntax("PROPERTY_EXISTS is missing target", source_span, None)
         })?),
         key: key.ok_or_else(|| {
+            ParserError::syntax("PROPERTY_EXISTS is missing property key", source_span, None)
+        })?,
+        key_source_kind: key_source_kind.ok_or_else(|| {
             ParserError::syntax("PROPERTY_EXISTS is missing property key", source_span, None)
         })?,
         span: source_span,

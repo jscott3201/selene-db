@@ -162,7 +162,9 @@ impl AnalyzedStatementKind {
                 if_not_exists,
                 span,
             },
-            Statement::SessionSetTimeZone { zone, span } => Self::SessionSetTimeZone { zone, span },
+            Statement::SessionSetTimeZone { zone, span, .. } => {
+                Self::SessionSetTimeZone { zone, span }
+            }
             Statement::SessionReset { target, span } => Self::SessionReset { target, span },
             Statement::SessionClose { span } => Self::SessionClose(span),
         }

@@ -42,9 +42,10 @@ fn build_session_set_time_zone(pair: Pair<'_, Rule>) -> Result<Statement, Parser
                 None,
             )
         })?;
-    let zone = expr::decode_string_text(&string_pair)?;
+    let (zone, zone_source_kind) = expr::decode_string_text_with_kind(&string_pair)?;
     Ok(Statement::SessionSetTimeZone {
         zone,
+        zone_source_kind,
         span: source_span,
     })
 }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::ast::{
-    BinaryOp, BindingTableType, EdgeDirection, GqlType, IntegerLiteralKind, IsCheckKind, LabelExpr,
-    Literal, PipelineStatement, SetOp, ValueExpr,
+    BinaryOp, BindingTableType, CharacterStringLiteralKind, EdgeDirection, GqlType,
+    IntegerLiteralKind, IsCheckKind, LabelExpr, Literal, PipelineStatement, SetOp, ValueExpr,
 };
 use crate::error::GqlStatus;
 
@@ -90,11 +90,12 @@ fn parse_return_integer() {
 #[test]
 fn parse_return_string() {
     let item = only_item("RETURN 'hello'");
-    let ValueExpr::Literal(Literal::String(value, span)) = &item.expr else {
+    let ValueExpr::Literal(Literal::String(value, span, kind)) = &item.expr else {
         panic!("expected string literal");
     };
     assert_eq!(value.as_str(), "hello");
     assert_eq!(*span, SourceSpan::new(7, 7));
+    assert_eq!(*kind, CharacterStringLiteralKind::Escaped);
 }
 
 #[test]
@@ -236,11 +237,12 @@ fn malformed_underscores_in_integer_rejected() {
 #[test]
 fn parse_temporal_literal() {
     let item = only_item("RETURN DATE '2020-01-01'");
-    let ValueExpr::Literal(Literal::Date(value, span)) = item.expr else {
+    let ValueExpr::Literal(Literal::Date(value, span, kind)) = item.expr else {
         panic!("expected DATE literal");
     };
     assert_eq!(value.to_string(), "2020-01-01");
     assert_eq!(span, SourceSpan::new(7, 17));
+    assert_eq!(kind, CharacterStringLiteralKind::Escaped);
 }
 
 #[test]

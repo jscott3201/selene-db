@@ -57,6 +57,8 @@ enum ScanState {
     Normal,
     SingleQuote,
     DoubleQuote,
+    NoEscapeSingleQuote,
+    NoEscapeDoubleQuote,
     Backtick,
     LineComment,
     BlockComment,
@@ -75,6 +77,14 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                     segments.push((start, &source[start..index]));
                     index += 1;
                     start = index;
+                }
+                b'@' if bytes.get(index + 1) == Some(&b'\'') => {
+                    state = ScanState::NoEscapeSingleQuote;
+                    index += 2;
+                }
+                b'@' if bytes.get(index + 1) == Some(&b'"') => {
+                    state = ScanState::NoEscapeDoubleQuote;
+                    index += 2;
                 }
                 b'\'' => {
                     state = ScanState::SingleQuote;
@@ -99,6 +109,20 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 b'/' if bytes.get(index + 1) == Some(&b'*') => {
                     state = ScanState::BlockComment;
                     index += 2;
+                }
+                _ => index += 1,
+            },
+            ScanState::NoEscapeSingleQuote => match bytes[index] {
+                b'\'' => {
+                    state = ScanState::Normal;
+                    index += 1;
+                }
+                _ => index += 1,
+            },
+            ScanState::NoEscapeDoubleQuote => match bytes[index] {
+                b'"' => {
+                    state = ScanState::Normal;
+                    index += 1;
                 }
                 _ => index += 1,
             },
