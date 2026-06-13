@@ -1,7 +1,7 @@
 //! Shared opt-in embedding benchmark configuration.
 
 use super::client::{EmbeddingClient, EmbeddingProvider};
-use super::corpus::{CorpusInput, CorpusProfile};
+use super::corpus::{CorpusInput, CorpusProfile, scale_document_inputs};
 use selene_core::VectorValue;
 
 const ENABLE_ENVS: &[&str] = &["SELENE_EMBEDDING_BENCH", "SELENE_OMLX_EMBEDDING_BENCH"];
@@ -12,6 +12,10 @@ const BATCH_SIZE_ENVS: &[&str] = &[
     "SELENE_OMLX_EMBEDDING_BATCH_SIZE",
 ];
 const CORPUS_ENVS: &[&str] = &["SELENE_EMBEDDING_CORPUS", "SELENE_OMLX_CORPUS"];
+const CORPUS_REPEAT_ENVS: &[&str] = &[
+    "SELENE_EMBEDDING_CORPUS_REPEAT",
+    "SELENE_OMLX_CORPUS_REPEAT",
+];
 const GRAPH_HINT_DOCS_PER_TOPIC_ENVS: &[&str] = &[
     "SELENE_GRAPH_HINT_DOCS_PER_TOPIC",
     "SELENE_OMLX_GRAPH_HINT_DOCS_PER_TOPIC",
@@ -30,6 +34,7 @@ const DEFAULT_OMLX_MODELS: &[&str] = &[
 ];
 const DEFAULT_OPENROUTER_MODELS: &[&str] = &["mistralai/codestral-embed-2505"];
 const DEFAULT_EMBEDDING_BATCH_SIZE: usize = 64;
+const DEFAULT_EMBEDDING_CORPUS_REPEAT: usize = 1;
 
 /// Shared configuration for local/remote opt-in embedding benchmark rows.
 pub struct EmbeddingBenchConfig {
@@ -39,6 +44,8 @@ pub struct EmbeddingBenchConfig {
     pub models: Vec<String>,
     /// Corpus profile to embed.
     pub corpus: CorpusProfile,
+    /// Number of times to repeat document inputs before keeping one query set.
+    pub corpus_repeat: usize,
     /// Request chunk size.
     pub batch_size: usize,
     /// Optional number of graph hint docs per topic.
@@ -80,10 +87,16 @@ impl EmbeddingBenchConfig {
             provider,
             models: models(provider),
             corpus: corpus_profile(),
+            corpus_repeat: corpus_repeat(),
             batch_size,
             graph_hint_docs_per_topic: graph_hint_docs_per_topic(),
             client,
         })
+    }
+
+    /// Materialize configured corpus inputs, including benchmark-only scaling.
+    pub fn inputs(&self) -> Vec<CorpusInput> {
+        scale_document_inputs(self.corpus.inputs(), self.corpus_repeat)
     }
 
     /// Embed every corpus input with `model`.
@@ -136,6 +149,21 @@ fn corpus_profile() -> CorpusProfile {
     env_from_any(CORPUS_ENVS)
         .as_deref()
         .map_or(CorpusProfile::Tiny, CorpusProfile::from_value)
+}
+
+fn corpus_repeat() -> usize {
+    env_from_any(CORPUS_REPEAT_ENVS)
+        .map(|raw| {
+            let repeat = raw
+                .parse::<usize>()
+                .expect("embedding corpus repeat must be a positive integer");
+            assert!(
+                repeat > 0,
+                "embedding corpus repeat must be greater than zero"
+            );
+            repeat
+        })
+        .unwrap_or(DEFAULT_EMBEDDING_CORPUS_REPEAT)
 }
 
 fn graph_hint_docs_per_topic() -> Option<usize> {

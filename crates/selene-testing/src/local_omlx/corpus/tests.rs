@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::{CorpusInput, CorpusProfile, Topic, topic_label};
+use super::{CorpusInput, CorpusProfile, Topic, scale_document_inputs, topic_label};
 
 #[test]
 fn tiny_profile_has_four_topics_with_documents_and_queries() {
@@ -97,6 +97,41 @@ fn project_migration_profile_contains_current_state_decoys() {
 }
 
 #[test]
+fn scaled_document_inputs_repeat_documents_without_duplicating_targets() {
+    let inputs = CorpusProfile::ProjectSourceChunkMemory.inputs();
+    let document_count = inputs.iter().filter(|input| input.is_document).count();
+    let query_count = inputs.len() - document_count;
+    let target_count = inputs
+        .iter()
+        .filter(|input| input.is_document && input.target_key.is_some())
+        .count();
+
+    let scaled = scale_document_inputs(inputs, 3);
+    let scaled_documents = scaled.iter().filter(|input| input.is_document).count();
+    let scaled_queries = scaled.len() - scaled_documents;
+    let scaled_targets = scaled
+        .iter()
+        .filter(|input| input.is_document && input.target_key.is_some())
+        .count();
+    let duplicate_targets = scaled
+        .iter()
+        .skip(document_count)
+        .filter(|input| input.is_document && input.target_key.is_some())
+        .count();
+    let duplicate_markers = scaled
+        .iter()
+        .filter(|input| input.is_document && input.text().contains("[embedding corpus duplicate"))
+        .count();
+
+    assert_eq!(scaled_documents, document_count * 3);
+    assert_eq!(scaled_queries, query_count);
+    assert_eq!(scaled_targets, target_count);
+    assert_eq!(duplicate_targets, 0);
+    assert_eq!(duplicate_markers, document_count * 2);
+    assert_targeted_inputs(&scaled, query_count);
+}
+
+#[test]
 fn project_workspace_source_profile_reads_current_files() {
     let inputs = CorpusProfile::ProjectWorkspaceSourceMemory.inputs();
     let plan_cache_doc = target_doc(&inputs, "workspace-gql-session-plan-cache");
@@ -172,6 +207,10 @@ fn topic_labels_are_distinct() {
 
 fn assert_targeted_profile(profile: CorpusProfile, expected_queries: usize) {
     let inputs = profile.inputs();
+    assert_targeted_inputs(&inputs, expected_queries);
+}
+
+fn assert_targeted_inputs(inputs: &[CorpusInput], expected_queries: usize) {
     let document_keys = inputs
         .iter()
         .filter(|input| input.is_document)

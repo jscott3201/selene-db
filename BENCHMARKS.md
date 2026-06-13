@@ -2293,6 +2293,12 @@ Embedding requests are chunked by `SELENE_EMBEDDING_BATCH_SIZE` (or legacy
 `SELENE_OMLX_EMBEDDING_BATCH_SIZE`; default: 64). Profiles above that size
 preserve input order across multiple POSTs and fail if any response chunk does
 not return exactly one vector per input.
+`SELENE_EMBEDDING_CORPUS_REPEAT=N` (or legacy
+`SELENE_OMLX_CORPUS_REPEAT=N`) repeats document inputs while keeping one copy
+of each query. Duplicate documents keep their topic but clear target keys and
+append a short duplicate marker to the submitted text, so target-hit rows keep a
+unique original target document while index-pressure rows can grow a source
+corpus beyond the default TurboQuant `c512` envelope.
 `SELENE_GRAPH_HINT_DOCS_PER_TOPIC=N` caps graph-authored topic labels and
 `OmlxDependsOn` edges to the first `N` same-topic documents per topic; unset
 means every same-topic document receives graph hints. The partial-hint fixture
@@ -2345,11 +2351,26 @@ PR-local OpenRouter Codestral source-chunk vector-index guard:
 Command:
 `SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=mistralai/codestral-embed-2505 SELENE_EMBEDDING_CORPUS=project_source_chunk_memory SELENE_EMBEDDING_BATCH_SIZE=4 SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --sample-size 40 --measurement-time 4 --bench vector_graph_retrieval --filter "exact_graph_search|hnsw_graph_search|turbo_quant_graph_search"`.
 
+Use `SELENE_EMBEDDING_CORPUS_REPEAT=17` or higher with the same row family to
+push the 32-document source-chunk profile above the `TurboQuantCosine` default
+`c512` search width without duplicating target queries.
+
 | Row | Median | Notes |
 |---|---:|---|
 | `graph_vector_omlx_embedding_pressure/exact_graph_search/mistralai_codestral-embed-2505_32_q16_k4_dim1536_precbp8125` | 149.51 µs | Exact cosine over the 32-document source-chunk profile is the small-corpus oracle for the live Codestral embedding distribution. |
 | `graph_vector_omlx_embedding_pressure/hnsw_graph_search/mistralai_codestral-embed-2505_32_q16_k4_ef64_dim1536_precbp8125` | 137.90 µs | HNSW mirrors exact topic precision and is slightly faster at this small project-source scale. |
 | `graph_vector_omlx_embedding_pressure/turbo_quant_graph_search/mistralai_codestral-embed-2505_32_q16_k4_c512_dim1536_precbp8125` | 613.47 µs | Production `TurboQuantCosine` now has a live real-embedding row. The default `c512` envelope preserves the same precision but is intentionally oversized for 32 documents, so graph-scoped exact scoring remains the better tiny-corpus primitive. |
+
+PR-local OpenRouter Codestral repeated source-chunk index-pressure guard:
+
+Command:
+`SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=mistralai/codestral-embed-2505 SELENE_EMBEDDING_CORPUS=project_source_chunk_memory SELENE_EMBEDDING_CORPUS_REPEAT=17 SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_graph_retrieval --filter "exact_graph_search|hnsw_graph_search|turbo_quant_graph_search"`.
+
+| Row | Median | 95% CI | Notes |
+|---|---:|---:|---|
+| `graph_vector_omlx_embedding_pressure/exact_graph_search/mistralai_codestral-embed-2505_544_q16_k4_dim1536_precbp9218` | 2.4743 ms | 2.4736-2.4754 ms | Exact scan is still feasible at 544 source-chunk documents and remains the topic-precision oracle for this repeated live corpus. |
+| `graph_vector_omlx_embedding_pressure/hnsw_graph_search/mistralai_codestral-embed-2505_544_q16_k4_ef64_dim1536_precbp8593` | 951.10 µs | 949.81-951.53 µs | HNSW is the latency winner but loses topic precision on this repeated source-shaped corpus. |
+| `graph_vector_omlx_embedding_pressure/turbo_quant_graph_search/mistralai_codestral-embed-2505_544_q16_k4_c512_dim1536_precbp9218` | 3.6629 ms | 3.6598-3.6653 ms | TurboQuant c512 preserves the exact precision suffix after compressed preselection plus exact rerank, but at just above the c512 envelope it is slower than exact scan. Criterion reported no baseline p-value for this new row; outliers were 35% / 15% / 10% for exact / HNSW / TurboQuant. |
 
 PR-local TurboQuant exact-covered fallback A/B:
 
