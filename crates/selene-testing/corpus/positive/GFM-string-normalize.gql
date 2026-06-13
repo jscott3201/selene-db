@@ -3,4 +3,4 @@
 // expects: parse-ok
 RETURN NORMALIZE('é') AS nfc_value,
        NORMALIZE('é', NFD) AS nfd_value,
-       'é' IS NORMALIZED AS normalized
+       'é' IS NORMALIZED AS "normalized"

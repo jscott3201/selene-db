@@ -15,6 +15,9 @@ fn iso_function_heads_are_reserved_but_delimited_identifiers_still_parse() {
         "RETURN labels",
         "RETURN ELEMENTS",
         "RETURN NORMALIZE",
+        "RETURN DATETIME",
+        "RETURN DURATION_BETWEEN",
+        "RETURN ZONED_DATETIME",
     ] {
         assert!(
             parse(source).is_err(),
@@ -50,6 +53,22 @@ fn reserved_iso_function_heads_remain_callable() {
         "RETURN PROPERTY_EXISTS(n, 'name') AS value",
         "RETURN ALL_DIFFERENT(1, 2) AS value",
         "RETURN SAME(n, n) AS value",
+        "RETURN ELEMENT_ID(null) AS value",
+        "RETURN COALESCE(null, 1) AS value",
+        "RETURN NULLIF(1, 1) AS value",
+        "RETURN CURRENT_DATE AS value",
+        "RETURN CURRENT_DATE() AS value",
+        "RETURN CURRENT_TIME() AS value",
+        "RETURN CURRENT_TIMESTAMP() AS value",
+        "RETURN DATE('2026-01-01') AS value",
+        "RETURN DATETIME('2026-01-01T00:00:00') AS value",
+        "RETURN LOCAL_DATETIME('2026-01-01T00:00:00') AS value",
+        "RETURN TIME('12:34:56') AS value",
+        "RETURN LOCAL_TIME('12:34:56') AS value",
+        "RETURN ZONED_TIME('12:34:56Z') AS value",
+        "RETURN ZONED_DATETIME('2026-01-01T00:00:00Z') AS value",
+        "RETURN DURATION(null) AS value",
+        "RETURN DURATION_BETWEEN(null) AS value",
     ] {
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
     }
@@ -63,6 +82,11 @@ fn keyword_function_calls_format_bare_and_round_trip() {
         ("RETURN char_length('abc') AS value", "\"char_length\"("),
         ("RETURN trim(' x ') AS value", "\"trim\"("),
         ("RETURN labels(n) AS value", "\"labels\"("),
+        ("RETURN element_id(null) AS value", "\"element_id\"("),
+        ("RETURN coalesce(null, 1) AS value", "\"coalesce\"("),
+        ("RETURN current_date() AS value", "\"current_date\"("),
+        ("RETURN date(null) AS value", "\"date\"("),
+        ("RETURN duration(null) AS value", "\"duration\"("),
     ] {
         let parsed = parse(source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
         let formatted = format_read_statement(&parsed).expect("read-side AST formats");
@@ -81,10 +105,74 @@ fn keyword_function_calls_format_bare_and_round_trip() {
 
 #[test]
 fn reserved_keyword_aliases_still_format_as_identifiers() {
-    for keyword in ["LEFT", "ABS", "CARDINALITY", "NORMALIZE"] {
+    for keyword in [
+        "LEFT",
+        "ABS",
+        "CARDINALITY",
+        "NORMALIZE",
+        "ELEMENT_ID",
+        "COALESCE",
+        "CURRENT_DATE",
+        "DATE",
+        "LOCAL_TIME",
+        "DURATION",
+    ] {
         let source = format!("RETURN 1 AS \"{keyword}\"");
         let parsed = parse(&source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
         let formatted = format_read_statement(&parsed).expect("read-side AST formats");
         assert_eq!(formatted, source);
+    }
+}
+
+#[test]
+fn implemented_reserved_function_and_temporal_heads_reject_bare_aliases() {
+    for keyword in [
+        "ELEMENT_ID",
+        "COALESCE",
+        "NULLIF",
+        "CURRENT_DATE",
+        "CURRENT_TIME",
+        "CURRENT_TIMESTAMP",
+        "DATE",
+        "DATETIME",
+        "LOCAL_DATETIME",
+        "LOCAL_TIME",
+        "ZONED_DATETIME",
+        "ZONED_TIME",
+        "DURATION",
+        "DURATION_BETWEEN",
+        "TIMESTAMP",
+        "LOCAL_TIMESTAMP",
+        "ZONED",
+    ] {
+        let source = format!("RETURN 1 AS {keyword}");
+        assert!(
+            parse(&source).is_err(),
+            "{source} must reject a bare reserved alias"
+        );
+    }
+}
+
+#[test]
+fn prefix_overlapping_keywords_reject_bare_aliases() {
+    for keyword in ["ASC", "ASIN", "INTERSECT", "NULLIF", "NULLS", "NORMALIZED"] {
+        let source = format!("RETURN 1 AS {keyword}");
+        assert!(
+            parse(&source).is_err(),
+            "{source} must reject prefix-overlapping reserved alias"
+        );
+    }
+}
+
+#[test]
+fn literal_keyword_prefixes_remain_identifier_names() {
+    for source in [
+        "RETURN TRUEVALUE AS value",
+        "RETURN FALSEVALUE AS value",
+        "RETURN UNKNOWNVALUE AS value",
+        "RETURN NULLVALUE AS value",
+        "RETURN NFCVALUE AS value",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
     }
 }

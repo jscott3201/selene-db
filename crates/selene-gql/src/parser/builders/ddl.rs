@@ -86,24 +86,20 @@ fn build_drop_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
 fn build_create_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut if_not_exists = false;
-    let mut idents = Vec::new();
+    let mut name = None;
+    let mut label = None;
+    let mut properties = Vec::new();
 
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => idents.push(db_string_pair(child)?),
+            Rule::ident if name.is_none() => name = Some(db_string_pair(child)?),
+            Rule::ident if label.is_none() => label = Some(db_string_pair(child)?),
+            Rule::prop_ident => properties.push(db_string_pair(child)?),
             _ => return Err(unexpected_pair(child, "unexpected CREATE INDEX child")),
         }
     }
 
-    let mut idents = idents.into_iter();
-    let name = idents.next().ok_or_else(|| {
-        ParserError::syntax("CREATE INDEX is missing index name", source_span, None)
-    })?;
-    let label = idents.next().ok_or_else(|| {
-        ParserError::syntax("CREATE INDEX is missing target label", source_span, None)
-    })?;
-    let properties = idents.collect::<Vec<_>>();
     if properties.is_empty() {
         return Err(ParserError::syntax(
             "CREATE INDEX is missing property name",
@@ -113,8 +109,12 @@ fn build_create_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
     }
 
     Ok(DdlStatement::CreateIndex {
-        name,
-        label,
+        name: name.ok_or_else(|| {
+            ParserError::syntax("CREATE INDEX is missing index name", source_span, None)
+        })?,
+        label: label.ok_or_else(|| {
+            ParserError::syntax("CREATE INDEX is missing target label", source_span, None)
+        })?,
         properties,
         if_not_exists,
         span: source_span,

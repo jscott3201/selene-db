@@ -28,7 +28,7 @@ fn record_inequality_on_differing_field_sets() {
 
 #[test]
 fn record_equality_with_null_field_is_unknown() {
-    let table = execute_read("RETURN ({a: 1, b: null} = {b: null, a: 1}) IS NULL AS unknown");
+    let table = execute_read("RETURN ({a: 1, b: null} = {b: null, a: 1}) IS NULL AS \"unknown\"");
 
     assert_eq!(column_values(&table, "unknown"), vec![Value::Bool(true)]);
 }

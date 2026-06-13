@@ -345,7 +345,7 @@ const ENTRIES: &[ExecutorCorpusEntry] = &[
     ),
     e!(
         "call_read_tier_yield_named",
-        Single("CALL pkg.all() YIELD outA AS first, outB AS second"),
+        Single("CALL pkg.all() YIELD outA AS first, outB AS \"second\""),
         EmptyOpen,
         Call,
         false,

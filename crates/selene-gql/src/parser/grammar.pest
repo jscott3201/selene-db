@@ -87,7 +87,7 @@ label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
 
 create_graph = { ^"CREATE" ~ or_replace? ~ ^"GRAPH" ~ if_not_exists? ~ ident }
 drop_graph   = { ^"DROP" ~ ^"GRAPH" ~ if_exists? ~ ident }
-create_index = { ^"CREATE" ~ ^"INDEX" ~ if_not_exists? ~ ident ~ ^"ON" ~ ":" ~ ident ~ "(" ~ ident ~ ("," ~ ident)* ~ ")" }
+create_index = { ^"CREATE" ~ ^"INDEX" ~ if_not_exists? ~ ident ~ ^"ON" ~ ":" ~ ident ~ "(" ~ prop_ident ~ ("," ~ prop_ident)* ~ ")" }
 drop_index   = { ^"DROP" ~ ^"INDEX" ~ if_exists? ~ ident }
 
 if_not_exists = { ^"IF" ~ ^"NOT" ~ ^"EXISTS" }
@@ -421,7 +421,7 @@ distinct_kw = { ^"DISTINCT" }
 
 projection_list = { projection ~ ("," ~ projection)* }
 projection      = { expr ~ alias? }
-alias           = { ^"AS" ~ prop_ident }
+alias           = { ^"AS" ~ ident }
 
 group_by_clause = { group_by_kw ~ group_by_item ~ ("," ~ group_by_item)* }
 group_by_kw     = { ^"GROUP" ~ ^"BY" }
@@ -543,8 +543,8 @@ normalized_kw     = @{ ^"NORMALIZED" ~ !(LETTER | NUMBER | "_") }
 typed_kw          = @{ ^"TYPED" ~ !(LETTER | NUMBER | "_") }
 source_of_kw      = ${ ^"SOURCE" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
 destination_of_kw = ${ ^"DESTINATION" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
-truth_value = { ^"TRUE" | ^"FALSE" | ^"UNKNOWN" }
-normal_form = { ^"NFC" | ^"NFD" | ^"NFKC" | ^"NFKD" }
+truth_value = @{ (^"TRUE" | ^"FALSE" | ^"UNKNOWN") ~ !(LETTER | NUMBER | "_") }
+normal_form = @{ (^"NFC" | ^"NFD" | ^"NFKC" | ^"NFKD") ~ !(LETTER | NUMBER | "_") }
 string_match_op = { ^"STARTS" ~ ^"WITH" | ^"ENDS" ~ ^"WITH" | ^"CONTAINS" }
 
 comparison = { concat ~ (comp_op ~ concat)? }
@@ -726,6 +726,7 @@ scalar_keyword_function_name = @{
     ^"CHARACTER_LENGTH" | ^"CHAR_LENGTH"
   | ^"BYTE_LENGTH" | ^"OCTET_LENGTH"
   | ^"PATH_LENGTH" | ^"CARDINALITY" | ^"SIZE"
+  | ^"ELEMENT_ID"
   | ^"ABS" | ^"MOD"
   | ^"SINH" | ^"COSH" | ^"TANH"
   | ^"SIN" | ^"COS" | ^"TAN" | ^"COT"
@@ -735,6 +736,12 @@ scalar_keyword_function_name = @{
   | ^"POWER" | ^"SQRT" | ^"FLOOR" | ^"CEILING" | ^"CEIL"
   | ^"LEFT" | ^"RIGHT" | ^"UPPER" | ^"LOWER"
   | ^"BTRIM" | ^"LTRIM" | ^"RTRIM"
+  | ^"COALESCE" | ^"NULLIF"
+  | ^"CURRENT_TIMESTAMP" | ^"CURRENT_TIME" | ^"CURRENT_DATE"
+  | ^"LOCAL_DATETIME" | ^"LOCAL_TIME"
+  | ^"ZONED_DATETIME" | ^"ZONED_TIME"
+  | ^"DATETIME" | ^"DATE" | ^"TIME"
+  | ^"DURATION_BETWEEN" | ^"DURATION"
 }
 
 function_call     = { qualified_name ~ "(" ~ arg_list? ~ ")" }
@@ -844,9 +851,9 @@ literal = {
   | list_lit
 }
 
-null_lit    = { ^"NULL" }
-unknown_lit = { ^"UNKNOWN" }
-bool_lit    = { ^"TRUE" | ^"FALSE" }
+null_lit    = { null_kw }
+unknown_lit = @{ ^"UNKNOWN" ~ !(LETTER | NUMBER | "_") }
+bool_lit    = @{ (^"TRUE" | ^"FALSE") ~ !(LETTER | NUMBER | "_") }
 uuid_lit    = { ^"UUID" ~ string_lit }
 
 // Integer: optional sign + decimal, hexadecimal, octal, or binary digits.
@@ -953,25 +960,30 @@ prop_ident = @{
 keyword = @{
     ( ^"MATCH" | ^"RETURN" | ^"FILTER" | ^"WHERE" | ^"ORDER"
     | ^"LIMIT" | ^"OFFSET" | ^"GROUP" | ^"LET" | ^"SET" | ^"DELETE"
-    | ^"INSERT" | ^"REMOVE" | ^"MERGE" | ^"CALL" | ^"YIELD" | ^"AS" | ^"FINISH" | ^"DETACH" | ^"FOR"
-    | ^"AND" | ^"OR" | ^"NOT" | ^"XOR" | ^"IN" | ^"IS" | ^"EXISTS"
-    | ^"NULL" | ^"TRUE" | ^"FALSE" | ^"UNKNOWN"
-    | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"ASC" | ^"DESC"
-    | ^"START" | ^"COMMIT" | ^"ROLLBACK" | ^"UNION" | ^"INTERSECT" | ^"EXCEPT" | ^"OTHERWISE" | ^"NEXT"
+    | ^"INSERT" | ^"REMOVE" | ^"MERGE" | ^"CALL" | ^"YIELD" | ^"ASC" | ^"ASIN" | ^"AS" | ^"FINISH" | ^"DETACH" | ^"FOR"
+    | ^"AND" | ^"OR" | ^"NOT" | ^"XOR" | ^"INTERSECT" | ^"IN" | ^"IS" | ^"EXISTS"
+    | ^"NULLIF" | ^"NULLS" | ^"NULL" | ^"TRUE" | ^"FALSE" | ^"UNKNOWN"
+    | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"DESC"
+    | ^"START" | ^"COMMIT" | ^"ROLLBACK" | ^"UNION" | ^"EXCEPT" | ^"OTHERWISE" | ^"NEXT"
     | ^"CAST" | ^"CASE" | ^"WHEN" | ^"THEN" | ^"ELSE" | ^"END"
     | ^"COUNT" | ^"SUM" | ^"AVG"
     | ^"STDDEV_SAMP" | ^"STDDEV_POP"
     | ^"COLLECT_LIST"
     | ^"CHARACTER_LENGTH" | ^"CHAR_LENGTH" | ^"BYTE_LENGTH" | ^"OCTET_LENGTH" | ^"PATH_LENGTH" | ^"CARDINALITY" | ^"SIZE"
+    | ^"ELEMENT_ID" | ^"COALESCE"
     | ^"ABS" | ^"MOD"
-    | ^"SINH" | ^"COSH" | ^"TANH" | ^"SIN" | ^"COS" | ^"TAN" | ^"COT" | ^"ASIN" | ^"ACOS" | ^"ATAN"
+    | ^"SINH" | ^"COSH" | ^"TANH" | ^"SIN" | ^"COS" | ^"TAN" | ^"COT" | ^"ACOS" | ^"ATAN"
     | ^"DEGREES" | ^"RADIANS" | ^"LOG10" | ^"LOG" | ^"LN" | ^"EXP" | ^"POWER" | ^"SQRT" | ^"FLOOR" | ^"CEILING" | ^"CEIL"
     | ^"LEFT" | ^"RIGHT" | ^"UPPER" | ^"LOWER" | ^"BTRIM" | ^"LTRIM" | ^"RTRIM"
-    | ^"ALL_DIFFERENT" | ^"SAME" | ^"PROPERTY_EXISTS" | ^"LABELS" | ^"ELEMENTS" | ^"NORMALIZE"
-    | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"NULLS"
+    | ^"CURRENT_TIMESTAMP" | ^"CURRENT_TIME" | ^"CURRENT_DATE"
+    | ^"DATETIME" | ^"DATE" | ^"DURATION_BETWEEN" | ^"DURATION"
+    | ^"LOCAL_DATETIME" | ^"LOCAL_TIMESTAMP" | ^"LOCAL_TIME" | ^"LOCAL"
+    | ^"TIMESTAMP" | ^"TIME" | ^"ZONED_DATETIME" | ^"ZONED_TIME" | ^"ZONED"
+    | ^"ALL_DIFFERENT" | ^"SAME" | ^"PROPERTY_EXISTS" | ^"LABELS" | ^"ELEMENTS" | ^"NORMALIZED" | ^"NORMALIZE"
+    | ^"WITH" | ^"HAVING" | ^"UNWIND"
     | ^"CREATE" | ^"DROP"
     | ^"SELECT" | ^"FROM" | ^"TRIM"
-    | ^"DIRECTED" | ^"LABELED" | ^"RECORD" | ^"NORMALIZED"
+    | ^"DIRECTED" | ^"LABELED" | ^"RECORD"
     | ^"DAY" | ^"HOUR" | ^"MINUTE" | ^"SECOND" | ^"MONTH" | ^"YEAR"
     | ^"ARRAY"
     | ^"BINDING" | ^"CONNECTING" | ^"DIFFERENT" | ^"KEEP" | ^"ONLY"

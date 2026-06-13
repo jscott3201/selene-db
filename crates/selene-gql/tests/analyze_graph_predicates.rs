@@ -139,7 +139,7 @@ fn property_exists_rejects_non_element_variable_references() {
 #[test]
 fn graph_identity_predicates_accept_singleton_element_variables() {
     let nodes =
-        analyze_one("MATCH (a), (b) RETURN ALL_DIFFERENT(a, b) AS diff, SAME(a, b) AS same")
+        analyze_one("MATCH (a), (b) RETURN ALL_DIFFERENT(a, b) AS diff, SAME(a, b) AS \"same\"")
             .expect("node variable arguments analyze");
     assert_eq!(
         projection_type(&nodes, "diff"),
@@ -286,7 +286,7 @@ fn source_destination_predicates_reject_non_node_edge_references() {
 fn directed_labeled_predicates_accept_singleton_element_variables() {
     let analyzed = analyze_one(
         "MATCH (n:Person)-[e:KNOWS]->() \
-         RETURN e IS DIRECTED AS directed, n IS LABELED :Person AS node_label, \
+         RETURN e IS DIRECTED AS \"directed\", n IS LABELED :Person AS node_label, \
          e IS LABELED :KNOWS AS edge_label",
     )
     .expect("directed/labeled predicates analyze");
@@ -326,7 +326,7 @@ fn directed_labeled_predicates_accept_procedure_yielded_graph_references() {
     let registry = graph_ref_registry();
     let analyzed = analyze_with(
         "CALL pkg.refs() YIELD node, edge \
-         RETURN node IS LABELED :Fact AS node_label, edge IS DIRECTED AS directed",
+         RETURN node IS LABELED :Fact AS node_label, edge IS DIRECTED AS \"directed\"",
         &registry,
     )
     .expect("procedure-yielded directed/labeled operands analyze");

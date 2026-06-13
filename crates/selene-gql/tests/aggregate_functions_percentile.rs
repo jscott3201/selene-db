@@ -79,7 +79,7 @@ fn percentile_cont_uses_linear_interpolation() {
 fn percentile_disc_uses_ties_even_on_one_based_index() {
     let table = execute(
         "UNWIND [1, 2, 3, 4] AS x \
-         RETURN percentile_disc(x, 0.5) AS half, percentile_disc(x, 0.75) AS upper",
+         RETURN percentile_disc(x, 0.5) AS half, percentile_disc(x, 0.75) AS \"upper\"",
     );
 
     assert_eq!(column_values(&table, "half"), vec![Value::Int(2)]);
