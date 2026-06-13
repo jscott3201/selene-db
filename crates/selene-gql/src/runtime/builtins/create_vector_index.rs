@@ -26,8 +26,8 @@ static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 9] = [
         .with_description("Required vector dimensionality."),
     StaticParameter::new("kind", GqlType::String, false)
         .with_description("Vector index algorithm kind.")
-        .with_default_doc("turbo_quant")
-        .with_default(ProcedureDefaultValue::String("turbo_quant")),
+        .with_default_doc("ivf_cosine")
+        .with_default(ProcedureDefaultValue::String("ivf_cosine")),
     StaticParameter::new("name", GqlType::String, true)
         .with_description("Optional catalog name.")
         .with_default_doc("NULL")
@@ -148,7 +148,7 @@ fn kind_arg(
     metric: Option<VectorMetric>,
 ) -> Result<VectorIndexKind, ProcedureError> {
     let Some(value) = value else {
-        return Ok(VectorIndexKind::TurboQuantCosine);
+        return Ok(VectorIndexKind::IvfCosine);
     };
     let raw = string_arg(value, "kind")?;
     match raw.as_str().to_ascii_lowercase().as_str() {
@@ -170,6 +170,12 @@ fn kind_arg(
             VectorMetric::Cosine => VectorIndexKind::IvfCosine,
             VectorMetric::NegativeInnerProduct => VectorIndexKind::IvfNegativeInnerProduct,
         }),
+        "ivf_cosine" => match metric.unwrap_or(VectorMetric::Cosine) {
+            VectorMetric::Cosine => Ok(VectorIndexKind::IvfCosine),
+            other => Err(invalid_arg(format!(
+                "ivf_cosine vector indexes support cosine metric only, got {other:?}"
+            ))),
+        },
         "turbo_quant" | "turboquant" => match metric.unwrap_or(VectorMetric::Cosine) {
             VectorMetric::Cosine => Ok(VectorIndexKind::TurboQuantCosine),
             other => Err(invalid_arg(format!(
@@ -177,7 +183,7 @@ fn kind_arg(
             ))),
         },
         other => Err(invalid_arg(format!(
-            "unknown vector index kind '{other}'; expected flat, hnsw, ivf, or turbo_quant"
+            "unknown vector index kind '{other}'; expected flat, hnsw, ivf, ivf_cosine, or turbo_quant"
         ))),
     }
 }
@@ -282,10 +288,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn omitted_kind_defaults_to_turbo_quant_cosine() {
+    fn omitted_kind_defaults_to_ivf_cosine() {
         assert_eq!(
             kind_arg(None, None).expect("omitted kind resolves"),
-            VectorIndexKind::TurboQuantCosine
+            VectorIndexKind::IvfCosine
         );
     }
 
@@ -297,5 +303,26 @@ mod tests {
             kind_arg(Some(&value), None).expect("flat resolves"),
             VectorIndexKind::Flat
         );
+    }
+
+    #[test]
+    fn default_kind_metadata_value_resolves_to_ivf_cosine() {
+        let value = Value::String(db_string("ivf_cosine").expect("test string fits"));
+
+        assert_eq!(
+            kind_arg(Some(&value), None).expect("ivf_cosine resolves"),
+            VectorIndexKind::IvfCosine
+        );
+    }
+
+    #[test]
+    fn ivf_cosine_kind_rejects_contradictory_metric() {
+        let value = Value::String(db_string("ivf_cosine").expect("test string fits"));
+
+        assert!(matches!(
+            kind_arg(Some(&value), Some(VectorMetric::SquaredEuclidean)),
+            Err(ProcedureError::InvalidArgument { detail })
+                if detail.contains("ivf_cosine vector indexes support cosine metric only")
+        ));
     }
 }

@@ -735,7 +735,7 @@ mod tests {
         assert_eq!(parameters[2].ty, crate::GqlType::Integer);
         assert_eq!(parameters[3].name.as_str(), "kind");
         assert_eq!(parameters[3].ty, crate::GqlType::String);
-        assert_eq!(parameters[3].default_doc, Some("turbo_quant"));
+        assert_eq!(parameters[3].default_doc, Some("ivf_cosine"));
         assert!(parameters[3].default.is_some());
         assert_eq!(parameters[4].name.as_str(), "name");
         assert_eq!(parameters[4].ty, crate::GqlType::String);
