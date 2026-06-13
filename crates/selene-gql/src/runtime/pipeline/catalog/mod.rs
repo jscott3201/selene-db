@@ -531,6 +531,8 @@ pub(super) fn runtime_db_string_owned(value: String) -> Result<DbString, Executo
 
 fn render_gql_type(ty: &GqlType) -> String {
     match ty {
+        GqlType::Any => "ANY".to_owned(),
+        GqlType::AnyProperty => "ANY PROPERTY VALUE".to_owned(),
         GqlType::String => "STRING".to_owned(),
         GqlType::CharacterString(character) if character.min_len == 0 => {
             format!("STRING({})", character.max_len)

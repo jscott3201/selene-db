@@ -661,6 +661,8 @@ fn hash_match_clause<H: Hasher>(
 
 fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
     match ty {
+        GqlType::Any => 50u8.hash(state),
+        GqlType::AnyProperty => 51u8.hash(state),
         GqlType::String => 0u8.hash(state),
         GqlType::CharacterString(character) => {
             48u8.hash(state);

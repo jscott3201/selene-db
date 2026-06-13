@@ -28,7 +28,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use selene_core::{CharacterStringCoercionError, DbString, JsonValue, Value};
+use selene_core::{CharacterStringCoercionError, DbString, JsonValue, PropertyValueType, Value};
 
 use crate::{
     GqlType, SourceSpan,
@@ -100,6 +100,10 @@ pub(super) fn eval_cast(
             });
         }
         _ => {}
+    }
+
+    if matches!(target_type, GqlType::Any | GqlType::AnyProperty) {
+        return cast_to_dynamic_union(value, target_type, span);
     }
 
     // A RECORD target is handled before the generic source-rejection block: per ISO §20.8
@@ -218,6 +222,23 @@ pub(super) fn eval_cast(
             feature: cast_to_type_feature(other),
             span,
         }),
+    }
+}
+
+fn cast_to_dynamic_union(
+    value: Value,
+    target_type: &GqlType,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match target_type {
+        GqlType::Any => Ok(value),
+        GqlType::AnyProperty if PropertyValueType::of(&value).is_some() => Ok(value),
+        GqlType::AnyProperty => Err(ExecutorError::data_exception(
+            DataExceptionSubclass::InvalidValueType,
+            "CAST source is not a supported property value",
+            span,
+        )),
+        _ => unreachable!("dynamic-union cast called for non-dynamic target"),
     }
 }
 

@@ -6,6 +6,8 @@ use crate::ast::{BindingTableType, RecordType};
 
 pub(crate) fn fmt_type(ty: &GqlType) -> String {
     match ty {
+        GqlType::Any => "ANY".to_owned(),
+        GqlType::AnyProperty => "ANY PROPERTY VALUE".to_owned(),
         GqlType::String => "STRING".to_owned(),
         GqlType::CharacterString(character) if character.min_len == 0 => {
             format!("STRING({})", character.max_len)
