@@ -284,8 +284,6 @@ fn ast_only_type_variant(ty: &GqlType) -> Option<&'static str> {
     match ty {
         GqlType::NotNull(inner) => ast_only_type_variant(inner),
         GqlType::GraphRef => Some("GraphRef"),
-        GqlType::NodeRef => Some("NodeRef"),
-        GqlType::EdgeRef => Some("EdgeRef"),
         GqlType::TableRef => Some("TableRef"),
         _ => None,
     }
@@ -325,29 +323,26 @@ mod tests {
     }
 
     #[test]
-    fn preflight_rejects_reference_type_inside_closed_record_field() {
-        // A reference type nested in a closed-record field is still AST-only and
-        // must be caught by the recursive field walk.
+    fn preflight_accepts_graph_element_reference_types() {
+        validate_formattable(&statement_with_type(GqlType::NodeRef))
+            .expect("NODE reference type is formattable");
+        validate_formattable(&statement_with_type(GqlType::EdgeRef))
+            .expect("EDGE reference type is formattable");
+    }
+
+    #[test]
+    fn preflight_accepts_graph_element_reference_type_inside_closed_record_field() {
         let closed = GqlType::Record(RecordType::Closed(vec![(
             selene_core::db_string("ref").expect("db_string ref"),
             GqlType::NodeRef,
         )]));
-        assert_unsupported(closed, "NodeRef");
+        validate_formattable(&statement_with_type(closed))
+            .expect("closed record with NODE reference field is formattable");
     }
 
     #[test]
     fn preflight_rejects_graph_ref_type() {
         assert_unsupported(GqlType::GraphRef, "GraphRef");
-    }
-
-    #[test]
-    fn preflight_rejects_node_ref_type() {
-        assert_unsupported(GqlType::NodeRef, "NodeRef");
-    }
-
-    #[test]
-    fn preflight_rejects_edge_ref_type() {
-        assert_unsupported(GqlType::EdgeRef, "EdgeRef");
     }
 
     #[test]

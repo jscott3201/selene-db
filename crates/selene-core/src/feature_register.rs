@@ -503,11 +503,11 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (FeatureId::GV26, "FLOAT256 is deferred"),
     (
         FeatureId::GV60,
-        "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
+        "GRAPH reference type spellings parse to the Flagger, but graph reference value semantics and closed graph constraints remain deferred",
     ),
     (
         FeatureId::GV61,
-        "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
+        "binding table reference types require TABLE field-type descriptors and binding-table value semantics before claiming",
     ),
 ];
 
