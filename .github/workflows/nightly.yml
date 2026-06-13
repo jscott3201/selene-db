@@ -13,6 +13,10 @@
 #   - push:main                       (post-merge double-check of main)
 #   - workflow_dispatch               (on-demand)
 #
+# Nightly jobs are canonical-repository-only. Forks, redirects, and legacy
+# repository homes should not spend Actions minutes or report authoritative
+# health for selene-db.
+#
 # Security notes:
 #   - No `${{ github.event.* }}` interpolations appear in any `run:` command;
 #     all such expansions are confined to `if:` conditions and `with:` action
@@ -42,6 +46,7 @@ permissions:
 
 jobs:
   clippy-macos:
+    if: github.repository == 'jscott3201/selene-db'
     name: clippy (macos-latest)
     runs-on: macos-latest
     steps:
@@ -54,6 +59,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test-macos:
+    if: github.repository == 'jscott3201/selene-db'
     name: test (macos-latest)
     runs-on: macos-latest
     env:
@@ -76,6 +82,7 @@ jobs:
   # closes that gap by re-running audit against current Cargo.lock every day
   # with a fresh advisory-db.
   audit:
+    if: github.repository == 'jscott3201/selene-db'
     name: cargo-audit (advisory-db drift)
     runs-on: ubuntu-latest
     steps:
@@ -91,6 +98,7 @@ jobs:
       - run: cargo audit --color always
 
   parse-fuzz:
+    if: github.repository == 'jscott3201/selene-db'
     name: parse-fuzz (15m soak)
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     runs-on: ubuntu-latest
@@ -126,6 +134,7 @@ jobs:
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=900 -timeout=20 -max_len=65536
 
   persist-decode-fuzz:
+    if: github.repository == 'jscott3201/selene-db'
     name: persist-decode-fuzz (short soak)
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     # One job runs the four crash-recovery decoder targets sequentially (60s
