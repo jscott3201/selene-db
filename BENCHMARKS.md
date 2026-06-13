@@ -2135,18 +2135,29 @@ scoring stops being cheap enough to beat ANN or compressed pre-scoring.
 | `graph_vector_retrieval/graph_expand_personalized_pagerank/...covbp10000_curbp10000_precbp10000` | 391.32 µs | 850.10 µs (`covbp8632_curbp1406_precbp9140`) | Personalized PageRank can repair current coverage on the 1k fixture, but it badly underperforms explicit validity/supersession repair at 10k. This is negative evidence for PageRank-only currentness policy. |
 | `graph_vector_retrieval/exact_graph_oracle/...covbp10000_curbp10000_precbp10000` | 1.4716 ms | 22.548 ms | Exact vector search plus validity-aware expansion reaches the fixture oracle, but it is far slower at 10k and only suitable as a research bound. |
 
-Local-only embedding rows are disabled unless `SELENE_EMBEDDING_BENCH=1` (or
-the legacy `SELENE_OMLX_EMBEDDING_BENCH=1`) is set. They call the developer's
-local oMLX OpenAI-compatible endpoint by default, or OpenRouter when
-`SELENE_EMBEDDING_PROVIDER=openrouter` is set, and therefore are **not**
-expected to run in CI. Use ignored `.env` keys only through the shell
-environment; do not commit or print them:
+Opt-in embedding rows are disabled unless `SELENE_EMBEDDING_BENCH=1` (or the
+legacy `SELENE_OMLX_EMBEDDING_BENCH=1`) is set. New
+`SELENE_EMBEDDING_BENCH=1` runs default to OpenRouter; set
+`SELENE_EMBEDDING_PROVIDER=omlx` or use the legacy enable flag for the local
+oMLX OpenAI-compatible endpoint. These rows are **not** expected to run in CI.
+Use ignored `.env` keys only through the shell environment; do not commit or
+print them:
 
 ```bash
 set -a; source .env; set +a
 SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_CORPUS=code_alias_memory \
+SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 \
+scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter query_root_current_state_intersection_batch
+```
+
+Local oMLX rows remain available explicitly:
+
+```bash
+set -a; source .env; set +a
+SELENE_EMBEDDING_BENCH=1 \
+SELENE_EMBEDDING_PROVIDER=omlx \
 SELENE_EMBEDDING_CORPUS=tiny \
-SELENE_EMBEDDING_BATCH_SIZE=64 \
 SELENE_EMBEDDING_MODELS=Qwen3-Embedding-0.6B-4bit-DWQ,Qwen3-Embedding-4B-4bit-DWQ \
 scripts/run-benches.sh --profile quick --bench vector_graph_retrieval --filter graph_vector_omlx_embedding_pressure --vector-scales 1000
 ```

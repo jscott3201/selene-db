@@ -338,7 +338,7 @@ pub(super) fn execute_score_state_expanded_batch(
     for (query_index, (query, expanded)) in queries.iter().zip(expanded_sets.iter()).enumerate() {
         let query_index = u64::try_from(query_index)
             .map_err(|err| query_index_too_large(SCORE_STATE_EXPANDED_BATCH_PROC_NAME, err))?;
-        let candidates = operation.compose(&state, &expanded);
+        let candidates = operation.compose(&state, expanded);
         let hits = index
             .search_candidates_checked(
                 query.as_str(),

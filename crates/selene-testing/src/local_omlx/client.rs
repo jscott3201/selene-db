@@ -10,7 +10,7 @@ use selene_core::VectorValue;
 use super::corpus::CorpusInput;
 
 /// Embedding provider used by opt-in benchmark helpers.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EmbeddingProvider {
     /// Local oMLX OpenAI-compatible HTTP endpoint.
     Omlx,
@@ -19,10 +19,15 @@ pub enum EmbeddingProvider {
 }
 
 impl EmbeddingProvider {
-    /// Resolve a provider from `env_name`, defaulting to local oMLX.
-    pub fn from_env(env_name: &str) -> Self {
-        match std::env::var(env_name).ok().as_deref() {
-            None | Some("") | Some("omlx") => Self::Omlx,
+    /// Resolve a provider from `env_name`, using `default` when unset.
+    pub fn from_env(env_name: &str, default: Self) -> Self {
+        Self::from_value(std::env::var(env_name).ok().as_deref(), default)
+    }
+
+    fn from_value(value: Option<&str>, default: Self) -> Self {
+        match value {
+            None | Some("") => default,
+            Some("omlx") => Self::Omlx,
             Some("openrouter") => Self::OpenRouter,
             Some(other) => panic!("unsupported SELENE_EMBEDDING_PROVIDER value: {other}"),
         }
@@ -449,5 +454,29 @@ mod tests {
         let err = parse_embedding_response("test", "model", 2, body).unwrap_err();
 
         assert!(err.contains("returned 1 vectors for 2 inputs"));
+    }
+
+    #[test]
+    fn provider_value_defaults_when_unset() {
+        assert_eq!(
+            EmbeddingProvider::from_value(None, EmbeddingProvider::OpenRouter),
+            EmbeddingProvider::OpenRouter
+        );
+        assert_eq!(
+            EmbeddingProvider::from_value(Some(""), EmbeddingProvider::Omlx),
+            EmbeddingProvider::Omlx
+        );
+    }
+
+    #[test]
+    fn provider_value_honors_explicit_selection() {
+        assert_eq!(
+            EmbeddingProvider::from_value(Some("openrouter"), EmbeddingProvider::Omlx),
+            EmbeddingProvider::OpenRouter
+        );
+        assert_eq!(
+            EmbeddingProvider::from_value(Some("omlx"), EmbeddingProvider::OpenRouter),
+            EmbeddingProvider::Omlx
+        );
     }
 }
