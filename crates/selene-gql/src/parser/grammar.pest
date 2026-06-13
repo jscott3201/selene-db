@@ -644,9 +644,26 @@ path_constructor = { ^"PATH" ~ "[" ~ expr ~ ("," ~ expr ~ "," ~ expr)* ~ "]" }
 
 normalize_expr = { ^"NORMALIZE" ~ "(" ~ expr ~ ("," ~ normal_form)? ~ ")" }
 
-// TRIM (spec section20.24): TRIM([LEADING|TRAILING|BOTH] [char] FROM source)
-trim_expr = { ^"TRIM" ~ "(" ~ trim_spec? ~ trim_char? ~ ^"FROM" ~ expr ~ ")" }
-trim_spec = { ^"LEADING" | ^"TRAILING" | ^"BOTH" }
+// TRIM (ISO/IEC 39075:2024 §20.24): TRIM([ [spec] [char] FROM ] source)
+// plus the list trim form from §20.18. The operand grammar is deliberately
+// factored by the first token after `TRIM(` instead of using
+// `trim_spec? ~ trim_char? ~ FROM`: the optional cascade made malformed nested
+// TRIM false-starts reparse the same expression multiple times. `TRIM` is a
+// reserved keyword here (see `keyword`), so the source-only/list-count forms are
+// lowered explicitly by the builder instead of falling through to
+// `function_call`.
+trim_expr = { trim_kw ~ "(" ~ (trim_spec_operands | trim_value_operands) ~ ")" }
+trim_spec_operands = { trim_spec ~ (trim_char ~ from_kw ~ expr | from_kw ~ expr) }
+trim_value_operands = { expr ~ trim_value_tail? }
+trim_value_tail = { trim_list_tail | trim_from_tail }
+trim_list_tail = { "," ~ expr }
+trim_from_tail = { from_kw ~ expr }
+trim_kw = @{ ^"TRIM" ~ !(LETTER | NUMBER | "_") }
+from_kw = @{ ^"FROM" ~ !(LETTER | NUMBER | "_") }
+trim_spec = { leading_kw | trailing_kw | both_kw }
+leading_kw = @{ ^"LEADING" ~ !(LETTER | NUMBER | "_") }
+trailing_kw = @{ ^"TRAILING" ~ !(LETTER | NUMBER | "_") }
+both_kw = @{ ^"BOTH" ~ !(LETTER | NUMBER | "_") }
 trim_char = { expr }
 
 // Record constructor (spec section20.18): RECORD {name: expr, ...}
@@ -927,7 +944,7 @@ keyword = @{
     | ^"COLLECT_LIST"
     | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"NULLS"
     | ^"CREATE" | ^"DROP"
-    | ^"SELECT" | ^"FROM"
+    | ^"SELECT" | ^"FROM" | ^"TRIM"
     | ^"DIRECTED" | ^"LABELED" | ^"RECORD" | ^"NORMALIZED"
     | ^"DAY" | ^"HOUR" | ^"MINUTE" | ^"SECOND" | ^"MONTH" | ^"YEAR"
     | ^"ARRAY"
