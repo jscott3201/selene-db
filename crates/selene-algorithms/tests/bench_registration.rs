@@ -15,8 +15,8 @@ fn bench_registration_is_pinned() {
     // check stays meaningful — keep it in lockstep with the runner format and
     // its sibling pin `selene-testing/tests/benchmarks_md_pin.rs`.
     assert!(
-        script.contains("selene-algorithms|algo_bench|"),
-        "scripts/run-benches.sh REGISTRY is missing selene-algorithms|algo_bench|<harness>"
+        script.contains("selene-db-algorithms|algo_bench|"),
+        "scripts/run-benches.sh REGISTRY is missing selene-db-algorithms|algo_bench|<harness>"
     );
 }
 

@@ -1,5 +1,5 @@
 [package]
-name = "selene-algorithms"
+name = "selene-db-algorithms"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,9 +9,12 @@ repository.workspace = true
 homepage.workspace = true
 description = "Graph algorithms for selene-db (projection, structural, pathfinding, centrality, community)"
 
+[lib]
+name = "selene_algorithms"
+
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.1.0" }
-selene-graph = { path = "../selene-graph", version = "1.1.0" }
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "1.2.0" }
 parking_lot.workspace = true
 rayon.workspace = true
 roaring.workspace = true
@@ -24,7 +27,7 @@ criterion.workspace = true
 insta.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
-selene-testing = { path = "../selene-testing", version = "1.1.0" }
+selene-testing = { package = "selene-db-testing", path = "../selene-testing" }
 
 [features]
 test-harness = []

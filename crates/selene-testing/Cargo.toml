@@ -1,5 +1,5 @@
 [package]
-name = "selene-testing"
+name = "selene-db-testing"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,9 @@ repository.workspace = true
 homepage.workspace = true
 publish = false
 
+[lib]
+name = "selene_testing"
+
 [features]
 default = []
 
@@ -16,9 +19,9 @@ default = []
 workspace = true
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.1.0" }
-selene-gql = { path = "../selene-gql", version = "1.1.0" }
-selene-graph = { path = "../selene-graph", version = "1.1.0" }
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.2.0" }
+selene-gql = { package = "selene-db-gql", path = "../selene-gql", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "1.2.0" }
 serde_json.workspace = true
 thiserror.workspace = true
 

@@ -755,6 +755,15 @@ impl SharedGraph {
     ) -> GraphResult<crate::CommitOutcome> {
         self.committer.handle().submit_commit(sealed)
     }
+
+    /// Enqueue a sealed commit and return its reply receiver without waiting.
+    #[cfg(test)]
+    pub(crate) fn submit_sealed_async_for_test(
+        &self,
+        sealed: crate::write_txn::SealedCommit,
+    ) -> GraphResult<std::sync::mpsc::Receiver<GraphResult<crate::CommitOutcome>>> {
+        self.committer.handle().submit_commit_async_for_test(sealed)
+    }
 }
 
 impl SharedGraphBuilder {

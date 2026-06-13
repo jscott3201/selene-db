@@ -1,5 +1,5 @@
 [package]
-name = "selene-persist"
+name = "selene-db-persist"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,8 +10,11 @@ homepage.workspace = true
 description = "WAL and snapshot persistence formats for selene-db."
 autobenches = false
 
+[lib]
+name = "selene_persist"
+
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.1.0" }
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.2.0" }
 thiserror.workspace = true
 miette.workspace = true
 serde.workspace = true
@@ -31,7 +34,7 @@ mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 rust_decimal.workspace = true
-selene-testing = { path = "../selene-testing", version = "1.1.0" }
+selene-testing = { package = "selene-db-testing", path = "../selene-testing" }
 serde_json.workspace = true
 uuid.workspace = true
 

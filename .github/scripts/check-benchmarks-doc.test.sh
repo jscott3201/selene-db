@@ -11,12 +11,12 @@ mkdir -p "$TMPDIR/scripts"
 
 cat > "$TMPDIR/scripts/run-benches.sh" <<'SCRIPT'
 REGISTRY="
-selene-core|value_clone|0
-selene-graph|single_graph|0
-selene-gql|parse|1
+selene-db-core|value_clone|0
+selene-db-graph|single_graph|0
+selene-db-gql|parse|1
 "
 SMOKE="
-selene-graph|single_graph|node_fetch
+selene-db-graph|single_graph|node_fetch
 "
 SCRIPT
 
@@ -53,10 +53,10 @@ fi
 # covered above; ensure parsing stops at the REGISTRY closing quote).
 cat > "$TMPDIR/scripts/run-benches.sh" <<'SCRIPT'
 REGISTRY="
-selene-core|value_clone|0
+selene-db-core|value_clone|0
 "
 SMOKE="
-selene-graph|never_registered|node_fetch
+selene-db-graph|never_registered|node_fetch
 "
 SCRIPT
 cat > "$TMPDIR/BENCHMARKS.md" <<'DOC'

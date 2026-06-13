@@ -61,6 +61,9 @@ const ARTIFACTS: &[(&str, &[u8])] = &[
     ("timeout-f3a4d77", TIMEOUT_F3A4D77),
 ];
 
+/// `fuzz/artifacts/parse_gql/timeout-0566cc3ad711f03d74b6f489a35db4cf806e1363` (795 bytes).
+const CASE_PREFIX_TIMEOUT_0566CC3AD: &[u8] = b"// ck\nRETURN CQSeiv/re-ok\nRETURN CASeaturETURN *har_leGV56s56siCASe--------CASeaturETURN *har-----CASeaturETURN *har_leGV57siCASea--r_leleGV56siCASea------------2----------------------------CASeaturETURN *har-----CASeiCASea--------------2------------2----------------------CASeaturETURN *har_leGV57siCASea--r_leleGV56siCASea------------2----------------------------CASeaturETURN *har-----CASeaturETURN *har_leGViCASea--r_leleGV56siCASea------------2-------------------------------CASeaturETURN *har-[----CASeat---------CASeaturETURN *har-----CASeaturETURN *har_leGViCASea--r_leleGV56siCASea------------2-------------------------------CASeaturETURN *har-[----CASeaturETURN *har_leGV56siCASea--r_le------UR R";
+
 /// Per-artifact wall-clock ceiling — a coarse, deliberately loose tripwire.
 ///
 /// The *primary*, deterministic guarantee is structural and lives in
@@ -318,6 +321,31 @@ mod recursion_crash {
     }
 
     #[test]
+    fn case_keyword_prefix_false_starts_reject_quickly() {
+        // v1.2.0 release fuzz found this malformed input: many identifier words
+        // begin with `CASE` (`CASeaturETURN`) and used to send pest into a
+        // near-timeout false-start path. The parser must reject it before that
+        // prefix backtracking becomes observable.
+        use std::time::Instant;
+
+        let source = std::str::from_utf8(super::CASE_PREFIX_TIMEOUT_0566CC3AD)
+            .expect("fuzz artifact must be valid UTF-8");
+        let start = Instant::now();
+        let result = parse(source);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < super::PARSE_BUDGET,
+            "CASE-prefix fuzz artifact took {elapsed:?} to parse (budget {:?})",
+            super::PARSE_BUDGET
+        );
+        assert!(
+            result.is_err(),
+            "CASE-prefix fuzz artifact is malformed and must not parse"
+        );
+    }
+
+    #[test]
     fn flat_wide_return_is_linear_and_admitted() {
         // AC#9 (parity): flat, wide RETURN lists pin Lens-C linearity. The
         // parser must admit N distinct identifiers cleanly and stay linear in
@@ -339,10 +367,12 @@ mod recursion_crash {
         let elapsed = start.elapsed();
 
         // Loose tripwire: generous against CI jitter, but a super-linear
-        // regression on a 2000-item flat list would blow well past it.
+        // regression on a 2000-item flat list would blow well past it. Ubuntu
+        // release runners have measured above 1s for this unoptimized test.
+        let budget = Duration::from_secs(2);
         assert!(
-            elapsed < Duration::from_millis(500),
-            "flat RETURN of {n} items took {elapsed:?}; parse cost should be ~linear in N"
+            elapsed < budget,
+            "flat RETURN of {n} items took {elapsed:?} (budget {budget:?}); parse cost should be ~linear in N"
         );
 
         // Cardinality: all N projection items survive into the AST (linearity is

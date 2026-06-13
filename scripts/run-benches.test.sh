@@ -19,7 +19,7 @@ if ! grep -q "SELENE_VECTOR_REBUILD_BENCH_SCALES=250000,1000000" <<< "$dry_run";
 fi
 
 compile_only_dry_run="$(scripts/run-benches.sh --profile quick --bench vector_graph_retrieval --filter graph_vector_omlx_embedding_pressure --compile-only --dry-run)"
-if ! grep -q "cargo bench -p selene-algorithms --bench vector_graph_retrieval --no-run" <<< "$compile_only_dry_run"; then
+if ! grep -q "cargo bench -p selene-db-algorithms --bench vector_graph_retrieval --no-run" <<< "$compile_only_dry_run"; then
   echo "FAIL: --compile-only dry-run did not resolve to a cargo bench --no-run invocation" >&2
   exit 1
 fi

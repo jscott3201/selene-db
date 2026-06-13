@@ -1,5 +1,5 @@
 [package]
-name = "selene-core"
+name = "selene-db-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,6 +7,9 @@ repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 description = "Foundation types for the selene-db ISO/IEC 39075:2024 GQL property graph engine."
+
+[lib]
+name = "selene_core"
 
 [dependencies]
 thiserror.workspace = true

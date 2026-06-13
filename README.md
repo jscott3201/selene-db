@@ -54,14 +54,15 @@ selene-core -> selene-graph -> selene-algorithms -> selene-gql
 
 ## Quickstart
 
-The crates are not published to crates.io yet. Depend on them by path from a
-neighboring application:
+Starting with v1.2.0, the public packages are published to crates.io under the
+`selene-db-*` namespace. Depend on the layers your application uses while
+keeping the Rust crate names stable:
 
 ```toml
 [dependencies]
-selene-core = { path = "../selene-db/crates/selene-core" }
-selene-graph = { path = "../selene-db/crates/selene-graph" }
-selene-gql = { path = "../selene-db/crates/selene-gql" }
+selene-core = { package = "selene-db-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", version = "1.2.0" }
+selene-gql = { package = "selene-db-gql", version = "1.2.0" }
 ```
 
 Create a graph, write through the mutation funnel, and query with GQL:
