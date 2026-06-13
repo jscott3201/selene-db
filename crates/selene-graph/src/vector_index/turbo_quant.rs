@@ -185,16 +185,9 @@ impl TurboQuantVectorIndex {
             self.bulk_rotated = rotated;
             return Err(err);
         }
-        let mut row_bytes = Vec::with_capacity(self.bytes_per_row);
-        for slot in 0..self.rows.len() {
-            let start = slot * self.dimension;
-            let end = start + self.dimension;
-            if let Err(err) =
-                self.encode_slot_with_scratch(slot, &rotated[start..end], &mut row_bytes)
-            {
-                self.bulk_rotated = rotated;
-                return Err(err);
-            }
+        if let Err(err) = self.encode_bulk_slots(&rotated) {
+            self.bulk_rotated = rotated;
+            return Err(err);
         }
         self.collecting_bulk = false;
         Ok(())

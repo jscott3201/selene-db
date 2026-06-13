@@ -1004,6 +1004,19 @@ Commands:
 | `graph_turbo_quant_churn/tqcos_create_index/d1536_n2k` | 47.958 ms | 45.533 ms | Production 4-bit TurboQuant encode now packs one row's nibbles and writes row bytes into blocked storage, avoiding per-coordinate generic bit writes. Criterion reports a 5.06% improvement (`p=0.00`). |
 | `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 17.917 ms | 15.229 ms | The lower-dimensional create row benefits more from reduced encode overhead, improving 15.00% (`p=0.00`) while retaining the same calibration and blocked-code layout. |
 
+PR-local TurboQuant parallel bulk encode spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter graph_turbo_quant_churn/tqcos_create_index/d1536_n2k --save-baseline tq_parallel_encode_d1536_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter graph_turbo_quant_churn/tqcos_create_index/d1536_n2k --baseline tq_parallel_encode_d1536_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter graph_turbo_quant_churn/tqcos_create_index/d128_n10k --save-baseline tq_parallel_encode_d128_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter graph_turbo_quant_churn/tqcos_create_index/d128_n10k --baseline tq_parallel_encode_d128_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_churn/tqcos_create_index/d1536_n2k` | 45.839 ms | 17.549 ms | Post-calibration bulk encoding now packs row bytes in parallel once a build crosses the 1M rotated-value threshold, then copies the finished rows into blocked storage. Criterion reports a 61.72% improvement (`p=0.00`). |
+| `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 15.492 ms | 9.9322 ms | The lower-dimensional 10k-row create guardrail also crosses the threshold and improves 36.31% (`p=0.00`), with the same TQ+ calibration and blocked-code layout. |
+
 PR-local TurboQuant calibration selection spot-check:
 
 Commands:
