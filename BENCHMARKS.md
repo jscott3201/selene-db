@@ -549,6 +549,27 @@ PR-local quick text baseline:
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 34.665 µs (quick) | Repeated query over a prebuilt `TextIndex` postings structure. Same BM25 tokenizer/scorer/order as the exact oracle; about 9.5x faster than the exact scan on this fixture. |
 | `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 456.56 µs (quick) | Build a transient postings index from the graph snapshot, then query it once. Slower than exact for one-off 1k queries; useful as the build-cost envelope and as the bridge toward durable maintained registrations. |
 
+PR-local text-index mixed maintenance rows:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed`;
+`scripts/run-benches.sh --profile quick --bench graph_mixed_workload --filter point_read`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_mixed/registered_query_update_r60w40/n10000_k10`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_mixed/write_registered_update_w40/n10000`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_mixed/registered_query_update_r60w40/n100000_k10`.
+
+| Bench | 1k | 10k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_mixed/registered_query_update_r60w40` | 7.1944 ms (quick) | 72.334 ms | 764.43 ms | One cycle interleaves 60 maintained BM25 index reads with 40 registered text-property updates. The 1k row had two high severe outliers; the 100k row had one high mild outlier. |
+| `graph_text_bm25_mixed/write_registered_update_w40` | 4.9800 ms (quick) | 46.147 ms | 495.04 ms | Write-only companion over the same fixture. The roughly linear scale curve shows text-body churn, not repeated BM25 reads, is the dominant high-scale cost. |
+
+Same-run 1k `graph_mixed_workload` guards measured scalar mixed at 2.1155 ms,
+typed property-index mixed at 2.2297 ms, and scalar WAL mixed at 149.76 ms.
+Maintained BM25 remains the preferred read path when lexical/current-state
+quality is sufficient, but body-update-heavy workloads should treat text-index
+maintenance as a first-class write-side bottleneck before adding richer text or
+JSON indexing surfaces.
+
 PR-local quick JSON baseline:
 
 | Bench | 1k | Notes |
@@ -2414,7 +2435,7 @@ Current vector-index and retrieval policy matrix from the evidence above:
 | Lowest-latency approximate vector lookup where recall/precision loss is acceptable or can be repaired by a later exact/state stage | HNSW | The 2k Codestral row has HNSW ef64 at 918.94 µs, much faster than exact/TurboQuant, but with lower `precbp8593`. HNSW remains the latency-oriented ANN primitive; use exact rerank, graph/state gating, or wider/tuned settings when quality matters. |
 | Coarse partitioning, cheap rebuild/recommended maintenance, clustered source corpora, or explicit list-count experiments | IVF | IVF rebuild and recommended-rebuild rows are cheap relative to HNSW construction (`ivf_cos_dim128` 2.124 ms at 1k, recommended 12.63 ms at 10k). The 2k live Codestral row now also gives IVF p2 the best latency while preserving the exact topic-precision suffix. This promotes IVF for the omitted native vector-index kind and clustered/source-shaped broad candidate generation, but its `hitbp5000` result means target-specific retrieval should still prefer graph/state/BM25 roots when available. |
 | Tight graph-derived, maintained-state, BM25, JSON, or explicit candidate sets | Exact graph-candidate scoring or maintained candidate-state scoring | Candidate/state rows are microsecond-scale for c32-c128, and live source/code rows show graph-expanded current-state vector scoring around 300 µs with full target/current precision where applicable. This remains the default for agent-memory and source-shaped workflows when graph or text can produce a meaningful candidate set. |
-| Lexical/currentness-rooted retrieval where BM25 already finds the target set | Maintained BM25/current-state, optionally followed by exact vector rerank or RRF only when it closes a measured quality gap | Live OpenRouter source/code rows repeatedly show BM25/current-state as fastest (roughly 170-195 µs on q16 source-shaped profiles) and often target-complete. Text/vector fusion usually preserves quality while adding millisecond-scale vector cost; vector-first BM25 often lowers current precision. RRF can restore full precision/currentness on alias-heavy rows, but the measured composition is slower than the best single maintained-state quality primitive, so it remains an A/B tool rather than a default fused policy. |
+| Lexical/currentness-rooted retrieval where BM25 already finds the target set | Maintained BM25/current-state, optionally followed by exact vector rerank or RRF only when it closes a measured quality gap | Live OpenRouter source/code rows repeatedly show BM25/current-state as fastest (roughly 170-195 µs on q16 source-shaped profiles) and often target-complete. Text/vector fusion usually preserves quality while adding millisecond-scale vector cost; vector-first BM25 often lowers current precision. RRF can restore full precision/currentness on alias-heavy rows, but the measured composition is slower than the best single maintained-state quality primitive, so it remains an A/B tool rather than a default fused policy. For body-update-heavy workloads, the `graph_text_bm25_mixed` maintenance rows show registered text updates scale with indexed row count; optimize snapshot-friendly text-index updates before broadening maintained text/JSON surfaces. |
 | Partial graph roots/hints without support expansion or maintained state | Expand/intersect roots before final scoring; do not use raw partial hints as final retrieval | Partial graph-hint rows with `*_GRAPH_HINT_DOCS_PER_TOPIC=2` yield only `c2` and `precbp5000` for raw topic-label candidate scoring. Existing graph-expanded and maintained-state rows recover full topic/current precision by expanding roots through support edges and intersecting state before exact rerank. |
 
 PR-local OpenRouter Codestral source-chunk vector-index guard:
