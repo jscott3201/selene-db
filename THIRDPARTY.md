@@ -4166,12 +4166,12 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- selene-algorithms v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-core v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-gql v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-graph v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-persist v1.2.0 — https://github.com/Aionforge-Labs/selene-db
-- selene-testing v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-algorithms v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-core v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-gql v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-graph v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-persist v1.2.0 — https://github.com/Aionforge-Labs/selene-db
+- selene-db-testing v1.2.0 — https://github.com/Aionforge-Labs/selene-db
 - anes v0.1.6 — https://github.com/zrzka/anes-rs
 - block2 v0.6.2 — https://github.com/madsmtm/objc2
 - gpu-descriptor-types v0.2.0 — https://github.com/zakarumych/gpu-descriptor
