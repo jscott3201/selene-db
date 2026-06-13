@@ -31,7 +31,7 @@ run-benches.sh --smoke                          # curated <~60s tripwire subset 
 run-benches.sh                                  # FULL run, every bench (the north-star sweep)
 run-benches.sh --bench wal                      # one bench bin (scoped compile + run)
 run-benches.sh --bench vector_graph_retrieval --compile-only  # compile tripwire, no Criterion run
-run-benches.sh --crate selene-graph             # every bench in one crate
+run-benches.sh --crate selene-db-graph          # every bench in one package
 run-benches.sh --bench wal --filter body_size   # one criterion group within a bin
 run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   # A/B fidelity knobs
 run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
@@ -42,7 +42,7 @@ SELENE_WGPU_STRESS_CASES=1 run-benches.sh --profile quick --bench vector_wgpu --
 scripts/criterion-summary.sh core_vector_wgpu_prototype/cpu_rayon_score_topk/q8x100000x1024
 SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 run-benches.sh --bench vector_index_rebuild --allocator system   # allocator A/B without mimalloc
-run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
+run-benches.sh --crate selene-db-algorithms --dry-run   # preview resolved invocations, run nothing
 ```
 
 ### Profiles

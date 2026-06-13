@@ -261,6 +261,7 @@ jobs:
             crate="$1"
             crate_version="$2"
             curl --fail --silent --output /dev/null \
+              --header "User-Agent: selene-db-release-workflow (github.com/Aionforge-Labs/selene-db)" \
               "https://crates.io/api/v1/crates/${crate}/${crate_version}"
           }
 
@@ -289,8 +290,8 @@ jobs:
             wait_for_index "$crate" "$version"
           }
 
-          publish_crate selene-core
-          publish_crate selene-persist
-          publish_crate selene-graph
-          publish_crate selene-algorithms
-          publish_crate selene-gql
+          publish_crate selene-db-core
+          publish_crate selene-db-persist
+          publish_crate selene-db-graph
+          publish_crate selene-db-algorithms
+          publish_crate selene-db-gql

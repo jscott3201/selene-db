@@ -1885,7 +1885,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
-name = "selene-algorithms"
+name = "selene-db-algorithms"
 version = "1.2.0"
 dependencies = [
  "criterion",
@@ -1896,15 +1896,15 @@ dependencies = [
  "rayon",
  "roaring",
  "rustc-hash 2.1.2",
- "selene-core",
- "selene-graph",
- "selene-testing",
+ "selene-db-core",
+ "selene-db-graph",
+ "selene-db-testing",
  "smallvec",
  "thiserror",
 ]
 
 [[package]]
-name = "selene-core"
+name = "selene-db-core"
 version = "1.2.0"
 dependencies = [
  "bytes",
@@ -1932,7 +1932,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "selene-gql"
+name = "selene-db-gql"
 version = "1.2.0"
 dependencies = [
  "criterion",
@@ -1949,11 +1949,11 @@ dependencies = [
  "rstest",
  "rust_decimal",
  "rustc-hash 2.1.2",
- "selene-algorithms",
- "selene-core",
- "selene-graph",
- "selene-persist",
- "selene-testing",
+ "selene-db-algorithms",
+ "selene-db-core",
+ "selene-db-graph",
+ "selene-db-persist",
+ "selene-db-testing",
  "serde",
  "serde_json",
  "smallvec",
@@ -1967,7 +1967,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "selene-graph"
+name = "selene-db-graph"
 version = "1.2.0"
 dependencies = [
  "arc-swap",
@@ -1985,9 +1985,9 @@ dependencies = [
  "rstest",
  "rust_decimal",
  "rustc-hash 2.1.2",
- "selene-core",
- "selene-persist",
- "selene-testing",
+ "selene-db-core",
+ "selene-db-persist",
+ "selene-db-testing",
  "serde",
  "serde_json",
  "smallvec",
@@ -1999,7 +1999,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "selene-persist"
+name = "selene-db-persist"
 version = "1.2.0"
 dependencies = [
  "blake3",
@@ -2011,8 +2011,8 @@ dependencies = [
  "rayon",
  "rstest",
  "rust_decimal",
- "selene-core",
- "selene-testing",
+ "selene-db-core",
+ "selene-db-testing",
  "serde",
  "serde_json",
  "thiserror",
@@ -2023,13 +2023,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "selene-testing"
+name = "selene-db-testing"
 version = "1.2.0"
 dependencies = [
  "proptest",
- "selene-core",
- "selene-gql",
- "selene-graph",
+ "selene-db-core",
+ "selene-db-gql",
+ "selene-db-graph",
  "serde_json",
  "thiserror",
 ]

@@ -1,5 +1,5 @@
 [package]
-name = "selene-graph"
+name = "selene-db-graph"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,8 +10,11 @@ homepage.workspace = true
 description = "In-memory property-graph storage core (ArcSwap + imbl CoW, label/typed indexes, write funnel) for selene-db."
 autobenches = false
 
+[lib]
+name = "selene_graph"
+
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.2.0" }
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.2.0" }
 selene-persist.workspace = true
 arc-swap.workspace = true
 parking_lot.workspace = true
@@ -25,7 +28,7 @@ triomphe.workspace = true
 serde.workspace = true
 # use-std declared here (not inherited via unification with selene-persist)
 # because candidate_state.rs and core_provider/sections/codec.rs call
-# postcard::to_stdvec; a standalone `cargo check -p selene-graph` must build.
+# postcard::to_stdvec; a standalone `cargo check -p selene-db-graph` must build.
 postcard = { workspace = true, features = ["use-std"] }
 rkyv.workspace = true
 rust_decimal.workspace = true
@@ -43,7 +46,7 @@ criterion.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
-selene-testing = { path = "../selene-testing" }
+selene-testing = { package = "selene-db-testing", path = "../selene-testing" }
 serde_json.workspace = true
 
 [[bench]]
