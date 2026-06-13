@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GV50
+// also-covers: GA05
+// expects: parse-ok
+RETURN CAST([1, 2, 3] AS INTEGER ARRAY) AS xs
