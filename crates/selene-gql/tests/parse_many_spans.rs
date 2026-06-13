@@ -20,10 +20,31 @@ fn double_quote_ident_semicolon_does_not_split() {
 }
 
 #[test]
+fn double_quoted_string_escaped_quote_semicolon_does_not_split() {
+    // ISO character string literals can be double-quoted. A semicolon after an
+    // escaped double quote is still inside the string and must not become a
+    // statement boundary.
+    let source = r#"RETURN "a\";b" AS s; RETURN 2 AS n"#;
+    let second_start = source.rfind("RETURN ").unwrap() as u32;
+    let statements = parse_many(source).expect("double-quoted string semicolon is not a boundary");
+    assert_eq!(statements.len(), 2, "the in-string `;` must not split");
+    assert_eq!(span_offset(&statements, 1), second_start);
+}
+
+#[test]
 fn backtick_ident_semicolon_does_not_split() {
     // PARSE-18: the Backtick scanner state — `;` inside a backtick-quoted
     // identifier is not a boundary.
     let source = "RETURN 1 AS `a;b`; RETURN 2 AS n";
+    let second_start = source.rfind("RETURN ").unwrap() as u32;
+    let statements = parse_many(source).expect("backtick-ident semicolon is not a boundary");
+    assert_eq!(statements.len(), 2);
+    assert_eq!(span_offset(&statements, 1), second_start);
+}
+
+#[test]
+fn backtick_doubled_backtick_semicolon_does_not_split() {
+    let source = "RETURN 1 AS `a``;b`; RETURN 2 AS n";
     let second_start = source.rfind("RETURN ").unwrap() as u32;
     let statements = parse_many(source).expect("backtick-ident semicolon is not a boundary");
     assert_eq!(statements.len(), 2);

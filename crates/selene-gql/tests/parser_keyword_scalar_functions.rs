@@ -26,10 +26,10 @@ fn iso_function_heads_are_reserved_but_delimited_identifiers_still_parse() {
     }
 
     for source in [
-        "RETURN \"left\" AS value",
-        "RETURN \"ABS\" AS value",
-        "RETURN \"CARDINALITY\" AS value",
-        "RETURN \"NORMALIZE\" AS value",
+        "RETURN 1 AS \"left\"",
+        "RETURN 1 AS \"ABS\"",
+        "CREATE NODE TYPE :\"CARDINALITY\" ()",
+        "MATCH (\"NORMALIZE\") RETURN 1 AS value",
     ] {
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
     }

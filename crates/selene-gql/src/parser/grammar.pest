@@ -12,9 +12,9 @@
 // PEG grammar (pest). Case-insensitive keywords via ^"keyword".
 // All whitespace and comments handled implicitly by WHITESPACE/COMMENT.
 //
-// Spec alignment: double-quote = delimited identifier (not string),
-// single-quote = string literal, Unicode identifiers, prop_ident
-// for keyword-safe property access.
+// Spec alignment: single- and double-quoted character string literals, Unicode
+// identifiers, double-quote/backtick delimited identifiers, and prop_ident for
+// keyword-safe property access.
 
 // -- Top-level ------------------------------------------------------
 
@@ -938,17 +938,24 @@ approximate_number_suffix = { "F" | "f" | "D" | "d" }
 numeric_suffix = { exact_number_suffix | approximate_number_suffix }
 numeric_continuation = { numeric_suffix | "e" | "E" }
 
-// Strings: SINGLE-QUOTE ONLY (spec-aligned)
-// Double-quotes are delimited identifiers (see ident rule).
-// Supports '' escape (two single-quotes = literal single-quote) and backslash escapes.
+// Strings: ISO/IEC 39075:2024 §21.2 single- or double-quoted character
+// sequences. In expression/literal slots, "text" is a string literal; in
+// identifier slots, the same double-quoted sequence remains a delimited
+// identifier through the `ident`/`prop_ident` rules below.
+// Supports doubled delimiter escapes ('' or "") and backslash escapes.
 // Escape validation is intentionally left to the AST builder so malformed
 // escapes produce the precise decode_escape diagnostic instead of a generic
 // tokenization failure.
-string_lit        = ${ "'" ~ single_inner ~ "'" }
-single_inner      = @{ (escaped_quote | dangling_escape | escape_seq | "''" | !("'" | "\\") ~ ANY)* }
-escaped_quote     = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
-dangling_escape   = @{ "\\" ~ &"'" }
-escape_seq        = @{ "\\" ~ ANY }
+string_lit             = ${ single_string_lit | double_string_lit }
+single_string_lit      = { "'" ~ single_inner ~ "'" }
+double_string_lit      = { "\"" ~ double_inner ~ "\"" }
+single_inner           = @{ (escaped_single_quote | dangling_single_escape | escape_seq | "''" | !("'" | "\\") ~ ANY)* }
+double_inner           = @{ (escaped_double_quote | dangling_double_escape | escape_seq | "\"\"" | !("\"" | "\\") ~ ANY)* }
+escaped_single_quote   = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
+escaped_double_quote   = @{ "\\" ~ "\"" ~ &((!"\"" ~ ANY)* ~ "\"") }
+dangling_single_escape = @{ "\\" ~ &"'" }
+dangling_double_escape = @{ "\\" ~ &"\"" }
+escape_seq             = @{ "\\" ~ ANY }
 
 // Byte strings: ISO-style X'...' hex octets. Spaces inside each quoted chunk
 // are ignored; adjacent chunks require a separator containing at least one
@@ -984,12 +991,13 @@ duration_lit = {
 
 // Identifiers: Unicode letters or underscore start, followed by letters/digits/underscore.
 // Double-quote delimited identifiers (spec section21.3): "my id", ""escaped""
-// Backtick delimited identifiers (Selene extension): `my id`
+// Backtick delimited identifiers (Selene extension): doubled backticks escape
+// an embedded backtick, e.g. `a``b`.
 // Keywords are excluded via negative lookahead - an identifier cannot be a
 // reserved word (unless delimited).
 ident = @{
     "\"" ~ (!"\"" ~ ANY | "\"\"")+ ~ "\""
-  | "`" ~ (!"`" ~ ANY)+ ~ "`"
+  | "`" ~ ("``" | !"`" ~ ANY)+ ~ "`"
   | !keyword ~ (LETTER | "_") ~ (LETTER | NUMBER | "_")*
 }
 
@@ -998,7 +1006,7 @@ ident = @{
 // No keyword guard - "date", "time", "type" etc. are valid property names.
 prop_ident = @{
     "\"" ~ (!"\"" ~ ANY | "\"\"")+ ~ "\""
-  | "`" ~ (!"`" ~ ANY)+ ~ "`"
+  | "`" ~ ("``" | !"`" ~ ANY)+ ~ "`"
   | (LETTER | "_") ~ (LETTER | NUMBER | "_")*
 }
 

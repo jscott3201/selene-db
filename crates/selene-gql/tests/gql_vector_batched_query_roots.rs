@@ -75,10 +75,10 @@ fn vector_score_expanded_candidates_batch_accepts_gql_query_roots() {
     let table = execute_rows(
         &mut session,
         "MATCH (anchor:QueryAnchor)-[:DEPENDS_ON]->(root:VectorRoot) \
-         WITH anchor.query_index AS query_index, anchor.query AS \"query\", collect_list(root) AS roots \
+         WITH anchor.query_index AS query_index, anchor.query AS query_vector, collect_list(root) AS roots \
          GROUP BY anchor.query_index, anchor.query \
          ORDER BY query_index \
-         WITH collect_list(\"query\") AS queries, collect_list(roots) AS root_sets \
+         WITH collect_list(query_vector) AS queries, collect_list(roots) AS root_sets \
          CALL selene.vector_score_expanded_candidates_batch('embedding', queries, root_sets, 'SUPPORTS', 2) \
          YIELD query_index, node_id, distance \
          RETURN query_index, node_id, distance",

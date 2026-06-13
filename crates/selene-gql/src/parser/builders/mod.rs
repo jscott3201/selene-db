@@ -620,13 +620,13 @@ pub(super) fn build_typed_param_ref(
 ///
 /// Bare (unquoted) identifiers — the common case — are returned borrowed
 /// (`Cow::Borrowed`) with zero allocation; only delimited identifiers that
-/// must strip delimiters or unescape `""` allocate. Callers preserve that
+/// must strip delimiters or unescape doubled delimiters allocate. Callers preserve that
 /// borrowed/owned shape when constructing the validated database string.
 pub(super) fn decode_ident_like(text: &str) -> Cow<'_, str> {
     if let Some(inner) = text.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         Cow::Owned(inner.replace("\"\"", "\""))
     } else if let Some(inner) = text.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
-        Cow::Borrowed(inner)
+        Cow::Owned(inner.replace("``", "`"))
     } else {
         Cow::Borrowed(text)
     }

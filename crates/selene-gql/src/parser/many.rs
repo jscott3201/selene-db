@@ -112,6 +112,7 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 _ => index += 1,
             },
             ScanState::DoubleQuote => match bytes[index] {
+                b'\\' => index = (index + 2).min(bytes.len()),
                 b'"' if bytes.get(index + 1) == Some(&b'"') => index += 2,
                 b'"' => {
                     state = ScanState::Normal;
@@ -119,12 +120,14 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 }
                 _ => index += 1,
             },
-            ScanState::Backtick => {
-                if bytes[index] == b'`' {
+            ScanState::Backtick => match bytes[index] {
+                b'`' if bytes.get(index + 1) == Some(&b'`') => index += 2,
+                b'`' => {
                     state = ScanState::Normal;
+                    index += 1;
                 }
-                index += 1;
-            }
+                _ => index += 1,
+            },
             ScanState::LineComment => {
                 if bytes[index] == b'\n' {
                     state = ScanState::Normal;
