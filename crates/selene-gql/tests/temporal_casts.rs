@@ -224,7 +224,7 @@ fn temporal_default_literals_materialize_and_round_trip() {
              zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04:00', \
              lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
              zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04:00', \
-             dur :: DURATION DEFAULT DURATION 'PT1H2S')",
+             dur :: DURATION (DAY TO SECOND) DEFAULT DURATION 'PT1H2S')",
             &EmptyProcedureRegistry,
         )
         .expect("temporal defaults are accepted");
@@ -269,7 +269,7 @@ fn temporal_default_literals_materialize_and_round_trip() {
              zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04', \
              lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
              zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04', \
-             dur :: DURATION DEFAULT DURATION 'PT1H2S')"
+             dur :: DURATION (DAY TO SECOND) DEFAULT DURATION 'PT1H2S')"
             )
             .unwrap()
         )
@@ -307,11 +307,11 @@ fn cast_strings_to_temporal_values() {
         Value::LocalTime("12:34:56".parse().unwrap())
     );
     assert_eq!(
-        cast_string("PT1H2S", "DURATION"),
+        cast_string("PT1H2S", "DURATION (DAY TO SECOND)"),
         Value::Duration(Box::new("PT1H2S".parse().unwrap()))
     );
     assert_eq!(
-        cast_string(" PT1H2S ", "DURATION"),
+        cast_string(" PT1H2S ", "DURATION (DAY TO SECOND)"),
         Value::Duration(Box::new("PT1H2S".parse().unwrap()))
     );
 
@@ -521,7 +521,7 @@ fn cast_invalid_strings_to_temporal_values_returns_22007() {
 #[test]
 fn cast_invalid_strings_to_duration_returns_22g0h() {
     assert_eq!(
-        cast_string_status("not-duration", "DURATION"),
+        cast_string_status("not-duration", "DURATION (DAY TO SECOND)"),
         GqlStatus::INVALID_DURATION_FORMAT
     );
 }

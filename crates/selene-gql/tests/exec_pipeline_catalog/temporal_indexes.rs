@@ -11,7 +11,7 @@ fn create_node_type_temporal_time_indexed_properties_create_property_indexes() {
     let plan = planned(
         "CREATE NODE TYPE :Event \
          (occurred_at :: ZONED DATETIME INDEXED, wall_time :: LOCAL TIME INDEXED, \
-          clock_time :: ZONED TIME INDEXED, span :: DURATION INDEXED, \
+          clock_time :: ZONED TIME INDEXED, span :: DURATION (DAY TO SECOND) INDEXED, \
           billing_cycle :: DURATION (YEAR TO MONTH) INDEXED, \
           elapsed :: DURATION (DAY TO SECOND) INDEXED)",
     );

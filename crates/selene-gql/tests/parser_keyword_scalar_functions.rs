@@ -89,6 +89,30 @@ fn dedicated_temporal_value_functions_reject_generic_call_shapes() {
 }
 
 #[test]
+fn bare_duration_remains_value_head_but_not_type_name() {
+    for source in [
+        "RETURN DURATION 'PT1H' AS value",
+        "RETURN DURATION('PT1H') AS value",
+        "RETURN DURATION({days: 1}) AS value",
+        "RETURN CAST('PT1H' AS DURATION (DAY TO SECOND)) AS value",
+        "RETURN DURATION 'P2M' IS TYPED DURATION (YEAR TO MONTH) AS ok",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+    }
+
+    for source in [
+        "RETURN CAST('PT1H' AS DURATION) AS value",
+        "RETURN DURATION 'PT1H' IS TYPED DURATION AS ok",
+        "CREATE NODE TYPE :Event (span :: DURATION)",
+    ] {
+        assert!(
+            parse(source).is_err(),
+            "{source} must reject non-ISO bare DURATION type syntax"
+        );
+    }
+}
+
+#[test]
 fn keyword_function_calls_format_bare_and_round_trip() {
     for (source, quoted_head) in [
         ("RETURN left('abcdef', 2) AS value", "\"left\"("),

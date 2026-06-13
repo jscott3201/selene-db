@@ -88,7 +88,9 @@ pub enum GqlType {
     ZonedTime,
     /// `LOCAL TIME`.
     LocalTime,
-    /// `DURATION`.
+    /// Internal broad duration value family.
+    ///
+    /// Parsed duration type names use the qualified variants below.
     Duration,
     /// `DURATION (YEAR TO MONTH)`.
     DurationYearToMonth,
