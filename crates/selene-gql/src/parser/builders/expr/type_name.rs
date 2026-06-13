@@ -439,8 +439,9 @@ fn build_field_types_specification(
         for child in field.into_inner() {
             match child.as_rule() {
                 Rule::prop_ident => name_pair = Some(child),
+                Rule::typed_marker => {}
                 Rule::type_name => type_pair = Some(child),
-                _ => {}
+                _ => return Err(unexpected_pair(child, "unexpected field type child")),
             }
         }
         let name_pair = name_pair
