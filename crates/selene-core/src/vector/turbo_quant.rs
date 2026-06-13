@@ -36,7 +36,7 @@ pub enum TurboQuantCodecError {
     },
     /// Caller-supplied packed bytes did not match the codec shape.
     ByteLengthMismatch {
-        /// Expected byte length for `(rows, dimensions, bit_width)`.
+        /// Expected byte length for the requested packed-code operation.
         expected: usize,
         /// Actual byte length supplied by the caller.
         actual: usize,

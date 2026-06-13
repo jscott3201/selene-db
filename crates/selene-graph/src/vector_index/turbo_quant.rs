@@ -23,6 +23,8 @@ use crate::parallel_scan::should_parallelize_scan;
 mod batch;
 #[path = "turbo_quant/calibration.rs"]
 mod calibration;
+#[path = "turbo_quant/encode.rs"]
+mod encode;
 #[path = "turbo_quant/fast_scan.rs"]
 mod fast_scan;
 #[path = "turbo_quant/filter.rs"]
@@ -183,10 +185,13 @@ impl TurboQuantVectorIndex {
             self.bulk_rotated = rotated;
             return Err(err);
         }
+        let mut row_bytes = Vec::with_capacity(self.bytes_per_row);
         for slot in 0..self.rows.len() {
             let start = slot * self.dimension;
             let end = start + self.dimension;
-            if let Err(err) = self.encode_slot(slot, &rotated[start..end]) {
+            if let Err(err) =
+                self.encode_slot_with_scratch(slot, &rotated[start..end], &mut row_bytes)
+            {
                 self.bulk_rotated = rotated;
                 return Err(err);
             }
@@ -405,30 +410,6 @@ impl TurboQuantVectorIndex {
             estimated_heap_bytes,
             referenced_vector_bytes: 0,
         }
-    }
-
-    fn encode_slot(&mut self, slot: usize, rotated: &[f32]) -> GraphResult<()> {
-        let mut reconstructed_inner = 0.0;
-        for (dimension, value) in rotated.iter().copied().enumerate() {
-            let calibrated = calibrate_value(value, dimension, &self.shift, &self.scale);
-            let code = self
-                .codebook
-                .encode_scalar(calibrated)
-                .map_err(codec_invariant)?;
-            let reconstructed = reconstruct_value(
-                usize::from(code),
-                dimension,
-                self.codebook.centroids(),
-                &self.shift,
-                &self.inv_scale,
-            );
-            reconstructed_inner += f64::from(value) * f64::from(reconstructed);
-            self.codes
-                .write(slot, dimension, code)
-                .map_err(codec_invariant)?;
-        }
-        self.row_scales[slot] = (1.0 / reconstructed_inner.max(MIN_RECONSTRUCTED_INNER)) as f32;
-        Ok(())
     }
 
     fn approx_distance_lut(&self, slot: usize, byte_lut: &[f64], query_bias: f64) -> f64 {

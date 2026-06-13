@@ -120,6 +120,26 @@ impl TurboQuantBlockedCodes {
         Ok(self.bytes[offset])
     }
 
+    /// Overwrite one packed row from caller-provided row-major bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a bounds error when `row` is outside the matrix, or a byte-length
+    /// mismatch when `bytes` does not contain exactly one packed row.
+    pub fn write_row_bytes(&mut self, row: usize, bytes: &[u8]) -> TurboQuantCodecResult<()> {
+        self.validate_row(row)?;
+        if bytes.len() != self.bytes_per_row {
+            return Err(TurboQuantCodecError::ByteLengthMismatch {
+                expected: self.bytes_per_row,
+                actual: bytes.len(),
+            });
+        }
+        for (byte, value) in bytes.iter().copied().enumerate() {
+            self.set_row_byte(row, byte, value);
+        }
+        Ok(())
+    }
+
     /// Return the blocked backing bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
@@ -354,6 +374,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn write_row_bytes_overwrites_one_blocked_row() {
+        let bit_width = TurboQuantBitWidth::new(4).unwrap();
+        let mut blocked = TurboQuantBlockedCodes::new(bit_width, 4, 35).unwrap();
+
+        blocked.write_row_bytes(33, &[0x21, 0x43]).unwrap();
+
+        assert_eq!(blocked.read(33, 0).unwrap(), 1);
+        assert_eq!(blocked.read(33, 1).unwrap(), 2);
+        assert_eq!(blocked.read(33, 2).unwrap(), 3);
+        assert_eq!(blocked.read(33, 3).unwrap(), 4);
+        assert_eq!(blocked.block_byte(1, 0)[1], 0x21);
+        assert_eq!(blocked.block_byte(1, 1)[1], 0x43);
+    }
+
+    #[test]
+    fn write_row_bytes_rejects_wrong_length() {
+        let bit_width = TurboQuantBitWidth::new(4).unwrap();
+        let mut blocked = TurboQuantBlockedCodes::new(bit_width, 4, 1).unwrap();
+
+        assert_eq!(
+            blocked.write_row_bytes(0, &[0x21]).unwrap_err(),
+            TurboQuantCodecError::ByteLengthMismatch {
+                expected: 2,
+                actual: 1
+            }
+        );
     }
 
     #[test]
