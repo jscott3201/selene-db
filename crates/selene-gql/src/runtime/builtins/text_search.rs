@@ -315,27 +315,29 @@ pub(super) fn execute_score_state_expanded_batch(
         )));
     };
 
+    let expanded_sets = snapshot
+        .expand_vector_candidate_sets_batch_checked(
+            &root_sets,
+            &edge_label,
+            direction,
+            k,
+            ctx.cancellation_checker(),
+        )
+        .map_err(|error| {
+            vector_search_error(
+                error,
+                "batched maintained candidate-state expanded BM25 scoring",
+                BatchMismatch::Internal(
+                    "batched maintained candidate-state text expansion received batched-only error",
+                ),
+                "batched maintained candidate-state expanded BM25 scoring",
+            )
+        })?;
+
     let mut rows = Vec::new();
-    for (query_index, (query, roots)) in queries.iter().zip(root_sets.iter()).enumerate() {
+    for (query_index, (query, expanded)) in queries.iter().zip(expanded_sets.iter()).enumerate() {
         let query_index = u64::try_from(query_index)
             .map_err(|err| query_index_too_large(SCORE_STATE_EXPANDED_BATCH_PROC_NAME, err))?;
-        let expanded = snapshot
-            .expand_vector_candidate_set_checked(
-                roots,
-                &edge_label,
-                direction,
-                ctx.cancellation_checker(),
-            )
-            .map_err(|error| {
-                vector_search_error(
-                    error,
-                    "batched maintained candidate-state expanded BM25 scoring",
-                    BatchMismatch::Internal(
-                        "batched maintained candidate-state text expansion received batched-only error",
-                    ),
-                    "batched maintained candidate-state expanded BM25 scoring",
-                )
-            })?;
         let candidates = operation.compose(&state, &expanded);
         let hits = index
             .search_candidates_checked(
