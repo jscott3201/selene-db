@@ -48,7 +48,7 @@ require_nightly_jobs_canonical() {
         next
       }
 
-      in_jobs && job != "" && index($0, needle) > 0 {
+      in_jobs && job != "" && $0 ~ /^    if:/ && index($0, needle) > 0 {
         job_ok = 1
       }
 
