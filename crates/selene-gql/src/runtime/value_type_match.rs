@@ -89,6 +89,18 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
                 .all(|value| value_matches_gql_type(value, inner)),
             _ => false,
         },
+        GqlType::BoundedList {
+            element_type,
+            max_len,
+        } => match value {
+            Value::List(values) => {
+                u64::try_from(values.len()).is_ok_and(|len| len <= *max_len)
+                    && values
+                        .iter()
+                        .all(|value| value_matches_gql_type(value, element_type))
+            }
+            _ => false,
+        },
         GqlType::Path => matches!(value, Value::Path(_)),
         GqlType::GraphRef => matches!(value, Value::GraphRef(_)),
         GqlType::NodeRef => matches!(value, Value::NodeRef(_)),

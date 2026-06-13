@@ -803,8 +803,9 @@ type_name_base = {
   | record_type
   | ^"NOTHING" | ^"NULL"
 }
-angle_list_type = { list_value_type_name_synonym ~ "<" ~ type_name ~ ">" }
-postfix_list_suffix = { type_not_null? ~ list_value_type_name_synonym }
+angle_list_type = { list_value_type_name_synonym ~ "<" ~ type_name ~ ">" ~ list_max_cardinality? }
+postfix_list_suffix = { type_not_null? ~ list_value_type_name_synonym ~ list_max_cardinality? }
+list_max_cardinality = { "[" ~ unsigned_integer ~ "]" }
 list_value_type_name_synonym = @{ (^"LIST" | ^"ARRAY") ~ !(LETTER | NUMBER | "_") }
 signed_integer_precision_type = {
     (^"SIGNED" ~ ^"INTEGER" | ^"INTEGER" | ^"INT") ~ "(" ~ numeric_type_precision ~ ")"

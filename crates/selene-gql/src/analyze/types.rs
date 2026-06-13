@@ -714,6 +714,14 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
             29u8.hash(state);
             hash_gql_type(inner, state);
         }
+        GqlType::BoundedList {
+            element_type,
+            max_len,
+        } => {
+            49u8.hash(state);
+            max_len.hash(state);
+            hash_gql_type(element_type, state);
+        }
         GqlType::NotNull(inner) => {
             46u8.hash(state);
             hash_gql_type(inner, state);

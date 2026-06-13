@@ -90,7 +90,7 @@ fn parse_string_type_lengths(
         .collect()
 }
 
-fn parse_unsigned_length(
+pub(super) fn parse_unsigned_length(
     text: &str,
     span: SourceSpan,
     kind: &'static str,

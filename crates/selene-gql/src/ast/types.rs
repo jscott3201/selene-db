@@ -106,6 +106,13 @@ pub enum GqlType {
     Record(RecordType),
     /// `LIST<T>`.
     List(Box<GqlType>),
+    /// `LIST<T>[n]`.
+    BoundedList {
+        /// Element value type.
+        element_type: Box<GqlType>,
+        /// Maximum list cardinality.
+        max_len: u64,
+    },
     /// Explicitly non-null value type (`<value type> NOT NULL`).
     NotNull(Box<GqlType>),
     /// `PATH`.

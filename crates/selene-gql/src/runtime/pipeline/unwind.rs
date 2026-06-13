@@ -48,7 +48,11 @@ pub(super) fn execute(
 
 fn element_type(ty: &AnalyzedType) -> AnalyzedType {
     match ty {
-        AnalyzedType::Resolved(GqlType::List(inner)) => AnalyzedType::Resolved((**inner).clone()),
+        AnalyzedType::Resolved(GqlType::List(inner))
+        | AnalyzedType::Resolved(GqlType::BoundedList {
+            element_type: inner,
+            ..
+        }) => AnalyzedType::Resolved((**inner).clone()),
         _ => AnalyzedType::DYNAMIC,
     }
 }

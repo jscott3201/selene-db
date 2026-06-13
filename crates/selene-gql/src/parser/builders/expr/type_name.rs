@@ -55,13 +55,11 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
                         });
                     }
                     let child_span = span(&child);
-                    let element_not_null = child
-                        .into_inner()
-                        .any(|part| part.as_rule() == Rule::type_not_null);
+                    let (element_not_null, max_len) = build_postfix_list_suffix(child)?;
                     if element_not_null {
                         ty = apply_not_null(ty, child_span)?;
                     }
-                    ty = GqlType::List(Box::new(ty));
+                    ty = build_list_type(ty, max_len);
                 }
                 Rule::type_not_null => outer_not_null = true,
                 _ => return Err(unexpected_pair(child, "expected type-name suffix")),
@@ -171,16 +169,22 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         .into_inner()
         .find(|child| child.as_rule() == Rule::angle_list_type)
     {
-        let inner = list_type
-            .into_inner()
-            .find(|child| child.as_rule() == Rule::type_name)
-            .ok_or_else(|| {
-                ParserError::syntax("list type is missing element type", source_span, None)
-            })?;
-        return Ok(GqlType::List(Box::new(build_type_name_with_depth(
-            inner,
-            depth + 1,
-        )?)));
+        let mut inner_type = None;
+        let mut max_len = None;
+        for child in list_type.into_inner() {
+            match child.as_rule() {
+                Rule::list_value_type_name_synonym => {}
+                Rule::type_name => {
+                    inner_type = Some(build_type_name_with_depth(child, depth + 1)?);
+                }
+                Rule::list_max_cardinality => max_len = Some(build_list_max_cardinality(child)?),
+                _ => return Err(unexpected_pair(child, "unexpected list type child")),
+            }
+        }
+        let inner_type = inner_type.ok_or_else(|| {
+            ParserError::syntax("list type is missing element type", source_span, None)
+        })?;
+        return Ok(build_list_type(inner_type, max_len));
     }
 
     if let Some(record_type) = pair
@@ -302,6 +306,56 @@ fn apply_not_null(ty: GqlType, span: SourceSpan) -> Result<GqlType, ParserError>
         )),
         other => Ok(GqlType::NotNull(Box::new(other))),
     }
+}
+
+fn build_postfix_list_suffix(pair: Pair<'_, Rule>) -> Result<(bool, Option<u64>), ParserError> {
+    let mut element_not_null = false;
+    let mut max_len = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::list_value_type_name_synonym => {}
+            Rule::type_not_null => element_not_null = true,
+            Rule::list_max_cardinality => max_len = Some(build_list_max_cardinality(child)?),
+            _ => {
+                return Err(unexpected_pair(
+                    child,
+                    "unexpected postfix list suffix child",
+                ));
+            }
+        }
+    }
+    Ok((element_not_null, max_len))
+}
+
+fn build_list_type(element_type: GqlType, max_len: Option<u64>) -> GqlType {
+    match max_len {
+        Some(max_len) => GqlType::BoundedList {
+            element_type: Box::new(element_type),
+            max_len,
+        },
+        None => GqlType::List(Box::new(element_type)),
+    }
+}
+
+fn build_list_max_cardinality(pair: Pair<'_, Rule>) -> Result<u64, ParserError> {
+    let source_span = span(&pair);
+    let max_len = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::unsigned_integer)
+        .ok_or_else(|| {
+            ParserError::syntax("list max cardinality is missing length", source_span, None)
+        })
+        .and_then(|child| {
+            strings::parse_unsigned_length(child.as_str(), span(&child), "list max cardinality")
+        })?;
+    if max_len == 0 {
+        return Err(ParserError::syntax(
+            "list max cardinality must be positive",
+            source_span,
+            Some("use a positive maximum cardinality such as [1]".into()),
+        ));
+    }
+    Ok(max_len)
 }
 
 fn build_record_type_name(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
