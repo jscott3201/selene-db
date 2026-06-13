@@ -1804,6 +1804,18 @@ same command.
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_text_score_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536_precbp9375_curbp9375_hitbp10000` | 185.29 µs | Maintained current-state BM25 baseline for the JSON-current text comparison. |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_json_current_text_score_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536_precbp9375_curbp9375_hitbp10000` | 364.84 µs | JSON-current filtering composes correctly with BM25 and keeps the same target-hit suffix, but is ~2.0x slower than maintained-state BM25 for this already-materialized current/support shape. Use candidate-scoped JSON as an exact metadata filter/oracle unless rows show a quality gap maintained state cannot express. |
 
+PR-local OpenRouter maintained-state BM25 root-expansion reuse validation:
+
+Command:
+`set -a; source .env; set +a; SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=mistralai/codestral-embed-2505 SELENE_EMBEDDING_CORPUS=project_source_chunk_memory SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --sample-size 40 --measurement-time 4 --bench procedure_call_repeat --filter query_root_current_state_text_score_batch --save-baseline text_state_expand_pre`,
+then the same command with `--baseline text_state_expand_pre` after
+`selene.text_score_candidate_state_expanded_batch` reused the same grouped
+root-expansion primitive as the vector companion.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_text_score_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536_precbp9375_curbp9375_hitbp10000` | 189.96 µs | 170.90 µs | Repeated per-topic root sets expand once per distinct group before candidate-state composition and BM25 scoring. Criterion reports a 10.19% improvement (`p=0.00`, 95% mean CI -10.47% to -9.91%) while preserving the same precision/currentness/target-hit suffix. |
+
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
 
 The only read-query **execution** bench in the suite (`expression_eval` is
