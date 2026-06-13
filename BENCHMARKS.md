@@ -2346,6 +2346,18 @@ target-aware profiles keep topic/current precision metrics but also record
 `hitbp` so rows can show whether the expected symbol/fact/file was retrieved,
 not only whether the result was in the right broad topic:
 
+Current vector-index and retrieval policy matrix from the evidence above:
+
+| Workload shape | Prefer | Evidence and caveats |
+|---|---|---|
+| Tiny or small full-label vector search, especially when `k`/search width covers the index | Exact scan or flat/exact index; HNSW only when approximate quality is acceptable | On live Codestral source chunks, the 32-document row has exact at 149.51 µs, HNSW at 137.90 µs, and TurboQuant after exact-covered bypass at 150.88 µs. At 544 documents, exact remains faster than TurboQuant (2.4743 ms vs 3.6629 ms) while preserving the same `precbp9218`. |
+| Broad high-dimensional cosine search where exact-like quality matters and corpus size is comfortably beyond c512 | `TurboQuantCosine` with exact primary-vector rerank | The 2k live Codestral source-chunk row has TurboQuant c512 at 6.3464 ms versus exact at 9.3568 ms with the same `precbp9218`. Synthetic 10k production rows keep full recall at c512 for d768/d1536/d3072. This supports TurboQuant as the default compressed cosine path for broad high-dimensional reads, but not as a complete retrieval policy. |
+| Lowest-latency approximate vector lookup where recall/precision loss is acceptable or can be repaired by a later exact/state stage | HNSW | The 2k Codestral row has HNSW ef64 at 918.94 µs, much faster than exact/TurboQuant, but with lower `precbp8593`. HNSW remains the latency-oriented ANN primitive; use exact rerank, graph/state gating, or wider/tuned settings when quality matters. |
+| Coarse partitioning, cheap rebuild/recommended maintenance, or explicit list-count experiments | IVF | IVF rebuild and recommended-rebuild rows are cheap relative to HNSW construction (`ivf_cos_dim128` 2.124 ms at 1k, recommended 12.63 ms at 10k), but current evidence does not make IVF the general semantic default. Prefer IVF when maintenance/rebuild cost or explicit centroid/list tuning is the workload constraint; add real-embedding IVF rows before promoting it over HNSW/TurboQuant for source-shaped retrieval. |
+| Tight graph-derived, maintained-state, BM25, JSON, or explicit candidate sets | Exact graph-candidate scoring or maintained candidate-state scoring | Candidate/state rows are microsecond-scale for c32-c128, and live source/code rows show graph-expanded current-state vector scoring around 300 µs with full target/current precision where applicable. This remains the default for agent-memory and source-shaped workflows when graph or text can produce a meaningful candidate set. |
+| Lexical/currentness-rooted retrieval where BM25 already finds the target set | Maintained BM25/current-state, optionally followed by exact vector rerank only when it closes a measured quality gap | Live OpenRouter source/code rows repeatedly show BM25/current-state as fastest (roughly 170-195 µs on q16 source-shaped profiles) and often target-complete. Text/vector fusion usually preserves quality while adding millisecond-scale vector cost; vector-first BM25 often lowers current precision. |
+| Partial graph roots/hints without support expansion or maintained state | Expand/intersect roots before final scoring; do not use raw partial hints as final retrieval | The 2k live row with `SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2` yields only `c2` and `precbp5000` for raw topic-label candidate scoring. Existing graph-expanded and maintained-state rows recover full topic/current precision by expanding roots through support edges and intersecting state before exact rerank. |
+
 PR-local OpenRouter Codestral source-chunk vector-index guard:
 
 Command:
@@ -2371,6 +2383,18 @@ Command:
 | `graph_vector_omlx_embedding_pressure/exact_graph_search/mistralai_codestral-embed-2505_544_q16_k4_dim1536_precbp9218` | 2.4743 ms | 2.4736-2.4754 ms | Exact scan is still feasible at 544 source-chunk documents and remains the topic-precision oracle for this repeated live corpus. |
 | `graph_vector_omlx_embedding_pressure/hnsw_graph_search/mistralai_codestral-embed-2505_544_q16_k4_ef64_dim1536_precbp8593` | 951.10 µs | 949.81-951.53 µs | HNSW is the latency winner but loses topic precision on this repeated source-shaped corpus. |
 | `graph_vector_omlx_embedding_pressure/turbo_quant_graph_search/mistralai_codestral-embed-2505_544_q16_k4_c512_dim1536_precbp9218` | 3.6629 ms | 3.6598-3.6653 ms | TurboQuant c512 preserves the exact precision suffix after compressed preselection plus exact rerank, but at just above the c512 envelope it is slower than exact scan. Criterion reported no baseline p-value for this new row; outliers were 35% / 15% / 10% for exact / HNSW / TurboQuant. |
+
+PR-local OpenRouter Codestral 2k repeated source-chunk policy guard:
+
+Command:
+`SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=mistralai/codestral-embed-2505 SELENE_EMBEDDING_CORPUS=project_source_chunk_memory SELENE_EMBEDDING_CORPUS_REPEAT=64 SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_graph_retrieval --filter "exact_graph_search|hnsw_graph_search|turbo_quant_graph_search|topic_label_candidate_score"`.
+
+| Row | Median | 95% CI | Notes |
+|---|---:|---:|---|
+| `graph_vector_omlx_embedding_pressure/exact_graph_search/mistralai_codestral-embed-2505_2k_q16_k4_dim1536_precbp9218` | 9.3568 ms | 9.3521-9.3604 ms | Exact scan remains the precision oracle for the 2,048-document repeated source-chunk corpus. |
+| `graph_vector_omlx_embedding_pressure/hnsw_graph_search/mistralai_codestral-embed-2505_2k_q16_k4_ef64_dim1536_precbp8593` | 918.94 µs | 918.55-919.85 µs | HNSW is still the latency winner but loses topic precision relative to exact/TurboQuant. |
+| `graph_vector_omlx_embedding_pressure/turbo_quant_graph_search/mistralai_codestral-embed-2505_2k_q16_k4_c512_dim1536_precbp9218` | 6.3464 ms | 6.3376-6.3556 ms | TurboQuant c512 now beats exact scan while preserving the exact precision suffix through compressed preselection plus exact rerank. |
+| `graph_vector_omlx_embedding_pressure/topic_label_candidate_score/mistralai_codestral-embed-2505_2k_q16_k4_c2_dim1536_precbp5000` | 12.637 µs | 12.635-12.653 µs | With `SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2`, raw graph-label candidates are only two roots per topic, so this is a partial-hint guard rather than a full candidate-set row. Criterion reported no baseline p-value for these new rows; outliers were 25% / 15% / 15% / 20% for exact / HNSW / TurboQuant / topic-label. |
 
 PR-local TurboQuant exact-covered fallback A/B:
 
