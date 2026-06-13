@@ -1787,6 +1787,23 @@ batch procedure.
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536` | 343.26 µs | 302.17 µs | Maintained current-state composition now uses the same grouped expansion helper, improving the live source-chunk row by 11.12% (`p=0.00`). |
 | `procedure_vector_omlx_query_roots/shared_cache_query_root_provenance_state_intersection_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536` | 338.29 µs | 302.80 µs | Provenance-gated current-state vector scoring preserves the same candidate semantics while avoiding duplicate graph expansion, improving 10.32% (`p=0.00`). |
 
+PR-local OpenRouter JSON-current composition row validation:
+
+Command:
+`set -a; source .env; set +a; SELENE_EMBEDDING_BENCH=1 SELENE_EMBEDDING_PROVIDER=openrouter SELENE_EMBEDDING_MODELS=mistralai/codestral-embed-2505 SELENE_EMBEDDING_CORPUS=project_source_chunk_memory SELENE_GRAPH_HINT_DOCS_PER_TOPIC=2 scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench procedure_call_repeat --filter 'query_root_json_current|query_root_current_state_text_score_batch|query_root_current_state_intersection_batch'`.
+These rows use the existing candidate-scoped JSON procedures over document
+`metadata` to filter root-expanded candidates to current support facts before
+batch text/vector scoring. They are new absolute rows, so there is no
+before/after p-value; the comparison is against maintained-state rows from the
+same command.
+
+| Bench | Median | Notes |
+|---|---:|---|
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_intersection_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536_basecurbp9687_curbp10000_hitbp10000` | 318.39 µs | Maintained current-state vector baseline for the JSON-current comparison command. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_json_current_vector_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536_precbp10000_curbp10000_hitbp10000` | 1.1045 ms | JSON metadata filtering preserves full target/current quality, but the exact JSON procedure pass makes it ~3.5x slower than maintained current-state vector scoring on this source-chunk row. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_current_state_text_score_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536_precbp9375_curbp9375_hitbp10000` | 185.29 µs | Maintained current-state BM25 baseline for the JSON-current text comparison. |
+| `procedure_vector_omlx_query_roots/shared_cache_query_root_json_current_text_score_batch/mistralai_codestral-embed-2505_project_source_chunk_memory_q16_k4_r2_c6_dim1536_precbp9375_curbp9375_hitbp10000` | 364.84 µs | JSON-current filtering composes correctly with BM25 and keeps the same target-hit suffix, but is ~2.0x slower than maintained-state BM25 for this already-materialized current/support shape. Use candidate-scoped JSON as an exact metadata filter/oracle unless rows show a quality gap maintained state cannot express. |
+
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
 
 The only read-query **execution** bench in the suite (`expression_eval` is

@@ -4,13 +4,17 @@ use std::{
     sync::Arc,
 };
 
-use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Value, VectorValue};
+use selene_core::{
+    DbString, GraphId, JsonValue, LabelSet, NodeId, PropertyMap, Value, VectorValue,
+};
 use selene_gql::BindingTable;
 use selene_graph::{
     CandidateStateSpec, IndexProvider, MaintainedCandidateStateProvider, SharedGraph,
 };
 use selene_testing::local_omlx::{CorpusInput, Topic, topic_label};
 
+#[path = "fixture/json_exec.rs"]
+mod json_exec;
 #[path = "fixture/query_exec.rs"]
 mod query_exec;
 #[path = "fixture/text_exec.rs"]
@@ -58,6 +62,7 @@ impl OmlxGqlQueryRootFixture {
         let provenance_edge = db_string("OmlxGroundedBy");
         let embedding_key = db_string("embedding");
         let body_key = db_string("body");
+        let metadata_key = db_string("metadata");
         let query_key = db_string("query");
         let query_text_key = db_string("query_text");
         let query_index_key = db_string("query_index");
@@ -91,11 +96,6 @@ impl OmlxGqlQueryRootFixture {
                     if !input.is_document {
                         continue;
                     }
-                    let props = PropertyMap::from_pairs([
-                        (embedding_key.clone(), Value::Vector(vector.clone())),
-                        (body_key.clone(), Value::String(db_string(input.text()))),
-                    ])
-                    .expect("oMLX GQL bench document properties fit");
                     let graph_hint = admits_graph_hint(
                         &mut graph_hint_counts,
                         input.topic,
@@ -110,6 +110,13 @@ impl OmlxGqlQueryRootFixture {
                         labels.insert(support_fact_label.clone());
                     }
                     let current_fact = !is_negative_evidence_document(input.text());
+                    let metadata = document_metadata(input, graph_hint, support_fact, current_fact);
+                    let props = PropertyMap::from_pairs([
+                        (embedding_key.clone(), Value::Vector(vector.clone())),
+                        (body_key.clone(), Value::String(db_string(input.text()))),
+                        (metadata_key.clone(), metadata),
+                    ])
+                    .expect("oMLX GQL bench document properties fit");
                     let node = mutator
                         .create_node(labels, props)
                         .expect("oMLX GQL bench document node inserts");
@@ -420,6 +427,35 @@ fn is_negative_evidence_document(text: &str) -> bool {
     ["stale", "superseded", "contradict"]
         .iter()
         .any(|needle| text.contains(needle))
+}
+
+fn document_metadata(
+    input: &CorpusInput,
+    graph_hint: bool,
+    support_fact: bool,
+    current_fact: bool,
+) -> Value {
+    Value::Json(
+        JsonValue::new(serde_json::json!({
+            "retrieval": {
+                "topic": topic_name(input.topic),
+                "current": current_fact,
+                "support": support_fact,
+                "graph_hint": graph_hint,
+                "target": input.target_key,
+            }
+        }))
+        .expect("embedding benchmark metadata JSON is valid"),
+    )
+}
+
+const fn topic_name(topic: Topic) -> &'static str {
+    match topic {
+        Topic::Gql => "gql",
+        Topic::Vector => "vector",
+        Topic::AgentMemory => "agent_memory",
+        Topic::Code => "code",
+    }
 }
 
 fn db_string(value: &str) -> DbString {
