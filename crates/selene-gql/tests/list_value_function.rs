@@ -113,6 +113,10 @@ fn trim_list_function_removes_tail_elements() {
         Value::List(vec![Value::Int(1), Value::Int(2)])
     );
     assert_eq!(
+        single_value("RETURN TRIM([1, 2, 3, 4], 2) AS value", "value"),
+        Value::List(vec![Value::Int(1), Value::Int(2)])
+    );
+    assert_eq!(
         single_value("RETURN trim([1, 2, 3, 4], 2M) AS value", "value"),
         Value::List(vec![Value::Int(1), Value::Int(2)])
     );
@@ -156,16 +160,21 @@ fn trim_list_function_rejects_non_list_or_non_integer_arguments() {
 
 #[test]
 fn trim_list_function_records_gv50() {
-    let statement = parse("MATCH (n) RETURN trim(n.values, 1)").expect("source parses");
-    let features = feature_walk(&statement)
-        .into_iter()
-        .map(|feature| feature.feature_id)
-        .collect::<Vec<_>>();
+    for source in [
+        "MATCH (n) RETURN trim(n.values, 1)",
+        "MATCH (n) RETURN TRIM(n.values, 1)",
+    ] {
+        let statement = parse(source).expect("source parses");
+        let features = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
 
-    assert!(
-        features.contains(&FeatureId::GV50),
-        "trim list function should record GV50, observed {features:?}"
-    );
+        assert!(
+            features.contains(&FeatureId::GV50),
+            "{source}: trim list function should record GV50, observed {features:?}"
+        );
+    }
 }
 
 #[test]

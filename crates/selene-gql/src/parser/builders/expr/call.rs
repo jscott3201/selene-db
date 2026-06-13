@@ -183,6 +183,14 @@ fn build_keyword_function(pair: Pair<'_, Rule>, name: &str) -> Result<ValueExpr,
             _ => return Err(unexpected_pair(child, "unexpected keyword-function child")),
         }
     }
+    keyword_function_expr(name, args, source_span)
+}
+
+fn keyword_function_expr(
+    name: &str,
+    args: Vec<ValueExpr>,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
     Ok(ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![db_string_from_owned(
             name.to_owned(),
@@ -283,42 +291,88 @@ pub(super) fn build_normalize_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
 
 pub(super) fn build_trim_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
-    let mut spec = TrimSpec::Both;
-    let mut has_spec = false;
-    let mut has_character = false;
-    let mut values = Vec::new();
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::trim_spec => {
-                has_spec = true;
-                spec = parse_trim_spec(child.as_str());
-            }
-            Rule::expr => values.push(build_value_expr(child)?),
-            Rule::trim_char => {
-                has_character = true;
-                values.push(build_value_expr(first_child(child)?)?);
-            }
+            Rule::trim_kw => {}
+            Rule::trim_spec_operands => return build_trim_spec_operands(child, source_span),
+            Rule::trim_value_operands => return build_trim_value_operands(child, source_span),
             _ => return Err(unexpected_pair(child, "unexpected TRIM child")),
         }
     }
-    if !has_spec && !has_character {
-        return Err(ParserError::syntax(
-            "TRIM with FROM requires a trim specification or trim character",
-            source_span,
-            None,
-        ));
+    Err(ParserError::syntax(
+        "TRIM is missing operands",
+        source_span,
+        None,
+    ))
+}
+
+fn build_trim_spec_operands(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
+    let mut spec = TrimSpec::Both;
+    let mut character = None;
+    let mut source = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::trim_spec => spec = parse_trim_spec(child.as_str()),
+            Rule::trim_char => {
+                character = Some(Box::new(build_value_expr(first_child(child)?)?));
+            }
+            Rule::from_kw => {}
+            Rule::expr => source = Some(build_value_expr(child)?),
+            _ => return Err(unexpected_pair(child, "unexpected explicit TRIM child")),
+        }
     }
-    let source = values.pop().ok_or_else(|| {
+    trim_from_expr(spec, character, source, source_span)
+}
+
+fn build_trim_value_operands(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
+    let mut children = pair.into_inner();
+    let first_pair = children.next().ok_or_else(|| {
         ParserError::syntax("TRIM is missing source expression", source_span, None)
     })?;
-    let character = values.pop().map(Box::new);
-    if !values.is_empty() {
-        return Err(ParserError::syntax(
-            "TRIM has too many value expressions",
-            source_span,
-            None,
-        ));
+    let first = build_value_expr(first_pair)?;
+    match children.next() {
+        None => keyword_function_expr("trim", vec![first], source_span),
+        Some(tail) => {
+            let tail = if tail.as_rule() == Rule::trim_value_tail {
+                first_child(tail)?
+            } else {
+                tail
+            };
+            match tail.as_rule() {
+                Rule::trim_from_tail => {
+                    let source = expr_from_child(tail)?;
+                    trim_from_expr(
+                        TrimSpec::Both,
+                        Some(Box::new(first)),
+                        Some(source),
+                        source_span,
+                    )
+                }
+                Rule::trim_list_tail => {
+                    let count = expr_from_child(tail)?;
+                    keyword_function_expr("trim", vec![first, count], source_span)
+                }
+                _ => Err(unexpected_pair(tail, "unexpected TRIM operand tail")),
+            }
+        }
     }
+}
+
+fn trim_from_expr(
+    spec: TrimSpec,
+    character: Option<Box<ValueExpr>>,
+    source: Option<ValueExpr>,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
+    let source = source.ok_or_else(|| {
+        ParserError::syntax("TRIM is missing source expression", source_span, None)
+    })?;
     Ok(ValueExpr::Trim {
         spec,
         character,
