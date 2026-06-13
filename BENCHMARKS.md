@@ -1017,6 +1017,17 @@ Commands:
 | `graph_turbo_quant_churn/tqcos_create_index/d1536_n2k` | 45.839 ms | 17.549 ms | Post-calibration bulk encoding now packs row bytes in parallel once a build crosses the 1M rotated-value threshold, then copies the finished rows into blocked storage. Criterion reports a 61.72% improvement (`p=0.00`). |
 | `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 15.492 ms | 9.9322 ms | The lower-dimensional 10k-row create guardrail also crosses the threshold and improves 36.31% (`p=0.00`), with the same TQ+ calibration and blocked-code layout. |
 
+PR-local TurboQuant codebook partition-point spot-check:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter graph_turbo_quant_churn/tqcos_create_index/d1536_n2k --baseline tq_row_buffer_d1536_pre`;
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench vector_turbo_churn --filter graph_turbo_quant_churn/tqcos_create_index/d128_n10k --baseline tq_row_buffer_d128_pre`.
+
+| Bench | Linear boundary scan | Partition-point search | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_churn/tqcos_create_index/d1536_n2k` | 17.534 ms | 15.059 ms | TurboQuant scalar codebook encoding now uses strict `partition_point` over sorted centroid boundaries, preserving lower-code boundary ties while reducing per-coordinate comparisons during bulk encode. Criterion reports a 14.43% improvement (`p=0.00`). |
+| `graph_turbo_quant_churn/tqcos_create_index/d128_n10k` | 9.9037 ms | 9.6178 ms | The row-count-heavy 128-dim build also benefits, improving 2.70% (`p=0.00`) on top of the parallel bulk-encode path. |
+
 PR-local TurboQuant calibration selection spot-check:
 
 Commands:
