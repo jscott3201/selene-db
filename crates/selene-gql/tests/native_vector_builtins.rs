@@ -102,7 +102,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 #[test]
-fn create_vector_index_defaults_to_turbo_quant_through_the_funnel() {
+fn create_vector_index_defaults_to_ivf_cosine_through_the_funnel() {
     let graph = graph(330_013);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -137,10 +137,7 @@ fn create_vector_index_defaults_to_turbo_quant_through_the_funnel() {
     let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
     assert_eq!(string_column(&table, "label"), vec!["VectorDoc"]);
     assert_eq!(string_column(&table, "property"), vec!["embedding"]);
-    assert_eq!(
-        string_column(&table, "kind"),
-        vec!["vector_turbo_quant_cosine(3)"]
-    );
+    assert_eq!(string_column(&table, "kind"), vec!["vector_ivf_cosine(3)"]);
 }
 
 #[test]
