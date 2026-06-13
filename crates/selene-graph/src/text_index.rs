@@ -9,6 +9,7 @@
 
 use std::collections::BTreeSet;
 use std::mem::size_of;
+use std::sync::Arc;
 
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
@@ -24,8 +25,12 @@ use crate::text_search::{
     unique_query_terms,
 };
 
+#[path = "text_index/builder.rs"]
+mod builder;
 #[path = "text_index/candidate.rs"]
 mod candidate;
+use builder::TextIndexBuilder;
+
 /// In-memory BM25 postings index for one node `(label, property)` pair.
 #[derive(Clone, Debug)]
 pub struct TextIndex {
@@ -33,8 +38,8 @@ pub struct TextIndex {
     property: DbString,
     rows: RoaringBitmap,
     document_lengths: FxHashMap<NodeId, u32>,
-    document_terms: FxHashMap<NodeId, Vec<String>>,
-    postings: FxHashMap<String, Vec<TextPosting>>,
+    document_terms: FxHashMap<NodeId, Arc<[String]>>,
+    postings: FxHashMap<String, Arc<Vec<TextPosting>>>,
     total_document_len: u64,
     posting_count: usize,
 }
@@ -51,9 +56,9 @@ impl TextIndex {
     /// Returns [`GraphError::Inconsistent`] if the label index references a row
     /// without a resolvable node id or property row.
     pub fn build(graph: &SeleneGraph, label: DbString, property: DbString) -> GraphResult<Self> {
-        let mut index = Self::empty(label.clone(), property.clone());
+        let mut index = TextIndexBuilder::empty(label.clone(), property.clone());
         let Some(label_rows) = graph.nodes_with_label(&label) else {
-            return Ok(index);
+            return Ok(index.finish());
         };
 
         for raw_row in label_rows.iter() {
@@ -84,8 +89,7 @@ impl TextIndex {
             };
             index.insert_document(raw_row, node_id, text.as_str());
         }
-        index.finish_bulk_load();
-        Ok(index)
+        Ok(index.finish())
     }
 
     /// Construct an empty postings index for `label.property`.
@@ -163,11 +167,11 @@ impl TextIndex {
         let mut document_term_bytes = self
             .document_terms
             .capacity()
-            .saturating_mul(size_of::<(NodeId, Vec<String>)>());
+            .saturating_mul(size_of::<(NodeId, Arc<[String]>)>());
         for terms in self.document_terms.values() {
-            document_term_bytes = document_term_bytes
-                .saturating_add(terms.capacity().saturating_mul(size_of::<String>()));
-            for term in terms {
+            document_term_bytes =
+                document_term_bytes.saturating_add(terms.len().saturating_mul(size_of::<String>()));
+            for term in terms.iter() {
                 document_term_bytes = document_term_bytes.saturating_add(term.capacity());
             }
         }
@@ -181,7 +185,7 @@ impl TextIndex {
         let terms_table_bytes = self
             .postings
             .capacity()
-            .saturating_mul(size_of::<(String, Vec<TextPosting>)>());
+            .saturating_mul(size_of::<(String, Arc<Vec<TextPosting>>)>());
         let estimated_index_bytes = size_of::<Self>()
             .saturating_add(row_bitmap_bytes)
             .saturating_add(document_length_bytes)
@@ -245,7 +249,7 @@ impl TextIndex {
                 continue;
             };
             document_frequencies[term_index] = u32::try_from(postings.len()).unwrap_or(u32::MAX);
-            for posting in postings {
+            for posting in postings.iter() {
                 postings_since_check += 1;
                 if postings_since_check >= crate::text_search::TEXT_SEARCH_CANCEL_STRIDE {
                     checker.check()?;
@@ -300,7 +304,11 @@ impl TextIndex {
         self.total_document_len = self.total_document_len.saturating_add(u64::from(len));
         let mut terms = Vec::with_capacity(counts.len());
         for (term, term_count) in counts {
-            let postings = self.postings.entry(term.clone()).or_default();
+            let postings = self
+                .postings
+                .entry(term.clone())
+                .or_insert_with(|| Arc::new(Vec::new()));
+            let postings = Arc::make_mut(postings);
             match postings.binary_search_by_key(&node_id, |posting| posting.node_id) {
                 Ok(index) => {
                     postings[index].term_count = term_count;
@@ -318,7 +326,7 @@ impl TextIndex {
             }
             terms.push(term);
         }
-        self.document_terms.insert(node_id, terms);
+        self.document_terms.insert(node_id, Arc::from(terms));
     }
 
     pub(crate) fn remove_document(&mut self, row: u32, node_id: NodeId) {
@@ -330,8 +338,9 @@ impl TextIndex {
         let Some(terms) = self.document_terms.remove(&node_id) else {
             return;
         };
-        for term in terms {
-            let remove_term = if let Some(postings) = self.postings.get_mut(&term) {
+        for term in terms.iter() {
+            let remove_term = if let Some(postings) = self.postings.get_mut(term.as_str()) {
+                let postings = Arc::make_mut(postings);
                 if let Ok(index) =
                     postings.binary_search_by_key(&node_id, |posting| posting.node_id)
                 {
@@ -343,14 +352,8 @@ impl TextIndex {
                 false
             };
             if remove_term {
-                self.postings.remove(&term);
+                self.postings.remove(term.as_str());
             }
-        }
-    }
-
-    fn finish_bulk_load(&mut self) {
-        for postings in self.postings.values_mut() {
-            postings.sort_by_key(|posting| posting.node_id);
         }
     }
 
