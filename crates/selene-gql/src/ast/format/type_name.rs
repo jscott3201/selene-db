@@ -84,9 +84,9 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
                 .join(", ");
             format!("RECORD{{{body}}}")
         }
-        // validate_formattable rejects these AST-only reference variants before
-        // read-side source formatting starts. Crate-internal diagnostics still
-        // use this renderer directly, so preserve the logical type names here.
+        // validate_formattable still rejects graph and binding-table references
+        // before read-side source formatting starts. Graph-element references
+        // are formattable and canonicalize to their primary ISO names.
         GqlType::GraphRef => "GRAPH".to_owned(),
         GqlType::NodeRef => "NODE".to_owned(),
         GqlType::EdgeRef => "EDGE".to_owned(),
