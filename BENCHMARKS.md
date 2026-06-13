@@ -784,6 +784,21 @@ Command: `scripts/run-benches.sh --profile quick --bench vector_turbo_projection
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d1536_q8_cand4243_k10_recallbp10000_m7770-full60000` | 3.6223 ms (quick) | The 1536-dim row stays inside the bounded FastScan accumulator envelope and gives graph-filtered multi-query workloads the fastest current production path. |
 | `graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d3072_q8_cand4243_k10_recallbp10000_m15300-full120000` | 6.2490 ms (quick) | 3072-dim query-specific filtered batches preserve full recall and keep the fused compressed scan below the single-query filtered high-dimensional path. |
 
+PR-local production filtered batch FastScan query-scale A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench vector_turbo_projection --filter graph_turbo_quant_production_filtered_batch_dimension_projection/cluster_cos/tqcos_filtered_batch_c512_d1536 --save-baseline tq_fast_scan_max_contrib_d1536_pre`
+with the per-dimension centroid scan, then the same command with
+`--baseline tq_fast_scan_max_contrib_d1536_pre` after reducing max query
+contribution against the codebook's maximum absolute centroid. The d128 guard
+used the same command shape with `...d128` and baseline
+`tq_fast_scan_max_contrib_d128_pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...d1536` | 3.6018 ms | 3.4985 ms | FastScan LUT prep now computes the quantization scale with one codebook max and one pass over query dimensions, improving the high-dimensional filtered batch row by 2.61% (`p=0.00`). |
+| `graph_turbo_quant_production_filtered_batch_dimension_projection/...d128` | 1.2351 ms | 1.2397 ms | Low-dimensional guard remains within Criterion's noise threshold, so the query-scale simplification does not cost the short-vector filtered batch path. |
+
 PR-local production sparse/mixed filtered batch TurboQuant A/B:
 
 Commands:

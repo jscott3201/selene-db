@@ -545,17 +545,19 @@ impl TurboQuantVectorIndex {
         self.bytes_per_row.checked_mul(2)
     }
 
-    fn max_fast_scan_query_contribution(&self, rotated_query: &[f32]) -> f64 {
+    pub(super) fn max_fast_scan_query_contribution(&self, rotated_query: &[f32]) -> f64 {
+        let max_centroid = self
+            .codebook
+            .centroids()
+            .iter()
+            .map(|centroid| f64::from(*centroid).abs())
+            .fold(0.0, f64::max);
         (0..self.dimension)
-            .flat_map(|dimension| {
+            .map(|dimension| {
                 let query =
                     query_component_for_score(rotated_query[dimension], dimension, &self.inv_scale);
-                self.codebook
-                    .centroids()
-                    .iter()
-                    .map(move |centroid| f64::from(query) * f64::from(*centroid))
+                f64::from(query).abs() * max_centroid
             })
-            .map(f64::abs)
             .fold(0.0, f64::max)
     }
 
