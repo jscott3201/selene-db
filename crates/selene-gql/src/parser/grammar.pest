@@ -821,14 +821,15 @@ character_string_type = {
   | ^"CHAR" ~ ("(" ~ character_string_length ~ ")")?
   | ^"VARCHAR" ~ ("(" ~ character_string_length ~ ")")?
 }
-character_string_length = @{ ASCII_DIGIT+ }
+character_string_length = @{ unsigned_integer }
 
 byte_string_type = {
     ^"BYTES" ~ ("(" ~ byte_string_length ~ ("," ~ byte_string_length)? ~ ")")?
   | ^"BINARY" ~ ("(" ~ byte_string_length ~ ")")?
   | ^"VARBINARY" ~ ("(" ~ byte_string_length ~ ")")?
 }
-byte_string_length = @{ ASCII_DIGIT+ }
+byte_string_length = @{ unsigned_integer }
+unsigned_integer = { hex_int_lit | oct_int_lit | bin_int_lit | dec_int_lit }
 
 // -------------------------------------------------------------------
 // Literals
