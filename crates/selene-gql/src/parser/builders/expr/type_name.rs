@@ -1,14 +1,12 @@
 //! GQL type-name builders.
 
+mod strings;
+
 use pest::iterators::Pair;
 use selene_core::feature_register::FeatureId;
 
 use crate::{
-    ast::{
-        ByteStringType, ByteStringTypeForm, CharacterStringType, CharacterStringTypeForm,
-        DecimalType, GqlType, MAX_BYTE_STRING_TYPE_LENGTH, MAX_CHARACTER_STRING_TYPE_LENGTH,
-        MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, RecordType, SourceSpan,
-    },
+    ast::{DecimalType, GqlType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, RecordType, SourceSpan},
     error::ParserError,
     parser::MAX_NESTING_DEPTH,
 };
@@ -123,13 +121,13 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         || keyword_starts_with(text, "BINARY")
         || keyword_starts_with(text, "VARBINARY")
     {
-        return build_byte_string_type_name(text, source_span);
+        return strings::build_byte_string_type_name(text, source_span);
     }
     if keyword_starts_with(text, "STRING")
         || keyword_starts_with(text, "CHAR")
         || keyword_starts_with(text, "VARCHAR")
     {
-        return build_character_string_type_name(text, source_span);
+        return strings::build_character_string_type_name(text, source_span);
     }
     if keyword_starts_with(text, "DURATION") {
         return build_duration_type_name(pair);
@@ -147,42 +145,12 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         )?)));
     }
 
-    if keyword_starts_with(text, "RECORD") {
-        // Per ISO 39075:2024 section18.9 <record type> / <field types specification> +
-        // section18.10 <field type>: a braced `RECORD { a :: INT }` is a closed record
-        // type; bare `RECORD` (no fields) is the open record type. Field names are
-        // user-controlled; construction applies the per-string byte cap (IL013).
-        let mut fields = Vec::new();
-        for field in pair
-            .into_inner()
-            .filter(|child| child.as_rule() == Rule::record_field_type)
-        {
-            let field_span = span(&field);
-            let mut children = field.into_inner();
-            let name_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("record field type is missing name", field_span, None)
-            })?;
-            let type_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("record field type is missing type", field_span, None)
-            })?;
-            let name = db_string_pair(name_pair)?;
-            if fields
-                .iter()
-                .any(|(existing_name, _)| existing_name == &name)
-            {
-                return Err(ParserError::syntax(
-                    format!("duplicate record field type name: {}", name.as_str()),
-                    field_span,
-                    Some("each closed RECORD type field name must be declared once".into()),
-                ));
-            }
-            fields.push((name, build_type_name_with_depth(type_pair, depth + 1)?));
-        }
-        return Ok(if fields.is_empty() {
-            GqlType::Record(RecordType::Open)
-        } else {
-            GqlType::Record(RecordType::Closed(fields))
-        });
+    if let Some(record_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::record_type)
+    {
+        return build_record_type_name(record_type, depth);
     }
 
     // Scalar / reference type names, matched token-wise (case- and
@@ -274,33 +242,48 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     ))
 }
 
-fn build_character_string_type_name(text: &str, span: SourceSpan) -> Result<GqlType, ParserError> {
-    if !text.contains('(') {
-        if keyword_tokens_eq(text, &["CHAR"]) {
-            return character_string_type(1, 1, CharacterStringTypeForm::CharFixed, span);
+fn build_record_type_name(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
+    // Per ISO/IEC 39075:2024 §18.9, bare `RECORD` and `ANY RECORD` are open
+    // record types. A field-types specification, even `{}`, is a closed record
+    // type; field syntax itself is §18.10 `<field type>` (`name :: type`).
+    let mut fields = Vec::new();
+    let mut has_field_specification = false;
+    for child in pair.into_inner() {
+        if child.as_rule() != Rule::field_types_specification {
+            continue;
         }
-        return Ok(GqlType::String);
-    }
-    let lengths = parse_string_type_lengths(text, span, "character string")?;
-    if keyword_starts_with(text, "CHAR") {
-        let [length] = string_type_single_length(&lengths, span, "character string")?;
-        return character_string_type(length, length, CharacterStringTypeForm::CharFixed, span);
-    }
-    if keyword_starts_with(text, "VARCHAR") {
-        let [max] = string_type_single_length(&lengths, span, "character string")?;
-        return character_string_type(0, max, CharacterStringTypeForm::VarcharMax, span);
-    }
-    match lengths.as_slice() {
-        [max] => character_string_type(0, *max, CharacterStringTypeForm::StringMax, span),
-        [min, max] => {
-            character_string_type(*min, *max, CharacterStringTypeForm::StringMinMax, span)
+        has_field_specification = true;
+        for field in child
+            .into_inner()
+            .filter(|field| field.as_rule() == Rule::record_field_type)
+        {
+            let field_span = span(&field);
+            let mut children = field.into_inner();
+            let name_pair = children.next().ok_or_else(|| {
+                ParserError::syntax("record field type is missing name", field_span, None)
+            })?;
+            let type_pair = children.next().ok_or_else(|| {
+                ParserError::syntax("record field type is missing type", field_span, None)
+            })?;
+            let name = db_string_pair(name_pair)?;
+            if fields
+                .iter()
+                .any(|(existing_name, _)| existing_name == &name)
+            {
+                return Err(ParserError::syntax(
+                    format!("duplicate record field type name: {}", name.as_str()),
+                    field_span,
+                    Some("each closed RECORD type field name must be declared once".into()),
+                ));
+            }
+            fields.push((name, build_type_name_with_depth(type_pair, depth + 1)?));
         }
-        _ => Err(ParserError::syntax(
-            "character string type expects one or two length bounds",
-            span,
-            None,
-        )),
     }
+    Ok(if has_field_specification {
+        GqlType::Record(RecordType::Closed(fields))
+    } else {
+        GqlType::Record(RecordType::Open)
+    })
 }
 
 fn build_integer_precision_type_name(
@@ -517,178 +500,4 @@ fn build_duration_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError
         "DAY TO SECOND" => GqlType::DurationDayToSecond,
         _ => unreachable!("grammar restricts temporal_duration_qualifier"),
     })
-}
-
-fn build_byte_string_type_name(text: &str, span: SourceSpan) -> Result<GqlType, ParserError> {
-    if !text.contains('(') {
-        return Ok(GqlType::Bytes);
-    }
-    let lengths = parse_string_type_lengths(text, span, "byte string")?;
-    if keyword_starts_with(text, "BINARY") {
-        let [length] = byte_string_single_length(&lengths, span)?;
-        return byte_string_type(length, length, ByteStringTypeForm::BinaryFixed, span);
-    }
-    if keyword_starts_with(text, "VARBINARY") {
-        let [max] = byte_string_single_length(&lengths, span)?;
-        return byte_string_type(0, max, ByteStringTypeForm::VarbinaryMax, span);
-    }
-    match lengths.as_slice() {
-        [max] => byte_string_type(0, *max, ByteStringTypeForm::BytesMax, span),
-        [min, max] => byte_string_type(*min, *max, ByteStringTypeForm::BytesMinMax, span),
-        _ => Err(ParserError::syntax(
-            "byte string type expects one or two length bounds",
-            span,
-            None,
-        )),
-    }
-}
-
-fn parse_string_type_lengths(
-    text: &str,
-    span: SourceSpan,
-    kind: &'static str,
-) -> Result<Vec<u64>, ParserError> {
-    let open = text.find('(').ok_or_else(|| {
-        ParserError::syntax(format!("{kind} type is missing length bounds"), span, None)
-    })?;
-    let close = text.rfind(')').ok_or_else(|| {
-        ParserError::syntax(
-            format!("{kind} type is missing closing parenthesis"),
-            span,
-            None,
-        )
-    })?;
-    text[open + 1..close]
-        .split(',')
-        .map(str::trim)
-        .map(|part| parse_unsigned_length(part, span, kind))
-        .collect()
-}
-
-fn parse_unsigned_length(
-    text: &str,
-    span: SourceSpan,
-    kind: &'static str,
-) -> Result<u64, ParserError> {
-    let (digits, radix) = if let Some(rest) = text.strip_prefix("0x") {
-        (rest, 16)
-    } else if let Some(rest) = text.strip_prefix("0o") {
-        (rest, 8)
-    } else if let Some(rest) = text.strip_prefix("0b") {
-        (rest, 2)
-    } else {
-        (text, 10)
-    };
-    validate_unsigned_integer_underscores(digits, span, kind)?;
-    let normalized = digits.replace('_', "");
-    u64::from_str_radix(&normalized, radix).map_err(|_| {
-        ParserError::syntax(format!("{kind} length exceeds supported range"), span, None)
-    })
-}
-
-fn validate_unsigned_integer_underscores(
-    text: &str,
-    span: SourceSpan,
-    kind: &'static str,
-) -> Result<(), ParserError> {
-    let mut prev_underscore = false;
-    for &byte in text.as_bytes() {
-        if byte == b'_' {
-            if prev_underscore {
-                return Err(ParserError::syntax(
-                    format!("{kind} length contains consecutive underscores"),
-                    span,
-                    Some("use `_` only between digits".into()),
-                ));
-            }
-            prev_underscore = true;
-        } else {
-            prev_underscore = false;
-        }
-    }
-    if prev_underscore {
-        return Err(ParserError::syntax(
-            format!("{kind} length cannot end with an underscore"),
-            span,
-            Some("remove the trailing `_`".into()),
-        ));
-    }
-    Ok(())
-}
-
-fn byte_string_single_length(lengths: &[u64], span: SourceSpan) -> Result<[u64; 1], ParserError> {
-    string_type_single_length(lengths, span, "byte string")
-}
-
-fn string_type_single_length(
-    lengths: &[u64],
-    span: SourceSpan,
-    kind: &'static str,
-) -> Result<[u64; 1], ParserError> {
-    match lengths {
-        [length] => Ok([*length]),
-        _ => Err(ParserError::syntax(
-            format!("{kind} type expects exactly one length bound"),
-            span,
-            None,
-        )),
-    }
-}
-
-fn character_string_type(
-    min_len: u64,
-    max_len: u64,
-    form: CharacterStringTypeForm,
-    span: SourceSpan,
-) -> Result<GqlType, ParserError> {
-    // Fixed-length coercion pads values up to `min_len`, so an unbounded
-    // declared length is an allocation primitive in read-only statements.
-    // Checking `max_len` alone is sufficient: `new` rejects min > max.
-    if max_len > MAX_CHARACTER_STRING_TYPE_LENGTH {
-        return Err(ParserError::syntax(
-            "character string length exceeds the implementation-defined maximum",
-            span,
-            Some(format!(
-                "selene-db currently supports declared character string lengths up to {MAX_CHARACTER_STRING_TYPE_LENGTH} characters"
-            )),
-        ));
-    }
-    CharacterStringType::new(min_len, max_len, form)
-        .map(GqlType::CharacterString)
-        .ok_or_else(|| {
-            ParserError::syntax(
-                "character string length bounds require max > 0 and min <= max",
-                span,
-                None,
-            )
-        })
-}
-
-fn byte_string_type(
-    min_len: u64,
-    max_len: u64,
-    form: ByteStringTypeForm,
-    span: SourceSpan,
-) -> Result<GqlType, ParserError> {
-    // Fixed-length coercion zero-pads values up to `min_len`, so an unbounded
-    // declared length is an allocation primitive in read-only statements.
-    // Checking `max_len` alone is sufficient: `new` rejects min > max.
-    if max_len > MAX_BYTE_STRING_TYPE_LENGTH {
-        return Err(ParserError::syntax(
-            "byte string length exceeds the implementation-defined maximum",
-            span,
-            Some(format!(
-                "selene-db currently supports declared byte string lengths up to {MAX_BYTE_STRING_TYPE_LENGTH} bytes"
-            )),
-        ));
-    }
-    ByteStringType::new(min_len, max_len, form)
-        .map(GqlType::ByteString)
-        .ok_or_else(|| {
-            ParserError::syntax(
-                "byte string length bounds require max > 0 and min <= max",
-                span,
-                None,
-            )
-        })
 }
