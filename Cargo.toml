@@ -24,8 +24,8 @@ edition = "2024"
 rust-version = "1.95.0"
 authors = ["selene-db contributors"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Aionforge-Labs/selene-db"
-homepage = "https://github.com/Aionforge-Labs/selene-db"
+repository = "https://github.com/jscott3201/selene-db"
+homepage = "https://github.com/jscott3201/selene-db"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
