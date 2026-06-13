@@ -17,6 +17,8 @@ use selene_testing::local_omlx::{CorpusInput, Topic, topic_label};
 mod json_exec;
 #[path = "fixture/query_exec.rs"]
 mod query_exec;
+#[path = "fixture/rrf_exec.rs"]
+mod rrf_exec;
 #[path = "fixture/text_exec.rs"]
 mod text_exec;
 
