@@ -25,11 +25,29 @@ pub(super) fn build_session_command(pair: Pair<'_, Rule>) -> Result<Statement, P
 fn build_session_set(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let inner = first_child(pair)?;
     match inner.as_rule() {
+        Rule::session_set_graph_parameter => build_session_set_graph_parameter(inner),
         Rule::session_set_graph => build_session_set_graph(inner),
         Rule::session_set_time_zone => build_session_set_time_zone(inner),
         Rule::session_set_value => build_session_set_value(inner),
         _ => Err(unexpected_pair(inner, "expected SESSION SET target")),
     }
+}
+
+fn build_session_set_graph_parameter(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+    let feature_id = if pair
+        .clone()
+        .into_inner()
+        .any(|child| child.as_rule() == Rule::session_current_graph)
+    {
+        FeatureId::GS01
+    } else {
+        FeatureId::GS12
+    };
+    Err(unsupported_feature(
+        &pair,
+        feature_id,
+        "SESSION SET graph parameters are outside the current D1 graph claim",
+    ))
 }
 
 fn build_session_set_graph(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
