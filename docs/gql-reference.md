@@ -6,8 +6,8 @@ build a `SharedGraph` plus an `EmptyProcedureRegistry`.
 
 selene-db targets **ISO/IEC 39075:2024 minimum conformance** plus a curated
 subset of optional features. The parser is **strict ISO GQL**: no Cypher,
-no SQL, no SPARQL grammar. Constructs outside the v1.0 claimed feature
-register are rejected at parse time by the GQL Flagger (ISO GQL Clause 24.6).
+no SQL, no SPARQL grammar. Constructs outside the D1 claimed feature register
+are rejected at parse time by the GQL Flagger (ISO GQL Clause 24.6).
 
 For the engine architecture see [`architecture.md`](architecture.md). For
 durability and recovery see
@@ -71,7 +71,7 @@ parsing or analysis, never at runtime.
 | `FLOAT` | `3.14`, `-0.5`, `1.0e6`, `2.5e-3` | `Value::Float` (f64) | IEEE 754 binary64 (feature `GA01`). |
 | `STRING` | `'single quotes'`, `"double quotes"`, `` `accent quotes` ``, `'\n'` escapes | `Value::String(DbString)` | ISO single-, double-, and accent-quoted character strings. Doubled delimiters and backslash escapes are honored unless the literal uses `@` no-escape form. |
 
-### Optional types claimed in v1.0
+### Optional types claimed under D1
 
 | GQL type | Literal syntax | `Value` variant | Feature |
 |:---|:---|:---|:---|
@@ -392,7 +392,7 @@ UNION
 MATCH (p:Person) WHERE p.country = 'AU' RETURN p.name
 ```
 
-| Operator | v1.0 status |
+| Operator | Status |
 |---|---|
 | `UNION`, `UNION ALL`, `UNION DISTINCT` | Supported (feature `GQ03`). |
 | `EXCEPT`, `EXCEPT ALL`, `EXCEPT DISTINCT` | Supported (features `GQ04`, `GQ05`). |
@@ -776,7 +776,7 @@ execute_statement(&plan_for("COMMIT"), &mut session, &registry)?;
 Mixed catalog-and-data transactions are forbidden (implementation-defined
 choices `IE006`, `IE007`): a transaction may either modify schema or
 modify data, but not both. Feature `GP18` (mixed catalog/data) is not
-claimed in v1.0.
+claimed under D1.
 
 Multi-graph transactions (`GT03`) are not claimed; one transaction touches
 exactly one graph.
@@ -785,8 +785,8 @@ exactly one graph.
 
 ## 10. GQL Flagger
 
-The Flagger (ISO GQL Clause 24.6) rejects constructs outside the v1.0
-claimed feature register at parse or analysis time. Rejection happens
+The Flagger (ISO GQL Clause 24.6) rejects constructs outside the D1 claimed
+feature register at parse or analysis time. Rejection happens
 **before** execution; there is no runtime "unsupported feature" surprise.
 
 Examples of rejected constructs:
@@ -833,7 +833,7 @@ diagnostic codes follow the GQLSTATUS table in
 
 ## 12. What's NOT supported
 
-The v1.0 surface is deliberately narrow. The list below names what is
+The current D1 surface is deliberately narrow. The list below names what is
 explicitly absent. The canonical rationale is
 `feature_register::NOT_SUPPORTED_RATIONALE`.
 
