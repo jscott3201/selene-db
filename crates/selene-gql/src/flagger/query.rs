@@ -26,7 +26,7 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
                     SetOp::Union | SetOp::UnionAll => {
                         record_feature(uses, FeatureId::GQ03, pipeline.span);
                     }
-                    SetOp::Otherwise => record_feature(uses, FeatureId::GQ09, pipeline.span),
+                    SetOp::Otherwise => record_feature(uses, FeatureId::GQ02, pipeline.span),
                     SetOp::Intersect => record_feature(uses, FeatureId::GQ06, pipeline.span),
                     SetOp::IntersectAll => record_feature(uses, FeatureId::GQ07, pipeline.span),
                     SetOp::Except => record_feature(uses, FeatureId::GQ04, pipeline.span),
@@ -288,6 +288,9 @@ fn edge_pattern(pattern: &EdgePattern, uses: &mut Vec<FeatureUse>) {
 }
 
 fn let_bindings(bindings: &[LetBinding], uses: &mut Vec<FeatureUse>) {
+    if let Some(first) = bindings.first() {
+        record_feature(uses, FeatureId::GQ09, first.span);
+    }
     for binding in bindings {
         expr::value(&binding.value, uses);
     }
