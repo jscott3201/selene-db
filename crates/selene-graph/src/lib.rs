@@ -6,7 +6,7 @@
 //! transaction boundary while readers observe immutable snapshots. selene-db is
 //! a single native engine: the higher `selene-gql` layer owns GQL
 //! binding/planning and the one frozen native procedure registry. Edge property
-//! indexes remain outside the v1.0 storage contract.
+//! indexes remain outside the current storage contract.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

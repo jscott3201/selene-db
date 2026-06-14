@@ -288,7 +288,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 }
 
-/// Return the implicit graph type ID used while v1.0 has one bound type per graph.
+/// Return the implicit graph type ID used while one bound type is allowed per graph.
 ///
 /// Future multi-type-bound graph work should replace this sentinel with a real
 /// graph-type allocator and preserve the ID across WAL replay.

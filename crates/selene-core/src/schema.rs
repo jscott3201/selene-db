@@ -469,7 +469,7 @@ pub struct ValueType {
     pub record: Option<RecordTypeRef>,
     /// Whether null is forbidden at this level.
     pub not_null: bool,
-    /// Minimal v1.0 scalar cardinality.
+    /// Currently supported scalar cardinality.
     pub cardinality: ValueTypeCardinality,
 }
 
@@ -507,7 +507,7 @@ impl ValueType {
     }
 }
 
-/// Predefined value types claimed by the v1.0 surface.
+/// Predefined value types claimed by the D1 surface.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PredefinedValueType {
     /// Boolean.
@@ -584,7 +584,7 @@ pub enum PredefinedValueType {
     Json,
 }
 
-/// Minimal v1.0 value cardinality.
+/// Currently supported value cardinality.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum ValueTypeCardinality {
     /// Exactly one value.

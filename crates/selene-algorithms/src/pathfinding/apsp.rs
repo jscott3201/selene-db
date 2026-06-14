@@ -2,8 +2,9 @@
 //!
 //! Each call to [`crate::pathfinding::sssp`] is fully independent (fresh
 //! `dist[]` allocation per source per §O.A.3). For N nodes this is O(N · sssp)
-//! = O(N · (V + E) log V) for the typical sparse case — acceptable for v1.0
-//! sequential pathfinding bounded by the caller-supplied `max_nodes` gate
+//! = O(N · (V + E) log V) for the typical sparse case — acceptable for the
+//! current sequential pathfinding surface bounded by the caller-supplied
+//! `max_nodes` gate
 //! (spec 16 §E18).
 
 use selene_core::{CancellationChecker, NodeId};
