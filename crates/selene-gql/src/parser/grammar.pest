@@ -180,13 +180,14 @@ session_reset_parameter   = { ^"PARAMETER"? ~ param_ref }
 
 // -- SELECT (desugars to MATCH + RETURN at AST level) ------------
 
+select_kw = @{ ^"SELECT" ~ !(LETTER | NUMBER | "_") }
 select_stmt = {
-    ^"SELECT" ~ (distinct_kw | all_kw)? ~ (return_star | projection_list)
+    select_kw ~ (distinct_kw | all_kw)? ~ (return_star | projection_list)
     ~ select_from? ~ where_clause?
     ~ group_by_clause? ~ having_clause?
     ~ sorting_stmt? ~ offset_stmt? ~ limit_stmt?
 }
-select_from = { ^"FROM" ~ (match_stmt | ident) }
+select_from = { from_kw ~ (match_stmt | ident) }
 
 // -- Query pipeline -------------------------------------------------
 

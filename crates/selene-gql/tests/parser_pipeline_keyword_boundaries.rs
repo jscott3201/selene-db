@@ -28,6 +28,10 @@ fn pipeline_statement_keywords_require_boundaries() {
         "MATCH (n WHEREtrue) RETURN n",
         "CALL foo() YIELD bar ASbaz RETURN baz",
         "RETURN CAST(1 ASINT8) AS x",
+        "SELECTx AS x",
+        "SELECTALL 1 AS x",
+        "SELECT 1 AS x FROMMATCH (n)",
+        "SELECT 1 AS x FROMx",
     ] {
         assert!(
             parse(source).is_err(),
@@ -70,6 +74,10 @@ fn guarded_pipeline_keywords_still_accept_iso_forms() {
         "MATCH (n WHERE true) RETURN n",
         "CALL foo() YIELD bar AS baz RETURN baz",
         "RETURN CAST(1 AS INT8) AS x",
+        "SELECT 1 AS x",
+        "SELECT ALL 1 AS x",
+        "SELECT 1 AS x FROM MATCH (n)",
+        "SELECT * FROM MATCH (n)",
     ] {
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
     }
