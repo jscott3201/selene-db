@@ -43,3 +43,21 @@ fn procedure_feature_names_match_annex_d() {
         assert_eq!(name_of(feature), Some(expected_name));
     }
 }
+
+#[test]
+fn core_language_feature_names_match_annex_d() {
+    for (feature, expected_name) in [
+        (FeatureId::G002, "Different-edges match mode"),
+        (FeatureId::G003, "Explicit REPEATABLE ELEMENTS keyword"),
+        (FeatureId::G036, "Quantified edges"),
+        (FeatureId::G037, "Questioned paths"),
+        (FeatureId::G060, "Bounded graph pattern quantifiers"),
+        (FeatureId::G061, "Unbounded graph pattern quantifiers"),
+        (FeatureId::GE04, "Graph parameters"),
+        (FeatureId::GE05, "Binding table parameters"),
+        (FeatureId::GE07, "Boolean XOR"),
+        (FeatureId::GT03, "Use of multiple graphs in a transaction"),
+    ] {
+        assert_eq!(name_of(feature), Some(expected_name));
+    }
+}

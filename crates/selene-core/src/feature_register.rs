@@ -44,8 +44,8 @@ macro_rules! feature_ids {
 }
 
 feature_ids! {
-    G002 = "G002" => "Different edges match mode";
-    G003 = "G003" => "Repeatable elements match mode";
+    G002 = "G002" => "Different-edges match mode";
+    G003 = "G003" => "Explicit REPEATABLE ELEMENTS keyword";
     G010 = "G010" => "Explicit WALK keyword";
     G011 = "G011" => "Advanced path modes: TRAIL";
     G012 = "G012" => "Advanced path modes: SIMPLE";
@@ -57,10 +57,10 @@ feature_ids! {
     G018 = "G018" => "Any shortest path search";
     G019 = "G019" => "Counted shortest path search";
     G020 = "G020" => "Counted shortest group search";
-    G036 = "G036" => "Quantified edge pattern";
-    G037 = "G037" => "Questioned path primary";
-    G060 = "G060" => "Bounded quantified path primary";
-    G061 = "G061" => "Unbounded quantified path primary";
+    G036 = "G036" => "Quantified edges";
+    G037 = "G037" => "Questioned paths";
+    G060 = "G060" => "Bounded graph pattern quantifiers";
+    G061 = "G061" => "Unbounded graph pattern quantifiers";
     G100 = "G100" => "ELEMENT_ID function";
     G110 = "G110" => "IS DIRECTED predicate";
     G111 = "G111" => "IS LABELED predicate";
@@ -75,10 +75,10 @@ feature_ids! {
     GC04 = "GC04" => "Graph management";
     GC05 = "GC05" => "Graph management: IF [ NOT ] EXISTS";
     GD01 = "GD01" => "Updatable graphs";
-    GE04 = "GE04" => "Parameters";
-    GE05 = "GE05" => "Named parameters";
+    GE04 = "GE04" => "Graph parameters";
+    GE05 = "GE05" => "Binding table parameters";
     GE06 = "GE06" => "Path value construction";
-    GE07 = "GE07" => "XOR operator";
+    GE07 = "GE07" => "Boolean XOR";
     // ISO/IEC 39075:2024 Annex D Table D.1 row 77 / subclause 17.7: GE08 is
     // "Reference parameters", NOT a CAST feature. selene-db does not implement
     // reference parameters, so GE08 is referenced-but-not-supported (see
@@ -180,7 +180,7 @@ feature_ids! {
     GS15 = "GS15" => "SESSION SET command: set time zone displacement";
     GS16 = "GS16" => "SESSION RESET command: reset individual session parameters";
     GT01 = "GT01" => "Explicit transaction commands";
-    GT03 = "GT03" => "Multi-graph transactions";
+    GT03 = "GT03" => "Use of multiple graphs in a transaction";
     GV01 = "GV01" => "8 bit unsigned integer numbers";
     GV02 = "GV02" => "8 bit signed integer numbers";
     GV03 = "GV03" => "16 bit unsigned integer numbers";
