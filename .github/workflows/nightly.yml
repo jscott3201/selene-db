@@ -99,7 +99,7 @@ jobs:
 
   parse-fuzz:
     if: github.repository == 'jscott3201/selene-db'
-    name: parse-fuzz (15m soak)
+    name: parse-fuzz (parse, batch, round-trip soak)
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     runs-on: ubuntu-latest
     steps:
@@ -115,12 +115,25 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: crates/selene-gql/fuzz/corpus
-          key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql') }}
+          key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql', 'crates/selene-gql/fuzz/fuzz_targets/**') }}
           restore-keys: gql-fuzz-corpus-${{ runner.os }}-
       - name: seed parse corpus
         run: |
-          mkdir -p crates/selene-gql/fuzz/corpus/parse_gql
+          mkdir -p \
+            crates/selene-gql/fuzz/corpus/parse_gql \
+            crates/selene-gql/fuzz/corpus/parse_many_gql \
+            crates/selene-gql/fuzz/corpus/round_trip
           find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/parse_gql/ \;
+          find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/round_trip/ \;
+          cat > crates/selene-gql/fuzz/corpus/parse_many_gql/basic-batch.gql <<'EOF'
+          RETURN 1 AS n; RETURN 2 AS n
+          EOF
+          cat > crates/selene-gql/fuzz/corpus/parse_many_gql/mixed-batch.gql <<'EOF'
+          CREATE NODE TYPE :Person (name STRING); INSERT (:Person {name: 'Alice'}) FINISH; MATCH (n:Person) RETURN n
+          EOF
+          cat > crates/selene-gql/fuzz/corpus/parse_many_gql/semicolon-delimiters.gql <<'EOF'
+          RETURN 'a;b' AS value; /* c;d */ RETURN @"x;y" AS quoted
+          EOF
       - name: fuzz parser (15m soak)
         working-directory: crates/selene-gql/fuzz
         # -timeout=20 caps per-input parse time at 20s. The default (1200s)
@@ -132,6 +145,16 @@ jobs:
         # chain only crashes in the thousands-to-tens-of-thousands of bytes); the
         # default could never generate an input long enough to trip them.
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=900 -timeout=20 -max_len=65536
+      - name: fuzz batch parser (2m soak)
+        working-directory: crates/selene-gql/fuzz
+        # parse_many_gql covers the semicolon-boundary scanner and span-rebase
+        # path around the same single-statement parser guarded above.
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_many_gql -- -max_total_time=120 -timeout=20 -max_len=65536
+      - name: fuzz formatter round trip (2m soak)
+        working-directory: crates/selene-gql/fuzz
+        # round_trip exercises parse -> AST format -> parse -> structural
+        # equality, catching formatter/AST drift that parse-only fuzz cannot.
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu round_trip -- -max_total_time=120 -timeout=20 -max_len=65536
 
   persist-decode-fuzz:
     if: github.repository == 'jscott3201/selene-db'
