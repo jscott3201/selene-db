@@ -336,8 +336,9 @@ RETURN CARDINALITY([1, 2, 3]) AS count
 RETURN TRIM([1, 2, 3, 4], 2) AS prefix
 ```
 
-Selene supports ISO list value constructors, concatenation, element access,
-`CARDINALITY`, and the ISO list `TRIM(list, count)` function. Cypher-style list
+Selene supports ISO list value constructors, concatenation, `CARDINALITY`, and
+the ISO list `TRIM(list, count)` function. It also supports the
+implementation-defined `[index]` element access operator. Cypher-style list
 comprehension, list quantifier, and `REDUCE` expression syntax is not ISO GQL
 and is rejected at parse time.
 
