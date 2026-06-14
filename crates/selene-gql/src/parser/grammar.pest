@@ -132,10 +132,10 @@ rollback            = { ^"ROLLBACK" }
 // VALUE (GS03), SET TIME ZONE (GS15), RESET targets (GS04/GS07/GS08/GS16), and
 // CLOSE (section 7.3, no feature code). D1-blocked RESET SCHEMA/GRAPH forms are
 // parsed to structured GS05/GS06 UnsupportedFeature errors. D1-blocked SET
-// graph-parameter forms are likewise parsed to structured GS01/GS12 rejections.
-// The remaining D1-blocked SET schema, binding-table, and expression/subquery
-// parameter forms are intentionally omitted; they parse-fail cleanly and carry
-// NOT_SUPPORTED_RATIONALE entries.
+// graph-parameter and binding-table forms are likewise parsed to structured
+// GS01/GS12 and GS02/GS10/GS13 rejections. The remaining D1-blocked SET schema
+// and value expression/subquery parameter forms are intentionally omitted; they
+// parse-fail cleanly and carry NOT_SUPPORTED_RATIONALE entries.
 
 session_command = { session_set | session_reset | session_close }
 
@@ -143,7 +143,8 @@ session_command = { session_set | session_reset | session_close }
 session_close = { ^"SESSION" ~ ^"CLOSE" }
 
 // section 7.1 <session set command> implemented branches.
-session_set            = { ^"SESSION" ~ ^"SET" ~ (session_set_graph_parameter | session_set_graph | session_set_time_zone | session_set_value) }
+session_set            = { ^"SESSION" ~ ^"SET" ~ (session_set_binding_table_parameter | session_set_graph_parameter | session_set_graph | session_set_time_zone | session_set_value) }
+session_set_binding_table_parameter = { param_ref ~ ^"BINDING" ~ ^"TABLE" ~ (value_subquery_expr | param_ref | ident) }
 session_set_graph_parameter = { param_ref ~ ^"PROPERTY"? ~ ^"GRAPH" ~ (session_current_graph | param_ref) }
 session_set_graph      = { ^"PROPERTY"? ~ ^"GRAPH" ~ session_current_graph }
 session_current_graph  = { ^"CURRENT_PROPERTY_GRAPH" | ^"CURRENT_GRAPH" }

@@ -25,12 +25,41 @@ pub(super) fn build_session_command(pair: Pair<'_, Rule>) -> Result<Statement, P
 fn build_session_set(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let inner = first_child(pair)?;
     match inner.as_rule() {
+        Rule::session_set_binding_table_parameter => {
+            build_session_set_binding_table_parameter(inner)
+        }
         Rule::session_set_graph_parameter => build_session_set_graph_parameter(inner),
         Rule::session_set_graph => build_session_set_graph(inner),
         Rule::session_set_time_zone => build_session_set_time_zone(inner),
         Rule::session_set_value => build_session_set_value(inner),
         _ => Err(unexpected_pair(inner, "expected SESSION SET target")),
     }
+}
+
+fn build_session_set_binding_table_parameter(
+    pair: Pair<'_, Rule>,
+) -> Result<Statement, ParserError> {
+    let mut param_refs = 0;
+    let mut has_subquery = false;
+    for child in pair.clone().into_inner() {
+        match child.as_rule() {
+            Rule::param_ref => param_refs += 1,
+            Rule::value_subquery_expr => has_subquery = true,
+            _ => {}
+        }
+    }
+    let feature_id = if has_subquery {
+        FeatureId::GS10
+    } else if param_refs > 1 {
+        FeatureId::GS13
+    } else {
+        FeatureId::GS02
+    };
+    Err(unsupported_feature(
+        &pair,
+        feature_id,
+        "SESSION SET binding-table parameters are outside the current D1 claim",
+    ))
 }
 
 fn build_session_set_graph_parameter(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
