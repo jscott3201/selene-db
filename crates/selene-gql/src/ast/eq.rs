@@ -57,7 +57,9 @@ fn scrub_statement(statement: &mut Statement) {
             *span = SourceSpan::default();
             *zone_source_kind = CharacterStringLiteralKind::Escaped;
         }
-        Statement::SessionReset { span, .. } | Statement::SessionClose { span } => {
+        Statement::SessionSetGraph { span, .. }
+        | Statement::SessionReset { span, .. }
+        | Statement::SessionClose { span } => {
             *span = SourceSpan::default();
         }
     }

@@ -144,6 +144,12 @@ fn lower_statement_kind(
                 span: *span,
             }))
         }
+        AnalyzedStatementKind::SessionSetGraph { target, span } => {
+            Ok(session_plan(SessionOp::SetGraph {
+                target: *target,
+                span: *span,
+            }))
+        }
         AnalyzedStatementKind::SessionReset { target, span } => {
             Ok(session_plan(session_reset_op(target, *span)))
         }

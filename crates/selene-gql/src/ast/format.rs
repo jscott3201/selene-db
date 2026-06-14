@@ -82,6 +82,7 @@ pub fn format_read_statement(stmt: &Statement) -> Result<String, FormatError> {
         }
         Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => {
             return Err(FormatError::Unsupported {

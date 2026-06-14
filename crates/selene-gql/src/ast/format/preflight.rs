@@ -39,6 +39,7 @@ pub(crate) fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> 
         | Statement::Rollback { .. }
         | Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => Ok(()),
     }

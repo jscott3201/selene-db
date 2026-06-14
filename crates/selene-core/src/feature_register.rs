@@ -464,7 +464,7 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GS01,
-        "SESSION SET <name> GRAPH binds a session-local graph parameter; D1 single-graph embeddable has one graph and no <graph expression>/CURRENT_GRAPH (GV60) or catalog to bind",
+        "SESSION SET <name> GRAPH binds a session-local graph parameter; D1 single-graph embeddable has one graph and no graph-parameter catalog/value slot to bind",
     ),
     (
         FeatureId::GS02,

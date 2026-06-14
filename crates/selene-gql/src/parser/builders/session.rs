@@ -3,7 +3,7 @@
 use pest::iterators::Pair;
 
 use crate::{
-    ast::{SessionResetTarget, Statement},
+    ast::{SessionResetTarget, SessionSetGraphTarget, Statement},
     error::ParserError,
 };
 
@@ -24,10 +24,37 @@ pub(super) fn build_session_command(pair: Pair<'_, Rule>) -> Result<Statement, P
 fn build_session_set(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let inner = first_child(pair)?;
     match inner.as_rule() {
+        Rule::session_set_graph => build_session_set_graph(inner),
         Rule::session_set_time_zone => build_session_set_time_zone(inner),
         Rule::session_set_value => build_session_set_value(inner),
         _ => Err(unexpected_pair(inner, "expected SESSION SET target")),
     }
+}
+
+fn build_session_set_graph(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+    let source_span = span(&pair);
+    let target_pair = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::session_current_graph)
+        .ok_or_else(|| {
+            ParserError::syntax(
+                "SESSION SET GRAPH is missing a current graph expression",
+                source_span,
+                None,
+            )
+        })?;
+    let target = if target_pair
+        .as_str()
+        .eq_ignore_ascii_case("CURRENT_PROPERTY_GRAPH")
+    {
+        SessionSetGraphTarget::CurrentPropertyGraph
+    } else {
+        SessionSetGraphTarget::CurrentGraph
+    };
+    Ok(Statement::SessionSetGraph {
+        target,
+        span: source_span,
+    })
 }
 
 fn build_session_set_time_zone(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
