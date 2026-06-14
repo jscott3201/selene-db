@@ -12,9 +12,9 @@
 // PEG grammar (pest). Case-insensitive keywords via ^"keyword".
 // All whitespace and comments handled implicitly by WHITESPACE/COMMENT.
 //
-// Spec alignment: single- and double-quoted character string literals, Unicode
-// identifiers, double-quote/backtick delimited identifiers, and prop_ident for
-// keyword-safe property access.
+// Spec alignment: single-, double-, and accent-quoted character string
+// literals, Unicode identifiers, double/accent-quoted delimited identifiers,
+// and prop_ident for keyword-safe property access.
 
 // -- Top-level ------------------------------------------------------
 
@@ -580,11 +580,12 @@ primary = {
   | trim_expr
   | elements_function
   | aggregate_expr
-  | literal
   | current_datetime_function
   | duration_between_expr
+  | duration_lit
   | scalar_keyword_function_call
   | function_call
+  | literal
   | paren_expr
   | typed_param_ref
   | var_ref
@@ -938,30 +939,37 @@ approximate_number_suffix = { "F" | "f" | "D" | "d" }
 numeric_suffix = { exact_number_suffix | approximate_number_suffix }
 numeric_continuation = { numeric_suffix | "e" | "E" }
 
-// Strings: ISO/IEC 39075:2024 §21.2 single- or double-quoted character
-// sequences. In expression/literal slots, "text" is a string literal; in
-// identifier slots, the same double-quoted sequence remains a delimited
-// identifier through the `ident`/`prop_ident` rules below.
-// Standard strings support doubled delimiter escapes ('' or "") and backslash
-// escapes. `@` is ISO `<no escape>` (Feature GL11): it must be adjacent to the
-// quoted sequence and disables both backslash and doubled-delimiter character
-// representations, so the active delimiter cannot occur inside the body.
+// Strings: ISO/IEC 39075:2024 §21.2 single-, double-, or accent-quoted
+// character sequences. In expression/literal slots, quoted sequences are string
+// literals; in identifier slots, double/accent-quoted sequences remain
+// delimited identifiers through the `ident`/`prop_ident` rules below.
+// Standard strings support doubled delimiter escapes ('' / "" / ``) and
+// backslash escapes. `@` is ISO `<no escape>` (Feature GL11): it must be
+// adjacent to the quoted sequence and disables both backslash and
+// doubled-delimiter character representations, so the active delimiter cannot
+// occur inside the body.
 // Escape validation for standard strings is intentionally left to the AST
 // builder so malformed escapes produce the precise decode_escape diagnostic
 // instead of a generic tokenization failure.
-string_lit                  = ${ no_escape_single_string_lit | no_escape_double_string_lit | single_string_lit | double_string_lit }
+string_lit                  = ${ no_escape_single_string_lit | no_escape_double_string_lit | no_escape_accent_string_lit | single_string_lit | double_string_lit | accent_string_lit }
 no_escape_single_string_lit = { "@" ~ "'" ~ no_escape_single_inner ~ "'" }
 no_escape_double_string_lit = { "@" ~ "\"" ~ no_escape_double_inner ~ "\"" }
+no_escape_accent_string_lit = { "@" ~ "`" ~ no_escape_accent_inner ~ "`" }
 single_string_lit           = { "'" ~ single_inner ~ "'" }
 double_string_lit           = { "\"" ~ double_inner ~ "\"" }
+accent_string_lit           = { "`" ~ accent_inner ~ "`" }
 no_escape_single_inner      = @{ (!"'" ~ ANY)* }
 no_escape_double_inner      = @{ (!"\"" ~ ANY)* }
+no_escape_accent_inner      = @{ (!"`" ~ ANY)* }
 single_inner                = @{ (escaped_single_quote | dangling_single_escape | escape_seq | "''" | !("'" | "\\") ~ ANY)* }
 double_inner                = @{ (escaped_double_quote | dangling_double_escape | escape_seq | "\"\"" | !("\"" | "\\") ~ ANY)* }
+accent_inner                = @{ (escaped_accent_quote | dangling_accent_escape | escape_seq | "``" | !("`" | "\\") ~ ANY)* }
 escaped_single_quote        = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
 escaped_double_quote        = @{ "\\" ~ "\"" ~ &((!"\"" ~ ANY)* ~ "\"") }
+escaped_accent_quote        = @{ "\\" ~ "`" ~ &((!"`" ~ ANY)* ~ "`") }
 dangling_single_escape      = @{ "\\" ~ &"'" }
 dangling_double_escape      = @{ "\\" ~ &"\"" }
+dangling_accent_escape      = @{ "\\" ~ &"`" }
 escape_seq                  = @{ "\\" ~ ANY }
 
 // Byte strings: ISO-style X'...' hex octets. Spaces inside each quoted chunk
@@ -997,9 +1005,8 @@ duration_lit = {
 // -------------------------------------------------------------------
 
 // Identifiers: Unicode letters or underscore start, followed by letters/digits/underscore.
-// Double-quote delimited identifiers (spec section21.3): "my id", ""escaped""
-// Backtick delimited identifiers (Selene extension): doubled backticks escape
-// an embedded backtick, e.g. `a``b`.
+// Double-quote and accent-quote delimited identifiers (ISO §21.3): "my id" and
+// `my id`; doubled delimiters escape embedded delimiters ("" / ``).
 // Keywords are excluded via negative lookahead - an identifier cannot be a
 // reserved word (unless delimited).
 ident = @{

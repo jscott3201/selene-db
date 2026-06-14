@@ -25,6 +25,10 @@ pub(super) fn build_literal_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pars
     if child.as_rule() == Rule::list_lit {
         return build_list_lit(child);
     }
+    build_literal_child_expr(child)
+}
+
+pub(super) fn build_literal_child_expr(child: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     build_literal_child(child).map(ValueExpr::Literal)
 }
 
@@ -500,42 +504,28 @@ fn parse_character_string(
     span: SourceSpan,
 ) -> Result<ParsedCharacterString, ParserError> {
     if let Some(quoted) = text.strip_prefix('@') {
-        if let Some(inner) = quoted
-            .strip_prefix('\'')
-            .and_then(|value| value.strip_suffix('\''))
-        {
-            return Ok(ParsedCharacterString {
-                value: inner.to_owned(),
-                kind: CharacterStringLiteralKind::NoEscape,
-            });
-        }
-        if let Some(inner) = quoted
-            .strip_prefix('"')
-            .and_then(|value| value.strip_suffix('"'))
-        {
-            return Ok(ParsedCharacterString {
-                value: inner.to_owned(),
-                kind: CharacterStringLiteralKind::NoEscape,
-            });
+        for delimiter in ['\'', '"', '`'] {
+            if let Some(inner) = quoted
+                .strip_prefix(delimiter)
+                .and_then(|value| value.strip_suffix(delimiter))
+            {
+                return Ok(ParsedCharacterString {
+                    value: inner.to_owned(),
+                    kind: CharacterStringLiteralKind::NoEscape,
+                });
+            }
         }
     }
-    if let Some(inner) = text
-        .strip_prefix('\'')
-        .and_then(|value| value.strip_suffix('\''))
-    {
-        return Ok(ParsedCharacterString {
-            value: decode_quoted(inner, '\'', span)?,
-            kind: CharacterStringLiteralKind::Escaped,
-        });
-    }
-    if let Some(inner) = text
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-    {
-        return Ok(ParsedCharacterString {
-            value: decode_quoted(inner, '"', span)?,
-            kind: CharacterStringLiteralKind::Escaped,
-        });
+    for delimiter in ['\'', '"', '`'] {
+        if let Some(inner) = text
+            .strip_prefix(delimiter)
+            .and_then(|value| value.strip_suffix(delimiter))
+        {
+            return Ok(ParsedCharacterString {
+                value: decode_quoted(inner, delimiter, span)?,
+                kind: CharacterStringLiteralKind::Escaped,
+            });
+        }
     }
     Err(ParserError::syntax(
         "string literal is missing quotes",

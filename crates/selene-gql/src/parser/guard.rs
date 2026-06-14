@@ -154,6 +154,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     // pest still closes the string before and parses — a parser-time DoS bypass.
     let last_single_quote = bytes.iter().rposition(|byte| *byte == b'\'');
     let last_double_quote = bytes.iter().rposition(|byte| *byte == b'"');
+    let last_backtick = bytes.iter().rposition(|byte| *byte == b'`');
     let mut index = 0;
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
@@ -206,6 +207,13 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 prev_sig_byte = Some(b'"');
                 index = skip_no_escape_quoted(bytes, index + 2, b'"');
             }
+            b'@' if next_is(bytes, index, b'`') => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(b'`');
+                index = skip_no_escape_quoted(bytes, index + 2, b'`');
+            }
             b'\'' => {
                 sign_run = 0;
                 not_run = 0;
@@ -225,7 +233,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 not_run = 0;
                 prev_word = PrevWord::Other;
                 prev_sig_byte = Some(b'`');
-                index = skip_backtick_quoted(bytes, index + 1);
+                index = skip_backtick_quoted(bytes, index + 1, last_backtick);
             }
             // Comments are whitespace to pest, so they do NOT reset any run or
             // the `prev_*` lookbehind: `- // c\n -` is still a 2-deep unary chain,
@@ -608,9 +616,13 @@ fn skip_no_escape_quoted(bytes: &[u8], mut index: usize, delimiter: u8) -> usize
     bytes.len()
 }
 
-fn skip_backtick_quoted(bytes: &[u8], mut index: usize) -> usize {
+fn skip_backtick_quoted(bytes: &[u8], mut index: usize, last_backtick: Option<usize>) -> usize {
     while index < bytes.len() {
         match bytes[index] {
+            b'\\' if bytes.get(index + 1) == Some(&b'`') && Some(index + 1) == last_backtick => {
+                return index + 1;
+            }
+            b'\\' => index += 2,
             b'`' if next_is(bytes, index, b'`') => index += 2,
             b'`' => return index,
             _ => index += 1,

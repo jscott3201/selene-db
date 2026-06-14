@@ -57,6 +57,7 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
         Rule::elements_function => call::build_elements_function(pair),
         Rule::current_datetime_function => call::build_current_datetime_function(pair),
         Rule::duration_between_expr => call::build_duration_between_expr(pair),
+        Rule::duration_lit => literal::build_literal_child_expr(pair),
         Rule::scalar_keyword_function_call => call::build_scalar_keyword_function_call(pair),
         Rule::normalize_expr => call::build_normalize_expr(pair),
         Rule::aggregate_expr => call::build_aggregate_expr(first_child(pair)?),
