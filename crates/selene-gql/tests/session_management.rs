@@ -12,8 +12,8 @@ use selene_core::feature_register::{
     ANNEX_B_REGISTER, FeatureId, NOT_SUPPORTED_RATIONALE, SUPPORTED_FEATURES,
 };
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutorError, GqlStatus, Session, SessionSetGraphTarget, Statement,
-    StatementOutput, Value, analyze, execute_statement, feature_walk, parse, plan,
+    EmptyProcedureRegistry, ExecutorError, GqlStatus, ParserError, Session, SessionSetGraphTarget,
+    Statement, StatementOutput, Value, analyze, execute_statement, feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
 
@@ -594,9 +594,19 @@ fn deferred_set_schema_fails_to_parse() {
 }
 
 #[test]
-fn deferred_reset_schema_fails_to_parse() {
-    // SESSION RESET SCHEMA (GS05) is not in the grammar under D1.
-    assert!(parse("SESSION RESET SCHEMA").is_err());
+fn deferred_reset_schema_and_graph_report_unsupported_features() {
+    for (source, expected) in [
+        ("SESSION RESET SCHEMA", FeatureId::GS05),
+        ("SESSION RESET GRAPH", FeatureId::GS06),
+        ("SESSION RESET PROPERTY GRAPH", FeatureId::GS06),
+    ] {
+        let error = parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus().as_str(), "42N01");
+        let ParserError::UnsupportedFeature { feature_id, .. } = error else {
+            panic!("expected UnsupportedFeature for {source}");
+        };
+        assert_eq!(feature_id, expected, "{source}");
+    }
 }
 
 // ---------------------------------------------------------------------------
