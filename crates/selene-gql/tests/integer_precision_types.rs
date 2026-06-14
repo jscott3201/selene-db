@@ -46,6 +46,14 @@ fn bind_and_eval(value: Value, source: &str) -> Value {
     first_value_in(&mut session, source)
 }
 
+fn assert_syntax_error(source: &str) {
+    let err = parse(source).expect_err(source);
+    assert!(
+        matches!(err, ParserError::SyntaxError { .. }),
+        "expected syntax error for `{source}`, got {err:?}"
+    );
+}
+
 #[test]
 fn specified_integer_precision_formats_to_supported_normal_form() {
     for (source, expected) in [
@@ -56,12 +64,20 @@ fn specified_integer_precision_formats_to_supported_normal_form() {
             "RETURN n IS TYPED SIGNED INTEGER(32)",
             "RETURN n IS TYPED INT64",
         ),
+        (
+            "RETURN n IS TYPED SIGNED /* c */ INTEGER(32)",
+            "RETURN n IS TYPED INT64",
+        ),
         ("RETURN n IS TYPED INT(64)", "RETURN n IS TYPED INT128"),
         ("RETURN n IS TYPED INT(1_27)", "RETURN n IS TYPED INT128"),
         ("RETURN n IS TYPED UINT(8)", "RETURN n IS TYPED UINT8"),
         ("RETURN n IS TYPED UINT(9)", "RETURN n IS TYPED UINT16"),
         (
             "RETURN n IS TYPED UNSIGNED INTEGER(32)",
+            "RETURN n IS TYPED UINT32",
+        ),
+        (
+            "RETURN n IS TYPED UNSIGNED /* c */ INTEGER(32)",
             "RETURN n IS TYPED UINT32",
         ),
         ("RETURN n IS TYPED UINT(33)", "RETURN n IS TYPED UINT64"),
@@ -73,6 +89,19 @@ fn specified_integer_precision_formats_to_supported_normal_form() {
         assert_eq!(formatted, expected);
         let reparsed = parse(&formatted).expect("formatted source parses");
         assert!(structurally_eq(&parsed, &reparsed), "{source}");
+    }
+}
+
+#[test]
+fn specified_integer_precision_keywords_require_boundaries() {
+    for source in [
+        "RETURN n IS TYPED SIGNEDINTEGER(32)",
+        "RETURN n IS TYPED UNSIGNEDINTEGER(32)",
+        "RETURN n IS TYPED INTEGERx(31)",
+        "RETURN n IS TYPED INTx(31)",
+        "RETURN n IS TYPED UINTx(31)",
+    ] {
+        assert_syntax_error(source);
     }
 }
 
@@ -154,11 +183,7 @@ fn invalid_or_unsupported_precision_reports_honest_parse_errors() {
         "RETURN n IS TYPED INT(7_)",
         "RETURN n IS TYPED UINT(1__2)",
     ] {
-        let err = parse(source).expect_err(source);
-        assert!(
-            matches!(err, ParserError::SyntaxError { .. }),
-            "expected syntax error for `{source}`, got {err:?}"
-        );
+        assert_syntax_error(source);
     }
 
     for (source, expected_feature) in [

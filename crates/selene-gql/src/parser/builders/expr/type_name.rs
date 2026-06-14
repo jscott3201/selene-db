@@ -1,6 +1,7 @@
 //! GQL type-name builders.
 
 mod dynamic_union;
+mod exact_numeric;
 mod list;
 mod strings;
 mod temporal;
@@ -149,25 +150,8 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "FLOAT16 is outside the selene-db D1 claim list; use FLOAT32 or FLOAT64",
         });
     }
-    if keyword_tokens_eq(text, &["UINT256"]) || keyword_tokens_eq(text, &["UNSIGNED", "INTEGER256"])
-    {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV15,
-            display_name: "256 bit unsigned integer numbers",
-            span: source_span,
-            hint: "UINT256 is outside the selene-db D1 claim list",
-        });
-    }
-    if keyword_tokens_eq(text, &["INT256"])
-        || keyword_tokens_eq(text, &["INTEGER256"])
-        || keyword_tokens_eq(text, &["SIGNED", "INTEGER256"])
-    {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV16,
-            display_name: "256 bit signed integer numbers",
-            span: source_span,
-            hint: "INT256 is outside the selene-db D1 claim list",
-        });
+    if let Some(exact_numeric_type) = exact_numeric::build_keyword_type_name(&pair)? {
+        return Ok(exact_numeric_type);
     }
     if keyword_tokens_eq(text, &["FLOAT128"]) {
         return Err(ParserError::UnsupportedFeature {
