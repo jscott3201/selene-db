@@ -195,11 +195,15 @@ call_query_pipeline = { call_stmt ~ post_call_pipeline_statement ~ pipeline_stat
 pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 
-for_stmt    = { ^"FOR" ~ ident ~ ^"IN" ~ expr ~ for_position? }
-for_position = { ^"WITH" ~ (for_position_ordinality | for_position_offset) ~ ident }
+let_kw = @{ ^"LET" ~ !(LETTER | NUMBER | "_") }
+for_kw = @{ ^"FOR" ~ !(LETTER | NUMBER | "_") }
+with_kw = @{ ^"WITH" ~ !(LETTER | NUMBER | "_") }
+
+for_stmt    = { for_kw ~ ident ~ in_kw ~ expr ~ for_position? }
+for_position = { with_kw ~ (for_position_ordinality | for_position_offset) ~ ident }
 for_position_ordinality = @{ ^"ORDINALITY" ~ !(LETTER | NUMBER | "_") }
 for_position_offset = @{ ^"OFFSET" ~ !(LETTER | NUMBER | "_") }
-with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ having_clause? ~ where_clause? }
+with_stmt   = { with_kw ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ having_clause? ~ where_clause? }
 
 // -- MATCH ----------------------------------------------------------
 
@@ -420,7 +424,7 @@ inline_where = { ^"WHERE" ~ expr }
 
 // -- LET ------------------------------------------------------------
 
-let_stmt    = { ^"LET" ~ let_binding ~ ("," ~ let_binding)* }
+let_stmt    = { let_kw ~ let_binding ~ ("," ~ let_binding)* }
 let_binding = { let_value_binding | let_shorthand_binding }
 // ISO/IEC 39075:2024 §14.7:
 // <let variable definition> ::= <value variable definition>
