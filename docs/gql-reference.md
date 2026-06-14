@@ -601,23 +601,24 @@ CREATE EDGE TYPE :KNOWS (
 ) STRICT
 ```
 
-Property constraints recognized by the AST (`TypePropertyConstraint`):
-`NOT NULL`, `DEFAULT <expr>`, `IMMUTABLE`, `UNIQUE`, `INDEXED`,
-`SEARCHABLE`, `DICTIONARY`, `FILL <name>`, `INTERVAL '<duration>'`,
-`ENCODING <name>`.
+Catalog DDL accepts `NOT NULL`, `DEFAULT <expr>`, `IMMUTABLE`, `UNIQUE`, and
+`INDEXED [AS <name>]` property annotations. Donor full-text and time-series
+constraints such as `SEARCHABLE`, `DICTIONARY`, `FILL`, `INTERVAL`, and
+`ENCODING` are not part of the supported grammar and reject as syntax errors.
 
 The trailing `STRICT` or `WARN` keyword is accepted by the grammar and stored
-as `ValidationMode`, but v1.1 does not enforce validation-mode semantics at
-runtime. Catalog DDL carrying `STRICT` or `WARN` is currently rejected with
-GQLSTATUS `5GQL0`. Closed-graph type validation is separate from
-`ValidationMode`: writes against a closed graph hard-fail with `G2000` when
-they violate the bound graph type. Element type names (`GG20`) and explicit
-key label sets (`GG21`) are claimed.
+as `ValidationMode`. `STRICT` is the default closed-graph validation mode:
+writes against a closed graph hard-fail with `G2000` when they violate the
+bound graph type. `WARN` permits relaxed writes and emits warning `01N01`
+(`VALIDATION_MODE_RELAXED_WRITE`) through the session warning sink after
+commit. Element type names (`GG20`) and explicit key label sets (`GG21`) are
+claimed.
 
 `DEFAULT <expr>` is represented in the AST and is independent from `NOT NULL`:
-a property with `DEFAULT` but no `NOT NULL` remains nullable. Runtime DEFAULT
-application is not implemented in v1.1, and catalog DDL containing `DEFAULT`
-is rejected with `5GQL0`.
+a property with `DEFAULT` but no `NOT NULL` remains nullable. Catalog defaults
+are validated against the declared property type, stored in the graph type,
+round-tripped by `SHOW NODE TYPES` / `SHOW EDGE TYPES`, recovered from durable
+state, and materialized when an inserted node or edge omits the property.
 
 `OR REPLACE` and `IF NOT EXISTS` modifiers are accepted on `CREATE NODE
 TYPE` and `CREATE EDGE TYPE` (feature `GC03`).

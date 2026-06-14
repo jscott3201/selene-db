@@ -411,18 +411,17 @@ The `analyze` schema argument is `Option<&GraphTypeDef>`. Pass `None` for open g
 
 ### 6.4 Schema validation
 
-The parser accepts `STRICT` and `WARN` validation modes on `CREATE NODE TYPE`
-and `CREATE EDGE TYPE`, but v1.1 does not enforce validation-mode semantics at
-runtime. Catalog DDL carrying a validation mode is rejected with GQLSTATUS
-`5GQL0`.
-
-Closed-graph validation is a separate hard-fail path. If a graph is bound to a
+`CREATE NODE TYPE` and `CREATE EDGE TYPE` accept `STRICT` and `WARN`
+validation modes. `STRICT` is the default: if a graph is bound to a
 `GraphTypeDef`, writes are checked against that type during analysis and again
-at commit; violations return `G2000`. They are not downgraded to warnings.
+at commit, and violations return `G2000`. `WARN` permits relaxed writes and
+emits `01N01` (`VALIDATION_MODE_RELAXED_WRITE`) through the session warning
+sink after commit.
 
 `DEFAULT` and `NOT NULL` are independent in the AST. A property with
-`DEFAULT <expr>` but no `NOT NULL` is nullable, and runtime DEFAULT application
-is not implemented in v1.1.
+`DEFAULT <expr>` but no `NOT NULL` is nullable. Catalog defaults are validated,
+stored in the graph type, shown by `SHOW NODE TYPES` / `SHOW EDGE TYPES`, and
+materialized when an inserted node or edge omits the property.
 
 ### 6.5 Warning channel
 
