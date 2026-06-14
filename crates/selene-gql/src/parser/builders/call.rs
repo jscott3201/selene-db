@@ -2,7 +2,7 @@
 
 use pest::iterators::Pair;
 
-use selene_core::DbString;
+use selene_core::{DbString, feature_register::FeatureId};
 
 use crate::{
     ast::{
@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, first_child, span,
-    unexpected_pair,
+    unexpected_pair, unsupported_feature,
 };
 
 pub(super) fn build_top_level_call(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -113,13 +113,7 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::qualified_name => name = Some(build_qualified_name(child)?),
-            Rule::arg_list => {
-                args = child
-                    .into_inner()
-                    .filter(|arg| arg.as_rule() == Rule::expr)
-                    .map(|arg| expr::build_value_expr(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-            }
+            Rule::procedure_arg_list => args = build_procedure_args(child)?,
             Rule::yield_clause => yield_items = build_yield_items(child)?,
             _ => return Err(unexpected_pair(child, "unexpected procedure-call child")),
         }
@@ -135,6 +129,31 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
         yield_items,
         span: source_span,
     })
+}
+
+fn build_procedure_args(pair: Pair<'_, Rule>) -> Result<Vec<crate::ast::ValueExpr>, ParserError> {
+    let mut args = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::expr => args.push(expr::build_value_expr(child)?),
+            Rule::procedure_binding_table_arg => {
+                return Err(unsupported_feature(
+                    &child,
+                    FeatureId::GP14,
+                    "binding-table procedure arguments are outside the current procedure claim",
+                ));
+            }
+            Rule::procedure_graph_arg => {
+                return Err(unsupported_feature(
+                    &child,
+                    FeatureId::GP15,
+                    "graph procedure arguments are outside the current procedure claim",
+                ));
+            }
+            _ => return Err(unexpected_pair(child, "unexpected procedure argument")),
+        }
+    }
+    Ok(args)
 }
 
 pub(super) fn build_yield_items(pair: Pair<'_, Rule>) -> Result<Vec<YieldItem>, ParserError> {
