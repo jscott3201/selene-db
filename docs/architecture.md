@@ -307,8 +307,8 @@ in `selene-gql`. It is the plan/execute seam: the planner resolves procedure
 signatures and the executor dispatches calls through a `&dyn
 ProcedureRegistry`. The trait has exactly one frozen production
 implementation — the concrete native `BuiltinProcedureRegistry`
-(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 24
-procedures at construction (the 5 `selene.*` platform built-ins plus the 19
+(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 65
+procedures at construction (the 46 `selene.*` platform built-ins plus the 19
 `algo.*` procedures) and reports a constant `registry_version()` of `0` so
 the CALL plan cache never invalidates. The injectable `&dyn` seam exists for
 the test harness, not for third-party packs: there is no loadable-pack
