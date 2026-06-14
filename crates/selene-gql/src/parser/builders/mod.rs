@@ -220,6 +220,7 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
     // aliases or aggregation.
     let mut pre_return = Vec::new();
     let mut post_return = Vec::new();
+    let mut saw_select_from = false;
 
     for child in pair.into_inner() {
         match child.as_rule() {
@@ -228,6 +229,7 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
             Rule::return_star => return_clause.star = true,
             Rule::projection_list => return_clause.items = build_projection_list(child)?,
             Rule::select_from => {
+                saw_select_from = true;
                 let from_child = first_child(child)?;
                 if from_child.as_rule() == Rule::match_stmt {
                     pre_return.push(PipelineStatement::Match(pattern::build_match_clause(
@@ -258,6 +260,13 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
         }
     }
 
+    if return_clause.star && !saw_select_from {
+        return Err(ParserError::syntax(
+            "SELECT * requires a FROM clause",
+            source_span,
+            Some("add FROM MATCH (...) or project explicit SELECT items".into()),
+        ));
+    }
     if return_clause.star && return_clause.group_by.is_some() {
         return Err(ParserError::syntax(
             "SELECT * cannot specify GROUP BY",
