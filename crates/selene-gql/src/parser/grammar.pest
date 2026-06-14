@@ -132,10 +132,10 @@ rollback            = { ^"ROLLBACK" }
 // VALUE (GS03), SET TIME ZONE (GS15), RESET targets (GS04/GS07/GS08/GS16), and
 // CLOSE (section 7.3, no feature code). D1-blocked RESET SCHEMA/GRAPH forms are
 // parsed to structured GS05/GS06 UnsupportedFeature errors. D1-blocked SET
-// graph-parameter and binding-table forms are likewise parsed to structured
-// GS01/GS12 and GS02/GS10/GS13 rejections. The remaining D1-blocked SET schema
-// and value expression/subquery parameter forms are intentionally omitted; they
-// parse-fail cleanly and carry NOT_SUPPORTED_RATIONALE entries.
+// graph-parameter, binding-table, and value expression/subquery forms are
+// likewise parsed to structured GS01/GS12, GS02/GS10/GS13, and GS11/GS14
+// rejections. The remaining D1-blocked SET schema forms are intentionally
+// omitted; they parse-fail cleanly and carry NOT_SUPPORTED_RATIONALE entries.
 
 session_command = { session_set | session_reset | session_close }
 
@@ -157,7 +157,10 @@ session_set_time_zone  = { ^"TIME" ~ ^"ZONE" ~ string_lit }
 // parameter reference) per ISO section 7.1 Conformance Rule: without Feature
 // GS14, the initializer shall conform to <value specification>. selene-db does
 // NOT claim GS14, so simple-expression / subquery RHS forms are rejected.
-session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ "=" ~ session_value_spec }
+session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ "=" ~ (session_value_subquery_expr | session_value_simple_expr | session_value_spec) }
+session_value_subquery_expr = { &(value_subquery_expr ~ EOI) ~ value_subquery_expr }
+session_value_simple_expr = { !session_value_spec_to_eoi ~ expr }
+session_value_spec_to_eoi = _{ session_value_spec ~ EOI }
 session_value_spec     = { literal | typed_param_ref }
 
 // section 7.2 <session reset command>. Bare SESSION RESET = ALL CHARACTERISTICS
