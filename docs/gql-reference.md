@@ -50,7 +50,7 @@ spec docs by the build. The table below summarizes the major clause groups.
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
 | Mutation (`INSERT`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). |
 | DDL (`CREATE/DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Full | Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
-| Procedure calls (`CALL ns.proc(args) YIELD col1, col2`) | Full | Named procedure call is feature `GP04`. Inline procedures (`GP01`-`GP15`) are not claimed in v1.0. |
+| Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries claim `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not claimed. |
 | Path patterns (variable-length, ANY/ALL SHORTEST) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST` selectors are claimed (`G015`-`G018`). Counted shortest selectors (`G019`, `G020`) are not. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
@@ -654,10 +654,11 @@ emitted from the CALL or the DDL form.
 ## 8. `CALL` and procedures
 
 Procedure calls invoke named functions registered in the native procedure
-registry. A `CALL` accepts positional arguments and yields a tabular
-result via `YIELD`. The `CALL` grammar is unchanged ISO GQL (external
-procedures per ISO `IW010`); there is no procedure-pack or loadable-extension
-machinery behind it.
+registry, or execute an inline query subquery with `CALL { ... }`. A
+named `CALL` accepts positional arguments and yields a tabular result via
+`YIELD`. `OPTIONAL CALL` preserves each input row when the call result is
+empty, filling yielded columns with `NULL`. There is no procedure-pack or
+loadable-extension machinery behind the native registry.
 
 ```gql
 CALL algo.pagerank('person_graph', 0.85, 30)
@@ -671,7 +672,8 @@ LIMIT 20
 Form:
 
 ```text
-CALL <namespace>.<procedure>(args) [ YIELD col1 [, col2 ...] [ WHERE expr ] ]
+[ OPTIONAL ] CALL <namespace>.<procedure>(args) [ YIELD col1 [, col2 ...] [ WHERE expr ] ]
+[ OPTIONAL ] CALL [ (var1 [, var2 ...]) ] { <query pipeline> } [ YIELD col1 [, col2 ...] ]
 ```
 
 `YIELD *` yields every output column. Each yield column can be aliased

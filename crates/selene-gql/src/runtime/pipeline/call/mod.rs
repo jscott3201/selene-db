@@ -42,6 +42,10 @@ pub(super) fn execute(
                 .execute(call.handle, &args, &mut procedure_ctx)
                 .map_err(|source| context::procedure_error(source, call.span, deadline))?
         };
+        if call.optional && result.rows.is_empty() {
+            output.push(optional_output_row(call, &row));
+            continue;
+        }
         for output_row in result.rows {
             ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
             let projected = project::project_yield_row(call, output_row)?;
@@ -88,6 +92,10 @@ pub(super) fn execute_read_only(
                 .execute(call.handle, &args, &mut procedure_ctx)
                 .map_err(|source| context::procedure_error(source, call.span, deadline))?
         };
+        if call.optional && result.rows.is_empty() {
+            output.push(optional_output_row(call, &row));
+            continue;
+        }
         for output_row in result.rows {
             ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
             let projected = project::project_yield_row(call, output_row)?;
@@ -118,4 +126,10 @@ fn output_schema(input: &BindingTableSchema, call: &PlannedCall) -> BindingTable
     let mut schema = input.clone();
     schema.columns.extend(call.yield_schema.clone());
     schema
+}
+
+fn optional_output_row(call: &PlannedCall, input: &Binding) -> Binding {
+    let mut values = input.values().to_vec();
+    values.extend(std::iter::repeat_n(Value::Null, call.yield_schema.len()));
+    Binding::with_insert_sites(values, input.insert_sites().iter().copied().collect())
 }

@@ -6,8 +6,9 @@ use std::num::NonZeroUsize;
 
 use exec_common::{ExecFixture, column_values};
 use selene_core::Value;
+use selene_gql::ast::format_read_statement;
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutorError, ProcedureMutability, Session, StatementOutput,
+    EmptyProcedureRegistry, ExecutorError, ProcedureMutability, Session, StatementOutput, parse,
 };
 use selene_testing::MockProcedureRegistry;
 
@@ -127,6 +128,54 @@ fn call_subquery_without_yield_drops_outer_rows_when_inner_is_empty() {
     );
 
     assert!(table.is_empty());
+}
+
+#[test]
+fn optional_call_subquery_with_empty_body_preserves_rows_with_null_yields() {
+    let table = execute(
+        "MATCH (a:Person)
+         OPTIONAL CALL { MATCH (a)-[:KNOWS]->(:Nope) RETURN 1 AS n }
+         YIELD n
+         RETURN a.name AS name, n
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(
+        value_values(&table, "n"),
+        vec![Value::Null, Value::Null, Value::Null]
+    );
+}
+
+#[test]
+fn optional_call_subquery_without_yield_preserves_rows_for_empty_body() {
+    let table = execute(
+        "MATCH (a:Person)
+         OPTIONAL CALL { MATCH (a)-[:KNOWS]->(:Nope) }
+         RETURN a.name AS name
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+}
+
+#[test]
+fn optional_call_subquery_formats_and_reparses() {
+    let parsed = parse("OPTIONAL CALL { RETURN 1 AS one LIMIT 1 } YIELD one")
+        .expect("optional inline CALL parses");
+    let formatted = format_read_statement(&parsed).expect("optional inline CALL formats");
+
+    assert_eq!(
+        formatted,
+        "OPTIONAL CALL { RETURN 1 AS one\nLIMIT 1 } YIELD one"
+    );
+    parse(&formatted).expect("formatted optional inline CALL reparses");
 }
 
 #[test]

@@ -63,6 +63,8 @@ pub enum SubqueryBody {
 /// Planned inline `CALL { ... }` table subquery.
 #[derive(Clone, Debug)]
 pub struct PlannedTableSubquery {
+    /// Whether an empty body result preserves the input row with null yields.
+    pub optional: bool,
     /// Full query body executed once per input row.
     pub body: Box<ExecutionPlan>,
     /// Outer-scope bindings referenced by the body, sorted and deduped.

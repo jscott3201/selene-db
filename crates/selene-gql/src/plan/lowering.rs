@@ -407,6 +407,7 @@ fn lower_call_subquery(
         })
         .collect::<Result<Vec<_>, PlannerError>>()?;
     Ok(PlannedTableSubquery {
+        optional: call.optional,
         body: Box::new(body),
         outer_binding_refs: expr::outer_binding_refs_in_span(call.body.span, analyzed)?,
         yield_items,

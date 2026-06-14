@@ -101,6 +101,7 @@ pub(crate) fn plan_call(
     validate_output_schema(call, &metadata, analyzed)?;
 
     let mut planned = PlannedCall {
+        optional: call.optional,
         procedure: call.name.clone().into_vec().into_boxed_slice(),
         handle: metadata.handle,
         args,
@@ -528,6 +529,7 @@ mod defensive_tests {
         let name = selene_core::db_string("pkg").expect("test string fits DB string cap");
         let col = selene_core::db_string("out").expect("test string fits DB string cap");
         let planned = PlannedCall {
+            optional: false,
             procedure: Box::new([name.clone()]),
             handle: ProcedureHandle::new(1),
             args: Vec::new(),

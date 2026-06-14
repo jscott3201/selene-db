@@ -80,6 +80,58 @@ fn procedure_returning_zero_rows_drops_input_row() {
 }
 
 #[test]
+fn optional_procedure_returning_zero_rows_preserves_input_with_null_yields() {
+    let registry = registry_one(
+        &["pkg", "empty"],
+        ProcedureMutability::Read,
+        ProcedureTier::Graph,
+        vec![output("out", GqlType::Integer)],
+        Behavior::Return(Vec::new()),
+    );
+
+    let table = rows(
+        execute(
+            "UNWIND [1, 2] AS x OPTIONAL CALL pkg.empty() YIELD out RETURN x, out ORDER BY x",
+            &graph(3919),
+            &registry,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(1), Value::Int(2)]
+    );
+    assert_eq!(column_values(&table, "out"), vec![Value::Null, Value::Null]);
+    assert_eq!(registry.records().len(), 2);
+}
+
+#[test]
+fn optional_procedure_without_yields_preserves_input_for_empty_result() {
+    let registry = registry_one(
+        &["pkg", "empty"],
+        ProcedureMutability::Read,
+        ProcedureTier::Graph,
+        Vec::new(),
+        Behavior::Return(Vec::new()),
+    );
+
+    let table = rows(
+        execute(
+            "UNWIND [1, 2] AS x OPTIONAL CALL pkg.empty() RETURN x ORDER BY x",
+            &graph(3920),
+            &registry,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(1), Value::Int(2)]
+    );
+}
+
+#[test]
 fn procedure_returning_one_unit_row_emits_one_row_per_input() {
     let registry = registry_one(
         &["pkg", "unit"],

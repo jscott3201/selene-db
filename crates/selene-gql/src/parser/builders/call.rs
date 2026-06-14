@@ -42,10 +42,27 @@ enum BuiltCall {
 
 fn build_call_stmt(pair: Pair<'_, Rule>) -> Result<BuiltCall, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::call_stmt);
-    let inner = first_child(pair)?;
+    let mut optional = false;
+    let mut body = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::optional_modifier => optional = true,
+            Rule::call_procedure | Rule::call_subquery => body = Some(child),
+            _ => return Err(unexpected_pair(child, "expected CALL body")),
+        }
+    }
+    let inner = body.ok_or_else(ParserError::empty_program)?;
     match inner.as_rule() {
-        Rule::call_procedure => build_procedure_call(inner).map(BuiltCall::Procedure),
-        Rule::call_subquery => build_inline_call(inner).map(BuiltCall::Inline),
+        Rule::call_procedure => {
+            let mut call = build_procedure_call(inner)?;
+            call.optional = optional;
+            Ok(BuiltCall::Procedure(call))
+        }
+        Rule::call_subquery => {
+            let mut call = build_inline_call(inner)?;
+            call.optional = optional;
+            Ok(BuiltCall::Inline(call))
+        }
         _ => Err(unexpected_pair(inner, "expected CALL body")),
     }
 }
@@ -71,6 +88,7 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
     }
 
     Ok(InlineProcedureCall {
+        optional: false,
         variable_scope,
         body: Box::new(body.ok_or_else(|| {
             ParserError::syntax("CALL subquery is missing body", source_span, None)
@@ -115,6 +133,7 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
     }
 
     Ok(ProcedureCall {
+        optional: false,
         name: NonEmpty::try_from_vec(name.ok_or_else(|| {
             ParserError::syntax("procedure call is missing name", source_span, None)
         })?)
