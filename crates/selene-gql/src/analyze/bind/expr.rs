@@ -1,7 +1,7 @@
 //! Value-expression bind and type-inference handling.
 
 use crate::{
-    IsCheckKind, LimitValue, PipelineStatement, QueryPipeline, ReturnClause, ValueExpr,
+    ExistsBody, IsCheckKind, LimitValue, PipelineStatement, QueryPipeline, ReturnClause, ValueExpr,
     analyze::{
         error::{AnalysisError, ConditionClause, ExpectedType, TypeMismatchContext},
         infer,
@@ -190,14 +190,8 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 }
                 infer::case_result(&result_types)?
             }
-            ValueExpr::Exists {
-                pattern: clause,
-                span,
-                ..
-            } => {
-                ctx.with_child_scope(ScopeKind::Subquery, *span, false, |ctx| {
-                    pattern::bind_match_clause(ctx, clause)
-                })?;
+            ValueExpr::Exists { body, span, .. } => {
+                bind_exists_body(ctx, body, *span)?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
             ValueExpr::ValueSubquery { body, span } => bind_value_subquery(ctx, body, *span)?,
@@ -209,6 +203,20 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
             }
         };
         Ok(ctx.allocate_expr(expr, ty))
+    })
+}
+
+fn bind_exists_body(
+    ctx: &mut BindContext,
+    body: &ExistsBody,
+    span: crate::SourceSpan,
+) -> Result<(), AnalysisError> {
+    ctx.with_child_scope(ScopeKind::Subquery, span, false, |ctx| match body {
+        ExistsBody::Match(clause) => pattern::bind_match_clause(ctx, clause),
+        ExistsBody::Query(pipeline) => {
+            let mut pipeline = pipeline.as_ref().clone();
+            query::bind_query_pipeline(ctx, &mut pipeline).map(|_| ())
+        }
     })
 }
 

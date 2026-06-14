@@ -1,8 +1,8 @@
 //! Expression and subquery depth guards for the bind pass.
 
 use crate::{
-    IsCheckKind, MatchClause, PipelineStatement, QueryPipeline, ReturnClause, ValueExpr,
-    analyze::error::AnalysisError,
+    ExistsBody, IsCheckKind, MatchClause, PipelineStatement, QueryPipeline, ReturnClause,
+    ValueExpr, analyze::error::AnalysisError,
 };
 
 use super::ANALYZER_MAX_DEPTH;
@@ -273,9 +273,14 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
             ValueExpr::ValueSubquery { body, .. } => {
                 check_query_subquery_depth(body, depth.saturating_add(1))?;
             }
-            ValueExpr::Exists { pattern, .. } => {
-                check_match_clause_subquery_depth(pattern, depth.saturating_add(1))?;
-            }
+            ValueExpr::Exists { body, .. } => match body {
+                ExistsBody::Match(pattern) => {
+                    check_match_clause_subquery_depth(pattern, depth.saturating_add(1))?;
+                }
+                ExistsBody::Query(pipeline) => {
+                    check_query_subquery_depth(pipeline, depth.saturating_add(1))?;
+                }
+            },
             ValueExpr::Cast { value, .. } => stack.push((value, depth)),
             ValueExpr::Normalize { source, .. } => stack.push((source, depth)),
             ValueExpr::Trim {

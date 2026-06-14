@@ -4,8 +4,8 @@ use std::fmt::{self, Write as _};
 
 use super::super::format_ident::{escape_string, fmt_call_segment, fmt_expr_ident, fmt_ident};
 use super::super::{
-    DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, TemporalDurationQualifier, UnaryOp,
-    ValueExpr,
+    DecimalLiteralKind, ExistsBody, FloatLiteralKind, IntegerLiteralKind,
+    TemporalDurationQualifier, UnaryOp, ValueExpr,
 };
 use super::is_check::{fmt_is_check, fmt_normal_form};
 use super::keywords::fmt_binary;
@@ -246,14 +246,15 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             }
             out.push_str(" END");
         }
-        ValueExpr::Exists {
-            pattern, negated, ..
-        } => {
+        ValueExpr::Exists { body, negated, .. } => {
             if *negated {
                 out.push_str("NOT ");
             }
             out.push_str("EXISTS { ");
-            fmt_match(out, pattern)?;
+            match body {
+                ExistsBody::Match(pattern) => fmt_match(out, pattern)?,
+                ExistsBody::Query(pipeline) => fmt_pipeline(out, pipeline)?,
+            }
             out.push_str(" }");
         }
         ValueExpr::ValueSubquery { body, .. } => {

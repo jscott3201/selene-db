@@ -35,7 +35,7 @@ use crate::{
     ast::{
         call::{InlineProcedureCall, ProcedureCall},
         ddl::{DdlStatement, TypePropertyConstraint},
-        expr::{IsCheckKind, ValueExpr},
+        expr::{ExistsBody, IsCheckKind, ValueExpr},
         mutation::{MutationPipeline, MutationStatement, MutationTerminator, SetItem},
         pattern::{GraphPattern, MatchClause, PatternElement},
         statement::{PipelineStatement, QueryPipeline, ReturnClause, Statement, WithClause},
@@ -204,9 +204,10 @@ fn push_expr<'a>(
         // Subquery bodies are `MatchClause` / `QueryPipeline`, not direct
         // `ValueExpr` children — descend into them (a fresh expression context,
         // so depth resets to 1 in the structural push helpers).
-        ValueExpr::Exists { pattern, .. } => {
-            work.push(Node::MatchClause(pattern));
-        }
+        ValueExpr::Exists { body, .. } => match body {
+            ExistsBody::Match(pattern) => work.push(Node::MatchClause(pattern)),
+            ExistsBody::Query(pipeline) => work.push(Node::Pipeline(pipeline)),
+        },
         ValueExpr::ValueSubquery { body, .. } => work.push(Node::Pipeline(body)),
     }
     Ok(())

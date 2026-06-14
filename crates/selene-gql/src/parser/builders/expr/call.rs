@@ -5,16 +5,16 @@ use selene_core::DbString;
 
 use crate::{
     ast::{
-        BinaryOp, NormalForm, SourceSpan, TemporalDurationQualifier, TrimSpec, ValueExpr,
-        util::NonEmpty,
+        BinaryOp, ExistsBody, NormalForm, SourceSpan, TemporalDurationQualifier, TrimSpec,
+        ValueExpr, util::NonEmpty,
     },
     error::ParserError,
 };
 
 use super::{Rule, build_value_expr, first_child, literal};
 use crate::parser::builders::{
-    build_qualified_name, build_query_pipeline, db_string_from_owned, pattern, span,
-    unexpected_pair,
+    build_exists_match_body_pipeline, build_qualified_name, build_query_pipeline,
+    db_string_from_owned, pattern, span, unexpected_pair,
 };
 
 pub(super) enum PredicateKind {
@@ -477,19 +477,34 @@ pub(super) fn build_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserErro
         .into_inner()
         .find(|child| child.as_rule() == Rule::exists_body)
         .ok_or_else(|| ParserError::syntax("EXISTS is missing body", source_span, None))?;
-    let pattern_pair = body_pair
+    let body_child = body_pair
         .into_inner()
-        .find(|child| matches!(child.as_rule(), Rule::match_stmt | Rule::graph_pattern_list))
+        .find(|child| {
+            matches!(
+                child.as_rule(),
+                Rule::exists_match_body | Rule::graph_pattern_list
+            )
+        })
         .ok_or_else(|| ParserError::syntax("EXISTS is missing pattern", source_span, None))?;
-    let pattern = match pattern_pair.as_rule() {
-        Rule::match_stmt => pattern::build_match_clause(pattern_pair)?,
-        Rule::graph_pattern_list => {
-            pattern::build_match_clause_from_graph_pattern_list(pattern_pair, source_span)?
+    let body = match body_child.as_rule() {
+        Rule::exists_match_body => {
+            let mut children = body_child.clone().into_inner();
+            let first = children.next().ok_or_else(|| {
+                ParserError::syntax("EXISTS match body is missing MATCH", source_span, None)
+            })?;
+            if children.next().is_some() {
+                ExistsBody::Query(Box::new(build_exists_match_body_pipeline(body_child)?))
+            } else {
+                ExistsBody::Match(Box::new(pattern::build_match_clause(first)?))
+            }
         }
-        _ => return Err(unexpected_pair(pattern_pair, "unexpected EXISTS body")),
+        Rule::graph_pattern_list => ExistsBody::Match(Box::new(
+            pattern::build_match_clause_from_graph_pattern_list(body_child, source_span)?,
+        )),
+        _ => return Err(unexpected_pair(body_child, "unexpected EXISTS body")),
     };
     Ok(ValueExpr::Exists {
-        pattern: Box::new(pattern),
+        body,
         negated,
         span: source_span,
     })

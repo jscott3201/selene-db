@@ -3,7 +3,7 @@
 use selene_gql::{
     AnalyzedStatement, AnalyzedType, BindingElement, EdgeDirection, EmptyProcedureRegistry,
     FilterPredicateKind, GqlType, JoinTree, LabelExpr, LimitAmount, PipelineOp, PlannerError,
-    ScanKind, SetOp, SubqueryKind, analyze, parse, plan,
+    ScanKind, SetOp, SubqueryBody, SubqueryKind, analyze, parse, plan,
 };
 
 fn analyze_one(source: &str) -> AnalyzedStatement {
@@ -466,6 +466,26 @@ fn expression_subqueries_populate_plan_registry() {
         exists.kind,
         SubqueryKind::Exists { negated: false }
     ));
+    assert_eq!(exists.outer_binding_refs.len(), 1);
+}
+
+#[test]
+fn exists_query_body_populates_plan_body() {
+    let plan = plan_one("MATCH (a) RETURN EXISTS { MATCH (a)-[]->(b) RETURN b } AS e");
+    let Some(PipelineOp::Project(projects)) = plan.pipeline.first() else {
+        panic!("expected project op");
+    };
+
+    let exists = plan
+        .subqueries
+        .get(projects[0].expr_id)
+        .expect("exists subquery planned");
+
+    assert!(matches!(
+        exists.kind,
+        SubqueryKind::Exists { negated: false }
+    ));
+    assert!(matches!(exists.body, SubqueryBody::Plan(_)));
     assert_eq!(exists.outer_binding_refs.len(), 1);
 }
 

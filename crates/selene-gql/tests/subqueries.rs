@@ -92,6 +92,31 @@ fn exists_accepts_parenthesized_match_body() {
 }
 
 #[test]
+fn exists_accepts_match_body_with_return_tail() {
+    let table = execute(
+        "MATCH (p:Person)
+         WHERE EXISTS { MATCH (p)-[:KNOWS]->(:Sensor) RETURN p }
+         RETURN p.name AS name",
+    );
+
+    assert_eq!(string_values(&table, "name"), vec!["Bob".to_owned()]);
+}
+
+#[test]
+fn exists_query_body_formats_and_reparses() {
+    let parsed = parse(
+        "MATCH (p:Person)
+         WHERE EXISTS { MATCH (p)-[:KNOWS]->(:Sensor) RETURN p }
+         RETURN p.name AS name",
+    )
+    .expect("EXISTS query body parses");
+    let formatted = format_read_statement(&parsed).expect("read statement formats");
+    let reparsed = parse(&formatted).expect("formatted EXISTS query body parses");
+
+    assert!(structurally_eq(&parsed, &reparsed));
+}
+
+#[test]
 fn not_exists_returns_negation() {
     let table = execute("RETURN NOT EXISTS { MATCH (:Nope) } AS e");
 
