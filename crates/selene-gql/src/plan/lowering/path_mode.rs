@@ -35,6 +35,12 @@ pub(super) fn collect_path_contributors(
     contributors: &mut Vec<PathContributor>,
 ) -> Result<(), PlannerError> {
     match tree {
+        JoinTree::Unit => {
+            return Err(PlannerError::NotImplemented {
+                feature: "path mode over unit input; ISO path modes apply to path patterns",
+                span,
+            });
+        }
         JoinTree::Scan(scan) => contributors.push(node_contributor(
             scan.binding,
             scan.hidden_binding,

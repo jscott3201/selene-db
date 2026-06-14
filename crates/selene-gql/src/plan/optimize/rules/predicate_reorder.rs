@@ -44,6 +44,7 @@ fn reorder_tree(tree: &mut JoinTree, bindings: &[BindingDef], ctx: &OptimizeCont
         catalog: ctx.index_catalog,
     };
     match tree {
+        JoinTree::Unit => false,
         JoinTree::Scan(scan) => reorder_bucket(&mut scan.property_predicates, ctx, &scan_ctx),
         JoinTree::Expand { child, edge, .. } => {
             reorder_tree(child, bindings, ctx)

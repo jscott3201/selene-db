@@ -276,6 +276,7 @@ fn collect_subqueries_in_join_tree(
     max_quantifier: u32,
 ) -> Result<(), PlannerError> {
     match tree {
+        JoinTree::Unit => {}
         JoinTree::Scan(scan) => {
             for predicate in &scan.property_predicates {
                 collect_subqueries_in_expr(

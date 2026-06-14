@@ -39,7 +39,8 @@ impl Rule for WcoJoin {
 fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
     if matches!(
         tree,
-        JoinTree::Repeat { .. }
+        JoinTree::Unit
+            | JoinTree::Repeat { .. }
             | JoinTree::Questioned { .. }
             | JoinTree::PathSearch { .. }
             | JoinTree::PathModeFilter { .. }
@@ -69,7 +70,8 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
             rewrite_tree(left, cap) | rewrite_tree(right, cap)
         }
         JoinTree::Outer { left, .. } => rewrite_tree(left, cap),
-        JoinTree::Scan(_)
+        JoinTree::Unit
+        | JoinTree::Scan(_)
         | JoinTree::Repeat { .. }
         | JoinTree::Questioned { .. }
         | JoinTree::PathSearch { .. }
@@ -104,6 +106,7 @@ fn detect_cycle(
     seen: &mut BTreeSet<crate::BindingId>,
 ) -> Option<bool> {
     match tree {
+        JoinTree::Unit => None,
         JoinTree::Scan(scan) => {
             if let Some(binding) = scan.binding {
                 seen.insert(binding);
@@ -153,6 +156,7 @@ fn collect_cycle_nodes(
     ordered: &mut Vec<crate::BindingId>,
 ) -> Option<()> {
     match tree {
+        JoinTree::Unit => None,
         JoinTree::Scan(scan) => {
             if let Some(binding) = scan.binding
                 && seen.insert(binding)

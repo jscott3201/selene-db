@@ -613,15 +613,14 @@ fn aggregate_only_query_emits_groupby_with_empty_keys() {
 }
 
 #[test]
-fn leading_optional_match_is_not_implemented() {
-    let err = plan_err("OPTIONAL MATCH (a) RETURN a");
-    assert!(matches!(
-        err,
-        PlannerError::NotImplemented {
-            feature: "leading OPTIONAL MATCH (no preceding pipeline)",
-            ..
-        }
-    ));
+fn leading_optional_match_lowers_to_unit_outer() {
+    let plan = plan_one("OPTIONAL MATCH (a) RETURN a");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let JoinTree::Outer { left, key, .. } = &pattern.join_tree else {
+        panic!("expected leading optional outer join");
+    };
+    assert!(matches!(left.as_ref(), JoinTree::Unit));
+    assert!(key.is_empty());
 }
 
 #[test]

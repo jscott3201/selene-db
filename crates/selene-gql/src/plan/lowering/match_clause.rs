@@ -106,14 +106,16 @@ pub(crate) fn lower_match_prefix(
                 (lowered.tree, lowered.names)
             }
             (None, true) => {
-                // Why: a leading OPTIONAL MATCH lacks a left input to outer-join
-                // against. GQL semantics call for one null-extended row; the
-                // planner needs a unit-row scan or special leading marker we
-                // do not yet model. Defer until the executor surface lands.
-                return Err(PlannerError::NotImplemented {
-                    feature: "leading OPTIONAL MATCH (no preceding pipeline)",
-                    span: clause.span,
-                });
+                let right_filters = lowered.filters;
+                (
+                    JoinTree::Outer {
+                        left: Box::new(JoinTree::Unit),
+                        right: Box::new(lowered.tree),
+                        key: Vec::new(),
+                        right_filters,
+                    },
+                    lowered.names,
+                )
             }
             (Some((left, left_names)), false) => {
                 let key = shared_names(&left_names, &lowered.names);
@@ -825,6 +827,7 @@ fn shared_names(left: &BTreeSet<DbString>, right: &BTreeSet<DbString>) -> Vec<Db
 /// silently fall back to an older named node from earlier in the chain.
 fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
     match tree {
+        JoinTree::Unit => None,
         JoinTree::Scan(scan) => scan
             .binding
             .map(TailBinding::Named)

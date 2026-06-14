@@ -46,6 +46,7 @@ fn rewrite_tree(
     catalog: &dyn crate::IndexCatalog,
 ) -> bool {
     match tree {
+        JoinTree::Unit => false,
         JoinTree::Scan(scan) => rewrite_scan(scan, bindings, catalog),
         JoinTree::Expand { child, .. }
         | JoinTree::Questioned { child, .. }
