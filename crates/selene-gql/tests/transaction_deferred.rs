@@ -23,3 +23,22 @@ fn bare_start_transaction_still_parses() {
     let statement = parse("START TRANSACTION").expect("bare START TRANSACTION parses");
     assert!(matches!(statement, Statement::StartTransaction { .. }));
 }
+
+#[test]
+fn transaction_keywords_require_boundaries() {
+    for source in [
+        "STARTTRANSACTION",
+        "STARTx TRANSACTION",
+        "START TRANSACTIONx",
+        "START TRANSACTIONCREATE GRAPH demo",
+        "START TRANSACTION ONGRAPH demo",
+        "START TRANSACTION ON GRAPHx",
+        "COMMITx",
+        "ROLLBACKx",
+    ] {
+        assert!(
+            parse(source).is_err(),
+            "{source} must reject keyword prefix"
+        );
+    }
+}

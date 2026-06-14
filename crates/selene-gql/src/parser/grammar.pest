@@ -121,11 +121,16 @@ otherwise_op    = { ^"OTHERWISE" }
 // -- Transaction control --------------------------------------------
 
 transaction_control = { start_transaction_mixed | start_transaction_on_graph | start_transaction | commit | rollback }
-start_transaction_mixed = { ^"START" ~ ^"TRANSACTION" ~ ddl_statement }
-start_transaction_on_graph = { ^"START" ~ ^"TRANSACTION" ~ ^"ON" ~ ^"GRAPH" ~ ident }
-start_transaction   = { ^"START" ~ ^"TRANSACTION" }
-commit              = { ^"COMMIT" }
-rollback            = { ^"ROLLBACK" }
+start_transaction_mixed = { start_kw ~ transaction_kw ~ ddl_statement }
+start_transaction_on_graph = { start_kw ~ transaction_kw ~ on_kw ~ transaction_graph_kw ~ ident }
+start_transaction   = { start_kw ~ transaction_kw }
+commit              = { commit_kw }
+rollback            = { rollback_kw }
+start_kw = @{ ^"START" ~ !(LETTER | NUMBER | "_") }
+transaction_kw = @{ ^"TRANSACTION" ~ !(LETTER | NUMBER | "_") }
+commit_kw = @{ ^"COMMIT" ~ !(LETTER | NUMBER | "_") }
+rollback_kw = @{ ^"ROLLBACK" ~ !(LETTER | NUMBER | "_") }
+transaction_graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
 
 // -- Session control ------------------------------------------------
 //
