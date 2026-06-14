@@ -46,13 +46,13 @@ spec docs by the build. The table below summarizes the major clause groups.
 | Group | Coverage | Notes |
 |---|---|---|
 | Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `UNWIND`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
-| Set composition (`UNION`, chained `NEXT`) | Partial | Only `UNION` / `UNION ALL` / `UNION DISTINCT` are supported (feature `GQ03`). `EXCEPT`, `INTERSECT`, and `OTHERWISE` parse but the analyzer rejects them. |
+| Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`); `OTHERWISE` is `GQ09`. |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
 | Mutation (`INSERT`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). |
 | DDL (`CREATE/DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Full | Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries claim `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not claimed. |
-| Path patterns (variable-length, ANY/ALL SHORTEST) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST` selectors are claimed (`G015`-`G018`). Counted shortest selectors (`G019`, `G020`) are not. |
+| Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are claimed (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
 
 Statements outside the claimed feature set fail with a Flagger error during
@@ -79,15 +79,16 @@ parsing or analysis, never at runtime.
 | `UINT8`, `UINT16`, `UINT32`, `UINT64` | `CAST(x AS UINT32)` | `Value::Uint` | `GV01`, `GV03`, `GV06`, `GV11` |
 | `INT128`, `UINT128` | `CAST(x AS INT128)`, `CAST(x AS UINT128)` | `Value::Int128`, `Value::Uint128` | `GV13`, `GV14` |
 | `DECIMAL` | `CAST('1.23' AS DECIMAL)` | `Value::Decimal` (`rust_decimal::Decimal`) | `GV17`, 28 significant digits |
-| `FLOAT32` | `1.5f` | `Value::Float32` | `GV21` |
-| `BYTES` / bare `BINARY` / bare `VARBINARY` | `CAST(x AS BYTES)` | `Value::Bytes` | `GV35`; Selene normalizes all three unqualified spellings to the unbounded `BYTES` form. |
+| `FLOAT32`, `REAL` | `1.5f`, `CAST(x AS REAL)` | `Value::Float32` | `GV21`, `GV23` |
+| `FLOAT64`, `DOUBLE`, `DOUBLE PRECISION` | `CAST(x AS DOUBLE)` | `Value::Float` | `GV24`, `GV23` |
+| `BYTES`, `BYTES(n)`, `BYTES(min,max)`, `BINARY(n)`, `VARBINARY(n)` | `CAST(x AS BYTES(2,4))` | `Value::Bytes` | `GV35`-`GV38`; fixed/variable bounded aliases canonicalize to `BYTES(min,max)` descriptors. |
 | `DATE` | `DATE '2026-05-16'` | `Value::Date` | `GV39` |
 | `LOCAL DATETIME` | `LOCAL DATETIME '2026-05-16T08:30:00'` | `Value::LocalDateTime` | `GV39` |
 | `LOCAL TIME` | `LOCAL TIME '08:30:00'` | `Value::LocalTime` | `GV39` |
 | `ZONED DATETIME` | `ZONED DATETIME '2026-05-16T08:30:00-07:00'` | `Value::ZonedDateTime` | `GV40` |
 | `ZONED TIME` | `ZONED TIME '08:30:00-07:00'` | `Value::ZonedTime` | `GV40` |
 | `DURATION` | `DURATION 'PT1H30M'` or `DURATION('1h30m')` | `Value::Duration` | `GV41` |
-| `LIST<T>` | `[1, 2, 3]`, `CAST(x AS LIST<INTEGER>)` | `Value::List` | `GV50` |
+| `LIST<T>`, `ARRAY<T>`, postfix `T LIST` / `T ARRAY` | `[1, 2, 3]`, `CAST(x AS LIST<INTEGER>)` | `Value::List` | `GV50`; formatter canonicalizes to `LIST<...>`. |
 | `PATH` | constructed by `MATCH` path variables | `Value::Path` | `GV55` |
 
 String-source numeric casts follow the ISO signed/unsigned numeric literal image
@@ -102,12 +103,14 @@ the comparison family.
 
 ### Optional type surfaces deliberately not claimed
 
-Graph and binding-table reference types (`GV60`-`GV61`), explicit value-type
-nullability syntax (`GV90`), length-qualified byte-string types (`GV36`-`GV38`),
-`FLOAT16` / `FLOAT128` / `FLOAT256`, 256-bit integers, and the
-`REAL`/`DOUBLE` synonyms all carry rationale entries in
-`feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of
-these types is rejected at parse or analyze time.
+Graph and binding-table reference type spellings (`GV60`-`GV61`), `FLOAT16` /
+`FLOAT128` / `FLOAT256`, and 256-bit integers carry rationale entries in
+`feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of these
+deferred types is rejected at parse or analyze time.
+
+Explicit value-type nullability (`GV90`), length-qualified byte-string types
+(`GV36`-`GV38`), and `REAL` / `DOUBLE` synonyms (`GV23` / `GV24`) are claimed
+and covered by conformance corpus rows.
 
 ### Numeric literal forms
 
@@ -388,9 +391,9 @@ MATCH (p:Person) WHERE p.country = 'AU' RETURN p.name
 | Operator | v1.0 status |
 |---|---|
 | `UNION`, `UNION ALL`, `UNION DISTINCT` | Supported (feature `GQ03`). |
-| `EXCEPT`, `EXCEPT ALL`, `EXCEPT DISTINCT` | Parses; analyzer rejects (features `GQ04`, `GQ05` not claimed). |
-| `INTERSECT`, `INTERSECT ALL`, `INTERSECT DISTINCT` | Parses; analyzer rejects (`GQ06`, `GQ07` not claimed). |
-| `OTHERWISE` | Parses; analyzer rejects (`GQ09` not claimed). |
+| `EXCEPT`, `EXCEPT ALL`, `EXCEPT DISTINCT` | Supported (features `GQ04`, `GQ05`). |
+| `INTERSECT`, `INTERSECT ALL`, `INTERSECT DISTINCT` | Supported (features `GQ06`, `GQ07`). |
+| `OTHERWISE` | Supported (feature `GQ09`). |
 
 ### `LIMIT` precedence under `UNION ALL`
 
@@ -788,12 +791,12 @@ Examples of rejected constructs:
 
 | Construct | Reason | Failure mode |
 |---|---|---|
-| `MATCH (p) RETURN ALL SHORTEST 3 PATH ...` | Feature `G019` (counted shortest) not claimed. | Flagger error. |
-| `CALL { CREATE PROCEDURE ... }` (inline procedure body) | Features `GP01`-`GP15` not claimed. | Flagger error. |
-| `MATCH ... RETURN ... EXCEPT MATCH ...` | Feature `GQ04` not claimed. | Flagger error. |
-| `RECORD<a INTEGER, b STRING>` in a type position | Features `GV45`-`GV48` not claimed. | Flagger error. |
+| `CREATE PROCEDURE pkg.fn() { LET x = 1 RETURN x }` | Procedure-local definitions (`GP05`-`GP13`) are deferred. | Parser error. |
+| `CALL pkg.fn(TABLE rows)` | Binding tables as procedure arguments (`GP14`) are deferred. | Parser error. |
+| `CALL pkg.fn(GRAPH g)` | Graphs as procedure arguments (`GP15`) are deferred. | Parser error. |
+| `RETURN NULL IS TYPED GRAPH AS ok` | Graph reference value types (`GV60`) are deferred. | Flagger error. |
 | `CAST(x AS FLOAT16)` | Feature `GV20` not claimed. | Flagger error. |
-| `CAST(x AS BYTES(16))`, `BINARY(16)`, `VARBINARY(16)` | Byte-string length features `GV36`-`GV38` not claimed. | Flagger error. |
+| `CAST(x AS FLOAT128)` | Feature `GV25` not claimed. | Flagger error. |
 | Cypher-only `CREATE (n:Foo)-[:R]->(m:Bar)` (without the `INSERT` keyword) | Not ISO GQL surface. | Parser error. |
 | Cypher-only `WHERE n.x =~ '.*foo.*'` (regex match) | Not ISO GQL surface. | Parser error. |
 
@@ -835,16 +838,13 @@ explicitly absent. The canonical rationale is
 | Cypher grammar | Not supported. Use ISO GQL syntax. |
 | SQL grammar | Not supported. |
 | SPARQL grammar | Not supported. |
-| `EXCEPT`, `INTERSECT`, `OTHERWISE` set operators | Parses; analyzer rejects (features `GQ04`-`GQ09`). |
-| Counted shortest path (`G019`, `G020`) | Not claimed. Use `ANY SHORTEST` or `ALL SHORTEST`. |
-| Inline procedure definitions (`CREATE PROCEDURE { ... }`) | Not claimed (features `GP01`-`GP03`, `GP05`-`GP15`). Named procedures (`GP04`) are served only by the native built-in registry. |
+| Procedure-local definitions (`CREATE PROCEDURE { ... }`) | Not claimed (features `GP05`-`GP13`). Inline query subqueries (`GP01`-`GP03`) and named procedure calls (`GP04`) are supported. |
+| Binding tables or graphs as procedure arguments | Not claimed (features `GP14`, `GP15`). |
 | Procedure-local variables | Not claimed (features `GP05`-`GP15`). |
 | Mixed catalog/data transactions | Not claimed (feature `GP18`). |
 | Multi-graph transactions | Not claimed (feature `GT03`). |
 | Graph / table reference type spellings (`GRAPH`, `TABLE` as types) | Not claimed (features `GV60`-`GV61`). |
-| Explicit value-type nullability syntax (`STRING NOT NULL` in type expressions) | Not claimed (feature `GV90`). The DDL `NOT NULL` property constraint is supported separately. |
-| Length-qualified byte-string types (`BYTES(max)`, `BYTES(min,max)`, `BINARY(n)`, `VARBINARY(n)`) | Not claimed (features `GV36`-`GV38`). Bare `BYTES`, `BINARY`, and `VARBINARY` all normalize to unbounded `BYTES`. |
-| `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL`/`DOUBLE` synonyms | Not claimed. |
+| `FLOAT16`, `FLOAT128`, `FLOAT256` | Not claimed (`GV20`, `GV25`, `GV26`). `REAL` / `DOUBLE` synonyms are supported. |
 | 256-bit integers (`INT256`, `UINT256`) | Not claimed. |
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |
 | RDF / SPARQL bridge syntax | Out of scope. Future first-party extension allocation `GRPR`. |

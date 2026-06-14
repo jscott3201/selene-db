@@ -333,11 +333,11 @@ fn bounded_shortest_unchanged_on_cycle() {
 
 #[test]
 fn unbounded_counted_shortest_still_program_limit_on_cycle() {
-    // SCOPE: counted shortest (G019 SHORTEST N) is DEFERRED — it counts paths by
+    // SCOPE: counted shortest (G019 SHORTEST N) is claimed. It counts paths by
     // hop-rank INCLUDING non-simple paths (ISO §22.4), so it must stay WALK and
     // keep raising 5GQL1 on an unbounded cyclic graph (downshifting to TRAIL would
     // silently change its semantics to count trails, inconsistent with bounded
-    // counted-shortest). Pins the deferral.
+    // counted-shortest). Pins the implementation-defined cap behavior.
     let graph = cycle_graph();
     let plan = planned("MATCH SHORTEST 2 (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r");
 
