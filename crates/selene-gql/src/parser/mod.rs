@@ -5,7 +5,7 @@
 //! Flagger before callers see unsupported syntax. It does not resolve names,
 //! infer types, or choose execution behavior; those invariants start at the
 //! analyzer. Deferred grammar surfaces return `ParserError::NotImplemented`
-//! with v1.0 support guidance. See ISO GQL Clause 14 and Spec 07.
+//! with D1 support guidance. See ISO GQL Clause 14 and Spec 07.
 
 mod builders;
 mod depth;
@@ -41,7 +41,7 @@ pub(crate) const MAX_NESTING_DEPTH: u32 = guard::MAX_NESTING_DEPTH;
 ///
 /// Returns [`ParserError::SyntaxError`] for parse failures and
 /// [`ParserError::NotImplemented`] for grammar surfaces whose AST builders
-/// are not yet supported in v1.0.
+/// are not yet supported.
 #[tracing::instrument(name = "selene.gql.parse", skip(source), fields(source_len = source.len()))]
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
     guard::validate(source)?;
