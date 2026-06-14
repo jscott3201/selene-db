@@ -71,7 +71,7 @@ fn bind_inline_call(
 ) -> Result<(), AnalysisError> {
     if call.in_transactions {
         return Err(AnalysisError::NotImplemented {
-            message: "CALL { ... } IN TRANSACTIONS is not yet supported".into(),
+            message: "CALL { ... } IN TRANSACTIONS is not ISO GQL inline CALL syntax".into(),
             span: call.span,
             hint: None,
         });

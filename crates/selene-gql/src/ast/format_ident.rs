@@ -168,7 +168,7 @@ const KEYWORDS: &[&str] = &[
 /// formatting can continue to apply call-specific rules.
 #[rustfmt::skip]
 const CONTEXTUAL_IDENTIFIER_KEYWORDS: &[&str] = &[
-    "EXPLAIN", "INDEXES", "PROCEDURES", "TRANSACTIONS", "VALUE",
+    "EXPLAIN", "INDEXES", "PROCEDURES", "VALUE",
 ];
 
 /// Format an identifier slot (binding name, alias name, property key).
