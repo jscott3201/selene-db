@@ -1,8 +1,8 @@
 use super::*;
 use crate::ast::{
     BinaryOp, BindingTableType, CharacterStringLiteralKind, EdgeDirection, GqlType,
-    IntegerLiteralKind, IsCheckKind, LabelExpr, Literal, PipelineStatement, RowExpansionSyntax,
-    SetOp, ValueExpr,
+    IntegerLiteralKind, IsCheckKind, LabelExpr, Literal, PipelineStatement,
+    RowExpansionPositionKind, RowExpansionSyntax, SetOp, ValueExpr,
 };
 use crate::error::GqlStatus;
 
@@ -191,6 +191,27 @@ fn parse_for_list_statement_as_row_expansion() {
         panic!("expected list source");
     };
     assert_eq!(items.len(), 2);
+}
+
+#[test]
+fn parse_for_position_tail() {
+    for (source, expected) in [
+        (
+            "FOR x IN [1, 2] WITH ORDINALITY ord RETURN x, ord",
+            RowExpansionPositionKind::Ordinality,
+        ),
+        (
+            "FOR x IN [1, 2] WITH OFFSET off RETURN x, off",
+            RowExpansionPositionKind::Offset,
+        ),
+    ] {
+        let query = query(source);
+        let PipelineStatement::Unwind(statement) = &query.statements[0] else {
+            panic!("expected row expansion");
+        };
+        let position = statement.position.as_ref().expect("position tail parses");
+        assert_eq!(position.kind, expected);
+    }
 }
 
 #[test]

@@ -253,8 +253,28 @@ pub struct UnwindStatement {
     pub source: ValueExpr,
     /// Database-string alias.
     pub alias: DbString,
+    /// Optional ISO position output (`WITH ORDINALITY` / `WITH OFFSET`).
+    pub position: Option<RowExpansionPosition>,
     /// Source span.
     pub span: SourceSpan,
+}
+
+/// Optional position output for ISO `FOR`.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct RowExpansionPosition {
+    /// Position value form.
+    pub kind: RowExpansionPositionKind,
+    /// Database-string alias.
+    pub alias: DbString,
+}
+
+/// ISO `FOR` position output kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum RowExpansionPositionKind {
+    /// `WITH ORDINALITY`, producing one-based positions.
+    Ordinality,
+    /// `WITH OFFSET`, producing zero-based offsets.
+    Offset,
 }
 
 /// `ORDER BY` term.

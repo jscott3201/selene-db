@@ -182,10 +182,18 @@ fn dispatch_pipeline(
             PipelineOp::Unwind {
                 source,
                 alias,
+                position,
                 span,
             } => {
                 let eval_ctx = ctx.eval_ctx(expr_ids, subqueries);
-                unwind::execute(source, alias.clone(), *span, table, &eval_ctx)?
+                unwind::execute(
+                    source,
+                    alias.clone(),
+                    position.clone(),
+                    *span,
+                    table,
+                    &eval_ctx,
+                )?
             }
             PipelineOp::OrderBy(keys) => {
                 let eval_ctx = ctx.eval_ctx(expr_ids, subqueries);

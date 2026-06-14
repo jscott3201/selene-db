@@ -321,6 +321,15 @@ const ENTRIES: &[PlanCorpusEntry] = &[
         registry: PlanCorpusRegistry::Empty,
     },
     PlanCorpusEntry {
+        slug: "read_for_ordinality",
+        description: "ISO FOR position output survives planning and optimizer summaries.",
+        source: "FOR x IN [1, 2] WITH ORDINALITY ord RETURN x, ord",
+        category: PlanCorpusCategory::Read,
+        expected_rules: &[],
+        uses_index_catalog: false,
+        registry: PlanCorpusRegistry::Empty,
+    },
+    PlanCorpusEntry {
         slug: "read_group_by",
         description: "Grouping and aggregate pipeline surface.",
         source: "MATCH (n) RETURN length(n.name) AS l, count(*) AS c GROUP BY length(n.name)",

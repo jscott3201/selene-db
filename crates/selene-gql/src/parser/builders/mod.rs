@@ -17,8 +17,9 @@ use selene_core::DbString;
 use crate::{
     ast::{
         GqlType, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-        QueryPipeline, ReturnClause, ReturnItem, RowExpansionSyntax, SetOp, SourceSpan, Statement,
-        UnwindStatement, WithClause, util::NonEmpty,
+        QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition, RowExpansionPositionKind,
+        RowExpansionSyntax, SetOp, SourceSpan, Statement, UnwindStatement, WithClause,
+        util::NonEmpty,
     },
     error::ParserError,
 };
@@ -301,6 +302,7 @@ fn build_unwind(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
         syntax: RowExpansionSyntax::Unwind,
         source,
         alias,
+        position: None,
         span: source_span,
     })
 }
@@ -316,11 +318,43 @@ fn build_for(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
         .next()
         .ok_or_else(|| ParserError::syntax("FOR is missing source expression", source_span, None))
         .and_then(|pair| expr::build_value_expr(pair))?;
+    let position = children.next().map(build_for_position).transpose()?;
     Ok(UnwindStatement {
         syntax: RowExpansionSyntax::For,
         source,
         alias,
+        position,
         span: source_span,
+    })
+}
+
+fn build_for_position(pair: Pair<'_, Rule>) -> Result<RowExpansionPosition, ParserError> {
+    let source_span = span(&pair);
+    let mut kind = None;
+    let mut alias = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::for_position_ordinality => kind = Some(RowExpansionPositionKind::Ordinality),
+            Rule::for_position_offset => kind = Some(RowExpansionPositionKind::Offset),
+            Rule::ident => alias = Some(db_string_pair(child)?),
+            _ => return Err(unexpected_pair(child, "unexpected FOR position child")),
+        }
+    }
+    Ok(RowExpansionPosition {
+        kind: kind.ok_or_else(|| {
+            ParserError::syntax(
+                "FOR position is missing ORDINALITY or OFFSET",
+                source_span,
+                None,
+            )
+        })?,
+        alias: alias.ok_or_else(|| {
+            ParserError::syntax(
+                "FOR position is missing binding variable",
+                source_span,
+                None,
+            )
+        })?,
     })
 }
 

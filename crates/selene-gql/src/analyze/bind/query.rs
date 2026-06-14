@@ -532,6 +532,14 @@ fn bind_unwind(ctx: &mut BindContext, unwind: &UnwindStatement) -> Result<(), An
         unwind.span,
         ty,
     )?;
+    if let Some(position) = &unwind.position {
+        ctx.declare_strict_typed(
+            BindingDeclKind::UnwindAlias,
+            position.alias.clone(),
+            unwind.span,
+            AnalyzedType::Resolved(crate::GqlType::Integer),
+        )?;
+    }
     Ok(())
 }
 

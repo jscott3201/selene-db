@@ -10,7 +10,9 @@ use crate::{
             EdgeDirection, EdgePattern, GraphPattern, MatchClause, MatchMode, NodePattern,
             PathMode, PathSelector, PatternElement, Quantifier,
         },
-        statement::{LetBinding, OrderTerm, RowExpansionSyntax, UnwindStatement},
+        statement::{
+            LetBinding, OrderTerm, RowExpansionPositionKind, RowExpansionSyntax, UnwindStatement,
+        },
     },
 };
 
@@ -267,6 +269,13 @@ fn let_bindings(bindings: &[LetBinding], uses: &mut Vec<FeatureUse>) {
 fn unwind(statement: &UnwindStatement, uses: &mut Vec<FeatureUse>) {
     if statement.syntax == RowExpansionSyntax::For {
         record_feature(uses, FeatureId::GQ10, statement.span);
+    }
+    if let Some(position) = &statement.position {
+        let feature = match position.kind {
+            RowExpansionPositionKind::Ordinality => FeatureId::GQ11,
+            RowExpansionPositionKind::Offset => FeatureId::GQ24,
+        };
+        record_feature(uses, feature, statement.span);
     }
     expr::value(&statement.source, uses);
 }

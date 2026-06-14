@@ -219,6 +219,25 @@ fn for_list_aliases_to_element_type() {
 }
 
 #[test]
+fn for_position_aliases_are_integer() {
+    for source in [
+        "FOR x IN [1, 2, 3] WITH ORDINALITY ord RETURN ord",
+        "FOR x IN [1, 2, 3] WITH OFFSET off RETURN off",
+    ] {
+        let analyzed = analyze_one(source).unwrap();
+        let name = if source.contains("ORDINALITY") {
+            "ord"
+        } else {
+            "off"
+        };
+        assert_eq!(
+            projection_type(&analyzed, name),
+            AnalyzedType::Resolved(GqlType::Integer)
+        );
+    }
+}
+
+#[test]
 fn record_literal_resolves_to_open_record() {
     // An open `RECORD{...}` value literal resolves to the open record type
     // (ISO feature GV45, `<record constructor>` clause 20.18). `RecordType::Open`

@@ -154,11 +154,13 @@ feature_ids! {
     GQ08 = "GQ08" => "FILTER statement";
     GQ09 = "GQ09" => "Composite query: OTHERWISE";
     GQ10 = "GQ10" => "FOR statement: list value support";
+    GQ11 = "GQ11" => "FOR statement: WITH ORDINALITY";
     GQ12 = "GQ12" => "OFFSET clause";
     GQ13 = "GQ13" => "LIMIT clause";
     GQ15 = "GQ15" => "GROUP BY clause";
     GQ18 = "GQ18" => "Scalar value query expression";
     GQ20 = "GQ20" => "Linear query composition";
+    GQ24 = "GQ24" => "FOR statement: WITH OFFSET";
     GS01 = "GS01" => "SESSION SET command: session-local graph parameters";
     GS02 = "GS02" => "SESSION SET command: session-local binding table parameters";
     GS03 = "GS03" => "SESSION SET command: session-local value parameters";
@@ -328,11 +330,13 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GQ08,
     FeatureId::GQ09,
     FeatureId::GQ10,
+    FeatureId::GQ11,
     FeatureId::GQ12,
     FeatureId::GQ13,
     FeatureId::GQ15,
     FeatureId::GQ18,
     FeatureId::GQ20,
+    FeatureId::GQ24,
     FeatureId::GS03,
     FeatureId::GS04,
     FeatureId::GS07,

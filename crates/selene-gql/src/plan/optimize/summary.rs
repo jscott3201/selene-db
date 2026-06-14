@@ -299,14 +299,36 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
                     .join(",")
             ),
         },
-        PipelineOp::Unwind { source, alias, .. } => PipelineOpSummary {
-            kind: "Unwind",
-            payload: format!(
-                "alias={}, source=binding_refs=[{}]",
-                alias.as_str(),
-                binding_refs(&source.binding_refs, bindings)
-            ),
-        },
+        PipelineOp::Unwind {
+            source,
+            alias,
+            position,
+            ..
+        } => {
+            let payload = if let Some(position) = position {
+                let kind = match position.kind {
+                    crate::RowExpansionPositionKind::Ordinality => "ordinality",
+                    crate::RowExpansionPositionKind::Offset => "offset",
+                };
+                format!(
+                    "alias={}, position={}:{}, source=binding_refs=[{}]",
+                    alias.as_str(),
+                    kind,
+                    position.alias.as_str(),
+                    binding_refs(&source.binding_refs, bindings)
+                )
+            } else {
+                format!(
+                    "alias={}, source=binding_refs=[{}]",
+                    alias.as_str(),
+                    binding_refs(&source.binding_refs, bindings)
+                )
+            };
+            PipelineOpSummary {
+                kind: "Unwind",
+                payload,
+            }
+        }
         PipelineOp::OrderBy(keys) => PipelineOpSummary {
             kind: "OrderBy",
             payload: format!("keys={}", keys.len()),
