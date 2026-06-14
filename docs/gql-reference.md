@@ -241,6 +241,12 @@ are exactly the projected aliases. `DISTINCT`, `GROUP BY`, `HAVING`, and
 FOR x IN [1, 2, 3, 4]
 RETURN x * x AS squared
 
+FOR x IN [1, 2, 3, 4] WITH ORDINALITY ord
+RETURN x, ord
+
+FOR x IN [1, 2, 3, 4] WITH OFFSET off
+RETURN x, off
+
 UNWIND [1, 2, 3, 4] AS x
 RETURN x * x AS squared
 ```
@@ -248,7 +254,8 @@ RETURN x * x AS squared
 `FOR` is the ISO list-value row-expansion statement. `UNWIND` is Selene's
 equivalent pipeline alias. Both flatten a list expression into row-per-element.
 The expression can be a list literal, a list-typed property, or any expression
-evaluating to `LIST<T>`.
+evaluating to `LIST<T>`. `WITH ORDINALITY` adds a one-based position column;
+`WITH OFFSET` adds a zero-based position column.
 
 ### `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`
 

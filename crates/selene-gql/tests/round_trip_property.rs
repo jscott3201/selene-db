@@ -13,6 +13,8 @@ fn representative_read_shapes_round_trip() {
     for source in [
         "MATCH (n:Person {name: 'Ada'}) RETURN n.name AS name",
         "FOR x IN [1, 2, 3] RETURN x",
+        "FOR x IN [1, 2, 3] WITH ORDINALITY ord RETURN x, ord",
+        "FOR x IN [1, 2, 3] WITH OFFSET off RETURN x, off",
         "RETURN (1 + 2) * 3 AS n",
         "RETURN count(*) AS c",
         "RETURN CASE WHEN n.age > 10 THEN 'old' ELSE 'new' END AS bucket",

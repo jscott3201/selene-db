@@ -571,6 +571,8 @@ pub enum PipelineOp {
         source: ProjectExpr,
         /// Alias bound to each list element.
         alias: selene_core::DbString,
+        /// Optional position output for ISO `FOR`.
+        position: Option<crate::RowExpansionPosition>,
         /// Source span.
         span: SourceSpan,
     },

@@ -45,8 +45,8 @@ pub use crate::ast::{
     span::SourceSpan,
     statement::{
         LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-        QueryPipeline, ReturnClause, ReturnItem, RowExpansionSyntax, SessionResetTarget, SetOp,
-        Statement, UnwindStatement, WithClause,
+        QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition, RowExpansionPositionKind,
+        RowExpansionSyntax, SessionResetTarget, SetOp, Statement, UnwindStatement, WithClause,
     },
     types::{BindingTableType, GqlType, RecordType},
     util::{EmptyVecError, NonEmpty, Vec2OrMore},

@@ -1,0 +1,11 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+assertion_line: 29
+expression: snapshot.to_string()
+---
+fired_rules: none
+output: [x, ord]
+pattern: none
+pipeline:
+  - Unwind(alias=x, position=ordinality:ord, source=binding_refs=[])
+  - Project(columns=[x,ord])

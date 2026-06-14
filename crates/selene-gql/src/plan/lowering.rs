@@ -284,9 +284,17 @@ fn lower_query_pipeline(
                     hidden: None,
                     ty: AnalyzedType::DYNAMIC,
                 });
+                if let Some(position) = &unwind.position {
+                    visible.push(BindingTableColumn {
+                        name: Some(position.alias.clone()),
+                        hidden: None,
+                        ty: AnalyzedType::Resolved(GqlType::Integer),
+                    });
+                }
                 ops.push(PipelineOp::Unwind {
                     source,
                     alias: unwind.alias.clone(),
+                    position: unwind.position.clone(),
                     span: unwind.span,
                 });
             }

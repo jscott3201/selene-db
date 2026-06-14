@@ -78,6 +78,34 @@ fn read_executes_for_list_query() {
 }
 
 #[test]
+fn read_executes_for_ordinality_query() {
+    let table = execute_read("FOR x IN [10, 20] WITH ORDINALITY ord RETURN x, ord");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(10), Value::Int(20)]
+    );
+    assert_eq!(
+        column_values(&table, "ord"),
+        vec![Value::Int(1), Value::Int(2)]
+    );
+}
+
+#[test]
+fn read_executes_for_offset_query() {
+    let table = execute_read("FOR x IN [10, 20] WITH OFFSET off RETURN x, off");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(10), Value::Int(20)]
+    );
+    assert_eq!(
+        column_values(&table, "off"),
+        vec![Value::Int(0), Value::Int(1)]
+    );
+}
+
+#[test]
 fn read_executes_distinct_projection() {
     let table = execute_read("MATCH (n:Person) RETURN DISTINCT n.tenant AS tenant");
 

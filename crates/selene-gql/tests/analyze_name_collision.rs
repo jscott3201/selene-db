@@ -45,6 +45,13 @@ fn unwind_alias_same_name_does_not_collide_with_node_pattern() {
 }
 
 #[test]
+fn for_position_alias_must_not_shadow_element_alias() {
+    let err = analyze_one("FOR x IN [1] WITH ORDINALITY x RETURN x")
+        .expect_err("position alias shadows element alias");
+    assert!(matches!(err, AnalysisError::Shadow { .. }));
+}
+
+#[test]
 fn projection_alias_same_name_does_not_collide_with_node_pattern() {
     assert_alias_reused_as_node(
         "MATCH (n) RETURN n AS x NEXT MATCH (x) RETURN x",
