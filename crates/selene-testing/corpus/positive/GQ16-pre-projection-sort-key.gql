@@ -1,0 +1,6 @@
+// corpus: positive
+// feature: GQ16
+// expects: parse-ok
+MATCH (n)
+RETURN n.name AS who
+ORDER BY n.age

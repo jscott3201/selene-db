@@ -1,0 +1,6 @@
+// corpus: positive
+// feature: GQ14
+// expects: parse-ok
+FOR x IN [1, 2]
+RETURN x AS x
+ORDER BY x + 1

@@ -104,6 +104,7 @@ feature_ids! {
     GF11 = "GF11" => "Advanced aggregate functions: binary set functions";
     GF12 = "GF12" => "CARDINALITY function";
     GF13 = "GF13" => "SIZE function";
+    GF20 = "GF20" => "Aggregate functions in sort keys";
     GL01 = "GL01" => "Hexadecimal literals";
     GL02 = "GL02" => "Octal literals";
     GL03 = "GL03" => "Binary literals";
@@ -156,7 +157,9 @@ feature_ids! {
     GQ11 = "GQ11" => "FOR statement: WITH ORDINALITY";
     GQ12 = "GQ12" => "OFFSET clause";
     GQ13 = "GQ13" => "LIMIT clause";
+    GQ14 = "GQ14" => "Complex expressions in sort keys";
     GQ15 = "GQ15" => "GROUP BY clause";
+    GQ16 = "GQ16" => "Pre-projection aliases in sort keys";
     GQ18 = "GQ18" => "Scalar value query expression";
     GQ20 = "GQ20" => "Linear query composition";
     GQ24 = "GQ24" => "FOR statement: WITH OFFSET";
@@ -282,6 +285,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GF11,
     FeatureId::GF12,
     FeatureId::GF13,
+    FeatureId::GF20,
     FeatureId::GL01,
     FeatureId::GL02,
     FeatureId::GL03,
@@ -331,7 +335,9 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GQ11,
     FeatureId::GQ12,
     FeatureId::GQ13,
+    FeatureId::GQ14,
     FeatureId::GQ15,
+    FeatureId::GQ16,
     FeatureId::GQ18,
     FeatureId::GQ20,
     FeatureId::GQ24,
