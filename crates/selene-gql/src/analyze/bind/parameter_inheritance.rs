@@ -337,7 +337,7 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
                     stack.push(character.as_mut());
                 }
             }
-            ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
+            ValueExpr::Exists { pattern, .. } => {
                 inherit_match_clause_parameter_declarations(pattern, declarations);
             }
             ValueExpr::ValueSubquery { body, .. } => {

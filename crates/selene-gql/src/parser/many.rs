@@ -381,7 +381,7 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
     value.for_each_span_mut(&mut |span| rebase_span(span, offset));
     value.for_each_child_mut(&mut |child| rebase_value(child, offset));
     match value {
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
+        ValueExpr::Exists { pattern, .. } => {
             rebase_match(pattern, offset);
         }
         ValueExpr::ValueSubquery { body, .. } => rebase_query_pipeline(body, offset),

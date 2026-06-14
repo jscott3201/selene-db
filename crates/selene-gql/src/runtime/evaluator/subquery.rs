@@ -2,9 +2,8 @@
 //!
 //! `EXISTS { MATCH ... }` follows ISO/IEC 39075:2024 section 19.4 and is
 //! two-valued: it returns `TRUE` when the inner pattern has at least one row and
-//! `FALSE` otherwise. `COUNT { MATCH ... }` is a selene-db dialect extension
-//! over the same planned single-MATCH surface. Correlated outer bindings are
-//! projected into the inner pattern's seed row before execution.
+//! `FALSE` otherwise. Correlated outer bindings are projected into the inner
+//! pattern's seed row before execution.
 
 use selene_core::Value;
 
@@ -13,8 +12,7 @@ use crate::{
     analyze::ExprId,
     plan::{OuterBindingRef, PlannedSubquery, SubqueryBody},
     runtime::{
-        Binding, BindingTable, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
-        pattern, plan_runner,
+        Binding, BindingTable, BindingTableSchema, EvalCtx, ExecutorError, pattern, plan_runner,
     },
 };
 
@@ -29,24 +27,6 @@ pub(super) fn eval_exists(
     let table = execute_subquery(expr, binding, schema, ctx)?;
     let exists = !table.is_empty();
     Ok(Value::Bool(if negated { !exists } else { exists }))
-}
-
-pub(super) fn eval_count_subquery(
-    expr: &ValueExpr,
-    span: SourceSpan,
-    binding: &Binding,
-    schema: &BindingTableSchema,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Value, ExecutorError> {
-    let table = execute_subquery(expr, binding, schema, ctx)?;
-    let count = i64::try_from(table.row_count()).map_err(|_| {
-        ExecutorError::data_exception(
-            DataExceptionSubclass::NumericValueOutOfRange,
-            "subquery count is out of range",
-            span,
-        )
-    })?;
-    Ok(Value::Int(count))
 }
 
 pub(super) fn eval_value_subquery(

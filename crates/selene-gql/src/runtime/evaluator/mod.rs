@@ -47,7 +47,7 @@ use self::{
     concat_ops::ConcatCaps,
     predicates::{eval_all_different, eval_is_check, eval_property_exists, eval_same},
     scalar_fns::eval_function_call,
-    subquery::{eval_count_subquery, eval_exists, eval_value_subquery},
+    subquery::{eval_exists, eval_value_subquery},
 };
 
 /// Evaluate a value expression against one binding-table row.
@@ -171,9 +171,6 @@ pub fn evaluate(
         ),
         ValueExpr::Exists { negated, span, .. } => {
             eval_exists(expr, *negated, *span, binding, schema, ctx)
-        }
-        ValueExpr::CountSubquery { span, .. } => {
-            eval_count_subquery(expr, *span, binding, schema, ctx)
         }
         ValueExpr::ValueSubquery { span, .. } => {
             eval_value_subquery(expr, *span, binding, schema, ctx)

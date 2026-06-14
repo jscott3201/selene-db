@@ -452,9 +452,7 @@ fn plan_records_next_pipeline_op_id_high_water_mark() {
 
 #[test]
 fn expression_subqueries_populate_plan_registry() {
-    let plan = plan_one(
-        "MATCH (a) RETURN EXISTS { MATCH (a)-[]->(b) } AS e, COUNT { MATCH (a)-[]->(b) } AS c",
-    );
+    let plan = plan_one("MATCH (a) RETURN EXISTS { MATCH (a)-[]->(b) } AS e");
     let Some(PipelineOp::Project(projects)) = plan.pipeline.first() else {
         panic!("expected project op");
     };
@@ -463,18 +461,12 @@ fn expression_subqueries_populate_plan_registry() {
         .subqueries
         .get(projects[0].expr_id)
         .expect("exists subquery planned");
-    let count = plan
-        .subqueries
-        .get(projects[1].expr_id)
-        .expect("count subquery planned");
 
     assert!(matches!(
         exists.kind,
         SubqueryKind::Exists { negated: false }
     ));
     assert_eq!(exists.outer_binding_refs.len(), 1);
-    assert_eq!(count.kind, SubqueryKind::Count);
-    assert_eq!(count.outer_binding_refs, exists.outer_binding_refs);
 }
 
 #[test]

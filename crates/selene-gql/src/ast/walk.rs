@@ -11,8 +11,7 @@
 //!   **direct** child `ValueExpr` of a node, in source order. They are *shallow*:
 //!   the callback receives each immediate child once, and the caller drives
 //!   recursion by re-invoking itself inside the callback. Subquery nodes
-//!   ([`ValueExpr::Exists`], [`ValueExpr::CountSubquery`],
-//!   [`ValueExpr::ValueSubquery`]) carry no direct `ValueExpr` children — their
+//!   ([`ValueExpr::Exists`], [`ValueExpr::ValueSubquery`]) carry no direct `ValueExpr` children — their
 //!   bodies are [`MatchClause`](crate::MatchClause) /
 //!   [`QueryPipeline`](crate::QueryPipeline) — so they yield nothing and the
 //!   caller handles any subquery descent explicitly.
@@ -110,7 +109,7 @@ impl ValueExpr {
             Self::Cast { value, .. } => f(value),
             // Subquery bodies are `MatchClause` / `QueryPipeline`, not
             // `ValueExpr`; they carry no direct `ValueExpr` children.
-            Self::Exists { .. } | Self::CountSubquery { .. } | Self::ValueSubquery { .. } => {}
+            Self::Exists { .. } | Self::ValueSubquery { .. } => {}
         }
     }
 
@@ -193,7 +192,7 @@ impl ValueExpr {
             Self::Cast { value, .. } => f(value),
             // Subquery bodies are `MatchClause` / `QueryPipeline`, not
             // `ValueExpr`; they carry no direct `ValueExpr` children.
-            Self::Exists { .. } | Self::CountSubquery { .. } | Self::ValueSubquery { .. } => {}
+            Self::Exists { .. } | Self::ValueSubquery { .. } => {}
         }
     }
 
@@ -226,7 +225,6 @@ impl ValueExpr {
             | Self::PropertyExists { span, .. }
             | Self::Case { span, .. }
             | Self::Exists { span, .. }
-            | Self::CountSubquery { span, .. }
             | Self::ValueSubquery { span, .. }
             | Self::Normalize { span, .. }
             | Self::Trim { span, .. }

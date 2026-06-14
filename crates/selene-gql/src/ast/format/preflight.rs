@@ -229,9 +229,7 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             }
             Ok(())
         }
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-            validate_match(pattern)
-        }
+        ValueExpr::Exists { pattern, .. } => validate_match(pattern),
         ValueExpr::ValueSubquery { body, .. } => validate_pipeline(body),
         ValueExpr::Cast {
             value, target_type, ..

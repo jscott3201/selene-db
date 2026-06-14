@@ -80,9 +80,7 @@ pub(crate) fn collect_binding_refs(
         // `binding_refs` instead of silently dropping the subquery's outer
         // references — a sibling rewrite must not strip a ValueSubquery's
         // correlated refs.
-        ValueExpr::Exists { .. }
-        | ValueExpr::CountSubquery { .. }
-        | ValueExpr::ValueSubquery { .. } => {
+        ValueExpr::Exists { .. } | ValueExpr::ValueSubquery { .. } => {
             unresolved = true;
         }
         _ => {}
@@ -261,7 +259,7 @@ fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
     // edge it binds (e.g. `{n, e}`); omitting it would let the optimizer's filter
     // pushdown treat the predicate as single-binding and push it onto the node
     // scan/expand before the edge is bound. Subquery variants
-    // (`Exists`/`CountSubquery`/`ValueSubquery`) carry no `ValueExpr` children and
+    // (`Exists`/`ValueSubquery`) carry no `ValueExpr` children and
     // are deliberately not descended here — their outer-binding uses are
     // collected separately by the caller.
     visit(expr);

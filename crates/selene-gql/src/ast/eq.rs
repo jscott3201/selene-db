@@ -191,7 +191,7 @@ fn scrub_value(value: &mut ValueExpr) {
         } => {
             *key_source_kind = CharacterStringLiteralKind::Escaped;
         }
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
+        ValueExpr::Exists { pattern, .. } => {
             scrub_match(pattern);
         }
         ValueExpr::ValueSubquery { body, .. } => scrub_query_pipeline(body),

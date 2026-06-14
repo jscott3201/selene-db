@@ -271,27 +271,23 @@ mod tests {
     }
 
     #[test]
-    fn exists_and_count_subquery_bodies_stay_linear_unoptimized() {
-        // EXISTS and COUNT lower to a `SubqueryBody::Pattern`. The optimizer does
-        // not descend, so the body scan stays Linear even though `(:Person)`
-        // would otherwise take the label index (proven above).
-        for source in [
-            "MATCH (a:Person) WHERE EXISTS { MATCH (n:Person) WHERE n.age > 5 } RETURN a",
-            "MATCH (a:Person) RETURN COUNT { MATCH (n:Person) WHERE n.age > 5 } AS c",
-        ] {
+    fn exists_subquery_body_stays_linear_unoptimized() {
+        // EXISTS lowers to a `SubqueryBody::Pattern`. The optimizer does not
+        // descend, so the body scan stays Linear even though `(:Person)` would
+        // otherwise take the label index (proven above).
+        for source in
+            ["MATCH (a:Person) WHERE EXISTS { MATCH (n:Person) WHERE n.age > 5 } RETURN a"]
+        {
             let optimized = optimize_with_label_index(source);
             let mut subqueries = 0;
             for subquery in optimized.subqueries.iter() {
                 assert!(
-                    matches!(
-                        subquery.kind,
-                        SubqueryKind::Exists { .. } | SubqueryKind::Count
-                    ),
+                    matches!(subquery.kind, SubqueryKind::Exists { .. }),
                     "unexpected subquery kind {:?} for {source}",
                     subquery.kind
                 );
                 let SubqueryBody::Pattern(pattern) = &subquery.body else {
-                    panic!("EXISTS/COUNT body must be a Pattern body");
+                    panic!("EXISTS body must be a Pattern body");
                 };
                 let access = leading_scan_access(&pattern.join_tree).expect("body scan");
                 assert!(
@@ -382,13 +378,12 @@ mod tests {
         // PLAN-18 (collector half): the external corpus invariants
         // (`corpus_optimize_preserves_expr_types`) never descend into subquery
         // bodies, so a rule that mutated an expr-id's analyzed type INSIDE an
-        // EXISTS/COUNT/VALUE body would go uncaught. Pin the type-stability
+        // EXISTS/VALUE body would go uncaught. Pin the type-stability
         // invariant inside the body: every `(expr_id, ty)` observed before
         // optimize must match the one observed after. (The bodies are currently
         // left untouched, so this also documents that they are stable today.)
         for source in [
             "MATCH (a:Person) WHERE EXISTS { MATCH (n:Person) WHERE n.age > 5 } RETURN a",
-            "MATCH (a:Person) RETURN COUNT { MATCH (n:Person) WHERE n.age > 5 } AS c",
             "MATCH (a:Person) RETURN VALUE { MATCH (n:Person) WHERE n.age > 5 RETURN n.age LIMIT 1 } AS v",
         ] {
             let before = plan_one(source);

@@ -495,20 +495,6 @@ pub(super) fn build_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserErro
     })
 }
 
-pub(super) fn build_count_subquery(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
-    let source_span = span(&pair);
-    let match_pair = pair
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::match_stmt)
-        .ok_or_else(|| {
-            ParserError::syntax("COUNT subquery is missing MATCH pattern", source_span, None)
-        })?;
-    Ok(ValueExpr::CountSubquery {
-        pattern: Box::new(pattern::build_match_clause(match_pair)?),
-        span: source_span,
-    })
-}
-
 pub(super) fn build_value_subquery(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let body_pair = pair

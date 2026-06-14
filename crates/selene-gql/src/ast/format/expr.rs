@@ -256,11 +256,6 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             fmt_match(out, pattern)?;
             out.push_str(" }");
         }
-        ValueExpr::CountSubquery { pattern, .. } => {
-            out.push_str("COUNT { ");
-            fmt_match(out, pattern)?;
-            out.push_str(" }");
-        }
         ValueExpr::ValueSubquery { body, .. } => {
             out.push_str("VALUE { ");
             fmt_pipeline(out, body)?;

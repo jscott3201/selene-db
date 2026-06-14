@@ -204,7 +204,7 @@ fn push_expr<'a>(
         // Subquery bodies are `MatchClause` / `QueryPipeline`, not direct
         // `ValueExpr` children — descend into them (a fresh expression context,
         // so depth resets to 1 in the structural push helpers).
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
+        ValueExpr::Exists { pattern, .. } => {
             work.push(Node::MatchClause(pattern));
         }
         ValueExpr::ValueSubquery { body, .. } => work.push(Node::Pipeline(body)),

@@ -200,13 +200,6 @@ pub enum ValueExpr {
         /// Source span of the full expression.
         span: SourceSpan,
     },
-    /// `COUNT { MATCH ... }` subquery expression.
-    CountSubquery {
-        /// Match pattern.
-        pattern: Box<MatchClause>,
-        /// Source span of the full expression.
-        span: SourceSpan,
-    },
     /// `VALUE { ... }` scalar value query expression.
     ValueSubquery {
         /// Nested query body.
@@ -332,7 +325,6 @@ impl ValueExpr {
             | Self::PropertyExists { span, .. }
             | Self::Case { span, .. }
             | Self::Exists { span, .. }
-            | Self::CountSubquery { span, .. }
             | Self::ValueSubquery { span, .. }
             | Self::Normalize { span, .. }
             | Self::Trim { span, .. }

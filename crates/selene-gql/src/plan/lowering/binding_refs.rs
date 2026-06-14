@@ -45,7 +45,7 @@ fn collect_binding_refs_in_expr(
         // Subquery bodies are `MatchClause` / `QueryPipeline`, not `ValueExpr`
         // children: collect the outer-binding uses they reference rather than
         // recursing through `for_each_child`.
-        ValueExpr::Exists { pattern, span, .. } | ValueExpr::CountSubquery { pattern, span } => {
+        ValueExpr::Exists { pattern, span, .. } => {
             refs.extend(
                 outer_binding_uses_in_match(pattern, *span, analyzed)?
                     .into_iter()
