@@ -2,7 +2,7 @@
 
 use selene_core::feature_register::FeatureId;
 use selene_gql::{
-    GqlType, IsCheckKind, PipelineStatement, RecordType, Statement, ValueExpr,
+    GqlType, IsCheckKind, ParserError, PipelineStatement, RecordType, Statement, ValueExpr,
     ast::format_read_statement, feature_walk, parse,
 };
 
@@ -68,6 +68,44 @@ fn iso_record_type_forms_format_to_canonical_record_names() {
 }
 
 #[test]
+fn record_type_keywords_accept_comment_boundaries() {
+    for (source, expected) in [
+        (
+            "RETURN NULL IS TYPED ANY /* c */ RECORD AS ok",
+            "RETURN null IS TYPED RECORD AS ok",
+        ),
+        (
+            "RETURN NULL IS TYPED RECORD /* c */ { /* c */ } AS ok",
+            "RETURN null IS TYPED RECORD{} AS ok",
+        ),
+        (
+            "RETURN NULL IS TYPED RECORD /* c */ { a /* c */ :: /* c */ INT } AS ok",
+            "RETURN null IS TYPED RECORD{a :: INTEGER} AS ok",
+        ),
+    ] {
+        let statement =
+            parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+        let formatted = format_read_statement(&statement).expect("statement formats");
+        assert_eq!(formatted, expected);
+    }
+}
+
+#[test]
+fn record_type_keywords_require_boundaries_before_type_suffixes() {
+    for source in [
+        "RETURN NULL IS TYPED ANYRECORD AS ok",
+        "RETURN NULL IS TYPED ANYRECORDARRAY AS ok",
+        "RETURN NULL IS TYPED ANYRECORDNOT NULL AS ok",
+        "RETURN NULL IS TYPED ANY RECORDARRAY AS ok",
+        "RETURN NULL IS TYPED ANY RECORDNOT NULL AS ok",
+        "RETURN NULL IS TYPED RECORDARRAY AS ok",
+        "RETURN NULL IS TYPED RECORDNOT NULL AS ok",
+    ] {
+        assert_syntax_error(source);
+    }
+}
+
+#[test]
 fn record_type_forms_stamp_open_and_closed_record_features() {
     let open = parse("RETURN NULL IS TYPED ANY RECORD AS ok").expect("open record parses");
     let open_features = feature_walk(&open)
@@ -123,4 +161,12 @@ fn typed_type(source: &str) -> GqlType {
         panic!("{source} should parse as IS TYPED");
     };
     ty.clone()
+}
+
+fn assert_syntax_error(source: &str) {
+    let err = parse(source).expect_err("source should reject");
+    assert!(
+        matches!(err, ParserError::SyntaxError { .. }),
+        "{source:?} should reject as syntax, got {err:?}"
+    );
 }
