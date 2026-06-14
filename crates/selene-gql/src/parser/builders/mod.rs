@@ -17,8 +17,8 @@ use selene_core::DbString;
 use crate::{
     ast::{
         GqlType, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-        QueryPipeline, ReturnClause, ReturnItem, SetOp, SourceSpan, Statement, UnwindStatement,
-        WithClause, util::NonEmpty,
+        QueryPipeline, ReturnClause, ReturnItem, RowExpansionSyntax, SetOp, SourceSpan, Statement,
+        UnwindStatement, WithClause, util::NonEmpty,
     },
     error::ParserError,
 };
@@ -162,13 +162,13 @@ fn build_pipeline_statement(pair: Pair<'_, Rule>) -> Result<PipelineStatement, P
         Rule::match_stmt => pattern::build_match_clause(pair).map(PipelineStatement::Match),
         Rule::filter_stmt => build_filter(pair).map(PipelineStatement::Filter),
         Rule::let_stmt => build_let(pair).map(PipelineStatement::Let),
+        Rule::for_stmt => build_for(pair).map(PipelineStatement::Unwind),
         Rule::unwind_stmt => build_unwind(pair).map(PipelineStatement::Unwind),
         Rule::sorting_stmt => build_sorting(pair).map(PipelineStatement::Sorting),
         Rule::offset_stmt => build_limit_or_offset(pair).map(PipelineStatement::Offset),
         Rule::limit_stmt => build_limit_or_offset(pair).map(PipelineStatement::Limit),
         Rule::return_stmt => build_return_clause(pair).map(PipelineStatement::Return),
         Rule::with_stmt => build_with_clause(pair).map(PipelineStatement::With),
-        Rule::for_stmt => Err(not_implemented(&pair, "FOR is not yet supported")),
         Rule::call_stmt => call::build_pipeline_call(pair),
         _ => Err(unexpected_pair(pair, "expected pipeline statement")),
     }
@@ -298,6 +298,26 @@ fn build_unwind(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
         .ok_or_else(|| ParserError::syntax("UNWIND is missing alias", source_span, None))
         .and_then(|pair| db_string_pair(pair))?;
     Ok(UnwindStatement {
+        syntax: RowExpansionSyntax::Unwind,
+        source,
+        alias,
+        span: source_span,
+    })
+}
+
+fn build_for(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
+    let source_span = span(&pair);
+    let mut children = pair.into_inner();
+    let alias = children
+        .next()
+        .ok_or_else(|| ParserError::syntax("FOR is missing binding variable", source_span, None))
+        .and_then(|pair| db_string_pair(pair))?;
+    let source = children
+        .next()
+        .ok_or_else(|| ParserError::syntax("FOR is missing source expression", source_span, None))
+        .and_then(|pair| expr::build_value_expr(pair))?;
+    Ok(UnwindStatement {
+        syntax: RowExpansionSyntax::For,
         source,
         alias,
         span: source_span,

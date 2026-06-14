@@ -390,7 +390,7 @@ fn parse_transaction_control() {
 fn deferred_surfaces_return_not_implemented() {
     // These remain ISO-legal but are deferred in v1.0, so they parse and the
     // builder rejects them with FEATURE_NOT_SUPPORTED (42N01).
-    for source in ["MERGE (n:Person {name: 'X'})", "FOR x IN [1,2,3] RETURN x"] {
+    for source in ["MERGE (n:Person {name: 'X'})", "SELECT * FROM g"] {
         let error = parse(source).expect_err(source);
         assert_eq!(
             error.gqlstatus(),

@@ -37,7 +37,7 @@ pub(super) fn execute(
             _ => {
                 return Err(ExecutorError::data_exception(
                     DataExceptionSubclass::InvalidValueType,
-                    "UNWIND requires a list value",
+                    "row expansion requires a list value",
                     span,
                 ));
             }

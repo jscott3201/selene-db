@@ -30,7 +30,7 @@ pub enum BindingDeclKind {
     EdgePattern,
     /// A value alias introduced by `LET`.
     LetAlias,
-    /// A value alias introduced by `UNWIND`.
+    /// A value alias introduced by row expansion (`FOR` / `UNWIND`).
     UnwindAlias,
     /// A projected value introduced by `RETURN` or `WITH`.
     ProjectionAlias,
@@ -84,7 +84,7 @@ pub enum BindingDecl {
         /// Static type of the binding.
         ty: AnalyzedType,
     },
-    /// `UNWIND expr AS x`.
+    /// `FOR x IN expr` or `UNWIND expr AS x`.
     UnwindAlias {
         /// Allocated binding ID.
         binding: BindingId,

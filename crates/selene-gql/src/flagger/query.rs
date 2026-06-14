@@ -10,7 +10,7 @@ use crate::{
             EdgeDirection, EdgePattern, GraphPattern, MatchClause, MatchMode, NodePattern,
             PathMode, PathSelector, PatternElement, Quantifier,
         },
-        statement::{LetBinding, OrderTerm, UnwindStatement},
+        statement::{LetBinding, OrderTerm, RowExpansionSyntax, UnwindStatement},
     },
 };
 
@@ -265,6 +265,9 @@ fn let_bindings(bindings: &[LetBinding], uses: &mut Vec<FeatureUse>) {
 }
 
 fn unwind(statement: &UnwindStatement, uses: &mut Vec<FeatureUse>) {
+    if statement.syntax == RowExpansionSyntax::For {
+        record_feature(uses, FeatureId::GQ10, statement.span);
+    }
     expr::value(&statement.source, uses);
 }
 
