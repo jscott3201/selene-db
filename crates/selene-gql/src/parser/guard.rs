@@ -22,16 +22,16 @@ use crate::{SourceSpan, error::ParserError};
 /// catch it. See `tests/parser_expr_depth.rs::nested_subqueries_with_deep_folds_do_not_crash`.
 pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 
-/// Maximum simultaneously-open `[` (list / index / comprehension) nesting
+/// Maximum simultaneously-open `[` (list / index) nesting
 /// depth admitted in a single statement.
 ///
 /// pest is not packrat-memoized, so a `[` opener is re-explored by each of the
-/// three `[`-prefixed expression rules (`list_access_op`, `list_comprehension`,
-/// `list_lit`; see `grammar.pest`) before the parser can commit. A run of
-/// *unclosed* `[` therefore nests those ambiguous sub-parses, and the failed
-/// branches are recomputed at every level — super-linear backtracking that
-/// reaches seconds-to-minutes parse time for sub-kilobyte hostile inputs (the
-/// fuzz corpus blows up around 57 nested `[`), well under [`MAX_NESTING_DEPTH`].
+/// two `[`-prefixed expression rules (`list_access_op`, `list_lit`; see
+/// `grammar.pest`) before the parser can commit. A run of *unclosed* `[`
+/// therefore nests those ambiguous sub-parses, and the failed branches are
+/// recomputed at every level — super-linear backtracking that reaches
+/// seconds-to-minutes parse time for sub-kilobyte hostile inputs (the fuzz
+/// corpus blows up around 57 nested `[`), well under [`MAX_NESTING_DEPTH`].
 /// Parsing precedes execution, so an execution deadline cannot interrupt it;
 /// the only safe place to stop the blow-up is before recursive descent begins.
 ///

@@ -487,6 +487,29 @@ fn deferred_grammar_surfaces_report_not_implemented_with_42n01() {
 }
 
 #[test]
+fn non_iso_list_iteration_expressions_are_syntax_errors() {
+    for source in [
+        "RETURN [x IN [1, 2, 3] WHERE x > 1 | x]",
+        "RETURN ALL(x IN [1, 2, 3] WHERE x > 0)",
+        "RETURN ANY(x IN [1, 2, 3] WHERE x = 2)",
+        "RETURN NONE(x IN [1, 2, 3] WHERE x = 4)",
+        "RETURN SINGLE(x IN [1, 2, 3] WHERE x = 2)",
+        "RETURN REDUCE(acc = 0, x IN [1, 2, 3] | acc + x)",
+    ] {
+        let error = parse(source).expect_err(source);
+        assert!(
+            matches!(error, ParserError::SyntaxError { .. }),
+            "expected SyntaxError for {source:?}, got {error:?}"
+        );
+        assert_eq!(
+            error.gqlstatus(),
+            GqlStatus::SYNTAX_ERROR,
+            "{source:?} must report 42001"
+        );
+    }
+}
+
+#[test]
 fn closed_type_ddl_features_are_supported() {
     // GG02 (closed graph type) + GG20 (explicit element type names) are claimed,
     // as is GG21 (explicit element type key label sets, 813) — but the bare
