@@ -138,7 +138,7 @@ fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
             Rule::session_value_spec => {
                 value = Some(expr::build_value_expr(first_child(child)?)?);
             }
-            Rule::value_subquery_expr => {
+            Rule::session_value_subquery_expr => {
                 return Err(unsupported_feature(
                     &child,
                     FeatureId::GS11,

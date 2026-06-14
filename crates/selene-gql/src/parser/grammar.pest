@@ -157,7 +157,8 @@ session_set_time_zone  = { ^"TIME" ~ ^"ZONE" ~ string_lit }
 // parameter reference) per ISO section 7.1 Conformance Rule: without Feature
 // GS14, the initializer shall conform to <value specification>. selene-db does
 // NOT claim GS14, so simple-expression / subquery RHS forms are rejected.
-session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ "=" ~ (value_subquery_expr | session_value_simple_expr | session_value_spec) }
+session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ "=" ~ (session_value_subquery_expr | session_value_simple_expr | session_value_spec) }
+session_value_subquery_expr = { &(value_subquery_expr ~ EOI) ~ value_subquery_expr }
 session_value_simple_expr = { !session_value_spec_to_eoi ~ expr }
 session_value_spec_to_eoi = _{ session_value_spec ~ EOI }
 session_value_spec     = { literal | typed_param_ref }

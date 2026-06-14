@@ -31,6 +31,10 @@ fn session_set_value_expression_initializers_report_unsupported_features() {
         ),
         ("SESSION SET VALUE $p = 41 + 1", FeatureId::GS14),
         ("SESSION SET VALUE $p = ($base)", FeatureId::GS14),
+        (
+            "SESSION SET VALUE $p = VALUE { MATCH (n) RETURN count(n) } + 1",
+            FeatureId::GS14,
+        ),
     ] {
         let error = parse(source).expect_err(source);
         assert_eq!(error.gqlstatus().as_str(), "42N01");
