@@ -1,7 +1,7 @@
 use proptest::prelude::*;
 
 use super::*;
-use crate::db_string;
+use crate::{Value, db_string};
 
 proptest! {
     #[test]
