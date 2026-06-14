@@ -83,7 +83,21 @@ default_value = _{ record_constructor | literal }
 edge_endpoint_clause = { ^"FROM" ~ label_list ~ ^"TO" ~ label_list }
 label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
 
-create_graph = { ^"CREATE" ~ or_replace? ~ ^"GRAPH" ~ if_not_exists? ~ ident }
+create_graph = {
+    ^"CREATE" ~ or_replace? ~ ^"GRAPH" ~ if_not_exists? ~
+    create_graph_name ~ create_graph_source? ~ create_graph_copy?
+}
+create_graph_name = { ("/" ~ ident)+ | ident }
+create_graph_source = {
+    ^"ANY"
+  | ^"LIKE" ~ create_graph_name
+  | create_graph_type_ref
+}
+create_graph_type_ref = { typed_marker? ~ (create_graph_type_literal | ident) }
+create_graph_type_literal = { "{" ~ create_graph_type_element ~ ("," ~ create_graph_type_element)* ~ "}" }
+create_graph_type_element = { "(" ~ ident ~ (":" ~ ident)? ~ create_graph_type_props? ~ ")" }
+create_graph_type_props = { "{" ~ type_prop_def_list? ~ "}" }
+create_graph_copy = { ^"AS" ~ ^"COPY" ~ ^"OF" ~ create_graph_name }
 drop_graph   = { ^"DROP" ~ ^"GRAPH" ~ if_exists? ~ ident }
 create_index = { ^"CREATE" ~ ^"INDEX" ~ if_not_exists? ~ ident ~ ^"ON" ~ ":" ~ ident ~ "(" ~ prop_ident ~ ("," ~ prop_ident)* ~ ")" }
 drop_index   = { ^"DROP" ~ ^"INDEX" ~ if_exists? ~ ident }

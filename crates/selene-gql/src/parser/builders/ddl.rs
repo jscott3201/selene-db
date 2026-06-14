@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    Rule, db_string_pair, expr, first_child, keyword_starts_with, keyword_tokens_eq, span,
-    unexpected_pair,
+    Rule, db_string_from_str, db_string_pair, expr, first_child, keyword_starts_with,
+    keyword_tokens_eq, span, unexpected_pair,
 };
 
 pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
@@ -49,7 +49,11 @@ fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => name = Some(db_string_pair(child)?),
+            Rule::create_graph_name if name.is_none() => {
+                let name_span = span(&child);
+                name = Some(db_string_from_str(child.as_str(), name_span, "graph name")?);
+            }
+            Rule::create_graph_source | Rule::create_graph_copy => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE GRAPH child")),
         }
     }
