@@ -148,9 +148,6 @@ pub(crate) fn check_query_subquery_depth(
                 for arg in &call.args {
                     check_expr_subquery_depth(arg, depth)?;
                 }
-                if let Some(filter) = &call.yield_filter {
-                    check_expr_subquery_depth(filter, depth)?;
-                }
             }
             PipelineStatement::CallSubquery(call) => {
                 check_query_subquery_depth(&call.body, depth.saturating_add(1))?;

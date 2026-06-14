@@ -473,10 +473,6 @@ fn fmt_call(out: &mut String, call: &ProcedureCall) -> fmt::Result {
             }
         }
     }
-    if let Some(filter) = &call.yield_filter {
-        out.push_str(" WHERE ");
-        fmt_expr(out, filter)?;
-    }
     Ok(())
 }
 

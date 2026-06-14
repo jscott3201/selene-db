@@ -4,7 +4,7 @@ use selene_core::DbString;
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedType, BindingDeclKind, EmptyProcedureRegistry,
     GqlStatus, GqlType, ProcedureOutputColumn, ProcedureParameter, ProcedureRegistry,
-    TypeMismatchContext, analyze, analyze::ConditionClause, parse,
+    TypeMismatchContext, analyze, parse,
 };
 use selene_testing::MockProcedureRegistry;
 
@@ -320,15 +320,18 @@ fn unknown_yield_column_errors() {
 }
 
 #[test]
-fn yield_where_filter_binds_yielded_alias() {
+fn pipeline_filter_binds_yielded_alias() {
     let registry = registry(
         &["pkg", "one"],
         Vec::new(),
         vec![output("score", GqlType::Integer)],
     );
 
-    let analyzed = analyze_with("CALL pkg.one() YIELD score AS s WHERE s > 10", &registry)
-        .expect("yield filter sees yielded alias");
+    let analyzed = analyze_with(
+        "CALL pkg.one() YIELD score AS s FILTER s > 10 RETURN s",
+        &registry,
+    )
+    .expect("pipeline filter sees yielded alias");
 
     assert_eq!(
         yield_type(&analyzed, "s"),
@@ -337,25 +340,10 @@ fn yield_where_filter_binds_yielded_alias() {
 }
 
 #[test]
-fn yield_where_filter_must_be_boolean_when_static() {
-    let registry = registry(
-        &["pkg", "one"],
-        Vec::new(),
-        vec![output("score", GqlType::Integer)],
-    );
-
-    let err = analyze_with("CALL pkg.one() YIELD score WHERE score", &registry)
-        .expect_err("non-boolean yield filter rejects");
-
-    assert!(matches!(
-        err,
-        AnalysisError::TypeMismatch {
-            context: TypeMismatchContext::Condition {
-                clause: ConditionClause::YieldWhere
-            },
-            ..
-        }
-    ));
+fn call_yield_where_is_rejected_before_analysis() {
+    let err = parse("CALL pkg.one() YIELD score WHERE score > 10")
+        .expect_err("post-yield WHERE is not ISO named procedure-call syntax");
+    assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
 }
 
 #[test]

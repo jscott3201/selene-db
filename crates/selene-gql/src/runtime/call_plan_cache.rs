@@ -302,13 +302,10 @@ mod tests {
         let yield_order = key("CALL cache.echo() YIELD a, b");
         let yield_order_reversed = key("CALL cache.echo() YIELD b, a");
         let yield_alias = key("CALL cache.echo() YIELD out AS alias");
-        let yield_filter_one = key("CALL cache.echo() YIELD out WHERE out > 1");
-        let yield_filter_two = key("CALL cache.echo() YIELD out WHERE out > 2");
 
         assert_ne!(arg_shape, arg_value);
         assert_ne!(yield_order, yield_order_reversed);
         assert_ne!(key("CALL cache.echo() YIELD out"), yield_alias);
-        assert_ne!(yield_filter_one, yield_filter_two);
         assert_ne!(
             key("CALL cache.echo($p)"),
             key("CALL cache.echo($p :: INT)")
@@ -323,16 +320,12 @@ mod tests {
         );
 
         let statement =
-            parse("CALL cache.echo(1 + 2, $p) YIELD out AS alias WHERE out IS NOT NULL")
-                .expect("source parses");
+            parse("CALL cache.echo(1 + 2, $p) YIELD out AS alias").expect("source parses");
         let Statement::Call(call) = statement else {
             panic!("expected top-level CALL");
         };
         let formatted = format_procedure_call(&call).expect("procedure call formats");
-        assert_eq!(
-            formatted,
-            "CALL cache.echo((1 + 2), $p) YIELD out AS alias WHERE out IS NOT NULL"
-        );
+        assert_eq!(formatted, "CALL cache.echo((1 + 2), $p) YIELD out AS alias");
     }
 
     #[test]

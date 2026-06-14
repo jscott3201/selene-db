@@ -363,9 +363,6 @@ fn push_call<'a>(call: &'a ProcedureCall, work: &mut Vec<Node<'a>>) {
     for arg in &call.args {
         work.push(Node::Expr(arg, 1));
     }
-    if let Some(filter) = &call.yield_filter {
-        work.push(Node::Expr(filter, 1));
-    }
 }
 
 fn push_ddl<'a>(statement: &'a DdlStatement, work: &mut Vec<Node<'a>>) {

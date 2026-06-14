@@ -670,7 +670,7 @@ loadable-extension machinery behind the native registry.
 ```gql
 CALL algo.pagerank('person_graph', 0.85, 30)
 YIELD node_id, score
-WHERE score > 0.01
+FILTER score > 0.01
 RETURN node_id, score
 ORDER BY score DESC
 LIMIT 20
@@ -679,13 +679,13 @@ LIMIT 20
 Form:
 
 ```text
-[ OPTIONAL ] CALL <namespace>.<procedure>(args) [ YIELD col1 [, col2 ...] [ WHERE expr ] ]
+[ OPTIONAL ] CALL <namespace>.<procedure>(args) [ YIELD col1 [, col2 ...] ]
 [ OPTIONAL ] CALL [ (var1 [, var2 ...]) ] { <query pipeline> } [ YIELD col1 [, col2 ...] ]
 ```
 
 `YIELD *` yields every output column. Each yield column can be aliased
-(`YIELD col AS alias`). The optional inline `WHERE` filters the call's
-output before it joins the surrounding pipeline.
+(`YIELD col AS alias`). Use a following pipeline `FILTER` statement to filter
+procedure output.
 
 ### Built-in `selene.*` procedures
 

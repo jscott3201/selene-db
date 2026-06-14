@@ -37,12 +37,7 @@ pub(crate) fn lower_top_level_call(
         }
     }
     let columns = planned.yield_schema.clone();
-    let mut pipeline = vec![PipelineOp::Call(planned)];
-    if let Some(filter) = &call.yield_filter {
-        pipeline.push(PipelineOp::Filter(expr::filter_predicate(
-            filter, analyzed,
-        )?));
-    }
+    let pipeline = vec![PipelineOp::Call(planned)];
     let next_pipeline_op_id = crate::PipelineOpId::new(pipeline.len() as u32);
     Ok(ExecutionPlan {
         category: analyzed.category,
