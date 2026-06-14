@@ -4,7 +4,7 @@ This guide walks you from an empty Cargo project to running your first ISO GQL q
 
 By the end you will have:
 
-1. Added `selene-db` to a Cargo project as path dependencies.
+1. Added `selene-db` crates to a Cargo project.
 2. Built a graph, added nodes and edges, and read them back with a `MATCH` query.
 3. Used labels, typed properties, and parameter bindings in a query pipeline.
 4. Confirmed read-your-writes durability across multiple transactions, and seen where on-disk persistence lives.
@@ -17,7 +17,7 @@ If you only want the 30-second version, skip to the [Hello-graph](#example-1-hel
 
 - **Rust 1.95.0 or later** (workspace `rust-version`). `rustup show` will confirm; `rustup update stable` if you are behind.
 - **Edition 2024**. New projects you generate with `cargo new` on modern toolchains already use this; the example `Cargo.toml` snippets below set it explicitly.
-- **macOS or Linux**. Windows is out of scope for v1.0.
+- **macOS or Linux**. Windows is currently out of scope.
 
 You do not need a database server, a container, or a wire client. `selene-db` is an in-process library: it runs in the same address space as your Rust application.
 
@@ -25,10 +25,10 @@ You do not need a database server, a container, or a wire client. `selene-db` is
 
 ## Adding selene-db to a Cargo project
 
-`selene-db` is not yet published to crates.io. Embedders depend on the workspace crates by path:
+The public packages are published to crates.io under the `selene-db-*`
+namespace. Keep the Rust crate names stable with `package = ...` aliases:
 
 ```bash
-git clone https://github.com/jscott3201/selene-db.git
 cargo new my-graph-app
 cd my-graph-app
 ```
@@ -42,17 +42,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-selene-core  = { path = "../selene-db/crates/selene-core" }
-selene-graph = { path = "../selene-db/crates/selene-graph" }
-selene-gql   = { path = "../selene-db/crates/selene-gql" }
+selene-core = { package = "selene-db-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", version = "1.2.0" }
+selene-gql = { package = "selene-db-gql", version = "1.2.0" }
 ```
 
 For on-disk persistence, add `selene-persist`. For graph algorithms — PageRank, betweenness, Louvain, and the rest, reachable both as a native Rust API and via `CALL algo.*` — add `selene-algorithms`:
 
 ```toml
-selene-persist    = { path = "../selene-db/crates/selene-persist" }
-selene-algorithms = { path = "../selene-db/crates/selene-algorithms" }
+selene-persist = { package = "selene-db-persist", version = "1.2.0" }
+selene-algorithms = { package = "selene-db-algorithms", version = "1.2.0" }
 ```
+
+When developing against a local checkout, replace the `version` entries above
+with `path = "path/to/selene-db/crates/<crate>"` while keeping the
+`package = "selene-db-*"` aliases.
 
 Run `cargo build` once to confirm the dependency graph resolves before moving on.
 
