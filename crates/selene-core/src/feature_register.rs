@@ -146,13 +146,14 @@ feature_ids! {
     GP14 = "GP14" => "Binding tables as procedure arguments";
     GP15 = "GP15" => "Graphs as procedure arguments";
     GP18 = "GP18" => "Mixed catalog/data transaction feature";
+    GQ02 = "GQ02" => "Composite query: OTHERWISE";
     GQ03 = "GQ03" => "Composite query: UNION";
     GQ04 = "GQ04" => "Composite query: EXCEPT DISTINCT";
     GQ05 = "GQ05" => "Composite query: EXCEPT ALL";
     GQ06 = "GQ06" => "Composite query: INTERSECT DISTINCT";
     GQ07 = "GQ07" => "Composite query: INTERSECT ALL";
     GQ08 = "GQ08" => "FILTER statement";
-    GQ09 = "GQ09" => "Composite query: OTHERWISE";
+    GQ09 = "GQ09" => "LET statement";
     GQ10 = "GQ10" => "FOR statement: list value support";
     GQ11 = "GQ11" => "FOR statement: WITH ORDINALITY";
     GQ12 = "GQ12" => "OFFSET clause";
@@ -324,6 +325,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GP02,
     FeatureId::GP03,
     FeatureId::GP04,
+    FeatureId::GQ02,
     FeatureId::GQ03,
     FeatureId::GQ04,
     FeatureId::GQ05,
