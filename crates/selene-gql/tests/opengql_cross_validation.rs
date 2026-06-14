@@ -10,15 +10,9 @@ const SYNTAX_GAP_ALLOWED: &[&str] = &[
     "create_closed_graph_from_nested_graph_type_(double_colon).gql",
     "create_graph.gql",
     "create_schema.gql",
-    "insert_statement.gql",
-    "match_and_insert_example.gql",
-    "match_with_exists_predicate_(match_block_statement_in_braces).gql",
-    "match_with_exists_predicate_(match_block_statement_in_parentheses).gql",
     "match_with_exists_predicate_(nested_match_statement).gql",
     "session_set_graph_to_current_graph.gql",
     "session_set_graph_to_current_property_graph.gql",
-    "session_set_property_as_value.gql",
-    "session_set_time_zone.gql",
 ];
 
 #[test]
