@@ -180,6 +180,7 @@ fn feature_status_reports_supported_rows() {
     );
     let feature_ids = string_column(&table, "feature_id");
     let statuses = string_column(&table, "status");
+    let rationales = string_column(&table, "rationale");
 
     assert!(!feature_ids.is_empty());
     let gp04 = feature_ids
@@ -187,6 +188,20 @@ fn feature_status_reports_supported_rows() {
         .position(|value| value == "GP04")
         .expect("GP04 row exists");
     assert_eq!(statuses[gp04], "supported");
+
+    for (feature_id, expected_name) in [
+        ("GQ12", "ORDER BY and page statement: OFFSET clause"),
+        ("GQ13", "ORDER BY and page statement: LIMIT clause"),
+        ("GQ18", "Scalar subqueries"),
+        ("GQ20", "Advanced linear composition with NEXT"),
+    ] {
+        let index = feature_ids
+            .iter()
+            .position(|value| value == feature_id)
+            .unwrap_or_else(|| panic!("{feature_id} row exists"));
+        assert_eq!(statuses[index], "supported");
+        assert_eq!(rationales[index], expected_name);
+    }
 }
 
 #[test]
