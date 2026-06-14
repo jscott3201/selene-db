@@ -25,6 +25,17 @@ fn representative_read_shapes_round_trip() {
 }
 
 #[test]
+fn explicit_all_set_quantifier_formats_to_implicit_default() {
+    for source in ["RETURN ALL 1 AS n", "SELECT ALL 1 AS n"] {
+        let parsed = parse(source).expect("explicit ALL parses");
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert_eq!(formatted, "RETURN 1 AS n", "{source}");
+        let reparsed = parse(&formatted).expect("formatted source reparses");
+        assert!(structurally_eq(&parsed, &reparsed), "{source}");
+    }
+}
+
+#[test]
 fn empty_grouping_set_formats_with_parentheses() {
     let source = "RETURN count(*) AS c GROUP BY ()";
     let parsed = parse(source).expect("empty grouping set parses");

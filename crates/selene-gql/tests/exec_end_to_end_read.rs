@@ -109,6 +109,16 @@ fn read_executes_distinct_projection() {
 }
 
 #[test]
+fn read_executes_explicit_all_projection() {
+    let table = execute_read("FOR x IN [1, 1, 2] RETURN ALL x AS x ORDER BY x");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(1), Value::Int(1), Value::Int(2)]
+    );
+}
+
+#[test]
 fn read_executes_limit_with_offset() {
     let table = execute_read("MATCH (n:Person) RETURN n.name AS name LIMIT 2 OFFSET 1");
 

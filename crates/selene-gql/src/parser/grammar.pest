@@ -178,7 +178,7 @@ session_reset_parameter   = { ^"PARAMETER"? ~ param_ref }
 // -- SELECT (desugars to MATCH + RETURN at AST level) ------------
 
 select_stmt = {
-    ^"SELECT" ~ distinct_kw? ~ (return_star | projection_list)
+    ^"SELECT" ~ (distinct_kw | all_kw)? ~ (return_star | projection_list)
     ~ select_from? ~ where_clause?
     ~ group_by_clause? ~ having_clause?
     ~ sorting_stmt? ~ offset_stmt? ~ limit_stmt?
@@ -439,7 +439,12 @@ limit_value   = { typed_param_ref | uint }
 
 // -- RETURN ---------------------------------------------------------
 
-return_stmt = { ^"RETURN" ~ (no_bindings | distinct_kw? ~ (return_star | projection_list) ~ group_by_clause? ~ having_clause?) }
+return_stmt = {
+    ^"RETURN" ~ (
+        no_bindings
+      | (distinct_kw | all_kw)? ~ (return_star | projection_list) ~ group_by_clause? ~ having_clause?
+    )
+}
 no_bindings = { ^"NO" ~ ^"BINDINGS" }
 return_star = { "*" }
 having_clause = { ^"HAVING" ~ expr }
