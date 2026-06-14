@@ -4,7 +4,7 @@ use std::{fs, path::Path};
 
 use selene_gql::{ParserError, parse};
 
-const SYNTAX_GAP_ALLOWED: &[&str] = &["create_schema.gql"];
+const SYNTAX_GAP_ALLOWED: &[&str] = &[];
 
 #[test]
 fn opengql_samples_return_structured_results() {

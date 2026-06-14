@@ -18,7 +18,7 @@
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (explain_stmt | create_schema_command | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
 
 explain_stmt = { ^"EXPLAIN" ~ explainable_statement }
 explainable_statement = { ddl_statement | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
@@ -29,6 +29,10 @@ ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_
               | create_edge_type | drop_edge_type | truncate_edge_type | show_edge_types
               | show_indexes | show_procedures
               | create_graph | drop_graph | create_index | drop_index }
+
+create_schema_command = { create_schema ~ (^"NEXT" ~ create_schema)* }
+create_schema = { ^"CREATE" ~ ^"SCHEMA" ~ if_not_exists? ~ schema_name }
+schema_name = { ("/" ~ ident)+ | ident }
 
 create_node_type = {
     ^"CREATE" ~ or_replace? ~ ^"NODE" ~ ^"TYPE" ~ if_not_exists? ~
