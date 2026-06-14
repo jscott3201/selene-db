@@ -22,14 +22,17 @@ pub(crate) fn execute(
 ) -> Result<Vec<Binding>, ExecutorError> {
     let child_rows = pattern::walk_join_tree(child, env)?;
     // Per ISO 39075:2024 §16.6 SR2c the equivalences are:
-    //   ALL SHORTEST          == SHORTEST 1 ... GROUP  (count = 1, group = true)
-    //   ANY SHORTEST          == SHORTEST 1 ... PATH   (count = 1, group = false)
-    //   <counted shortest path>  == SHORTEST N PATHS   (count = N, group = false)
-    //   <counted shortest group> == SHORTEST N GROUPS  (count = N, group = true)
-    // ALL/ANY (non-shortest) are not length-ranked and keep all / one per pair.
+    //   ANY [N]              == ANY N ... PATHS         (count = N, no ranking)
+    //   ALL SHORTEST         == SHORTEST 1 ... GROUP    (count = 1, group = true)
+    //   ANY SHORTEST         == SHORTEST 1 ... PATH     (count = 1, group = false)
+    //   <counted shortest path>  == SHORTEST N PATHS    (count = N, group = false)
+    //   <counted shortest group> == SHORTEST N GROUPS   (count = N, group = true)
+    // ALL (non-shortest) keeps every row.
     match selector {
         PathSelector::All => Ok(child_rows),
-        PathSelector::Any => select_any(child_rows, source_binding, final_binding, env),
+        PathSelector::Any { paths } => {
+            select_any(child_rows, source_binding, final_binding, env, paths)
+        }
         PathSelector::AllShortest => select_counted(
             child_rows,
             source_binding,
@@ -74,9 +77,15 @@ fn select_any(
     source_binding: TailBinding,
     final_binding: TailBinding,
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
+    count: u32,
 ) -> Result<Vec<Binding>, ExecutorError> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+
     let mut selected = Vec::new();
-    let mut seen = FxHashSet::default();
+    let mut per_pair_selected: FxHashMap<EndpointPair, usize> = FxHashMap::default();
+    let limit = usize::try_from(count).unwrap_or(usize::MAX);
     let mut rows_since_check = 0;
     for row in rows {
         env.ctx
@@ -85,7 +94,9 @@ fn select_any(
         let Some(pair) = endpoint_pair(&row, source_binding, final_binding, env)? else {
             continue;
         };
-        if seen.insert(pair) {
+        let selected_count = per_pair_selected.entry(pair).or_default();
+        if *selected_count < limit {
+            *selected_count += 1;
             selected.push(row);
         }
     }

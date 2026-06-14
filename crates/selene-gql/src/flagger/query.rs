@@ -194,7 +194,7 @@ pub(crate) fn match_clause(clause: &MatchClause, uses: &mut Vec<FeatureUse>) {
     if let Some(selector) = clause.selector {
         match selector {
             PathSelector::All => record_feature(uses, FeatureId::G015, clause.span),
-            PathSelector::Any => record_feature(uses, FeatureId::G016, clause.span),
+            PathSelector::Any { .. } => record_feature(uses, FeatureId::G016, clause.span),
             PathSelector::AllShortest => record_feature(uses, FeatureId::G017, clause.span),
             PathSelector::AnyShortest => record_feature(uses, FeatureId::G018, clause.span),
             // Per ISO 39075:2024 §16.6 CR10/11: SHORTEST N PATHS is the counted
