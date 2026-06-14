@@ -522,7 +522,8 @@ yield_item     = { ("*" | prop_ident) ~ alias? }
 // -- Mutations ------------------------------------------------------
 
 mutation_pipeline = { (match_stmt | filter_stmt)* ~ mutation_op+ ~ (return_stmt | finish_stmt)? }
-finish_stmt       = { ^"FINISH" }
+finish_stmt       = { finish_kw }
+finish_kw         = @{ ^"FINISH" ~ !(LETTER | NUMBER | "_") }
 mutation_op       = { insert_op | merge_op | set_stmt | remove_stmt | detach_delete_op | delete_op }
 
 // MERGE accepts ON CREATE and ON MATCH in either order, with at most one
@@ -530,14 +531,18 @@ mutation_op       = { insert_op | merge_op | set_stmt | remove_stmt | detach_del
 // (e.g. `ON CREATE ... ON CREATE ...`) that a naive
 // `(a | b)? ~ (a | b)?` would let through. Builder routes each clause
 // by rule name.
-merge_op = { ^"MERGE" ~ node_pattern ~ ((on_create_clause ~ on_match_clause?) | (on_match_clause ~ on_create_clause?))? }
-on_create_clause = { ^"ON" ~ ^"CREATE" ~ ^"SET" ~ set_pair ~ ("," ~ set_pair)* }
-on_match_clause  = { ^"ON" ~ ^"MATCH" ~ ^"SET" ~ set_pair ~ ("," ~ set_pair)* }
+merge_op = { merge_kw ~ node_pattern ~ ((on_create_clause ~ on_match_clause?) | (on_match_clause ~ on_create_clause?))? }
+merge_kw = @{ ^"MERGE" ~ !(LETTER | NUMBER | "_") }
+on_create_clause = { on_kw ~ create_kw ~ set_kw ~ set_pair ~ ("," ~ set_pair)* }
+on_match_clause  = { on_kw ~ match_kw ~ set_kw ~ set_pair ~ ("," ~ set_pair)* }
+on_kw = @{ ^"ON" ~ !(LETTER | NUMBER | "_") }
+create_kw = @{ ^"CREATE" ~ !(LETTER | NUMBER | "_") }
 set_pair         = { ident ~ "." ~ prop_ident ~ "=" ~ expr }
 
 // INSERT: path-based form per spec section13.2
 // Example: INSERT (a:P {name: 'Alice'})-[:K]->(b:P {name: 'Bob'})
-insert_op = { ^"INSERT" ~ insert_graph_pattern }
+insert_op = { insert_kw ~ insert_graph_pattern }
+insert_kw = @{ ^"INSERT" ~ !(LETTER | NUMBER | "_") }
 insert_graph_pattern = { insert_path_pattern ~ ("," ~ insert_path_pattern)* }
 insert_path_pattern = { insert_node_pattern ~ (insert_edge_pattern ~ insert_node_pattern)* }
 insert_node_pattern = { "(" ~ ident? ~ insert_label_set? ~ property_map? ~ ")" }
@@ -553,18 +558,21 @@ set_kw = @{ ^"SET" ~ !(LETTER | NUMBER | "_") }
 set_item = { set_property_item | set_all_properties_item | set_label_item }
 set_property_item = { ident ~ "." ~ prop_ident ~ "=" ~ expr }
 set_all_properties_item = { ident ~ "=" ~ property_map }
-set_label_item = { ident ~ (^"IS" | ":") ~ ident }
+set_label_item = { ident ~ (is_kw | ":") ~ ident }
 
 // Multi-item REMOVE (spec section13.4): REMOVE a.x, b.y, n IS Label
-remove_stmt = { ^"REMOVE" ~ remove_item ~ ("," ~ remove_item)* }
+remove_stmt = { remove_kw ~ remove_item ~ ("," ~ remove_item)* }
+remove_kw = @{ ^"REMOVE" ~ !(LETTER | NUMBER | "_") }
 remove_item = { remove_property_item | remove_label_item }
 remove_property_item = { ident ~ "." ~ prop_ident }
-remove_label_item = { ident ~ (^"IS" | ":") ~ ident }
+remove_label_item = { ident ~ (is_kw | ":") ~ ident }
 
 // Multi-target DELETE (spec section13.5): DELETE a, b or DETACH DELETE a, b
-detach_delete_op = { ^"DETACH" ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
-delete_op   = { nodetach_kw? ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
-nodetach_kw = { ^"NODETACH" }
+detach_delete_op = { detach_kw ~ delete_kw ~ ident ~ ("," ~ ident)* }
+detach_kw = @{ ^"DETACH" ~ !(LETTER | NUMBER | "_") }
+delete_op   = { nodetach_kw? ~ delete_kw ~ ident ~ ("," ~ ident)* }
+delete_kw = @{ ^"DELETE" ~ !(LETTER | NUMBER | "_") }
+nodetach_kw = @{ ^"NODETACH" ~ !(LETTER | NUMBER | "_") }
 
 // -------------------------------------------------------------------
 // Expressions (precedence via recursive descent)
