@@ -1,4 +1,4 @@
 // corpus: negative
 // feature: GS05
-// expects: parse-rejected(syntax)
+// expects: parse-rejected(GS05)
 SESSION RESET SCHEMA

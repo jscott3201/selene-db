@@ -130,9 +130,10 @@ rollback            = { ^"ROLLBACK" }
 // ISO/IEC 39075:2024 section 7 session management. The implemented subset is
 // the D1-meaningful surface: SET [PROPERTY] GRAPH to the current graph, SET
 // VALUE (GS03), SET TIME ZONE (GS15), RESET targets (GS04/GS07/GS08/GS16), and
-// CLOSE (section 7.3, no feature code). The D1-blocked forms (SET
-// SCHEMA/GRAPH-parameter/BINDING TABLE = GS01/GS02, RESET SCHEMA/GRAPH =
-// GS05/GS06) are intentionally omitted; they parse-fail cleanly and carry
+// CLOSE (section 7.3, no feature code). D1-blocked RESET SCHEMA/GRAPH forms are
+// parsed to structured GS05/GS06 UnsupportedFeature errors. The remaining
+// D1-blocked SET forms (SET SCHEMA/GRAPH-parameter/BINDING TABLE = GS01/GS02)
+// are intentionally omitted; they parse-fail cleanly and carry
 // NOT_SUPPORTED_RATIONALE entries.
 
 session_command = { session_set | session_reset | session_close }
@@ -159,7 +160,9 @@ session_value_spec     = { literal | typed_param_ref }
 // section 7.2 <session reset command>. Bare SESSION RESET = ALL CHARACTERISTICS
 // (Syntax Rule 2b); bare {PARAMETERS|CHARACTERISTICS} = ALL form (Rule 2a-i).
 session_reset             = { ^"SESSION" ~ ^"RESET" ~ session_reset_args? }
-session_reset_args        = { session_reset_time_zone | session_reset_all | session_reset_parameter }
+session_reset_args        = { session_reset_schema | session_reset_graph | session_reset_time_zone | session_reset_all | session_reset_parameter }
+session_reset_schema      = { ^"SCHEMA" }
+session_reset_graph       = { ^"PROPERTY"? ~ ^"GRAPH" }
 session_reset_time_zone   = { ^"TIME" ~ ^"ZONE" }
 session_reset_all         = { ^"ALL"? ~ (^"PARAMETERS" | ^"CHARACTERISTICS") }
 session_reset_parameter   = { ^"PARAMETER"? ~ param_ref }

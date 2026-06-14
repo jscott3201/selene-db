@@ -1,13 +1,14 @@
 //! Session-control builders (ISO/IEC 39075:2024 section 7).
 
 use pest::iterators::Pair;
+use selene_core::feature_register::FeatureId;
 
 use crate::{
     ast::{SessionResetTarget, SessionSetGraphTarget, Statement},
     error::ParserError,
 };
 
-use super::{Rule, db_string_param, expr, first_child, span, unexpected_pair};
+use super::{Rule, db_string_param, expr, first_child, span, unexpected_pair, unsupported_feature};
 
 /// Build a `session_command` parse tree into a session-control [`Statement`].
 pub(super) fn build_session_command(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -130,6 +131,20 @@ fn build_session_reset(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     };
     let inner = first_child(args)?;
     let target = match inner.as_rule() {
+        Rule::session_reset_schema => {
+            return Err(unsupported_feature(
+                &inner,
+                FeatureId::GS05,
+                "SESSION RESET SCHEMA is outside the current catalog claim",
+            ));
+        }
+        Rule::session_reset_graph => {
+            return Err(unsupported_feature(
+                &inner,
+                FeatureId::GS06,
+                "SESSION RESET GRAPH is outside the current D1 graph claim",
+            ));
+        }
         Rule::session_reset_time_zone => SessionResetTarget::TimeZone,
         Rule::session_reset_all => reset_all_target(&inner),
         Rule::session_reset_parameter => {
