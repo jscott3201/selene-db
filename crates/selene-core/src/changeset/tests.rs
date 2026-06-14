@@ -1,7 +1,7 @@
 use smallvec::smallvec;
 
 use super::*;
-use crate::GraphTypeId;
+use crate::{CoreError, GraphTypeId, Value};
 
 fn dbs(name: &str) -> DbString {
     crate::db_string(name).unwrap()
