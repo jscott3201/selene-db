@@ -620,7 +620,16 @@ list_reduce        = { ^"REDUCE" ~ "(" ~ ident ~ "=" ~ expr ~ "," ~ ident ~ in_k
 list_iter_where    = { ^"WHERE" ~ expr }
 
 count_subquery_expr  = { ^"COUNT" ~ "{" ~ match_stmt ~ "}" }
-exists_expr          = { not_kw? ~ ^"EXISTS" ~ "{" ~ match_stmt ~ "}" }
+// ISO/IEC 39075:2024 §19.4 <exists predicate> admits either a direct
+// <graph pattern> or a <match statement block>, delimited by braces or
+// parentheses. selene keeps the D1 single-MATCH subset of match statement block
+// support; direct graph patterns are lowered by the builder to an equivalent
+// MATCH clause.
+exists_expr          = { not_kw? ~ ^"EXISTS" ~ exists_body }
+exists_body          = {
+    "{" ~ (match_stmt | graph_pattern_list) ~ "}"
+  | "(" ~ (match_stmt | graph_pattern_list) ~ ")"
+}
 value_subquery_expr  = { ^"VALUE" ~ "{" ~ query_pipeline ~ "}" }
 all_different_expr   = { ^"ALL_DIFFERENT" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
 same_expr            = { ^"SAME" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
