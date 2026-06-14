@@ -6,7 +6,7 @@
 //! execute, and in-memory commit CPU — the deltas GQLRT-05 / CORE-06 move. The
 //! durable family (`*_with_flush`, `direct_*`) keeps a real WAL. Note that a
 //! WAL-backed `SharedGraph` ALWAYS commits in `OnFlushOnly` with
-//! `CommitBatching::Off` (the committer owns fsync since v1.1), so any caller
+//! `CommitBatching::Off` (the committer owns fsync since v1.2), so any caller
 //! `SyncPolicy` is inert — which is exactly why the CPU arms must not be
 //! WAL-backed (one fsync per commit would swamp the CPU sample).
 
