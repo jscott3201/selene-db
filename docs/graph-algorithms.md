@@ -392,7 +392,7 @@ RETURN community, count(*) AS size
 ORDER BY size DESC
 ```
 
-Converges when no labels change in an iteration, or `max_iter` is reached. `max_iter == 0` returns the initial state (each node in its own community). Unit weights only in v1.0; weighted label propagation is deferred. Isolated nodes retain their initial label.
+Converges when no labels change in an iteration, or `max_iter` is reached. `max_iter == 0` returns the initial state (each node in its own community). Current label propagation uses unit weights; weighted propagation is deferred. Isolated nodes retain their initial label.
 
 Complexity per iteration: `O(V + E)` for the visit + `O(d · log d)` per node for the per-node label-frequency tally, where `d` is degree.
 
@@ -412,7 +412,7 @@ RETURN community, count(*) AS size
 ORDER BY size DESC
 ```
 
-The `u32 level` is always `0` in v1.0; the slot is reserved for hierarchical Louvain (multi-level contraction) in a future release. Edge weights are projected via `ProjNeighbor::weight` (unit weights when the projection is unweighted). `max_iter == 0` returns the initial state.
+The `u32 level` is always `0` for the current single-pass Louvain implementation; the slot is reserved for hierarchical Louvain (multi-level contraction) in a future release. Edge weights are projected via `ProjNeighbor::weight` (unit weights when the projection is unweighted). `max_iter == 0` returns the initial state.
 
 Determinism: with a fixed projection and fixed `max_iter`, Louvain produces the same assignment every run. No RNG is involved.
 
