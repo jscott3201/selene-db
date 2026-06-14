@@ -20,8 +20,9 @@
 
 gql_program = { SOI ~ (explain_stmt | create_schema_command | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
 
-explain_stmt = { ^"EXPLAIN" ~ explainable_statement }
+explain_stmt = { explain_kw ~ explainable_statement }
 explainable_statement = { ddl_statement | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
+explain_kw = @{ ^"EXPLAIN" ~ !(LETTER | NUMBER | "_") }
 
 // -- DDL statements -----------------------------------------------
 
