@@ -174,7 +174,7 @@ feature_ids! {
     GS08 = "GS08" => "SESSION RESET command: reset all session parameters";
     GS10 = "GS10" => "SESSION SET command: session-local binding table parameters based on subqueries";
     GS11 = "GS11" => "SESSION SET command: session-local value parameters based on subqueries";
-    GS12 = "GS12" => "SESSION SET command: session-local graph parameters based on simple graph expressions or references";
+    GS12 = "GS12" => "SESSION SET command: session-local graph parameters based on simple expressions or references";
     GS13 = "GS13" => "SESSION SET command: session-local binding table parameters based on simple expressions or references";
     GS14 = "GS14" => "SESSION SET command: session-local value parameters based on simple expressions";
     GS15 = "GS15" => "SESSION SET command: set time zone displacement";
