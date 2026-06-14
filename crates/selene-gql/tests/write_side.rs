@@ -99,7 +99,16 @@ fn parse_finish_terminator() {
 fn parse_graph_ddl() {
     // CREATE GRAPH stays parse-rejected under D1 single-graph (GC04 unsupported
     // — cannot create a second graph).
-    for source in ["CREATE GRAPH foo", "CREATE GRAPH IF NOT EXISTS foo"] {
+    for source in [
+        "CREATE GRAPH foo",
+        "CREATE GRAPH IF NOT EXISTS foo",
+        "CREATE GRAPH foo ANY",
+        "CREATE GRAPH foo TYPED fooType",
+        "CREATE GRAPH foo ::fooType",
+        "CREATE GRAPH /foo LIKE /bar",
+        "CREATE GRAPH foo ANY AS COPY OF bar",
+        "CREATE GRAPH foo {(Person :Person {name STRING})}",
+    ] {
         let error = parse(source).expect_err(source);
         assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }

@@ -407,7 +407,17 @@ fn mutation_feature_is_supported() {
 fn create_graph_is_rejected_before_planning() {
     // CREATE GRAPH stays GC04-rejected under D1 single-graph: the engine cannot
     // create a second graph. DROP GRAPH is split out (now IM_DROP_GRAPH).
-    for source in ["CREATE GRAPH demo", "CREATE GRAPH IF NOT EXISTS demo"] {
+    for source in [
+        "CREATE GRAPH demo",
+        "CREATE GRAPH IF NOT EXISTS demo",
+        "CREATE GRAPH demo ANY",
+        "CREATE GRAPH demo TYPED socialNetworkGraphType",
+        "CREATE GRAPH demo ::socialNetworkGraphType",
+        "CREATE GRAPH demo ::{(City :City {name STRING})}",
+        "CREATE GRAPH /demo LIKE /source",
+        "CREATE GRAPH demo ANY AS COPY OF source",
+        "CREATE GRAPH demo {(Person :Person {lastname STRING, joined DATE})} AS COPY OF source",
+    ] {
         let error = parse(source).expect_err(source);
         assert_eq!(error.gqlstatus().as_str(), "42N01");
         assert_feature(error, FeatureId::GC04);

@@ -4,13 +4,7 @@ use std::{fs, path::Path};
 
 use selene_gql::{ParserError, parse};
 
-const SYNTAX_GAP_ALLOWED: &[&str] = &[
-    "create_closed_graph_from_graph_type_(double_colon).gql",
-    "create_closed_graph_from_graph_type_(lexical).gql",
-    "create_closed_graph_from_nested_graph_type_(double_colon).gql",
-    "create_graph.gql",
-    "create_schema.gql",
-];
+const SYNTAX_GAP_ALLOWED: &[&str] = &["create_schema.gql"];
 
 #[test]
 fn opengql_samples_return_structured_results() {
