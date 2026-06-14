@@ -34,6 +34,7 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
 
     for child in pair.into_inner() {
         match child.as_rule() {
+            Rule::match_kw => {}
             Rule::optional_modifier => optional = true,
             Rule::path_selector => {
                 selector = Some(build_path_selector(&child)?);

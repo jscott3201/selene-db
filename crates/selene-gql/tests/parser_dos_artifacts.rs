@@ -104,6 +104,12 @@ const TRIM_FALSE_START_ARTIFACTS: &[(&str, &str)] = &[
     ("slow-unit-b80e9eda", TRIM_SLOW_B80E9EDA_HEX),
 ];
 
+/// `fuzz/artifacts/parse_gql/slow-unit-7594295527082e8fbda55ba63023e93a3c5a20cc` (585 bytes).
+const SET_PREFIX_SLOW_75942955_HEX: &str = concat!(
+    "734554e3a2a245542e6c455454323d4554353237373628634554362c5b5b552e453d3030696e5b54452e453d3030696e5b5a553d3030696e5b5b552e453d3030694e5b443237373728734554662873455432286645323c455435362c4554353237373728735432453d455435323737362c455435323737372873457a3628736645552e453d3030696e5b54452e453d3030696e5b5a553d3030696e5b5b552e453d3030694e5b443237373728734554662873455432286645323c455435362c4554353237373728735432453d455435323737362c455435323737372873457a3628323d4554353237373628634554362c5b5b552e453d3030696e5b54452e453d3030696e5b5a553d3030696e5b5b552e453d3030694e5b443237373728734554662873455432286645323c455435362c4554353237373728735432453d455435323737362c455435323737372873457a3628736645552e453d3030696e5b54452e453d3030696e5b5a553d3030696e5b5b552e453d3030694e5b443237373728734554662873455432286645323c455435362c4554353237373728735432453d455435323737362c455435323737372873457a36287366456e6e35356c456c3d30306e542d690d2f472a2f0d2a2a2a2f2f2a2a2a2f0d",
+    "732222222222222222222222222260222222223a226e6e35356c457366456e6e35356c456c3d30306e542d690d2f472a2f0d2a2a2a2f2f2a2a2a2f0d732222222222222222222222222260222222223a226e6e35356c456c3d30306e542222222222222222222222223a222222222222222222",
+);
+
 /// Per-artifact wall-clock ceiling — a coarse, deliberately loose tripwire.
 ///
 /// The *primary*, deterministic guarantee is structural and lives in
@@ -411,6 +417,31 @@ mod recursion_crash {
                 "TRIM false-start artifact {label} is malformed and must not parse"
             );
         }
+    }
+
+    #[test]
+    fn set_keyword_prefix_false_start_artifact_rejects_quickly() {
+        // The June 14, 2026 local fuzz soak found a malformed input that begins
+        // with `SET` as the prefix of a longer word. `SET` must be guarded before
+        // pest enters the mutation grammar and explores the malformed RHS.
+        use std::time::Instant;
+
+        let bytes = decode_hex("slow-unit-75942955", super::SET_PREFIX_SLOW_75942955_HEX);
+        let source = std::str::from_utf8(&bytes)
+            .unwrap_or_else(|error| panic!("SET prefix artifact must be valid UTF-8: {error}"));
+        let start = Instant::now();
+        let result = parse(source);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < super::PARSE_BUDGET,
+            "SET prefix fuzz artifact took {elapsed:?} to parse (budget {:?})",
+            super::PARSE_BUDGET
+        );
+        assert!(
+            result.is_err(),
+            "SET prefix fuzz artifact is malformed and must not parse"
+        );
     }
 
     fn decode_hex(label: &str, hex: &str) -> Vec<u8> {

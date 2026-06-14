@@ -208,7 +208,8 @@ with_stmt   = { with_kw ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ ha
 
 // -- MATCH ----------------------------------------------------------
 
-match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ graph_pattern_list ~ where_clause? }
+match_stmt        = { optional_modifier? ~ match_kw ~ path_selector? ~ match_mode? ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ graph_pattern_list ~ where_clause? }
+match_kw          = @{ ^"MATCH" ~ !(LETTER | NUMBER | "_") }
 // ISO/IEC 39075:2024 §16.4 <match mode>. Verbatim BNF:
 //   <match mode> ::= <repeatable elements match mode> | <different edges match mode>
 //   <repeatable elements match mode> ::= REPEATABLE <element bindings or elements>
@@ -325,7 +326,8 @@ counted_shortest_tail = {
   | path_modifier? ~ (path_or_paths ~ !("="))? ~ counted_group_kw
 }
 counted_group_kw = { (^"GROUPS" | ^"GROUP") ~ !(LETTER | NUMBER | "_") }
-optional_modifier = { ^"OPTIONAL" }
+optional_modifier = { optional_kw }
+optional_kw = @{ ^"OPTIONAL" ~ !(LETTER | NUMBER | "_") }
 // Atomic + trailing word boundary so "WALKPATHS" cannot tokenize as WALK + PATHS
 // (and likewise the mode keyword cannot run into a following identifier).
 path_modifier     = @{ (^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL") ~ !(LETTER | NUMBER | "_") }
@@ -546,7 +548,8 @@ insert_edge_right = { "-" ~ "[" ~ edge_var? ~ label_expr? ~ property_map? ~ "]" 
 insert_edge_left  = { "<-" ~ "[" ~ edge_var? ~ label_expr? ~ property_map? ~ "]" ~ "-" }
 
 // Multi-item SET (spec section13.3): SET a.x = 1, b.y = 2, n = {x: 1}, n IS Label
-set_stmt = { ^"SET" ~ set_item ~ ("," ~ set_item)* }
+set_stmt = { set_kw ~ set_item ~ ("," ~ set_item)* }
+set_kw = @{ ^"SET" ~ !(LETTER | NUMBER | "_") }
 set_item = { set_property_item | set_all_properties_item | set_label_item }
 set_property_item = { ident ~ "." ~ prop_ident ~ "=" ~ expr }
 set_all_properties_item = { ident ~ "=" ~ property_map }
