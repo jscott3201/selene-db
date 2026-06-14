@@ -31,18 +31,18 @@ ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_
               | create_graph | drop_graph | create_index | drop_index }
 
 create_schema_command = { create_schema ~ (next_kw ~ create_schema)* }
-create_schema = { ^"CREATE" ~ ^"SCHEMA" ~ if_not_exists? ~ schema_name }
+create_schema = { ddl_create_kw ~ ddl_schema_kw ~ if_not_exists? ~ schema_name }
 schema_name = { ("/" ~ ident)+ | ident }
 
 create_node_type = {
-    ^"CREATE" ~ or_replace? ~ ^"NODE" ~ ^"TYPE" ~ if_not_exists? ~
-    node_type_descriptor ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    ddl_create_kw ~ or_replace? ~ ddl_node_kw ~ ddl_type_kw ~ if_not_exists? ~
+    node_type_descriptor ~ (ddl_extends_kw ~ ":" ~ ident)? ~
     "(" ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
 create_edge_type = {
-    ^"CREATE" ~ or_replace? ~ ^"EDGE" ~ ^"TYPE" ~ if_not_exists? ~
-    edge_type_descriptor ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    ddl_create_kw ~ or_replace? ~ ddl_edge_kw ~ ddl_type_kw ~ if_not_exists? ~
+    edge_type_descriptor ~ (ddl_extends_kw ~ ":" ~ ident)? ~
     "(" ~ edge_endpoint_clause? ~ ","? ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
@@ -68,43 +68,74 @@ edge_type_key_label_set = { key_label_set_phrase? ~ implies ~ key_label_implied_
 key_label_set_phrase     = { ":" ~ ident ~ ("&" ~ ":" ~ ident)* }
 key_label_implied_labels = { ":" ~ ident ~ ("&" ~ ":" ~ ident)* }
 implies                  = { "=>" | (^"IMPLIES" ~ !(LETTER | NUMBER | "_")) }
-validation_mode_clause = { ^"STRICT" | ^"WARN" }
-or_replace = { ^"OR" ~ ^"REPLACE" }
-drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
-drop_edge_type   = { ^"DROP" ~ ^"EDGE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
-drop_behavior    = { ^"RESTRICT" | ^"CASCADE" }
-truncate_node_type = { ^"TRUNCATE" ~ ^"NODE" ~ ^"TYPE" ~ ":" ~ ident }
-truncate_edge_type = { ^"TRUNCATE" ~ ^"EDGE" ~ ^"TYPE" ~ ":" ~ ident }
-show_node_types  = { ^"SHOW" ~ ^"NODE" ~ ^"TYPES" }
-show_edge_types  = { ^"SHOW" ~ ^"EDGE" ~ ^"TYPES" }
-show_indexes     = { ^"SHOW" ~ ^"INDEXES" }
-show_procedures  = { ^"SHOW" ~ ^"PROCEDURES" }
+validation_mode_clause = { ddl_strict_kw | ddl_warn_kw }
+or_replace = { ddl_or_kw ~ ddl_replace_kw }
+drop_node_type   = { ddl_drop_kw ~ ddl_node_kw ~ ddl_type_kw ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
+drop_edge_type   = { ddl_drop_kw ~ ddl_edge_kw ~ ddl_type_kw ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
+drop_behavior    = { ddl_restrict_kw | ddl_cascade_kw }
+truncate_node_type = { ddl_truncate_kw ~ ddl_node_kw ~ ddl_type_kw ~ ":" ~ ident }
+truncate_edge_type = { ddl_truncate_kw ~ ddl_edge_kw ~ ddl_type_kw ~ ":" ~ ident }
+show_node_types  = { ddl_show_kw ~ ddl_node_kw ~ ddl_types_kw }
+show_edge_types  = { ddl_show_kw ~ ddl_edge_kw ~ ddl_types_kw }
+show_indexes     = { ddl_show_kw ~ ddl_indexes_kw }
+show_procedures  = { ddl_show_kw ~ ddl_procedures_kw }
 
 type_prop_def_list = { type_prop_def ~ ("," ~ type_prop_def)* }
 type_prop_def      = { ident ~ ((typed_marker ~ type_name) | type_name) ~ type_prop_constraint* }
-type_prop_constraint = { ^"NOT" ~ ^"NULL" | ^"DEFAULT" ~ default_value | ^"IMMUTABLE" | ^"UNIQUE" | ^"INDEXED" ~ (^"AS" ~ ident)? }
+type_prop_constraint = { not_kw ~ null_kw | ddl_default_kw ~ default_value | ddl_immutable_kw | ddl_unique_kw | ddl_indexed_kw ~ (as_kw ~ ident)? }
 default_value = _{ record_constructor | literal }
-edge_endpoint_clause = { ^"FROM" ~ label_list ~ ^"TO" ~ label_list }
+edge_endpoint_clause = { from_kw ~ label_list ~ ddl_to_kw ~ label_list }
 label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
 
 create_graph = {
-    ^"CREATE" ~ or_replace? ~ ^"GRAPH" ~ if_not_exists? ~
+    ddl_create_kw ~ or_replace? ~ ddl_graph_kw ~ if_not_exists? ~
     create_graph_name ~ create_graph_source? ~ create_graph_copy?
 }
 create_graph_name = { ("/" ~ ident)+ | ident }
 create_graph_source = {
-    ^"ANY"
-  | ^"LIKE" ~ create_graph_name
+    ddl_any_kw
+  | ddl_like_kw ~ create_graph_name
   | create_graph_type_ref
 }
 create_graph_type_ref = { typed_marker? ~ (create_graph_type_literal | ident) }
 create_graph_type_literal = { "{" ~ create_graph_type_element ~ ("," ~ create_graph_type_element)* ~ "}" }
 create_graph_type_element = { "(" ~ ident ~ (":" ~ ident)? ~ create_graph_type_props? ~ ")" }
 create_graph_type_props = { "{" ~ type_prop_def_list? ~ "}" }
-create_graph_copy = { ^"AS" ~ ^"COPY" ~ ^"OF" ~ create_graph_name }
-drop_graph   = { ^"DROP" ~ ^"GRAPH" ~ if_exists? ~ ident }
-create_index = { ^"CREATE" ~ ^"INDEX" ~ if_not_exists? ~ ident ~ ^"ON" ~ ":" ~ ident ~ "(" ~ prop_ident ~ ("," ~ prop_ident)* ~ ")" }
-drop_index   = { ^"DROP" ~ ^"INDEX" ~ if_exists? ~ ident }
+create_graph_copy = { as_kw ~ ddl_copy_kw ~ ddl_of_kw ~ create_graph_name }
+drop_graph   = { ddl_drop_kw ~ ddl_graph_kw ~ if_exists? ~ ident }
+create_index = { ddl_create_kw ~ ddl_index_kw ~ if_not_exists? ~ ident ~ ddl_on_kw ~ ":" ~ ident ~ "(" ~ prop_ident ~ ("," ~ prop_ident)* ~ ")" }
+drop_index   = { ddl_drop_kw ~ ddl_index_kw ~ if_exists? ~ ident }
+
+ddl_create_kw = @{ ^"CREATE" ~ !(LETTER | NUMBER | "_") }
+ddl_drop_kw = @{ ^"DROP" ~ !(LETTER | NUMBER | "_") }
+ddl_truncate_kw = @{ ^"TRUNCATE" ~ !(LETTER | NUMBER | "_") }
+ddl_show_kw = @{ ^"SHOW" ~ !(LETTER | NUMBER | "_") }
+ddl_schema_kw = @{ ^"SCHEMA" ~ !(LETTER | NUMBER | "_") }
+ddl_node_kw = @{ ^"NODE" ~ !(LETTER | NUMBER | "_") }
+ddl_edge_kw = @{ ^"EDGE" ~ !(LETTER | NUMBER | "_") }
+ddl_type_kw = @{ ^"TYPE" ~ !(LETTER | NUMBER | "_") }
+ddl_types_kw = @{ ^"TYPES" ~ !(LETTER | NUMBER | "_") }
+ddl_graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
+ddl_index_kw = @{ ^"INDEX" ~ !(LETTER | NUMBER | "_") }
+ddl_indexes_kw = @{ ^"INDEXES" ~ !(LETTER | NUMBER | "_") }
+ddl_procedures_kw = @{ ^"PROCEDURES" ~ !(LETTER | NUMBER | "_") }
+ddl_extends_kw = @{ ^"EXTENDS" ~ !(LETTER | NUMBER | "_") }
+ddl_strict_kw = @{ ^"STRICT" ~ !(LETTER | NUMBER | "_") }
+ddl_warn_kw = @{ ^"WARN" ~ !(LETTER | NUMBER | "_") }
+ddl_or_kw = @{ ^"OR" ~ !(LETTER | NUMBER | "_") }
+ddl_replace_kw = @{ ^"REPLACE" ~ !(LETTER | NUMBER | "_") }
+ddl_restrict_kw = @{ ^"RESTRICT" ~ !(LETTER | NUMBER | "_") }
+ddl_cascade_kw = @{ ^"CASCADE" ~ !(LETTER | NUMBER | "_") }
+ddl_default_kw = @{ ^"DEFAULT" ~ !(LETTER | NUMBER | "_") }
+ddl_immutable_kw = @{ ^"IMMUTABLE" ~ !(LETTER | NUMBER | "_") }
+ddl_unique_kw = @{ ^"UNIQUE" ~ !(LETTER | NUMBER | "_") }
+ddl_indexed_kw = @{ ^"INDEXED" ~ !(LETTER | NUMBER | "_") }
+ddl_to_kw = @{ ^"TO" ~ !(LETTER | NUMBER | "_") }
+ddl_any_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
+ddl_like_kw = @{ ^"LIKE" ~ !(LETTER | NUMBER | "_") }
+ddl_copy_kw = @{ ^"COPY" ~ !(LETTER | NUMBER | "_") }
+ddl_of_kw = @{ ^"OF" ~ !(LETTER | NUMBER | "_") }
+ddl_on_kw = @{ ^"ON" ~ !(LETTER | NUMBER | "_") }
 
 if_not_exists = { if_kw ~ not_kw ~ exists_kw }
 if_exists     = { if_kw ~ exists_kw }
@@ -858,7 +889,7 @@ var_ref         = { ident }
 type_name = { prefixed_closed_dynamic_union_type | infix_type_name }
 infix_type_name = { type_name_primary ~ ("|" ~ type_name_primary)* }
 type_name_primary = { type_name_base ~ postfix_list_suffix* ~ type_not_null? }
-type_not_null = { ^"NOT" ~ ^"NULL" }
+type_not_null = { not_kw ~ null_kw }
 
 type_name_base = {
     ^"BOOLEAN" | ^"BOOL"
