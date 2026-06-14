@@ -536,9 +536,29 @@ fn bind_for(ctx: &mut BindContext, statement: &ForStatement) -> Result<(), Analy
 
 fn bind_sorting(ctx: &mut BindContext, terms: &[OrderTerm]) -> Result<(), AnalysisError> {
     for term in terms {
+        if sort_key_contains_nested_query(&term.expr) {
+            return Err(AnalysisError::SortKeyContainsNestedQuery {
+                span: term.expr.span(),
+            });
+        }
         expr::bind_value_expr(ctx, &term.expr)?;
     }
     Ok(())
+}
+
+fn sort_key_contains_nested_query(expr: &ValueExpr) -> bool {
+    let mut pending = vec![expr];
+    while let Some(expr) = pending.pop() {
+        if matches!(expr, ValueExpr::ValueSubquery { .. }) {
+            return true;
+        }
+        push_value_expr_children(expr, &mut pending);
+    }
+    false
+}
+
+fn push_value_expr_children<'a>(expr: &'a ValueExpr, pending: &mut Vec<&'a ValueExpr>) {
+    expr.for_each_child(&mut |child| pending.push(child));
 }
 
 fn bind_limit_value(value: &LimitValue) -> Result<(), AnalysisError> {

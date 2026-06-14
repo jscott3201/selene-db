@@ -163,6 +163,15 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// ISO 14.10 forbids nested query specifications inside sort keys.
+    #[error("ORDER BY sort key cannot contain a nested query specification")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    SortKeyContainsNestedQuery {
+        /// Source span of the invalid sort key.
+        #[label("nested query specification is not allowed in a sort key")]
+        span: SourceSpan,
+    },
+
     /// A reference is syntactically resolved but not valid in this expression context.
     #[error("invalid reference: {message}")]
     #[diagnostic(code(SLENE_GQL_42002))]
@@ -482,6 +491,7 @@ impl AnalysisError {
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::AggregateNestingViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ReturnStarRequiresInput { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::SortKeyContainsNestedQuery { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {

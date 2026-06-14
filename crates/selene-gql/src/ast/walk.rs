@@ -35,7 +35,7 @@ impl ValueExpr {
     /// [`IsCheckKind::SourceOf`]/[`IsCheckKind::DestinationOf`] operand counts as
     /// a child of the enclosing [`ValueExpr::IsCheck`] and is yielded after the
     /// checked `operand`. Subquery variants yield no children.
-    pub fn for_each_child(&self, f: &mut impl FnMut(&ValueExpr)) {
+    pub fn for_each_child<'a>(&'a self, f: &mut impl FnMut(&'a ValueExpr)) {
         match self {
             Self::Literal(_) | Self::Variable { .. } | Self::Parameter { .. } => {}
             Self::PropertyAccess { target, .. } | Self::PropertyExists { target, .. } => f(target),
