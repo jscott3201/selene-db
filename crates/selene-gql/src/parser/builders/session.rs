@@ -138,6 +138,20 @@ fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
             Rule::session_value_spec => {
                 value = Some(expr::build_value_expr(first_child(child)?)?);
             }
+            Rule::value_subquery_expr => {
+                return Err(unsupported_feature(
+                    &child,
+                    FeatureId::GS11,
+                    "SESSION SET VALUE subquery initializers are outside the current D1 claim",
+                ));
+            }
+            Rule::session_value_simple_expr => {
+                return Err(unsupported_feature(
+                    &child,
+                    FeatureId::GS14,
+                    "SESSION SET VALUE simple-expression initializers are outside the current D1 claim",
+                ));
+            }
             _ => return Err(unexpected_pair(child, "unexpected SESSION SET VALUE child")),
         }
     }
