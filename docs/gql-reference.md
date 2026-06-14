@@ -305,20 +305,25 @@ RETURN p.name
 | `ALL_DIFFERENT(a, b, c, ...)` | `WHERE ALL_DIFFERENT(p1, p2, p3)` | `G113` |
 | `SAME(a, b, c, ...)` | `WHERE SAME(a, b)` | `G114` |
 | `PROPERTY_EXISTS(n, 'key')` | `WHERE PROPERTY_EXISTS(p, 'email')` | `G115` |
-| `BETWEEN a AND b` | `WHERE x BETWEEN 0 AND 100` | mandatory |
 | `IN list` | `WHERE country IN ['NZ', 'AU']` | mandatory |
-| `LIKE pattern` | `WHERE name LIKE 'A%'` | mandatory |
 | `STARTS WITH`, `ENDS WITH`, `CONTAINS` | `WHERE name STARTS WITH 'A'` | mandatory |
 | `EXISTS { MATCH ... }` | `WHERE EXISTS { MATCH (p)-[:KNOWS]->() }` | mandatory |
 | `COUNT { MATCH ... }` | `RETURN COUNT { MATCH (p)-[:KNOWS]->() }` | mandatory |
 
+SQL-style predicate `LIKE` and `BETWEEN` syntax is not part of Selene's GQL
+surface. Use `STARTS WITH`, `ENDS WITH`, or `CONTAINS` for string predicates,
+and spell ranges as ordinary comparisons such as `x >= 0 AND x <= 100`.
+
 ### Expressions
 
 Operators in precedence order (low to high): `OR`, `XOR`, `AND`, `NOT`,
-predicate family (`IS ...`, `IN`, `LIKE`, `BETWEEN`, string match),
+predicate family (`IS ...`, `IN`, string match),
 comparison (`<`, `<=`, `>`, `>=`, `=`, `<>`), concatenation (`||`),
-addition (`+`, `-`), multiplication (`*`, `/`, `%`), unary (`+`, `-`),
-postfix (`.prop`, `.prop AT TIME 'ts'`).
+addition (`+`, `-`), multiplication (`*`, `/`), unary (`+`, `-`),
+postfix (`.prop`).
+
+Use the ISO `MOD(x, y)` numeric function for modulus. Infix `%` and temporal
+property postfix forms such as `.prop AT TIME 'ts'` are rejected at parse time.
 
 The arithmetic and comparison operators flow through three-valued logic
 when any operand is `NULL`.
