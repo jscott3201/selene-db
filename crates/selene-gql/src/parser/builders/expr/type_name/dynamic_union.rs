@@ -7,7 +7,7 @@ use crate::{
     error::ParserError,
     parser::{
         MAX_NESTING_DEPTH,
-        builders::{keyword_tokens_eq, span, unexpected_pair},
+        builders::{span, unexpected_pair},
     },
 };
 
@@ -17,23 +17,54 @@ pub(super) fn build_open_dynamic_union_type_name(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<GqlType, ParserError> {
-    let text = pair.as_str();
-    if keyword_tokens_eq(text, &["ANY"]) || keyword_tokens_eq(text, &["ANY", "VALUE"]) {
-        return Ok(GqlType::Any);
+    let pair = pair
+        .into_inner()
+        .find(|child| {
+            matches!(
+                child.as_rule(),
+                Rule::open_dynamic_union_type | Rule::dynamic_property_value_type
+            )
+        })
+        .ok_or_else(|| {
+            ParserError::syntax(
+                "dynamic union value type is missing open type form",
+                source_span,
+                None,
+            )
+        })?;
+    let mut rules = pair.into_inner().map(|child| child.as_rule());
+    let first = rules.next();
+    let second = rules.next();
+    let third = rules.next();
+    if rules.next().is_some() {
+        return Err(ParserError::syntax(
+            "unsupported dynamic union value type",
+            source_span,
+            Some(
+                "open dynamic union types are ANY, ANY VALUE, PROPERTY VALUE, and ANY PROPERTY VALUE"
+                    .into(),
+            ),
+        ));
     }
-    if keyword_tokens_eq(text, &["PROPERTY", "VALUE"])
-        || keyword_tokens_eq(text, &["ANY", "PROPERTY", "VALUE"])
-    {
-        return Ok(GqlType::AnyProperty);
+
+    match (first, second, third) {
+        (Some(Rule::any_value_type_kw), None, None)
+        | (Some(Rule::any_value_type_kw), Some(Rule::value_type_kw), None) => Ok(GqlType::Any),
+        (Some(Rule::property_type_kw), Some(Rule::value_type_kw), None)
+        | (
+            Some(Rule::any_value_type_kw),
+            Some(Rule::property_type_kw),
+            Some(Rule::value_type_kw),
+        ) => Ok(GqlType::AnyProperty),
+        _ => Err(ParserError::syntax(
+            "unsupported dynamic union value type",
+            source_span,
+            Some(
+                "open dynamic union types are ANY, ANY VALUE, PROPERTY VALUE, and ANY PROPERTY VALUE"
+                    .into(),
+            ),
+        )),
     }
-    Err(ParserError::syntax(
-        "unsupported dynamic union value type",
-        source_span,
-        Some(
-            "open dynamic union types are ANY, ANY VALUE, PROPERTY VALUE, and ANY PROPERTY VALUE"
-                .into(),
-        ),
-    ))
 }
 
 pub(super) fn build_closed_dynamic_union_type_name(
