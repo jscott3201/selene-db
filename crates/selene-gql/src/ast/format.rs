@@ -142,7 +142,7 @@ pub(super) fn fmt_pipeline(out: &mut String, pipeline: &QueryPipeline) -> fmt::R
                     fmt_expr(out, &value.value)?;
                 }
             }
-            crate::PipelineStatement::Unwind(value) => {
+            crate::PipelineStatement::For(value) => {
                 write!(out, "FOR {} IN ", fmt_ident(value.alias.clone()))?;
                 fmt_expr(out, &value.source)?;
                 if let Some(position) = &value.position {

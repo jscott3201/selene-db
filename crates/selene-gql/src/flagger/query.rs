@@ -10,7 +10,7 @@ use crate::{
             EdgeDirection, EdgePattern, GraphPattern, MatchClause, MatchMode, NodePattern,
             PathMode, PathSelector, PatternElement, Quantifier,
         },
-        statement::{LetBinding, OrderTerm, RowExpansionPositionKind, UnwindStatement},
+        statement::{ForStatement, LetBinding, OrderTerm, RowExpansionPositionKind},
     },
 };
 
@@ -97,7 +97,7 @@ pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<F
             expr::value(value, uses);
         }
         PipelineStatement::Let(values) => let_bindings(values, uses),
-        PipelineStatement::Unwind(value) => unwind(value, uses),
+        PipelineStatement::For(value) => for_statement(value, uses),
         PipelineStatement::Sorting(values) => order_terms(values, uses),
         PipelineStatement::Limit(value) => {
             record_feature(uses, FeatureId::GQ13, value.span());
@@ -264,7 +264,7 @@ fn let_bindings(bindings: &[LetBinding], uses: &mut Vec<FeatureUse>) {
     }
 }
 
-fn unwind(statement: &UnwindStatement, uses: &mut Vec<FeatureUse>) {
+fn for_statement(statement: &ForStatement, uses: &mut Vec<FeatureUse>) {
     record_feature(uses, FeatureId::GQ10, statement.span);
     if let Some(position) = &statement.position {
         let feature = match position.kind {

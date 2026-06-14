@@ -354,7 +354,7 @@ const fn is_alias_decl_kind(kind: BindingDeclKind) -> bool {
     matches!(
         kind,
         BindingDeclKind::LetAlias
-            | BindingDeclKind::UnwindAlias
+            | BindingDeclKind::ForAlias
             | BindingDeclKind::ProjectionAlias
             | BindingDeclKind::YieldColumn
     )

@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    GqlType, InlineProcedureCall, LetBinding, LimitValue, OrderTerm, PipelineStatement,
-    ProcedureMutability, QueryPipeline, ReturnClause, ReturnItem, SourceSpan, UnwindStatement,
+    ForStatement, GqlType, InlineProcedureCall, LetBinding, LimitValue, OrderTerm,
+    PipelineStatement, ProcedureMutability, QueryPipeline, ReturnClause, ReturnItem, SourceSpan,
     ValueExpr, WithClause, YieldColumn,
     analyze::{
         BindingDeclKind, BindingId, ScopeId,
@@ -39,7 +39,7 @@ pub(crate) fn bind_pipeline_statement(
             Ok(())
         }
         PipelineStatement::Let(bindings) => bind_let(ctx, bindings),
-        PipelineStatement::Unwind(unwind) => bind_unwind(ctx, unwind),
+        PipelineStatement::For(statement) => bind_for(ctx, statement),
         PipelineStatement::Sorting(terms) => bind_sorting(ctx, terms),
         PipelineStatement::Limit(value) | PipelineStatement::Offset(value) => {
             bind_limit_value(value)
@@ -516,8 +516,8 @@ fn bind_let(ctx: &mut BindContext, bindings: &[LetBinding]) -> Result<(), Analys
     Ok(())
 }
 
-fn bind_unwind(ctx: &mut BindContext, unwind: &UnwindStatement) -> Result<(), AnalysisError> {
-    let id = expr::bind_value_expr(ctx, &unwind.source)?;
+fn bind_for(ctx: &mut BindContext, statement: &ForStatement) -> Result<(), AnalysisError> {
+    let id = expr::bind_value_expr(ctx, &statement.source)?;
     let ty = match ctx.expr_type(id) {
         AnalyzedType::Resolved(crate::GqlType::List(inner))
         | AnalyzedType::Resolved(crate::GqlType::BoundedList {
@@ -527,16 +527,16 @@ fn bind_unwind(ctx: &mut BindContext, unwind: &UnwindStatement) -> Result<(), An
         _ => AnalyzedType::Dynamic,
     };
     ctx.declare_strict_typed(
-        BindingDeclKind::UnwindAlias,
-        unwind.alias.clone(),
-        unwind.span,
+        BindingDeclKind::ForAlias,
+        statement.alias.clone(),
+        statement.span,
         ty,
     )?;
-    if let Some(position) = &unwind.position {
+    if let Some(position) = &statement.position {
         ctx.declare_strict_typed(
-            BindingDeclKind::UnwindAlias,
+            BindingDeclKind::ForAlias,
             position.alias.clone(),
-            unwind.span,
+            statement.span,
             AnalyzedType::Resolved(crate::GqlType::Integer),
         )?;
     }

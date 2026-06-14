@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use selene_core::DbString;
 
 use crate::{
-    DdlStatement, GqlType, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
+    DdlStatement, ForStatement, GqlType, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
     MutationStatement, MutationTerminator, PatternElement, PipelineStatement, ProcedureCall,
     QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
-    TypePropertyConstraint, UnwindStatement, ValueExpr, analyze::error::AnalysisError,
+    TypePropertyConstraint, ValueExpr, analyze::error::AnalysisError,
 };
 
 pub(super) type DeclarationMap = BTreeMap<DbString, (GqlType, SourceSpan)>;
@@ -83,7 +83,7 @@ fn collect_pipeline_parameter_declarations(
                 collect_match_clause_parameter_declarations(clause, declarations)?;
             }
             PipelineStatement::Filter(value)
-            | PipelineStatement::Unwind(UnwindStatement { source: value, .. }) => {
+            | PipelineStatement::For(ForStatement { source: value, .. }) => {
                 collect_value_parameter_declarations(value, declarations)?;
             }
             PipelineStatement::Let(bindings) => {

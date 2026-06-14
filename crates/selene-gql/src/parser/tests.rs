@@ -182,7 +182,7 @@ fn parse_inline_call_subquery() {
 fn parse_for_list_statement_as_row_expansion() {
     let query = query("FOR x IN [1, 2] RETURN x");
     assert_eq!(query.statements.len(), 2);
-    let PipelineStatement::Unwind(statement) = &query.statements[0] else {
+    let PipelineStatement::For(statement) = &query.statements[0] else {
         panic!("expected row expansion");
     };
     assert_eq!(statement.alias.as_str(), "x");
@@ -205,7 +205,7 @@ fn parse_for_position_tail() {
         ),
     ] {
         let query = query(source);
-        let PipelineStatement::Unwind(statement) = &query.statements[0] else {
+        let PipelineStatement::For(statement) = &query.statements[0] else {
             panic!("expected row expansion");
         };
         let position = statement.position.as_ref().expect("position tail parses");

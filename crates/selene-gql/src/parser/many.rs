@@ -266,7 +266,7 @@ fn rebase_query_pipeline(pipeline: &mut QueryPipeline, offset: usize) {
                     rebase_value(&mut value.value, offset);
                 }
             }
-            crate::PipelineStatement::Unwind(value) => {
+            crate::PipelineStatement::For(value) => {
                 rebase_span(&mut value.span, offset);
                 rebase_value(&mut value.source, offset);
             }

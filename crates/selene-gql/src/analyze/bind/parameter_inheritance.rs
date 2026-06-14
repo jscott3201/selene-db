@@ -1,10 +1,9 @@
 //! Propagate inline parameter declarations to bare references in the same statement.
 
 use crate::{
-    DdlStatement, IsCheckKind, LimitValue, MatchClause, MutationPipeline, MutationStatement,
-    MutationTerminator, PatternElement, PipelineStatement, ProcedureCall, QueryPipeline,
-    ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint, UnwindStatement,
-    ValueExpr,
+    DdlStatement, ForStatement, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
+    MutationStatement, MutationTerminator, PatternElement, PipelineStatement, ProcedureCall,
+    QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint, ValueExpr,
 };
 
 use super::parameters::DeclarationMap;
@@ -60,7 +59,7 @@ fn inherit_pipeline_parameter_declarations(
                 inherit_match_clause_parameter_declarations(clause, declarations);
             }
             PipelineStatement::Filter(value)
-            | PipelineStatement::Unwind(UnwindStatement { source: value, .. }) => {
+            | PipelineStatement::For(ForStatement { source: value, .. }) => {
                 inherit_value_parameter_declarations(value, declarations);
             }
             PipelineStatement::Let(bindings) => {

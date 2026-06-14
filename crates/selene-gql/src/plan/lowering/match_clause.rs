@@ -656,7 +656,7 @@ fn binding_defs(
                 BindingDeclKind::EdgePattern | BindingDeclKind::InsertEdge => BindingElement::Edge,
                 BindingDeclKind::PathBinding => BindingElement::Path,
                 BindingDeclKind::LetAlias
-                | BindingDeclKind::UnwindAlias
+                | BindingDeclKind::ForAlias
                 | BindingDeclKind::ProjectionAlias
                 | BindingDeclKind::YieldColumn => return None,
             };

@@ -37,11 +37,8 @@ fn assert_pattern_kind_mismatch(
 }
 
 #[test]
-fn unwind_alias_same_name_does_not_collide_with_node_pattern() {
-    assert_alias_reused_as_node(
-        "FOR x IN [1] MATCH (x) RETURN x",
-        BindingDeclKind::UnwindAlias,
-    );
+fn for_alias_same_name_does_not_collide_with_node_pattern() {
+    assert_alias_reused_as_node("FOR x IN [1] MATCH (x) RETURN x", BindingDeclKind::ForAlias);
 }
 
 #[test]

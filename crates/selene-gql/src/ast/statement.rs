@@ -188,7 +188,7 @@ pub enum PipelineStatement {
     /// `LET`.
     Let(Vec<LetBinding>),
     /// Row expansion (`FOR`).
-    Unwind(UnwindStatement),
+    For(ForStatement),
     /// `ORDER BY`.
     Sorting(Vec<OrderTerm>),
     /// `LIMIT`.
@@ -213,7 +213,7 @@ impl PipelineStatement {
             Self::Match(value) => value.span,
             Self::Filter(value) => value.span(),
             Self::Let(values) => span_from_iter(values.iter().map(|value| value.span)),
-            Self::Unwind(value) => value.span,
+            Self::For(value) => value.span,
             Self::Sorting(values) => span_from_iter(values.iter().map(|value| value.span)),
             Self::Limit(value) | Self::Offset(value) => value.span(),
             Self::Return(value) => value.span,
@@ -237,7 +237,7 @@ pub struct LetBinding {
 
 /// Row-expansion statement.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct UnwindStatement {
+pub struct ForStatement {
     /// Source expression.
     pub source: ValueExpr,
     /// Database-string alias.

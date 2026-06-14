@@ -16,9 +16,9 @@ use selene_core::DbString;
 
 use crate::{
     ast::{
-        GqlType, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-        QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition, RowExpansionPositionKind,
-        SetOp, SourceSpan, Statement, UnwindStatement, WithClause, util::NonEmpty,
+        ForStatement, GqlType, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm,
+        PipelineStatement, QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition,
+        RowExpansionPositionKind, SetOp, SourceSpan, Statement, WithClause, util::NonEmpty,
     },
     error::ParserError,
 };
@@ -162,7 +162,7 @@ fn build_pipeline_statement(pair: Pair<'_, Rule>) -> Result<PipelineStatement, P
         Rule::match_stmt => pattern::build_match_clause(pair).map(PipelineStatement::Match),
         Rule::filter_stmt => build_filter(pair).map(PipelineStatement::Filter),
         Rule::let_stmt => build_let(pair).map(PipelineStatement::Let),
-        Rule::for_stmt => build_for(pair).map(PipelineStatement::Unwind),
+        Rule::for_stmt => build_for(pair).map(PipelineStatement::For),
         Rule::sorting_stmt => build_sorting(pair).map(PipelineStatement::Sorting),
         Rule::offset_stmt => build_limit_or_offset(pair).map(PipelineStatement::Offset),
         Rule::limit_stmt => build_limit_or_offset(pair).map(PipelineStatement::Limit),
@@ -283,7 +283,7 @@ fn build_let(pair: Pair<'_, Rule>) -> Result<Vec<LetBinding>, ParserError> {
         .collect()
 }
 
-fn build_for(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
+fn build_for(pair: Pair<'_, Rule>) -> Result<ForStatement, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let alias = children
@@ -295,7 +295,7 @@ fn build_for(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
         .ok_or_else(|| ParserError::syntax("FOR is missing source expression", source_span, None))
         .and_then(|pair| expr::build_value_expr(pair))?;
     let position = children.next().map(build_for_position).transpose()?;
-    Ok(UnwindStatement {
+    Ok(ForStatement {
         source,
         alias,
         position,

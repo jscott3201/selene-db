@@ -40,9 +40,9 @@ pub use selene_core::{
 };
 pub use span::SourceSpan;
 pub use statement::{
-    LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-    QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition, RowExpansionPositionKind,
-    SessionResetTarget, SetOp, Statement, TypedBinding, UnwindStatement, WithClause,
+    ForStatement, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm,
+    PipelineStatement, QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition,
+    RowExpansionPositionKind, SessionResetTarget, SetOp, Statement, TypedBinding, WithClause,
 };
 pub use types::{
     BindingTableType, ByteStringType, ByteStringTypeForm, CharacterStringType,
