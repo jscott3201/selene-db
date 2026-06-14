@@ -8,7 +8,8 @@ use exec_common::{ExecFixture, column_values};
 use selene_core::Value;
 use selene_gql::ast::format_read_statement;
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutorError, ProcedureMutability, Session, StatementOutput, parse,
+    AnalyzedType, EmptyProcedureRegistry, ExecutorError, GqlType, ProcedureMutability, Session,
+    StatementOutput, analyze, parse, plan,
 };
 use selene_testing::MockProcedureRegistry;
 
@@ -163,6 +164,31 @@ fn optional_call_subquery_without_yield_preserves_rows_for_empty_body() {
         string_values(&table, "name"),
         vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
     );
+}
+
+#[test]
+fn optional_call_subquery_yield_schema_relaxes_non_null_columns() {
+    let source =
+        "OPTIONAL CALL { RETURN CAST(1 AS INTEGER NOT NULL) AS n LIMIT 0 } YIELD n RETURN n";
+    let parsed = parse(source).expect("optional inline CALL parses");
+    let analyzed = analyze(parsed, &EmptyProcedureRegistry, None).expect("query analyzes");
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("query plans");
+
+    assert_eq!(
+        plan.output_schema.columns[0].ty,
+        AnalyzedType::Resolved(GqlType::Integer)
+    );
+}
+
+#[test]
+fn optional_call_subquery_null_yield_does_not_satisfy_not_null_type_check() {
+    let table = execute(
+        "OPTIONAL CALL { RETURN CAST(1 AS INTEGER NOT NULL) AS n LIMIT 0 }
+         YIELD n
+         RETURN n IS TYPED INTEGER NOT NULL AS ok",
+    );
+
+    assert_eq!(value_values(&table, "ok"), vec![Value::Bool(false)]);
 }
 
 #[test]

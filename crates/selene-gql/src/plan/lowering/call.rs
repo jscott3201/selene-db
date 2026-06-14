@@ -265,7 +265,7 @@ fn expected_yield_type_for_decl(
                 .columns
                 .iter()
                 .find(|candidate| candidate.name == *source_name)
-                .map(|col| col.ty.clone());
+                .map(|col| nullable_yield_gql_type(col.ty.clone(), call.optional));
         }
     }
 
@@ -279,7 +279,7 @@ fn expected_yield_type_for_decl(
             .columns
             .iter()
             .find(|candidate| candidate.name == decl.name())
-            .map(|col| col.ty.clone());
+            .map(|col| nullable_yield_gql_type(col.ty.clone(), call.optional));
     }
 
     None
@@ -290,6 +290,16 @@ fn output_schema_changed(call: &ProcedureCall, span: crate::SourceSpan) -> Plann
         procedure: call.name.clone().into_vec().into_boxed_slice(),
         detail: "output column type changed",
         span,
+    }
+}
+
+fn nullable_yield_gql_type(ty: GqlType, optional: bool) -> GqlType {
+    if !optional {
+        return ty;
+    }
+    match ty {
+        GqlType::NotNull(inner) => *inner,
+        other => other,
     }
 }
 
@@ -320,15 +330,19 @@ fn push_binding_column(
             span,
         });
     }
-    columns.push(binding_column(col, name));
+    columns.push(binding_column(col, name, planned.optional));
     Ok(())
 }
 
-fn binding_column(col: &ProcedureOutputColumn, name: selene_core::DbString) -> BindingTableColumn {
+fn binding_column(
+    col: &ProcedureOutputColumn,
+    name: selene_core::DbString,
+    optional: bool,
+) -> BindingTableColumn {
     BindingTableColumn {
         name: Some(name),
         hidden: None,
-        ty: AnalyzedType::Resolved(col.ty.clone()),
+        ty: super::nullable_call_yield_type(AnalyzedType::Resolved(col.ty.clone()), optional),
     }
 }
 

@@ -163,7 +163,7 @@ fn declare_inline_call_yields(
                         BindingDeclKind::YieldColumn,
                         output.name.clone(),
                         item.span,
-                        output.ty.clone(),
+                        call::nullable_call_yield_type(output.ty.clone(), call.optional),
                     )?;
                 }
             }
@@ -179,7 +179,7 @@ fn declare_inline_call_yields(
                     BindingDeclKind::YieldColumn,
                     item.alias.clone().unwrap_or_else(|| column.clone()),
                     output.span,
-                    output.ty.clone(),
+                    call::nullable_call_yield_type(output.ty.clone(), call.optional),
                 )?;
             }
         }
