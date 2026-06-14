@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: none
+// expects: parse-ok
+RETURN CASE 2 WHEN 1, 2 THEN 'hit' ELSE 'miss' END AS value
