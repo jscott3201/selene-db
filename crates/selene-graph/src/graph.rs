@@ -10,188 +10,23 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-use selene_core::{
-    DbString, EdgeId, GraphId, HnswIndexConfig, IvfIndexConfig, LabelSet, NodeId, PropertyMap,
-    Value,
-};
+use selene_core::{DbString, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::adjacency::AdjacencyEntry;
 use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
 use crate::id_map::{EngineIdMap, engine_id_map};
 use crate::store::{EdgeStore, NodeStore, RowIndex};
-use crate::text_index::{TextIndex, TextIndexMemoryUsage, TextIndexStats};
+use crate::text_index::TextIndex;
 use crate::typed_index::{TypedIndex, TypedIndexKind};
-use crate::vector_index::{VectorIndex, VectorIndexKind, VectorIndexMemoryUsage};
+use crate::vector_index::VectorIndex;
 
-/// Registered built-in property-index metadata.
-#[derive(Clone, Debug)]
-pub struct PropertyIndexEntry {
-    /// Index data for the `(label, property)` registration.
-    pub index: Arc<TypedIndex>,
-    /// Optional explicit catalog name. `None` means the name is derived at render time.
-    pub name: Option<DbString>,
-}
+mod index_entries;
 
-impl PropertyIndexEntry {
-    /// Construct an index entry from the built index and optional explicit name.
-    #[must_use]
-    pub fn new(index: TypedIndex, name: Option<DbString>) -> Self {
-        Self {
-            index: Arc::new(index),
-            name,
-        }
-    }
-
-    /// Return the registered index kind.
-    #[must_use]
-    pub fn kind(&self) -> TypedIndexKind {
-        self.index.kind()
-    }
-}
-
-/// Registered built-in composite-property index metadata.
-#[derive(Clone, Debug)]
-pub struct CompositePropertyIndexEntry {
-    /// Index data for the `(label, properties...)` registration.
-    pub index: Arc<CompositeTypedIndex>,
-    /// Indexed properties in declaration order.
-    pub declared_properties: SmallVec<[DbString; 4]>,
-    /// Optional explicit catalog name. `None` means the name is derived at render time.
-    pub name: Option<DbString>,
-}
-
-impl CompositePropertyIndexEntry {
-    /// Construct a composite index entry.
-    #[must_use]
-    pub fn new(
-        index: CompositeTypedIndex,
-        declared_properties: SmallVec<[DbString; 4]>,
-        name: Option<DbString>,
-    ) -> Self {
-        Self {
-            index: Arc::new(index),
-            declared_properties,
-            name,
-        }
-    }
-
-    /// Return the registered component kinds in declaration order.
-    #[must_use]
-    pub fn kinds(&self) -> SmallVec<[TypedIndexKind; 4]> {
-        self.index.kinds().iter().copied().collect()
-    }
-}
-
-/// Registered built-in vector-index metadata.
-#[derive(Clone, Debug)]
-pub struct VectorIndexEntry {
-    /// Index data for the `(label, property)` registration.
-    pub index: Arc<VectorIndex>,
-    /// Optional explicit catalog name. `None` means the name is derived at render time.
-    pub name: Option<DbString>,
-}
-
-impl VectorIndexEntry {
-    /// Construct a vector index entry from the built index and optional name.
-    #[must_use]
-    pub fn new(index: VectorIndex, name: Option<DbString>) -> Self {
-        Self {
-            index: Arc::new(index),
-            name,
-        }
-    }
-
-    /// Return the registered vector index kind.
-    #[must_use]
-    pub fn kind(&self) -> VectorIndexKind {
-        self.index.kind()
-    }
-
-    /// Return the registered vector dimensionality.
-    #[must_use]
-    pub fn dimension(&self) -> u32 {
-        self.index.dimension()
-    }
-
-    /// Return the registered HNSW construction config, if this is an HNSW index.
-    #[must_use]
-    pub fn hnsw_config(&self) -> Option<HnswIndexConfig> {
-        self.index.hnsw_config()
-    }
-
-    /// Return the registered IVF construction config, if this is a configured IVF index.
-    #[must_use]
-    pub fn ivf_config(&self) -> Option<IvfIndexConfig> {
-        self.index.ivf_config()
-    }
-
-    /// Return an estimated memory usage snapshot for this vector index.
-    #[must_use]
-    pub fn memory_usage(&self) -> VectorIndexMemoryUsage {
-        self.index.memory_usage()
-    }
-}
-
-/// Registered built-in text-index metadata.
-#[derive(Clone, Debug)]
-pub struct TextIndexEntry {
-    /// Index data for the `(label, property)` registration.
-    pub index: Arc<TextIndex>,
-    /// Optional explicit catalog name. `None` means the name is derived at render time.
-    pub name: Option<DbString>,
-}
-
-impl TextIndexEntry {
-    /// Construct a text index entry from the built index and optional name.
-    #[must_use]
-    pub fn new(index: TextIndex, name: Option<DbString>) -> Self {
-        Self {
-            index: Arc::new(index),
-            name,
-        }
-    }
-
-    /// Return aggregate index counters.
-    #[must_use]
-    pub fn stats(&self) -> TextIndexStats {
-        self.index.stats()
-    }
-
-    /// Return an estimated memory usage snapshot for this text index.
-    #[must_use]
-    pub fn memory_usage(&self) -> TextIndexMemoryUsage {
-        self.index.memory_usage()
-    }
-}
-
-/// Owned row returned when iterating composite property-index registrations.
-pub type CompositePropertyIndexEntryRow = (
-    DbString,
-    SmallVec<[DbString; 4]>,
-    SmallVec<[TypedIndexKind; 4]>,
-    Option<DbString>,
-);
-
-/// Owned row returned when iterating vector-index registrations.
-pub type VectorIndexEntryRow = (
-    DbString,
-    DbString,
-    VectorIndexKind,
-    u32,
-    Option<HnswIndexConfig>,
-    Option<IvfIndexConfig>,
-    Option<DbString>,
-);
-
-/// Owned row returned when iterating text-index registrations.
-pub type TextIndexEntryRow = (
-    DbString,
-    DbString,
-    TextIndexStats,
-    TextIndexMemoryUsage,
-    Option<DbString>,
-);
+pub use index_entries::{
+    CompositePropertyIndexEntry, CompositePropertyIndexEntryRow, PropertyIndexEntry,
+    TextIndexEntry, TextIndexEntryRow, VectorIndexEntry, VectorIndexEntryRow,
+};
 
 /// Snapshot metadata.
 #[derive(
@@ -702,81 +537,4 @@ pub(crate) fn composite_property_key(properties: &[DbString]) -> SmallVec<[DbStr
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use selene_core::db_string;
-
-    #[test]
-    fn new_graph_is_empty() {
-        let graph = SeleneGraph::new(GraphId::new(1));
-        assert_eq!(graph.node_count(), 0);
-        assert_eq!(graph.edge_count(), 0);
-        assert_eq!(graph.label_count(), 0);
-        assert_eq!(graph.edge_label_count(), 0);
-        assert_eq!(graph.property_index_count(), 0);
-        assert_eq!(graph.composite_property_index_count(), 0);
-        assert_eq!(graph.vector_index_count(), 0);
-        assert_eq!(graph.text_index_count(), 0);
-        assert!(graph.idx_label.is_empty());
-        assert!(graph.idx_edge_label.is_empty());
-        assert!(graph.property_index.is_empty());
-        assert!(graph.composite_property_index.is_empty());
-        assert!(graph.vector_index.is_empty());
-        assert!(graph.text_index.is_empty());
-        assert_eq!(graph.meta.generation, 0);
-        assert_eq!(graph.meta.next_node_id, 1);
-        assert_eq!(graph.meta.next_edge_id, 1);
-    }
-
-    #[test]
-    fn read_accessors_return_none_for_unknown_ids() {
-        let graph = SeleneGraph::new(GraphId::new(1));
-        assert_eq!(graph.node_labels(NodeId::new(1)), None);
-        assert_eq!(graph.edge_label(EdgeId::new(1)), None);
-        assert_eq!(
-            graph.nodes_with_label(&db_string("graph.missing").unwrap()),
-            None
-        );
-        assert!(!graph.is_node_alive(NodeId::TOMBSTONE));
-    }
-
-    #[test]
-    fn node_labels_returns_some_for_alive_node() {
-        let mut graph = SeleneGraph::new(GraphId::new(1));
-        let label = db_string("graph.node").unwrap();
-        graph
-            .node_store
-            .labels
-            .push(LabelSet::single(label.clone()));
-        graph.node_store.properties.push(PropertyMap::new());
-        // BRIEF-Item-4a: a manually built row must also bind id <-> row, the way
-        // create_node / rebuild_id_maps do — reads now resolve through the map.
-        graph.node_store.row_to_id.push(NodeId::new(1));
-        graph
-            .node_id_to_row
-            .insert(NodeId::new(1), RowIndex::new(0));
-        graph.node_store.alive_mut().insert(0);
-        assert_eq!(
-            graph
-                .node_labels(NodeId::new(1))
-                .unwrap()
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
-            vec![label]
-        );
-    }
-
-    #[test]
-    fn label_count_reports_distinct_labels_only() {
-        let mut graph = SeleneGraph::new(GraphId::new(1));
-        let label = db_string("graph.same").unwrap();
-        let mut bitmap = RoaringBitmap::new();
-        bitmap.insert(0);
-        bitmap.insert(1);
-        graph.idx_label.insert(label.clone(), bitmap);
-        assert_eq!(graph.label_count(), 1);
-        assert!(graph.nodes_with_label(&label).unwrap().contains(0));
-        assert!(graph.nodes_with_label(&label).unwrap().contains(1));
-    }
-}
+mod tests;
