@@ -110,7 +110,6 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
     let mut name = None;
     let mut args = Vec::new();
     let mut yield_items = Vec::new();
-    let mut yield_filter = None;
 
     for child in pair.into_inner() {
         match child.as_rule() {
@@ -123,9 +122,6 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
                     .collect::<Result<Vec<_>, _>>()?;
             }
             Rule::yield_clause => yield_items = build_yield_items(child)?,
-            Rule::yield_filter => {
-                yield_filter = Some(expr::build_value_expr(first_child(child)?)?);
-            }
             _ => return Err(unexpected_pair(child, "unexpected procedure-call child")),
         }
     }
@@ -138,7 +134,6 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
         .expect("grammar guarantees >= 1: qualified_name"),
         args,
         yield_items,
-        yield_filter,
         span: source_span,
     })
 }

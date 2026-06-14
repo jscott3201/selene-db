@@ -16,9 +16,6 @@ pub struct ProcedureCall {
     pub args: Vec<ValueExpr>,
     /// Requested yield columns. Empty means the call discards return columns.
     pub yield_items: Vec<YieldItem>,
-    /// Optional predicate over yielded columns.
-    #[serde(default)]
-    pub yield_filter: Option<ValueExpr>,
     /// Source span.
     pub span: SourceSpan,
 }

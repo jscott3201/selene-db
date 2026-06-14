@@ -31,7 +31,7 @@ fn read_tier_procedure_yields_rows() {
 }
 
 #[test]
-fn read_tier_procedure_yield_where_filters_projected_rows() {
+fn read_tier_procedure_pipeline_filter_filters_projected_rows() {
     let registry = registry_one(
         &["pkg", "scores"],
         ProcedureMutability::Read,
@@ -42,7 +42,7 @@ fn read_tier_procedure_yield_where_filters_projected_rows() {
 
     let table = rows(
         execute(
-            "CALL pkg.scores() YIELD score WHERE score >= 10",
+            "CALL pkg.scores() YIELD score FILTER score >= 10",
             &graph(3918),
             &registry,
         )

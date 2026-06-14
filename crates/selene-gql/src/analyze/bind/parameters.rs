@@ -235,9 +235,6 @@ fn collect_call_parameter_declarations(
     for arg in &call.args {
         collect_value_parameter_declarations(arg, declarations)?;
     }
-    if let Some(filter) = &call.yield_filter {
-        collect_value_parameter_declarations(filter, declarations)?;
-    }
     Ok(())
 }
 

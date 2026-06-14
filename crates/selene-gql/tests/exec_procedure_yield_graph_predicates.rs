@@ -62,7 +62,7 @@ fn procedure_yielded_node_ref_can_feed_label_predicate() {
 
     let output = session
         .execute_source(
-            "CALL pkg.nodes() YIELD node WHERE node IS LABELED :Fact RETURN node LIMIT 1",
+            "CALL pkg.nodes() YIELD node FILTER node IS LABELED :Fact RETURN node LIMIT 1",
             &registry,
         )
         .expect("procedure-yielded node label predicate executes");

@@ -8,7 +8,7 @@ use crate::{
     ProcedureOutputColumn, ValueExpr, YieldColumn,
     analyze::{
         binding::BindingDeclKind,
-        error::{AnalysisError, ConditionClause, ExpectedType, TypeMismatchContext},
+        error::{AnalysisError, ExpectedType, TypeMismatchContext},
         infer,
         types::AnalyzedType,
     },
@@ -119,9 +119,6 @@ pub(crate) fn bind_procedure_call_with_metadata(
             let name = item.alias.clone().unwrap_or_else(|| column.clone());
             declare_output(ctx, output, name, item.span, call.optional)?;
         }
-    }
-    if let Some(filter) = &call.yield_filter {
-        expr::bind_condition(ctx, filter, ConditionClause::YieldWhere)?;
     }
     Ok(())
 }

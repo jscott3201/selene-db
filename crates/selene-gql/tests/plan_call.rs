@@ -89,9 +89,9 @@ fn mixed_yield_star_and_alias_matches_analyzer_order() {
 }
 
 #[test]
-fn top_level_call_yield_where_lowers_to_filter_after_call() {
+fn leading_call_filter_lowers_to_filter_after_call() {
     let registry = registry();
-    let plan = plan_one("CALL pkg.all() YIELD outB WHERE outB >= 2", &registry);
+    let plan = plan_one("CALL pkg.all() YIELD outB FILTER outB >= 2", &registry);
     let [PipelineOp::Call(call), PipelineOp::Filter(filter)] = plan.pipeline.as_slice() else {
         panic!("expected call followed by filter");
     };

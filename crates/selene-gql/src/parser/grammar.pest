@@ -158,7 +158,7 @@ select_from = { ^"FROM" ~ (match_stmt | ident) }
 query_pipeline     = { pipeline_statement+ }
 call_query_pipeline = { call_stmt ~ post_call_pipeline_statement ~ pipeline_statement* }
 pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
-post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
+post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 
 for_stmt    = { ^"FOR" ~ ident ~ ^"IN" ~ expr ~ for_position? }
 for_position = { ^"WITH" ~ (for_position_ordinality | for_position_offset) ~ ident }
@@ -433,12 +433,11 @@ group_by_item   = { expr }
 call_stmt      = { optional_modifier? ~ ^"CALL" ~ (call_subquery | call_procedure) }
 call_subquery  = { variable_scope_clause? ~ "{" ~ query_pipeline ~ "}" ~ yield_clause? }
 variable_scope_clause = { "(" ~ (ident ~ ("," ~ ident)*)? ~ ")" }
-call_procedure = { qualified_name ~ "(" ~ arg_list? ~ ")" ~ (yield_clause ~ yield_filter?)? }
+call_procedure = { qualified_name ~ "(" ~ arg_list? ~ ")" ~ yield_clause? }
 qualified_name = { ident ~ ("." ~ prop_ident)* }
 arg_list       = { expr ~ ("," ~ expr)* }
 yield_clause   = { ^"YIELD" ~ yield_item ~ ("," ~ yield_item)* }
 yield_item     = { ("*" | prop_ident) ~ alias? }
-yield_filter   = { ^"WHERE" ~ expr }
 
 // -- Mutations ------------------------------------------------------
 

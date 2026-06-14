@@ -147,9 +147,6 @@ pub(super) fn validate_procedure_call(call: &ProcedureCall) -> Result<(), Format
     for arg in &call.args {
         validate_expr(arg)?;
     }
-    if let Some(filter) = &call.yield_filter {
-        validate_expr(filter)?;
-    }
     Ok(())
 }
 
