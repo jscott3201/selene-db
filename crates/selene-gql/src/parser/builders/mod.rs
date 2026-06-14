@@ -12,7 +12,10 @@ pub(super) mod transaction;
 use std::borrow::Cow;
 
 use pest::iterators::Pair;
-use selene_core::DbString;
+use selene_core::{
+    DbString,
+    feature_register::{FeatureId, name_of, non_supported_rationale},
+};
 
 use crate::{
     ast::{
@@ -48,11 +51,29 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
             mutation::build_mutation_pipeline(program_pair).map(Statement::Mutate)
         }
         Rule::ddl_statement => ddl::build_ddl_statement(program_pair).map(Statement::Ddl),
+        Rule::create_schema_command => Err(unsupported_feature(
+            &program_pair,
+            FeatureId::GC02,
+            "CREATE SCHEMA is outside the current catalog claim",
+        )),
         Rule::call_stmt => call::build_top_level_call(program_pair),
         Rule::explain_stmt => explain::build_explain_statement(program_pair),
         Rule::transaction_control => transaction::build_transaction_control(program_pair),
         Rule::session_command => session::build_session_command(program_pair),
         _ => Err(unexpected_pair(program_pair, "expected a GQL program")),
+    }
+}
+
+fn unsupported_feature(
+    pair: &Pair<'_, Rule>,
+    feature_id: FeatureId,
+    fallback_hint: &'static str,
+) -> ParserError {
+    ParserError::UnsupportedFeature {
+        feature_id,
+        display_name: name_of(feature_id).unwrap_or("unnamed feature"),
+        span: span(pair),
+        hint: non_supported_rationale(feature_id).unwrap_or(fallback_hint),
     }
 }
 
