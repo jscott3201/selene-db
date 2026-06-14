@@ -48,8 +48,17 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => record_feature(uses, FeatureId::GT01, statement.span()),
-        Statement::SessionSetValue { span, .. } => {
+        Statement::SessionSetValue {
+            declared_type,
+            value,
+            span,
+            ..
+        } => {
             record_feature(uses, FeatureId::GS03, *span);
+            if let Some(ty) = declared_type {
+                expr::gql_type(ty, *span, uses);
+            }
+            expr::value(value, uses);
         }
         Statement::SessionSetTimeZone {
             zone_source_kind,

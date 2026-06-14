@@ -612,6 +612,31 @@ fn flagger_stamps_set_value_gs03() {
 }
 
 #[test]
+fn flagger_stamps_set_value_declared_type_features() {
+    let observed = walked_features("SESSION SET VALUE $p INT8 = 1");
+
+    assert!(observed.contains(&FeatureId::GS03));
+    assert!(
+        observed.contains(&FeatureId::GV02) && observed.contains(&FeatureId::GV09),
+        "INT8 target type must stamp GV02/GV09, observed {observed:?}"
+    );
+}
+
+#[test]
+fn flagger_walks_set_value_initializer_features() {
+    let observed = walked_features("SESSION SET VALUE $p = $base :: INT8");
+
+    assert!(observed.contains(&FeatureId::GS03));
+    assert!(observed.contains(&FeatureId::GE04));
+    assert!(observed.contains(&FeatureId::GE05));
+    assert!(observed.contains(&FeatureId::IM_TYPED_PARAMS));
+    assert!(
+        observed.contains(&FeatureId::GV02) && observed.contains(&FeatureId::GV09),
+        "typed RHS parameter must stamp INT8 features, observed {observed:?}"
+    );
+}
+
+#[test]
 fn flagger_stamps_set_time_zone_gs15() {
     assert!(walked_features("SESSION SET TIME ZONE '+00:00'").contains(&FeatureId::GS15));
 }
