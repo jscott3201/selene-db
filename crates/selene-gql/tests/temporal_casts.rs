@@ -1,7 +1,7 @@
 //! Temporal CAST conformance cases.
 
 use selene_core::{GraphId, Value, db_string};
-use selene_gql::{EmptyProcedureRegistry, GqlStatus, Session, StatementOutput};
+use selene_gql::{EmptyProcedureRegistry, GqlStatus, ParserError, Session, StatementOutput, parse};
 use selene_graph::{GraphTypeDef, SharedGraph};
 
 fn cast_bound(value: Value, target: &str) -> Value {
@@ -137,6 +137,51 @@ fn read_values(source: &str) -> Vec<Value> {
         panic!("query produced non-row output");
     };
     table.rows()[0].values().to_vec()
+}
+
+fn assert_syntax_error(source: &str) {
+    let error = parse(source).expect_err(source);
+    assert!(
+        matches!(error, ParserError::SyntaxError { .. }),
+        "{source} must reject as syntax, got {error:?}"
+    );
+}
+
+#[test]
+fn temporal_type_keywords_require_boundaries() {
+    for source in [
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS ZONEDDATETIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS LOCALDATETIME) AS v",
+        "RETURN CAST('12:34:56-04:00' AS ZONEDTIME) AS v",
+        "RETURN CAST('12:34:56' AS LOCALTIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS TIMESTAMPWITHTIMEZONE) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMPWITHOUTTIMEZONE) AS v",
+        "RETURN CAST('12:34:56-04:00' AS TIMEWITHTIMEZONE) AS v",
+        "RETURN CAST('12:34:56' AS TIMEWITHOUTTIMEZONE) AS v",
+        "RETURN CAST('2026-05-07' AS DATEx) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMPx) AS v",
+        "RETURN CAST('PT1H' AS DURATIONx (DAY TO SECOND)) AS v",
+        "RETURN CAST('PT1H' AS DURATION (DAYTOSECOND)) AS v",
+    ] {
+        assert_syntax_error(source);
+    }
+}
+
+#[test]
+fn guarded_temporal_type_keywords_still_accept_separated_forms() {
+    for source in [
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS ZONED DATETIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS LOCAL DATETIME) AS v",
+        "RETURN CAST('12:34:56-04:00' AS ZONED TIME) AS v",
+        "RETURN CAST('12:34:56' AS LOCAL TIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS TIMESTAMP WITH TIME ZONE) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMP WITHOUT TIME ZONE) AS v",
+        "RETURN CAST('12:34:56-04:00' AS TIME WITH TIME ZONE) AS v",
+        "RETURN CAST('12:34:56' AS TIME WITHOUT TIME ZONE) AS v",
+        "RETURN CAST('PT1H' AS DURATION (DAY TO SECOND)) AS v",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+    }
 }
 
 #[test]
