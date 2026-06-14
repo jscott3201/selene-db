@@ -383,7 +383,7 @@ fn parse_transaction_control() {
 
 #[test]
 fn deferred_surfaces_return_not_implemented() {
-    // These remain ISO-legal but are deferred in v1.0, so they parse and the
+    // These remain ISO-legal but are deferred under D1, so they parse and the
     // builder rejects them with FEATURE_NOT_SUPPORTED (42N01).
     for source in ["MERGE (n:Person {name: 'X'})", "SELECT * FROM g"] {
         let error = parse(source).expect_err(source);
@@ -399,7 +399,7 @@ fn deferred_surfaces_return_not_implemented() {
 fn removed_non_iso_grammar_is_syntax_error() {
     // Triggers, materialized views, procedure DDL, and auth (users/roles/grants)
     // are out of spec entirely (auth = embedder concern D1; procedures are native
-    // built-ins; triggers/views are not in the v1.0 claim list). They have no
+    // built-ins; triggers/views are not in the D1 claim list). They have no
     // ISO equivalent and were removed from the grammar, so they now fail to
     // parse with SYNTAX_ERROR (42601) rather than FEATURE_NOT_SUPPORTED.
     for source in [

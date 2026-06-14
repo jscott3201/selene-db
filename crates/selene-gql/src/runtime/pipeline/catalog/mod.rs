@@ -35,7 +35,7 @@ use crate::{
 };
 
 const GRAPH_LEVEL_CATALOG_DETAIL: &str =
-    "graph-level catalog ops not in v1.0 (D1 single-graph embeddable)";
+    "CREATE GRAPH is not supported under D1 single-graph embeddable mode";
 const OPEN_GRAPH_CATALOG_DDL: &str =
     "open graph (GG01) does not support catalog type DDL -- use a closed graph (GG02)";
 

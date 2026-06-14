@@ -145,7 +145,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             feature_id: FeatureId::GV20,
             display_name: "16 bit floating point numbers",
             span: source_span,
-            hint: "FLOAT16 is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
+            hint: "FLOAT16 is outside the selene-db D1 claim list; use FLOAT32 or FLOAT64",
         });
     }
     if keyword_tokens_eq(text, &["UINT256"]) || keyword_tokens_eq(text, &["UNSIGNED", "INTEGER256"])
@@ -154,7 +154,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             feature_id: FeatureId::GV15,
             display_name: "256 bit unsigned integer numbers",
             span: source_span,
-            hint: "UINT256 is outside the selene-db v1.0 claim list",
+            hint: "UINT256 is outside the selene-db D1 claim list",
         });
     }
     if keyword_tokens_eq(text, &["INT256"])
@@ -165,7 +165,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             feature_id: FeatureId::GV16,
             display_name: "256 bit signed integer numbers",
             span: source_span,
-            hint: "INT256 is outside the selene-db v1.0 claim list",
+            hint: "INT256 is outside the selene-db D1 claim list",
         });
     }
     if keyword_tokens_eq(text, &["FLOAT128"]) {
@@ -173,7 +173,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             feature_id: FeatureId::GV25,
             display_name: "128 bit floating point numbers",
             span: source_span,
-            hint: "FLOAT128 is outside the selene-db v1.0 claim list",
+            hint: "FLOAT128 is outside the selene-db D1 claim list",
         });
     }
     if keyword_tokens_eq(text, &["FLOAT256"]) {
@@ -181,7 +181,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             feature_id: FeatureId::GV26,
             display_name: "256 bit floating point numbers",
             span: source_span,
-            hint: "FLOAT256 is outside the selene-db v1.0 claim list",
+            hint: "FLOAT256 is outside the selene-db D1 claim list",
         });
     }
     if keyword_starts_with(text, "BYTES")
@@ -610,14 +610,14 @@ fn float_precision_type(
             feature_id: FeatureId::GV25,
             display_name: "128 bit floating point numbers",
             span,
-            hint: "this precision/scale request requires FLOAT128, which is outside the selene-db v1.0 claim list",
+            hint: "this precision/scale request requires FLOAT128, which is outside the selene-db D1 claim list",
         });
     }
     Err(ParserError::UnsupportedFeature {
         feature_id: FeatureId::GV26,
         display_name: "256 bit floating point numbers",
         span,
-        hint: "this precision/scale request requires FLOAT256 or a floating-point type wider than FLOAT128, which is outside the selene-db v1.0 claim list",
+        hint: "this precision/scale request requires FLOAT256 or a floating-point type wider than FLOAT128, which is outside the selene-db D1 claim list",
     })
 }
 
@@ -632,7 +632,7 @@ fn signed_integer_precision_type(precision: u16, span: SourceSpan) -> Result<Gql
             feature_id: FeatureId::GV16,
             display_name: "256 bit signed integer numbers",
             span,
-            hint: "this precision requires a signed integer wider than INT128, which is outside the selene-db v1.0 claim list",
+            hint: "this precision requires a signed integer wider than INT128, which is outside the selene-db D1 claim list",
         }),
     }
 }
@@ -651,7 +651,7 @@ fn unsigned_integer_precision_type(
             feature_id: FeatureId::GV15,
             display_name: "256 bit unsigned integer numbers",
             span,
-            hint: "this precision requires an unsigned integer wider than UINT128, which is outside the selene-db v1.0 claim list",
+            hint: "this precision requires an unsigned integer wider than UINT128, which is outside the selene-db D1 claim list",
         }),
     }
 }

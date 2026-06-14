@@ -51,7 +51,7 @@ fn check_feature(id: FeatureId, span: SourceSpan) -> Result<(), ParserError> {
         display_name: name_of(id).unwrap_or("unnamed feature"),
         span,
         hint: non_supported_rationale(id)
-            .unwrap_or("feature is outside the selene-db v1.0 claim list"),
+            .unwrap_or("feature is outside the selene-db D1 claim list"),
     })
 }
 
