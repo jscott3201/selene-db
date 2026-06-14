@@ -236,6 +236,7 @@ fn no_escape_character_string_literals_flag_gl11() {
 
     for source in [
         r"RETURN @'literal' AS v",
+        "RETURN @`literal` AS v",
         "RETURN DATE @'2026-05-07' AS v",
         "RETURN DURATION @'PT1S' AS v",
         "RETURN UUID @'550e8400-e29b-41d4-a716-446655440000' AS v",

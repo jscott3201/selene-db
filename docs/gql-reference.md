@@ -69,7 +69,7 @@ parsing or analysis, never at runtime.
 | `BOOLEAN` | `TRUE`, `FALSE`, `UNKNOWN` | `Value::Bool` | Three-valued logic applies to `=`, `<>`, comparisons, and Boolean composition. |
 | `INTEGER` / `INT` | `42`, `-17`, `0`, `1_000` (underscores allowed) | `Value::Int` (i64) | Default integer is i64. Implementation-defined IA037 / ID028 set i64 default with i128 promotion when context demands. |
 | `FLOAT` | `3.14`, `-0.5`, `1.0e6`, `2.5e-3` | `Value::Float` (f64) | IEEE 754 binary64 (feature `GA01`). |
-| `STRING` | `'single quotes only'`, `'it''s ok'`, `'\n'` escapes | `Value::String(DbString)` | Single quotes only — double quotes are delimited identifiers. `''` and backslash escapes are honored. |
+| `STRING` | `'single quotes'`, `"double quotes"`, `` `accent quotes` ``, `'\n'` escapes | `Value::String(DbString)` | ISO single-, double-, and accent-quoted character strings. Doubled delimiters and backslash escapes are honored unless the literal uses `@` no-escape form. |
 
 ### Optional types claimed in v1.0
 
@@ -126,7 +126,8 @@ these types is rejected at parse or analyze time.
 |---|---|---|
 | Single-quoted | `'Ada''s graph'`, `'line\nnext'` | Standard escaped form; doubled delimiters and backslash escapes are decoded. |
 | Double-quoted | `"Ada ""graph"""`, `"line\nnext"` | Expression slots treat this as a string literal; identifier slots still use double quotes for delimited identifiers. |
-| No escape | `@'path\raw'`, `@"path\raw"` | Feature `GL11`; backslashes are literal and the active quote delimiter cannot appear inside the body. |
+| Accent-quoted | `` `Ada graph` ``, `` `line\nnext` `` | Expression slots treat this as a string literal; identifier slots still use accent quotes for delimited identifiers. Doubled grave accents escape a literal grave accent. |
+| No escape | `@'path\raw'`, `@"path\raw"`, `` @`path\raw` `` | Feature `GL11`; backslashes are literal and the active quote delimiter cannot appear inside the body. |
 
 ### Identifiers and delimited identifiers
 
@@ -134,7 +135,7 @@ these types is rejected at parse or analyze time.
 |---|---|---|
 | Unquoted | `name`, `Person`, `customer_id` | Unicode letters / digits / underscore. Reserved keywords cannot appear unquoted. |
 | Double-quoted | `"first name"`, `"with ""quote"""` | Spec form. `""` escapes a literal double quote. |
-| Backtick-quoted | `` `first name` `` | selene extension; semantically identical to double-quoted. |
+| Accent-quoted | `` `first name` `` | Spec form. Doubled grave accents escape a literal grave accent. |
 | Property identifier | `n.date`, `{date: 1}` | Keywords like `date`, `time`, `type` are valid property names without quoting. |
 
 ---

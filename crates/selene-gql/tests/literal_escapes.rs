@@ -65,12 +65,28 @@ fn double_quoted_string_literals_decode() {
 }
 
 #[test]
+fn accent_quoted_string_literals_decode() {
+    for (source, expected) in [
+        ("RETURN `plain` AS value", "plain"),
+        ("RETURN `a``b` AS value", "a`b"),
+        ("RETURN `a\\`b` AS value", "a`b"),
+        ("RETURN `a\\nb` AS value", "a\nb"),
+        ("RETURN `\\u00E9\\U0001F600` AS value", "\u{00e9}\u{1f600}"),
+        ("RETURN `don't \"quote\"` AS value", "don't \"quote\""),
+    ] {
+        assert_eq!(string_value(source), expected, "{source}");
+    }
+}
+
+#[test]
 fn no_escape_string_literals_decode_backslash_literally() {
     for (source, expected) in [
         (r"RETURN @'a\nb' AS value", r"a\nb"),
         (r#"RETURN @"a\nb" AS value"#, r"a\nb"),
+        ("RETURN @`a\\nb` AS value", r"a\nb"),
         (r"RETURN @'\q' AS value", r"\q"),
         (r#"RETURN @"don't" AS value"#, "don't"),
+        ("RETURN @`don't \"quote\"` AS value", "don't \"quote\""),
     ] {
         assert_eq!(string_value(source), expected, "{source}");
     }
@@ -80,6 +96,7 @@ fn no_escape_string_literals_decode_backslash_literally() {
 fn no_escape_string_literals_do_not_accept_doubled_delimiters() {
     assert_syntax_contains("RETURN @'a''b' AS value", "expected");
     assert_syntax_contains(r#"RETURN @"a""b" AS value"#, "expected");
+    assert_syntax_contains("RETURN @`a``b` AS value", "expected");
 }
 
 #[test]

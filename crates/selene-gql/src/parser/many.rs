@@ -59,6 +59,7 @@ enum ScanState {
     DoubleQuote,
     NoEscapeSingleQuote,
     NoEscapeDoubleQuote,
+    NoEscapeBacktick,
     Backtick,
     LineComment,
     BlockComment,
@@ -66,6 +67,9 @@ enum ScanState {
 
 fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
     let bytes = source.as_bytes();
+    let last_single_quote = bytes.iter().rposition(|byte| *byte == b'\'');
+    let last_double_quote = bytes.iter().rposition(|byte| *byte == b'"');
+    let last_backtick = bytes.iter().rposition(|byte| *byte == b'`');
     let mut segments = Vec::new();
     let mut start = 0;
     let mut index = 0;
@@ -84,6 +88,10 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 }
                 b'@' if bytes.get(index + 1) == Some(&b'"') => {
                     state = ScanState::NoEscapeDoubleQuote;
+                    index += 2;
+                }
+                b'@' if bytes.get(index + 1) == Some(&b'`') => {
+                    state = ScanState::NoEscapeBacktick;
                     index += 2;
                 }
                 b'\'' => {
@@ -126,7 +134,21 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 }
                 _ => index += 1,
             },
+            ScanState::NoEscapeBacktick => match bytes[index] {
+                b'`' => {
+                    state = ScanState::Normal;
+                    index += 1;
+                }
+                _ => index += 1,
+            },
             ScanState::SingleQuote => match bytes[index] {
+                b'\\'
+                    if bytes.get(index + 1) == Some(&b'\'')
+                        && Some(index + 1) == last_single_quote =>
+                {
+                    state = ScanState::Normal;
+                    index += 2;
+                }
                 b'\\' => index = (index + 2).min(bytes.len()),
                 b'\'' if bytes.get(index + 1) == Some(&b'\'') => index += 2,
                 b'\'' => {
@@ -136,6 +158,13 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 _ => index += 1,
             },
             ScanState::DoubleQuote => match bytes[index] {
+                b'\\'
+                    if bytes.get(index + 1) == Some(&b'"')
+                        && Some(index + 1) == last_double_quote =>
+                {
+                    state = ScanState::Normal;
+                    index += 2;
+                }
                 b'\\' => index = (index + 2).min(bytes.len()),
                 b'"' if bytes.get(index + 1) == Some(&b'"') => index += 2,
                 b'"' => {
@@ -145,6 +174,13 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 _ => index += 1,
             },
             ScanState::Backtick => match bytes[index] {
+                b'\\'
+                    if bytes.get(index + 1) == Some(&b'`') && Some(index + 1) == last_backtick =>
+                {
+                    state = ScanState::Normal;
+                    index += 2;
+                }
+                b'\\' => index = (index + 2).min(bytes.len()),
                 b'`' if bytes.get(index + 1) == Some(&b'`') => index += 2,
                 b'`' => {
                     state = ScanState::Normal;
