@@ -25,3 +25,12 @@ fn otherwise_and_let_use_their_distinct_iso_feature_ids() {
     assert!(let_statement.contains(&FeatureId::GQ09));
     assert!(!let_statement.contains(&FeatureId::GQ02));
 }
+
+#[test]
+fn typed_let_value_definition_records_target_type_features() {
+    let observed = observed_features("LET VALUE x INT8 = 1 RETURN x");
+
+    assert!(observed.contains(&FeatureId::GQ09));
+    assert!(observed.contains(&FeatureId::GV02));
+    assert!(observed.contains(&FeatureId::GV09));
+}

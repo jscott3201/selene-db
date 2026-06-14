@@ -591,6 +591,7 @@ mod tests {
             expr,
             expr_id: ExprId::new(0),
             ty: AnalyzedType::DYNAMIC,
+            declared_type: None,
             alias: None,
             binding_refs: refs,
             span: span(),

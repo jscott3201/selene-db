@@ -267,7 +267,16 @@ fn lower_query_pipeline(
                 let projects = bindings
                     .iter()
                     .map(|binding| {
-                        expr::project_expr(&binding.value, Some(binding.alias.clone()), analyzed)
+                        let mut project = expr::project_expr(
+                            &binding.value,
+                            Some(binding.alias.clone()),
+                            analyzed,
+                        )?;
+                        if let Some(declared_type) = &binding.declared_type {
+                            project.ty = AnalyzedType::Resolved(declared_type.clone());
+                            project.declared_type = Some(declared_type.clone());
+                        }
+                        Ok(project)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 for project in &projects {

@@ -511,7 +511,10 @@ fn declare_projection_items(
 fn bind_let(ctx: &mut BindContext, bindings: &[LetBinding]) -> Result<(), AnalysisError> {
     for binding in bindings {
         let id = expr::bind_value_expr(ctx, &binding.value)?;
-        let ty = ctx.expr_type(id).clone();
+        let ty = binding.declared_type.as_ref().map_or_else(
+            || ctx.expr_type(id).clone(),
+            |declared_type| AnalyzedType::Resolved(declared_type.clone()),
+        );
         ctx.declare_strict_typed(
             BindingDeclKind::LetAlias,
             binding.alias.clone(),

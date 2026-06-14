@@ -248,6 +248,8 @@ impl PipelineStatement {
 pub struct LetBinding {
     /// Database-string alias.
     pub alias: DbString,
+    /// Optional declared type for the value variable.
+    pub declared_type: Option<GqlType>,
     /// Bound value expression.
     pub value: ValueExpr,
     /// Source span.

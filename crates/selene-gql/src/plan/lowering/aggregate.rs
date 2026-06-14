@@ -254,6 +254,7 @@ fn project_expr(
         expr: rewrite_aggregate_refs(original, aggregate_names, analyzed),
         expr_id,
         ty,
+        declared_type: None,
         alias,
         binding_refs: expr::binding_refs_in(original, analyzed)?,
         span: original.span(),

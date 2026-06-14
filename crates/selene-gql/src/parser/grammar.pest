@@ -421,7 +421,14 @@ inline_where = { ^"WHERE" ~ expr }
 // -- LET ------------------------------------------------------------
 
 let_stmt    = { ^"LET" ~ let_binding ~ ("," ~ let_binding)* }
-let_binding = { ident ~ "=" ~ expr }
+let_binding = { let_value_binding | let_shorthand_binding }
+// ISO/IEC 39075:2024 §14.7:
+// <let variable definition> ::= <value variable definition>
+//   | <binding variable> "=" <value expression>
+// <value variable definition> ::= VALUE <binding variable> <opt typed value initializer>.
+let_value_binding = { value_type_kw ~ ident ~ let_value_declared_type? ~ "=" ~ expr }
+let_value_declared_type = { (typed_marker ~ type_name) | type_name }
+let_shorthand_binding = { ident ~ "=" ~ expr }
 
 // -- FILTER ---------------------------------------------------------
 

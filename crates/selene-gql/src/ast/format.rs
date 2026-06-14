@@ -147,7 +147,16 @@ pub(super) fn fmt_pipeline(out: &mut String, pipeline: &QueryPipeline) -> fmt::R
                     if index > 0 {
                         out.push_str(", ");
                     }
-                    write!(out, "{} = ", fmt_ident(value.alias.clone()))?;
+                    if let Some(declared_type) = &value.declared_type {
+                        write!(
+                            out,
+                            "VALUE {} :: {} = ",
+                            fmt_ident(value.alias.clone()),
+                            fmt_type(declared_type)
+                        )?;
+                    } else {
+                        write!(out, "{} = ", fmt_ident(value.alias.clone()))?;
+                    }
                     fmt_expr(out, &value.value)?;
                 }
             }
