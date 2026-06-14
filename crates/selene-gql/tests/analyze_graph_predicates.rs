@@ -227,6 +227,37 @@ fn source_destination_predicates_accept_node_edge_variables() {
 }
 
 #[test]
+fn source_destination_predicates_accept_comment_boundaries() {
+    let analyzed = analyze_one(
+        "MATCH (a)-[e]->(b) RETURN a IS SOURCE /* c */ OF e AS source, \
+         b IS DESTINATION /* c */ OF e AS destination",
+    )
+    .expect("endpoint predicates accept comments between phrase keywords");
+    assert_eq!(
+        projection_type(&analyzed, "source"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+    assert_eq!(
+        projection_type(&analyzed, "destination"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+}
+
+#[test]
+fn source_destination_predicate_keywords_require_boundaries() {
+    for source in [
+        "MATCH (a)-[e]->() RETURN a IS SOURCEOF e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS SOURCEx OF e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS SOURCE OFx e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS DESTINATIONOF e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS DESTINATIONx OF e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS DESTINATION OFx e AS ok",
+    ] {
+        assert!(parse(source).is_err(), "{source} should parse-reject");
+    }
+}
+
+#[test]
 fn source_destination_predicates_accept_node_edge_aliases() {
     for source in [
         "MATCH (a)-[e]->() WITH a AS x, e AS y RETURN x IS SOURCE OF y AS ok",
