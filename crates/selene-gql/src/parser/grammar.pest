@@ -633,7 +633,7 @@ path_constructor = { ^"PATH" ~ "[" ~ expr ~ ("," ~ expr ~ "," ~ expr)* ~ "]" }
 normalize_expr = { ^"NORMALIZE" ~ "(" ~ expr ~ ("," ~ normal_form)? ~ ")" }
 
 // TRIM (ISO/IEC 39075:2024 §20.24): TRIM([ [spec] [char] FROM ] source)
-// plus the list trim form from §20.18. The operand grammar is deliberately
+// plus the list trim form from §20.16. The operand grammar is deliberately
 // factored by the first token after `TRIM(` instead of using
 // `trim_spec? ~ trim_char? ~ FROM`: the optional cascade made malformed nested
 // TRIM false-starts reparse the same expression multiple times. `TRIM` is a
