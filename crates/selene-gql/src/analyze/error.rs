@@ -154,6 +154,15 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// ISO 14.11 forbids `RETURN *` over a unit incoming binding table.
+    #[error("RETURN * requires a non-unit incoming binding table")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    ReturnStarRequiresInput {
+        /// Source span of the invalid `RETURN *`.
+        #[label("no incoming bindings to expand")]
+        span: SourceSpan,
+    },
+
     /// A reference is syntactically resolved but not valid in this expression context.
     #[error("invalid reference: {message}")]
     #[diagnostic(code(SLENE_GQL_42002))]
@@ -472,6 +481,7 @@ impl AnalysisError {
             Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::AggregateNestingViolation { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::ReturnStarRequiresInput { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {

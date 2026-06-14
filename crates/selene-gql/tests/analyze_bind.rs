@@ -242,6 +242,16 @@ fn return_star_preserves_input_bindings_for_post_return_clauses() {
 }
 
 #[test]
+fn return_star_rejects_unit_input() {
+    let err = analyze_one("RETURN *").expect_err("unit input has no bindings to expand");
+    assert!(matches!(err, AnalysisError::ReturnStarRequiresInput { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "42001");
+
+    analyze_one("MATCH (n) RETURN *").expect("RETURN * expands MATCH binding");
+    analyze_one("MATCH (n) WITH n AS x RETURN *").expect("RETURN * expands WITH binding");
+}
+
+#[test]
 fn next_chain_threads_bindings_forward() {
     // NEXT consumes the prior block's terminal scope. Codex P1 on PR #25.
     analyze_one("MATCH (n) RETURN n NEXT RETURN n").expect("n flows across NEXT");

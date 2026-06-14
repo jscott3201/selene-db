@@ -417,6 +417,10 @@ impl<'ctx> BindContext<'ctx> {
         self.current
     }
 
+    pub(crate) fn current_scope_has_visible_bindings(&self) -> bool {
+        self.scopes.has_visible_bindings(self.current)
+    }
+
     pub(crate) fn set_scope(&mut self, scope: ScopeId) {
         self.current = scope;
     }
