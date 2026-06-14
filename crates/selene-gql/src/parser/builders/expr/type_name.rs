@@ -1,5 +1,6 @@
 //! GQL type-name builders.
 
+mod approximate_numeric;
 mod dynamic_union;
 mod exact_numeric;
 mod list;
@@ -142,32 +143,11 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     {
         return build_decimal_precision_type_name(decimal_precision, source_span);
     }
-    if keyword_tokens_eq(text, &["FLOAT16"]) {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV20,
-            display_name: "16 bit floating point numbers",
-            span: source_span,
-            hint: "FLOAT16 is outside the selene-db D1 claim list; use FLOAT32 or FLOAT64",
-        });
-    }
     if let Some(exact_numeric_type) = exact_numeric::build_keyword_type_name(&pair)? {
         return Ok(exact_numeric_type);
     }
-    if keyword_tokens_eq(text, &["FLOAT128"]) {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV25,
-            display_name: "128 bit floating point numbers",
-            span: source_span,
-            hint: "FLOAT128 is outside the selene-db D1 claim list",
-        });
-    }
-    if keyword_tokens_eq(text, &["FLOAT256"]) {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV26,
-            display_name: "256 bit floating point numbers",
-            span: source_span,
-            hint: "FLOAT256 is outside the selene-db D1 claim list",
-        });
+    if let Some(approximate_numeric_type) = approximate_numeric::build_keyword_type_name(&pair)? {
+        return Ok(approximate_numeric_type);
     }
     if keyword_starts_with(text, "BYTES")
         || keyword_starts_with(text, "BINARY")

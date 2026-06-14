@@ -926,12 +926,12 @@ type_name_base = {
   | integer_kw | bigint_kw | smallint_kw | int_kw
   | uint_256_kw | uint_128_kw | uint_64_kw | uint_32_kw | uint_16_kw | uint_8_kw
   | usmallint_kw | ubigint_kw | uint_kw
-  | ^"DOUBLE" ~ (^"PRECISION")?
+  | double_kw ~ precision_kw?
   | float_precision_type
-  | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
-  | ^"FLOAT" | ^"REAL"
+  | float_256_kw | float_128_kw | float_64_kw | float_32_kw | float_16_kw
+  | float_kw | real_kw
   | decimal_precision_type
-  | ^"DECIMAL" | ^"DEC"
+  | decimal_kw | dec_kw
   | character_string_type
   | ^"UUID"
   | ^"JSON"
@@ -991,14 +991,25 @@ smallint_kw = @{ ^"SMALLINT" ~ !(LETTER | NUMBER | "_") }
 bigint_kw = @{ ^"BIGINT" ~ !(LETTER | NUMBER | "_") }
 usmallint_kw = @{ ^"USMALLINT" ~ !(LETTER | NUMBER | "_") }
 ubigint_kw = @{ ^"UBIGINT" ~ !(LETTER | NUMBER | "_") }
+double_kw = @{ ^"DOUBLE" ~ !(LETTER | NUMBER | "_") }
+precision_kw = @{ ^"PRECISION" ~ !(LETTER | NUMBER | "_") }
+float_kw = @{ ^"FLOAT" ~ !(LETTER | NUMBER | "_") }
+float_16_kw = @{ ^"FLOAT16" ~ !(LETTER | NUMBER | "_") }
+float_32_kw = @{ ^"FLOAT32" ~ !(LETTER | NUMBER | "_") }
+float_64_kw = @{ ^"FLOAT64" ~ !(LETTER | NUMBER | "_") }
+float_128_kw = @{ ^"FLOAT128" ~ !(LETTER | NUMBER | "_") }
+float_256_kw = @{ ^"FLOAT256" ~ !(LETTER | NUMBER | "_") }
+real_kw = @{ ^"REAL" ~ !(LETTER | NUMBER | "_") }
+decimal_kw = @{ ^"DECIMAL" ~ !(LETTER | NUMBER | "_") }
+dec_kw = @{ ^"DEC" ~ !(LETTER | NUMBER | "_") }
 signed_integer_precision_type = {
     (signed_kw ~ integer_kw | integer_kw | int_kw) ~ "(" ~ numeric_type_precision ~ ")"
 }
 unsigned_integer_precision_type = {
     (unsigned_kw ~ integer_kw | uint_kw) ~ "(" ~ numeric_type_precision ~ ")"
 }
-float_precision_type = { ^"FLOAT" ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
-decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
+float_precision_type = { float_kw ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
+decimal_precision_type = { (decimal_kw | dec_kw) ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
 numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 duration_type = { duration_kw ~ "(" ~ temporal_duration_qualifier ~ ")" }
