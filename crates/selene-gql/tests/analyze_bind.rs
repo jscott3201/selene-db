@@ -279,6 +279,35 @@ fn order_by_allows_aggregate_sort_key_with_grouped_aggregate_return() {
 }
 
 #[test]
+fn group_by_rejects_ungrouped_nonaggregate_return_items() {
+    for source in [
+        "FOR x IN [1, 2] RETURN x AS x, x + 1 AS y GROUP BY x",
+        "FOR x IN [1, 2] RETURN 1 AS one, count(*) AS c GROUP BY ()",
+        "FOR x IN [1, 2] WITH x AS x, x + 1 AS y GROUP BY x RETURN x",
+    ] {
+        let err =
+            analyze_one(source).expect_err("non-aggregate projection item must be a GROUP BY key");
+        assert!(
+            matches!(err, AnalysisError::GroupedProjectionItemNotGrouped { .. }),
+            "{source} should reject with GroupedProjectionItemNotGrouped, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+#[test]
+fn group_by_allows_grouped_and_aggregate_return_items() {
+    analyze_one("FOR x IN [1, 2] RETURN x AS x GROUP BY x")
+        .expect("grouping key projection is legal without aggregate");
+    analyze_one("FOR x IN [1, 2] RETURN x + 1 AS y, count(*) AS c GROUP BY x + 1")
+        .expect("projected expression may match the grouping key");
+    analyze_one(
+        "FOR x IN ['aa', 'bbb'] RETURN char_length(x) AS l, count(*) AS c GROUP BY char_length(x)",
+    )
+    .expect("span-insensitive grouped expression matching keeps scalar grouping legal");
+}
+
+#[test]
 fn return_star_preserves_input_bindings_for_post_return_clauses() {
     // RETURN * does not redeclare aliases; pre-RETURN bindings must stay
     // visible for ORDER BY / LIMIT / OFFSET. Codex P1 on PR #25.

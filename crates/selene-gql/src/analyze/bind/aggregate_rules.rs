@@ -1,6 +1,6 @@
 //! Aggregate-specific analyzer rules.
 
-use crate::{ReturnItem, ValueExpr, analyze::error::AnalysisError};
+use crate::{ReturnItem, ValueExpr, analyze::error::AnalysisError, ast::eq::value_structurally_eq};
 
 use super::expr;
 
@@ -30,6 +30,29 @@ pub(crate) fn validate_aggregate_nesting(
     if let Some(having) = having {
         validate_aggregate_nesting_in_expr(having)?;
     }
+    Ok(())
+}
+
+/// Validate ISO 14.11 grouped projection item rules.
+pub(crate) fn validate_grouped_projection_items(
+    items: &[ReturnItem],
+    group_by: Option<&[ValueExpr]>,
+) -> Result<(), AnalysisError> {
+    let Some(group_by) = group_by else {
+        return Ok(());
+    };
+
+    for item in items {
+        if contains_aggregate_function(&item.expr)
+            || group_by
+                .iter()
+                .any(|key| value_structurally_eq(key, &item.expr))
+        {
+            continue;
+        }
+        return Err(AnalysisError::GroupedProjectionItemNotGrouped { span: item.span });
+    }
+
     Ok(())
 }
 

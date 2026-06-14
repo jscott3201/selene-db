@@ -19,6 +19,16 @@ pub fn structurally_eq(a: &Statement, b: &Statement) -> bool {
     left == right
 }
 
+/// Return true when two value expressions are structurally equal after removing
+/// spans and source-spelling metadata.
+pub(crate) fn value_structurally_eq(a: &ValueExpr, b: &ValueExpr) -> bool {
+    let mut left = a.clone();
+    let mut right = b.clone();
+    scrub_value(&mut left);
+    scrub_value(&mut right);
+    left == right
+}
+
 fn scrub_statement(statement: &mut Statement) {
     match statement {
         Statement::Query(pipeline) => scrub_query_pipeline(pipeline),
