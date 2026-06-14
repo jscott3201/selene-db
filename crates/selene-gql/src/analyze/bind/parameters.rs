@@ -317,10 +317,6 @@ fn collect_value_parameter_declarations(
             | ValueExpr::PropertyExists { target, .. }
             | ValueExpr::Normalize { source: target, .. }
             | ValueExpr::Cast { value: target, .. } => stack.push(target),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push(index);
-                stack.push(target);
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..

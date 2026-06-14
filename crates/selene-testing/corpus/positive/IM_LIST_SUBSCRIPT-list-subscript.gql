@@ -1,5 +1,0 @@
-// corpus: positive
-// feature: IM_LIST_SUBSCRIPT
-// also-covers: GV50
-// expects: parse-ok
-RETURN [10, 20, 30][1] AS first

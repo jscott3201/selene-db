@@ -468,8 +468,8 @@ fn parse_rejects_zero_argument_aggregates() {
 #[test]
 fn parse_list_record_and_case_expressions() {
     assert!(matches!(
-        only_item("RETURN [1, 2][0]").expr,
-        ValueExpr::ListAccess { .. }
+        only_item("RETURN [1, 2]").expr,
+        ValueExpr::ListLiteral { ref items, .. } if items.len() == 2
     ));
     assert!(matches!(
         only_item("RETURN {name: 'Alice'}").expr,
@@ -479,6 +479,13 @@ fn parse_list_record_and_case_expressions() {
         only_item("RETURN CASE WHEN true THEN 1 ELSE 0 END").expr,
         ValueExpr::Case { ref branches, else_branch: Some(_), .. } if branches.len() == 1
     ));
+}
+
+#[test]
+fn parse_rejects_non_iso_list_subscript_operator() {
+    let err =
+        parse("RETURN [10, 20, 30][1] AS value").expect_err("list subscript is not ISO GQL syntax");
+    assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
 }
 
 #[test]

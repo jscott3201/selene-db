@@ -16,10 +16,6 @@ pub(super) fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
         let next = depth.saturating_add(1);
         match expr {
             ValueExpr::PropertyAccess { target, .. } => stack.push((target, next)),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push((index, next));
-                stack.push((target, next));
-            }
             ValueExpr::ListLiteral { items, .. } => {
                 stack.extend(items.iter().rev().map(|item| (item, next)));
             }
@@ -218,10 +214,6 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
     while let Some((expr, depth)) = stack.pop() {
         match expr {
             ValueExpr::PropertyAccess { target, .. } => stack.push((target, depth)),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push((index, depth));
-                stack.push((target, depth));
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..

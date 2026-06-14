@@ -172,10 +172,6 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             Ok(())
         }
         ValueExpr::PropertyAccess { target, .. } => validate_expr(target),
-        ValueExpr::ListAccess { target, index, .. } => {
-            validate_expr(target)?;
-            validate_expr(index)
-        }
         ValueExpr::ListLiteral { items, .. } => validate_exprs(items),
         ValueExpr::PathConstructor { elements, .. } => validate_exprs(elements),
         ValueExpr::RecordLiteral { fields, .. } => {

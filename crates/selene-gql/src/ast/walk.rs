@@ -40,10 +40,6 @@ impl ValueExpr {
         match self {
             Self::Literal(_) | Self::Variable { .. } | Self::Parameter { .. } => {}
             Self::PropertyAccess { target, .. } | Self::PropertyExists { target, .. } => f(target),
-            Self::ListAccess { target, index, .. } => {
-                f(target);
-                f(index);
-            }
             Self::ListLiteral { items, .. }
             | Self::PathConstructor {
                 elements: items, ..
@@ -127,10 +123,6 @@ impl ValueExpr {
         match self {
             Self::Literal(_) | Self::Variable { .. } | Self::Parameter { .. } => {}
             Self::PropertyAccess { target, .. } | Self::PropertyExists { target, .. } => f(target),
-            Self::ListAccess { target, index, .. } => {
-                f(target);
-                f(index);
-            }
             Self::ListLiteral { items, .. }
             | Self::PathConstructor {
                 elements: items, ..
@@ -219,7 +211,6 @@ impl ValueExpr {
             Self::Variable { span, .. }
             | Self::Parameter { span, .. }
             | Self::PropertyAccess { span, .. }
-            | Self::ListAccess { span, .. }
             | Self::ListLiteral { span, .. }
             | Self::RecordLiteral { span, .. }
             | Self::PathConstructor { span, .. }

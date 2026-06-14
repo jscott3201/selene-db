@@ -561,9 +561,8 @@ unary    = { sign_op ~ unary | postfix }
 sign_op  = { "+" | "-" }
 
 postfix = { primary ~ postfix_op* }
-postfix_op = { prop_access | list_access_op }
+postfix_op = { prop_access }
 prop_access    = { "." ~ prop_ident }
-list_access_op = { "[" ~ expr ~ "]" }
 
 // -- Primary expressions (no left-recursion) ------------------------
 

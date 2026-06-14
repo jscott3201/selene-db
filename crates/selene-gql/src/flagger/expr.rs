@@ -67,12 +67,9 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             return;
         }
         // Variants whose own feature surface is recorded before their direct
-        // `ValueExpr` children. The feature is emitted here; child recursion is
+        // `ValueExpr` children. Feature emission stays here; child recursion is
         // delegated to `for_each_child` below so the per-variant traversal
         // shape lives in exactly one place (`ast/walk.rs`).
-        ValueExpr::ListAccess { span, .. } => {
-            record_feature(uses, FeatureId::IM_LIST_SUBSCRIPT, *span);
-        }
         ValueExpr::ListLiteral { span, .. } => record_feature(uses, FeatureId::GV50, *span),
         ValueExpr::RecordLiteral { span, .. } => record_feature(uses, FeatureId::GV45, *span),
         ValueExpr::PathConstructor { span, .. } => {
@@ -563,28 +560,22 @@ mod tests {
 
     #[test]
     fn nested_child_features_record_transitively() {
-        // `list[1 + 2]`: the parent `ListAccess` owns `IM_LIST_SUBSCRIPT`; the
-        // `BinaryOp::Add` index child owns `GA01`. Both must surface, proving
-        // the `for_each_child` delegation recurses into children.
-        let expr = ValueExpr::ListAccess {
-            target: ValueExpr::Variable {
-                name: selene_core::db_string("list").expect("string fits DB string cap"),
-                span: span(0),
-            }
-            .into(),
-            index: ValueExpr::BinaryOp {
+        // `[1 + 2]`: the parent `ListLiteral` owns `GV50`; the nested
+        // `BinaryOp::Add` child owns `GA01`. Both must surface, proving the
+        // `for_each_child` delegation recurses into children.
+        let expr = ValueExpr::ListLiteral {
+            items: vec![ValueExpr::BinaryOp {
                 op: BinaryOp::Add,
                 lhs: int(1, 5).into(),
                 rhs: int(2, 7).into(),
                 span: span(5),
-            }
-            .into(),
+            }],
             span: span(0),
         };
         let observed = ids(&expr);
         assert!(
-            observed.contains(&FeatureId::IM_LIST_SUBSCRIPT),
-            "parent ListAccess feature missing: {observed:?}"
+            observed.contains(&FeatureId::GV50),
+            "parent ListLiteral feature missing: {observed:?}"
         );
         assert!(
             observed.contains(&FeatureId::GA01),

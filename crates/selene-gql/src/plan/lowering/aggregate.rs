@@ -144,10 +144,6 @@ fn collect_aggregates(
         | ValueExpr::PropertyExists { target, .. } => {
             collect_aggregates(target, analyzed, rewrite)?;
         }
-        ValueExpr::ListAccess { target, index, .. } => {
-            collect_aggregates(target, analyzed, rewrite)?;
-            collect_aggregates(index, analyzed, rewrite)?;
-        }
         ValueExpr::ListLiteral { items, .. }
         | ValueExpr::PathConstructor {
             elements: items, ..
@@ -292,15 +288,6 @@ fn rewrite_aggregate_refs(
         ValueExpr::PropertyAccess { target, key, span } => ValueExpr::PropertyAccess {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
             key: key.clone(),
-            span: *span,
-        },
-        ValueExpr::ListAccess {
-            target,
-            index,
-            span,
-        } => ValueExpr::ListAccess {
-            target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
-            index: Box::new(rewrite_aggregate_refs(index, aggregate_names, analyzed)),
             span: *span,
         },
         ValueExpr::ListLiteral { items, span } => ValueExpr::ListLiteral {

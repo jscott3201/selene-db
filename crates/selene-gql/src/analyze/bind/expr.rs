@@ -55,11 +55,6 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 bind_value_expr(ctx, target)?;
                 AnalyzedType::Dynamic
             }
-            ValueExpr::ListAccess { target, index, .. } => {
-                bind_value_expr(ctx, target)?;
-                bind_value_expr(ctx, index)?;
-                AnalyzedType::Dynamic
-            }
             ValueExpr::ListLiteral { items, .. } => {
                 let item_types = bind_many_with_spans(ctx, items)?;
                 infer::list_literal(&item_types)?

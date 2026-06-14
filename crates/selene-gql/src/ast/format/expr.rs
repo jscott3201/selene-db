@@ -54,12 +54,6 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             fmt_expr(out, target)?;
             write!(out, ".{}", fmt_ident(key.clone()))?;
         }
-        ValueExpr::ListAccess { target, index, .. } => {
-            fmt_expr(out, target)?;
-            out.push('[');
-            fmt_expr(out, index)?;
-            out.push(']');
-        }
         ValueExpr::ListLiteral { items, .. } => {
             out.push('[');
             for (index, item) in items.iter().enumerate() {
