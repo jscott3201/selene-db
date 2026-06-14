@@ -32,6 +32,11 @@ fn pipeline_statement_keywords_require_boundaries() {
         "SELECTALL 1 AS x",
         "SELECT 1 AS x FROMMATCH (n)",
         "SELECT 1 AS x FROMx",
+        "MATCHx (n) RETURN n",
+        "MATCHOPTIONAL (n) RETURN n",
+        "OPTIONALMATCH (n) RETURN n",
+        "OPTIONALx MATCH (n) RETURN n",
+        "MATCH (n) SETx n.age = 1 FINISH",
     ] {
         assert!(
             parse(source).is_err(),
@@ -78,6 +83,9 @@ fn guarded_pipeline_keywords_still_accept_iso_forms() {
         "SELECT ALL 1 AS x",
         "SELECT 1 AS x FROM MATCH (n)",
         "SELECT * FROM MATCH (n)",
+        "MATCH (n) RETURN n",
+        "OPTIONAL MATCH (n) RETURN n",
+        "MATCH (n) SET n.age = 1 FINISH",
     ] {
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
     }
