@@ -48,8 +48,8 @@ spec docs by the build. The table below summarizes the major clause groups.
 | Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
-| Mutation (`INSERT`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). |
-| DDL (`CREATE/DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Full | Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
+| Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
+| DDL (`DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` is the implementation-defined factory-reset surface. `CREATE GRAPH` remains unclaimed (`GC04`). Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
 | Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries claim `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not claimed. |
 | Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are claimed (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
@@ -502,18 +502,12 @@ let planned = plan(&analyzed, &registry)?;
 execute_statement(&planned, &mut session, &registry)?;
 ```
 
-### `MERGE`
+### `MERGE` (deferred)
 
-```gql
-MERGE (p:Person {email: 'ada@example.org'})
-ON CREATE SET p.created = LOCAL DATETIME '2026-05-16T00:00:00'
-ON MATCH SET p.last_seen = LOCAL DATETIME '2026-05-16T00:00:00'
-```
-
-`MERGE` matches the pattern; if no row matches, the pattern is created.
-`ON CREATE SET` runs for newly-created rows; `ON MATCH SET` runs for
-existing rows. Either clause is optional. Repetition of the same clause
-is rejected at parse time.
+`MERGE` is grammar-reserved, but the AST builder deliberately rejects it
+with feature-not-supported status `42N01`. selene-db does not claim this
+mutation surface yet. Use explicit `MATCH` plus `INSERT` application logic
+until a dedicated `MERGE` implementation lands.
 
 ### `SET`
 
@@ -572,19 +566,21 @@ selene-db supports two graph types: GG01 (open, schema-on-read) and GG02
 (closed, schema-validated). The default is open; closed graphs are
 opt-in.
 
-### `CREATE GRAPH` / `DROP GRAPH`
-
-```gql
-CREATE GRAPH analytics IF NOT EXISTS
-```
+### `DROP GRAPH`
 
 ```gql
 DROP GRAPH analytics IF EXISTS
 ```
 
-`CREATE GRAPH` and `DROP GRAPH` accept the `IF [NOT] EXISTS` modifier
-(feature `GC05`). `CREATE OR REPLACE GRAPH` replaces an existing graph
-atomically. Graph management is feature `GC04`.
+`DROP GRAPH` is supported as the implementation-defined
+`IM_DROP_GRAPH` factory-reset surface. Under D1, selene-db embeds exactly
+one current graph; the parsed graph name is informational and the command
+resets the current session graph. `DROP GRAPH IF EXISTS` parses too; the
+modifier is informational under the same single-graph model.
+
+`CREATE GRAPH` remains outside the current claim. It rejects before planning
+with feature-not-supported status `42N01` for `GC04`, because the embedded
+engine does not create a second graph from GQL.
 
 ### `CREATE NODE TYPE` / `CREATE EDGE TYPE`
 
@@ -799,6 +795,8 @@ Examples of rejected constructs:
 | `CREATE PROCEDURE pkg.fn() { LET x = 1 RETURN x }` | Procedure-local definitions (`GP05`-`GP13`) are deferred. | Parser error. |
 | `CALL pkg.fn(TABLE rows)` | Binding tables as procedure arguments (`GP14`) are deferred. | Parser error. |
 | `CALL pkg.fn(GRAPH g)` | Graphs as procedure arguments (`GP15`) are deferred. | Parser error. |
+| `CREATE GRAPH demo` | Graph management (`GC04`) is unclaimed under the D1 single-graph embedder model. | Flagger error. |
+| `MERGE (n:Person {id: 1})` | `MERGE` mutation lowering is deferred. | Parser error. |
 | `RETURN NULL IS TYPED GRAPH AS ok` | Graph reference value types (`GV60`) are deferred. | Flagger error. |
 | `CAST(x AS FLOAT16)` | Feature `GV20` not claimed. | Flagger error. |
 | `CAST(x AS FLOAT128)` | Feature `GV25` not claimed. | Flagger error. |
