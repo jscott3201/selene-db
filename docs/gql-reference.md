@@ -704,11 +704,12 @@ procedure output.
 | `selene.create_text_index`, `selene.drop_text_index` | Mutation | Register or drop maintained BM25 text indexes. |
 | `selene.text_index_stats` | Graph | Text index memory and cardinality statistics. |
 | `selene.text_search_nodes`, `selene.text_score_nodes`, `selene.text_score_nodes_batch`, `selene.text_score_candidate_state_expanded_batch` | Graph | Exact BM25 search and candidate-scoped text scoring. |
+| `selene.reciprocal_rank_fusion` | Graph | Fuse ranked node lists with Reciprocal Rank Fusion. |
 | `selene.json_contains_nodes`, `selene.json_path_*_nodes` | Graph | Exact JSON containment, path-existence, path-containment, and path-value search over node properties. |
 | `selene.json_contains_candidate_nodes`, `selene.json_path_*_candidate_nodes` | Graph | Candidate-scoped JSON filters over explicit `LIST<NODE>` inputs. |
 | `selene.compact` | Maintenance | Compact dead graph rows out of the live store. |
 
-The 45 platform built-ins are registered by the native
+The 46 platform built-ins are registered by the native
 `selene-gql` `BuiltinProcedureRegistry` (the sole frozen production
 `ProcedureRegistry` impl) and documented in its rustdoc.
 
@@ -732,8 +733,8 @@ result columns.
 
 `EmptyProcedureRegistry` is the no-op registry used by the README example.
 A real embedder constructs the native `BuiltinProcedureRegistry`, which is
-frozen at construction (D16): it allocates a fixed set of handles for the 5
-platform built-ins + 19 `algo.*` procedures and never changes thereafter
+frozen at construction (D16): it allocates a fixed set of handles for the 46
+platform built-ins plus 19 `algo.*` procedures and never changes thereafter
 (`registry_version()` is a constant `0`). It can be shared across threads
 via `Arc`. There are no loadable third-party packs to register.
 
