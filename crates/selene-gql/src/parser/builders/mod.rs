@@ -224,6 +224,7 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::distinct_kw => return_clause.distinct = true,
+            Rule::all_kw => {}
             Rule::return_star => return_clause.star = true,
             Rule::projection_list => return_clause.items = build_projection_list(child)?,
             Rule::select_from => {
@@ -440,6 +441,7 @@ pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, 
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::distinct_kw => clause.distinct = true,
+            Rule::all_kw => {}
             Rule::return_star => clause.star = true,
             Rule::projection_list => clause.items = build_projection_list(child)?,
             Rule::group_by_clause => clause.group_by = Some(build_group_by(child)?),
