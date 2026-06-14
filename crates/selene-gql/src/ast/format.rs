@@ -509,9 +509,6 @@ fn fmt_inline_call(out: &mut String, call: &InlineProcedureCall) -> fmt::Result 
         out.push_str(" YIELD ");
         fmt_yield_items(out, &call.yield_items)?;
     }
-    if call.in_transactions {
-        out.push_str(" IN TRANSACTIONS");
-    }
     Ok(())
 }
 

@@ -2,7 +2,7 @@
 
 use proptest::test_runner::TestRunner;
 use selene_gql::{
-    Statement,
+    PipelineStatement, Statement,
     ast::{FormatError, format_read_statement, structurally_eq},
     parse,
 };
@@ -115,7 +115,6 @@ fn contextual_keyword_aliases_are_quoted_in_formatted_output() {
         "EXPLAIN",
         "INDEXES",
         "PROCEDURES",
-        "TRANSACTIONS",
         "VALUE",
         "NORMALIZE",
         "PERCENTILE_CONT",
@@ -184,6 +183,25 @@ fn write_side_statements_report_unsupported_with_stable_variant_strings() {
         };
         assert_eq!(variant, expected_variant, "variant string for {source}");
     }
+}
+
+#[test]
+fn inline_call_in_transactions_flag_is_not_formattable() {
+    let mut parsed = parse("CALL { RETURN 1 AS x }").expect("inline CALL parses");
+    let Statement::Query(query) = &mut parsed else {
+        panic!("expected query statement");
+    };
+    let PipelineStatement::CallSubquery(call) = &mut query.statements[0] else {
+        panic!("expected leading inline CALL");
+    };
+    call.in_transactions = true;
+
+    let error = format_read_statement(&parsed)
+        .expect_err("non-ISO inline CALL transaction flag is not formattable");
+    let FormatError::Unsupported { variant } = error else {
+        panic!("expected Unsupported, got {error:?}");
+    };
+    assert_eq!(variant, "InlineCallInTransactions");
 }
 
 #[test]

@@ -432,9 +432,8 @@ group_by_item   = { expr }
 // -- CALL -----------------------------------------------------------
 
 call_stmt      = { optional_modifier? ~ ^"CALL" ~ (call_subquery | call_procedure) }
-call_subquery  = { variable_scope_clause? ~ "{" ~ query_pipeline ~ "}" ~ yield_clause? ~ call_transactions_clause? }
+call_subquery  = { variable_scope_clause? ~ "{" ~ query_pipeline ~ "}" ~ yield_clause? }
 variable_scope_clause = { "(" ~ (ident ~ ("," ~ ident)*)? ~ ")" }
-call_transactions_clause = { ^"IN" ~ ^"TRANSACTIONS" }
 call_procedure = { qualified_name ~ "(" ~ arg_list? ~ ")" ~ (yield_clause ~ yield_filter?)? }
 qualified_name = { ident ~ ("." ~ prop_ident)* }
 arg_list       = { expr ~ ("," ~ expr)* }

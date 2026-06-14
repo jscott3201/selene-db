@@ -73,7 +73,6 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
     let mut variable_scope = None;
     let mut body = None;
     let mut yield_items = Vec::new();
-    let mut in_transactions = false;
 
     for child in pair.into_inner() {
         match child.as_rule() {
@@ -82,7 +81,6 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
             }
             Rule::query_pipeline => body = Some(build_query_pipeline(child)?),
             Rule::yield_clause => yield_items = build_yield_items(child)?,
-            Rule::call_transactions_clause => in_transactions = true,
             _ => return Err(unexpected_pair(child, "unexpected CALL subquery child")),
         }
     }
@@ -94,7 +92,7 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
             ParserError::syntax("CALL subquery is missing body", source_span, None)
         })?),
         yield_items,
-        in_transactions,
+        in_transactions: false,
         span: source_span,
     })
 }

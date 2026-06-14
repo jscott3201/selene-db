@@ -249,7 +249,13 @@ fn call_subquery_runs_after_with_projection() {
 
 #[test]
 fn call_subquery_rejects_in_transactions() {
-    assert_status("CALL { RETURN 1 LIMIT 1 } IN TRANSACTIONS", "42N01");
+    let err = parse("CALL { RETURN 1 LIMIT 1 } IN TRANSACTIONS")
+        .expect_err("IN TRANSACTIONS is not ISO inline CALL syntax");
+    assert!(
+        matches!(err, selene_gql::ParserError::SyntaxError { .. }),
+        "expected syntax error, got {err:?}"
+    );
+    assert_eq!(err.gqlstatus().as_str(), "42001");
 }
 
 // GP03 (ISO/IEC 39075:2024 §15.2): explicit variable-scope CALL subqueries.

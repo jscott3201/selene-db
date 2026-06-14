@@ -35,7 +35,11 @@ pub struct InlineProcedureCall {
     pub body: Box<QueryPipeline>,
     /// Requested yield columns. Empty means the call discards return columns.
     pub yield_items: Vec<YieldItem>,
-    /// Whether the source requested `IN TRANSACTIONS`.
+    /// Defensive non-ISO `IN TRANSACTIONS` flag for hand-built ASTs.
+    ///
+    /// Parsed GQL never sets this flag; the planner/analyzer keep backstops so
+    /// internal callers cannot accidentally execute transaction-batched inline
+    /// calls through the read pipeline.
     pub in_transactions: bool,
     /// Source span.
     pub span: SourceSpan,
