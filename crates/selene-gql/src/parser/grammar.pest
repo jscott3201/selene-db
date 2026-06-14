@@ -933,10 +933,10 @@ type_name_base = {
   | decimal_precision_type
   | decimal_kw | dec_kw
   | character_string_type
-  | ^"UUID"
-  | ^"JSON"
-  | ^"VECTOR"
-  | byte_string_type | ^"BYTEA"
+  | uuid_kw
+  | json_kw
+  | vector_kw
+  | byte_string_type | bytea_kw
   | timestamp_kw ~ with_kw ~ time_kw ~ zone_kw
   | timestamp_kw ~ without_kw ~ time_kw ~ zone_kw
   | timestamp_kw
@@ -948,12 +948,12 @@ type_name_base = {
   | duration_type
   | binding_table_type
   | open_reference_value_type
-  | ^"PATH"
+  | path_type_kw
   | angle_list_type
   | bare_list_type
   | record_type
   | dynamic_union_type
-  | ^"NOTHING" | ^"NULL"
+  | nothing_kw | null_kw
 }
 angle_list_type = { list_value_type_name_synonym ~ "<" ~ type_name ~ ">" ~ list_max_cardinality? }
 bare_list_type = { list_value_type_name_synonym ~ list_max_cardinality? }
@@ -1002,6 +1002,12 @@ float_256_kw = @{ ^"FLOAT256" ~ !(LETTER | NUMBER | "_") }
 real_kw = @{ ^"REAL" ~ !(LETTER | NUMBER | "_") }
 decimal_kw = @{ ^"DECIMAL" ~ !(LETTER | NUMBER | "_") }
 dec_kw = @{ ^"DEC" ~ !(LETTER | NUMBER | "_") }
+uuid_kw = @{ ^"UUID" ~ !(LETTER | NUMBER | "_") }
+json_kw = @{ ^"JSON" ~ !(LETTER | NUMBER | "_") }
+vector_kw = @{ ^"VECTOR" ~ !(LETTER | NUMBER | "_") }
+bytea_kw = @{ ^"BYTEA" ~ !(LETTER | NUMBER | "_") }
+path_type_kw = @{ ^"PATH" ~ !(LETTER | NUMBER | "_") }
+nothing_kw = @{ ^"NOTHING" ~ !(LETTER | NUMBER | "_") }
 signed_integer_precision_type = {
     (signed_kw ~ integer_kw | integer_kw | int_kw) ~ "(" ~ numeric_type_precision ~ ")"
 }
