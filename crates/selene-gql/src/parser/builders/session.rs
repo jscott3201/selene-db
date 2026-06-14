@@ -23,7 +23,20 @@ pub(super) fn build_session_command(pair: Pair<'_, Rule>) -> Result<Statement, P
 }
 
 fn build_session_set(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
-    let inner = first_child(pair)?;
+    let source_span = span(&pair);
+    let inner = pair
+        .into_inner()
+        .find(|child| {
+            matches!(
+                child.as_rule(),
+                Rule::session_set_binding_table_parameter
+                    | Rule::session_set_graph_parameter
+                    | Rule::session_set_graph
+                    | Rule::session_set_time_zone
+                    | Rule::session_set_value
+            )
+        })
+        .ok_or_else(|| ParserError::syntax("SESSION SET is missing a target", source_span, None))?;
     match inner.as_rule() {
         Rule::session_set_binding_table_parameter => {
             build_session_set_binding_table_parameter(inner)
@@ -133,6 +146,7 @@ fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
     let mut value = None;
     for child in pair.into_inner() {
         match child.as_rule() {
+            Rule::session_value_kw => {}
             Rule::if_not_exists => if_not_exists = true,
             Rule::param_ref => param = Some(db_string_param(child)?),
             Rule::session_value_declared_type => {

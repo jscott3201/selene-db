@@ -106,8 +106,10 @@ drop_graph   = { ^"DROP" ~ ^"GRAPH" ~ if_exists? ~ ident }
 create_index = { ^"CREATE" ~ ^"INDEX" ~ if_not_exists? ~ ident ~ ^"ON" ~ ":" ~ ident ~ "(" ~ prop_ident ~ ("," ~ prop_ident)* ~ ")" }
 drop_index   = { ^"DROP" ~ ^"INDEX" ~ if_exists? ~ ident }
 
-if_not_exists = { ^"IF" ~ ^"NOT" ~ ^"EXISTS" }
-if_exists     = { ^"IF" ~ ^"EXISTS" }
+if_not_exists = { if_kw ~ not_kw ~ exists_kw }
+if_exists     = { if_kw ~ exists_kw }
+if_kw = @{ ^"IF" ~ !(LETTER | NUMBER | "_") }
+exists_kw = @{ ^"EXISTS" ~ !(LETTER | NUMBER | "_") }
 
 chained_query = { query_pipeline ~ (next_kw ~ query_pipeline)+ }
 
@@ -152,15 +154,15 @@ transaction_graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
 session_command = { session_set | session_reset | session_close }
 
 // section 7.3 <session close command>
-session_close = { ^"SESSION" ~ ^"CLOSE" }
+session_close = { session_kw ~ close_kw }
 
 // section 7.1 <session set command> implemented branches.
-session_set            = { ^"SESSION" ~ ^"SET" ~ (session_set_binding_table_parameter | session_set_graph_parameter | session_set_graph | session_set_time_zone | session_set_value) }
-session_set_binding_table_parameter = { param_ref ~ ^"BINDING" ~ ^"TABLE" ~ (value_subquery_expr | param_ref | ident) }
-session_set_graph_parameter = { param_ref ~ ^"PROPERTY"? ~ ^"GRAPH" ~ (session_current_graph | param_ref) }
-session_set_graph      = { ^"PROPERTY"? ~ ^"GRAPH" ~ session_current_graph }
-session_current_graph  = { ^"CURRENT_PROPERTY_GRAPH" | ^"CURRENT_GRAPH" }
-session_set_time_zone  = { ^"TIME" ~ ^"ZONE" ~ string_lit }
+session_set            = { session_kw ~ set_kw ~ (session_set_binding_table_parameter | session_set_graph_parameter | session_set_graph | session_set_time_zone | session_set_value) }
+session_set_binding_table_parameter = { param_ref ~ binding_kw ~ table_kw ~ (value_subquery_expr | param_ref | ident) }
+session_set_graph_parameter = { param_ref ~ property_kw? ~ graph_kw ~ (session_current_graph | param_ref) }
+session_set_graph      = { property_kw? ~ graph_kw ~ session_current_graph }
+session_current_graph  = { current_property_graph_kw | current_graph_kw }
+session_set_time_zone  = { time_kw ~ zone_kw ~ string_lit }
 // <session set value parameter clause> ::= VALUE <session set parameter name>
 //   <opt typed value initializer>.
 // <session set parameter name> ::= [ IF NOT EXISTS ] <session parameter specification>.
@@ -171,7 +173,7 @@ session_set_time_zone  = { ^"TIME" ~ ^"ZONE" ~ string_lit }
 // parameter reference) per ISO section 7.1 Conformance Rule: without Feature
 // GS14, the initializer shall conform to <value specification>. selene-db does
 // NOT claim GS14, so simple-expression / subquery RHS forms are rejected.
-session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ session_value_declared_type? ~ "=" ~ (session_value_subquery_expr | session_value_simple_expr | session_value_spec) }
+session_set_value      = { session_value_kw ~ if_not_exists? ~ param_ref ~ session_value_declared_type? ~ "=" ~ (session_value_subquery_expr | session_value_simple_expr | session_value_spec) }
 session_value_declared_type = { (typed_marker ~ type_name) | type_name }
 session_value_subquery_expr = { &(value_subquery_expr ~ EOI) ~ value_subquery_expr }
 session_value_simple_expr = { !session_value_spec_to_eoi ~ expr }
@@ -180,13 +182,29 @@ session_value_spec     = { literal | typed_param_ref }
 
 // section 7.2 <session reset command>. Bare SESSION RESET = ALL CHARACTERISTICS
 // (Syntax Rule 2b); bare {PARAMETERS|CHARACTERISTICS} = ALL form (Rule 2a-i).
-session_reset             = { ^"SESSION" ~ ^"RESET" ~ session_reset_args? }
+session_reset             = { session_kw ~ reset_kw ~ session_reset_args? }
 session_reset_args        = { session_reset_schema | session_reset_graph | session_reset_time_zone | session_reset_all | session_reset_parameter }
-session_reset_schema      = { ^"SCHEMA" }
-session_reset_graph       = { ^"PROPERTY"? ~ ^"GRAPH" }
-session_reset_time_zone   = { ^"TIME" ~ ^"ZONE" }
-session_reset_all         = { ^"ALL"? ~ (^"PARAMETERS" | ^"CHARACTERISTICS") }
-session_reset_parameter   = { ^"PARAMETER"? ~ param_ref }
+session_reset_schema      = { schema_kw }
+session_reset_graph       = { property_kw? ~ graph_kw }
+session_reset_time_zone   = { time_kw ~ zone_kw }
+session_reset_all         = { all_kw? ~ (parameters_kw | characteristics_kw) }
+session_reset_parameter   = { parameter_kw? ~ param_ref }
+session_kw = @{ ^"SESSION" ~ !(LETTER | NUMBER | "_") }
+close_kw = @{ ^"CLOSE" ~ !(LETTER | NUMBER | "_") }
+reset_kw = @{ ^"RESET" ~ !(LETTER | NUMBER | "_") }
+binding_kw = @{ ^"BINDING" ~ !(LETTER | NUMBER | "_") }
+table_kw = @{ ^"TABLE" ~ !(LETTER | NUMBER | "_") }
+property_kw = @{ ^"PROPERTY" ~ !(LETTER | NUMBER | "_") }
+graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
+current_property_graph_kw = @{ ^"CURRENT_PROPERTY_GRAPH" ~ !(LETTER | NUMBER | "_") }
+current_graph_kw = @{ ^"CURRENT_GRAPH" ~ !(LETTER | NUMBER | "_") }
+time_kw = @{ ^"TIME" ~ !(LETTER | NUMBER | "_") }
+zone_kw = @{ ^"ZONE" ~ !(LETTER | NUMBER | "_") }
+session_value_kw = @{ ^"VALUE" ~ !(LETTER | NUMBER | "_") }
+schema_kw = @{ ^"SCHEMA" ~ !(LETTER | NUMBER | "_") }
+parameters_kw = @{ ^"PARAMETERS" ~ !(LETTER | NUMBER | "_") }
+characteristics_kw = @{ ^"CHARACTERISTICS" ~ !(LETTER | NUMBER | "_") }
+parameter_kw = @{ ^"PARAMETER" ~ !(LETTER | NUMBER | "_") }
 
 // -- SELECT (desugars to MATCH + RETURN at AST level) ------------
 
