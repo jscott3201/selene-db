@@ -23,7 +23,7 @@ use keying::{TypedKey, raw_value_same, typed_key, typed_range_union};
 
 pub use crate::typed_float_key::{NotNanError, NotNanF32, NotNanF64};
 
-/// Indexable value kind for v1.0 built-in node property indexes.
+/// Indexable value kind for built-in node property indexes.
 #[derive(
     Clone,
     Copy,

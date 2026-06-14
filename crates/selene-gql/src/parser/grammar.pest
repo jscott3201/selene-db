@@ -6,8 +6,8 @@
 // Rule names follow snake_case mirrors of ISO/IEC 39075:2024 grammar names,
 // aligned with opengql/grammar v1.9.0 where the donor name diverged.
 //
-// FEATURE comments tag rules whose surface area belongs to a v1.0 claimed
-// feature ID. The Flagger rejects unsupported surfaces before execution.
+// FEATURE comments tag rules whose surface area belongs to a D1 claimed feature
+// ID. The Flagger rejects unsupported surfaces before execution.
 // -------------------------------------------------------------------
 // PEG grammar (pest). Case-insensitive keywords via ^"keyword".
 // All whitespace and comments handled implicitly by WHITESPACE/COMMENT.

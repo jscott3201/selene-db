@@ -14,8 +14,8 @@
 //! CSR neighbor/offset count bound: `offsets: Vec<u32>` and the per-bucket
 //! offsets are u32-indexed, so total projected neighbor count is bounded by
 //! `u32::MAX` (~4.3 B), aligning with selene-graph's row addressing. Production
-//! graphs approaching this bound are out of scope for v1.0's in-memory algorithm
-//! surface — distributed algorithms handle them.
+//! graphs approaching this bound are out of scope for the current in-memory
+//! algorithm surface — distributed algorithms handle them.
 
 use roaring::RoaringBitmap;
 use selene_core::{DbString, EdgeId, NodeId, Value};

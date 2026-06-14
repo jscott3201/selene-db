@@ -318,8 +318,8 @@ fn order_terms(
         // (sort key must be a return alias unless GA07 is claimed) is a
         // bind-pass concern — the Flagger cannot tell at parse time
         // whether a sort key is an alias. The conservative gate is to
-        // claim GA07 on any ORDER BY presence; selene-db's v1.0 claim
-        // list includes GA07, so this stamp does not produce rejections.
+        // claim GA07 on any ORDER BY presence; selene-db's D1 claim list
+        // includes GA07, so this stamp does not produce rejections.
         record_feature(uses, FeatureId::GA07, first.span);
     }
     for term in terms {

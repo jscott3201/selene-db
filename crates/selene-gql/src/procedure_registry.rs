@@ -183,7 +183,7 @@ impl Default for ProcedureSignature {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ProcedureParameter {
-    /// Parameter name. Diagnostic-only; arguments are positional in v1.0.
+    /// Parameter name. Diagnostic-only; arguments are currently positional.
     pub name: DbString,
     /// Expected static type for the corresponding positional argument.
     pub ty: GqlType,

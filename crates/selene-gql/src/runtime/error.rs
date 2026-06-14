@@ -155,8 +155,8 @@ pub struct ExecutorWarning {
 /// Receiver for runtime warnings.
 ///
 /// Sessions without an explicit sink silently discard warnings, preserving the
-/// v1.0 executor behavior. Embedders that need ISO warning visibility can pass
-/// a sink with [`crate::Session::with_warning_sink`].
+/// default executor behavior. Embedders that need ISO warning visibility can
+/// pass a sink with [`crate::Session::with_warning_sink`].
 pub trait WarningSink: Send {
     /// Receive one runtime warning.
     fn emit(&mut self, warning: ExecutorWarning);
