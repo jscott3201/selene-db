@@ -253,13 +253,14 @@ match_mode_bindings = @{ ^"BINDINGS" ~ !(LETTER | NUMBER | "_") }
 // tokenize as two adjacent tokens (pest's `~` separator is zero-or-more
 // whitespace). Mirrors the match-mode keyword treatment.
 path_selector     = {
-    any_kw ~ shortest_kw?
+    any_kw ~ (shortest_kw | any_path_count)?
   | all_kw ~ shortest_kw?
   | shortest_kw ~ counted_shortest_tail
 }
 any_kw      = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
 all_kw      = @{ ^"ALL" ~ !(LETTER | NUMBER | "_") }
 shortest_kw = @{ ^"SHORTEST" ~ !(LETTER | NUMBER | "_") }
+any_path_count = { uint }
 // ISO §16.6: counted shortest path (G019) = SHORTEST <n> [<path or paths>] ;
 // counted shortest group (G020) = SHORTEST [<n>] [<path or paths>] {GROUP|GROUPS}.
 // The optional <path or paths> (Feature G014) is parsed HERE, in its ISO position:

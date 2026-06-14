@@ -130,17 +130,24 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
 }
 
 fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserError> {
-    // Per ISO 39075:2024 §16.6: the `SHORTEST <n> [GROUP[S]]` / `SHORTEST
-    // GROUP[S]` forms (counted shortest path G019 / group G020) carry a
-    // `counted_shortest_tail` child; the bare `ANY`/`ALL`/`ANY SHORTEST`/
-    // `ALL SHORTEST` forms do not. Dispatch on the structured child first so the
-    // counted forms never fall through to the keyword-text match below.
+    // Per ISO 39075:2024 §16.6: counted selector forms carry structured count
+    // children. Dispatch on those children first so they never fall through to
+    // the keyword-text match below.
     if let Some(tail) = pair
         .clone()
         .into_inner()
         .find(|child| child.as_rule() == Rule::counted_shortest_tail)
     {
         return build_counted_shortest(tail);
+    }
+    if let Some(count) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::any_path_count)
+    {
+        return Ok(PathSelector::Any {
+            paths: parse_positive_path_count(&count)?,
+        });
     }
 
     // Match the selector keyword(s) token-wise (case- and whitespace-
@@ -153,7 +160,7 @@ fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserErro
     } else if keyword_tokens_eq(text, &["ALL", "SHORTEST"]) {
         Ok(PathSelector::AllShortest)
     } else if keyword_tokens_eq(text, &["ANY"]) {
-        Ok(PathSelector::Any)
+        Ok(PathSelector::Any { paths: 1 })
     } else if keyword_tokens_eq(text, &["ALL"]) {
         Ok(PathSelector::All)
     } else {
@@ -185,7 +192,7 @@ fn build_counted_shortest(tail: Pair<'_, Rule>) -> Result<PathSelector, ParserEr
     let mut is_group = false;
     for child in tail.into_inner() {
         match child.as_rule() {
-            Rule::uint => count = Some(parse_counted_uint(&child)?),
+            Rule::uint => count = Some(parse_positive_path_count(&child)?),
             Rule::counted_group_kw => is_group = true,
             // ISO §16.6 <path or paths> (Feature G014) in its counted-form position.
             // It is pure surface sugar with no effect on the selector; the presence
@@ -214,18 +221,20 @@ fn build_counted_shortest(tail: Pair<'_, Rule>) -> Result<PathSelector, ParserEr
     }
 }
 
-// Parse a counted shortest path/group `uint` literal to a positive `u32`.
+// Parse an ISO path-selector count literal to a positive `u32`.
 //
 // Saturates an out-of-range literal to `u32::MAX` (keep-all). Rejects a literal
 // `0` with GQLSTATUS 22G0F per ISO 39075:2024 §16.6 SR2bii / §22.4 GR7.
-fn parse_counted_uint(pair: &Pair<'_, Rule>) -> Result<u32, ParserError> {
+fn parse_positive_path_count(pair: &Pair<'_, Rule>) -> Result<u32, ParserError> {
     let value = pair.as_str().parse::<u32>().unwrap_or(u32::MAX);
     if value == 0 {
         return Err(ParserError::syntax_with_status(
             crate::error::GqlStatus::INVALID_NUMBER_OF_PATHS_OR_GROUPS,
-            "counted shortest path/group count must be a positive integer",
+            "path selector count must be a positive integer",
             span(pair),
-            Some("write SHORTEST 1 (or more); 0 is invalid per ISO 39075:2024 §16.6".into()),
+            Some(
+                "write a positive ANY/SHORTEST count; 0 is invalid per ISO 39075:2024 §16.6".into(),
+            ),
         ));
     }
     Ok(value)

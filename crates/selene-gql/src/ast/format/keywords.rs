@@ -49,7 +49,8 @@ pub(super) fn fmt_path_selector(out: &mut String, selector: PathSelector) -> fmt
     // keyword string. `SHORTEST N` is the counted path search (G019); `SHORTEST
     // N GROUPS` is the counted group search (G020).
     match selector {
-        PathSelector::Any => out.push_str("ANY"),
+        PathSelector::Any { paths: 1 } => out.push_str("ANY"),
+        PathSelector::Any { paths } => write!(out, "ANY {paths}")?,
         PathSelector::All => out.push_str("ALL"),
         PathSelector::AnyShortest => out.push_str("ANY SHORTEST"),
         PathSelector::AllShortest => out.push_str("ALL SHORTEST"),

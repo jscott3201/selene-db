@@ -1,5 +1,7 @@
 //! Graph-pattern AST nodes.
 
+use std::fmt;
+
 use selene_core::DbString;
 
 use crate::ast::{expr::ValueExpr, span::SourceSpan, util::Vec2OrMore};
@@ -21,10 +23,16 @@ pub enum PathMode {
 }
 
 /// Path selector.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum PathSelector {
-    /// `ANY`.
-    Any,
+    /// ISO §16.6 G016 any path search: `ANY [N] [PATHS]`.
+    ///
+    /// Retains up to N implementation-dependent path bindings per endpoint
+    /// partition (§22.4 GR13a). Bare `ANY` defaults to `paths = 1`.
+    Any {
+        /// Number of path bindings to retain per endpoint partition.
+        paths: u32,
+    },
     /// `ALL`.
     All,
     /// `ANY SHORTEST`.
@@ -45,6 +53,26 @@ pub enum PathSelector {
         /// Number of smallest distinct-length groups to retain per endpoint partition.
         groups: u32,
     },
+}
+
+impl fmt::Debug for PathSelector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Any { paths: 1 } => f.write_str("Any"),
+            Self::Any { paths } => f.debug_struct("Any").field("paths", paths).finish(),
+            Self::All => f.write_str("All"),
+            Self::AnyShortest => f.write_str("AnyShortest"),
+            Self::AllShortest => f.write_str("AllShortest"),
+            Self::CountedShortest { paths } => f
+                .debug_struct("CountedShortest")
+                .field("paths", paths)
+                .finish(),
+            Self::CountedShortestGroup { groups } => f
+                .debug_struct("CountedShortestGroup")
+                .field("groups", groups)
+                .finish(),
+        }
+    }
 }
 
 /// Match-mode modifier.
