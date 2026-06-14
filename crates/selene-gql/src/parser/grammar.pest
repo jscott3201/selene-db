@@ -1027,13 +1027,13 @@ binding_table_type_table_kw = @{ ^"TABLE" ~ !(LETTER | NUMBER | "_") }
 // reference value types carry graph-object type specifications and remain
 // outside this open-reference parser slice.
 open_reference_value_type = {
-    (^"ANY" ~ ^"PROPERTY" ~ ^"GRAPH")
-  | (^"PROPERTY" ~ ^"GRAPH")
-  | (^"ANY" ~ ^"GRAPH")
-  | ^"GRAPH"
-  | (^"ANY" ~ node_synonym)
+    (any_value_type_kw ~ property_type_kw ~ graph_kw)
+  | (property_type_kw ~ graph_kw)
+  | (any_value_type_kw ~ graph_kw)
+  | graph_kw
+  | (any_value_type_kw ~ node_synonym)
   | node_synonym
-  | (^"ANY" ~ edge_synonym)
+  | (any_value_type_kw ~ edge_synonym)
   | edge_synonym
 }
 node_synonym = @{ (^"NODE" | ^"VERTEX") ~ !(LETTER | NUMBER | "_") }

@@ -45,6 +45,48 @@ fn open_graph_reference_type_forms_report_gv60_unsupported() {
 }
 
 #[test]
+fn open_reference_type_keywords_require_boundaries() {
+    for source in [
+        "RETURN NULL IS TYPED ANYNODE AS ok",
+        "RETURN NULL IS TYPED ANYVERTEX AS ok",
+        "RETURN NULL IS TYPED ANYEDGE AS ok",
+        "RETURN NULL IS TYPED ANYRELATIONSHIP AS ok",
+        "RETURN NULL IS TYPED GRAPHARRAY AS ok",
+        "RETURN NULL IS TYPED GRAPHNOT NULL AS ok",
+        "RETURN NULL IS TYPED ANYGRAPH AS ok",
+        "RETURN NULL IS TYPED PROPERTYGRAPH AS ok",
+        "RETURN NULL IS TYPED ANYPROPERTY GRAPH AS ok",
+        "RETURN NULL IS TYPED ANY PROPERTYGRAPH AS ok",
+    ] {
+        assert_syntax_error(source);
+    }
+}
+
+#[test]
+fn open_reference_type_keywords_accept_whitespace_boundaries() {
+    assert_eq!(
+        typed_type("RETURN NULL IS TYPED ANY NODE AS ok"),
+        GqlType::NodeRef
+    );
+    assert_eq!(
+        typed_type("RETURN NULL IS TYPED ANY RELATIONSHIP AS ok"),
+        GqlType::EdgeRef
+    );
+
+    for source in [
+        "RETURN NULL IS TYPED ANY GRAPH AS ok",
+        "RETURN NULL IS TYPED PROPERTY GRAPH AS ok",
+        "RETURN NULL IS TYPED ANY PROPERTY GRAPH AS ok",
+    ] {
+        let err = parse(source).expect_err("GRAPH reference type remains unclaimed");
+        let ParserError::UnsupportedFeature { feature_id, .. } = err else {
+            panic!("{source} should report unsupported GV60, got {err:?}");
+        };
+        assert_eq!(feature_id, FeatureId::GV60, "{source}");
+    }
+}
+
+#[test]
 fn open_graph_element_reference_type_forms_format_canonically() {
     for (source, expected) in [
         (
@@ -197,6 +239,14 @@ fn typed_type(source: &str) -> GqlType {
         panic!("{source} should parse as IS TYPED");
     };
     ty.clone()
+}
+
+fn assert_syntax_error(source: &str) {
+    let err = parse(source).expect_err("source should reject");
+    assert!(
+        matches!(err, ParserError::SyntaxError { .. }),
+        "{source:?} should reject as syntax, got {err:?}"
+    );
 }
 
 fn first_value(session: &mut Session<'_>, source: &str) -> Value {
