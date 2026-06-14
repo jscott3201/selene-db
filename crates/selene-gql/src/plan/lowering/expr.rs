@@ -25,6 +25,7 @@ pub(crate) fn project_expr(
         expr: expr.clone(),
         expr_id,
         ty,
+        declared_type: None,
         alias,
         binding_refs: binding_refs_in(expr, analyzed)?,
         span: expr.span(),

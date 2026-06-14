@@ -46,6 +46,16 @@ fn empty_grouping_set_formats_with_parentheses() {
 }
 
 #[test]
+fn typed_let_value_definition_formats_canonically() {
+    let parsed =
+        parse("LET VALUE x TYPED INT8 = 1 RETURN x").expect("typed LET value definition parses");
+    let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+    assert_eq!(formatted, "LET VALUE x :: INT8 = 1\nRETURN x");
+    let reparsed = parse(&formatted).expect("formatted source reparses");
+    assert!(structurally_eq(&parsed, &reparsed));
+}
+
+#[test]
 fn explicit_trim_default_character_formats_with_specification() {
     let parsed = parse("RETURN TRIM(BOTH FROM ' hello ') AS trimmed")
         .expect("default-character trim parses");

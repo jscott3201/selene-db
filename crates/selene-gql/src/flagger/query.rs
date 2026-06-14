@@ -301,6 +301,9 @@ fn let_bindings(bindings: &[LetBinding], uses: &mut Vec<FeatureUse>) {
         record_feature(uses, FeatureId::GQ09, first.span);
     }
     for binding in bindings {
+        if let Some(ty) = &binding.declared_type {
+            expr::gql_type(ty, binding.span, uses);
+        }
         expr::value(&binding.value, uses);
     }
 }

@@ -75,6 +75,8 @@ pub struct ProjectExpr {
     pub expr_id: ExprId,
     /// Analyzer-inferred type for `expr`.
     pub ty: AnalyzedType,
+    /// Explicit declared target type when this expression must be checked at runtime.
+    pub declared_type: Option<GqlType>,
     /// Output alias, when present.
     pub alias: Option<DbString>,
     /// Referenced bindings, sorted and deduplicated.

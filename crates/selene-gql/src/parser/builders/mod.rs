@@ -4,6 +4,7 @@ pub(super) mod call;
 pub(super) mod ddl;
 pub(super) mod explain;
 pub(super) mod expr;
+pub(super) mod let_stmt;
 pub(super) mod mutation;
 pub(super) mod pattern;
 pub(super) mod session;
@@ -19,7 +20,7 @@ use selene_core::{
 
 use crate::{
     ast::{
-        ForStatement, GqlType, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm,
+        ForStatement, GqlType, LimitValue, NullsPolicy, OrderDirection, OrderTerm,
         PipelineStatement, QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition,
         RowExpansionPositionKind, SetOp, SourceSpan, Statement, WithClause, util::NonEmpty,
     },
@@ -189,7 +190,7 @@ fn build_pipeline_statement(pair: Pair<'_, Rule>) -> Result<PipelineStatement, P
     match pair.as_rule() {
         Rule::match_stmt => pattern::build_match_clause(pair).map(PipelineStatement::Match),
         Rule::filter_stmt => build_filter(pair).map(PipelineStatement::Filter),
-        Rule::let_stmt => build_let(pair).map(PipelineStatement::Let),
+        Rule::let_stmt => let_stmt::build_let(pair).map(PipelineStatement::Let),
         Rule::for_stmt => build_for(pair).map(PipelineStatement::For),
         Rule::sorting_stmt => build_sorting(pair).map(PipelineStatement::Sorting),
         Rule::offset_stmt => build_limit_or_offset(pair).map(PipelineStatement::Offset),
@@ -306,27 +307,6 @@ fn expr_from_first(
         .find(|child| child.as_rule() == Rule::expr)
         .ok_or_else(|| ParserError::syntax(missing, pair_span, None))?;
     expr::build_value_expr(expr_pair)
-}
-
-fn build_let(pair: Pair<'_, Rule>) -> Result<Vec<LetBinding>, ParserError> {
-    pair.into_inner()
-        .filter(|child| child.as_rule() == Rule::let_binding)
-        .map(|binding| {
-            let binding_span = span(&binding);
-            let mut children = binding.into_inner();
-            let alias_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("LET binding is missing alias", binding_span, None)
-            })?;
-            let value_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("LET binding is missing expression", binding_span, None)
-            })?;
-            Ok(LetBinding {
-                alias: db_string_pair(alias_pair)?,
-                value: expr::build_value_expr(value_pair)?,
-                span: binding_span,
-            })
-        })
-        .collect()
 }
 
 fn build_for(pair: Pair<'_, Rule>) -> Result<ForStatement, ParserError> {
