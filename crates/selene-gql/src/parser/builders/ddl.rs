@@ -39,6 +39,22 @@ pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, 
     }
 }
 
+fn is_ddl_keyword_token(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::ddl_create_kw
+            | Rule::ddl_drop_kw
+            | Rule::ddl_truncate_kw
+            | Rule::ddl_node_kw
+            | Rule::ddl_edge_kw
+            | Rule::ddl_type_kw
+            | Rule::ddl_graph_kw
+            | Rule::ddl_index_kw
+            | Rule::ddl_extends_kw
+            | Rule::ddl_on_kw
+    )
+}
+
 fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut name = None;
@@ -54,6 +70,7 @@ fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
                 name = Some(db_string_from_str(child.as_str(), name_span, "graph name")?);
             }
             Rule::create_graph_source | Rule::create_graph_copy => {}
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE GRAPH child")),
         }
     }
@@ -76,6 +93,7 @@ fn build_drop_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
             Rule::ident => name = Some(db_string_pair(child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected DROP GRAPH child")),
         }
     }
@@ -100,6 +118,7 @@ fn build_create_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
             Rule::ident if name.is_none() => name = Some(db_string_pair(child)?),
             Rule::ident if label.is_none() => label = Some(db_string_pair(child)?),
             Rule::prop_ident => properties.push(db_string_pair(child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE INDEX child")),
         }
     }
@@ -134,6 +153,7 @@ fn build_drop_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
             Rule::ident => name = Some(db_string_pair(child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected DROP INDEX child")),
         }
     }
@@ -166,6 +186,7 @@ fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
             Rule::ident => extends = Some(db_string_pair(child)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE NODE TYPE child")),
         }
     }
@@ -205,6 +226,7 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
             Rule::edge_endpoint_clause => endpoints = Some(build_edge_endpoint(child)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE EDGE TYPE child")),
         }
     }
@@ -344,6 +366,7 @@ fn build_truncate_label(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::ident => label = Some(db_string_pair(child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected TRUNCATE TYPE child")),
         }
     }
@@ -364,6 +387,7 @@ fn build_drop_type_parts(
             Rule::if_exists => if_exists = true,
             Rule::ident => label = Some(db_string_pair(child)?),
             Rule::drop_behavior => behavior = build_drop_behavior(&child)?,
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected DROP TYPE child")),
         }
     }
