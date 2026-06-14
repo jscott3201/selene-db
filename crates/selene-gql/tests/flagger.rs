@@ -578,32 +578,20 @@ fn explicit_key_label_set_flags_gg21() {
 }
 
 #[test]
-fn list_subscript_stamps_im_list_subscript_but_bare_list_does_not() {
-    // `list[i]` is the selene-db vendor subscript (no ISO operator exists), so it
-    // must flag IM_LIST_SUBSCRIPT on every use; a bare list literal flags only
-    // GV50 and never the subscript.
-    let subscript = parse("RETURN [10, 20, 30][1] AS first").expect("subscript parses");
+fn list_subscript_is_rejected_before_feature_flagging() {
+    let err =
+        parse("RETURN [10, 20, 30][1] AS first").expect_err("list subscript is not ISO GQL syntax");
+    assert!(matches!(err, ParserError::SyntaxError { .. }));
+    assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
+
     let bare_list = parse("RETURN [10, 20, 30] AS items").expect("bare list parses");
-
-    let ids = |statement| {
-        feature_walk(statement)
-            .into_iter()
-            .map(|feature| feature.feature_id)
-            .collect::<Vec<_>>()
-    };
-
-    let subscript_ids = ids(&subscript);
+    let bare_ids = feature_walk(&bare_list)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
     assert!(
-        subscript_ids.contains(&FeatureId::IM_LIST_SUBSCRIPT),
-        "list subscript must flag IM_LIST_SUBSCRIPT"
-    );
-    assert!(
-        subscript_ids.contains(&FeatureId::GV50),
-        "the subscripted list literal still flags GV50"
-    );
-    assert!(
-        !ids(&bare_list).contains(&FeatureId::IM_LIST_SUBSCRIPT),
-        "a bare list literal must NOT flag IM_LIST_SUBSCRIPT"
+        bare_ids.contains(&FeatureId::GV50),
+        "bare list literal must still flag GV50"
     );
 }
 

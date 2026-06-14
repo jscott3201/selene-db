@@ -124,10 +124,6 @@ fn push_expr<'a>(
         ValueExpr::PropertyAccess { target, .. } | ValueExpr::PropertyExists { target, .. } => {
             work.push(Node::Expr(target, next));
         }
-        ValueExpr::ListAccess { target, index, .. } => {
-            work.push(Node::Expr(target, next));
-            work.push(Node::Expr(index, next));
-        }
         ValueExpr::ListLiteral { items, .. }
         | ValueExpr::PathConstructor {
             elements: items, ..

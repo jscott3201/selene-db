@@ -240,16 +240,6 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             key.hash(state);
             span.hash(state);
         }
-        ValueExpr::ListAccess {
-            target,
-            index,
-            span,
-        } => {
-            4u8.hash(state);
-            hash_child(target, state, memo);
-            hash_child(index, state, memo);
-            span.hash(state);
-        }
         ValueExpr::ListLiteral { items, span } => {
             5u8.hash(state);
             hash_exprs(items, state, memo);

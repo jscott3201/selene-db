@@ -41,15 +41,6 @@ pub enum ValueExpr {
         /// Source span of the full property access.
         span: SourceSpan,
     },
-    /// List element access, such as `items[0]`.
-    ListAccess {
-        /// Target list expression.
-        target: Box<ValueExpr>,
-        /// Index expression.
-        index: Box<ValueExpr>,
-        /// Source span of the full list access.
-        span: SourceSpan,
-    },
     /// List literal.
     ListLiteral {
         /// Literal items.
@@ -326,7 +317,6 @@ impl ValueExpr {
             Self::Variable { span, .. }
             | Self::Parameter { span, .. }
             | Self::PropertyAccess { span, .. }
-            | Self::ListAccess { span, .. }
             | Self::ListLiteral { span, .. }
             | Self::RecordLiteral { span, .. }
             | Self::PathConstructor { span, .. }

@@ -319,15 +319,6 @@ fn build_postfix(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
                     span: SourceSpan::merge(previous_span, op_span),
                 };
             }
-            Rule::list_access_op => {
-                let index_pair = first_child(op_child)?;
-                let previous_span = value.span();
-                value = ValueExpr::ListAccess {
-                    target: Box::new(value),
-                    index: Box::new(build_value_expr(index_pair)?),
-                    span: SourceSpan::merge(previous_span, op_span),
-                };
-            }
             _ => return Err(unexpected_pair(op_child, "expected postfix operator")),
         }
     }

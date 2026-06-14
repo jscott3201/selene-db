@@ -43,7 +43,7 @@ use crate::{SubqueryRegistry, analyze::ExprIdLookup, runtime::TxContext};
 use self::{
     binary_ops::{eval_binary, eval_in_list, eval_in_list_expression, eval_unary},
     case::eval_case,
-    collections::{eval_list_access, eval_record_literal, record_field},
+    collections::{eval_record_literal, record_field},
     concat_ops::ConcatCaps,
     predicates::{eval_all_different, eval_is_check, eval_property_exists, eval_same},
     scalar_fns::eval_function_call,
@@ -185,11 +185,6 @@ pub fn evaluate(
         ValueExpr::PropertyExists {
             target, key, span, ..
         } => eval_property_exists(target, key.clone(), *span, binding, schema, ctx),
-        ValueExpr::ListAccess {
-            target,
-            index,
-            span,
-        } => eval_list_access(target, index, *span, binding, schema, ctx),
         ValueExpr::RecordLiteral { fields, span } => {
             eval_record_literal(fields, *span, binding, schema, ctx)
         }

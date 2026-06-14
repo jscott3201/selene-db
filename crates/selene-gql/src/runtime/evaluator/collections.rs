@@ -1,9 +1,5 @@
 //! Collection and record expression evaluation.
 //!
-//! List access uses 1-based ordinals per ISO/IEC 39075:2024 §20.16 (`list[1]`
-//! is the first element); ordinals outside `1..=cardinality` — including `0` and
-//! negatives — return `NULL`. ISO defines no list-subscript operator, so this is
-//! a selene-db vendor construct flagged as `IM_LIST_SUBSCRIPT` (clause 24.6).
 //! Record literals build open records and reject duplicate field keys with a
 //! data exception.
 
@@ -17,44 +13,7 @@ use crate::{
     runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
-use super::{
-    binary_ops::{data_exception, data_exception_with},
-    evaluate,
-};
-
-pub(super) fn eval_list_access(
-    target: &ValueExpr,
-    index: &ValueExpr,
-    span: SourceSpan,
-    binding: &Binding,
-    schema: &BindingTableSchema,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Value, ExecutorError> {
-    let target = evaluate(target, binding, schema, ctx)?;
-    let index = evaluate(index, binding, schema, ctx)?;
-    if matches!(target, Value::Null) || matches!(index, Value::Null) {
-        return Ok(Value::Null);
-    }
-    let Value::List(values) = target else {
-        return data_exception("list access target is not a list", span);
-    };
-    // ISO §20.16 fixes list ordinals as 1-based (`list[1]` is the first
-    // element). ISO has no subscript operator, so this is the selene-db vendor
-    // `IM_LIST_SUBSCRIPT` construct (clause 24.6); any ordinal outside
-    // `1..=cardinality` — 0, negative, beyond the end, or out of `usize` range —
-    // yields NULL rather than the §20.16 list-element error (22G0C).
-    let zero_based = match index {
-        Value::Int(index) if index >= 1 => usize::try_from(index - 1).ok(),
-        Value::Uint(index) if index != 0 => usize::try_from(index - 1).ok(),
-        Value::Int(_) | Value::Uint(_) => None,
-        _ => {
-            return data_exception("list access index is not an integer", span);
-        }
-    };
-    Ok(zero_based
-        .and_then(|index| values.get(index).cloned())
-        .unwrap_or(Value::Null))
-}
+use super::{binary_ops::data_exception_with, evaluate};
 
 pub(super) fn eval_record_literal(
     fields: &[(DbString, ValueExpr)],

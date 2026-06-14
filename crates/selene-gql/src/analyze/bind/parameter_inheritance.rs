@@ -276,10 +276,6 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
             | ValueExpr::PropertyExists { target, .. }
             | ValueExpr::Normalize { source: target, .. }
             | ValueExpr::Cast { value: target, .. } => stack.push(target.as_mut()),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push(index.as_mut());
-                stack.push(target.as_mut());
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..

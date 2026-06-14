@@ -322,10 +322,6 @@ fn validate_percentile_independent_refs_in_expr(
             | ValueExpr::PropertyExists { target, .. }
             | ValueExpr::Cast { value: target, .. }
             | ValueExpr::Normalize { source: target, .. } => stack.push(target),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push(index);
-                stack.push(target);
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..

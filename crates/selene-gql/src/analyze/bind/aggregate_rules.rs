@@ -40,10 +40,6 @@ fn validate_aggregate_nesting_in_expr(value: &ValueExpr) -> Result<(), AnalysisE
             | ValueExpr::PropertyExists { target, .. }
             | ValueExpr::Cast { value: target, .. }
             | ValueExpr::Normalize { source: target, .. } => stack.push((target, inside_aggregate)),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push((index, inside_aggregate));
-                stack.push((target, inside_aggregate));
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..

@@ -3,12 +3,9 @@
 //!
 //! # Background
 //!
-//! pest is not packrat-memoized, so a run of *unclosed* `[` openers is
-//! re-explored under the two `[`-prefixed expression rules (`list_access_op`,
-//! `list_lit`) at every nesting level, driving super-linear parse time —
-//! seconds-to-minutes for sub-kilobyte
-//! inputs — even though net nesting depth stays under the 64-delimiter general
-//! nesting cap (the corpus blows up around 57 nested `[`). Parsing precedes
+//! pest is not packrat-memoized, so a run of *unclosed* `[` openers can drive
+//! expensive nested list-literal expression attempts — seconds-to-minutes for
+//! sub-kilobyte inputs before the dedicated guard existed. Parsing precedes
 //! execution, so an execution deadline cannot interrupt the blow-up; the
 //! pre-pest byte-scan guard bounds the *depth of simultaneously-open `[`*
 //! instead (these artifacts are pure unclosed `[`, so their `[`-depth equals

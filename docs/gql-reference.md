@@ -318,7 +318,7 @@ Operators in precedence order (low to high): `OR`, `XOR`, `AND`, `NOT`,
 predicate family (`IS ...`, `IN`, `LIKE`, `BETWEEN`, string match),
 comparison (`<`, `<=`, `>`, `>=`, `=`, `<>`), concatenation (`||`),
 addition (`+`, `-`), multiplication (`*`, `/`, `%`), unary (`+`, `-`),
-postfix (`.prop`, `[index]`, `.prop AT TIME 'ts'`).
+postfix (`.prop`, `.prop AT TIME 'ts'`).
 
 The arithmetic and comparison operators flow through three-valued logic
 when any operand is `NULL`.
@@ -328,14 +328,12 @@ when any operand is `NULL`.
 ```gql
 RETURN [1, 2, 3] AS values
 RETURN [1, 2] || [3, 4] AS values
-RETURN [10, 20, 30][1] AS value
 RETURN CARDINALITY([1, 2, 3]) AS count
 RETURN TRIM([1, 2, 3, 4], 2) AS prefix
 ```
 
 Selene supports ISO list value constructors, concatenation, `CARDINALITY`, and
-the ISO list `TRIM(list, count)` function. It also supports the
-implementation-defined `[index]` element access operator. Cypher-style list
+the ISO list `TRIM(list, count)` function. Cypher-style list subscript,
 comprehension, list quantifier, and `REDUCE` expression syntax is not ISO GQL
 and is rejected at parse time.
 

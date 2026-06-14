@@ -22,18 +22,14 @@ use crate::{SourceSpan, error::ParserError};
 /// catch it. See `tests/parser_expr_depth.rs::nested_subqueries_with_deep_folds_do_not_crash`.
 pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 
-/// Maximum simultaneously-open `[` (list / index) nesting
-/// depth admitted in a single statement.
+/// Maximum simultaneously-open `[` list nesting depth admitted in a single
+/// statement.
 ///
-/// pest is not packrat-memoized, so a `[` opener is re-explored by each of the
-/// two `[`-prefixed expression rules (`list_access_op`, `list_lit`; see
-/// `grammar.pest`) before the parser can commit. A run of *unclosed* `[`
-/// therefore nests those ambiguous sub-parses, and the failed branches are
-/// recomputed at every level — super-linear backtracking that reaches
-/// seconds-to-minutes parse time for sub-kilobyte hostile inputs (the fuzz
-/// corpus blows up around 57 nested `[`), well under [`MAX_NESTING_DEPTH`].
-/// Parsing precedes execution, so an execution deadline cannot interrupt it;
-/// the only safe place to stop the blow-up is before recursive descent begins.
+/// pest is not packrat-memoized, so a run of unclosed list-literal openers can
+/// still drive expensive nested expression attempts before the parser can
+/// reject the input. Parsing precedes execution, so an execution deadline cannot
+/// interrupt the blow-up; the only safe place to stop it is before recursive
+/// descent begins.
 ///
 /// This caps the *depth* of simultaneously-open `[`, **not** a total opener
 /// count, because depth is the actual blow-up driver. A balanced, promptly
