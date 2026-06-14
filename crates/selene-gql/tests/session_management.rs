@@ -581,8 +581,26 @@ fn flagger_does_not_stamp_session_close() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn deferred_set_graph_parameter_fails_to_parse() {
-    // SESSION SET GRAPH <name> (GS01) is not in the grammar under D1.
+fn deferred_set_graph_parameter_reports_unsupported_features() {
+    for (source, expected) in [
+        ("SESSION SET $g GRAPH CURRENT_GRAPH", FeatureId::GS01),
+        (
+            "SESSION SET $g PROPERTY GRAPH CURRENT_GRAPH",
+            FeatureId::GS01,
+        ),
+        ("SESSION SET $g GRAPH $other", FeatureId::GS12),
+    ] {
+        let error = parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus().as_str(), "42N01");
+        let ParserError::UnsupportedFeature { feature_id, .. } = error else {
+            panic!("expected UnsupportedFeature for {source}");
+        };
+        assert_eq!(feature_id, expected, "{source}");
+    }
+}
+
+#[test]
+fn keyword_first_graph_parameter_forms_still_fail_to_parse() {
     assert!(parse("SESSION SET GRAPH $g CURRENT_GRAPH").is_err());
     assert!(parse("SESSION SET PROPERTY GRAPH $g CURRENT_PROPERTY_GRAPH").is_err());
 }
