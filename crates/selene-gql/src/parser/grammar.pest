@@ -692,7 +692,10 @@ source_of_kw      = ${ ^"SOURCE" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_"
 destination_of_kw = ${ ^"DESTINATION" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
 truth_value = @{ (^"TRUE" | ^"FALSE" | ^"UNKNOWN") ~ !(LETTER | NUMBER | "_") }
 normal_form = @{ (^"NFC" | ^"NFD" | ^"NFKC" | ^"NFKD") ~ !(LETTER | NUMBER | "_") }
-string_match_op = { ^"STARTS" ~ ^"WITH" | ^"ENDS" ~ ^"WITH" | ^"CONTAINS" }
+string_match_op = { starts_kw ~ with_kw | ends_kw ~ with_kw | contains_kw }
+starts_kw = @{ ^"STARTS" ~ !(LETTER | NUMBER | "_") }
+ends_kw = @{ ^"ENDS" ~ !(LETTER | NUMBER | "_") }
+contains_kw = @{ ^"CONTAINS" ~ !(LETTER | NUMBER | "_") }
 
 comparison = { concat ~ (comp_op ~ concat)? }
 comp_op    = { "<>" | "<=" | ">=" | "<" | ">" | "=" }
@@ -767,11 +770,15 @@ typed_param_ref = { param_ref ~ ("::" ~ type_name)? }
 // PEG: try simple_case first (CASE expr WHEN), falls back to searched_case (CASE WHEN)
 case_expr    = { simple_case | searched_case }
 case_kw      = @{ ^"CASE" ~ !(LETTER | NUMBER | "_") }
-simple_case  = { case_kw ~ expr ~ simple_when+ ~ else_clause? ~ ^"END" }
-simple_when  = { ^"WHEN" ~ expr ~ ("," ~ expr)* ~ ^"THEN" ~ expr }
-searched_case = { case_kw ~ when_clause+ ~ else_clause? ~ ^"END" }
-when_clause  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
-else_clause  = { ^"ELSE" ~ expr }
+simple_case  = { case_kw ~ expr ~ simple_when+ ~ else_clause? ~ end_kw }
+simple_when  = { when_kw ~ expr ~ ("," ~ expr)* ~ then_kw ~ expr }
+searched_case = { case_kw ~ when_clause+ ~ else_clause? ~ end_kw }
+when_clause  = { when_kw ~ expr ~ then_kw ~ expr }
+else_clause  = { else_kw ~ expr }
+when_kw = @{ ^"WHEN" ~ !(LETTER | NUMBER | "_") }
+then_kw = @{ ^"THEN" ~ !(LETTER | NUMBER | "_") }
+else_kw = @{ ^"ELSE" ~ !(LETTER | NUMBER | "_") }
+end_kw = @{ ^"END" ~ !(LETTER | NUMBER | "_") }
 
 cast_kw = @{ ^"CAST" ~ !(LETTER | NUMBER | "_") }
 cast_expr     = { cast_kw ~ "(" ~ expr ~ as_kw ~ type_name ~ ")" }

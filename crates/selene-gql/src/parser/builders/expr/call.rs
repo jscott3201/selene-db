@@ -533,13 +533,20 @@ pub(super) fn build_case_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserE
     }
 }
 
+fn is_case_keyword_token(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::case_kw | Rule::when_kw | Rule::then_kw | Rule::else_kw | Rule::end_kw
+    )
+}
+
 fn build_simple_case(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<ValueExpr, ParserError> {
     let mut children = pair
         .into_inner()
-        .filter(|child| child.as_rule() != Rule::case_kw);
+        .filter(|child| !is_case_keyword_token(child.as_rule()));
     let base =
         build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("simple CASE is missing input", source_span, None)
@@ -569,6 +576,7 @@ fn simple_when_branch(
     let when_span = span(&pair);
     let mut operands = pair
         .into_inner()
+        .filter(|child| child.as_rule() == Rule::expr)
         .map(build_value_expr)
         .collect::<Result<Vec<_>, _>>()?;
     let then_value = operands
@@ -608,7 +616,7 @@ fn build_searched_case(
     let mut else_branch = None;
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::case_kw => {}
+            rule if is_case_keyword_token(rule) => {}
             Rule::when_clause => branches.push(searched_when_branch(child)?),
             Rule::else_clause => else_branch = Some(Box::new(expr_from_child(child)?)),
             _ => return Err(unexpected_pair(child, "unexpected CASE child")),
@@ -623,7 +631,9 @@ fn build_searched_case(
 
 fn searched_when_branch(pair: Pair<'_, Rule>) -> Result<(ValueExpr, ValueExpr), ParserError> {
     let when_span = span(&pair);
-    let mut children = pair.into_inner();
+    let mut children = pair
+        .into_inner()
+        .filter(|child| child.as_rule() == Rule::expr);
     let condition =
         build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("CASE WHEN is missing condition", when_span, None)
