@@ -75,7 +75,7 @@ fn session_feature_names_match_annex_d() {
         ),
         (
             FeatureId::GS12,
-            "SESSION SET command: session-local graph parameters based on simple graph expressions or references",
+            "SESSION SET command: session-local graph parameters based on simple expressions or references",
         ),
         (
             FeatureId::GS13,
