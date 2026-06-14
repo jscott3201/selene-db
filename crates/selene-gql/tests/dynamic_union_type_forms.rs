@@ -27,6 +27,26 @@ fn open_dynamic_union_type_forms_parse_to_ast() {
 }
 
 #[test]
+fn open_dynamic_union_type_keywords_accept_comment_boundaries() {
+    for (source, expected) in [
+        (
+            "RETURN NULL IS TYPED ANY /* boundary */ VALUE AS ok",
+            GqlType::Any,
+        ),
+        (
+            "RETURN NULL IS TYPED PROPERTY /* boundary */ VALUE AS ok",
+            GqlType::AnyProperty,
+        ),
+        (
+            "RETURN NULL IS TYPED ANY /* boundary */ PROPERTY /* boundary */ VALUE AS ok",
+            GqlType::AnyProperty,
+        ),
+    ] {
+        assert_eq!(typed_type(source), expected, "{source}");
+    }
+}
+
+#[test]
 fn open_dynamic_union_type_forms_format_canonically() {
     for (source, expected) in [
         (
