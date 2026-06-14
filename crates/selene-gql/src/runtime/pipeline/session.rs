@@ -12,7 +12,7 @@
 use selene_core::Value;
 
 use crate::{
-    ImplDefinedCaps, ProcedureRegistry, SessionOp, SourceSpan, ValueExpr,
+    GqlType, ImplDefinedCaps, ProcedureRegistry, SessionOp, SourceSpan, ValueExpr,
     plan::SubqueryRegistry,
     runtime::{
         Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError, Session,
@@ -29,6 +29,7 @@ pub(crate) fn execute(
     match op {
         SessionOp::SetValue {
             param,
+            declared_type,
             value,
             if_not_exists,
             span,
@@ -36,6 +37,7 @@ pub(crate) fn execute(
             session,
             registry,
             param.clone(),
+            declared_type.as_ref(),
             value,
             *if_not_exists,
             *span,
@@ -73,15 +75,24 @@ fn set_value(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
     param: selene_core::DbString,
+    declared_type: Option<&GqlType>,
     value: &ValueExpr,
     if_not_exists: bool,
-    _span: SourceSpan,
+    span: SourceSpan,
 ) -> Result<StatementOutput, ExecutorError> {
     // IF NOT EXISTS (ISO section 7.4): leave an existing binding untouched.
     if if_not_exists && session.has_parameter(&param) {
         return Ok(StatementOutput::Empty);
     }
     let evaluated = evaluate_constant(session, registry, value)?;
+    if let Some(declared_type) = declared_type {
+        crate::runtime::parameter_type::validate_declared_type(
+            param.clone(),
+            &evaluated,
+            declared_type,
+            span,
+        )?;
+    }
     session.bind_parameter(param, evaluated);
     Ok(StatementOutput::Empty)
 }

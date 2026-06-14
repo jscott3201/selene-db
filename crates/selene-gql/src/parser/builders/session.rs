@@ -129,11 +129,25 @@ fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
     let source_span = span(&pair);
     let mut if_not_exists = false;
     let mut param = None;
+    let mut declared_type = None;
     let mut value = None;
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_not_exists => if_not_exists = true,
             Rule::param_ref => param = Some(db_string_param(child)?),
+            Rule::session_value_declared_type => {
+                let type_pair = child
+                    .into_inner()
+                    .find(|inner| inner.as_rule() == Rule::type_name)
+                    .ok_or_else(|| {
+                        ParserError::syntax(
+                            "SESSION SET VALUE declared type is missing type name",
+                            source_span,
+                            None,
+                        )
+                    })?;
+                declared_type = Some(expr::build_type_name(type_pair)?);
+            }
             // <value specification>: a single literal or parameter reference.
             Rule::session_value_spec => {
                 value = Some(expr::build_value_expr(first_child(child)?)?);
@@ -171,6 +185,7 @@ fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserErro
     })?;
     Ok(Statement::SessionSetValue {
         param,
+        declared_type,
         value: Box::new(value),
         if_not_exists,
         span: source_span,

@@ -2,18 +2,20 @@
 
 use selene_core::DbString;
 
-use crate::{SessionSetGraphTarget, SourceSpan, ValueExpr};
+use crate::{GqlType, SessionSetGraphTarget, SourceSpan, ValueExpr};
 
 /// Session-control operation lowered from a `SESSION` command.
 #[derive(Clone, Debug)]
 pub enum SessionOp {
-    /// `SESSION SET VALUE <param> = <value expression>` (ISO feature GS03).
+    /// `SESSION SET VALUE <param> [<type>] = <value expression>` (ISO feature GS03).
     ///
     /// The value is evaluated against an empty binding row at execution time
     /// (restricted to a `<value specification>`; see GS14 rationale).
     SetValue {
         /// Database-string parameter name without the leading `$`.
         param: DbString,
+        /// Optional declared type for the target session parameter.
+        declared_type: Option<GqlType>,
         /// Value expression bound to the parameter.
         value: Box<ValueExpr>,
         /// When set, leave an existing binding untouched (`IF NOT EXISTS`).
