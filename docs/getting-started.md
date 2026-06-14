@@ -54,9 +54,10 @@ selene-persist = { package = "selene-db-persist", version = "1.2.0" }
 selene-algorithms = { package = "selene-db-algorithms", version = "1.2.0" }
 ```
 
-When developing against a local checkout, replace the `version` entries above
-with `path = "path/to/selene-db/crates/<crate>"` while keeping the
-`package = "selene-db-*"` aliases.
+When developing against a local checkout, first clone the repository with
+`git clone https://github.com/jscott3201/selene-db.git`, then replace the
+`version` entries above with `path = "path/to/selene-db/crates/<crate>"`
+while keeping the `package = "selene-db-*"` aliases.
 
 Run `cargo build` once to confirm the dependency graph resolves before moving on.
 
