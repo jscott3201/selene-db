@@ -174,6 +174,13 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     {
         return build_binding_table_type_name(binding_table_type, depth);
     }
+    if let Some(open_reference_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::open_reference_value_type)
+    {
+        return build_open_reference_value_type_name(open_reference_type);
+    }
     if let Some(dynamic_union_type) = pair
         .clone()
         .into_inner()
@@ -333,6 +340,29 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     Err(not_implemented(
         &pair,
         "this GQL type constructor is not yet supported",
+    ))
+}
+
+fn build_open_reference_value_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
+    let source_span = span(&pair);
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::any_value_type_kw | Rule::property_type_kw => {}
+            Rule::graph_kw => return Ok(GqlType::GraphRef),
+            Rule::node_synonym => return Ok(GqlType::NodeRef),
+            Rule::edge_synonym => return Ok(GqlType::EdgeRef),
+            _ => {
+                return Err(unexpected_pair(
+                    child,
+                    "unexpected open reference value type child",
+                ));
+            }
+        }
+    }
+    Err(ParserError::syntax(
+        "open reference value type is missing reference kind",
+        source_span,
+        None,
     ))
 }
 
