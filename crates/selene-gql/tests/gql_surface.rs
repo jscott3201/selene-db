@@ -294,6 +294,33 @@ fn explain_match_plan_mentions_scan_and_project() {
 }
 
 #[test]
+fn explain_keyword_accepts_comment_boundary() {
+    let graph = graph(118_006);
+    let mut session = Session::new(&graph);
+    let table = execute_rows(
+        &mut session,
+        "EXPLAIN /* c */ MATCH (n:Sensor) RETURN n.id",
+        &EmptyProcedureRegistry,
+    );
+    let plan = column_strings(&table, "plan");
+
+    assert!(plan[0].contains("Project"));
+    assert!(plan[0].contains("Scan"));
+}
+
+#[test]
+fn explain_keyword_requires_boundary_before_statement_head() {
+    for source in [
+        "EXPLAINMATCH (n) RETURN n",
+        "EXPLAINRETURN 1",
+        "EXPLAINCALL test.bump()",
+        "EXPLAINCREATE NODE TYPE :Thing ()",
+    ] {
+        assert!(parse(source).is_err(), "{source} should parse-reject");
+    }
+}
+
+#[test]
 fn explain_rejects_transaction_control_and_nested_explain() {
     for source in [
         "EXPLAIN START TRANSACTION",
@@ -307,7 +334,7 @@ fn explain_rejects_transaction_control_and_nested_explain() {
 
 #[test]
 fn feature_status_procedure_returns_supported_rows() {
-    let graph = graph(118_006);
+    let graph = graph(118_007);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     let table = execute_rows(
