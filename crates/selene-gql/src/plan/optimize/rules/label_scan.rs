@@ -74,6 +74,7 @@ impl Rule for LabelScan {
 
 fn rewrite_tree(tree: &mut JoinTree, catalog: &dyn crate::IndexCatalog) -> bool {
     match tree {
+        JoinTree::Unit => false,
         JoinTree::Scan(scan) => rewrite_scan(scan, catalog),
         JoinTree::Expand { child, .. }
         | JoinTree::Questioned { child, .. }

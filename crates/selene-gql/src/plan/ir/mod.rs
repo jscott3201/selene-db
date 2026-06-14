@@ -104,7 +104,7 @@ impl ExecutionPlan {
 
 fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
     match tree {
-        JoinTree::Scan(_) => {}
+        JoinTree::Unit | JoinTree::Scan(_) => {}
         JoinTree::Expand { child, .. }
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
@@ -265,6 +265,8 @@ pub enum PathContributor {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum JoinTree {
+    /// One-row, all-null anchor used to model leading optional graph patterns.
+    Unit,
     /// Scan nodes or edges.
     Scan(NodeOrEdgeScan),
     /// Expand from a child tree across one edge pattern.

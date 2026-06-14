@@ -76,6 +76,7 @@ impl Rule for DisjunctiveLabelExpansion {
 fn rewrite_tree(tree: &mut JoinTree, bindings: &[BindingDef], catalog: &dyn IndexCatalog) -> bool {
     match tree {
         // The leaf — try to expand in place.
+        JoinTree::Unit => false,
         JoinTree::Scan(_) => maybe_expand_scan(tree, bindings, catalog),
         // Container shapes — recurse into children.
         JoinTree::Expand { child, .. }

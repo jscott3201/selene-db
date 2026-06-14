@@ -79,6 +79,10 @@ pub(crate) fn walk_join_tree(
     env: WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     match tree {
+        JoinTree::Unit => Ok(vec![Binding::new(vec![
+            Value::Null;
+            env.schema.columns.len()
+        ])]),
         JoinTree::Scan(scan_node) => {
             scan::scan_pattern(scan_node, env.pattern, env.schema, env.seed, env.ctx)
         }
@@ -239,6 +243,7 @@ pub(crate) fn schema_for_pattern(pattern: &PatternPlan) -> BindingTableSchema {
 
 fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, AnalyzedType>) {
     match tree {
+        JoinTree::Unit => {}
         JoinTree::Scan(scan) => {
             insert_hidden(slots, scan.hidden_binding, scan.kind);
         }

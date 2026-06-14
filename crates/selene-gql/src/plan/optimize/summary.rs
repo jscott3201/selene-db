@@ -489,6 +489,7 @@ fn collect_scans(
     scans: &mut Vec<ScanSnapshot>,
 ) {
     match tree {
+        JoinTree::Unit => {}
         JoinTree::Scan(scan) => scans.push(scan_snapshot(scan, bindings)),
         JoinTree::Expand { child, edge, .. } => {
             collect_scans(child, bindings, scans);
@@ -601,6 +602,7 @@ fn repeat_edge_snapshot(
 
 fn join_tree_shape(tree: &JoinTree, bindings: &BTreeMap<BindingId, String>) -> String {
     match tree {
+        JoinTree::Unit => "Unit".to_owned(),
         JoinTree::Scan(scan) => format!("Scan({})", binding_name(scan.binding, bindings, "_")),
         JoinTree::Expand { child, edge, .. } => format!(
             "{}->Expand({}->{})",

@@ -172,7 +172,8 @@ pub(crate) fn walk_expand_nodes(
     visit: &mut impl FnMut(&mut EdgeMatch) -> bool,
 ) -> bool {
     match tree {
-        JoinTree::Scan(_)
+        JoinTree::Unit
+        | JoinTree::Scan(_)
         | JoinTree::Repeat { .. }
         | JoinTree::Questioned { .. }
         | JoinTree::PathSearch { .. }
@@ -202,7 +203,7 @@ fn recurse_join_tree_subplans(
     visit: &mut impl FnMut(ExecutionPlan) -> Transformed<ExecutionPlan>,
 ) -> bool {
     match tree {
-        JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } => false,
+        JoinTree::Unit | JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } => false,
         JoinTree::Expand { child, .. }
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
@@ -250,6 +251,7 @@ fn walk_join_tree_exprs(
     visit: &mut impl FnMut(&mut ValueExpr) -> bool,
 ) -> bool {
     match tree {
+        JoinTree::Unit => false,
         JoinTree::Scan(scan) => walk_predicates(&mut scan.property_predicates, bindings, visit),
         JoinTree::Expand { child, edge, .. } => {
             let changed_child = walk_join_tree_exprs(child, bindings, visit);

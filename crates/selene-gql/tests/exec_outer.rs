@@ -6,6 +6,27 @@ use exec_common::{ExecFixture, execute_pattern, execute_read, node_ids_for, plan
 use selene_core::Value;
 
 #[test]
+fn leading_optional_match_emits_matches_when_present() {
+    let table = execute_read("OPTIONAL MATCH (a:Person) RETURN a ORDER BY a.name");
+
+    assert_eq!(node_ids_for(&table, "a"), vec![Some(1), Some(2), Some(3)]);
+}
+
+#[test]
+fn leading_optional_match_null_extends_when_empty() {
+    let table = execute_read("OPTIONAL MATCH (a:Nope) RETURN a");
+
+    assert_eq!(node_ids_for(&table, "a"), vec![None]);
+}
+
+#[test]
+fn leading_optional_match_right_filter_can_produce_null_row() {
+    let table = execute_read("OPTIONAL MATCH (a:Person) WHERE a.name = 'Nope' RETURN a");
+
+    assert_eq!(node_ids_for(&table, "a"), vec![None]);
+}
+
+#[test]
 fn outer_emits_left_with_right_when_right_has_matches() {
     let fixture = ExecFixture::build();
     let plan = planned("MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(b:Sensor) RETURN a, b");
