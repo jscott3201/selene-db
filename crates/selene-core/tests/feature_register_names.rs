@@ -61,3 +61,31 @@ fn core_language_feature_names_match_annex_d() {
         assert_eq!(name_of(feature), Some(expected_name));
     }
 }
+
+#[test]
+fn session_feature_names_match_annex_d() {
+    for (feature, expected_name) in [
+        (
+            FeatureId::GS10,
+            "SESSION SET command: session-local binding table parameters based on subqueries",
+        ),
+        (
+            FeatureId::GS11,
+            "SESSION SET command: session-local value parameters based on subqueries",
+        ),
+        (
+            FeatureId::GS12,
+            "SESSION SET command: session-local graph parameters based on simple graph expressions or references",
+        ),
+        (
+            FeatureId::GS13,
+            "SESSION SET command: session-local binding table parameters based on simple expressions or references",
+        ),
+        (
+            FeatureId::GS14,
+            "SESSION SET command: session-local value parameters based on simple expressions",
+        ),
+    ] {
+        assert_eq!(name_of(feature), Some(expected_name));
+    }
+}
