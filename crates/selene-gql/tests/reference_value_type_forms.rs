@@ -87,6 +87,30 @@ fn open_reference_type_keywords_accept_whitespace_boundaries() {
 }
 
 #[test]
+fn open_reference_type_keywords_accept_comment_boundaries() {
+    assert_eq!(
+        typed_type("RETURN NULL IS TYPED ANY /* boundary */ NODE AS ok"),
+        GqlType::NodeRef
+    );
+    assert_eq!(
+        typed_type("RETURN NULL IS TYPED ANY /* boundary */ RELATIONSHIP AS ok"),
+        GqlType::EdgeRef
+    );
+
+    for source in [
+        "RETURN NULL IS TYPED ANY /* boundary */ GRAPH AS ok",
+        "RETURN NULL IS TYPED PROPERTY /* boundary */ GRAPH AS ok",
+        "RETURN NULL IS TYPED ANY /* boundary */ PROPERTY /* boundary */ GRAPH AS ok",
+    ] {
+        let err = parse(source).expect_err("GRAPH reference type remains unclaimed");
+        let ParserError::UnsupportedFeature { feature_id, .. } = err else {
+            panic!("{source} should report unsupported GV60, got {err:?}");
+        };
+        assert_eq!(feature_id, FeatureId::GV60, "{source}");
+    }
+}
+
+#[test]
 fn open_graph_element_reference_type_forms_format_canonically() {
     for (source, expected) in [
         (
