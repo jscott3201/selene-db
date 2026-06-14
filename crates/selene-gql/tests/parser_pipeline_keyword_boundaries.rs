@@ -1,6 +1,6 @@
 //! Pipeline keyword boundary regression coverage.
 
-use selene_gql::{ast::format_read_statement, parse};
+use selene_gql::{ParserError, ast::format_read_statement, parse};
 
 #[test]
 fn pipeline_statement_keywords_require_boundaries() {
@@ -37,6 +37,16 @@ fn pipeline_statement_keywords_require_boundaries() {
         "OPTIONALMATCH (n) RETURN n",
         "OPTIONALx MATCH (n) RETURN n",
         "MATCH (n) SETx n.age = 1 FINISH",
+        "MATCH (n) SET n ISx FINISH",
+        "INSERTx (n) FINISH",
+        "INSERT (n) FINISHx",
+        "MATCH (n) REMOVEn.age FINISH",
+        "MATCH (n) REMOVE n ISx FINISH",
+        "MATCH (n) DELETEn FINISH",
+        "MATCH (n) DETACHDELETE n FINISH",
+        "MATCH (n) DETACH DELETEn FINISH",
+        "MATCH (n) NODETACHDELETE n FINISH",
+        "MATCH (n) NODETACH DELETEn FINISH",
     ] {
         assert!(
             parse(source).is_err(),
@@ -86,7 +96,34 @@ fn guarded_pipeline_keywords_still_accept_iso_forms() {
         "MATCH (n) RETURN n",
         "OPTIONAL MATCH (n) RETURN n",
         "MATCH (n) SET n.age = 1 FINISH",
+        "MATCH (n) SET n IS Label FINISH",
+        "INSERT (n) FINISH",
+        "MATCH (n) REMOVE n.age FINISH",
+        "MATCH (n) REMOVE n IS Label FINISH",
+        "MATCH (n) DELETE n FINISH",
+        "MATCH (n) DETACH DELETE n FINISH",
+        "MATCH (n) NODETACH DELETE n FINISH",
     ] {
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+    }
+}
+
+#[test]
+fn deferred_merge_clause_keywords_require_boundaries() {
+    for source in [
+        "MERGEx (n)",
+        "MERGE (n) ONCREATE SET n.x = 1",
+        "MERGE (n) ON CREATE SETn.x = 1",
+        "MERGE (n) ONMATCH SET n.x = 1",
+        "MERGE (n) ON MATCHSET n.x = 1",
+    ] {
+        let error = match parse(source) {
+            Ok(_) => panic!("{source} must not parse as a MERGE statement with prefixed keywords"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, ParserError::SyntaxError { .. }),
+            "{source} must be a syntax error, got {error:?}"
+        );
     }
 }
