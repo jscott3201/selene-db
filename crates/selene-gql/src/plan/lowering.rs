@@ -207,22 +207,22 @@ fn lower_chained(
     };
     let mut plan = lower_query_pipeline(first, registry, analyzed, max_quantifier)?;
     // NEXT's output_schema must reflect the final block's projection because
-    // each NEXT discards the prior block's columns. Correlated NEXT (rhs
-    // references prior-block bindings) is rejected here rather than silently
-    // losing carried bindings at runtime.
+    // each NEXT discards the prior block's columns.
     for block in rest {
-        assert_no_correlated_next(block.span, analyzed)?;
+        let correlated = block_references_prior_bindings(block.span, analyzed);
         let inner = lower_query_pipeline(block, registry, analyzed, max_quantifier)?;
         plan.output_schema = inner.output_schema.clone();
-        plan.pipeline.push(PipelineOp::Chain(Box::new(inner)));
+        let inner = Box::new(inner);
+        if correlated {
+            plan.pipeline.push(PipelineOp::CorrelatedChain(inner));
+        } else {
+            plan.pipeline.push(PipelineOp::Chain(inner));
+        }
     }
     Ok(plan)
 }
 
-fn assert_no_correlated_next(
-    block_span: SourceSpan,
-    analyzed: &AnalyzedStatement,
-) -> Result<(), PlannerError> {
+fn block_references_prior_bindings(block_span: SourceSpan, analyzed: &AnalyzedStatement) -> bool {
     for reference in &analyzed.references {
         if !span_contains(block_span, reference.span) {
             continue;
@@ -231,13 +231,10 @@ fn assert_no_correlated_next(
             continue;
         };
         if !span_contains(block_span, decl.span()) {
-            return Err(PlannerError::NotImplemented {
-                feature: "correlated NEXT (RHS references prior-block bindings)",
-                span: reference.span,
-            });
+            return true;
         }
     }
-    Ok(())
+    false
 }
 
 fn span_contains(outer: SourceSpan, inner: SourceSpan) -> bool {

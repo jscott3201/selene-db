@@ -111,7 +111,9 @@ pub(crate) fn recurse_subplans(
     }
     for op in &mut plan.pipeline {
         match op {
-            PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+            PipelineOp::Union { rhs, .. }
+            | PipelineOp::Chain(rhs)
+            | PipelineOp::CorrelatedChain(rhs) => {
                 changed |= recurse_plan_box(rhs, visit);
             }
             PipelineOp::CallSubquery(subquery) => {
@@ -344,6 +346,7 @@ fn walk_pipeline_op_exprs(
         | PipelineOp::Distinct
         | PipelineOp::Union { .. }
         | PipelineOp::Chain(_)
+        | PipelineOp::CorrelatedChain(_)
         | PipelineOp::CallSubquery(_)
         | PipelineOp::ExplainPlan { .. }
         | PipelineOp::Tx(_)

@@ -372,6 +372,10 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
             kind: "Chain",
             payload: format!("rhs={}", PlanSnapshot::from_plan(rhs, Vec::new()).compact()),
         },
+        PipelineOp::CorrelatedChain(rhs) => PipelineOpSummary {
+            kind: "CorrelatedChain",
+            payload: format!("rhs={}", PlanSnapshot::from_plan(rhs, Vec::new()).compact()),
+        },
         PipelineOp::Match(pattern) => PipelineOpSummary {
             kind: "Match",
             payload: join_tree_shape(&pattern.join_tree, bindings),
@@ -455,7 +459,9 @@ fn collect_order_access(pipeline: &[PipelineOp]) -> Vec<Option<String>> {
         match op {
             PipelineOp::OrderBy(keys) => access.extend(keys.iter().map(order_access)),
             PipelineOp::TopK { keys, .. } => access.extend(keys.iter().map(order_access)),
-            PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+            PipelineOp::Union { rhs, .. }
+            | PipelineOp::Chain(rhs)
+            | PipelineOp::CorrelatedChain(rhs) => {
                 access.extend(collect_order_access(&rhs.pipeline));
             }
             PipelineOp::CallSubquery(call) => {

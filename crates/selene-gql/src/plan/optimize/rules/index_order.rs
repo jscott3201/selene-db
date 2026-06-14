@@ -58,6 +58,7 @@ fn rewrite_pipeline_op(
         | PipelineOp::OptionalMatch(_)
         | PipelineOp::Union { .. }
         | PipelineOp::Chain(_)
+        | PipelineOp::CorrelatedChain(_)
         | PipelineOp::Call(_)
         | PipelineOp::CallSubquery(_)
         | PipelineOp::Mutation(_)

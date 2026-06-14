@@ -230,6 +230,10 @@ fn dispatch_pipeline(
                 TxCtxRef::ReadWrite(ctx) => chain::execute(rhs, table, ctx)?,
                 TxCtxRef::ReadOnly(ctx) => plan_runner::execute_plan_read_only(rhs, ctx)?,
             },
+            PipelineOp::CorrelatedChain(rhs) => match &mut ctx {
+                TxCtxRef::ReadWrite(ctx) => chain::execute_correlated(rhs, table, ctx)?,
+                TxCtxRef::ReadOnly(ctx) => chain::execute_correlated_read_only(rhs, table, ctx)?,
+            },
             PipelineOp::Call(call) => match &mut ctx {
                 TxCtxRef::ReadWrite(ctx) => call::execute(call, table, ctx, expr_ids, subqueries)?,
                 TxCtxRef::ReadOnly(ctx) => {

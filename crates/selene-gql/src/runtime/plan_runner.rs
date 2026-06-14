@@ -9,17 +9,39 @@ pub(crate) fn execute_plan(
     plan: &ExecutionPlan,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    execute_plan_with_seed(plan, None, ctx)
+}
+
+pub(crate) fn execute_plan_with_seed(
+    plan: &ExecutionPlan,
+    seed: Option<BindingTable>,
+    ctx: &mut TxContext<'_, '_>,
+) -> Result<BindingTable, ExecutorError> {
     let table = {
         let eval_ctx = EvalCtx {
             tx: ctx,
             expr_ids: &plan.expr_ids,
             subqueries: &plan.subqueries,
         };
-        match &plan.pattern_plan {
-            Some(pattern_plan) => {
+        match (&plan.pattern_plan, seed) {
+            (Some(pattern_plan), Some(seed)) => {
+                let (schema, rows) = seed.into_parts();
+                let Some(row) = rows.first() else {
+                    return Ok(BindingTable::new(schema, Vec::new()));
+                };
+                let target_schema = target_schema(&schema, pattern_plan);
+                pattern::execute_pattern_with_seed_and_schema(
+                    pattern_plan,
+                    Some(row),
+                    target_schema,
+                    &eval_ctx,
+                )?
+            }
+            (Some(pattern_plan), None) => {
                 pattern::execute_pattern_with_seed(pattern_plan, None, &eval_ctx)?
             }
-            None => seed_table(),
+            (None, Some(seed)) => seed,
+            (None, None) => seed_table(),
         }
     };
     pipeline::execute_pipeline_with_plan(
@@ -55,10 +77,11 @@ pub(crate) fn execute_plan_read_only_with_seed(
                 let Some(row) = rows.first() else {
                     return Ok(BindingTable::new(schema, Vec::new()));
                 };
+                let target_schema = target_schema(&schema, pattern_plan);
                 pattern::execute_pattern_with_seed_and_schema(
                     pattern_plan,
                     Some(row),
-                    schema,
+                    target_schema,
                     &eval_ctx,
                 )?
             }
@@ -85,6 +108,34 @@ pub(crate) fn seed_table() -> BindingTable {
         },
         vec![Binding::empty()],
     )
+}
+
+fn target_schema(
+    input: &BindingTableSchema,
+    pattern_plan: &crate::PatternPlan,
+) -> BindingTableSchema {
+    let mut schema = input.clone();
+    for column in pattern::schema_for_pattern(pattern_plan).columns {
+        if column_exists(&schema, &column) {
+            continue;
+        }
+        schema.columns.push(column);
+    }
+    schema
+}
+
+fn column_exists(schema: &BindingTableSchema, column: &crate::BindingTableColumn) -> bool {
+    match (column.name.clone(), column.hidden) {
+        (Some(name), _) => schema
+            .columns
+            .iter()
+            .any(|candidate| candidate.name == Some(name.clone())),
+        (None, Some(hidden)) => schema
+            .columns
+            .iter()
+            .any(|candidate| candidate.hidden == Some(hidden)),
+        (None, None) => false,
+    }
 }
 
 #[cfg(test)]

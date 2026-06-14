@@ -86,7 +86,9 @@ impl ExecutionPlan {
         }
         for op in &mut self.pipeline {
             match op {
-                PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+                PipelineOp::Union { rhs, .. }
+                | PipelineOp::Chain(rhs)
+                | PipelineOp::CorrelatedChain(rhs) => {
                     rhs.refresh_pipeline_op_high_water();
                 }
                 PipelineOp::CallSubquery(subquery) => {
@@ -614,6 +616,8 @@ pub enum PipelineOp {
     },
     /// Evaluate a NEXT block after the current plan.
     Chain(Box<ExecutionPlan>),
+    /// Evaluate a NEXT block once per input row because it references prior bindings.
+    CorrelatedChain(Box<ExecutionPlan>),
     /// Match a graph pattern against each incoming row.
     Match(PatternPlan),
     /// Optionally match a graph pattern against each incoming row.
