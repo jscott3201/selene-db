@@ -311,19 +311,25 @@ fn expr_from_first(
 
 fn build_for(pair: Pair<'_, Rule>) -> Result<ForStatement, ParserError> {
     let source_span = span(&pair);
-    let mut children = pair.into_inner();
-    let alias = children
-        .next()
-        .ok_or_else(|| ParserError::syntax("FOR is missing binding variable", source_span, None))
-        .and_then(|pair| db_string_pair(pair))?;
-    let source = children
-        .next()
-        .ok_or_else(|| ParserError::syntax("FOR is missing source expression", source_span, None))
-        .and_then(|pair| expr::build_value_expr(pair))?;
-    let position = children.next().map(build_for_position).transpose()?;
+    let mut alias = None;
+    let mut source = None;
+    let mut position = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::for_kw | Rule::in_kw => {}
+            Rule::ident if alias.is_none() => alias = Some(db_string_pair(child)?),
+            Rule::expr => source = Some(expr::build_value_expr(child)?),
+            Rule::for_position => position = Some(build_for_position(child)?),
+            _ => return Err(unexpected_pair(child, "unexpected FOR child")),
+        }
+    }
     Ok(ForStatement {
-        source,
-        alias,
+        source: source.ok_or_else(|| {
+            ParserError::syntax("FOR is missing source expression", source_span, None)
+        })?,
+        alias: alias.ok_or_else(|| {
+            ParserError::syntax("FOR is missing binding variable", source_span, None)
+        })?,
         position,
         span: source_span,
     })
@@ -335,6 +341,7 @@ fn build_for_position(pair: Pair<'_, Rule>) -> Result<RowExpansionPosition, Pars
     let mut alias = None;
     for child in pair.into_inner() {
         match child.as_rule() {
+            Rule::with_kw => {}
             Rule::for_position_ordinality => kind = Some(RowExpansionPositionKind::Ordinality),
             Rule::for_position_offset => kind = Some(RowExpansionPositionKind::Offset),
             Rule::ident => alias = Some(db_string_pair(child)?),
@@ -484,6 +491,7 @@ fn build_with_clause(pair: Pair<'_, Rule>) -> Result<WithClause, ParserError> {
 
     for child in pair.into_inner() {
         match child.as_rule() {
+            Rule::with_kw => {}
             Rule::distinct_kw => clause.distinct = true,
             Rule::projection_list => clause.items = build_projection_list(child)?,
             Rule::group_by_clause => clause.group_by = Some(build_group_by(child)?),
