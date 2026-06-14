@@ -235,6 +235,27 @@ fn return_projection_is_permeable_for_ga07_order_by() {
 }
 
 #[test]
+fn order_by_rejects_value_subquery_sort_key() {
+    let err = analyze_one("RETURN 1 AS n ORDER BY VALUE { RETURN 1 LIMIT 1 }")
+        .expect_err("sort key cannot contain a nested query specification");
+    assert!(matches!(
+        err,
+        AnalysisError::SortKeyContainsNestedQuery { .. }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "42001");
+
+    let err = analyze_one("RETURN 1 AS n ORDER BY 1 + VALUE { RETURN 1 LIMIT 1 }")
+        .expect_err("nested value query is rejected inside a larger sort expression");
+    assert!(matches!(
+        err,
+        AnalysisError::SortKeyContainsNestedQuery { .. }
+    ));
+
+    analyze_one("RETURN TRUE AS ok ORDER BY EXISTS { MATCH (n) }")
+        .expect("EXISTS predicate is not a nested query specification");
+}
+
+#[test]
 fn return_star_preserves_input_bindings_for_post_return_clauses() {
     // RETURN * does not redeclare aliases; pre-RETURN bindings must stay
     // visible for ORDER BY / LIMIT / OFFSET. Codex P1 on PR #25.
