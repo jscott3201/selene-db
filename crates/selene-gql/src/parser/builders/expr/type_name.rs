@@ -3,6 +3,7 @@
 mod dynamic_union;
 mod list;
 mod strings;
+mod temporal;
 
 use pest::iterators::Pair;
 use selene_core::{DbString, feature_register::FeatureId};
@@ -196,8 +197,11 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     {
         return strings::build_character_string_type_name(text, source_span);
     }
+    if let Some(temporal_type) = temporal::build_keyword_type_name(&pair) {
+        return Ok(temporal_type);
+    }
     if keyword_starts_with(text, "DURATION") {
-        return build_duration_type_name(pair);
+        return temporal::build_duration_type_name(pair);
     }
     if let Some(binding_table_type) = pair
         .clone()
@@ -654,28 +658,4 @@ fn unsigned_integer_precision_type(
             hint: "this precision requires an unsigned integer wider than UINT128, which is outside the selene-db D1 claim list",
         }),
     }
-}
-
-fn build_duration_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
-    let source_span = span(&pair);
-    let qualifier = pair
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::duration_type)
-        .and_then(|duration| {
-            duration
-                .into_inner()
-                .find(|child| child.as_rule() == Rule::temporal_duration_qualifier)
-        });
-    let Some(qualifier) = qualifier else {
-        return Err(ParserError::syntax(
-            "DURATION type requires YEAR TO MONTH or DAY TO SECOND qualifier",
-            source_span,
-            Some("use DURATION (YEAR TO MONTH) or DURATION (DAY TO SECOND)".into()),
-        ));
-    };
-    Ok(match qualifier.as_str().to_ascii_uppercase().as_str() {
-        "YEAR TO MONTH" => GqlType::DurationYearToMonth,
-        "DAY TO SECOND" => GqlType::DurationDayToSecond,
-        _ => unreachable!("grammar restricts temporal_duration_qualifier"),
-    })
 }

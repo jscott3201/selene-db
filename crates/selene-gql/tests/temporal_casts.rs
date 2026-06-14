@@ -161,6 +161,7 @@ fn temporal_type_keywords_require_boundaries() {
         "RETURN CAST('2026-05-07' AS DATEx) AS v",
         "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMPx) AS v",
         "RETURN CAST('PT1H' AS DURATIONx (DAY TO SECOND)) AS v",
+        "RETURN CAST('P1M' AS DURATION (YEARTOMONTH)) AS v",
         "RETURN CAST('PT1H' AS DURATION (DAYTOSECOND)) AS v",
     ] {
         assert_syntax_error(source);
@@ -170,15 +171,16 @@ fn temporal_type_keywords_require_boundaries() {
 #[test]
 fn guarded_temporal_type_keywords_still_accept_separated_forms() {
     for source in [
-        "RETURN CAST('2026-05-07T12:34:56-04:00' AS ZONED DATETIME) AS v",
-        "RETURN CAST('2026-05-07T12:34:56' AS LOCAL DATETIME) AS v",
-        "RETURN CAST('12:34:56-04:00' AS ZONED TIME) AS v",
-        "RETURN CAST('12:34:56' AS LOCAL TIME) AS v",
-        "RETURN CAST('2026-05-07T12:34:56-04:00' AS TIMESTAMP WITH TIME ZONE) AS v",
-        "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMP WITHOUT TIME ZONE) AS v",
-        "RETURN CAST('12:34:56-04:00' AS TIME WITH TIME ZONE) AS v",
-        "RETURN CAST('12:34:56' AS TIME WITHOUT TIME ZONE) AS v",
-        "RETURN CAST('PT1H' AS DURATION (DAY TO SECOND)) AS v",
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS ZONED /* c */ DATETIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS LOCAL /* c */ DATETIME) AS v",
+        "RETURN CAST('12:34:56-04:00' AS ZONED /* c */ TIME) AS v",
+        "RETURN CAST('12:34:56' AS LOCAL /* c */ TIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS TIMESTAMP /* c */ WITH /* c */ TIME /* c */ ZONE) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMP /* c */ WITHOUT /* c */ TIME /* c */ ZONE) AS v",
+        "RETURN CAST('12:34:56-04:00' AS TIME /* c */ WITH /* c */ TIME /* c */ ZONE) AS v",
+        "RETURN CAST('12:34:56' AS TIME /* c */ WITHOUT /* c */ TIME /* c */ ZONE) AS v",
+        "RETURN CAST('P1M' AS DURATION (YEAR /* c */ TO /* c */ MONTH)) AS v",
+        "RETURN CAST('PT1H' AS DURATION (DAY /* c */ TO /* c */ SECOND)) AS v",
     ] {
         parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
     }
