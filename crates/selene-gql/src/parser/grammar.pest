@@ -1054,11 +1054,13 @@ value_type_kw = @{ ^"VALUE" ~ !(LETTER | NUMBER | "_") }
 // GROUP-like specification-only devices do not apply here; ANY RECORD is the
 // open record type, while `{}` / `RECORD {}` are the closed unit record type.
 record_type = {
-    ^"ANY" ~ ^"RECORD"
-  | ^"RECORD" ~ field_types_specification
+    record_type_any_kw ~ record_type_record_kw
+  | record_type_record_kw ~ field_types_specification
   | field_types_specification
-  | ^"RECORD"
+  | record_type_record_kw
 }
+record_type_any_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
+record_type_record_kw = @{ ^"RECORD" ~ !(LETTER | NUMBER | "_") }
 field_types_specification = { "{" ~ (record_field_type ~ ("," ~ record_field_type)*)? ~ "}" }
 
 character_string_type = {
