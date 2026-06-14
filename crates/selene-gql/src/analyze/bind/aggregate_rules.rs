@@ -4,6 +4,20 @@ use crate::{ReturnItem, ValueExpr, analyze::error::AnalysisError};
 
 use super::expr;
 
+pub(crate) fn contains_aggregate_function(value: &ValueExpr) -> bool {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        if matches!(
+            value,
+            ValueExpr::FunctionCall { name, .. } if expr::is_aggregate_name(name.first())
+        ) {
+            return true;
+        }
+        value.for_each_child(&mut |child| stack.push(child));
+    }
+    false
+}
+
 /// Validate ISO 20.9 aggregate syntax rules that need AST context after
 /// expression binding.
 pub(crate) fn validate_aggregate_nesting(

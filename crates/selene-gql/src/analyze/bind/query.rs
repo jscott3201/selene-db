@@ -22,8 +22,22 @@ pub(crate) fn bind_query_pipeline(
     pipeline: &mut QueryPipeline,
 ) -> Result<(), AnalysisError> {
     super::parameters::validate_parameter_declarations(pipeline)?;
+    let mut return_sort_context = None;
     for statement in &mut pipeline.statements {
-        bind_pipeline_statement(ctx, statement)?;
+        match statement {
+            PipelineStatement::Return(clause) => {
+                bind_return_clause(ctx, clause)?;
+                return_sort_context = Some(ReturnSortContext::from_return_clause(clause));
+            }
+            PipelineStatement::Sorting(terms) => {
+                bind_sorting(ctx, terms, return_sort_context.as_ref())?;
+                return_sort_context = None;
+            }
+            _ => {
+                bind_pipeline_statement(ctx, statement)?;
+                return_sort_context = None;
+            }
+        }
     }
     Ok(())
 }
@@ -40,7 +54,7 @@ pub(crate) fn bind_pipeline_statement(
         }
         PipelineStatement::Let(bindings) => bind_let(ctx, bindings),
         PipelineStatement::For(statement) => bind_for(ctx, statement),
-        PipelineStatement::Sorting(terms) => bind_sorting(ctx, terms),
+        PipelineStatement::Sorting(terms) => bind_sorting(ctx, terms, None),
         PipelineStatement::Limit(value) | PipelineStatement::Offset(value) => {
             bind_limit_value(value)
         }
@@ -534,10 +548,38 @@ fn bind_for(ctx: &mut BindContext, statement: &ForStatement) -> Result<(), Analy
     Ok(())
 }
 
-fn bind_sorting(ctx: &mut BindContext, terms: &[OrderTerm]) -> Result<(), AnalysisError> {
+#[derive(Clone, Copy, Debug)]
+struct ReturnSortContext {
+    allows_aggregate_sort_key: bool,
+}
+
+impl ReturnSortContext {
+    fn from_return_clause(clause: &ReturnClause) -> Self {
+        Self {
+            allows_aggregate_sort_key: clause.group_by.is_some()
+                && clause
+                    .items
+                    .iter()
+                    .any(|item| aggregate_rules::contains_aggregate_function(&item.expr)),
+        }
+    }
+}
+
+fn bind_sorting(
+    ctx: &mut BindContext,
+    terms: &[OrderTerm],
+    return_context: Option<&ReturnSortContext>,
+) -> Result<(), AnalysisError> {
     for term in terms {
         if sort_key_contains_nested_query(&term.expr) {
             return Err(AnalysisError::SortKeyContainsNestedQuery {
+                span: term.expr.span(),
+            });
+        }
+        if return_context.is_some_and(|context| !context.allows_aggregate_sort_key)
+            && aggregate_rules::contains_aggregate_function(&term.expr)
+        {
+            return Err(AnalysisError::SortKeyContainsAggregate {
                 span: term.expr.span(),
             });
         }

@@ -256,6 +256,29 @@ fn order_by_rejects_value_subquery_sort_key() {
 }
 
 #[test]
+fn order_by_rejects_aggregate_sort_key_without_grouped_aggregate_return() {
+    for source in [
+        "RETURN 1 AS n ORDER BY count(*)",
+        "FOR x IN [1, 2] RETURN sum(x) AS s ORDER BY count(*)",
+        "FOR x IN [1, 2] RETURN x AS x GROUP BY x ORDER BY count(*)",
+    ] {
+        let err = analyze_one(source)
+            .expect_err("aggregate sort key requires grouped aggregate RETURN context");
+        assert!(
+            matches!(err, AnalysisError::SortKeyContainsAggregate { .. }),
+            "{source} should reject with SortKeyContainsAggregate, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+#[test]
+fn order_by_allows_aggregate_sort_key_with_grouped_aggregate_return() {
+    analyze_one("FOR x IN [1, 2] RETURN x AS x, count(*) AS c GROUP BY x ORDER BY count(*)")
+        .expect("grouped aggregate RETURN context may sort by aggregate function");
+}
+
+#[test]
 fn return_star_preserves_input_bindings_for_post_return_clauses() {
     // RETURN * does not redeclare aliases; pre-RETURN bindings must stay
     // visible for ORDER BY / LIMIT / OFFSET. Codex P1 on PR #25.
