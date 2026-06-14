@@ -856,8 +856,13 @@ duration_between_expr = {
     duration_between_kw ~ "(" ~ expr ~ "," ~ expr ~ ")" ~ temporal_duration_qualifier?
 }
 temporal_duration_qualifier = { year_to_month_qualifier | day_to_second_qualifier }
-year_to_month_qualifier = { ^"YEAR" ~ ^"TO" ~ ^"MONTH" }
-day_to_second_qualifier = { ^"DAY" ~ ^"TO" ~ ^"SECOND" }
+year_to_month_qualifier = { year_kw ~ to_kw ~ month_kw }
+day_to_second_qualifier = { day_kw ~ to_kw ~ second_kw }
+year_kw = @{ ^"YEAR" ~ !(LETTER | NUMBER | "_") }
+to_kw = @{ ^"TO" ~ !(LETTER | NUMBER | "_") }
+month_kw = @{ ^"MONTH" ~ !(LETTER | NUMBER | "_") }
+day_kw = @{ ^"DAY" ~ !(LETTER | NUMBER | "_") }
+second_kw = @{ ^"SECOND" ~ !(LETTER | NUMBER | "_") }
 duration_between_kw = @{ ^"DURATION_BETWEEN" ~ !(LETTER | NUMBER | "_") }
 
 // ISO scalar function heads are reserved words, so they cannot travel through
@@ -1131,21 +1136,27 @@ byte_string_separator = @{ (" " | "\t")* ~ ("\r\n" | "\n" | "\r") ~ (" " | "\t" 
 list_lit = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
 
 // Temporal keyword literals (ISO GQL spec section21.2)
-zoned_datetime_lit = { ^"ZONED" ~ ^"DATETIME" ~ string_lit }
-local_datetime_lit = { ^"LOCAL" ~ ^"DATETIME" ~ string_lit }
-date_lit           = { ^"DATE" ~ string_lit }
-zoned_time_lit     = { ^"ZONED" ~ ^"TIME" ~ string_lit }
-local_time_lit     = { ^"LOCAL" ~ ^"TIME" ~ string_lit }
-time_lit           = { ^"TIME" ~ string_lit }
+zoned_datetime_lit = { zoned_kw ~ datetime_kw ~ string_lit }
+local_datetime_lit = { local_kw ~ datetime_kw ~ string_lit }
+date_lit           = { date_kw ~ string_lit }
+zoned_time_lit     = { zoned_kw ~ time_kw ~ string_lit }
+local_time_lit     = { local_kw ~ time_kw ~ string_lit }
+time_lit           = { time_kw ~ string_lit }
 
 // Bare DATETIME/TIMESTAMP keyword literal (ISO section21.2): infers zoned vs local from content
-datetime_bare_lit = { (^"DATETIME" | ^"TIMESTAMP") ~ string_lit }
+datetime_bare_lit = { (datetime_kw | timestamp_kw) ~ string_lit }
 
 // Duration literal: DURATION('1h30m') or DURATION 'P1DT2H'
 duration_lit = {
-    ^"DURATION" ~ string_lit
-  | ^"DURATION" ~ "(" ~ string_lit ~ ")"
+    duration_kw ~ string_lit
+  | duration_kw ~ "(" ~ string_lit ~ ")"
 }
+zoned_kw     = @{ ^"ZONED" ~ !(LETTER | NUMBER | "_") }
+local_kw     = @{ ^"LOCAL" ~ !(LETTER | NUMBER | "_") }
+datetime_kw  = @{ ^"DATETIME" ~ !(LETTER | NUMBER | "_") }
+date_kw      = @{ ^"DATE" ~ !(LETTER | NUMBER | "_") }
+timestamp_kw = @{ ^"TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
+duration_kw  = @{ ^"DURATION" ~ !(LETTER | NUMBER | "_") }
 
 // -------------------------------------------------------------------
 // Identifiers
