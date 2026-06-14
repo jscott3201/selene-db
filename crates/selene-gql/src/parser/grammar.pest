@@ -905,27 +905,27 @@ type_name_primary = { type_name_base ~ postfix_list_suffix* ~ type_not_null? }
 type_not_null = { not_kw ~ null_kw }
 
 type_name_base = {
-    ^"BOOLEAN" | ^"BOOL"
+    boolean_kw | bool_kw
   | signed_integer_precision_type
   | unsigned_integer_precision_type
-  | ^"SIGNED" ~ ^"SMALL" ~ ^"INTEGER"
-  | ^"SIGNED" ~ ^"BIG" ~ ^"INTEGER"
-  | ^"SIGNED" ~ ^"INTEGER256" | ^"SIGNED" ~ ^"INTEGER128"
-  | ^"SIGNED" ~ ^"INTEGER64" | ^"SIGNED" ~ ^"INTEGER32"
-  | ^"SIGNED" ~ ^"INTEGER16" | ^"SIGNED" ~ ^"INTEGER8"
-  | ^"SIGNED" ~ ^"INTEGER"
-  | ^"UNSIGNED" ~ ^"SMALL" ~ ^"INTEGER"
-  | ^"UNSIGNED" ~ ^"BIG" ~ ^"INTEGER"
-  | ^"UNSIGNED" ~ ^"INTEGER256" | ^"UNSIGNED" ~ ^"INTEGER128"
-  | ^"UNSIGNED" ~ ^"INTEGER64" | ^"UNSIGNED" ~ ^"INTEGER32"
-  | ^"UNSIGNED" ~ ^"INTEGER16" | ^"UNSIGNED" ~ ^"INTEGER8"
-  | ^"UNSIGNED" ~ ^"INTEGER"
-  | ^"INT256" | ^"INT128" | ^"INT64" | ^"INT32" | ^"INT16" | ^"INT8"
-  | ^"INTEGER256" | ^"INTEGER128" | ^"INTEGER64" | ^"INTEGER32" | ^"INTEGER16" | ^"INTEGER8"
-  | ^"BIG" ~ ^"INTEGER" | ^"SMALL" ~ ^"INTEGER"
-  | ^"INTEGER" | ^"BIGINT" | ^"SMALLINT" | ^"INT"
-  | ^"UINT256" | ^"UINT128" | ^"UINT64" | ^"UINT32" | ^"UINT16" | ^"UINT8"
-  | ^"USMALLINT" | ^"UBIGINT" | ^"UINT"
+  | signed_kw ~ small_kw ~ integer_kw
+  | signed_kw ~ big_kw ~ integer_kw
+  | signed_kw ~ integer_256_kw | signed_kw ~ integer_128_kw
+  | signed_kw ~ integer_64_kw | signed_kw ~ integer_32_kw
+  | signed_kw ~ integer_16_kw | signed_kw ~ integer_8_kw
+  | signed_kw ~ integer_kw
+  | unsigned_kw ~ small_kw ~ integer_kw
+  | unsigned_kw ~ big_kw ~ integer_kw
+  | unsigned_kw ~ integer_256_kw | unsigned_kw ~ integer_128_kw
+  | unsigned_kw ~ integer_64_kw | unsigned_kw ~ integer_32_kw
+  | unsigned_kw ~ integer_16_kw | unsigned_kw ~ integer_8_kw
+  | unsigned_kw ~ integer_kw
+  | int_256_kw | int_128_kw | int_64_kw | int_32_kw | int_16_kw | int_8_kw
+  | integer_256_kw | integer_128_kw | integer_64_kw | integer_32_kw | integer_16_kw | integer_8_kw
+  | big_kw ~ integer_kw | small_kw ~ integer_kw
+  | integer_kw | bigint_kw | smallint_kw | int_kw
+  | uint_256_kw | uint_128_kw | uint_64_kw | uint_32_kw | uint_16_kw | uint_8_kw
+  | usmallint_kw | ubigint_kw | uint_kw
   | ^"DOUBLE" ~ (^"PRECISION")?
   | float_precision_type
   | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
@@ -960,11 +960,42 @@ bare_list_type = { list_value_type_name_synonym ~ list_max_cardinality? }
 postfix_list_suffix = { type_not_null? ~ list_value_type_name_synonym ~ list_max_cardinality? }
 list_max_cardinality = { "[" ~ unsigned_integer ~ "]" }
 list_value_type_name_synonym = @{ (^"LIST" | ^"ARRAY") ~ !(LETTER | NUMBER | "_") }
+boolean_kw = @{ ^"BOOLEAN" ~ !(LETTER | NUMBER | "_") }
+bool_kw = @{ ^"BOOL" ~ !(LETTER | NUMBER | "_") }
+signed_kw = @{ ^"SIGNED" ~ !(LETTER | NUMBER | "_") }
+unsigned_kw = @{ ^"UNSIGNED" ~ !(LETTER | NUMBER | "_") }
+small_kw = @{ ^"SMALL" ~ !(LETTER | NUMBER | "_") }
+big_kw = @{ ^"BIG" ~ !(LETTER | NUMBER | "_") }
+integer_kw = @{ ^"INTEGER" ~ !(LETTER | NUMBER | "_") }
+integer_8_kw = @{ ^"INTEGER8" ~ !(LETTER | NUMBER | "_") }
+integer_16_kw = @{ ^"INTEGER16" ~ !(LETTER | NUMBER | "_") }
+integer_32_kw = @{ ^"INTEGER32" ~ !(LETTER | NUMBER | "_") }
+integer_64_kw = @{ ^"INTEGER64" ~ !(LETTER | NUMBER | "_") }
+integer_128_kw = @{ ^"INTEGER128" ~ !(LETTER | NUMBER | "_") }
+integer_256_kw = @{ ^"INTEGER256" ~ !(LETTER | NUMBER | "_") }
+int_kw = @{ ^"INT" ~ !(LETTER | NUMBER | "_") }
+int_8_kw = @{ ^"INT8" ~ !(LETTER | NUMBER | "_") }
+int_16_kw = @{ ^"INT16" ~ !(LETTER | NUMBER | "_") }
+int_32_kw = @{ ^"INT32" ~ !(LETTER | NUMBER | "_") }
+int_64_kw = @{ ^"INT64" ~ !(LETTER | NUMBER | "_") }
+int_128_kw = @{ ^"INT128" ~ !(LETTER | NUMBER | "_") }
+int_256_kw = @{ ^"INT256" ~ !(LETTER | NUMBER | "_") }
+uint_kw = @{ ^"UINT" ~ !(LETTER | NUMBER | "_") }
+uint_8_kw = @{ ^"UINT8" ~ !(LETTER | NUMBER | "_") }
+uint_16_kw = @{ ^"UINT16" ~ !(LETTER | NUMBER | "_") }
+uint_32_kw = @{ ^"UINT32" ~ !(LETTER | NUMBER | "_") }
+uint_64_kw = @{ ^"UINT64" ~ !(LETTER | NUMBER | "_") }
+uint_128_kw = @{ ^"UINT128" ~ !(LETTER | NUMBER | "_") }
+uint_256_kw = @{ ^"UINT256" ~ !(LETTER | NUMBER | "_") }
+smallint_kw = @{ ^"SMALLINT" ~ !(LETTER | NUMBER | "_") }
+bigint_kw = @{ ^"BIGINT" ~ !(LETTER | NUMBER | "_") }
+usmallint_kw = @{ ^"USMALLINT" ~ !(LETTER | NUMBER | "_") }
+ubigint_kw = @{ ^"UBIGINT" ~ !(LETTER | NUMBER | "_") }
 signed_integer_precision_type = {
-    (^"SIGNED" ~ ^"INTEGER" | ^"INTEGER" | ^"INT") ~ "(" ~ numeric_type_precision ~ ")"
+    (signed_kw ~ integer_kw | integer_kw | int_kw) ~ "(" ~ numeric_type_precision ~ ")"
 }
 unsigned_integer_precision_type = {
-    (^"UNSIGNED" ~ ^"INTEGER" | ^"UINT") ~ "(" ~ numeric_type_precision ~ ")"
+    (unsigned_kw ~ integer_kw | uint_kw) ~ "(" ~ numeric_type_precision ~ ")"
 }
 float_precision_type = { ^"FLOAT" ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
 decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }

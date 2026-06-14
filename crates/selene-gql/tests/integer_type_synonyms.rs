@@ -31,6 +31,14 @@ fn first_status(source: &str) -> String {
         .to_owned()
 }
 
+fn assert_syntax_error(source: &str) {
+    let err = parse(source).expect_err(source);
+    assert!(
+        matches!(err, ParserError::SyntaxError { .. }),
+        "expected syntax error for `{source}`, got {err:?}"
+    );
+}
+
 #[test]
 fn verbose_integer_type_names_format_to_canonical_names() {
     for (source, expected) in [
@@ -67,12 +75,59 @@ fn verbose_integer_type_names_format_to_canonical_names() {
             "RETURN n IS TYPED UNSIGNED BIG INTEGER",
             "RETURN n IS TYPED UBIGINT",
         ),
+        (
+            "RETURN n IS TYPED SIGNED /* c */ SMALL /* c */ INTEGER",
+            "RETURN n IS TYPED SMALLINT",
+        ),
+        (
+            "RETURN n IS TYPED SIGNED /* c */ INTEGER16",
+            "RETURN n IS TYPED INT16",
+        ),
+        (
+            "RETURN n IS TYPED UNSIGNED /* c */ BIG /* c */ INTEGER",
+            "RETURN n IS TYPED UBIGINT",
+        ),
+        (
+            "RETURN n IS TYPED UNSIGNED /* c */ INTEGER8",
+            "RETURN n IS TYPED UINT8",
+        ),
+        (
+            "RETURN n IS TYPED BIG /* c */ INTEGER",
+            "RETURN n IS TYPED BIGINT",
+        ),
     ] {
         let parsed = parse(source).expect(source);
         let formatted = format_read_statement(&parsed).expect("read statement formats");
         assert_eq!(formatted, expected);
         let reparsed = parse(&formatted).expect("formatted source parses");
         assert!(structurally_eq(&parsed, &reparsed), "{source}");
+    }
+}
+
+#[test]
+fn integer_type_keywords_require_boundaries() {
+    for source in [
+        "RETURN n IS TYPED BOOLEANx",
+        "RETURN n IS TYPED BOOLx",
+        "RETURN n IS TYPED SIGNEDSMALLINTEGER",
+        "RETURN n IS TYPED SIGNEDBIGINTEGER",
+        "RETURN n IS TYPED SIGNEDINTEGER16",
+        "RETURN n IS TYPED SIGNEDINTEGER",
+        "RETURN n IS TYPED SIGNEDINTEGER256",
+        "RETURN n IS TYPED UNSIGNEDSMALLINTEGER",
+        "RETURN n IS TYPED UNSIGNEDBIGINTEGER",
+        "RETURN n IS TYPED UNSIGNEDINTEGER8",
+        "RETURN n IS TYPED UNSIGNEDINTEGER",
+        "RETURN n IS TYPED UNSIGNEDINTEGER256",
+        "RETURN n IS TYPED BIGINTEGER",
+        "RETURN n IS TYPED SMALLINTEGER",
+        "RETURN n IS TYPED INTEGER8x",
+        "RETURN n IS TYPED INT8x",
+        "RETURN n IS TYPED UINT8x",
+        "RETURN n IS TYPED BIGINTx",
+        "RETURN n IS TYPED USMALLINTx",
+    ] {
+        assert_syntax_error(source);
     }
 }
 
@@ -147,7 +202,15 @@ fn verbose_unsupported_256_bit_names_report_the_same_feature_ids() {
     for (source, expected_feature) in [
         ("RETURN n IS TYPED INTEGER256", FeatureId::GV16),
         ("RETURN n IS TYPED SIGNED INTEGER256", FeatureId::GV16),
+        (
+            "RETURN n IS TYPED SIGNED /* c */ INTEGER256",
+            FeatureId::GV16,
+        ),
         ("RETURN n IS TYPED UNSIGNED INTEGER256", FeatureId::GV15),
+        (
+            "RETURN n IS TYPED UNSIGNED /* c */ INTEGER256",
+            FeatureId::GV15,
+        ),
     ] {
         let err = parse(source).expect_err(source);
         let ParserError::UnsupportedFeature { feature_id, .. } = err else {
