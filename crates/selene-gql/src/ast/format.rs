@@ -31,7 +31,9 @@ pub(crate) use type_name::fmt_type as format_gql_type;
 ///
 /// # Errors
 ///
-/// Returns [`FormatError::Unsupported`] for write-side AST surfaces.
+/// Returns [`FormatError::Unsupported`] for write-side AST surfaces and
+/// [`FormatError::Invalid`] for ASTs that violate parser-level syntax
+/// invariants.
 pub fn format_read_statement(stmt: &Statement) -> Result<String, FormatError> {
     validate_formattable(stmt)?;
 
@@ -116,6 +118,12 @@ pub enum FormatError {
     Unsupported {
         /// Stable AST variant name.
         variant: &'static str,
+    },
+    /// AST violates a syntax invariant enforced by the parser.
+    #[error("AST is not valid GQL: {reason}")]
+    Invalid {
+        /// Stable reason string for the invalid AST shape.
+        reason: &'static str,
     },
     /// Formatting failed.
     #[error("formatting failed")]

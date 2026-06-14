@@ -258,6 +258,14 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
         }
     }
 
+    if return_clause.star && return_clause.group_by.is_some() {
+        return Err(ParserError::syntax(
+            "SELECT * cannot specify GROUP BY",
+            source_span,
+            Some("project explicit SELECT items before grouping".into()),
+        ));
+    }
+
     let mut statements = pre_return;
     statements.push(PipelineStatement::Return(return_clause));
     statements.extend(post_return);
@@ -462,6 +470,13 @@ pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, 
             "RETURN requires at least one projection item",
             source_span,
             None,
+        ));
+    }
+    if clause.star && clause.group_by.is_some() {
+        return Err(ParserError::syntax(
+            "RETURN * cannot specify GROUP BY",
+            source_span,
+            Some("project explicit RETURN items before grouping".into()),
         ));
     }
     Ok(clause)
