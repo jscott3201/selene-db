@@ -112,6 +112,11 @@ fn validate_edge_pattern(edge: &EdgePattern) -> Result<(), FormatError> {
 }
 
 fn validate_return(clause: &ReturnClause) -> Result<(), FormatError> {
+    if clause.star && clause.group_by.is_some() {
+        return Err(FormatError::Invalid {
+            reason: "RETURN * cannot specify GROUP BY",
+        });
+    }
     for item in &clause.items {
         validate_expr(&item.expr)?;
     }
@@ -354,11 +359,38 @@ mod tests {
         assert_unsupported(GqlType::TableRef(crate::BindingTableType::Any), "TableRef");
     }
 
+    #[test]
+    fn preflight_rejects_return_star_group_by() {
+        let span = SourceSpan::default();
+        let err = validate_formattable(&Statement::Query(QueryPipeline {
+            statements: vec![PipelineStatement::Return(ReturnClause {
+                distinct: false,
+                star: true,
+                items: Vec::new(),
+                group_by: Some(vec![ValueExpr::Literal(Literal::Integer(1, span))]),
+                having: None,
+                span,
+            })],
+            span,
+        }))
+        .expect_err("RETURN * GROUP BY is invalid");
+        match err {
+            FormatError::Invalid { reason } => {
+                assert_eq!(reason, "RETURN * cannot specify GROUP BY");
+            }
+            FormatError::Unsupported { .. } | FormatError::Fmt(_) => {
+                panic!("expected invalid AST")
+            }
+        }
+    }
+
     fn assert_unsupported(ty: GqlType, expected: &'static str) {
         let err = validate_formattable(&statement_with_type(ty)).expect_err("type is unsupported");
         match err {
             FormatError::Unsupported { variant } => assert_eq!(variant, expected),
-            FormatError::Fmt(_) => panic!("expected unsupported variant"),
+            FormatError::Invalid { .. } | FormatError::Fmt(_) => {
+                panic!("expected unsupported variant")
+            }
         }
     }
 
