@@ -92,6 +92,13 @@ pub enum Statement {
         /// Source span.
         span: SourceSpan,
     },
+    /// `SESSION SET [PROPERTY] GRAPH <current graph>` (ISO/IEC 39075:2024 section 7.1).
+    SessionSetGraph {
+        /// Current-graph expression selected by the command.
+        target: SessionSetGraphTarget,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `SESSION RESET [ <session reset arguments> ]` (ISO features GS04/GS07/GS08/GS16).
     SessionReset {
         /// Reset target selected by the arguments (bare = all characteristics).
@@ -107,6 +114,15 @@ pub enum Statement {
         /// Source span.
         span: SourceSpan,
     },
+}
+
+/// Current graph expression selected by `SESSION SET [PROPERTY] GRAPH`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum SessionSetGraphTarget {
+    /// `CURRENT_GRAPH`.
+    CurrentGraph,
+    /// `CURRENT_PROPERTY_GRAPH`.
+    CurrentPropertyGraph,
 }
 
 /// Target selected by `<session reset arguments>` (ISO/IEC 39075:2024 section 7.2).
@@ -143,6 +159,7 @@ impl Statement {
             }
             Self::SessionSetValue { span, .. }
             | Self::SessionSetTimeZone { span, .. }
+            | Self::SessionSetGraph { span, .. }
             | Self::SessionReset { span, .. }
             | Self::SessionClose { span } => *span,
         }

@@ -2,7 +2,7 @@
 
 use selene_core::DbString;
 
-use crate::{SourceSpan, ValueExpr};
+use crate::{SessionSetGraphTarget, SourceSpan, ValueExpr};
 
 /// Session-control operation lowered from a `SESSION` command.
 #[derive(Clone, Debug)]
@@ -25,6 +25,13 @@ pub enum SessionOp {
     SetTimeZone {
         /// Decoded IANA region name or fixed-offset string.
         zone: String,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION SET [PROPERTY] GRAPH <current graph>` (ISO/IEC 39075:2024 section 7.1).
+    SetGraph {
+        /// Current-graph expression selected by the command.
+        target: SessionSetGraphTarget,
         /// Source span.
         span: SourceSpan,
     },

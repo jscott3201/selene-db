@@ -5,8 +5,9 @@
 //! side against an empty binding row (the value is restricted to a
 //! `<value specification>`, so GS14 is not claimed) and binds the result as a
 //! session-local parameter. `SESSION SET TIME ZONE` parses the time-zone
-//! string with `jiff`. The RESET forms clear parameters / reset the time zone,
-//! and `SESSION CLOSE` raises the termination flag.
+//! string with `jiff`. `SESSION SET [PROPERTY] GRAPH <current graph>` is a
+//! no-op in the D1 single-graph engine. The RESET forms clear parameters /
+//! reset the time zone, and `SESSION CLOSE` raises the termination flag.
 
 use selene_core::Value;
 
@@ -40,6 +41,11 @@ pub(crate) fn execute(
             *span,
         ),
         SessionOp::SetTimeZone { zone, span } => set_time_zone(session, zone, *span),
+        SessionOp::SetGraph { .. } => {
+            // D1 has exactly one graph; both current-graph expressions resolve
+            // to the session's embedded graph and leave state unchanged.
+            Ok(StatementOutput::Empty)
+        }
         SessionOp::ResetAllCharacteristics { .. } => {
             session.reset_characteristics();
             Ok(StatementOutput::Empty)

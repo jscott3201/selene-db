@@ -4,7 +4,7 @@ use selene_core::DbString;
 
 use crate::{
     DdlStatement, MutationPipeline, NonEmpty, ProcedureCall, QueryPipeline, SessionResetTarget,
-    SetOp, SourceSpan, Statement, ValueExpr,
+    SessionSetGraphTarget, SetOp, SourceSpan, Statement, ValueExpr,
     analyze::{
         binding::BindingUse,
         category::StatementCategory,
@@ -124,6 +124,13 @@ pub enum AnalyzedStatementKind {
         /// Source span.
         span: SourceSpan,
     },
+    /// `SESSION SET [PROPERTY] GRAPH <current graph>` (ISO/IEC 39075:2024 section 7.1).
+    SessionSetGraph {
+        /// Current-graph expression selected by the command.
+        target: SessionSetGraphTarget,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `SESSION RESET [ <session reset arguments> ]` (ISO features GS04/GS07/GS08/GS16).
     SessionReset {
         /// Reset target selected by the arguments.
@@ -165,6 +172,7 @@ impl AnalyzedStatementKind {
             Statement::SessionSetTimeZone { zone, span, .. } => {
                 Self::SessionSetTimeZone { zone, span }
             }
+            Statement::SessionSetGraph { target, span } => Self::SessionSetGraph { target, span },
             Statement::SessionReset { target, span } => Self::SessionReset { target, span },
             Statement::SessionClose { span } => Self::SessionClose(span),
         }

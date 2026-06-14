@@ -249,6 +249,7 @@ fn rebase_statement_spans(statement: &mut Statement, offset: usize) {
             rebase_value(value, offset);
         }
         Statement::SessionSetTimeZone { span, .. }
+        | Statement::SessionSetGraph { span, .. }
         | Statement::SessionReset { span, .. }
         | Statement::SessionClose { span } => rebase_span(span, offset),
     }

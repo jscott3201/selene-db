@@ -42,7 +42,8 @@ pub use span::SourceSpan;
 pub use statement::{
     ForStatement, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm,
     PipelineStatement, QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition,
-    RowExpansionPositionKind, SessionResetTarget, SetOp, Statement, TypedBinding, WithClause,
+    RowExpansionPositionKind, SessionResetTarget, SessionSetGraphTarget, SetOp, Statement,
+    TypedBinding, WithClause,
 };
 pub use types::{
     BindingTableType, ByteStringType, ByteStringTypeForm, CharacterStringType,

@@ -44,6 +44,7 @@ pub(super) fn inherit_statement_parameter_declarations(
         | Statement::Rollback { .. }
         | Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => {}
     }

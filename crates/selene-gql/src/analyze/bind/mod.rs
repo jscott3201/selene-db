@@ -82,6 +82,7 @@ pub(crate) fn bind_statement(
             }
             Statement::SessionSetValue { span, .. }
             | Statement::SessionSetTimeZone { span, .. }
+            | Statement::SessionSetGraph { span, .. }
             | Statement::SessionReset { span, .. }
             | Statement::SessionClose { span } => session::bind_session_command(&mut ctx, *span),
         }
@@ -143,6 +144,7 @@ fn bind_explain_inner(
         // binding a non-explainable statement.
         Statement::SessionSetValue { span, .. }
         | Statement::SessionSetTimeZone { span, .. }
+        | Statement::SessionSetGraph { span, .. }
         | Statement::SessionReset { span, .. }
         | Statement::SessionClose { span } => Err(AnalysisError::NotImplemented {
             message: "EXPLAIN of a SESSION command is not supported".into(),

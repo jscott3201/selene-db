@@ -236,6 +236,7 @@ fn push_statement<'a>(statement: &'a Statement, work: &mut Vec<Node<'a>>) {
         | Statement::Commit { .. }
         | Statement::Rollback { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => {}
     }

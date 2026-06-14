@@ -2,17 +2,18 @@
 //!
 //! Exercises the implemented session subset end to end: SET VALUE (GS03),
 //! SET TIME ZONE (GS15) threaded into the section 20.27 current-datetime
-//! functions, RESET targets (GS04/GS07/GS08/GS16), SESSION CLOSE (section 7.3)
-//! with its termination guard, IF NOT EXISTS (section 7.4), the flagger feature
-//! stamps, and the D1-deferred forms (SET GRAPH/SCHEMA) failing cleanly.
+//! functions, SET GRAPH to current-graph expressions (section 7.1), RESET
+//! targets (GS04/GS07/GS08/GS16), SESSION CLOSE (section 7.3) with its
+//! termination guard, IF NOT EXISTS (section 7.4), the flagger feature stamps,
+//! and the D1-deferred schema / graph-parameter forms failing cleanly.
 
 use selene_core::GraphId;
 use selene_core::feature_register::{
     ANNEX_B_REGISTER, FeatureId, NOT_SUPPORTED_RATIONALE, SUPPORTED_FEATURES,
 };
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutorError, GqlStatus, Session, StatementOutput, Value, analyze,
-    execute_statement, feature_walk, parse, plan,
+    EmptyProcedureRegistry, ExecutorError, GqlStatus, Session, SessionSetGraphTarget, Statement,
+    StatementOutput, Value, analyze, execute_statement, feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
 
@@ -265,6 +266,66 @@ fn set_time_zone_rejects_unknown_zone_with_data_exception() {
     // The session must remain usable after a rejected time-zone change.
     assert!(!session.is_closed());
     run(&mut session, "RETURN 1").expect("session still usable");
+}
+
+// ---------------------------------------------------------------------------
+// SESSION SET GRAPH to current-graph expressions (section 7.1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_graph_current_graph_executes_as_single_graph_noop() {
+    let graph = graph(7018);
+    let mut session = Session::new(&graph);
+
+    assert!(matches!(
+        run(&mut session, "SESSION SET GRAPH CURRENT_GRAPH").expect("set graph"),
+        StatementOutput::Empty
+    ));
+    assert!(!session.is_closed());
+}
+
+#[test]
+fn set_property_graph_current_property_graph_executes_as_single_graph_noop() {
+    let graph = graph(7019);
+    let mut session = Session::new(&graph);
+
+    assert!(matches!(
+        run(
+            &mut session,
+            "SESSION SET PROPERTY GRAPH CURRENT_PROPERTY_GRAPH"
+        )
+        .expect("set property graph"),
+        StatementOutput::Empty
+    ));
+    assert!(!session.is_closed());
+}
+
+#[test]
+fn set_graph_current_targets_parse_to_distinct_ast_targets() {
+    let statement = parse("SESSION SET GRAPH CURRENT_GRAPH").expect("parse current graph");
+    assert!(matches!(
+        statement,
+        Statement::SessionSetGraph {
+            target: SessionSetGraphTarget::CurrentGraph,
+            ..
+        }
+    ));
+
+    let statement = parse("SESSION SET PROPERTY GRAPH CURRENT_PROPERTY_GRAPH")
+        .expect("parse current property graph");
+    assert!(matches!(
+        statement,
+        Statement::SessionSetGraph {
+            target: SessionSetGraphTarget::CurrentPropertyGraph,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn set_graph_current_targets_do_not_stamp_graph_parameter_feature() {
+    assert!(walked_features("SESSION SET GRAPH CURRENT_GRAPH").is_empty());
+    assert!(walked_features("SESSION SET PROPERTY GRAPH CURRENT_PROPERTY_GRAPH").is_empty());
 }
 
 #[test]
@@ -520,9 +581,10 @@ fn flagger_does_not_stamp_session_close() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn deferred_set_graph_fails_to_parse() {
-    // SESSION SET <name> GRAPH (GS01) is not in the grammar under D1.
-    assert!(parse("SESSION SET $g GRAPH CURRENT_GRAPH").is_err());
+fn deferred_set_graph_parameter_fails_to_parse() {
+    // SESSION SET GRAPH <name> (GS01) is not in the grammar under D1.
+    assert!(parse("SESSION SET GRAPH $g CURRENT_GRAPH").is_err());
+    assert!(parse("SESSION SET PROPERTY GRAPH $g CURRENT_PROPERTY_GRAPH").is_err());
 }
 
 #[test]
