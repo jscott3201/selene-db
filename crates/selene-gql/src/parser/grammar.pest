@@ -151,15 +151,18 @@ session_set_graph_parameter = { param_ref ~ ^"PROPERTY"? ~ ^"GRAPH" ~ (session_c
 session_set_graph      = { ^"PROPERTY"? ~ ^"GRAPH" ~ session_current_graph }
 session_current_graph  = { ^"CURRENT_PROPERTY_GRAPH" | ^"CURRENT_GRAPH" }
 session_set_time_zone  = { ^"TIME" ~ ^"ZONE" ~ string_lit }
-// <session set value parameter clause> ::= VALUE [ IF NOT EXISTS ]
-//   <general parameter reference> <opt typed value initializer>.
-// <session parameter specification> ::= <general parameter reference> = param_ref.
+// <session set value parameter clause> ::= VALUE <session set parameter name>
+//   <opt typed value initializer>.
+// <session set parameter name> ::= [ IF NOT EXISTS ] <session parameter specification>.
+// <session parameter specification> ::= <general parameter reference>.
+// <opt typed value initializer> ::= [ [ <typed> ] <value type> ] "=" <value expression>.
 //
 // The RHS is restricted to a <value specification> (literal or general value
 // parameter reference) per ISO section 7.1 Conformance Rule: without Feature
 // GS14, the initializer shall conform to <value specification>. selene-db does
 // NOT claim GS14, so simple-expression / subquery RHS forms are rejected.
-session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ "=" ~ (session_value_subquery_expr | session_value_simple_expr | session_value_spec) }
+session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ session_value_declared_type? ~ "=" ~ (session_value_subquery_expr | session_value_simple_expr | session_value_spec) }
+session_value_declared_type = { (typed_marker ~ type_name) | type_name }
 session_value_subquery_expr = { &(value_subquery_expr ~ EOI) ~ value_subquery_expr }
 session_value_simple_expr = { !session_value_spec_to_eoi ~ expr }
 session_value_spec_to_eoi = _{ session_value_spec ~ EOI }

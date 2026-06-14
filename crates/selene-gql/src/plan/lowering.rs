@@ -129,11 +129,13 @@ fn lower_statement_kind(
         AnalyzedStatementKind::Rollback(span) => Ok(tx_plan(TxOp::Rollback { span: *span })),
         AnalyzedStatementKind::SessionSetValue {
             param,
+            declared_type,
             value,
             if_not_exists,
             span,
         } => Ok(session_plan(SessionOp::SetValue {
             param: param.clone(),
+            declared_type: declared_type.clone(),
             value: value.clone(),
             if_not_exists: *if_not_exists,
             span: *span,

@@ -67,7 +67,7 @@ pub enum Statement {
         /// Source span.
         span: SourceSpan,
     },
-    /// `SESSION SET VALUE <param> = <value expression>` (ISO feature GS03).
+    /// `SESSION SET VALUE <param> [<type>] = <value expression>` (ISO feature GS03).
     ///
     /// Binds a session-local value parameter. The `if_not_exists` flag carries
     /// the `IF NOT EXISTS` qualifier from `<session set parameter name>`
@@ -76,6 +76,8 @@ pub enum Statement {
     SessionSetValue {
         /// Database-string parameter name without the leading `$`.
         param: DbString,
+        /// Optional declared type for the target session parameter.
+        declared_type: Option<GqlType>,
         /// Value expression bound to the parameter.
         value: Box<ValueExpr>,
         /// `IF NOT EXISTS` was present on the parameter specification.

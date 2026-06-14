@@ -12,8 +12,9 @@ use selene_core::feature_register::{
     ANNEX_B_REGISTER, FeatureId, NOT_SUPPORTED_RATIONALE, SUPPORTED_FEATURES,
 };
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutorError, GqlStatus, ParserError, Session, SessionSetGraphTarget,
-    Statement, StatementOutput, Value, analyze, execute_statement, feature_walk, parse, plan,
+    EmptyProcedureRegistry, ExecutorError, GqlStatus, GqlType, ParserError, Session,
+    SessionSetGraphTarget, Statement, StatementOutput, Value, analyze, execute_statement,
+    feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
 
@@ -78,6 +79,84 @@ fn set_value_rhs_can_reference_prior_parameter() {
     assert_eq!(
         single_value(run(&mut session, "RETURN $alias").expect("return")),
         Value::Int(10)
+    );
+}
+
+#[test]
+fn set_value_typed_target_parse_carries_declared_type() {
+    let statement = parse("SESSION SET VALUE $p :: INTEGER = 42").expect("parse");
+
+    let Statement::SessionSetValue {
+        param,
+        declared_type,
+        ..
+    } = statement
+    else {
+        panic!("expected SESSION SET VALUE");
+    };
+    assert_eq!(param.as_str(), "p");
+    assert_eq!(declared_type, Some(GqlType::Integer));
+}
+
+#[test]
+fn set_value_accepts_typed_target_spellings() {
+    for (index, source) in [
+        "SESSION SET VALUE $p INTEGER = 42",
+        "SESSION SET VALUE $p TYPED INTEGER = 42",
+        "SESSION SET VALUE $p :: INTEGER = 42",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let graph = graph(7030 + index as u64);
+        let mut session = Session::new(&graph);
+
+        run(&mut session, source).expect("typed bind");
+
+        assert_eq!(
+            single_value(run(&mut session, "RETURN $p").expect("return")),
+            Value::Int(42)
+        );
+    }
+}
+
+#[test]
+fn set_value_typed_target_rejects_mismatch_without_binding() {
+    let graph = graph(7033);
+    let mut session = Session::new(&graph);
+
+    let err =
+        run(&mut session, "SESSION SET VALUE $p :: INTEGER = 'abc'").expect_err("type mismatch");
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidParameterType {
+            name,
+            ref expected,
+            actual: "STRING",
+            ..
+        } if name.as_str() == "p" && expected.as_ref() == "INTEGER"
+    ));
+    assert!(matches!(
+        run(&mut session, "RETURN $p"),
+        Err(ExecutorError::UnboundParameter { .. })
+    ));
+}
+
+#[test]
+fn set_value_if_not_exists_skips_typed_initializer_for_existing_binding() {
+    let graph = graph(7034);
+    let mut session = Session::new(&graph);
+    run(&mut session, "SESSION SET VALUE $p = 1").expect("first bind");
+
+    run(
+        &mut session,
+        "SESSION SET VALUE IF NOT EXISTS $p :: INTEGER = 'abc'",
+    )
+    .expect("guarded bind");
+
+    assert_eq!(
+        single_value(run(&mut session, "RETURN $p").expect("return")),
+        Value::Int(1)
     );
 }
 
@@ -530,6 +609,31 @@ fn walked_features(source: &str) -> Vec<FeatureId> {
 #[test]
 fn flagger_stamps_set_value_gs03() {
     assert!(walked_features("SESSION SET VALUE $p = 1").contains(&FeatureId::GS03));
+}
+
+#[test]
+fn flagger_stamps_set_value_declared_type_features() {
+    let observed = walked_features("SESSION SET VALUE $p INT8 = 1");
+
+    assert!(observed.contains(&FeatureId::GS03));
+    assert!(
+        observed.contains(&FeatureId::GV02) && observed.contains(&FeatureId::GV09),
+        "INT8 target type must stamp GV02/GV09, observed {observed:?}"
+    );
+}
+
+#[test]
+fn flagger_walks_set_value_initializer_features() {
+    let observed = walked_features("SESSION SET VALUE $p = $base :: INT8");
+
+    assert!(observed.contains(&FeatureId::GS03));
+    assert!(observed.contains(&FeatureId::GE04));
+    assert!(observed.contains(&FeatureId::GE05));
+    assert!(observed.contains(&FeatureId::IM_TYPED_PARAMS));
+    assert!(
+        observed.contains(&FeatureId::GV02) && observed.contains(&FeatureId::GV09),
+        "typed RHS parameter must stamp INT8 features, observed {observed:?}"
+    );
 }
 
 #[test]
