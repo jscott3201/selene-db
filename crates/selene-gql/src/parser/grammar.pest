@@ -120,7 +120,9 @@ otherwise_op    = { ^"OTHERWISE" }
 
 // -- Transaction control --------------------------------------------
 
-transaction_control = { start_transaction | commit | rollback }
+transaction_control = { start_transaction_mixed | start_transaction_on_graph | start_transaction | commit | rollback }
+start_transaction_mixed = { ^"START" ~ ^"TRANSACTION" ~ ddl_statement }
+start_transaction_on_graph = { ^"START" ~ ^"TRANSACTION" ~ ^"ON" ~ ^"GRAPH" ~ ident }
 start_transaction   = { ^"START" ~ ^"TRANSACTION" }
 commit              = { ^"COMMIT" }
 rollback            = { ^"ROLLBACK" }

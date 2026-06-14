@@ -1,4 +1,4 @@
 // corpus: negative
 // feature: GT03
-// expects: parse-rejected(syntax)
+// expects: parse-rejected(GT03)
 START TRANSACTION ON GRAPH demo
