@@ -1062,17 +1062,23 @@ record_type = {
 field_types_specification = { "{" ~ (record_field_type ~ ("," ~ record_field_type)*)? ~ "}" }
 
 character_string_type = {
-    ^"STRING" ~ ("(" ~ character_string_length ~ ("," ~ character_string_length)? ~ ")")?
-  | ^"CHAR" ~ ("(" ~ character_string_length ~ ")")?
-  | ^"VARCHAR" ~ ("(" ~ character_string_length ~ ")")?
+    character_string_type_string_kw ~ ("(" ~ character_string_length ~ ("," ~ character_string_length)? ~ ")")?
+  | character_string_type_char_kw ~ ("(" ~ character_string_length ~ ")")?
+  | character_string_type_varchar_kw ~ ("(" ~ character_string_length ~ ")")?
 }
+character_string_type_string_kw = @{ ^"STRING" ~ !(LETTER | NUMBER | "_") }
+character_string_type_char_kw = @{ ^"CHAR" ~ !(LETTER | NUMBER | "_") }
+character_string_type_varchar_kw = @{ ^"VARCHAR" ~ !(LETTER | NUMBER | "_") }
 character_string_length = @{ unsigned_integer }
 
 byte_string_type = {
-    ^"BYTES" ~ ("(" ~ byte_string_length ~ ("," ~ byte_string_length)? ~ ")")?
-  | ^"BINARY" ~ ("(" ~ byte_string_length ~ ")")?
-  | ^"VARBINARY" ~ ("(" ~ byte_string_length ~ ")")?
+    byte_string_type_bytes_kw ~ ("(" ~ byte_string_length ~ ("," ~ byte_string_length)? ~ ")")?
+  | byte_string_type_binary_kw ~ ("(" ~ byte_string_length ~ ")")?
+  | byte_string_type_varbinary_kw ~ ("(" ~ byte_string_length ~ ")")?
 }
+byte_string_type_bytes_kw = @{ ^"BYTES" ~ !(LETTER | NUMBER | "_") }
+byte_string_type_binary_kw = @{ ^"BINARY" ~ !(LETTER | NUMBER | "_") }
+byte_string_type_varbinary_kw = @{ ^"VARBINARY" ~ !(LETTER | NUMBER | "_") }
 byte_string_length = @{ unsigned_integer }
 unsigned_integer = { hex_int_lit | oct_int_lit | bin_int_lit | dec_int_lit }
 

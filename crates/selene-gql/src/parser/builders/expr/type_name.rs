@@ -149,17 +149,19 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     if let Some(approximate_numeric_type) = approximate_numeric::build_keyword_type_name(&pair)? {
         return Ok(approximate_numeric_type);
     }
-    if keyword_starts_with(text, "BYTES")
-        || keyword_starts_with(text, "BINARY")
-        || keyword_starts_with(text, "VARBINARY")
+    if let Some(character_string_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::character_string_type)
     {
-        return strings::build_byte_string_type_name(text, source_span);
+        return strings::build_character_string_type_name(character_string_type, source_span);
     }
-    if keyword_starts_with(text, "STRING")
-        || keyword_starts_with(text, "CHAR")
-        || keyword_starts_with(text, "VARCHAR")
+    if let Some(byte_string_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::byte_string_type)
     {
-        return strings::build_character_string_type_name(text, source_span);
+        return strings::build_byte_string_type_name(byte_string_type, source_span);
     }
     if let Some(temporal_type) = temporal::build_keyword_type_name(&pair) {
         return Ok(temporal_type);
