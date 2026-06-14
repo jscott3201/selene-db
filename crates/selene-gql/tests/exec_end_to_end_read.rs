@@ -68,6 +68,16 @@ fn read_executes_unwind_only_query() {
 }
 
 #[test]
+fn read_executes_for_list_query() {
+    let table = execute_read("FOR x IN [1, 2] RETURN x");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(1), Value::Int(2)]
+    );
+}
+
+#[test]
 fn read_executes_distinct_projection() {
     let table = execute_read("MATCH (n:Person) RETURN DISTINCT n.tenant AS tenant");
 

@@ -142,11 +142,17 @@ pub(super) fn fmt_pipeline(out: &mut String, pipeline: &QueryPipeline) -> fmt::R
                     fmt_expr(out, &value.value)?;
                 }
             }
-            crate::PipelineStatement::Unwind(value) => {
-                out.push_str("UNWIND ");
-                fmt_expr(out, &value.source)?;
-                write!(out, " AS {}", fmt_ident(value.alias.clone()))?;
-            }
+            crate::PipelineStatement::Unwind(value) => match value.syntax {
+                crate::RowExpansionSyntax::For => {
+                    write!(out, "FOR {} IN ", fmt_ident(value.alias.clone()))?;
+                    fmt_expr(out, &value.source)?;
+                }
+                crate::RowExpansionSyntax::Unwind => {
+                    out.push_str("UNWIND ");
+                    fmt_expr(out, &value.source)?;
+                    write!(out, " AS {}", fmt_ident(value.alias.clone()))?;
+                }
+            },
             crate::PipelineStatement::Sorting(values) => fmt_order(out, values)?,
             crate::PipelineStatement::Limit(value) => {
                 out.push_str("LIMIT ");

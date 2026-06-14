@@ -20,6 +20,31 @@ fn group_by_feature_is_supported() {
 }
 
 #[test]
+fn for_list_feature_is_supported_and_recorded() {
+    let source = "FOR x IN [1, 2] RETURN x";
+    let statement = parse(source).expect(source);
+    let observed = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+    assert!(
+        observed.contains(&FeatureId::GQ10),
+        "{source} should record GQ10, observed {observed:?}"
+    );
+    assert_read_plan(source);
+    assert_read_execution(source);
+
+    let unwind = feature_walk(&parse("UNWIND [1, 2] AS x RETURN x").expect("UNWIND parses"))
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+    assert!(
+        !unwind.contains(&FeatureId::GQ10),
+        "UNWIND is the Selene alias, not ISO FOR; observed {unwind:?}"
+    );
+}
+
+#[test]
 fn path_selector_features_are_supported() {
     for source in [
         "MATCH ALL (n) RETURN n",

@@ -45,7 +45,7 @@ spec docs by the build. The table below summarizes the major clause groups.
 
 | Group | Coverage | Notes |
 |---|---|---|
-| Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `UNWIND`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
+| Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `UNWIND`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
 | Set composition (`UNION`, chained `NEXT`) | Partial | Only `UNION` / `UNION ALL` / `UNION DISTINCT` are supported (feature `GQ03`). `EXCEPT`, `INTERSECT`, and `OTHERWISE` parse but the analyzer rejects them. |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
 | Mutation (`INSERT`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). |
@@ -235,16 +235,20 @@ RETURN c.name, headcount
 are exactly the projected aliases. `DISTINCT`, `GROUP BY`, `HAVING`, and
 `WHERE` are all valid after `WITH`.
 
-### `UNWIND`
+### `FOR` / `UNWIND`
 
 ```gql
+FOR x IN [1, 2, 3, 4]
+RETURN x * x AS squared
+
 UNWIND [1, 2, 3, 4] AS x
 RETURN x * x AS squared
 ```
 
-`UNWIND` flattens a list expression into row-per-element. The expression
-can be a list literal, a list-typed property, or any expression evaluating
-to `LIST<T>`.
+`FOR` is the ISO list-value row-expansion statement. `UNWIND` is Selene's
+equivalent pipeline alias. Both flatten a list expression into row-per-element.
+The expression can be a list literal, a list-typed property, or any expression
+evaluating to `LIST<T>`.
 
 ### `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`
 
@@ -268,7 +272,7 @@ RETURN total, prefix
 ```
 
 `LET` binds value variables. `FOR x IN expr` iterates over a list-typed
-expression (similar to `UNWIND` but as a pipeline op).
+expression using ISO row-expansion syntax.
 
 ### `FILTER`
 

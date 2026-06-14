@@ -153,6 +153,7 @@ feature_ids! {
     GQ07 = "GQ07" => "Composite query: INTERSECT ALL";
     GQ08 = "GQ08" => "FILTER statement";
     GQ09 = "GQ09" => "Composite query: OTHERWISE";
+    GQ10 = "GQ10" => "FOR statement: list value support";
     GQ12 = "GQ12" => "OFFSET clause";
     GQ13 = "GQ13" => "LIMIT clause";
     GQ15 = "GQ15" => "GROUP BY clause";
@@ -326,6 +327,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GQ07,
     FeatureId::GQ08,
     FeatureId::GQ09,
+    FeatureId::GQ10,
     FeatureId::GQ12,
     FeatureId::GQ13,
     FeatureId::GQ15,

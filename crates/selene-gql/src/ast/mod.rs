@@ -41,8 +41,8 @@ pub use selene_core::{
 pub use span::SourceSpan;
 pub use statement::{
     LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-    QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement, TypedBinding,
-    UnwindStatement, WithClause,
+    QueryPipeline, ReturnClause, ReturnItem, RowExpansionSyntax, SessionResetTarget, SetOp,
+    Statement, TypedBinding, UnwindStatement, WithClause,
 };
 pub use types::{
     BindingTableType, ByteStringType, ByteStringTypeForm, CharacterStringType,

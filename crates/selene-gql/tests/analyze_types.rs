@@ -210,6 +210,15 @@ fn unwind_list_aliases_to_element_type() {
 }
 
 #[test]
+fn for_list_aliases_to_element_type() {
+    let analyzed = analyze_one("FOR x IN [1, 2, 3] RETURN x").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "x"),
+        AnalyzedType::Resolved(GqlType::Integer)
+    );
+}
+
+#[test]
 fn record_literal_resolves_to_open_record() {
     // An open `RECORD{...}` value literal resolves to the open record type
     // (ISO feature GV45, `<record constructor>` clause 20.18). `RecordType::Open`

@@ -1,7 +1,8 @@
 use super::*;
 use crate::ast::{
     BinaryOp, BindingTableType, CharacterStringLiteralKind, EdgeDirection, GqlType,
-    IntegerLiteralKind, IsCheckKind, LabelExpr, Literal, PipelineStatement, SetOp, ValueExpr,
+    IntegerLiteralKind, IsCheckKind, LabelExpr, Literal, PipelineStatement, RowExpansionSyntax,
+    SetOp, ValueExpr,
 };
 use crate::error::GqlStatus;
 
@@ -175,6 +176,21 @@ fn parse_inline_call_subquery() {
     assert!(call.yield_items.is_empty());
     assert!(!call.in_transactions);
     assert_eq!(call.body.statements.len(), 1);
+}
+
+#[test]
+fn parse_for_list_statement_as_row_expansion() {
+    let query = query("FOR x IN [1, 2] RETURN x");
+    assert_eq!(query.statements.len(), 2);
+    let PipelineStatement::Unwind(statement) = &query.statements[0] else {
+        panic!("expected row expansion");
+    };
+    assert_eq!(statement.syntax, RowExpansionSyntax::For);
+    assert_eq!(statement.alias.as_str(), "x");
+    let ValueExpr::ListLiteral { items, .. } = &statement.source else {
+        panic!("expected list source");
+    };
+    assert_eq!(items.len(), 2);
 }
 
 #[test]
