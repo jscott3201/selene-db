@@ -162,6 +162,32 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
     })
 }
 
+pub(super) fn build_match_clause_from_graph_pattern_list(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<MatchClause, ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::graph_pattern_list);
+    let patterns = build_graph_pattern_list(pair)?;
+    if patterns.is_empty() {
+        return Err(ParserError::syntax(
+            "EXISTS graph pattern is missing a graph pattern",
+            source_span,
+            None,
+        ));
+    }
+    Ok(MatchClause {
+        optional: false,
+        selector: None,
+        match_mode: None,
+        path_mode: PathMode::Walk,
+        path_mode_explicit: false,
+        path_or_paths: false,
+        patterns,
+        where_clause: None,
+        span: source_span,
+    })
+}
+
 fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserError> {
     // Per ISO 39075:2024 §16.6: counted selector forms carry structured count
     // children. Dispatch on those children first so they never fall through to

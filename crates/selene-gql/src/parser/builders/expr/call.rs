@@ -473,12 +473,23 @@ pub(super) fn build_property_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, P
 pub(super) fn build_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let negated = pair.as_str().to_ascii_uppercase().starts_with("NOT");
-    let match_pair = pair
+    let body_pair = pair
         .into_inner()
-        .find(|child| child.as_rule() == Rule::match_stmt)
-        .ok_or_else(|| ParserError::syntax("EXISTS is missing MATCH pattern", source_span, None))?;
+        .find(|child| child.as_rule() == Rule::exists_body)
+        .ok_or_else(|| ParserError::syntax("EXISTS is missing body", source_span, None))?;
+    let pattern_pair = body_pair
+        .into_inner()
+        .find(|child| matches!(child.as_rule(), Rule::match_stmt | Rule::graph_pattern_list))
+        .ok_or_else(|| ParserError::syntax("EXISTS is missing pattern", source_span, None))?;
+    let pattern = match pattern_pair.as_rule() {
+        Rule::match_stmt => pattern::build_match_clause(pattern_pair)?,
+        Rule::graph_pattern_list => {
+            pattern::build_match_clause_from_graph_pattern_list(pattern_pair, source_span)?
+        }
+        _ => return Err(unexpected_pair(pattern_pair, "unexpected EXISTS body")),
+    };
     Ok(ValueExpr::Exists {
-        pattern: Box::new(pattern::build_match_clause(match_pair)?),
+        pattern: Box::new(pattern),
         negated,
         span: source_span,
     })
