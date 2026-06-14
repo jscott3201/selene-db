@@ -55,6 +55,14 @@ fn bind_and_eval(value: Value, source: &str) -> Result<Value, ExecutorError> {
     Ok(table.rows()[0].values()[0].clone())
 }
 
+fn assert_syntax_error(source: &str) {
+    let err = parse(source).expect_err(source);
+    assert!(
+        matches!(err, ParserError::SyntaxError { .. }),
+        "expected syntax error for `{source}`, got {err:?}"
+    );
+}
+
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
@@ -75,7 +83,15 @@ fn decimal_precision_formats_to_canonical_type_name() {
             "RETURN n IS TYPED DECIMAL(5)",
         ),
         (
+            "RETURN n IS TYPED DECIMAL /* c */ (5)",
+            "RETURN n IS TYPED DECIMAL(5)",
+        ),
+        (
             "RETURN n IS TYPED DEC(5, 2)",
+            "RETURN n IS TYPED DECIMAL(5, 2)",
+        ),
+        (
+            "RETURN n IS TYPED DEC /* c */ (5, 2)",
             "RETURN n IS TYPED DECIMAL(5, 2)",
         ),
         (
@@ -88,6 +104,18 @@ fn decimal_precision_formats_to_canonical_type_name() {
         assert_eq!(formatted, expected);
         let reparsed = parse(&formatted).expect("formatted source parses");
         assert!(structurally_eq(&parsed, &reparsed), "{source}");
+    }
+}
+
+#[test]
+fn decimal_precision_keywords_require_boundaries() {
+    for source in [
+        "RETURN n IS TYPED DECIMALx",
+        "RETURN n IS TYPED DECx",
+        "RETURN n IS TYPED DECIMALx(5)",
+        "RETURN n IS TYPED DECx(5, 2)",
+    ] {
+        assert_syntax_error(source);
     }
 }
 
@@ -363,10 +391,6 @@ fn invalid_decimal_precision_reports_honest_parse_errors() {
         "RETURN n IS TYPED DECIMAL(1__2, 0)",
         "RETURN n IS TYPED DECIMAL(12, 1__0)",
     ] {
-        let err = parse(source).expect_err(source);
-        assert!(
-            matches!(err, ParserError::SyntaxError { .. }),
-            "expected syntax error for `{source}`, got {err:?}"
-        );
+        assert_syntax_error(source);
     }
 }
