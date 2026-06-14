@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use selene_core::DbString;
 
 use crate::{
-    DdlStatement, ForStatement, GqlType, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
-    MutationStatement, MutationTerminator, PatternElement, PipelineStatement, ProcedureCall,
-    QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
+    DdlStatement, ExistsBody, ForStatement, GqlType, IsCheckKind, LimitValue, MatchClause,
+    MutationPipeline, MutationStatement, MutationTerminator, PatternElement, PipelineStatement,
+    ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
     TypePropertyConstraint, ValueExpr, analyze::error::AnalysisError,
 };
 
@@ -375,9 +375,14 @@ fn collect_value_parameter_declarations(
                     stack.push(character);
                 }
             }
-            ValueExpr::Exists { pattern, .. } => {
-                collect_match_clause_parameter_declarations(pattern, declarations)?;
-            }
+            ValueExpr::Exists { body, .. } => match body {
+                ExistsBody::Match(pattern) => {
+                    collect_match_clause_parameter_declarations(pattern, declarations)?;
+                }
+                ExistsBody::Query(pipeline) => {
+                    collect_pipeline_parameter_declarations(pipeline, declarations)?;
+                }
+            },
             ValueExpr::ValueSubquery { body, .. } => {
                 collect_pipeline_parameter_declarations(body, declarations)?;
             }

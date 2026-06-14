@@ -1,7 +1,7 @@
 //! Binding-reference collection for planned expressions.
 
 use crate::{
-    SourceSpan, ValueExpr,
+    ExistsBody, SourceSpan, ValueExpr,
     analyze::{AnalyzedStatement, BindingId},
     plan::PlannerError,
 };
@@ -45,13 +45,22 @@ fn collect_binding_refs_in_expr(
         // Subquery bodies are `MatchClause` / `QueryPipeline`, not `ValueExpr`
         // children: collect the outer-binding uses they reference rather than
         // recursing through `for_each_child`.
-        ValueExpr::Exists { pattern, span, .. } => {
-            refs.extend(
-                outer_binding_uses_in_match(pattern, *span, analyzed)?
-                    .into_iter()
-                    .map(|(binding, _, span)| (binding, span)),
-            );
-        }
+        ValueExpr::Exists { body, span, .. } => match body {
+            ExistsBody::Match(pattern) => {
+                refs.extend(
+                    outer_binding_uses_in_match(pattern, *span, analyzed)?
+                        .into_iter()
+                        .map(|(binding, _, span)| (binding, span)),
+                );
+            }
+            ExistsBody::Query(pipeline) => {
+                refs.extend(
+                    outer_binding_uses_in_span(pipeline.span, pipeline.span, analyzed)?
+                        .into_iter()
+                        .map(|(binding, _, span)| (binding, span)),
+                );
+            }
+        },
         ValueExpr::ValueSubquery { body, .. } => {
             refs.extend(
                 outer_binding_uses_in_span(body.span, body.span, analyzed)?

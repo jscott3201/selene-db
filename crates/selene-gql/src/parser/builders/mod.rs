@@ -133,6 +133,13 @@ pub(super) fn build_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline
     build_pipeline_from_children(pair)
 }
 
+pub(super) fn build_exists_match_body_pipeline(
+    pair: Pair<'_, Rule>,
+) -> Result<QueryPipeline, ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::exists_match_body);
+    build_pipeline_from_children(pair)
+}
+
 fn build_call_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::call_query_pipeline);
     build_pipeline_from_children(pair)
@@ -153,7 +160,7 @@ fn build_pipeline_from_children(pair: Pair<'_, Rule>) -> Result<QueryPipeline, P
 fn build_pipeline_statement(pair: Pair<'_, Rule>) -> Result<PipelineStatement, ParserError> {
     if matches!(
         pair.as_rule(),
-        Rule::pipeline_statement | Rule::post_call_pipeline_statement
+        Rule::pipeline_statement | Rule::post_call_pipeline_statement | Rule::exists_query_tail
     ) {
         return build_pipeline_statement(first_child(pair)?);
     }

@@ -1,9 +1,9 @@
 //! Preflight validation for read-side AST formatting.
 
 use crate::ast::{
-    EdgePattern, GqlType, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause, NodePattern,
-    PatternElement, ProcedureCall, QueryPipeline, RecordType, ReturnClause, Statement, ValueExpr,
-    WithClause,
+    EdgePattern, ExistsBody, GqlType, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause,
+    NodePattern, PatternElement, ProcedureCall, QueryPipeline, RecordType, ReturnClause, Statement,
+    ValueExpr, WithClause,
 };
 
 use super::FormatError;
@@ -221,7 +221,10 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             }
             Ok(())
         }
-        ValueExpr::Exists { pattern, .. } => validate_match(pattern),
+        ValueExpr::Exists { body, .. } => match body {
+            ExistsBody::Match(pattern) => validate_match(pattern),
+            ExistsBody::Query(pipeline) => validate_pipeline(pipeline),
+        },
         ValueExpr::ValueSubquery { body, .. } => validate_pipeline(body),
         ValueExpr::Cast {
             value, target_type, ..

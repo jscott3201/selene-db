@@ -1,7 +1,7 @@
 //! Expression lowering helpers.
 
 use crate::{
-    ProcedureRegistry, SourceSpan, ValueExpr,
+    ExistsBody, ProcedureRegistry, SourceSpan, ValueExpr,
     analyze::{AnalyzedStatement, BindingId, ExprId},
     plan::{
         AggregateArg, CatalogOp, ExecutionPlan, FilterPredicate, FilterPredicateKind, JoinTree,
@@ -503,24 +503,39 @@ fn collect_subqueries_in_expr(
         // children: register the planned subquery (which recurses into its own
         // body) rather than walking through `for_each_child`.
         ValueExpr::Exists {
-            pattern,
+            body,
             negated,
             span,
-        } => {
-            collect_planned_subquery(
-                expr,
-                SubqueryKind::Exists { negated: *negated },
-                pattern,
-                *span,
-                analyzed,
-                registry,
-                entries,
-                max_quantifier,
-            )?;
-        }
+        } => match body {
+            ExistsBody::Match(pattern) => {
+                collect_planned_match_subquery(
+                    expr,
+                    SubqueryKind::Exists { negated: *negated },
+                    pattern,
+                    *span,
+                    analyzed,
+                    registry,
+                    entries,
+                    max_quantifier,
+                )?;
+            }
+            ExistsBody::Query(body) => {
+                collect_planned_query_subquery(
+                    expr,
+                    SubqueryKind::Exists { negated: *negated },
+                    body,
+                    *span,
+                    analyzed,
+                    registry,
+                    entries,
+                    max_quantifier,
+                )?;
+            }
+        },
         ValueExpr::ValueSubquery { body, span } => {
-            collect_value_subquery(
+            collect_planned_query_subquery(
                 expr,
+                SubqueryKind::Value,
                 body,
                 *span,
                 analyzed,
@@ -554,7 +569,7 @@ fn collect_subqueries_in_expr(
 // max_quantifier) plus the four subquery descriptors (expr/kind/pattern/span);
 // bundling them would not improve clarity for one internal helper.
 #[allow(clippy::too_many_arguments)]
-fn collect_planned_subquery(
+fn collect_planned_match_subquery(
     expr: &ValueExpr,
     kind: SubqueryKind,
     pattern: &crate::MatchClause,
@@ -587,8 +602,10 @@ fn collect_planned_subquery(
     Ok(())
 }
 
-fn collect_value_subquery(
+#[allow(clippy::too_many_arguments)]
+fn collect_planned_query_subquery(
     expr: &ValueExpr,
+    kind: SubqueryKind,
     body: &crate::QueryPipeline,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
@@ -605,7 +622,7 @@ fn collect_value_subquery(
     entries.push((
         expr_id,
         PlannedSubquery {
-            kind: SubqueryKind::Value,
+            kind,
             body: SubqueryBody::Plan(Box::new(plan)),
             outer_binding_refs: outer_binding_refs_in_span(body.span, analyzed)?,
             span,

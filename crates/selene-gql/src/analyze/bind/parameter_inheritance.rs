@@ -1,7 +1,7 @@
 //! Propagate inline parameter declarations to bare references in the same statement.
 
 use crate::{
-    DdlStatement, ForStatement, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
+    DdlStatement, ExistsBody, ForStatement, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
     MutationStatement, MutationTerminator, PatternElement, PipelineStatement, ProcedureCall,
     QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint, ValueExpr,
 };
@@ -334,9 +334,14 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
                     stack.push(character.as_mut());
                 }
             }
-            ValueExpr::Exists { pattern, .. } => {
-                inherit_match_clause_parameter_declarations(pattern, declarations);
-            }
+            ValueExpr::Exists { body, .. } => match body {
+                ExistsBody::Match(pattern) => {
+                    inherit_match_clause_parameter_declarations(pattern, declarations);
+                }
+                ExistsBody::Query(pipeline) => {
+                    inherit_pipeline_parameter_declarations(pipeline, declarations);
+                }
+            },
             ValueExpr::ValueSubquery { body, .. } => {
                 inherit_pipeline_parameter_declarations(body, declarations);
             }

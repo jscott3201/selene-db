@@ -191,10 +191,10 @@ pub enum ValueExpr {
         /// Source span of the full expression.
         span: SourceSpan,
     },
-    /// `EXISTS { MATCH ... }` subquery predicate.
+    /// `EXISTS { ... }` subquery predicate.
     Exists {
-        /// Match pattern.
-        pattern: Box<MatchClause>,
+        /// Nested body.
+        body: ExistsBody,
         /// Whether the predicate was negated.
         negated: bool,
         /// Source span of the full expression.
@@ -241,6 +241,15 @@ pub enum ValueExpr {
         /// Source span of the full expression.
         span: SourceSpan,
     },
+}
+
+/// Nested body accepted by an `EXISTS` predicate.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum ExistsBody {
+    /// Existing single-MATCH body.
+    Match(Box<MatchClause>),
+    /// Full query pipeline body.
+    Query(Box<QueryPipeline>),
 }
 
 /// Temporal duration qualifier for `DURATION_BETWEEN`.

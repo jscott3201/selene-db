@@ -1,10 +1,10 @@
 //! Span-erasing AST equality helpers.
 
 use crate::ast::{
-    DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, MatchClause, MutationPipeline,
-    MutationStatement, MutationTerminator, NodePattern, PatternElement, ProcedureCall,
-    QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint,
-    TypePropertyDef, ValueExpr, WithClause,
+    DdlStatement, EdgePattern, ExistsBody, GraphPattern, InlineProcedureCall, MatchClause,
+    MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
+    ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement,
+    TypePropertyConstraint, TypePropertyDef, ValueExpr, WithClause,
 };
 
 use super::{CharacterStringLiteralKind, Literal, SourceSpan};
@@ -191,9 +191,10 @@ fn scrub_value(value: &mut ValueExpr) {
         } => {
             *key_source_kind = CharacterStringLiteralKind::Escaped;
         }
-        ValueExpr::Exists { pattern, .. } => {
-            scrub_match(pattern);
-        }
+        ValueExpr::Exists { body, .. } => match body {
+            ExistsBody::Match(pattern) => scrub_match(pattern),
+            ExistsBody::Query(pipeline) => scrub_query_pipeline(pipeline),
+        },
         ValueExpr::ValueSubquery { body, .. } => scrub_query_pipeline(body),
         _ => {}
     }

@@ -30,8 +30,9 @@ pub use crate::ast::{
         TypePropertyDef, ValidationMode,
     },
     expr::{
-        BinaryOp, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, IsCheckKind, Literal,
-        NormalForm, TemporalDurationQualifier, TrimSpec, TruthValue, UnaryOp, ValueExpr,
+        BinaryOp, DecimalLiteralKind, ExistsBody, FloatLiteralKind, IntegerLiteralKind,
+        IsCheckKind, Literal, NormalForm, TemporalDurationQualifier, TrimSpec, TruthValue, UnaryOp,
+        ValueExpr,
     },
     format::format_procedure_call,
     mutation::{

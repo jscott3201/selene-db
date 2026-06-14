@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    BindingTableType, GqlType, IsCheckKind, LabelExpr, Literal, MatchClause, NormalForm,
-    PatternElement, RecordType, SourceSpan, TruthValue, ValueExpr,
+    BindingTableType, ExistsBody, GqlType, IsCheckKind, LabelExpr, Literal, MatchClause,
+    NormalForm, PatternElement, RecordType, SourceSpan, TruthValue, ValueExpr,
 };
 
 /// Stable, opaque identifier for a `ValueExpr` cell within one analyzer call.
@@ -393,12 +393,22 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             span.hash(state);
         }
         ValueExpr::Exists {
-            pattern,
+            body,
             negated,
             span,
         } => {
             18u8.hash(state);
-            hash_match_clause(pattern, state, memo);
+            match body {
+                ExistsBody::Match(pattern) => {
+                    0u8.hash(state);
+                    hash_match_clause(pattern, state, memo);
+                }
+                ExistsBody::Query(pipeline) => {
+                    1u8.hash(state);
+                    pipeline.span.hash(state);
+                    pipeline.statements.len().hash(state);
+                }
+            }
             negated.hash(state);
             span.hash(state);
         }

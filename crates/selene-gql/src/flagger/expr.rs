@@ -3,7 +3,7 @@
 use selene_core::{DbString, feature_register::FeatureId};
 
 use crate::{
-    NonEmpty, ValueExpr,
+    ExistsBody, NonEmpty, ValueExpr,
     ast::{
         expr::{
             BinaryOp, CharacterStringLiteralKind, DecimalLiteralKind, FloatLiteralKind,
@@ -57,8 +57,11 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             is_check(kind, *span, uses);
             return;
         }
-        ValueExpr::Exists { pattern, .. } => {
-            query::match_clause(pattern, uses);
+        ValueExpr::Exists { body, .. } => {
+            match body {
+                ExistsBody::Match(pattern) => query::match_clause(pattern, uses),
+                ExistsBody::Query(pipeline) => query::query_pipeline(pipeline, uses),
+            }
             return;
         }
         ValueExpr::ValueSubquery { body, span } => {

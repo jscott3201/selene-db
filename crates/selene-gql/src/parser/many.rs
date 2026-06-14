@@ -2,7 +2,7 @@
 
 use crate::{
     ast::{
-        DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, MatchClause,
+        DdlStatement, EdgePattern, ExistsBody, GraphPattern, InlineProcedureCall, MatchClause,
         MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
         ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
         TypePropertyConstraint, TypePropertyDef, ValueExpr, WithClause,
@@ -381,9 +381,10 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
     value.for_each_span_mut(&mut |span| rebase_span(span, offset));
     value.for_each_child_mut(&mut |child| rebase_value(child, offset));
     match value {
-        ValueExpr::Exists { pattern, .. } => {
-            rebase_match(pattern, offset);
-        }
+        ValueExpr::Exists { body, .. } => match body {
+            ExistsBody::Match(pattern) => rebase_match(pattern, offset),
+            ExistsBody::Query(pipeline) => rebase_query_pipeline(pipeline, offset),
+        },
         ValueExpr::ValueSubquery { body, .. } => rebase_query_pipeline(body, offset),
         _ => {}
     }
