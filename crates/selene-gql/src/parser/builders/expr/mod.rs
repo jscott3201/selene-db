@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    Rule, build_typed_param_ref, db_string_pair, db_string_param, first_child, not_implemented,
-    span, unexpected_pair,
+    Rule, build_typed_param_ref, db_string_pair, db_string_param, first_child, span,
+    unexpected_pair,
 };
 
 pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
@@ -76,12 +76,6 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
         Rule::labels_expr => call::build_labels_function(pair),
         Rule::path_constructor => call::build_path_constructor(pair),
         Rule::trim_expr => call::build_trim_expr(pair),
-        Rule::list_iter_expr | Rule::list_comprehension | Rule::list_quant | Rule::list_reduce => {
-            Err(not_implemented(
-                &pair,
-                "list-iteration expressions are not yet supported",
-            ))
-        }
         _ => Err(unexpected_pair(pair, "expected value expression")),
     }
 }

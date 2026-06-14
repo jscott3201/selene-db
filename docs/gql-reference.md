@@ -329,13 +329,17 @@ when any operand is `NULL`.
 ### List expressions
 
 ```gql
-RETURN [x IN [1, 2, 3, 4] WHERE x > 2 | x * x]              // list comprehension
-RETURN ALL(x IN range WHERE x > 0)                           // universal quantifier
-RETURN ANY(x IN range WHERE x = target)                      // existential quantifier
-RETURN NONE(x IN range WHERE x = forbidden)
-RETURN SINGLE(x IN range WHERE x = unique_target)
-RETURN REDUCE(acc = 0, x IN [1, 2, 3] | acc + x)            // fold
+RETURN [1, 2, 3] AS values
+RETURN [1, 2] || [3, 4] AS values
+RETURN [10, 20, 30][1] AS value
+RETURN CARDINALITY([1, 2, 3]) AS count
+RETURN TRIM([1, 2, 3, 4], 2) AS prefix
 ```
+
+Selene supports ISO list value constructors, concatenation, element access,
+`CARDINALITY`, and the ISO list `TRIM(list, count)` function. Cypher-style list
+comprehension, list quantifier, and `REDUCE` expression syntax is not ISO GQL
+and is rejected at parse time.
 
 ### `CASE`, `CAST`, `TRIM`, `LABELS`
 

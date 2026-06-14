@@ -573,7 +573,6 @@ primary = {
     value_subquery_expr
   | count_subquery_expr
   | exists_expr
-  | list_iter_expr
   | all_different_expr
   | same_expr
   | property_exists_expr
@@ -596,28 +595,6 @@ primary = {
   | typed_param_ref
   | var_ref
 }
-
-// -- List iteration expressions (spec section20.10-11) -------------------
-// List comprehension:  [ x IN list WHERE pred | projection ]
-// Quantifier predicates: any|all|none|single ( x IN list WHERE pred )
-// Reduce:               reduce ( acc = init, x IN list | step )
-//
-// PEG ordering: tried before `function_call` so `any(x IN list WHERE p)`
-// avoids greedy matching as a user function. A plain call like `any(x)`
-// (no `IN`) fails the rule and backtracks to `function_call`. Likewise,
-// a list literal `[1, 2, 3]` fails at the missing `IN` after the first
-// element and backtracks to `list_lit`. Iteration-variable names are
-// not reserved keywords - only the rule head tokens (ANY/ALL/NONE/SINGLE
-// as list_quant_op; REDUCE as list_reduce) are matched by the rule.
-list_iter_expr     = { list_comprehension | list_quant | list_reduce }
-// Note: use `in_kw` (atomic, word-bounded) not bare ^"IN". Non-atomic `~`
-// skips whitespace BEFORE checking the boundary, so `^"IN" ~ !(LETTER|...)`
-// fails on legitimate expressions like `IN null` or `IN my_var`.
-list_comprehension = { "[" ~ ident ~ in_kw ~ expr ~ list_iter_where? ~ "|" ~ expr ~ "]" }
-list_quant         = { list_quant_op ~ "(" ~ ident ~ in_kw ~ expr ~ list_iter_where ~ ")" }
-list_quant_op      = { ^"ALL" | ^"ANY" | ^"NONE" | ^"SINGLE" }
-list_reduce        = { ^"REDUCE" ~ "(" ~ ident ~ "=" ~ expr ~ "," ~ ident ~ in_kw ~ expr ~ "|" ~ expr ~ ")" }
-list_iter_where    = { ^"WHERE" ~ expr }
 
 count_subquery_expr  = { ^"COUNT" ~ "{" ~ match_stmt ~ "}" }
 // ISO/IEC 39075:2024 §19.4 <exists predicate> admits either a direct
