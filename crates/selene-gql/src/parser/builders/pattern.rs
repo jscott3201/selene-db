@@ -66,6 +66,13 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
                 trailing_path_mode = true;
             }
             Rule::path_or_paths => {
+                if path_or_paths {
+                    return Err(ParserError::syntax(
+                        "PATH/PATHS may be specified only once in a MATCH prefix",
+                        span(&child),
+                        None,
+                    ));
+                }
                 path_or_paths = true;
                 trailing_path_or_paths = true;
             }

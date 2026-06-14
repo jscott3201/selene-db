@@ -105,6 +105,20 @@ fn counted_group_rejects_path_mode_after_group_discriminator() {
 }
 
 #[test]
+fn counted_shortest_rejects_duplicate_path_or_paths() {
+    for source in [
+        "MATCH SHORTEST 2 PATHS PATHS (a)-[:K]->(b) RETURN b",
+        "MATCH SHORTEST 2 TRAIL PATHS PATHS (a)-[:K]->(b) RETURN b",
+    ] {
+        let err = parse(source).expect_err("duplicate PATH/PATHS must reject");
+        assert!(
+            matches!(err, ParserError::SyntaxError { .. }),
+            "expected SyntaxError for {source:?}, got {err:?}"
+        );
+    }
+}
+
+#[test]
 fn counted_shortest_zero_count_is_rejected_with_22g0f() {
     // ISO 39075:2024 §16.6 SR2bii: a written literal count SHALL be positive.
     // A literal 0 is a static violation; reject it with GQLSTATUS 22G0F (invalid
