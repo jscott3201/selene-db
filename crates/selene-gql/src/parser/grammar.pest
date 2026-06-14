@@ -431,7 +431,7 @@ group_by_item   = { expr }
 
 // -- CALL -----------------------------------------------------------
 
-call_stmt      = { ^"CALL" ~ (call_subquery | call_procedure) }
+call_stmt      = { optional_modifier? ~ ^"CALL" ~ (call_subquery | call_procedure) }
 call_subquery  = { variable_scope_clause? ~ "{" ~ query_pipeline ~ "}" ~ yield_clause? ~ call_transactions_clause? }
 variable_scope_clause = { "(" ~ (ident ~ ("," ~ ident)*)? ~ ")" }
 call_transactions_clause = { ^"IN" ~ ^"TRANSACTIONS" }

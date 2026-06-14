@@ -402,11 +402,12 @@ fn lower_call_subquery(
             Ok(BindingTableColumn {
                 name: Some(item.output.clone()),
                 hidden: None,
-                ty: column.ty.clone(),
+                ty: nullable_call_yield_type(column.ty.clone(), call.optional),
             })
         })
         .collect::<Result<Vec<_>, PlannerError>>()?;
     Ok(PlannedTableSubquery {
+        optional: call.optional,
         body: Box::new(body),
         outer_binding_refs: expr::outer_binding_refs_in_span(call.body.span, analyzed)?,
         yield_items,
@@ -447,6 +448,23 @@ fn table_subquery_yields(
         }
     }
     Ok(yields)
+}
+
+fn nullable_call_yield_type(ty: AnalyzedType, optional: bool) -> AnalyzedType {
+    if !optional {
+        return ty;
+    }
+    match ty {
+        AnalyzedType::Resolved(ty) => AnalyzedType::Resolved(nullable_gql_type(ty)),
+        AnalyzedType::Dynamic => AnalyzedType::Dynamic,
+    }
+}
+
+fn nullable_gql_type(ty: GqlType) -> GqlType {
+    match ty {
+        GqlType::NotNull(inner) => *inner,
+        other => other,
+    }
 }
 
 fn body_column(

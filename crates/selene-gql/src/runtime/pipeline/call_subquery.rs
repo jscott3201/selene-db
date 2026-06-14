@@ -30,6 +30,9 @@ pub(super) fn execute_read_only(
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let target_schema = target_schema(call, &input_schema)?;
         if null_outer_binding_is_plan_pattern_binding(call, &row, &input_schema)? {
+            if call.optional {
+                output.push(optional_output_row(call, &row));
+            }
             continue;
         }
         let seed = seed_binding(call, &row, &input_schema, &target_schema)?;
@@ -39,6 +42,10 @@ pub(super) fn execute_read_only(
             ctx,
         )?;
         let yield_indices = yield_indices(call, inner.schema())?;
+        if call.optional && inner.rows().is_empty() {
+            output.push(optional_output_row(call, &row));
+            continue;
+        }
         for inner_row in inner.rows() {
             ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
             let mut values = row.values().to_vec();
@@ -62,6 +69,12 @@ fn output_schema(
     let mut schema = input_schema.clone();
     schema.columns.extend(call.yield_schema.clone());
     schema
+}
+
+fn optional_output_row(call: &PlannedTableSubquery, input: &Binding) -> Binding {
+    let mut values = input.values().to_vec();
+    values.extend(std::iter::repeat_n(Value::Null, call.yield_schema.len()));
+    Binding::with_insert_sites(values, input.insert_sites().iter().copied().collect())
 }
 
 fn target_schema(

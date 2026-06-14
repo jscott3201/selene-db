@@ -358,6 +358,7 @@ mod tests {
             category: StatementCategory::ReadOnly,
             pattern_plan: None,
             pipeline: vec![PipelineOp::Call(PlannedCall {
+                optional: false,
                 procedure: Box::from([admitted("cache"), admitted("call")]),
                 handle: ProcedureHandle::new(1),
                 args: Vec::new(),

@@ -11,6 +11,8 @@ use super::{BindingTableColumn, ProjectExpr};
 /// Planned procedure call.
 #[derive(Clone, Debug)]
 pub struct PlannedCall {
+    /// Whether an empty procedure result preserves the input row with null yields.
+    pub optional: bool,
     /// Qualified procedure name.
     pub procedure: Box<[DbString]>,
     /// Opaque procedure handle.

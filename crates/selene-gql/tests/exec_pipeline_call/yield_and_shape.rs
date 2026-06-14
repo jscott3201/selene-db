@@ -5,8 +5,8 @@
 
 use selene_core::Value;
 use selene_gql::{
-    GqlType, PipelineOp, ProcedureMutability, ProcedureTier, Session, TxContext, execute_pipeline,
-    execute_statement,
+    AnalyzedType, GqlType, PipelineOp, ProcedureMutability, ProcedureTier, Session, TxContext,
+    execute_pipeline, execute_statement,
 };
 
 use super::{
@@ -77,6 +77,98 @@ fn procedure_returning_zero_rows_drops_input_row() {
         table.schema().columns[0].name.clone().unwrap().as_str(),
         "out"
     );
+}
+
+#[test]
+fn optional_procedure_returning_zero_rows_preserves_input_with_null_yields() {
+    let registry = registry_one(
+        &["pkg", "empty"],
+        ProcedureMutability::Read,
+        ProcedureTier::Graph,
+        vec![output("out", GqlType::Integer)],
+        Behavior::Return(Vec::new()),
+    );
+
+    let table = rows(
+        execute(
+            "UNWIND [1, 2] AS x OPTIONAL CALL pkg.empty() YIELD out RETURN x, out ORDER BY x",
+            &graph(3919),
+            &registry,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(1), Value::Int(2)]
+    );
+    assert_eq!(column_values(&table, "out"), vec![Value::Null, Value::Null]);
+    assert_eq!(registry.records().len(), 2);
+}
+
+#[test]
+fn optional_procedure_without_yields_preserves_input_for_empty_result() {
+    let registry = registry_one(
+        &["pkg", "empty"],
+        ProcedureMutability::Read,
+        ProcedureTier::Graph,
+        Vec::new(),
+        Behavior::Return(Vec::new()),
+    );
+
+    let table = rows(
+        execute(
+            "UNWIND [1, 2] AS x OPTIONAL CALL pkg.empty() RETURN x ORDER BY x",
+            &graph(3920),
+            &registry,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(1), Value::Int(2)]
+    );
+}
+
+#[test]
+fn optional_procedure_yield_schema_relaxes_non_null_columns() {
+    let registry = registry_one(
+        &["pkg", "empty"],
+        ProcedureMutability::Read,
+        ProcedureTier::Graph,
+        vec![output("out", GqlType::NotNull(Box::new(GqlType::Integer)))],
+        Behavior::Return(Vec::new()),
+    );
+
+    let plan = planned("OPTIONAL CALL pkg.empty() YIELD out", &registry);
+
+    assert_eq!(
+        plan.output_schema.columns[0].ty,
+        AnalyzedType::Resolved(GqlType::Integer)
+    );
+}
+
+#[test]
+fn optional_procedure_null_yield_does_not_satisfy_not_null_type_check() {
+    let registry = registry_one(
+        &["pkg", "empty"],
+        ProcedureMutability::Read,
+        ProcedureTier::Graph,
+        vec![output("out", GqlType::NotNull(Box::new(GqlType::Integer)))],
+        Behavior::Return(Vec::new()),
+    );
+
+    let table = rows(
+        execute(
+            "OPTIONAL CALL pkg.empty() YIELD out RETURN out IS TYPED INTEGER NOT NULL AS ok",
+            &graph(3921),
+            &registry,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(column_values(&table, "ok"), vec![Value::Bool(false)]);
 }
 
 #[test]

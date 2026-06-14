@@ -447,6 +447,9 @@ fn fmt_limit(out: &mut String, value: &LimitValue) -> fmt::Result {
 }
 
 fn fmt_call(out: &mut String, call: &ProcedureCall) -> fmt::Result {
+    if call.optional {
+        out.push_str("OPTIONAL ");
+    }
     out.push_str("CALL ");
     for (index, part) in call.name.iter().enumerate() {
         if index > 0 {
@@ -485,6 +488,9 @@ fn fmt_call(out: &mut String, call: &ProcedureCall) -> fmt::Result {
 }
 
 fn fmt_inline_call(out: &mut String, call: &InlineProcedureCall) -> fmt::Result {
+    if call.optional {
+        out.push_str("OPTIONAL ");
+    }
     out.push_str("CALL ");
     if let Some(scope) = &call.variable_scope {
         out.push('(');
