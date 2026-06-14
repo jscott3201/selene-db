@@ -69,13 +69,6 @@ fn bind_inline_call(
     ctx: &mut BindContext,
     call: &mut InlineProcedureCall,
 ) -> Result<(), AnalysisError> {
-    if call.in_transactions {
-        return Err(AnalysisError::NotImplemented {
-            message: "CALL { ... } IN TRANSACTIONS is not ISO GQL inline CALL syntax".into(),
-            span: call.span,
-            hint: None,
-        });
-    }
     expr_depth::check_query_subquery_depth(&call.body, 1)?;
     let bind_result = match &call.variable_scope {
         // GP03 (ISO §15.2): explicit variable scope — the body sees ONLY the

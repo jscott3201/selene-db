@@ -377,12 +377,6 @@ fn lower_call_subquery(
     analyzed: &AnalyzedStatement,
     max_quantifier: u32,
 ) -> Result<PlannedTableSubquery, PlannerError> {
-    if call.in_transactions {
-        return Err(PlannerError::NotImplemented {
-            feature: "CALL { ... } IN TRANSACTIONS",
-            span: call.span,
-        });
-    }
     // GP03: explicit variable scope is bound in the analyzer (the body sees only
     // the named imports); the import set flows into `outer_binding_refs` below
     // via `outer_binding_refs_in_span` because body references resolve to the

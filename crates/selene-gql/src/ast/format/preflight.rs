@@ -151,11 +151,6 @@ pub(super) fn validate_procedure_call(call: &ProcedureCall) -> Result<(), Format
 }
 
 pub(super) fn validate_inline_call(call: &InlineProcedureCall) -> Result<(), FormatError> {
-    if call.in_transactions {
-        return Err(FormatError::Unsupported {
-            variant: "InlineCallInTransactions",
-        });
-    }
     validate_pipeline(&call.body)
 }
 
