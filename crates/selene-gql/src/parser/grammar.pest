@@ -626,13 +626,13 @@ property_exists_expr = { ^"PROPERTY_EXISTS" ~ "(" ~ expr ~ "," ~ string_lit ~ ")
 param_ref = @{ "$" ~ (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
 typed_param_ref = { param_ref ~ ("::" ~ type_name)? }
 
-// Simple CASE: CASE expr WHEN val THEN result ... END
+// Simple CASE: CASE expr WHEN val [, val ...] THEN result ... END
 // Searched CASE: CASE WHEN condition THEN result ... END
 // PEG: try simple_case first (CASE expr WHEN), falls back to searched_case (CASE WHEN)
 case_expr    = { simple_case | searched_case }
 case_kw      = @{ ^"CASE" ~ !(LETTER | NUMBER | "_") }
 simple_case  = { case_kw ~ expr ~ simple_when+ ~ else_clause? ~ ^"END" }
-simple_when  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
+simple_when  = { ^"WHEN" ~ expr ~ ("," ~ expr)* ~ ^"THEN" ~ expr }
 searched_case = { case_kw ~ when_clause+ ~ else_clause? ~ ^"END" }
 when_clause  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
 else_clause  = { ^"ELSE" ~ expr }

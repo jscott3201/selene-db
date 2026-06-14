@@ -555,25 +555,37 @@ fn simple_when_branch(
     base: &ValueExpr,
 ) -> Result<(ValueExpr, ValueExpr), ParserError> {
     let when_span = span(&pair);
-    let mut children = pair.into_inner();
-    let when_value =
-        build_value_expr(children.next().ok_or_else(|| {
-            ParserError::syntax("CASE WHEN is missing expression", when_span, None)
-        })?)?;
-    let then_value =
-        build_value_expr(children.next().ok_or_else(|| {
-            ParserError::syntax("CASE THEN is missing expression", when_span, None)
-        })?)?;
-    let condition_span = SourceSpan::merge(base.span(), when_value.span());
-    Ok((
-        ValueExpr::BinaryOp {
-            op: BinaryOp::Eq,
-            lhs: Box::new(base.clone()),
-            rhs: Box::new(when_value),
-            span: condition_span,
-        },
-        then_value,
-    ))
+    let mut operands = pair
+        .into_inner()
+        .map(build_value_expr)
+        .collect::<Result<Vec<_>, _>>()?;
+    let then_value = operands
+        .pop()
+        .ok_or_else(|| ParserError::syntax("CASE THEN is missing expression", when_span, None))?;
+    let mut operands = operands.into_iter();
+    let first_operand = operands
+        .next()
+        .ok_or_else(|| ParserError::syntax("CASE WHEN is missing expression", when_span, None))?;
+    let mut condition = simple_when_comparison(base, first_operand);
+    for operand in operands {
+        let rhs = simple_when_comparison(base, operand);
+        condition = ValueExpr::BinaryOp {
+            op: BinaryOp::Or,
+            span: SourceSpan::merge(condition.span(), rhs.span()),
+            lhs: Box::new(condition),
+            rhs: Box::new(rhs),
+        };
+    }
+    Ok((condition, then_value))
+}
+
+fn simple_when_comparison(base: &ValueExpr, operand: ValueExpr) -> ValueExpr {
+    ValueExpr::BinaryOp {
+        op: BinaryOp::Eq,
+        span: SourceSpan::merge(base.span(), operand.span()),
+        lhs: Box::new(base.clone()),
+        rhs: Box::new(operand),
+    }
 }
 
 fn build_searched_case(

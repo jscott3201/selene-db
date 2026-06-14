@@ -619,6 +619,13 @@ fn case_list_access_and_record_literal_evaluate() {
         ),
         Value::Int(2)
     );
+    assert_eq!(
+        single_value(
+            "RETURN CASE 2 WHEN 1, 2 THEN 'hit' WHEN 3 THEN 'three' ELSE 'miss' END AS value",
+            "value",
+        ),
+        Value::String(db_string("hit"))
+    );
     // 1-based ordinal subscript (ISO §14.8): list[1] is the first element.
     assert_eq!(
         single_value("RETURN [10, 20, 30][1] AS value", "value"),
