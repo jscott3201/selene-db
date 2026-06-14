@@ -453,9 +453,12 @@ projection_list = { projection ~ ("," ~ projection)* }
 projection      = { expr ~ alias? }
 alias           = { ^"AS" ~ ident }
 
-group_by_clause = { group_by_kw ~ group_by_item ~ ("," ~ group_by_item)* }
-group_by_kw     = { ^"GROUP" ~ ^"BY" }
-group_by_item   = { expr }
+group_by_clause    = {
+    group_by_kw ~ (empty_grouping_set | group_by_item ~ ("," ~ group_by_item)*)
+}
+group_by_kw        = { ^"GROUP" ~ ^"BY" }
+empty_grouping_set = { "(" ~ ")" }
+group_by_item      = { expr }
 
 // return_order_by, return_offset, return_limit removed - parsed as separate
 // pipeline statements after RETURN. Planner handles positional semantics.

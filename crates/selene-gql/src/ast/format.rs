@@ -395,11 +395,15 @@ fn fmt_group_having(
 ) -> fmt::Result {
     if let Some(group_by) = group_by {
         out.push_str(" GROUP BY ");
-        for (index, item) in group_by.iter().enumerate() {
-            if index > 0 {
-                out.push_str(", ");
+        if group_by.is_empty() {
+            out.push_str("()");
+        } else {
+            for (index, item) in group_by.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                fmt_expr(out, item)?;
             }
-            fmt_expr(out, item)?;
         }
     }
     if let Some(having) = having {

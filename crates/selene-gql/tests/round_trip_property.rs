@@ -17,10 +17,21 @@ fn representative_read_shapes_round_trip() {
         "FOR x IN [1, 2, 3] WITH OFFSET off RETURN x, off",
         "RETURN (1 + 2) * 3 AS n",
         "RETURN count(*) AS c",
+        "RETURN count(*) AS c GROUP BY ()",
         "RETURN CASE WHEN n.age > 10 THEN 'old' ELSE 'new' END AS bucket",
     ] {
         assert_round_trip(source);
     }
+}
+
+#[test]
+fn empty_grouping_set_formats_with_parentheses() {
+    let source = "RETURN count(*) AS c GROUP BY ()";
+    let parsed = parse(source).expect("empty grouping set parses");
+    let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+    assert_eq!(formatted, source);
+    let reparsed = parse(&formatted).expect("formatted source reparses");
+    assert!(structurally_eq(&parsed, &reparsed));
 }
 
 #[test]
@@ -198,6 +209,7 @@ fn read_side_formatting_is_byte_idempotent() {
         "RETURN DISTINCT 1 AS \"WITH\"",
         "MATCH (a)-[:KNOWS*1..3]-(b) RETURN b",
         "RETURN n IS TYPED LIST<INT8>",
+        "RETURN count(*) AS c GROUP BY ()",
         "RETURN 1 UNION ALL RETURN 2",
         "MATCH (n) RETURN n NEXT MATCH (m) RETURN m",
     ] {

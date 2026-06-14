@@ -51,6 +51,30 @@ fn group_by_implicit_with_empty_input_emits_one_row_with_empty_aggregates() {
 }
 
 #[test]
+fn group_by_empty_grouping_set_collapses_non_empty_input() {
+    let table = execute_read("FOR x IN [1, 2, 3] RETURN count(*) AS c GROUP BY ()");
+
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(column_values(&table, "c"), vec![Value::Int(3)]);
+}
+
+#[test]
+fn group_by_empty_grouping_set_collapses_empty_input() {
+    let table = execute_read("MATCH (n:Missing) RETURN count(*) AS c GROUP BY ()");
+
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(column_values(&table, "c"), vec![Value::Int(0)]);
+}
+
+#[test]
+fn with_empty_grouping_set_collapses_input() {
+    let table = execute_read("FOR x IN [1, 2] WITH count(*) AS c GROUP BY () RETURN c");
+
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(column_values(&table, "c"), vec![Value::Int(2)]);
+}
+
+#[test]
 fn group_by_explicit_with_empty_input_emits_no_rows() {
     let table = execute_read("MATCH (n:Missing) RETURN n.age AS age, count(*) AS c GROUP BY n.age");
 
