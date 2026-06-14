@@ -260,6 +260,7 @@ fn bind_return_inputs(
         expr::bind_condition(ctx, value, ConditionClause::Having)?;
     }
     aggregate_rules::validate_aggregate_nesting(items, having)?;
+    aggregate_rules::validate_grouped_projection_items(items, group_by)?;
     validate_percentile_independent_refs(ctx, row_scope, items, group_by, having)?;
     Ok(())
 }

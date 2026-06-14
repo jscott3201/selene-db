@@ -154,6 +154,16 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// ISO 14.11 requires every grouped non-aggregate projection item to be
+    /// one of the grouping keys.
+    #[error("grouped projection item must be a grouping key or aggregate expression")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    GroupedProjectionItemNotGrouped {
+        /// Source span of the invalid projection item.
+        #[label("not a grouping key or aggregate expression")]
+        span: SourceSpan,
+    },
+
     /// ISO 14.11 forbids `RETURN *` over a unit incoming binding table.
     #[error("RETURN * requires a non-unit incoming binding table")]
     #[diagnostic(code(SLENE_GQL_42001))]
@@ -499,6 +509,7 @@ impl AnalysisError {
             Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::AggregateNestingViolation { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::GroupedProjectionItemNotGrouped { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ReturnStarRequiresInput { .. } => GqlStatus::SYNTAX_ERROR,
             Self::SortKeyContainsNestedQuery { .. } => GqlStatus::SYNTAX_ERROR,
             Self::SortKeyContainsAggregate { .. } => GqlStatus::SYNTAX_ERROR,
