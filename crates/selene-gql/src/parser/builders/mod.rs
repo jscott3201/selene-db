@@ -444,6 +444,7 @@ pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, 
 
     for child in pair.into_inner() {
         match child.as_rule() {
+            Rule::return_kw => {}
             Rule::distinct_kw => clause.distinct = true,
             Rule::all_kw => {}
             Rule::return_star => clause.star = true,

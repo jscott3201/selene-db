@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, first_child, span,
-    unexpected_pair, unsupported_feature,
+    Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, span, unexpected_pair,
+    unsupported_feature,
 };
 
 pub(super) fn build_top_level_call(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -178,7 +178,15 @@ fn build_yield_item(pair: Pair<'_, Rule>) -> Result<YieldItem, ParserError> {
             Rule::prop_ident if column.is_none() => {
                 column = Some(YieldColumn::Named(db_string_pair(child)?));
             }
-            Rule::alias => alias = Some(db_string_pair(first_child(child)?)?),
+            Rule::alias => {
+                let alias_pair = child
+                    .into_inner()
+                    .find(|nested| nested.as_rule() == Rule::ident)
+                    .ok_or_else(|| {
+                        ParserError::syntax("YIELD alias is missing identifier", source_span, None)
+                    })?;
+                alias = Some(db_string_pair(alias_pair)?);
+            }
             _ => return Err(unexpected_pair(child, "unexpected YIELD item child")),
         }
     }

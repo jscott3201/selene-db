@@ -419,8 +419,9 @@ property_pair = { prop_ident ~ ":" ~ expr }
 
 // -- WHERE clause ---------------------------------------------------
 
-where_clause = { ^"WHERE" ~ expr }
-inline_where = { ^"WHERE" ~ expr }
+where_kw = @{ ^"WHERE" ~ !(LETTER | NUMBER | "_") }
+where_clause = { where_kw ~ expr }
+inline_where = { where_kw ~ expr }
 
 // -- LET ------------------------------------------------------------
 
@@ -436,46 +437,63 @@ let_shorthand_binding = { ident ~ "=" ~ expr }
 
 // -- FILTER ---------------------------------------------------------
 
-filter_stmt = { ^"FILTER" ~ ^"WHERE"? ~ expr }
+filter_kw = @{ ^"FILTER" ~ !(LETTER | NUMBER | "_") }
+filter_stmt = { filter_kw ~ where_kw? ~ expr }
 
 // -- ORDER BY -------------------------------------------------------
 
-sorting_stmt = { ^"ORDER" ~ ^"BY" ~ order_term ~ ("," ~ order_term)* }
+order_kw = @{ ^"ORDER" ~ !(LETTER | NUMBER | "_") }
+by_kw = @{ ^"BY" ~ !(LETTER | NUMBER | "_") }
+sorting_stmt = { order_kw ~ by_kw ~ order_term ~ ("," ~ order_term)* }
 order_term    = { expr ~ sort_dir? ~ nulls_order? }
-sort_dir      = { ^"ASC" | ^"DESC" }
-nulls_order   = { ^"NULLS" ~ (^"FIRST" | ^"LAST") }
+sort_dir      = { asc_kw | desc_kw }
+asc_kw = @{ ^"ASC" ~ !(LETTER | NUMBER | "_") }
+desc_kw = @{ ^"DESC" ~ !(LETTER | NUMBER | "_") }
+nulls_order   = { nulls_kw ~ (first_kw | last_kw) }
+nulls_kw = @{ ^"NULLS" ~ !(LETTER | NUMBER | "_") }
+first_kw = @{ ^"FIRST" ~ !(LETTER | NUMBER | "_") }
+last_kw = @{ ^"LAST" ~ !(LETTER | NUMBER | "_") }
 
 // -- OFFSET / LIMIT -------------------------------------------------
 
-offset_stmt   = { (^"OFFSET" | ^"SKIP") ~ limit_value }
-limit_stmt    = { ^"LIMIT" ~ limit_value }
+offset_kw = @{ ^"OFFSET" ~ !(LETTER | NUMBER | "_") }
+skip_kw = @{ ^"SKIP" ~ !(LETTER | NUMBER | "_") }
+limit_kw = @{ ^"LIMIT" ~ !(LETTER | NUMBER | "_") }
+offset_stmt   = { (offset_kw | skip_kw) ~ limit_value }
+limit_stmt    = { limit_kw ~ limit_value }
 limit_value   = { typed_param_ref | uint }
 
 // -- RETURN ---------------------------------------------------------
 
+return_kw = @{ ^"RETURN" ~ !(LETTER | NUMBER | "_") }
 return_stmt = {
-    ^"RETURN" ~ (
+    return_kw ~ (
         no_bindings
       | (distinct_kw | all_kw)? ~ (return_star | projection_list) ~ group_by_clause? ~ having_clause?
     )
 }
-no_bindings = { ^"NO" ~ ^"BINDINGS" }
+no_kw = @{ ^"NO" ~ !(LETTER | NUMBER | "_") }
+bindings_kw = @{ ^"BINDINGS" ~ !(LETTER | NUMBER | "_") }
+no_bindings = { no_kw ~ bindings_kw }
 return_star = { "*" }
-having_clause = { ^"HAVING" ~ expr }
+having_kw = @{ ^"HAVING" ~ !(LETTER | NUMBER | "_") }
+having_clause = { having_kw ~ expr }
 // Note: ORDER BY, OFFSET, LIMIT after RETURN are parsed as separate pipeline
 // statements. The GQL spec distinguishes RETURN-level ORDER BY from pipeline
 // ORDER BY for visibility semantics - but syntactically they're the same and
 // the planner handles the distinction based on position relative to RETURN.
-distinct_kw = { ^"DISTINCT" }
+distinct_kw = @{ ^"DISTINCT" ~ !(LETTER | NUMBER | "_") }
 
 projection_list = { projection ~ ("," ~ projection)* }
 projection      = { expr ~ alias? }
-alias           = { ^"AS" ~ ident }
+as_kw = @{ ^"AS" ~ !(LETTER | NUMBER | "_") }
+alias           = { as_kw ~ ident }
 
 group_by_clause    = {
     group_by_kw ~ (empty_grouping_set | group_by_item ~ ("," ~ group_by_item)*)
 }
-group_by_kw        = { ^"GROUP" ~ ^"BY" }
+group_kw = @{ ^"GROUP" ~ !(LETTER | NUMBER | "_") }
+group_by_kw        = { group_kw ~ by_kw }
 empty_grouping_set = { "(" ~ ")" }
 group_by_item      = { expr }
 
@@ -682,7 +700,8 @@ searched_case = { case_kw ~ when_clause+ ~ else_clause? ~ ^"END" }
 when_clause  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
 else_clause  = { ^"ELSE" ~ expr }
 
-cast_expr     = { ^"CAST" ~ "(" ~ expr ~ ^"AS" ~ type_name ~ ")" }
+cast_kw = @{ ^"CAST" ~ !(LETTER | NUMBER | "_") }
+cast_expr     = { cast_kw ~ "(" ~ expr ~ as_kw ~ type_name ~ ")" }
 labels_expr   = { ^"LABELS" ~ "(" ~ expr ~ ")" }
 path_constructor = { ^"PATH" ~ "[" ~ expr ~ ("," ~ expr ~ "," ~ expr)* ~ "]" }
 
