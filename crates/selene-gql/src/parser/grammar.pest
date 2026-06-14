@@ -261,14 +261,16 @@ any_kw      = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
 all_kw      = @{ ^"ALL" ~ !(LETTER | NUMBER | "_") }
 shortest_kw = @{ ^"SHORTEST" ~ !(LETTER | NUMBER | "_") }
 any_path_count = { uint }
-// ISO §16.6: counted shortest path (G019) = SHORTEST <n> [<path or paths>] ;
-// counted shortest group (G020) = SHORTEST [<n>] [<path or paths>] {GROUP|GROUPS}.
-// The optional <path or paths> (Feature G014) is parsed HERE, in its ISO position:
-// for the counted-PATH form it trails the count; for the counted-GROUP form it sits
-// BEFORE the GROUP/GROUPS discriminator (so `SHORTEST 2 PATHS GROUPS` — not
-// `... GROUPS PATHS` — is the conforming spelling). The non-counted forms
-// (ALL / ANY [SHORTEST], <path mode prefix>) instead use the separate trailing
-// `path_or_paths?` slot in match_stmt, where <path or paths> is the final token.
+// ISO §16.6: counted shortest path (G019) =
+//   SHORTEST <n> [<path mode>] [<path or paths>]
+// counted shortest group (G020) =
+//   SHORTEST [<n>] [<path mode>] [<path or paths>] {GROUP|GROUPS}.
+// The optional <path mode> and <path or paths> are parsed HERE, in their ISO
+// position for counted forms: before the GROUP/GROUPS discriminator. This makes
+// `SHORTEST 2 TRAIL PATHS GROUPS` conforming and leaves `... GROUPS TRAIL` /
+// `... GROUPS PATHS` to be rejected by the builder as wrong-order flattened
+// residue. Non-counted forms (ALL / ANY [SHORTEST], <path mode prefix>) use the
+// separate trailing `path_modifier? ~ path_or_paths?` slots in match_stmt.
 // The `!("=")` guard releases a path variable literally named `path`/`paths`
 // (path_var_binding = ident ~ "=") rather than stealing it. build_match_clause sets
 // MatchClause.path_or_paths from whichever site matched.
@@ -280,8 +282,8 @@ any_path_count = { uint }
 // §22.4 GR7 (dynamic non-positive count -> 22G0F at runtime) is not applicable;
 // add a parameter alternative here if a future brief claims the dynamic form.
 counted_shortest_tail = {
-    uint ~ (path_or_paths ~ !("="))? ~ counted_group_kw?   // SHORTEST n [PATHS] [GROUP[S]]
-  | (path_or_paths ~ !("="))? ~ counted_group_kw           // SHORTEST [PATHS] GROUP[S], n=1
+    uint ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ counted_group_kw?
+  | path_modifier? ~ (path_or_paths ~ !("="))? ~ counted_group_kw
 }
 counted_group_kw = { (^"GROUPS" | ^"GROUP") ~ !(LETTER | NUMBER | "_") }
 optional_modifier = { ^"OPTIONAL" }

@@ -15,9 +15,9 @@ use selene_core::DbString;
 use super::format_ident::fmt_ident;
 use crate::ast::{
     EdgeDirection, EdgePattern, GqlType, GraphPattern, InlineProcedureCall, LabelExpr, LimitValue,
-    MatchClause, NodePattern, NullsPolicy, OrderDirection, OrderTerm, PathMode, PatternElement,
-    ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem, Statement, ValueExpr,
-    WithClause,
+    MatchClause, NodePattern, NullsPolicy, OrderDirection, OrderTerm, PathMode, PathSelector,
+    PatternElement, ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem, Statement,
+    ValueExpr, WithClause,
 };
 
 use expr::fmt_expr;
@@ -187,15 +187,32 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
         out.push_str("OPTIONAL ");
     }
     out.push_str("MATCH");
-    if let Some(selector) = clause.selector {
-        out.push(' ');
-        fmt_path_selector(out, selector)?;
-    }
+    let selector_consumes_mode_and_paths =
+        if let Some(PathSelector::CountedShortestGroup { groups }) = clause.selector {
+            write!(out, " SHORTEST {groups}")?;
+            if clause.path_mode != PathMode::Walk
+                || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit)
+            {
+                write!(out, " {}", fmt_path_mode(clause.path_mode))?;
+            }
+            if clause.path_or_paths {
+                out.push_str(" PATHS");
+            }
+            out.push_str(" GROUPS");
+            true
+        } else {
+            if let Some(selector) = clause.selector {
+                out.push(' ');
+                fmt_path_selector(out, selector)?;
+            }
+            false
+        };
     if let Some(mode) = clause.match_mode {
         write!(out, " {}", fmt_match_mode(mode))?;
     }
-    if clause.path_mode != PathMode::Walk
-        || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit)
+    if !selector_consumes_mode_and_paths
+        && (clause.path_mode != PathMode::Walk
+            || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit))
     {
         write!(out, " {}", fmt_path_mode(clause.path_mode))?;
     }
@@ -203,7 +220,7 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
     // explicit PATH/PATHS keyword so a parse->format->parse round trip
     // preserves the AST `path_or_paths` flag (mirrors the explicit-WALK
     // handling above). Canonical plural `PATHS` per §16.6 SR1.
-    if clause.path_or_paths {
+    if clause.path_or_paths && !selector_consumes_mode_and_paths {
         out.push_str(" PATHS");
     }
     out.push(' ');
