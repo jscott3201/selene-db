@@ -156,13 +156,13 @@ feature_ids! {
     GQ09 = "GQ09" => "LET statement";
     GQ10 = "GQ10" => "FOR statement: list value support";
     GQ11 = "GQ11" => "FOR statement: WITH ORDINALITY";
-    GQ12 = "GQ12" => "OFFSET clause";
-    GQ13 = "GQ13" => "LIMIT clause";
+    GQ12 = "GQ12" => "ORDER BY and page statement: OFFSET clause";
+    GQ13 = "GQ13" => "ORDER BY and page statement: LIMIT clause";
     GQ14 = "GQ14" => "Complex expressions in sort keys";
     GQ15 = "GQ15" => "GROUP BY clause";
     GQ16 = "GQ16" => "Pre-projection aliases in sort keys";
-    GQ18 = "GQ18" => "Scalar value query expression";
-    GQ20 = "GQ20" => "Linear query composition";
+    GQ18 = "GQ18" => "Scalar subqueries";
+    GQ20 = "GQ20" => "Advanced linear composition with NEXT";
     GQ24 = "GQ24" => "FOR statement: WITH OFFSET";
     GS01 = "GS01" => "SESSION SET command: session-local graph parameters";
     GS02 = "GS02" => "SESSION SET command: session-local binding table parameters";
