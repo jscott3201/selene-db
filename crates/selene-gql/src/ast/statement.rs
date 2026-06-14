@@ -187,8 +187,8 @@ pub enum PipelineStatement {
     Filter(ValueExpr),
     /// `LET`.
     Let(Vec<LetBinding>),
-    /// Row expansion (`FOR` / `UNWIND`).
-    Unwind(UnwindStatement),
+    /// Row expansion (`FOR`).
+    For(ForStatement),
     /// `ORDER BY`.
     Sorting(Vec<OrderTerm>),
     /// `LIMIT`.
@@ -213,7 +213,7 @@ impl PipelineStatement {
             Self::Match(value) => value.span,
             Self::Filter(value) => value.span(),
             Self::Let(values) => span_from_iter(values.iter().map(|value| value.span)),
-            Self::Unwind(value) => value.span,
+            Self::For(value) => value.span,
             Self::Sorting(values) => span_from_iter(values.iter().map(|value| value.span)),
             Self::Limit(value) | Self::Offset(value) => value.span(),
             Self::Return(value) => value.span,
@@ -235,20 +235,9 @@ pub struct LetBinding {
     pub span: SourceSpan,
 }
 
-/// Surface spelling for a row-expansion statement.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub enum RowExpansionSyntax {
-    /// ISO `FOR <binding> IN <list expression>` spelling.
-    For,
-    /// Selene `UNWIND <list expression> AS <binding>` spelling.
-    Unwind,
-}
-
 /// Row-expansion statement.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct UnwindStatement {
-    /// Source syntax used to parse this row expansion.
-    pub syntax: RowExpansionSyntax,
+pub struct ForStatement {
     /// Source expression.
     pub source: ValueExpr,
     /// Database-string alias.

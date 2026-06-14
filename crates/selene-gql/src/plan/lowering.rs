@@ -277,14 +277,14 @@ fn lower_query_pipeline(
                 // would drop everything outside the new aliases.
                 ops.push(PipelineOp::Let(projects));
             }
-            PipelineStatement::Unwind(unwind) => {
-                let source = expr::project_expr(&unwind.source, None, analyzed)?;
+            PipelineStatement::For(statement) => {
+                let source = expr::project_expr(&statement.source, None, analyzed)?;
                 visible.push(BindingTableColumn {
-                    name: Some(unwind.alias.clone()),
+                    name: Some(statement.alias.clone()),
                     hidden: None,
                     ty: AnalyzedType::DYNAMIC,
                 });
-                if let Some(position) = &unwind.position {
+                if let Some(position) = &statement.position {
                     visible.push(BindingTableColumn {
                         name: Some(position.alias.clone()),
                         hidden: None,
@@ -293,9 +293,9 @@ fn lower_query_pipeline(
                 }
                 ops.push(PipelineOp::Unwind {
                     source,
-                    alias: unwind.alias.clone(),
-                    position: unwind.position.clone(),
-                    span: unwind.span,
+                    alias: statement.alias.clone(),
+                    position: statement.position.clone(),
+                    span: statement.span,
                 });
             }
             PipelineStatement::Sorting(terms) => {

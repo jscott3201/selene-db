@@ -92,7 +92,7 @@ fn property_exists_accepts_singleton_node_edge_aliases() {
     for source in [
         "MATCH (n) WITH n AS x RETURN PROPERTY_EXISTS(x, 'name') AS ok",
         "MATCH (n) LET x = n RETURN PROPERTY_EXISTS(x, 'name') AS ok",
-        "MATCH (n) UNWIND [n] AS x RETURN PROPERTY_EXISTS(x, 'name') AS ok",
+        "MATCH (n) FOR x IN [n] RETURN PROPERTY_EXISTS(x, 'name') AS ok",
         "MATCH ()-[e:K]->() WITH e AS x RETURN PROPERTY_EXISTS(x, 'weight') AS ok",
     ] {
         let analyzed = analyze_one(source).expect("node/edge alias target analyzes");
@@ -231,7 +231,7 @@ fn source_destination_predicates_accept_node_edge_aliases() {
     for source in [
         "MATCH (a)-[e]->() WITH a AS x, e AS y RETURN x IS SOURCE OF y AS ok",
         "MATCH (a)-[e]->() LET x = a LET y = e RETURN x IS SOURCE OF y AS ok",
-        "MATCH (a)-[e]->() UNWIND [a] AS x UNWIND [e] AS y RETURN x IS SOURCE OF y AS ok",
+        "MATCH (a)-[e]->() FOR x IN [a] FOR y IN [e] RETURN x IS SOURCE OF y AS ok",
     ] {
         let analyzed = analyze_one(source).expect("node/edge alias endpoint operands analyze");
         assert_eq!(
@@ -309,7 +309,7 @@ fn directed_labeled_predicates_accept_node_edge_aliases() {
     for source in [
         "MATCH (n:Person) WITH n AS x RETURN x IS LABELED :Person AS ok",
         "MATCH (n:Person) LET x = n RETURN x IS LABELED :Person AS ok",
-        "MATCH (n:Person) UNWIND [n] AS x RETURN x IS LABELED :Person AS ok",
+        "MATCH (n:Person) FOR x IN [n] RETURN x IS LABELED :Person AS ok",
         "MATCH ()-[e:KNOWS]->() WITH e AS x RETURN x IS DIRECTED AS ok",
         "MATCH ()-[e:KNOWS]->() LET x = e RETURN x IS LABELED :KNOWS AS ok",
     ] {

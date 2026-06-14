@@ -75,7 +75,7 @@ fn scrub_query_pipeline(pipeline: &mut QueryPipeline) {
                     scrub_value(&mut value.value);
                 }
             }
-            crate::PipelineStatement::Unwind(value) => {
+            crate::PipelineStatement::For(value) => {
                 value.span = SourceSpan::default();
                 scrub_value(&mut value.source);
             }

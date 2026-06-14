@@ -54,7 +54,7 @@ fn validate_pipeline(pipeline: &QueryPipeline) -> Result<(), FormatError> {
                     validate_expr(&value.value)?;
                 }
             }
-            crate::PipelineStatement::Unwind(value) => validate_expr(&value.source)?,
+            crate::PipelineStatement::For(value) => validate_expr(&value.source)?,
             crate::PipelineStatement::Sorting(values) => {
                 for value in values {
                     validate_expr(&value.expr)?;

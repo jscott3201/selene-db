@@ -244,7 +244,7 @@ impl PatternElementKind {
             BindingDeclKind::EdgePattern | BindingDeclKind::InsertEdge => Some(Self::Edge),
             BindingDeclKind::PathBinding => Some(Self::Path),
             BindingDeclKind::LetAlias
-            | BindingDeclKind::UnwindAlias
+            | BindingDeclKind::ForAlias
             | BindingDeclKind::ProjectionAlias
             | BindingDeclKind::YieldColumn => None,
         }

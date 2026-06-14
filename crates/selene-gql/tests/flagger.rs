@@ -365,9 +365,9 @@ fn datetime_value_functions_record_temporal_features() {
 #[test]
 fn gf10_iso_aggregate_functions_are_recorded_without_collect_alias() {
     for source in [
-        "UNWIND [1, 2] AS x RETURN stddev_pop(x)",
-        "UNWIND [1, 2] AS x RETURN stddev_samp(x)",
-        "UNWIND [1, 2] AS x RETURN collect_list(x)",
+        "FOR x IN [1, 2] RETURN stddev_pop(x)",
+        "FOR x IN [1, 2] RETURN stddev_samp(x)",
+        "FOR x IN [1, 2] RETURN collect_list(x)",
     ] {
         let statement = parse(source).expect(source);
         let observed = feature_walk(&statement)
@@ -383,8 +383,8 @@ fn gf10_iso_aggregate_functions_are_recorded_without_collect_alias() {
     }
 
     for source in [
-        "UNWIND [1, 2] AS x RETURN collect(x)",
-        "UNWIND [1, 2] AS x RETURN average(x)",
+        "FOR x IN [1, 2] RETURN collect(x)",
+        "FOR x IN [1, 2] RETURN average(x)",
     ] {
         let statement = parse(source).expect(source);
         let observed = feature_walk(&statement)

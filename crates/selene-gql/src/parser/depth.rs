@@ -254,7 +254,7 @@ fn push_pipeline<'a>(pipeline: &'a QueryPipeline, work: &mut Vec<Node<'a>>) {
                     work.push(Node::Expr(&binding.value, 1));
                 }
             }
-            PipelineStatement::Unwind(unwind) => work.push(Node::Expr(&unwind.source, 1)),
+            PipelineStatement::For(statement) => work.push(Node::Expr(&statement.source, 1)),
             PipelineStatement::Sorting(terms) => {
                 for term in terms {
                     work.push(Node::Expr(&term.expr, 1));

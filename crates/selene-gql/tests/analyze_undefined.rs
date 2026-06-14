@@ -31,7 +31,7 @@ fn shadow_in_let() {
 
 #[test]
 fn shadow_across_match_and_unwind() {
-    let err = analyze_one("MATCH (n) UNWIND [1] AS n RETURN n").expect_err("UNWIND shadows n");
+    let err = analyze_one("MATCH (n) FOR n IN [1] RETURN n").expect_err("FOR shadows n");
     assert!(matches!(err, AnalysisError::Shadow { .. }));
 }
 

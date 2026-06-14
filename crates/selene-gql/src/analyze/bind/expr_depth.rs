@@ -124,7 +124,9 @@ pub(crate) fn check_query_subquery_depth(
                     check_expr_subquery_depth(&binding.value, depth)?;
                 }
             }
-            PipelineStatement::Unwind(unwind) => check_expr_subquery_depth(&unwind.source, depth)?,
+            PipelineStatement::For(statement) => {
+                check_expr_subquery_depth(&statement.source, depth)?
+            }
             PipelineStatement::Sorting(terms) => {
                 for term in terms {
                     check_expr_subquery_depth(&term.expr, depth)?;

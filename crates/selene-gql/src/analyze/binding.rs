@@ -30,8 +30,8 @@ pub enum BindingDeclKind {
     EdgePattern,
     /// A value alias introduced by `LET`.
     LetAlias,
-    /// A value alias introduced by row expansion (`FOR` / `UNWIND`).
-    UnwindAlias,
+    /// A value alias introduced by row expansion (`FOR`).
+    ForAlias,
     /// A projected value introduced by `RETURN` or `WITH`.
     ProjectionAlias,
     /// An explicit result column introduced by `CALL ... YIELD`.
@@ -84,8 +84,8 @@ pub enum BindingDecl {
         /// Static type of the binding.
         ty: AnalyzedType,
     },
-    /// `FOR x IN expr` or `UNWIND expr AS x`.
-    UnwindAlias {
+    /// `FOR x IN expr`.
+    ForAlias {
         /// Allocated binding ID.
         binding: BindingId,
         /// Database-string binding name.
@@ -186,7 +186,7 @@ impl BindingDecl {
                 span,
                 ty,
             },
-            BindingDeclKind::UnwindAlias => Self::UnwindAlias {
+            BindingDeclKind::ForAlias => Self::ForAlias {
                 binding,
                 name,
                 span,
@@ -237,7 +237,7 @@ impl BindingDecl {
             }
             BindingDeclKind::PathBinding => AnalyzedType::Resolved(GqlType::Path),
             BindingDeclKind::LetAlias
-            | BindingDeclKind::UnwindAlias
+            | BindingDeclKind::ForAlias
             | BindingDeclKind::ProjectionAlias
             | BindingDeclKind::YieldColumn => AnalyzedType::Dynamic,
         }
@@ -250,7 +250,7 @@ impl BindingDecl {
             Self::NodePattern { binding, .. }
             | Self::EdgePattern { binding, .. }
             | Self::LetAlias { binding, .. }
-            | Self::UnwindAlias { binding, .. }
+            | Self::ForAlias { binding, .. }
             | Self::ProjectionAlias { binding, .. }
             | Self::YieldColumn { binding, .. }
             | Self::InsertNode { binding, .. }
@@ -266,7 +266,7 @@ impl BindingDecl {
             Self::NodePattern { name, .. }
             | Self::EdgePattern { name, .. }
             | Self::LetAlias { name, .. }
-            | Self::UnwindAlias { name, .. }
+            | Self::ForAlias { name, .. }
             | Self::ProjectionAlias { name, .. }
             | Self::YieldColumn { name, .. }
             | Self::InsertNode { name, .. }
@@ -282,7 +282,7 @@ impl BindingDecl {
             Self::NodePattern { span, .. }
             | Self::EdgePattern { span, .. }
             | Self::LetAlias { span, .. }
-            | Self::UnwindAlias { span, .. }
+            | Self::ForAlias { span, .. }
             | Self::ProjectionAlias { span, .. }
             | Self::YieldColumn { span, .. }
             | Self::InsertNode { span, .. }
@@ -298,7 +298,7 @@ impl BindingDecl {
             Self::NodePattern { ty, .. }
             | Self::EdgePattern { ty, .. }
             | Self::LetAlias { ty, .. }
-            | Self::UnwindAlias { ty, .. }
+            | Self::ForAlias { ty, .. }
             | Self::ProjectionAlias { ty, .. }
             | Self::YieldColumn { ty, .. }
             | Self::InsertNode { ty, .. }
@@ -314,7 +314,7 @@ impl BindingDecl {
             Self::NodePattern { .. } => BindingDeclKind::NodePattern,
             Self::EdgePattern { .. } => BindingDeclKind::EdgePattern,
             Self::LetAlias { .. } => BindingDeclKind::LetAlias,
-            Self::UnwindAlias { .. } => BindingDeclKind::UnwindAlias,
+            Self::ForAlias { .. } => BindingDeclKind::ForAlias,
             Self::ProjectionAlias { .. } => BindingDeclKind::ProjectionAlias,
             Self::YieldColumn { .. } => BindingDeclKind::YieldColumn,
             Self::InsertNode { .. } => BindingDeclKind::InsertNode,
@@ -332,7 +332,7 @@ impl BindingDecl {
             | Self::InsertNode { labels, .. }
             | Self::InsertEdge { labels, .. } => labels.as_ref(),
             Self::LetAlias { .. }
-            | Self::UnwindAlias { .. }
+            | Self::ForAlias { .. }
             | Self::ProjectionAlias { .. }
             | Self::YieldColumn { .. }
             | Self::PathBinding { .. } => None,
@@ -349,7 +349,7 @@ impl BindingDecl {
             | Self::InsertNode { labels, .. }
             | Self::InsertEdge { labels, .. } => labels,
             Self::LetAlias { .. }
-            | Self::UnwindAlias { .. }
+            | Self::ForAlias { .. }
             | Self::ProjectionAlias { .. }
             | Self::YieldColumn { .. }
             | Self::PathBinding { .. } => return,

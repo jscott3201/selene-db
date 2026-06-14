@@ -21,15 +21,16 @@ fn for_list_feature_is_supported_and_recorded() {
     );
     assert_read_plan(source);
     assert_read_execution(source);
+}
 
-    let unwind = feature_walk(&parse("UNWIND [1, 2] AS x RETURN x").expect("UNWIND parses"))
-        .into_iter()
-        .map(|feature| feature.feature_id)
-        .collect::<Vec<_>>();
+#[test]
+fn non_iso_unwind_alias_is_rejected_at_parse_time() {
+    let err = parse("UNWIND [1, 2] AS x RETURN x").expect_err("UNWIND is not ISO GQL");
     assert!(
-        !unwind.contains(&FeatureId::GQ10),
-        "UNWIND is the Selene alias, not ISO FOR; observed {unwind:?}"
+        matches!(err, selene_gql::ParserError::SyntaxError { .. }),
+        "expected syntax error, got {err:?}"
     );
+    assert_eq!(err.gqlstatus().as_str(), "42001");
 }
 
 #[test]

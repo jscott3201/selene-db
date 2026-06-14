@@ -58,16 +58,6 @@ fn read_executes_let_then_return() {
 }
 
 #[test]
-fn read_executes_unwind_only_query() {
-    let table = execute_read("UNWIND [1, 2] AS x RETURN x");
-
-    assert_eq!(
-        column_values(&table, "x"),
-        vec![Value::Int(1), Value::Int(2)]
-    );
-}
-
-#[test]
 fn read_executes_for_list_query() {
     let table = execute_read("FOR x IN [1, 2] RETURN x");
 

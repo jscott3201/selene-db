@@ -31,7 +31,7 @@ fn limit_rows_with(value: Value, source: &str) -> usize {
 
 #[test]
 fn limit_parameter_accepts_wide_exact_integer_values() {
-    let source = "UNWIND [1, 2, 3] AS n RETURN n LIMIT $count";
+    let source = "FOR n IN [1, 2, 3] RETURN n LIMIT $count";
 
     assert_eq!(limit_rows_with(Value::Int128(2), source), 2);
     assert_eq!(limit_rows_with(Value::Uint128(2), source), 2);
@@ -43,21 +43,21 @@ fn typed_limit_parameter_accepts_wide_exact_numeric_types() {
     assert_eq!(
         limit_rows_with(
             Value::Int128(2),
-            "UNWIND [1, 2, 3] AS n RETURN n LIMIT $count :: INT128",
+            "FOR n IN [1, 2, 3] RETURN n LIMIT $count :: INT128",
         ),
         2
     );
     assert_eq!(
         limit_rows_with(
             Value::Uint128(2),
-            "UNWIND [1, 2, 3] AS n RETURN n LIMIT $count :: UINT128",
+            "FOR n IN [1, 2, 3] RETURN n LIMIT $count :: UINT128",
         ),
         2
     );
     assert_eq!(
         limit_rows_with(
             Value::Decimal(Decimal::from(2)),
-            "UNWIND [1, 2, 3] AS n RETURN n LIMIT $count :: DECIMAL",
+            "FOR n IN [1, 2, 3] RETURN n LIMIT $count :: DECIMAL",
         ),
         2
     );
@@ -123,7 +123,7 @@ fn decimal_limit_parameter_negative_integer_reports_negative_limit_value() {
 
     let err = session
         .execute_source(
-            "UNWIND [1, 2, 3] AS n RETURN n LIMIT $count",
+            "FOR n IN [1, 2, 3] RETURN n LIMIT $count",
             &EmptyProcedureRegistry,
         )
         .expect_err("negative decimal limit is rejected");
@@ -150,7 +150,7 @@ fn fractional_decimal_limit_parameter_reports_invalid_value_type() {
 
         let err = session
             .execute_source(
-                "UNWIND [1, 2, 3] AS n RETURN n LIMIT $count",
+                "FOR n IN [1, 2, 3] RETURN n LIMIT $count",
                 &EmptyProcedureRegistry,
             )
             .expect_err("fractional decimal limit is rejected");
@@ -177,7 +177,7 @@ fn limit_parameter_above_u64_reports_numeric_value_out_of_range() {
 
     let err = session
         .execute_source(
-            "UNWIND [1, 2, 3] AS n RETURN n LIMIT $count",
+            "FOR n IN [1, 2, 3] RETURN n LIMIT $count",
             &EmptyProcedureRegistry,
         )
         .expect_err("out-of-range limit is rejected");

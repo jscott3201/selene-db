@@ -312,9 +312,9 @@ const ENTRIES: &[PlanCorpusEntry] = &[
         registry: PlanCorpusRegistry::Empty,
     },
     PlanCorpusEntry {
-        slug: "read_let_unwind_distinct",
-        description: "Read pipeline surface covering Unwind, Let, Project, and Distinct.",
-        source: "UNWIND [1, 2] AS x LET y = x RETURN DISTINCT y",
+        slug: "read_let_for_distinct",
+        description: "Read pipeline surface covering FOR row expansion, Let, Project, and Distinct.",
+        source: "FOR x IN [1, 2] LET y = x RETURN DISTINCT y",
         category: PlanCorpusCategory::Read,
         expected_rules: &[],
         uses_index_catalog: false,

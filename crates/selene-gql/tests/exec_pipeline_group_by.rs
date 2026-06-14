@@ -9,7 +9,7 @@ use exec_common::{LARGE_COUNTER_A, LARGE_COUNTER_B, column_values, execute_read}
 #[test]
 fn group_by_single_key_partitions_correctly() {
     let table =
-        execute_read("UNWIND [1, 2, 1] AS x RETURN x AS x, count(*) AS c GROUP BY x ORDER BY x");
+        execute_read("FOR x IN [1, 2, 1] RETURN x AS x, count(*) AS c GROUP BY x ORDER BY x");
 
     assert_eq!(
         column_values(&table, "x"),
@@ -60,7 +60,7 @@ fn group_by_explicit_with_empty_input_emits_no_rows() {
 #[test]
 fn group_by_uses_lossless_numeric_equality_for_keys() {
     let table = execute_read(
-        "UNWIND [9007199254740992, 9007199254740993, 9007199254740992.0] AS x \
+        "FOR x IN [9007199254740992, 9007199254740993, 9007199254740992.0] \
          RETURN x AS x, count(*) AS c GROUP BY x ORDER BY c DESC",
     );
 
@@ -74,9 +74,8 @@ fn group_by_uses_lossless_numeric_equality_for_keys() {
 
 #[test]
 fn group_by_handles_null_keys_as_distinct_group() {
-    let table = execute_read(
-        "UNWIND [NULL, NULL, 1] AS x RETURN x AS x, count(*) AS c GROUP BY x ORDER BY x",
-    );
+    let table =
+        execute_read("FOR x IN [NULL, NULL, 1] RETURN x AS x, count(*) AS c GROUP BY x ORDER BY x");
 
     assert_eq!(column_values(&table, "x"), vec![Value::Int(1), Value::Null]);
     assert_eq!(
@@ -87,7 +86,7 @@ fn group_by_handles_null_keys_as_distinct_group() {
 
 #[test]
 fn group_by_preserves_first_row_emission_order() {
-    let table = execute_read("UNWIND [2, 1, 2, 3, 1] AS x RETURN x AS x, count(*) AS c GROUP BY x");
+    let table = execute_read("FOR x IN [2, 1, 2, 3, 1] RETURN x AS x, count(*) AS c GROUP BY x");
 
     // GQLRT-02: the hash-indexed grouping keeps groups in first-emission order
     // (2, then 1, then 3) and reports the correct per-group aggregate.
