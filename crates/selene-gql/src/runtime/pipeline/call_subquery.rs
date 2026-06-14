@@ -158,6 +158,7 @@ fn op_binds_name(op: &PipelineOp, name: selene_core::DbString) -> bool {
         }
         PipelineOp::Union { rhs, .. }
         | PipelineOp::Chain(rhs)
+        | PipelineOp::CorrelatedChain(rhs)
         | PipelineOp::ExplainPlan { inner: rhs, .. } => plan_binds_name(rhs, name),
         PipelineOp::CallSubquery(subquery) => plan_binds_name(&subquery.body, name),
         _ => false,

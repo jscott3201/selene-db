@@ -356,7 +356,9 @@ fn collect_pipeline_types(op: &PipelineOp, types: &mut BTreeMap<ExprId, Analyzed
                 }
             }
         }
-        PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => collect_plan_types(rhs, types),
+        PipelineOp::Union { rhs, .. }
+        | PipelineOp::Chain(rhs)
+        | PipelineOp::CorrelatedChain(rhs) => collect_plan_types(rhs, types),
         PipelineOp::Call(call) => {
             for arg in &call.args {
                 record_project_type(arg, types);
@@ -488,7 +490,9 @@ fn collect_join_tree_predicates<'a>(tree: &'a JoinTree, predicates: &mut Vec<&'a
 fn collect_pipeline_predicates<'a>(op: &'a PipelineOp, predicates: &mut Vec<&'a FilterPredicate>) {
     match op {
         PipelineOp::Filter(predicate) => predicates.push(predicate),
-        PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+        PipelineOp::Union { rhs, .. }
+        | PipelineOp::Chain(rhs)
+        | PipelineOp::CorrelatedChain(rhs) => {
             collect_filter_predicates(rhs, predicates);
         }
         _ => {}
@@ -591,7 +595,9 @@ fn assert_pipeline_refs(op: &PipelineOp, slug: &str) {
                 assert_ref_list(&key.binding_refs, slug);
             }
         }
-        PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => assert_binding_refs(rhs, slug),
+        PipelineOp::Union { rhs, .. }
+        | PipelineOp::Chain(rhs)
+        | PipelineOp::CorrelatedChain(rhs) => assert_binding_refs(rhs, slug),
         PipelineOp::Call(call) => {
             for arg in &call.args {
                 assert_ref_list(&arg.binding_refs, slug);

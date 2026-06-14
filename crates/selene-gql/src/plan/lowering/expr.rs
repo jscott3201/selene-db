@@ -212,7 +212,9 @@ fn collect_subqueries_in_pipeline_op(
                 }
             }
         }
-        PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+        PipelineOp::Union { rhs, .. }
+        | PipelineOp::Chain(rhs)
+        | PipelineOp::CorrelatedChain(rhs) => {
             populate_plan_subqueries(rhs, analyzed, registry, max_quantifier)?;
         }
         PipelineOp::Match(pattern) | PipelineOp::OptionalMatch(pattern) => {

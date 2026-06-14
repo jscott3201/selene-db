@@ -36,6 +36,7 @@ fn variant_names(plan: &selene_gql::ExecutionPlan) -> Vec<&'static str> {
             PipelineOp::Distinct => "Distinct",
             PipelineOp::Union { .. } => "Union",
             PipelineOp::Chain(_) => "Chain",
+            PipelineOp::CorrelatedChain(_) => "CorrelatedChain",
             PipelineOp::OptionalMatch(_) => "OptionalMatch",
             PipelineOp::Call(_) => "Call",
             PipelineOp::Mutation(_) => "Mutation",
@@ -206,6 +207,15 @@ fn composite_subplans_keep_pattern_bindings_local() {
 fn chained_query_uses_chain_pipeline_op() {
     let plan = plan_one("RETURN 1 AS n NEXT RETURN 2 AS n");
     assert!(matches!(plan.pipeline.last(), Some(PipelineOp::Chain(_))));
+}
+
+#[test]
+fn correlated_chained_query_uses_correlated_chain_pipeline_op() {
+    let plan = plan_one("FOR a IN [1, 2] RETURN a NEXT RETURN a + 10 AS b");
+    assert!(matches!(
+        plan.pipeline.last(),
+        Some(PipelineOp::CorrelatedChain(_))
+    ));
 }
 
 #[test]
