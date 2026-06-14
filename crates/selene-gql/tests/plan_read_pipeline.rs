@@ -623,6 +623,28 @@ fn aggregate_only_query_emits_groupby_with_empty_keys() {
 }
 
 #[test]
+fn explicit_empty_grouping_set_emits_groupby_with_empty_keys() {
+    let plan = plan_one("FOR x IN [1, 2] RETURN count(*) AS c GROUP BY ()");
+    let groupings: Vec<_> = plan
+        .pipeline
+        .iter()
+        .filter_map(|op| {
+            if let PipelineOp::GroupBy { keys, aggregates } = op {
+                Some((keys.len(), aggregates.len()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        groupings,
+        vec![(0, 1)],
+        "expected explicit empty grouping set to lower to one GroupBy with empty keys; got pipeline {:?}",
+        variant_names(&plan)
+    );
+}
+
+#[test]
 fn leading_optional_match_lowers_to_unit_outer() {
     let plan = plan_one("OPTIONAL MATCH (a) RETURN a");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
