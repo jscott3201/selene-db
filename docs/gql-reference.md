@@ -46,7 +46,7 @@ spec docs by the build. The table below summarizes the major clause groups.
 | Group | Coverage | Notes |
 |---|---|---|
 | Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
-| Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`); `OTHERWISE` is `GQ09`. |
+| Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
 | Mutation (`INSERT`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). |
 | DDL (`CREATE/DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Full | Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
@@ -397,7 +397,7 @@ MATCH (p:Person) WHERE p.country = 'AU' RETURN p.name
 | `UNION`, `UNION ALL`, `UNION DISTINCT` | Supported (feature `GQ03`). |
 | `EXCEPT`, `EXCEPT ALL`, `EXCEPT DISTINCT` | Supported (features `GQ04`, `GQ05`). |
 | `INTERSECT`, `INTERSECT ALL`, `INTERSECT DISTINCT` | Supported (features `GQ06`, `GQ07`). |
-| `OTHERWISE` | Supported (feature `GQ09`). |
+| `OTHERWISE` | Supported (feature `GQ02`). |
 
 ### `LIMIT` precedence under `UNION ALL`
 
@@ -806,10 +806,10 @@ Examples of rejected constructs:
 
 ### Runtime feature introspection
 
-A future `CALL selene.feature_status` procedure may surface the claimed
-feature register at runtime. The canonical source today is the
-`feature_register` module in `selene-core`:
-`SUPPORTED_FEATURES`, `NOT_SUPPORTED_RATIONALE`, and `is_supported`.
+`CALL selene.feature_status()` surfaces the claimed feature register at
+runtime with `feature_id`, `status`, and `rationale` columns. It is backed by
+the `feature_register` module in `selene-core`: `SUPPORTED_FEATURES`,
+`NOT_SUPPORTED_RATIONALE`, and `is_supported`.
 
 ---
 
