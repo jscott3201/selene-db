@@ -8,8 +8,8 @@ architecture decisions that shape the workspace.
 selene-db is an embeddable property graph engine for Rust that targets
 ISO/IEC 39075:2024 GQL minimum conformance plus a curated subset of optional
 features. The engine is library-only: no transport, no auth, no server.
-Embedders pull the workspace crates as path dependencies and run the engine
-in-process.
+Embedders depend on the published workspace crates or a local checkout and run
+the engine in-process.
 
 For operational detail on durability and recovery see
 [`persistence-and-recovery.md`](persistence-and-recovery.md). For the GQL
@@ -102,8 +102,8 @@ AnalysisError>` runs semantic checks: scope resolution, binding decls
 (`ExprTypeTable`), statement-category classification (`ReadOnly`,
 `DataModifying`, `CatalogModifying`, `TransactionControl`), and the mutation
 write set (`MutationWriteSet`, `WriteSetEntry`). The Flagger runs in this
-phase: any construct outside the v1.0 claimed feature register is rejected
-with a `GqlStatus` flag.
+phase: any construct outside the D1 claimed feature register is rejected with
+a `GqlStatus` flag.
 
 ### Plan
 
@@ -335,17 +335,17 @@ referenced from spec files and brief logs throughout the codebase.
 
 ### D1 — Library only
 
-selene-db v1.0 is an embeddable Rust library. No server process, no
-transport, no auth layer. Embedders own the network and policy surfaces.
-This decision is what lets selene-db ship without a wire format claim
-(ISO 39075 clause 4.2.3) and what makes `IW001` / `IW002` (principals and
-authorization) the caller's responsibility.
+selene-db is an embeddable Rust library. No server process, no transport, no
+auth layer. Embedders own the network and policy surfaces. This decision is
+what lets selene-db ship without a wire format claim (ISO 39075 clause 4.2.3)
+and what makes `IW001` / `IW002` (principals and authorization) the caller's
+responsibility.
 
 ### D2 — Strict ISO GQL parser
 
 The query language is ISO/IEC 39075:2024 GQL. No Cypher, no SQL, no SPARQL
-grammar in the parser. Constructs outside the v1.0 claimed feature register
-are rejected by the Flagger at parse time. This eliminates a class of
+grammar in the parser. Constructs outside the D1 claimed feature register are
+rejected by the Flagger at parse time. This eliminates a class of
 "works on Neo4j but not on us" surprises and pins the language surface to
 a stable external standard.
 
@@ -353,8 +353,8 @@ a stable external standard.
 
 A single process can host multiple `SharedGraph` instances side by side,
 each with its own snapshot, write lock, WAL directory, and provider set.
-Cross-graph transactions are out of v1.0 scope (feature `GT03` is not
-claimed). This decision lets embedders run shard-per-graph or
+Cross-graph transactions are outside the current D1 scope (feature `GT03` is
+not claimed). This decision lets embedders run shard-per-graph or
 tenant-per-graph patterns without process-level coordination.
 
 ### D4 — Snapshot isolation by ArcSwap publication

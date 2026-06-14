@@ -6,7 +6,8 @@ selene-db is a single native graph engine — there is no extension/procedure-pa
 
 ## 1. What "embedding" means here
 
-`selene-db` is a **library-only** engine. Per D1 (ISO/IEC 39075:2024 Clause 4.2.3 does not normatively define a wire format), v1.0 ships:
+`selene-db` is a **library-only** engine. Per D1 (ISO/IEC 39075:2024
+Clause 4.2.3 does not normatively define a wire format), the engine ships:
 
 - no server process,
 - no transport (HTTP, gRPC, BACnet, anything),
@@ -459,7 +460,9 @@ let mut session = Session::new(&graph).with_warning_sink(WarningLog::default());
 - `StatementOutput::Rows(BindingTable)` — the statement produced a row-bearing result. Iterate `table.rows()` for `&[Binding]`; each `Binding` is an ordered `&[Value]`. Use `table.schema().columns` to recover column names and types.
 - `StatementOutput::Empty` — the statement completed without rows (mutations with no `RETURN`, DDL, transaction control).
 
-Mutation statistics (rows inserted, edges updated, &c.) are not exposed as a separate variant in v1.0. If you need counts, plan an explicit `RETURN count(*)` or instrument via the WAL `Change` stream.
+Mutation statistics (rows inserted, edges updated, &c.) are not currently
+exposed as a separate variant. If you need counts, plan an explicit
+`RETURN count(*)` or instrument via the WAL `Change` stream.
 
 ### 6.7 Extracting values
 
