@@ -30,7 +30,7 @@ ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_
               | show_indexes | show_procedures
               | create_graph | drop_graph | create_index | drop_index }
 
-create_schema_command = { create_schema ~ (^"NEXT" ~ create_schema)* }
+create_schema_command = { create_schema ~ (next_kw ~ create_schema)* }
 create_schema = { ^"CREATE" ~ ^"SCHEMA" ~ if_not_exists? ~ schema_name }
 schema_name = { ("/" ~ ident)+ | ident }
 
@@ -109,14 +109,19 @@ drop_index   = { ^"DROP" ~ ^"INDEX" ~ if_exists? ~ ident }
 if_not_exists = { ^"IF" ~ ^"NOT" ~ ^"EXISTS" }
 if_exists     = { ^"IF" ~ ^"EXISTS" }
 
-chained_query = { query_pipeline ~ (^"NEXT" ~ query_pipeline)+ }
+chained_query = { query_pipeline ~ (next_kw ~ query_pipeline)+ }
 
 composite_query = { query_pipeline ~ (set_op ~ query_pipeline)+ }
 set_op          = { union_op | intersect_op | except_op | otherwise_op }
-union_op        = { ^"UNION" ~ (^"ALL" | ^"DISTINCT")? }
-intersect_op    = { ^"INTERSECT" ~ (^"ALL" | ^"DISTINCT")? }
-except_op       = { ^"EXCEPT" ~ (^"ALL" | ^"DISTINCT")? }
-otherwise_op    = { ^"OTHERWISE" }
+union_op        = { union_kw ~ (all_kw | distinct_kw)? }
+intersect_op    = { intersect_kw ~ (all_kw | distinct_kw)? }
+except_op       = { except_kw ~ (all_kw | distinct_kw)? }
+otherwise_op    = { otherwise_kw }
+next_kw = @{ ^"NEXT" ~ !(LETTER | NUMBER | "_") }
+union_kw = @{ ^"UNION" ~ !(LETTER | NUMBER | "_") }
+intersect_kw = @{ ^"INTERSECT" ~ !(LETTER | NUMBER | "_") }
+except_kw = @{ ^"EXCEPT" ~ !(LETTER | NUMBER | "_") }
+otherwise_kw = @{ ^"OTHERWISE" ~ !(LETTER | NUMBER | "_") }
 
 // -- Transaction control --------------------------------------------
 
