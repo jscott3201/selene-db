@@ -92,7 +92,6 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
             ParserError::syntax("CALL subquery is missing body", source_span, None)
         })?),
         yield_items,
-        in_transactions: false,
         span: source_span,
     })
 }

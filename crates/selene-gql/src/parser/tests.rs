@@ -174,7 +174,6 @@ fn parse_inline_call_subquery() {
     };
     assert!(call.variable_scope.is_none());
     assert!(call.yield_items.is_empty());
-    assert!(!call.in_transactions);
     assert_eq!(call.body.statements.len(), 1);
 }
 
