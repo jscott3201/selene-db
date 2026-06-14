@@ -490,7 +490,13 @@ fn parse_string(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
 }
 
 fn temporal_text(pair: Pair<'_, Rule>) -> Result<ParsedCharacterString, ParserError> {
-    let string_pair = first_child(pair)?;
+    let source_span = span(&pair);
+    let string_pair = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::string_lit)
+        .ok_or_else(|| {
+            ParserError::syntax("temporal literal is missing string", source_span, None)
+        })?;
     parse_character_string(string_pair.as_str(), span(&string_pair))
 }
 

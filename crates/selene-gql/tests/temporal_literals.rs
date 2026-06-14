@@ -1,7 +1,7 @@
 //! Temporal keyword literal conformance cases.
 
 use selene_core::{GraphId, Value};
-use selene_gql::{EmptyProcedureRegistry, GqlStatus, Session, StatementOutput, parse};
+use selene_gql::{EmptyProcedureRegistry, GqlStatus, ParserError, Session, StatementOutput, parse};
 use selene_graph::SharedGraph;
 
 fn single_value(source: &str) -> Value {
@@ -15,6 +15,14 @@ fn single_value(source: &str) -> Value {
     };
     assert_eq!(table.row_count(), 1, "expected one row");
     table.rows()[0].values()[0].clone()
+}
+
+fn assert_syntax_error(source: &str) {
+    let error = parse(source).expect_err(source);
+    assert!(
+        matches!(error, ParserError::SyntaxError { .. }),
+        "{source} must reject as syntax, got {error:?}"
+    );
 }
 
 #[test]
@@ -68,6 +76,39 @@ fn zoned_temporal_literals_lower_to_values() {
     };
     assert_eq!(value.time().to_string(), "12:34:56");
     assert_eq!(value.offset().to_string(), "-04");
+}
+
+#[test]
+fn temporal_literal_keywords_require_boundaries() {
+    for source in [
+        "RETURN ZONEDDATETIME '2026-05-07T12:34:56-04:00' AS v",
+        "RETURN LOCALDATETIME '2026-05-07T12:34:56' AS v",
+        "RETURN ZONEDTIME '12:34:56-04:00' AS v",
+        "RETURN LOCALTIME '12:34:56' AS v",
+        "RETURN DATETIMEx '2026-05-07T12:34:56' AS v",
+        "RETURN TIMESTAMPx '2026-05-07T12:34:56-04:00' AS v",
+        "RETURN DATEy '2026-05-07' AS v",
+        "RETURN TIMEx '12:34:56' AS v",
+        "RETURN DURATIONx 'PT1H' AS v",
+        "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-03-01')) YEARTOMONTH AS v",
+        "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-02')) DAYTOSECOND AS v",
+    ] {
+        assert_syntax_error(source);
+    }
+}
+
+#[test]
+fn guarded_temporal_keywords_still_accept_separated_forms() {
+    for source in [
+        "RETURN ZONED /* c */ DATETIME '2026-05-07T12:34:56-04:00' AS v",
+        "RETURN LOCAL /* c */ DATETIME '2026-05-07T12:34:56' AS v",
+        "RETURN ZONED /* c */ TIME '12:34:56-04:00' AS v",
+        "RETURN LOCAL /* c */ TIME '12:34:56' AS v",
+        "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-03-01')) YEAR /* c */ TO /* c */ MONTH AS v",
+        "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-02')) DAY /* c */ TO /* c */ SECOND AS v",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+    }
 }
 
 #[test]
