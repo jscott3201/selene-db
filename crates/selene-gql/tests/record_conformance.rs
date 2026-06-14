@@ -35,7 +35,7 @@ fn record_equality_with_null_field_is_unknown() {
 
 #[test]
 fn distinct_over_permuted_records_collapses() {
-    let table = execute_read("UNWIND [{a: 1, b: 2}, {b: 2, a: 1}] AS r RETURN DISTINCT r");
+    let table = execute_read("FOR r IN [{a: 1, b: 2}, {b: 2, a: 1}] RETURN DISTINCT r");
 
     assert_eq!(
         table.row_count(),
@@ -46,7 +46,7 @@ fn distinct_over_permuted_records_collapses() {
 
 #[test]
 fn distinct_keeps_records_with_different_field_values_apart() {
-    let table = execute_read("UNWIND [{a: 1, b: 2}, {a: 1, b: 3}] AS r RETURN DISTINCT r");
+    let table = execute_read("FOR r IN [{a: 1, b: 2}, {a: 1, b: 3}] RETURN DISTINCT r");
 
     assert_eq!(table.row_count(), 2);
 }
@@ -54,7 +54,7 @@ fn distinct_keeps_records_with_different_field_values_apart() {
 #[test]
 fn group_by_collapses_permuted_record_keys() {
     let table = execute_read(
-        "UNWIND [{a: 1, b: 2}, {b: 2, a: 1}, {a: 9, b: 9}] AS r \
+        "FOR r IN [{a: 1, b: 2}, {b: 2, a: 1}, {a: 9, b: 9}] \
          RETURN r AS key, count(*) AS n GROUP BY r",
     );
 

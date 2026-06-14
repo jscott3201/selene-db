@@ -2,7 +2,7 @@ use super::*;
 use crate::ast::{
     BinaryOp, BindingTableType, CharacterStringLiteralKind, EdgeDirection, GqlType,
     IntegerLiteralKind, IsCheckKind, LabelExpr, Literal, PipelineStatement,
-    RowExpansionPositionKind, RowExpansionSyntax, SetOp, ValueExpr,
+    RowExpansionPositionKind, SetOp, ValueExpr,
 };
 use crate::error::GqlStatus;
 
@@ -185,7 +185,6 @@ fn parse_for_list_statement_as_row_expansion() {
     let PipelineStatement::Unwind(statement) = &query.statements[0] else {
         panic!("expected row expansion");
     };
-    assert_eq!(statement.syntax, RowExpansionSyntax::For);
     assert_eq!(statement.alias.as_str(), "x");
     let ValueExpr::ListLiteral { items, .. } = &statement.source else {
         panic!("expected list source");

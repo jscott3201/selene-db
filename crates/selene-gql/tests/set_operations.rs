@@ -73,8 +73,7 @@ fn execute_manual_set_op(
 
 #[test]
 fn intersect_returns_lhs_input_order() {
-    let table =
-        execute_read("UNWIND [1, 2, 3] AS n RETURN n INTERSECT UNWIND [2, 3, 4] AS n RETURN n");
+    let table = execute_read("FOR n IN [1, 2, 3] RETURN n INTERSECT FOR n IN [2, 3, 4] RETURN n");
 
     assert_eq!(
         column_values(&table, "n"),
@@ -85,8 +84,8 @@ fn intersect_returns_lhs_input_order() {
 #[test]
 fn intersect_all_returns_min_count() {
     let table = execute_read(
-        "UNWIND [1, 2, 2, 3] AS n RETURN n \
-         INTERSECT ALL UNWIND [2, 2, 2, 4] AS n RETURN n",
+        "FOR n IN [1, 2, 2, 3] RETURN n \
+         INTERSECT ALL FOR n IN [2, 2, 2, 4] RETURN n",
     );
 
     assert_eq!(
@@ -97,8 +96,7 @@ fn intersect_all_returns_min_count() {
 
 #[test]
 fn except_returns_lhs_minus_rhs() {
-    let table =
-        execute_read("UNWIND [1, 2, 3] AS n RETURN n EXCEPT UNWIND [2, 3, 4] AS n RETURN n");
+    let table = execute_read("FOR n IN [1, 2, 3] RETURN n EXCEPT FOR n IN [2, 3, 4] RETURN n");
 
     assert_eq!(column_values(&table, "n"), vec![Value::Int(1)]);
 }
@@ -106,8 +104,8 @@ fn except_returns_lhs_minus_rhs() {
 #[test]
 fn except_all_returns_saturating_sub_count() {
     let table = execute_read(
-        "UNWIND [1, 2, 2, 3] AS n RETURN n \
-         EXCEPT ALL UNWIND [2, 4] AS n RETURN n",
+        "FOR n IN [1, 2, 2, 3] RETURN n \
+         EXCEPT ALL FOR n IN [2, 4] RETURN n",
     );
 
     assert_eq!(
@@ -118,7 +116,7 @@ fn except_all_returns_saturating_sub_count() {
 
 #[test]
 fn otherwise_empty_lhs_evaluates_rhs() {
-    let table = execute_read("UNWIND [] AS n RETURN n OTHERWISE RETURN 9 AS n");
+    let table = execute_read("FOR n IN [] RETURN n OTHERWISE RETURN 9 AS n");
 
     assert_eq!(column_values(&table, "n"), vec![Value::Int(9)]);
 }
@@ -144,8 +142,8 @@ fn otherwise_non_empty_lhs_does_not_evaluate_rhs() {
 #[test]
 fn set_op_null_equality_via_runtime_eq_key() {
     let table = execute_read(
-        "UNWIND [NULL, NULL, 1] AS n RETURN n \
-         INTERSECT UNWIND [NULL] AS n RETURN n",
+        "FOR n IN [NULL, NULL, 1] RETURN n \
+         INTERSECT FOR n IN [NULL] RETURN n",
     );
 
     assert_eq!(column_values(&table, "n"), vec![Value::Null]);
@@ -219,7 +217,7 @@ fn set_op_key_cap_exceeded_returns_5gql1() {
         ImplDefinedCaps::default().with_set_op_key_cap(NonZeroUsize::new(1).expect("non-zero cap"));
     let err = execute_manual_set_op(
         SetOp::Intersect,
-        "UNWIND [1, 2] AS n RETURN n",
+        "FOR n IN [1, 2] RETURN n",
         int_table("n", [1]),
         &caps,
         None,
@@ -242,7 +240,7 @@ fn final_output_still_respects_session_row_cap() {
     let mut session = Session::new(&graph).with_row_cap(1);
     let err = session
         .execute_source(
-            "UNWIND [1, 2] AS n RETURN n EXCEPT RETURN 99 AS n",
+            "FOR n IN [1, 2] RETURN n EXCEPT RETURN 99 AS n",
             &EmptyProcedureRegistry,
         )
         .expect_err("outer result exceeds row cap");
@@ -257,7 +255,7 @@ fn otherwise_empty_lhs_statement_output_rows() {
     let mut session = Session::new(&graph);
     let output = session
         .execute_source(
-            "UNWIND [] AS n RETURN n OTHERWISE RETURN 9 AS n",
+            "FOR n IN [] RETURN n OTHERWISE RETURN 9 AS n",
             &EmptyProcedureRegistry,
         )
         .expect("otherwise statement executes");

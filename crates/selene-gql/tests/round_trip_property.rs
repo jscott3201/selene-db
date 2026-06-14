@@ -234,7 +234,7 @@ fn read_side_formatting_is_byte_idempotent() {
 #[test]
 fn expression_identifiers_format_without_double_quotes() {
     for source in [
-        "UNWIND [1, 2, 3] AS value RETURN stddev_pop(value) AS pop",
+        "FOR value IN [1, 2, 3] RETURN stddev_pop(value) AS pop",
         "WITH 1 AS \"WITH\" RETURN `WITH` AS result",
         "WITH 1 AS `a``b` RETURN `a``b` AS result",
         "RETURN uuid('018f1b6d-7b89-7cc0-9f40-2c6f8d4df101') AS parsed",

@@ -236,7 +236,7 @@ impl<'g> Session<'g> {
     /// Attach an outermost result-row cap to subsequent statements.
     ///
     /// The cap is enforced only at the statement output boundary. Intermediate
-    /// rows produced by scans, joins, `UNWIND`, or other pipeline operators do
+    /// rows produced by scans, joins, `FOR`, or other pipeline operators do
     /// not count against it. Exceeding the cap returns `RowCapExceeded`; inside
     /// an explicit transaction that marks the transaction failed until
     /// `ROLLBACK`.

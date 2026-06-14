@@ -46,7 +46,7 @@ pub use crate::ast::{
     statement::{
         LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
         QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition, RowExpansionPositionKind,
-        RowExpansionSyntax, SessionResetTarget, SetOp, Statement, UnwindStatement, WithClause,
+        SessionResetTarget, SetOp, Statement, UnwindStatement, WithClause,
     },
     types::{BindingTableType, GqlType, RecordType},
     util::{EmptyVecError, NonEmpty, Vec2OrMore},

@@ -19,7 +19,7 @@ fn input() -> BindingTable {
 #[test]
 fn unwind_emits_one_row_per_list_element() {
     let fixture = ExecFixture::build();
-    let plan = planned("UNWIND [1, 2, 3] AS x RETURN x");
+    let plan = planned("FOR x IN [1, 2, 3] RETURN x");
     let mut ctx = fixture.context_caps(&plan);
 
     let table = execute_pipeline(&plan.pipeline, input(), &mut ctx).expect("unwind executes");
@@ -33,7 +33,7 @@ fn unwind_emits_one_row_per_list_element() {
 #[test]
 fn unwind_of_empty_list_emits_zero_rows() {
     let fixture = ExecFixture::build();
-    let plan = planned("UNWIND [] AS x RETURN x");
+    let plan = planned("FOR x IN [] RETURN x");
     let mut ctx = fixture.context_caps(&plan);
 
     let table = execute_pipeline(&plan.pipeline, input(), &mut ctx).expect("unwind executes");
@@ -44,7 +44,7 @@ fn unwind_of_empty_list_emits_zero_rows() {
 #[test]
 fn unwind_of_null_emits_zero_rows() {
     let fixture = ExecFixture::build();
-    let plan = planned("UNWIND NULL AS x RETURN x");
+    let plan = planned("FOR x IN NULL RETURN x");
     let mut ctx = fixture.context_caps(&plan);
 
     let table = execute_pipeline(&plan.pipeline, input(), &mut ctx).expect("unwind executes");
@@ -55,7 +55,7 @@ fn unwind_of_null_emits_zero_rows() {
 #[test]
 fn unwind_of_non_list_returns_data_exception() {
     let fixture = ExecFixture::build();
-    let plan = planned("UNWIND [1] AS x RETURN x");
+    let plan = planned("FOR x IN [1] RETURN x");
     let mut ctx = fixture.context_caps(&plan);
     let mut op = plan.pipeline[0].clone();
     let PipelineOp::Unwind { source, span, .. } = &mut op else {
@@ -71,7 +71,7 @@ fn unwind_of_non_list_returns_data_exception() {
 #[test]
 fn unwind_extends_schema_with_alias_column() {
     let fixture = ExecFixture::build();
-    let plan = planned("UNWIND [1] AS x RETURN x");
+    let plan = planned("FOR x IN [1] RETURN x");
     let mut ctx = fixture.context_caps(&plan);
 
     let table = execute_pipeline(&plan.pipeline[..1], input(), &mut ctx).expect("unwind executes");

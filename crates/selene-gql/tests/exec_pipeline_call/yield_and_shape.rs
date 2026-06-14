@@ -91,7 +91,7 @@ fn optional_procedure_returning_zero_rows_preserves_input_with_null_yields() {
 
     let table = rows(
         execute(
-            "UNWIND [1, 2] AS x OPTIONAL CALL pkg.empty() YIELD out RETURN x, out ORDER BY x",
+            "FOR x IN [1, 2] OPTIONAL CALL pkg.empty() YIELD out RETURN x, out ORDER BY x",
             &graph(3919),
             &registry,
         )
@@ -118,7 +118,7 @@ fn optional_procedure_without_yields_preserves_input_for_empty_result() {
 
     let table = rows(
         execute(
-            "UNWIND [1, 2] AS x OPTIONAL CALL pkg.empty() RETURN x ORDER BY x",
+            "FOR x IN [1, 2] OPTIONAL CALL pkg.empty() RETURN x ORDER BY x",
             &graph(3920),
             &registry,
         )
@@ -208,7 +208,7 @@ fn read_tier_procedure_cross_products_with_multi_row_input() {
 
     let table = rows(
         execute(
-            "UNWIND [1, 2, 3] AS x CALL pkg.two() YIELD y RETURN x, y",
+            "FOR x IN [1, 2, 3] CALL pkg.two() YIELD y RETURN x, y",
             &graph(3904),
             &registry,
         )

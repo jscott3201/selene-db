@@ -157,14 +157,13 @@ select_from = { ^"FROM" ~ (match_stmt | ident) }
 
 query_pipeline     = { pipeline_statement+ }
 call_query_pipeline = { call_stmt ~ post_call_pipeline_statement ~ pipeline_statement* }
-pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
-post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
+pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
+post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 
 for_stmt    = { ^"FOR" ~ ident ~ ^"IN" ~ expr ~ for_position? }
 for_position = { ^"WITH" ~ (for_position_ordinality | for_position_offset) ~ ident }
 for_position_ordinality = @{ ^"ORDINALITY" ~ !(LETTER | NUMBER | "_") }
 for_position_offset = @{ ^"OFFSET" ~ !(LETTER | NUMBER | "_") }
-unwind_stmt = { ^"UNWIND" ~ expr ~ ^"AS" ~ ident }
 with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ having_clause? ~ where_clause? }
 
 // -- MATCH ----------------------------------------------------------
@@ -1047,7 +1046,7 @@ keyword = @{
     | ^"LOCAL_DATETIME" | ^"LOCAL_TIMESTAMP" | ^"LOCAL_TIME" | ^"LOCAL"
     | ^"TIMESTAMP" | ^"TIME" | ^"ZONED_DATETIME" | ^"ZONED_TIME" | ^"ZONED"
     | ^"ALL_DIFFERENT" | ^"SAME" | ^"PROPERTY_EXISTS" | ^"LABELS" | ^"ELEMENTS" | ^"NORMALIZED" | ^"NORMALIZE"
-    | ^"WITHOUT" | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"ORDINALITY"
+    | ^"WITHOUT" | ^"WITH" | ^"HAVING" | ^"ORDINALITY"
     | ^"CREATE" | ^"DROP"
     | ^"SELECT" | ^"FROM" | ^"TRIM"
     | ^"DIRECTED" | ^"LABELED" | ^"RECORD"

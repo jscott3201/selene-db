@@ -138,7 +138,7 @@ fn sum_over_int128_column() {
     session.bind_parameter(db_string("b"), Value::Int128(20));
 
     assert_eq!(
-        single_value(&mut session, "UNWIND [$a, $b] AS x RETURN sum(x) AS s"),
+        single_value(&mut session, "FOR x IN [$a, $b] RETURN sum(x) AS s"),
         Value::Int128(30)
     );
 }
@@ -152,7 +152,7 @@ fn sum_over_uint128_column_out_of_i64_range() {
     session.bind_parameter(db_string("b"), Value::Uint128(1));
 
     assert_eq!(
-        single_value(&mut session, "UNWIND [$a, $b] AS x RETURN sum(x) AS s"),
+        single_value(&mut session, "FOR x IN [$a, $b] RETURN sum(x) AS s"),
         Value::Int128(i128::from(u64::MAX) + 1)
     );
 }
@@ -164,7 +164,7 @@ fn sum_over_int128_column_overflow_is_numeric_out_of_range() {
     session.bind_parameter(db_string("a"), Value::Int128(i128::MAX));
     session.bind_parameter(db_string("b"), Value::Int128(i128::MAX));
 
-    let err = execute(&mut session, "UNWIND [$a, $b] AS x RETURN sum(x) AS s")
+    let err = execute(&mut session, "FOR x IN [$a, $b] RETURN sum(x) AS s")
         .expect_err("i128 sum overflow errors");
     assert_eq!(err.gqlstatus().as_str(), "22003");
 }
@@ -177,7 +177,7 @@ fn sum_over_decimal_column() {
     session.bind_parameter(db_string("b"), Value::Decimal("2.5".parse().unwrap()));
 
     assert_eq!(
-        single_value(&mut session, "UNWIND [$a, $b] AS x RETURN sum(x) AS s"),
+        single_value(&mut session, "FOR x IN [$a, $b] RETURN sum(x) AS s"),
         Value::Decimal("4.0".parse().unwrap())
     );
 }
@@ -190,7 +190,7 @@ fn avg_over_decimal_column() {
     session.bind_parameter(db_string("b"), Value::Decimal("2".parse().unwrap()));
 
     assert_eq!(
-        single_value(&mut session, "UNWIND [$a, $b] AS x RETURN avg(x) AS a"),
+        single_value(&mut session, "FOR x IN [$a, $b] RETURN avg(x) AS a"),
         Value::Decimal("1.5".parse().unwrap())
     );
 }
@@ -204,10 +204,7 @@ fn stddev_pop_over_int128_column() {
 
     // population stddev of [2,4] = 1.0
     assert_eq!(
-        single_value(
-            &mut session,
-            "UNWIND [$a, $b] AS x RETURN stddev_pop(x) AS s"
-        ),
+        single_value(&mut session, "FOR x IN [$a, $b] RETURN stddev_pop(x) AS s"),
         Value::Float(1.0)
     );
 }

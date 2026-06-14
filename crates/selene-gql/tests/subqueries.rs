@@ -394,7 +394,7 @@ fn value_subquery_rejects_non_aggregate_without_limit_one() {
 #[test]
 fn value_subquery_limit_one_must_bound_final_result() {
     assert_status(
-        "RETURN VALUE { RETURN 1 LIMIT 1 UNWIND [1, 2] AS n RETURN n } AS v",
+        "RETURN VALUE { RETURN 1 LIMIT 1 FOR n IN [1, 2] RETURN n } AS v",
         "42001",
     );
 }

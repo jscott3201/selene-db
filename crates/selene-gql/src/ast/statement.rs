@@ -187,7 +187,7 @@ pub enum PipelineStatement {
     Filter(ValueExpr),
     /// `LET`.
     Let(Vec<LetBinding>),
-    /// Row expansion (`FOR` / `UNWIND`).
+    /// Row expansion (`FOR`).
     Unwind(UnwindStatement),
     /// `ORDER BY`.
     Sorting(Vec<OrderTerm>),
@@ -235,20 +235,9 @@ pub struct LetBinding {
     pub span: SourceSpan,
 }
 
-/// Surface spelling for a row-expansion statement.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub enum RowExpansionSyntax {
-    /// ISO `FOR <binding> IN <list expression>` spelling.
-    For,
-    /// Selene `UNWIND <list expression> AS <binding>` spelling.
-    Unwind,
-}
-
 /// Row-expansion statement.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct UnwindStatement {
-    /// Source syntax used to parse this row expansion.
-    pub syntax: RowExpansionSyntax,
     /// Source expression.
     pub source: ValueExpr,
     /// Database-string alias.

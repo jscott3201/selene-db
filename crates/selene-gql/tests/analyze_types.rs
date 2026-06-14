@@ -202,7 +202,7 @@ fn count_subquery_is_integer() {
 
 #[test]
 fn unwind_list_aliases_to_element_type() {
-    let analyzed = analyze_one("UNWIND [1, 2, 3] AS x RETURN x").unwrap();
+    let analyzed = analyze_one("FOR x IN [1, 2, 3] RETURN x").unwrap();
     assert_eq!(
         projection_type(&analyzed, "x"),
         AnalyzedType::Resolved(GqlType::Integer)

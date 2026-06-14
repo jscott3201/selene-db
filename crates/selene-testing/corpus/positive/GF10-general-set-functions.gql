@@ -1,7 +1,7 @@
 // corpus: positive
 // feature: GF10
 // expects: parse-ok
-UNWIND [1, 2, 3] AS value
+FOR value IN [1, 2, 3]
 RETURN stddev_pop(value) AS pop,
        stddev_samp(value) AS samp,
        collect_list(value) AS "values"

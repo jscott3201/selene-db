@@ -262,7 +262,7 @@ fn cardinality_counts_session_table_parameter() {
 #[test]
 fn cardinality_counts_call_yield_table_ref() {
     let table = execute_with_registry(
-        "UNWIND [0] AS seed CALL selene_test.binding_table_with_rows(7) YIELD t RETURN cardinality(t) AS value",
+        "FOR seed IN [0] CALL selene_test.binding_table_with_rows(7) YIELD t RETURN cardinality(t) AS value",
         &BindingTableFixtureRegistry,
     );
 

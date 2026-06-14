@@ -45,7 +45,7 @@ spec docs by the build. The table below summarizes the major clause groups.
 
 | Group | Coverage | Notes |
 |---|---|---|
-| Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `UNWIND`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
+| Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
 | Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`); `OTHERWISE` is `GQ09`. |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
 | Mutation (`INSERT`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). |
@@ -186,8 +186,8 @@ RETURN r.score AS path_scores
 
 Each row's `path_scores` value is a list. Missing edge properties become
 `NULL` at the corresponding list position. `PROPERTY_EXISTS` remains scalar
-over graph elements and records; use `UNWIND` when per-element existence checks
-are needed.
+over graph elements and records; use `FOR` when per-element existence checks are
+needed.
 
 ### `OPTIONAL MATCH`
 
@@ -238,7 +238,7 @@ RETURN c.name, headcount
 are exactly the projected aliases. `DISTINCT`, `GROUP BY`, `HAVING`, and
 `WHERE` are all valid after `WITH`.
 
-### `FOR` / `UNWIND`
+### `FOR`
 
 ```gql
 FOR x IN [1, 2, 3, 4]
@@ -249,16 +249,13 @@ RETURN x, ord
 
 FOR x IN [1, 2, 3, 4] WITH OFFSET off
 RETURN x, off
-
-UNWIND [1, 2, 3, 4] AS x
-RETURN x * x AS squared
 ```
 
-`FOR` is the ISO list-value row-expansion statement. `UNWIND` is Selene's
-equivalent pipeline alias. Both flatten a list expression into row-per-element.
-The expression can be a list literal, a list-typed property, or any expression
-evaluating to `LIST<T>`. `WITH ORDINALITY` adds a one-based position column;
-`WITH OFFSET` adds a zero-based position column.
+`FOR` is the ISO list-value row-expansion statement. It flattens a list
+expression into row-per-element. The expression can be a list literal, a
+list-typed property, or any expression evaluating to `LIST<T>`. `WITH
+ORDINALITY` adds a one-based position column; `WITH OFFSET` adds a zero-based
+position column.
 
 ### `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`
 
