@@ -505,7 +505,8 @@ group_by_item      = { expr }
 
 // -- CALL -----------------------------------------------------------
 
-call_stmt      = { optional_modifier? ~ ^"CALL" ~ (call_subquery | call_procedure) }
+call_stmt      = { optional_modifier? ~ call_kw ~ (call_subquery | call_procedure) }
+call_kw = @{ ^"CALL" ~ !(LETTER | NUMBER | "_") }
 call_subquery  = { variable_scope_clause? ~ "{" ~ query_pipeline ~ "}" ~ yield_clause? }
 variable_scope_clause = { "(" ~ (ident ~ ("," ~ ident)*)? ~ ")" }
 call_procedure = { qualified_name ~ "(" ~ procedure_arg_list? ~ ")" ~ yield_clause? }
@@ -516,7 +517,8 @@ procedure_binding_table_arg = { binding_table_type_table_kw ~ ident }
 procedure_graph_arg = { procedure_graph_kw ~ ident }
 procedure_graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
 arg_list       = { expr ~ ("," ~ expr)* }
-yield_clause   = { ^"YIELD" ~ yield_item ~ ("," ~ yield_item)* }
+yield_clause   = { yield_kw ~ yield_item ~ ("," ~ yield_item)* }
+yield_kw = @{ ^"YIELD" ~ !(LETTER | NUMBER | "_") }
 yield_item     = { ("*" | prop_ident) ~ alias? }
 
 // -- Mutations ------------------------------------------------------

@@ -47,6 +47,7 @@ fn build_call_stmt(pair: Pair<'_, Rule>) -> Result<BuiltCall, ParserError> {
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::optional_modifier => optional = true,
+            Rule::call_kw => {}
             Rule::call_procedure | Rule::call_subquery => body = Some(child),
             _ => return Err(unexpected_pair(child, "expected CALL body")),
         }
