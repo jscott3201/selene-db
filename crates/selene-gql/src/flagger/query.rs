@@ -1,10 +1,10 @@
 //! Query and top-level statement Flagger walk.
 
-use selene_core::feature_register::FeatureId;
+use selene_core::{DbString, feature_register::FeatureId};
 
 use crate::{
     LimitValue, PipelineStatement, QueryPipeline, ReturnClause, SessionResetTarget, SetOp,
-    Statement, WithClause,
+    Statement, ValueExpr, WithClause,
     ast::{
         pattern::{
             EdgeDirection, EdgePattern, GraphPattern, MatchClause, MatchMode, NodePattern,
@@ -82,15 +82,32 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
 }
 
 pub(crate) fn query_pipeline(pipeline: &QueryPipeline, uses: &mut Vec<FeatureUse>) {
+    let mut projection_names = None;
     for (index, statement) in pipeline.statements.iter().enumerate() {
         if index > 0 && matches!(statement, PipelineStatement::Match(_)) {
             record_feature(uses, FeatureId::GQ20, statement.span());
         }
-        pipeline_statement(statement, uses);
+        pipeline_statement(statement, projection_names.as_deref(), uses);
+        match statement {
+            PipelineStatement::Return(clause) => {
+                projection_names = Some(projected_names(&clause.items));
+            }
+            PipelineStatement::With(clause) => {
+                projection_names = Some(projected_names(&clause.items));
+            }
+            PipelineStatement::Sorting(_)
+            | PipelineStatement::Limit(_)
+            | PipelineStatement::Offset(_) => {}
+            _ => projection_names = None,
+        }
     }
 }
 
-pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<FeatureUse>) {
+pub(crate) fn pipeline_statement(
+    statement: &PipelineStatement,
+    projection_names: Option<&[DbString]>,
+    uses: &mut Vec<FeatureUse>,
+) {
     match statement {
         PipelineStatement::Match(value) => match_clause(value, uses),
         PipelineStatement::Filter(value) => {
@@ -99,7 +116,7 @@ pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<F
         }
         PipelineStatement::Let(values) => let_bindings(values, uses),
         PipelineStatement::For(value) => for_statement(value, uses),
-        PipelineStatement::Sorting(values) => order_terms(values, uses),
+        PipelineStatement::Sorting(values) => order_terms(values, projection_names, uses),
         PipelineStatement::Limit(value) => {
             record_feature(uses, FeatureId::GQ13, value.span());
             limit_value(value, uses);
@@ -121,6 +138,17 @@ pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<F
             query_pipeline(&value.body, uses);
         }
     }
+}
+
+fn projected_names(items: &[crate::ReturnItem]) -> Vec<DbString> {
+    items.iter().filter_map(projection_name).collect()
+}
+
+fn projection_name(item: &crate::ReturnItem) -> Option<DbString> {
+    item.alias.clone().or_else(|| match &item.expr {
+        ValueExpr::Variable { name, .. } => Some(name.clone()),
+        _ => None,
+    })
 }
 
 fn limit_value(value: &LimitValue, uses: &mut Vec<FeatureUse>) {
@@ -277,7 +305,11 @@ fn for_statement(statement: &ForStatement, uses: &mut Vec<FeatureUse>) {
     expr::value(&statement.source, uses);
 }
 
-fn order_terms(terms: &[OrderTerm], uses: &mut Vec<FeatureUse>) {
+fn order_terms(
+    terms: &[OrderTerm],
+    projection_names: Option<&[DbString]>,
+    uses: &mut Vec<FeatureUse>,
+) {
     if let Some(first) = terms.first() {
         // Stamp every ORDER BY clause with GA07. The strict spec rule
         // (sort key must be a return alias unless GA07 is claimed) is a
@@ -288,6 +320,66 @@ fn order_terms(terms: &[OrderTerm], uses: &mut Vec<FeatureUse>) {
         record_feature(uses, FeatureId::GA07, first.span);
     }
     for term in terms {
+        sort_key_features(term, projection_names, uses);
         expr::value(&term.expr, uses);
     }
+}
+
+fn sort_key_features(
+    term: &OrderTerm,
+    projection_names: Option<&[DbString]>,
+    uses: &mut Vec<FeatureUse>,
+) {
+    if !matches!(term.expr, ValueExpr::Variable { .. }) {
+        record_feature(uses, FeatureId::GQ14, term.expr.span());
+    }
+    if contains_unprojected_variable(&term.expr, projection_names) {
+        record_feature(uses, FeatureId::GQ16, term.expr.span());
+    }
+    if contains_aggregate_function(&term.expr) {
+        record_feature(uses, FeatureId::GF20, term.expr.span());
+    }
+}
+
+fn contains_unprojected_variable(value: &ValueExpr, projection_names: Option<&[DbString]>) -> bool {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        if let ValueExpr::Variable { name, .. } = value
+            && !projection_names.is_some_and(|names| names.contains(name))
+        {
+            return true;
+        }
+        value.for_each_child(&mut |child| stack.push(child));
+    }
+    false
+}
+
+fn contains_aggregate_function(value: &ValueExpr) -> bool {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        if let ValueExpr::FunctionCall { name, .. } = value
+            && is_aggregate_name(name.first())
+        {
+            return true;
+        }
+        value.for_each_child(&mut |child| stack.push(child));
+    }
+    false
+}
+
+fn is_aggregate_name(name: &DbString) -> bool {
+    [
+        "count",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "collect_list",
+        "stddev_pop",
+        "stddev_samp",
+        "percentile_cont",
+        "percentile_disc",
+    ]
+    .iter()
+    .any(|candidate| name.as_str().eq_ignore_ascii_case(candidate))
 }
