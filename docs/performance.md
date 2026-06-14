@@ -235,7 +235,7 @@ Notable points:
 - **APSP parallel scales near-linearly** up to the core count; the 4.08×
   speedup at 1k sources on 10 cores is the strongest parallel win in the
   workspace.
-- **Louvain is sequential-only** in v1.0 — the modularity-optimization
+- **Louvain is sequential-only** today — the modularity-optimization
   iteration carries cross-vertex dependencies that the current
   implementation does not parallelize safely.
 

@@ -58,7 +58,7 @@ fn algo_bench_parallel_modes_are_pinned() {
     let louvain = slice_fn_body(&source, "bench_louvain");
     assert!(
         !louvain.contains("PARALLELISM_BENCH_MODES"),
-        "BRIEF-86 pins bench_louvain as sequential-only for v1.0"
+        "BRIEF-86 pins bench_louvain as sequential-only"
     );
 }
 

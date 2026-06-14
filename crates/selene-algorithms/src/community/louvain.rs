@@ -5,10 +5,10 @@
 //! to the candidate with **strictly-largest** gain. Repeat until no node
 //! moves, or caller-supplied `max_iter` reached.
 //!
-//! ## v1.0 scope
+//! ## Current scope
 //!
 //! - Single-pass at `level = 0` (no hierarchical contraction; that ships in
-//!   v1.x as multi-level Louvain — the `u32 level` is reserved for forward
+//!   a future multi-level Louvain — the `u32 level` is reserved for forward
 //!   compatibility per spec 16 §E27).
 //! - Uses projection edge weights (§E04). Defaults to unit weights when the
 //!   projection is unweighted.
@@ -32,8 +32,8 @@ use crate::projection::GraphProjection;
 /// Compute community assignments via single-pass Louvain modularity.
 ///
 /// Returns `(NodeId, community_id, level)` triples sorted **ASC by NodeId**
-/// per spec 16 §E27. `level` is always `0` in v1.0 (reserved for hierarchical
-/// Louvain in v1.x). Empty projection → `vec![]`. `max_iter == 0` returns the
+/// per spec 16 §E27. `level` is always `0` in the current single-pass
+/// implementation. Empty projection → `vec![]`. `max_iter == 0` returns the
 /// initial state (each node in its own community).
 ///
 /// Edge weights are projected via `ProjNeighbor::weight` per spec 16 §E04
