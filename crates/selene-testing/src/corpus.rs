@@ -312,11 +312,11 @@ mod tests {
     #[test]
     fn parses_negative_feature_header() {
         let case = parse(
-            "// corpus: negative\n// feature: GQ09\n// expects: parse-rejected(GQ09)\nRETURN 1 OTHERWISE RETURN 2",
+            "// corpus: negative\n// feature: GQ02\n// expects: parse-rejected(GQ02)\nRETURN 1 OTHERWISE RETURN 2",
         );
         assert_eq!(
             case.expectation,
-            Expectation::ParseRejectedFeature(FeatureId::GQ09)
+            Expectation::ParseRejectedFeature(FeatureId::GQ02)
         );
     }
 
