@@ -464,14 +464,14 @@ fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> boo
     // any descendant was rewritten. `for_each_child_mut` yields the `IS
     // [SOURCE|DESTINATION] OF` operand as a child, so the edge-binding walk that
     // the optimizer relies on is preserved. Subquery bodies are not `ValueExpr`
-    // children: `Exists`/`CountSubquery` descend into their `MatchClause`
-    // explicitly, and `ValueSubquery` is intentionally not descended (matching
+    // children: `Exists` descends into its `MatchClause` explicitly, and
+    // `ValueSubquery` is intentionally not descended (matching
     // the prior `=> false` arm) — its body is optimized as its own plan.
     let mut changed_children = false;
     expr.for_each_child_mut(&mut |child| {
         changed_children |= walk_expr(child, visit);
     });
-    if let ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } = expr {
+    if let ValueExpr::Exists { pattern, .. } = expr {
         changed_children |= walk_match_clause(pattern, visit);
     }
     visit(expr) | changed_children

@@ -108,7 +108,6 @@ fn validate_aggregate_nesting_in_expr(value: &ValueExpr) -> Result<(), AnalysisE
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
             | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. }
             | ValueExpr::ValueSubquery { .. } => {}
         }
     }

@@ -5,7 +5,7 @@ mod exec_common;
 use exec_common::{ExecFixture, column_values, execute_plan as execute_planned_pipeline, planned};
 use selene_core::Value;
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutorError, Session, StatementOutput,
+    EmptyProcedureRegistry, ExecutorError, GqlStatus, Session, StatementOutput,
     ast::{format_read_statement, structurally_eq},
     parse,
 };
@@ -291,32 +291,10 @@ fn public_pipeline_execution_uses_attached_plan_subquery_metadata() {
 }
 
 #[test]
-fn count_subquery_empty_returns_zero() {
-    let table = execute("RETURN COUNT { MATCH (:Nope) } AS c");
-
-    assert_eq!(int_values(&table, "c"), vec![0]);
-}
-
-#[test]
-fn count_subquery_returns_row_count() {
-    let table = execute("RETURN COUNT { MATCH (:Person) } AS c");
-
-    assert_eq!(int_values(&table, "c"), vec![3]);
-}
-
-#[test]
-fn count_subquery_correlates_with_outer_binding() {
-    let table = execute(
-        "MATCH (a:Person)
-         RETURN a.name AS name, COUNT { MATCH (a)-[:KNOWS]->() } AS outgoing
-         ORDER BY name",
-    );
-
-    assert_eq!(
-        string_values(&table, "name"),
-        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
-    );
-    assert_eq!(int_values(&table, "outgoing"), [1, 1, 0]);
+fn count_subquery_syntax_is_rejected() {
+    let err = parse("RETURN COUNT { MATCH (:Person) } AS c")
+        .expect_err("COUNT { MATCH ... } is not ISO GQL syntax");
+    assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
 }
 
 #[test]

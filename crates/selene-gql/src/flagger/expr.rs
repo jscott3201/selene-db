@@ -57,7 +57,7 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             is_check(kind, *span, uses);
             return;
         }
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
+        ValueExpr::Exists { pattern, .. } => {
             query::match_clause(pattern, uses);
             return;
         }

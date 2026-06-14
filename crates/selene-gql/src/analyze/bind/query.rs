@@ -388,7 +388,6 @@ fn validate_percentile_independent_refs_in_expr(
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
             | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. }
             | ValueExpr::ValueSubquery { .. } => {}
         }
     }

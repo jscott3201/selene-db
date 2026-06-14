@@ -378,7 +378,7 @@ fn collect_value_parameter_declarations(
                     stack.push(character);
                 }
             }
-            ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
+            ValueExpr::Exists { pattern, .. } => {
                 collect_match_clause_parameter_declarations(pattern, declarations)?;
             }
             ValueExpr::ValueSubquery { body, .. } => {

@@ -308,7 +308,6 @@ RETURN p.name
 | `IN list` | `WHERE country IN ['NZ', 'AU']` | mandatory |
 | `STARTS WITH`, `ENDS WITH`, `CONTAINS` | `WHERE name STARTS WITH 'A'` | mandatory |
 | `EXISTS { MATCH ... }` | `WHERE EXISTS { MATCH (p)-[:KNOWS]->() }` | mandatory |
-| `COUNT { MATCH ... }` | `RETURN COUNT { MATCH (p)-[:KNOWS]->() }` | mandatory |
 
 SQL-style predicate `LIKE` and `BETWEEN` syntax is not part of Selene's GQL
 surface. Use `STARTS WITH`, `ENDS WITH`, or `CONTAINS` for string predicates,

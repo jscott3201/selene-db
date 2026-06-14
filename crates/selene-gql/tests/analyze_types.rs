@@ -192,15 +192,6 @@ fn element_id_expression_is_string() {
 }
 
 #[test]
-fn count_subquery_is_integer() {
-    let analyzed = analyze_one("MATCH (n) RETURN COUNT { MATCH (n)-[:K]->(m) } AS c").unwrap();
-    assert_eq!(
-        projection_type(&analyzed, "c"),
-        AnalyzedType::Resolved(GqlType::Integer)
-    );
-}
-
-#[test]
 fn for_list_aliases_to_element_type() {
     let analyzed = analyze_one("FOR x IN [1, 2, 3] RETURN x").unwrap();
     assert_eq!(

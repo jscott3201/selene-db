@@ -91,7 +91,6 @@ pub(super) fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
             | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. }
             | ValueExpr::ValueSubquery { .. } => {}
         }
     }
@@ -277,7 +276,7 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
             ValueExpr::ValueSubquery { body, .. } => {
                 check_query_subquery_depth(body, depth.saturating_add(1))?;
             }
-            ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
+            ValueExpr::Exists { pattern, .. } => {
                 check_match_clause_subquery_depth(pattern, depth.saturating_add(1))?;
             }
             ValueExpr::Cast { value, .. } => stack.push((value, depth)),

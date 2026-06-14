@@ -200,15 +200,6 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 })?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
-            ValueExpr::CountSubquery {
-                pattern: clause,
-                span,
-            } => {
-                ctx.with_child_scope(ScopeKind::Subquery, *span, false, |ctx| {
-                    pattern::bind_match_clause(ctx, clause)
-                })?;
-                AnalyzedType::Resolved(crate::GqlType::Integer)
-            }
             ValueExpr::ValueSubquery { body, span } => bind_value_subquery(ctx, body, *span)?,
             ValueExpr::Cast {
                 value, target_type, ..

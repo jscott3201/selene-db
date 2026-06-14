@@ -402,11 +402,6 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMa
             negated.hash(state);
             span.hash(state);
         }
-        ValueExpr::CountSubquery { pattern, span } => {
-            19u8.hash(state);
-            hash_match_clause(pattern, state, memo);
-            span.hash(state);
-        }
         ValueExpr::ValueSubquery { body, span } => {
             20u8.hash(state);
             body.span.hash(state);

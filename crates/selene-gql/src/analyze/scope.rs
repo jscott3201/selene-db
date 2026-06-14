@@ -35,7 +35,7 @@ pub enum ScopeKind {
     Statement,
     /// Isolated projection boundary created by `RETURN` or `WITH`.
     Projection,
-    /// Nested subquery scope created by `EXISTS` or `COUNT { ... }`.
+    /// Nested subquery scope created by `EXISTS` or `VALUE { ... }`.
     Subquery,
     /// Diagnostic scope for a `CASE` branch.
     CaseBranch,

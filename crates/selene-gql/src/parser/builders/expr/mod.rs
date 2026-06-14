@@ -68,7 +68,6 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
         Rule::same_expr => call::build_expr_list_predicate(pair, call::PredicateKind::Same),
         Rule::property_exists_expr => call::build_property_exists(pair),
         Rule::exists_expr => call::build_exists(pair),
-        Rule::count_subquery_expr => call::build_count_subquery(pair),
         Rule::value_subquery_expr => call::build_value_subquery(pair),
         Rule::case_expr => call::build_case_expr(first_child(pair)?),
         Rule::simple_case | Rule::searched_case => call::build_case_expr(pair),

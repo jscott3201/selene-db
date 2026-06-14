@@ -518,18 +518,6 @@ fn collect_subqueries_in_expr(
                 max_quantifier,
             )?;
         }
-        ValueExpr::CountSubquery { pattern, span } => {
-            collect_planned_subquery(
-                expr,
-                SubqueryKind::Count,
-                pattern,
-                *span,
-                analyzed,
-                registry,
-                entries,
-                max_quantifier,
-            )?;
-        }
         ValueExpr::ValueSubquery { body, span } => {
             collect_value_subquery(
                 expr,
