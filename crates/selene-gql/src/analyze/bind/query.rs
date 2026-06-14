@@ -194,6 +194,9 @@ pub(crate) fn bind_return_clause(
     ctx: &mut BindContext,
     clause: &ReturnClause,
 ) -> Result<(), AnalysisError> {
+    if clause.star && !ctx.current_scope_has_visible_bindings() {
+        return Err(AnalysisError::ReturnStarRequiresInput { span: clause.span });
+    }
     bind_return_inputs(
         ctx,
         &clause.items,

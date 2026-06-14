@@ -125,6 +125,23 @@ impl BindingScopeTree {
         self.scopes.get(id.get() as usize)
     }
 
+    pub(crate) fn has_visible_bindings(&self, scope: ScopeId) -> bool {
+        let mut cursor = Some(scope);
+        while let Some(scope_id) = cursor {
+            let Some(scope) = self.scope(scope_id) else {
+                return false;
+            };
+            if !scope.locals.is_empty() || !scope.imports.is_empty() {
+                return true;
+            }
+            if scope.boundary {
+                return false;
+            }
+            cursor = scope.parent;
+        }
+        false
+    }
+
     pub(crate) fn push_scope(
         &mut self,
         parent: ScopeId,
