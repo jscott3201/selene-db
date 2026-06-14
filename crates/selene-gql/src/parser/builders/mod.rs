@@ -225,13 +225,20 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
 
     for child in pair.into_inner() {
         match child.as_rule() {
+            Rule::select_kw => {}
             Rule::distinct_kw => return_clause.distinct = true,
             Rule::all_kw => {}
             Rule::return_star => return_clause.star = true,
             Rule::projection_list => return_clause.items = build_projection_list(child)?,
             Rule::select_from => {
                 saw_select_from = true;
-                let from_child = first_child(child)?;
+                let select_from_span = span(&child);
+                let from_child = child
+                    .into_inner()
+                    .find(|nested| matches!(nested.as_rule(), Rule::match_stmt | Rule::ident))
+                    .ok_or_else(|| {
+                        ParserError::syntax("SELECT FROM is missing source", select_from_span, None)
+                    })?;
                 if from_child.as_rule() == Rule::match_stmt {
                     pre_return.push(PipelineStatement::Match(pattern::build_match_clause(
                         from_child,
