@@ -7,8 +7,9 @@ use crate::graph::VectorIndexEntry;
 
 use super::{
     VectorIndex, VectorIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexMap,
-    VectorIndexMemoryUsage, VectorIndexRebuildEntry, VectorIndexRebuildReport, admit,
-    hnsw::HnswSearchScratch, index_rejection, is_null, warn_rejected,
+    VectorIndexMemoryUsage, VectorIndexRebuildEntry, VectorIndexRebuildReport,
+    hnsw::HnswSearchScratch,
+    maintenance::{admit, index_rejection, is_null, warn_rejected},
 };
 
 struct VectorIndexRegistration {
