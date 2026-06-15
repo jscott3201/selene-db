@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use roaring::RoaringBitmap;
 use selene_core::{CancellationCause, CancellationChecker, DbString, NodeId, Value};
+use smallvec::SmallVec;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
@@ -32,6 +33,8 @@ const TEXT_SEARCH_PARALLEL_MIN_ROWS: u64 = 16_384;
 const TEXT_SEARCH_PARALLEL_MIN_ROWS: u64 = 8;
 const BM25_K1: f64 = 1.2;
 const BM25_B: f64 = 0.75;
+
+type TermCounts = SmallVec<[u32; 4]>;
 
 /// One BM25-ranked node hit.
 #[derive(Clone, Debug, PartialEq)]
@@ -406,7 +409,7 @@ fn rank_text_docs(chunk: TextScanChunk, k: usize) -> Vec<TextSearchHit> {
 pub(crate) struct DocumentStats {
     pub(crate) node_id: NodeId,
     len: u32,
-    pub(crate) term_counts: Vec<u32>,
+    pub(crate) term_counts: TermCounts,
     admitted: bool,
 }
 
@@ -415,7 +418,7 @@ impl DocumentStats {
         Self {
             node_id,
             len,
-            term_counts: vec![0; query_term_count],
+            term_counts: TermCounts::from_elem(0, query_term_count),
             admitted: true,
         }
     }
@@ -432,7 +435,7 @@ fn document_stats(
     query_terms: &[String],
     admitted: bool,
 ) -> Option<DocumentStats> {
-    let mut term_counts = vec![0_u32; query_terms.len()];
+    let mut term_counts = TermCounts::from_elem(0, query_terms.len());
     let mut len = 0_u32;
     for token in tokenize_borrowed(text) {
         len = len.saturating_add(1);

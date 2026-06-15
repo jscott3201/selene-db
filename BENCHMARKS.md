@@ -609,6 +609,18 @@ and
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 34.665 µs | 36.696 µs | +5.9% | Small maintained-read tax from one extra shared-vector dereference. Keep watching this guard because BM25/current-state is a preferred read path. |
 | `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 456.56 µs | 533.05 µs | +16.8% | Build/recovery/regeneration pays to convert bulk-built vectors into shared snapshot state. This is accepted for the update win but keeps text-index rebuild/recovery cost as a follow-up benchmark area. |
 
+PR-local BM25 term-count inline storage A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 248.85 µs | 248.66 µs | neutral | Exact scan stayed noise-flat because tokenization and row scanning dominate. |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 36.016 µs | 33.988 µs | -5.55% | Candidate `DocumentStats` now stores the common four-term query counts inline rather than allocating a per-candidate `Vec<u32>`; p=0.00. Full-profile sanity medians after the change: 10k 342.47 µs, 50k 1.7921 ms, 100k 3.6531 ms. |
+
 Rejected variants: sharing postings while leaving per-document term lists as
 plain `Vec<String>` kept transient build lower at 523.57 µs but lost the update
 win (`write_registered_update_w40/n1000` returned to 5.0114 ms). Wrapping
