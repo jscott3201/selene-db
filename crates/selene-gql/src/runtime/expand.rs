@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use roaring::RoaringBitmap;
 use selene_core::{EdgeId, NodeId, Value};
 use selene_graph::RowIndex;
 
@@ -62,7 +63,7 @@ pub(crate) fn execute(
     if state
         .edge_row_filter
         .as_ref()
-        .is_some_and(|filter| filter.len() <= child_rows.len())
+        .is_some_and(|filter| filter.len() <= child_rows.len() as u64)
     {
         expand_from_indexed_edges(&child_rows, direction, &mut state)?;
     } else {
@@ -90,7 +91,7 @@ struct ExpandState<'a, 'eval, 'ctx, 'g, 'plan, 'out> {
     edge_hidden_slot: pattern::ColumnSlot,
     right_slot: pattern::ColumnSlot,
     right_hidden_slot: pattern::ColumnSlot,
-    edge_row_filter: Option<BTreeSet<u32>>,
+    edge_row_filter: Option<RoaringBitmap>,
     ctx: &'a EvalCtx<'eval, 'ctx, 'g, 'plan>,
     output: &'out mut Vec<Binding>,
 }
@@ -157,7 +158,7 @@ fn expand_from_indexed_edges(
         };
         rows_by_source.entry(source).or_default().push(row);
     }
-    let edge_rows: Vec<u32> = edge_rows.iter().copied().collect();
+    let edge_rows: Vec<u32> = edge_rows.iter().collect();
     for row in edge_rows {
         let Some(edge_id) = state.ctx.tx.snapshot().edge_id_for_row(RowIndex::new(row)) else {
             continue;

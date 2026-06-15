@@ -366,6 +366,19 @@ fn create_edge_property_index_builds_from_existing_edges() {
         .edges_with_property_eq(&label, &property, &Value::Int(7))
         .unwrap();
     assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
+    let rows = snapshot
+        .edges_with_property_any(&label, &property, &[Value::Int(7), Value::Int(9)])
+        .unwrap();
+    assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0, 1]);
+    assert!(
+        snapshot
+            .edges_with_property_any(
+                &label,
+                &property,
+                &[Value::String(db_string("bad").unwrap())]
+            )
+            .is_none()
+    );
     assert_eq!(snapshot.edge_property_index_count(), 1);
 }
 

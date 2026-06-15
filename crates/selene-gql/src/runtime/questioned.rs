@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use roaring::RoaringBitmap;
 use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
@@ -82,7 +83,7 @@ struct QuestionedState<'a, 'eval, 'ctx, 'g, 'plan, 'out> {
     edge_hidden_slot: pattern::ColumnSlot,
     right_slot: pattern::ColumnSlot,
     right_hidden_slot: pattern::ColumnSlot,
-    edge_row_filter: Option<BTreeSet<u32>>,
+    edge_row_filter: Option<RoaringBitmap>,
     ctx: &'a EvalCtx<'eval, 'ctx, 'g, 'plan>,
     output: &'out mut Vec<Binding>,
 }

@@ -1,7 +1,6 @@
 //! Edge-index candidate helpers shared by expand executors.
 
-use std::collections::BTreeSet;
-
+use roaring::RoaringBitmap;
 use selene_core::EdgeId;
 
 use crate::{EdgeMatch, NodeOrEdgeScan, ScanAccess, ScanKind};
@@ -11,7 +10,7 @@ use super::{EvalCtx, ExecutorError, scan};
 pub(super) fn candidate_row_filter(
     edge: &EdgeMatch,
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Option<BTreeSet<u32>>, ExecutorError> {
+) -> Result<Option<RoaringBitmap>, ExecutorError> {
     match &edge.access {
         ScanAccess::Linear | ScanAccess::LabelIndex { .. } => Ok(None),
         ScanAccess::TypedIndexRange { .. }
@@ -34,7 +33,7 @@ pub(super) fn candidate_row_filter(
 }
 
 pub(super) fn row_filter_matches(
-    filter: Option<&BTreeSet<u32>>,
+    filter: Option<&RoaringBitmap>,
     edge_id: EdgeId,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> bool {
@@ -44,5 +43,5 @@ pub(super) fn row_filter_matches(
     ctx.tx
         .snapshot()
         .row_for_edge_id(edge_id)
-        .is_some_and(|row| rows.contains(&row.get()))
+        .is_some_and(|row| rows.contains(row.get()))
 }
