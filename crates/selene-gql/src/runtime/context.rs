@@ -76,6 +76,18 @@ pub struct TxContext<'a, 'g> {
     subquery_target_schema: RefCell<FxHashMap<ExprId, BindingTableSchema>>,
 }
 
+struct TxContextParts<'a, 'g> {
+    snapshot: Arc<SeleneGraph>,
+    impl_defined_caps: &'a ImplDefinedCaps,
+    registry: &'a dyn ProcedureRegistry,
+    providers: &'a [Arc<dyn IndexProvider>],
+    parameters: Cow<'a, BTreeMap<DbString, Value>>,
+    binding_tables: Rc<BindingTableRegistry>,
+    reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
+    write_txn: Option<&'a mut WriteTxn<'g>>,
+    maintenance_graph: Option<&'g SharedGraph>,
+}
+
 /// Expression-evaluation context for one planned execution point.
 ///
 /// Expression subqueries are planned into side tables on the execution plan.
@@ -114,6 +126,52 @@ impl<'a, 'ctx, 'g, 'plan> EvalCtx<'a, 'ctx, 'g, 'plan> {
 }
 
 impl<'a, 'g> TxContext<'a, 'g> {
+    fn base_parts(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+        providers: &'a [Arc<dyn IndexProvider>],
+        parameters: Cow<'a, BTreeMap<DbString, Value>>,
+        binding_tables: Rc<BindingTableRegistry>,
+    ) -> TxContextParts<'a, 'g> {
+        TxContextParts {
+            snapshot,
+            impl_defined_caps,
+            registry,
+            providers,
+            parameters,
+            binding_tables,
+            reopt_hook: None,
+            write_txn: None,
+            maintenance_graph: None,
+        }
+    }
+
+    fn from_parts(parts: TxContextParts<'a, 'g>) -> Self {
+        Self {
+            snapshot: parts.snapshot,
+            impl_defined_caps: parts.impl_defined_caps,
+            registry: parts.registry,
+            providers: parts.providers,
+            parameters: parts.parameters,
+            binding_tables: parts.binding_tables,
+            reopt_hook: parts.reopt_hook,
+            plan_expr_ids: None,
+            plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
+            warning_sink: None,
+            emitted_warnings: RefCell::new(FxHashSet::default()),
+            result_rows_emitted: Cell::new(0),
+            write_txn: parts.write_txn,
+            maintenance_graph: parts.maintenance_graph,
+            session_time_zone: jiff::tz::TimeZone::UTC,
+            request_timestamp: jiff::Timestamp::now(),
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
+        }
+    }
+
     /// Construct a read-only context over an immutable graph snapshot.
     #[must_use]
     pub fn read_only(
@@ -138,28 +196,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
-        Self {
+        Self::from_parts(Self::base_parts(
             snapshot,
             impl_defined_caps,
             registry,
             providers,
-            parameters: Cow::Borrowed(parameters),
-            binding_tables: Rc::new(BindingTableRegistry::new()),
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: None,
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
+            Cow::Borrowed(parameters),
+            Rc::new(BindingTableRegistry::new()),
+        ))
     }
 
     /// Construct a read-only context carrying a future adaptive optimizer hook.
@@ -189,28 +233,16 @@ impl<'a, 'g> TxContext<'a, 'g> {
         reopt_hook: &'a dyn AdaptiveOptimizer,
         parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
-        Self {
+        let mut parts = Self::base_parts(
             snapshot,
             impl_defined_caps,
             registry,
             providers,
-            parameters: Cow::Borrowed(parameters),
-            binding_tables: Rc::new(BindingTableRegistry::new()),
-            reopt_hook: Some(reopt_hook),
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: None,
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
+            Cow::Borrowed(parameters),
+            Rc::new(BindingTableRegistry::new()),
+        );
+        parts.reopt_hook = Some(reopt_hook);
+        Self::from_parts(parts)
     }
 
     /// Construct a write-capable context over a graph write transaction.
@@ -240,28 +272,16 @@ impl<'a, 'g> TxContext<'a, 'g> {
         providers: &'a [Arc<dyn IndexProvider>],
         parameters: &'a BTreeMap<DbString, Value>,
     ) -> Self {
-        Self {
+        let mut parts = Self::base_parts(
             snapshot,
             impl_defined_caps,
             registry,
             providers,
-            parameters: Cow::Borrowed(parameters),
-            binding_tables: Rc::new(BindingTableRegistry::new()),
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: Some(txn),
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
+            Cow::Borrowed(parameters),
+            Rc::new(BindingTableRegistry::new()),
+        );
+        parts.write_txn = Some(txn);
+        Self::from_parts(parts)
     }
 
     pub(crate) fn read_only_with_owned_parameters_and_registry(
@@ -272,28 +292,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
-        Self {
+        Self::from_parts(Self::base_parts(
             snapshot,
             impl_defined_caps,
             registry,
             providers,
             parameters,
             binding_tables,
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: None,
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
+        ))
     }
 
     pub(crate) fn write_with_owned_parameters_and_registry(
@@ -305,28 +311,16 @@ impl<'a, 'g> TxContext<'a, 'g> {
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
-        Self {
+        let mut parts = Self::base_parts(
             snapshot,
             impl_defined_caps,
             registry,
             providers,
             parameters,
             binding_tables,
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: Some(txn),
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
+        );
+        parts.write_txn = Some(txn);
+        Self::from_parts(parts)
     }
 
     pub(crate) fn maintenance_with_owned_parameters_and_registry(
@@ -338,28 +332,16 @@ impl<'a, 'g> TxContext<'a, 'g> {
         parameters: Cow<'a, BTreeMap<DbString, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
-        Self {
+        let mut parts = Self::base_parts(
             snapshot,
             impl_defined_caps,
             registry,
             providers,
             parameters,
             binding_tables,
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: None,
-            maintenance_graph: Some(graph),
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
+        );
+        parts.maintenance_graph = Some(graph);
+        Self::from_parts(parts)
     }
 
     /// Attach per-statement cooperative cancellation and output row-cap limits.
