@@ -155,10 +155,10 @@ fn vector_search_ann_signature_has_metric_and_ef_search_args() {
         .expect("vector_search_nodes_ann resolves");
     let arity = metadata.signature.arity();
     assert_eq!(arity.minimum, 4);
-    assert_eq!(arity.maximum, 6);
+    assert_eq!(arity.maximum, 8);
 
     let parameters = &metadata.signature.parameters;
-    assert_eq!(parameters.len(), 6);
+    assert_eq!(parameters.len(), 8);
     assert_eq!(parameters[0].name.as_str(), "label");
     assert_eq!(parameters[0].ty, crate::GqlType::String);
     assert_eq!(parameters[1].name.as_str(), "property");
@@ -187,6 +187,25 @@ fn vector_search_ann_signature_has_metric_and_ef_search_args() {
     );
     assert_eq!(
         parameters[5].default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+    assert_eq!(parameters[6].name.as_str(), "filter_property");
+    assert_eq!(parameters[6].ty, crate::GqlType::String);
+    assert!(parameters[6].nullable);
+    assert_eq!(parameters[6].default_doc, Some("NULL (no property filter)"));
+    assert_eq!(
+        parameters[6].default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+    assert_eq!(parameters[7].name.as_str(), "filter_values");
+    assert_eq!(
+        parameters[7].ty,
+        crate::GqlType::List(Box::new(crate::GqlType::AnyProperty))
+    );
+    assert!(parameters[7].nullable);
+    assert_eq!(parameters[7].default_doc, Some("NULL (no property filter)"));
+    assert_eq!(
+        parameters[7].default,
         Some(crate::ProcedureDefaultValue::Null)
     );
 }

@@ -484,6 +484,29 @@ impl VectorIndex {
         }
         None
     }
+
+    pub(crate) fn ann_search_in_rows_with_scratch(
+        &self,
+        query: &VectorValue,
+        k: usize,
+        search_width: usize,
+        allowed_rows: &RoaringBitmap,
+        scratch: &mut HnswSearchScratch,
+    ) -> Option<selene_core::CoreResult<Vec<VectorIndexSearchHit>>> {
+        if let Some(hnsw) = &self.hnsw {
+            return Some(
+                hnsw.search_in_rows_with_scratch(query, k, search_width, allowed_rows, scratch)
+                    .map(hnsw_hits),
+            );
+        }
+        if let Some(ivf) = &self.ivf {
+            return Some(
+                ivf.search_in_rows(query, k, search_width, allowed_rows)
+                    .map(ivf_hits),
+            );
+        }
+        None
+    }
 }
 
 fn roaring_heap_bytes(rows: &RoaringBitmap) -> usize {

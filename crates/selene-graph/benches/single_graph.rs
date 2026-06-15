@@ -23,7 +23,10 @@ use selene_core::{
     CancellationChecker, DbString, GraphId, JsonPathSelector, JsonValue, LabelSet, PropertyMap,
     Value, VectorMetric, VectorValue, db_string,
 };
-use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind, VectorIndexMemoryUsage};
+use selene_graph::{
+    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, TypedIndexKind, VectorIndexKind,
+    VectorIndexMemoryUsage,
+};
 use selene_testing::BenchProfile;
 use single_graph_ann_recall::{ANN_RECALL_PROFILES, AnnRecallFixture};
 
@@ -168,6 +171,10 @@ fn bench_ann_recall(c: &mut Criterion) {
     vector::bench_ann_recall(c);
 }
 
+fn bench_ann_property_filter(c: &mut Criterion) {
+    vector::bench_ann_property_filter(c);
+}
+
 fn vector_scan_scales() -> Vec<usize> {
     vector::vector_scan_scales()
 }
@@ -191,6 +198,7 @@ criterion_group! {
         single_graph_vector_batch::bench_exact_vector_batch_scan,
         bench_exact_json_contains_scan, bench_exact_json_path_exists_scan,
         bench_exact_json_path_contains_scan, bench_exact_json_path_value_scan,
-        single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall
+        single_graph_candidate_set::bench_vector_candidate_set, bench_ann_recall,
+        bench_ann_property_filter
 }
 criterion_main!(graph_reads);

@@ -1946,6 +1946,7 @@ dependencies = [
  "pest",
  "pest_derive",
  "proptest",
+ "roaring",
  "rstest",
  "rust_decimal",
  "rustc-hash 2.1.2",

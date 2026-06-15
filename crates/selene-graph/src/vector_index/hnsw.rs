@@ -17,6 +17,7 @@ mod search;
 
 use std::mem::size_of;
 
+use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 use selene_core::{CoreResult, HnswIndexConfig, VectorMetric, VectorValue, vector_squared_norm};
 
@@ -230,6 +231,32 @@ impl HnswVectorIndex {
         ef_search: usize,
         scratch: &mut HnswSearchScratch,
     ) -> CoreResult<Vec<HnswVectorHit>> {
+        self.search_with_optional_rows(query, k, ef_search, None, scratch)
+    }
+
+    /// Approximate top-k search while admitting only rows in `allowed_rows`.
+    pub(crate) fn search_in_rows_with_scratch(
+        &self,
+        query: &VectorValue,
+        k: usize,
+        ef_search: usize,
+        allowed_rows: &RoaringBitmap,
+        scratch: &mut HnswSearchScratch,
+    ) -> CoreResult<Vec<HnswVectorHit>> {
+        if allowed_rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.search_with_optional_rows(query, k, ef_search, Some(allowed_rows), scratch)
+    }
+
+    fn search_with_optional_rows(
+        &self,
+        query: &VectorValue,
+        k: usize,
+        ef_search: usize,
+        allowed_rows: Option<&RoaringBitmap>,
+        scratch: &mut HnswSearchScratch,
+    ) -> CoreResult<Vec<HnswVectorHit>> {
         let use_cached_norms = self.metric == VectorMetric::Cosine;
         let scorer = if use_cached_norms {
             self.metric
@@ -271,6 +298,9 @@ impl HnswVectorIndex {
         for candidate in &scratch.result {
             let node = &self.nodes[candidate.id as usize];
             if node.deleted || self.row_to_entry.get(&node.row) != Some(&candidate.id) {
+                continue;
+            }
+            if allowed_rows.is_some_and(|rows| !rows.contains(node.row)) {
                 continue;
             }
             hits.push(HnswVectorHit {

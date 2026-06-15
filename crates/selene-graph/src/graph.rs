@@ -502,6 +502,28 @@ impl SeleneGraph {
             .and_then(|entry| entry.index.lookup_eq(value))
     }
 
+    /// Return the union of node rows matching any indexed scalar value.
+    ///
+    /// `None` means no node property index is registered for `(label, property)`
+    /// or at least one supplied value cannot be used with that index kind.
+    /// `Some(empty)` means the index exists but no row matches the value set.
+    #[must_use]
+    pub fn nodes_with_property_any(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        values: &[Value],
+    ) -> Option<RoaringBitmap> {
+        let entry = self
+            .property_index
+            .get(&(label.clone(), property.clone()))?;
+        let mut rows = RoaringBitmap::new();
+        for value in values {
+            rows |= entry.index.lookup_eq(value)?.as_ref();
+        }
+        Some(rows)
+    }
+
     /// Return edge rows matching `value` under a registered edge property index.
     ///
     /// `None` means no edge index is registered for `(label, property)` or the

@@ -23,6 +23,8 @@ pub use types::{
 };
 #[path = "vector_search/approx_batch.rs"]
 mod approx_batch;
+#[path = "vector_search/approx_filter.rs"]
+mod approx_filter;
 #[path = "vector_search/approx_turbo_quant.rs"]
 mod approx_turbo_quant;
 #[path = "vector_search/exact_batch.rs"]

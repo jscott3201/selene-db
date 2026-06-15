@@ -113,6 +113,45 @@ impl SeleneGraph {
         k: usize,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<TextSearchHit>, TextSearchError> {
+        self.exact_text_search_nodes_filtered_checked(label, property, query, k, None, checker)
+    }
+
+    /// Exhaustively rank text documents while admitting only `allowed_rows`.
+    ///
+    /// BM25 corpus statistics are still computed over every string document for
+    /// `(label, property)`, so scores and ordering match an unfiltered search
+    /// whose full ranking is filtered by this row set before `k` truncation.
+    pub fn exact_text_search_nodes_in_rows_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        query: &str,
+        k: usize,
+        allowed_rows: &RoaringBitmap,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<TextSearchHit>, TextSearchError> {
+        if allowed_rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.exact_text_search_nodes_filtered_checked(
+            label,
+            property,
+            query,
+            k,
+            Some(allowed_rows),
+            checker,
+        )
+    }
+
+    fn exact_text_search_nodes_filtered_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        query: &str,
+        k: usize,
+        allowed_rows: Option<&RoaringBitmap>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<TextSearchHit>, TextSearchError> {
         checker.check()?;
         if k == 0 {
             return Ok(Vec::new());
@@ -125,7 +164,7 @@ impl SeleneGraph {
             return Ok(Vec::new());
         };
 
-        let scan = TextScan::new(self, label, property, &query_terms);
+        let scan = TextScan::new(self, label, property, &query_terms, allowed_rows);
         let chunk = if should_parallelize_text_scan(label_rows, k) {
             exact_text_scan_parallel(scan, label_rows, checker)?
         } else {
@@ -168,6 +207,7 @@ struct TextScan<'a> {
     label: &'a DbString,
     property: &'a DbString,
     query_terms: &'a [String],
+    allowed_rows: Option<&'a RoaringBitmap>,
 }
 
 impl<'a> TextScan<'a> {
@@ -176,12 +216,14 @@ impl<'a> TextScan<'a> {
         label: &'a DbString,
         property: &'a DbString,
         query_terms: &'a [String],
+        allowed_rows: Option<&'a RoaringBitmap>,
     ) -> Self {
         Self {
             graph,
             label,
             property,
             query_terms,
+            allowed_rows,
         }
     }
 
@@ -213,7 +255,13 @@ impl<'a> TextScan<'a> {
         let Some(Value::String(text)) = properties.get(self.property) else {
             return Ok(None);
         };
-        Ok(document_stats(node_id, text.as_str(), self.query_terms))
+        Ok(document_stats(
+            node_id,
+            text.as_str(),
+            self.query_terms,
+            self.allowed_rows
+                .is_none_or(|allowed_rows| allowed_rows.contains(raw_row)),
+        ))
     }
 }
 
@@ -322,6 +370,9 @@ fn rank_text_docs(chunk: TextScanChunk, k: usize) -> Vec<TextSearchHit> {
     let average_document_len = chunk.total_document_len as f64 / corpus_len;
     let mut top_k = TextTopK::new(k);
     for doc in chunk.docs {
+        if !doc.admitted {
+            continue;
+        }
         let score = bm25_score(
             &doc,
             &chunk.document_frequencies,
@@ -340,6 +391,7 @@ pub(crate) struct DocumentStats {
     pub(crate) node_id: NodeId,
     len: u32,
     pub(crate) term_counts: Vec<u32>,
+    admitted: bool,
 }
 
 impl DocumentStats {
@@ -348,6 +400,7 @@ impl DocumentStats {
             node_id,
             len,
             term_counts: vec![0; query_term_count],
+            admitted: true,
         }
     }
 }
@@ -357,7 +410,12 @@ pub(crate) fn unique_query_terms(query: &str) -> Vec<String> {
     terms.into_iter().collect()
 }
 
-fn document_stats(node_id: NodeId, text: &str, query_terms: &[String]) -> Option<DocumentStats> {
+fn document_stats(
+    node_id: NodeId,
+    text: &str,
+    query_terms: &[String],
+    admitted: bool,
+) -> Option<DocumentStats> {
     let mut term_counts = vec![0_u32; query_terms.len()];
     let mut len = 0_u32;
     for token in tokenize_borrowed(text) {
@@ -370,6 +428,7 @@ fn document_stats(node_id: NodeId, text: &str, query_terms: &[String]) -> Option
         node_id,
         len,
         term_counts,
+        admitted,
     })
 }
 
