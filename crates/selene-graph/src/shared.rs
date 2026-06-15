@@ -279,7 +279,7 @@ impl SharedGraph {
     ///
     /// This is pure space reclamation: it changes only the internal row layout,
     /// never external `NodeId`/`EdgeId`, properties, or labels, so it emits **no**
-    /// [`Change`] and writes **no** WAL entry. Durability
+    /// [`selene_core::Change`] and writes **no** WAL entry. Durability
     /// comes from the next snapshot, which encodes the now-dense live graph (the
     /// CORE provider reads the same `snapshot` cell this method publishes into). A
     /// crash before that snapshot simply reloads the pre-compaction state and
@@ -345,7 +345,7 @@ impl SharedGraph {
     /// in-flight search can still traverse the neighbor graph safely. This
     /// maintenance path reclaims those stale entries by rebuilding only the
     /// derived vector-index state; it does not change graph data, emit
-    /// [`Change`], write a WAL entry, bump schema epoch, or
+    /// [`selene_core::Change`], write a WAL entry, bump schema epoch, or
     /// notify providers. The HNSW graph is derived, not durable: snapshots and
     /// recovery persist only vector-index registrations plus primary values, so
     /// a reopen rebuilds the index from that authoritative state.
@@ -415,7 +415,7 @@ impl SharedGraph {
     ///
     /// The epoch starts at zero for each [`SharedGraph`] instance and advances
     /// only after a successful commit whose change set contains
-    /// [`Change::SchemaChanged`].
+    /// [`selene_core::Change::SchemaChanged`].
     #[must_use]
     pub fn schema_version(&self) -> u64 {
         self.schema_version.load(Ordering::Acquire)
