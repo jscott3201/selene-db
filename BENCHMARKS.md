@@ -621,6 +621,17 @@ Commands:
 | `graph_text_bm25_exact/topic_query/n1000_k10` | 248.85 µs | 248.66 µs | neutral | Exact scan stayed noise-flat because tokenization and row scanning dominate. |
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 36.016 µs | 33.988 µs | -5.55% | Candidate `DocumentStats` now stores the common four-term query counts inline rather than allocating a per-candidate `Vec<u32>`; p=0.00. Full-profile sanity medians after the change: 10k 342.47 µs, 50k 1.7921 ms, 100k 3.6531 ms. |
 
+PR-local indexed BM25 candidate-map preallocation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 34.069 µs | 27.897 µs | -18.10% | Indexed search now gathers query postings once, keeps short-query posting metadata inline, and reserves the per-query candidate map from the capped postings upper bound; p=0.00. Registered-index sanity after the change is 28.054 µs, transient build/query is 476.87 µs, and full-profile indexed-read medians are 10k 282.10 µs, 50k 1.5770 ms, 100k 3.3224 ms. |
+
 Rejected variants: sharing postings while leaving per-document term lists as
 plain `Vec<String>` kept transient build lower at 523.57 µs but lost the update
 win (`write_registered_update_w40/n1000` returned to 5.0114 ms). Wrapping

@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use selene_core::{CancellationChecker, DbString, NodeId, Value};
 
@@ -31,6 +32,9 @@ mod candidate;
 #[path = "text_index/maintenance.rs"]
 mod maintenance;
 use builder::TextIndexBuilder;
+
+type QueryDocumentFrequencies = SmallVec<[u32; 4]>;
+type QueryPostings<'a> = SmallVec<[Option<&'a [TextPosting]>; 4]>;
 
 pub(crate) use maintenance::{
     apply_node_create, apply_node_delete, apply_node_update, rebuild_text_indexes,
@@ -246,16 +250,36 @@ impl TextIndex {
             return Ok(Vec::new());
         }
 
-        let mut document_frequencies = vec![0_u32; query_terms.len()];
+        let mut document_frequencies = QueryDocumentFrequencies::with_capacity(query_terms.len());
+        let mut postings_by_term = QueryPostings::with_capacity(query_terms.len());
+        let mut candidate_capacity = 0usize;
+        for term in &query_terms {
+            match self.postings.get(term) {
+                Some(postings) => {
+                    candidate_capacity = candidate_capacity.saturating_add(postings.len());
+                    document_frequencies.push(u32::try_from(postings.len()).unwrap_or(u32::MAX));
+                    postings_by_term.push(Some(postings.as_slice()));
+                }
+                None => {
+                    document_frequencies.push(0);
+                    postings_by_term.push(None);
+                }
+            }
+        }
+        let candidate_capacity = candidate_capacity.min(self.document_lengths.len());
+        if candidate_capacity == 0 {
+            return Ok(Vec::new());
+        }
+
         let mut candidates: FxHashMap<NodeId, DocumentStats> = FxHashMap::default();
+        candidates.reserve(candidate_capacity);
         let mut postings_since_check = 0usize;
 
-        for (term_index, term) in query_terms.iter().enumerate() {
-            let Some(postings) = self.postings.get(term) else {
+        for (term_index, postings) in postings_by_term.into_iter().enumerate() {
+            let Some(postings) = postings else {
                 continue;
             };
-            document_frequencies[term_index] = u32::try_from(postings.len()).unwrap_or(u32::MAX);
-            for posting in postings.iter() {
+            for posting in postings {
                 postings_since_check += 1;
                 if postings_since_check >= crate::text_search::TEXT_SEARCH_CANCEL_STRIDE {
                     checker.check()?;
