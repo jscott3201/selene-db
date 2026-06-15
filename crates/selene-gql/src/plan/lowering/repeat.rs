@@ -6,8 +6,9 @@ use crate::{
 };
 
 use super::{
+    bindings::edge_binding,
     expr,
-    match_clause::{EdgeLoweringContext, RightNode, edge_binding},
+    match_clause::{EdgeLoweringContext, RightNode},
 };
 
 pub(super) fn ensure_within_max_quantifier(
