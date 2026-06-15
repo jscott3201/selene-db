@@ -250,9 +250,3 @@ fn is_typed_unsupported_variant_errors_for_hand_built_ast() {
         }
     ));
 }
-
-// ANALYZE-01: the analyzer must NOT statically reject a literal `NULL` operand
-// in comparison / arithmetic / boolean operators. Per ISO/IEC 39075:2024 §12.x
-// three-valued logic, those operators yield NULL (UNKNOWN) when an operand is
-// NULL; the runtime already does so. A static type rejection there is a
-// conformance bug (a query the engine can evaluate fails analysis).

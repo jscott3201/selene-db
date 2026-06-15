@@ -1,5 +1,11 @@
 use super::*;
 
+// ANALYZE-01: the analyzer must NOT statically reject a literal `NULL` operand
+// in comparison / arithmetic / boolean operators. Per ISO/IEC 39075:2024 §12.x
+// three-valued logic, those operators yield NULL (UNKNOWN) when an operand is
+// NULL; the runtime already does so. A static type rejection there is a
+// conformance bug (a query the engine can evaluate fails analysis).
+
 #[test]
 fn analyze_accepts_null_comparison_operand() {
     let analyzed = analyze_one("RETURN NULL < 5 AS r").expect("NULL < 5 analyzes");
