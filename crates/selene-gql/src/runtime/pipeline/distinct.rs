@@ -10,6 +10,7 @@ pub(super) fn execute(
 ) -> Result<BindingTable, ExecutorError> {
     let (schema, rows) = table.into_parts();
     let mut seen = FxHashSet::default();
+    seen.reserve(rows.len());
     let mut output = Vec::with_capacity(rows.len());
     let mut rows_since_check = 0;
     for row in rows {

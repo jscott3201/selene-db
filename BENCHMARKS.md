@@ -2145,6 +2145,18 @@ and
 | `read_pipeline/match_name_in/1000` | 7.3209 µs | 6.8430 µs | 16-key `Person.name IN [...]` bitmap-union row over the maintained `Person(name)` index. Direct roaring bitmap union is −7.84% median, p=0.00. |
 | `read_pipeline/edge_property_filter_indexed/1000` | 115.83 µs | 117.14 µs | Existing indexed edge-property guard stayed neutral after edge-row filters moved from `BTreeSet` membership to roaring bitmap membership (p=0.20). |
 
+PR-local DISTINCT/GROUP BY hash-table reserve A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter distinct_dedup`
+and
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter group_by_highcard`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/distinct_dedup/1000` | 80.366 µs | 77.178 µs | DISTINCT now reserves its runtime equality-key set from the input row count. Median is -4.0%. |
+| `read_pipeline/group_by_highcard/1000` | 128.66 µs | 119.63 µs | GROUP BY now reserves its group vector and runtime equality-key index from the input row count capped by the configured group-key limit. Median is -7.0%; final rerun showed p=0.00. |
+
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:
 
