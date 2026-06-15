@@ -251,7 +251,19 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .target
             .get(row)
             .ok_or(GraphError::EdgeNotFound { id })?;
+        let props = graph
+            .edge_store
+            .properties
+            .get(row)
+            .cloned()
+            .unwrap_or_default();
         let graph = self.txn.guard_mut();
+        crate::property_index::apply_edge_delete(
+            &mut graph.edge_property_index,
+            &label,
+            &props,
+            row as u32,
+        )?;
         graph.edge_store.alive_mut().remove(row as u32);
         // BRIEF-Item-4a: keep the real id in row_to_id for the dead row (see
         // remove_node_row); only never-committed holes carry EdgeId::TOMBSTONE.

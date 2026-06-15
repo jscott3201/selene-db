@@ -71,6 +71,8 @@ pub struct SeleneGraph {
     pub idx_edge_label: HashMap<DbString, RoaringBitmap>,
     /// Per-`(label, property)` node value indexes. See spec 03 section 5.2.
     pub property_index: FxHashMap<(DbString, DbString), PropertyIndexEntry>,
+    /// Per-`(edge label, property)` edge value indexes.
+    pub edge_property_index: FxHashMap<(DbString, DbString), PropertyIndexEntry>,
     /// Per-`(label, properties...)` node composite value indexes.
     pub composite_property_index:
         FxHashMap<(DbString, SmallVec<[DbString; 4]>), CompositePropertyIndexEntry>,
@@ -106,6 +108,7 @@ impl SeleneGraph {
             idx_label: HashMap::new(),
             idx_edge_label: HashMap::new(),
             property_index: FxHashMap::default(),
+            edge_property_index: FxHashMap::default(),
             composite_property_index: FxHashMap::default(),
             vector_index: FxHashMap::default(),
             text_index: FxHashMap::default(),
@@ -323,6 +326,18 @@ impl SeleneGraph {
             .map(|entry| Arc::clone(&entry.index))
     }
 
+    /// Return a clone of the registered edge `(label, property)` index.
+    #[must_use]
+    pub fn edge_property_index_for(
+        &self,
+        label: &DbString,
+        property: &DbString,
+    ) -> Option<Arc<TypedIndex>> {
+        self.edge_property_index
+            .get(&(label.clone(), property.clone()))
+            .map(|entry| Arc::clone(&entry.index))
+    }
+
     /// Return a clone of the registered composite index.
     #[must_use]
     pub fn composite_property_index_for(
@@ -369,6 +384,12 @@ impl SeleneGraph {
     #[must_use]
     pub fn property_index_count(&self) -> usize {
         self.property_index.len()
+    }
+
+    /// Number of registered edge property indexes.
+    #[must_use]
+    pub fn edge_property_index_count(&self) -> usize {
+        self.edge_property_index.len()
     }
 
     /// Number of distinct `(label, properties...)` indexes currently registered.
@@ -481,6 +502,23 @@ impl SeleneGraph {
             .and_then(|entry| entry.index.lookup_eq(value))
     }
 
+    /// Return edge rows matching `value` under a registered edge property index.
+    ///
+    /// `None` means no edge index is registered for `(label, property)` or the
+    /// supplied value cannot be used with that index kind. `Some(empty)` means
+    /// the index exists but no edge row matches.
+    #[must_use]
+    pub fn edges_with_property_eq(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        value: &Value,
+    ) -> Option<Cow<'_, RoaringBitmap>> {
+        self.edge_property_index
+            .get(&(label.clone(), property.clone()))
+            .and_then(|entry| entry.index.lookup_eq(value))
+    }
+
     /// Return rows matching `range` under a registered property index.
     ///
     /// `None` means no index is registered or the supplied bounds do not match
@@ -497,6 +535,26 @@ impl SeleneGraph {
         R: RangeBounds<Value>,
     {
         self.property_index
+            .get(&(label.clone(), property.clone()))
+            .and_then(|entry| entry.index.lookup_range(range))
+    }
+
+    /// Return edge rows matching `range` under a registered edge property index.
+    ///
+    /// `None` means no edge index is registered or the supplied bounds do not
+    /// match the index kind. `Some(empty)` means the index exists but no edge
+    /// row matches.
+    #[must_use]
+    pub fn edges_with_property_range<R>(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        range: R,
+    ) -> Option<RoaringBitmap>
+    where
+        R: RangeBounds<Value>,
+    {
+        self.edge_property_index
             .get(&(label.clone(), property.clone()))
             .and_then(|entry| entry.index.lookup_range(range))
     }

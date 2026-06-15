@@ -1,10 +1,10 @@
 //! Typed range/equality index scan rule.
 
 use crate::{
-    BinaryOp, IndexTarget, Literal,
+    BinaryOp, EdgeMatch, IndexTarget, Literal,
     plan::{
-        BindingDef, ExecutionPlan, FilterPredicate, IndexKey, JoinTree, ScanAccess, ScanKind,
-        TypedIndexBounds,
+        BindingDef, BindingElement, ExecutionPlan, FilterPredicate, IndexKey, JoinTree, ScanAccess,
+        ScanKind, TypedIndexBounds,
         optimize::{OptimizeContext, Rule, Transformed, binding_refs, cost, walk},
     },
 };
@@ -48,9 +48,10 @@ fn rewrite_tree(
     match tree {
         JoinTree::Unit => false,
         JoinTree::Scan(scan) => rewrite_scan(scan, bindings, catalog),
-        JoinTree::Expand { child, .. }
-        | JoinTree::Questioned { child, .. }
-        | JoinTree::Repeat { child, .. } => rewrite_tree(child, bindings, catalog),
+        JoinTree::Expand { child, edge, .. } | JoinTree::Questioned { child, edge, .. } => {
+            rewrite_tree(child, bindings, catalog) | rewrite_edge(edge, bindings, catalog)
+        }
+        JoinTree::Repeat { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
@@ -74,15 +75,20 @@ fn rewrite_scan(
     bindings: &[BindingDef],
     catalog: &dyn crate::IndexCatalog,
 ) -> bool {
-    if scan.kind != ScanKind::Node || !matches!(scan.access, ScanAccess::Linear) {
+    if !matches!(scan.access, ScanAccess::Linear) {
         return false;
     }
     let Some(label) = single_label(&scan.label_predicate) else {
         return false;
     };
-    let Some(candidate) =
-        best_candidate(&scan.property_predicates, bindings, catalog, label.clone())
-    else {
+    let target = target_for_scan_kind(scan.kind);
+    let Some(candidate) = best_candidate(
+        &scan.property_predicates,
+        bindings,
+        catalog,
+        target,
+        label.clone(),
+    ) else {
         return false;
     };
     // OPT-5 cost gate: take the typed-index probe only when its estimated output
@@ -95,18 +101,61 @@ fn rewrite_scan(
     if let (Some(index_cost), Some(baseline)) = (
         cost::typed_index_cost(
             catalog,
-            IndexTarget::Node,
+            target,
             label.clone(),
             candidate.property.clone(),
             &candidate.bounds,
         ),
-        cost::linear_baseline(catalog, IndexTarget::Node, label),
+        cost::linear_baseline(catalog, target, label),
     ) && cost::should_decline_index(index_cost, baseline)
     {
         return false;
     }
     remove_indices(&mut scan.property_predicates, &candidate.consumed_indices);
     scan.access = ScanAccess::TypedIndexRange {
+        handle: candidate.handle,
+        property: candidate.property,
+        kind: candidate.kind,
+        bounds: candidate.bounds,
+    };
+    true
+}
+
+fn rewrite_edge(
+    edge: &mut EdgeMatch,
+    bindings: &[BindingDef],
+    catalog: &dyn crate::IndexCatalog,
+) -> bool {
+    if !matches!(edge.access, ScanAccess::Linear) {
+        return false;
+    }
+    let Some(label) = single_label(&edge.label_predicate) else {
+        return false;
+    };
+    let Some(candidate) = best_candidate(
+        &edge.property_predicates,
+        bindings,
+        catalog,
+        IndexTarget::Edge,
+        label.clone(),
+    ) else {
+        return false;
+    };
+    if let (Some(index_cost), Some(baseline)) = (
+        cost::typed_index_cost(
+            catalog,
+            IndexTarget::Edge,
+            label.clone(),
+            candidate.property.clone(),
+            &candidate.bounds,
+        ),
+        cost::linear_baseline(catalog, IndexTarget::Edge, label),
+    ) && cost::should_decline_index(index_cost, baseline)
+    {
+        return false;
+    }
+    remove_indices(&mut edge.property_predicates, &candidate.consumed_indices);
+    edge.access = ScanAccess::TypedIndexRange {
         handle: candidate.handle,
         property: candidate.property,
         kind: candidate.kind,
@@ -127,18 +176,17 @@ fn best_candidate(
     predicates: &[FilterPredicate],
     bindings: &[BindingDef],
     catalog: &dyn crate::IndexCatalog,
+    target: IndexTarget,
     label: selene_core::DbString,
 ) -> Option<Candidate> {
     for (index, pred) in predicates.iter().enumerate() {
         let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
             continue;
         };
-        if !binding_is_node(bindings, matched.binding) {
+        if !binding_is_target(bindings, matched.binding, target) {
             continue;
         }
-        let Some(lookup) =
-            catalog.typed_index(crate::IndexTarget::Node, label.clone(), matched.key.clone())
-        else {
+        let Some(lookup) = catalog.typed_index(target, label.clone(), matched.key.clone()) else {
             continue;
         };
         let Some((bounds, mut consumed_indices)) = bounds_for_property(
@@ -385,10 +433,25 @@ fn range_satisfiable(lo: &Literal, lo_inclusive: bool, hi: &Literal, hi_inclusiv
     }
 }
 
-fn binding_is_node(bindings: &[BindingDef], binding_id: crate::BindingId) -> bool {
-    bindings.iter().any(|binding| {
-        binding.binding == binding_id && binding.element == crate::BindingElement::Node
-    })
+fn target_for_scan_kind(kind: ScanKind) -> IndexTarget {
+    match kind {
+        ScanKind::Node => IndexTarget::Node,
+        ScanKind::Edge => IndexTarget::Edge,
+    }
+}
+
+fn binding_is_target(
+    bindings: &[BindingDef],
+    binding_id: crate::BindingId,
+    target: IndexTarget,
+) -> bool {
+    let element = match target {
+        IndexTarget::Node => BindingElement::Node,
+        IndexTarget::Edge => BindingElement::Edge,
+    };
+    bindings
+        .iter()
+        .any(|binding| binding.binding == binding_id && binding.element == element)
 }
 
 fn remove_indices(predicates: &mut Vec<FilterPredicate>, indices: &[usize]) {

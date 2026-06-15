@@ -55,6 +55,18 @@ impl MockIndexCatalog {
         self
     }
 
+    /// Register an edge typed-property index.
+    #[must_use]
+    pub fn with_edge_typed_index(
+        mut self,
+        label: DbString,
+        property: DbString,
+        kind: IndexKind,
+    ) -> Self {
+        self.insert_typed_index(IndexTarget::Edge, label, property, kind);
+        self
+    }
+
     /// Register a node label index.
     #[must_use]
     pub fn with_node_label_index(mut self, label: DbString) -> Self {
@@ -143,6 +155,14 @@ impl MockIndexCatalog {
         self
     }
 
+    /// Inject the exact row count carrying an edge label.
+    #[must_use]
+    pub fn with_edge_label_cardinality(mut self, label: DbString, rows: u64) -> Self {
+        self.label_cardinality
+            .insert((IndexTarget::Edge, label), rows);
+        self
+    }
+
     /// Inject the exact match count for a literal equality probe.
     #[must_use]
     pub fn with_equality_cardinality(
@@ -157,11 +177,38 @@ impl MockIndexCatalog {
         self
     }
 
+    /// Inject the exact match count for an edge literal equality probe.
+    #[must_use]
+    pub fn with_edge_equality_cardinality(
+        mut self,
+        label: DbString,
+        property: DbString,
+        value: Value,
+        rows: u64,
+    ) -> Self {
+        self.equality_cardinality
+            .push(((IndexTarget::Edge, label, property, value), rows));
+        self
+    }
+
     /// Inject the average bucket size for a typed index (parameter equality).
     #[must_use]
     pub fn with_typed_avg_bucket(mut self, label: DbString, property: DbString, rows: u64) -> Self {
         self.typed_avg_bucket
             .insert((IndexTarget::Node, label, property), rows);
+        self
+    }
+
+    /// Inject the average bucket size for an edge typed index.
+    #[must_use]
+    pub fn with_edge_typed_avg_bucket(
+        mut self,
+        label: DbString,
+        property: DbString,
+        rows: u64,
+    ) -> Self {
+        self.typed_avg_bucket
+            .insert((IndexTarget::Edge, label, property), rows);
         self
     }
 

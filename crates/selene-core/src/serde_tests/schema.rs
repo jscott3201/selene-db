@@ -50,7 +50,7 @@ fn schema_change_postcard_round_trip() {
         },
         SchemaChange::EdgeTypeDropped {
             graph_type: graph_type_id,
-            name: edge_label,
+            name: edge_label.clone(),
         },
         SchemaChange::RecordTypeAdded {
             graph_type: graph_type_id,
@@ -74,6 +74,16 @@ fn schema_change_postcard_round_trip() {
             property: dbs("serde.schema.indexed"),
             kind: SchemaPropertyIndexKind::Decimal,
             name: Some(dbs("serde.schema.index.name")),
+        },
+        SchemaChange::EdgePropertyIndexCreated {
+            label: edge_label.clone(),
+            property: dbs("serde.schema.edge.indexed"),
+            kind: SchemaPropertyIndexKind::String,
+            name: Some(dbs("serde.schema.edge.index.name")),
+        },
+        SchemaChange::EdgePropertyIndexDropped {
+            label: edge_label.clone(),
+            property: dbs("serde.schema.edge.indexed"),
         },
         SchemaChange::CompositePropertyIndexCreated {
             label: node_label.clone(),

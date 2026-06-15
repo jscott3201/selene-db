@@ -102,6 +102,8 @@ fn apply_schema_change(
         SchemaChange::PropertyIndexCreated { .. }
         | SchemaChange::PropertyIndexDropped { .. }
         | SchemaChange::PropertyIndexCreatedNamed { .. }
+        | SchemaChange::EdgePropertyIndexCreated { .. }
+        | SchemaChange::EdgePropertyIndexDropped { .. }
         | SchemaChange::CompositePropertyIndexCreated { .. }
         | SchemaChange::CompositePropertyIndexDropped { .. }
         | SchemaChange::VectorIndexCreated { .. }
@@ -593,6 +595,8 @@ pub(super) fn schema_change_variant(change: &SchemaChange) -> &'static str {
         SchemaChange::VectorIndexDropped { .. } => "VectorIndexDropped",
         SchemaChange::TextIndexCreated { .. } => "TextIndexCreated",
         SchemaChange::TextIndexDropped { .. } => "TextIndexDropped",
+        SchemaChange::EdgePropertyIndexCreated { .. } => "EdgePropertyIndexCreated",
+        SchemaChange::EdgePropertyIndexDropped { .. } => "EdgePropertyIndexDropped",
     }
 }
 

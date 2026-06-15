@@ -293,6 +293,12 @@ node properties before maintained JSON/path indexes exist. Global JSON scans use
 threshold-gated Rayon when the label row set has at least 16,384 rows, including
 deadline-bearing checked calls; candidate-scoped JSON scans remain sequential
 because they sort/dedup and can stop once `k` matches are found.
+`graph_edge_property_scan/*`, `graph_edge_property_index_lookup/*`, and
+`graph_point_connected_traversal/*` are edge-index sprint rows over an
+open-control-shaped `CdlBlock`/`Point` fixture: the first scans `CONNECTED_TO`
+edge-label rows and filters edge properties, the second uses the built-in
+edge-property typed index, and the third walks `Point` nodes through labeled
+adjacency before checking target metadata.
 `graph_snapshot_read_loops/*` amortizes thread setup over many
 `SharedGraph::read()` calls so the ArcSwap snapshot hot path is visible; the
 older `graph_concurrent_reads` row remains a legacy spawn/join smoke row.
@@ -540,6 +546,21 @@ and
 | `graph_bfs` (depth=1) | 106.3 ns | 109.0 ns | 109.6 ns | Depth-1 independent of N. |
 | `graph_bfs` (depth=10) | 11.34 µs | 12.09 µs | 12.18 µs | Mostly traversal cost. |
 | `graph_bfs` (depth=50) | 101.1 µs | 111.1 µs | 113.1 µs | Saturates ~110 µs. |
+
+PR-local edge-index sprint baseline:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_edge_property_scan`
+and
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_edge_property_index_lookup`
+and
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_point_connected_traversal`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `graph_edge_property_scan/1000` | 22.410 µs | Exact scan path: `CONNECTED_TO` edge-label bitmap scan, row-to-`EdgeId` mapping, and `from_port = 'out_0'` property check over 1,000 connected edges. |
+| `graph_edge_property_index_lookup/1000` | 11.887 ns | Built-in edge-property typed index lookup for the same `(CONNECTED_TO, from_port = 'out_0')` predicate. Fixture build/index creation is excluded from the timed body. |
+| `graph_point_connected_traversal/1000` | 26.569 µs | Open-control-shaped Point-node path: label scan over 1,000 `Point` nodes, filter output points, traverse outgoing `CONNECTED_TO`, and validate input-point metadata. |
 
 PR-local quick text baseline:
 
@@ -2045,6 +2066,16 @@ cold vs 81 µs warm) amortizes under the linear scan.
 | `read_pipeline/distinct_dedup` | 877 µs | 5.93 ms | 13.61 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
 | `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
 | `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
+
+PR-local edge-index sprint A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter edge_property_filter`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/edge_property_filter_no_index/1000` | 476.73 µs | Warm unanchored edge-property query over `CONNECTED_TO` edges with no edge-property index; scans expand adjacency and evaluates `e.from_port = 'port_17'` as a residual predicate. |
+| `read_pipeline/edge_property_filter_indexed/1000` | 115.87 µs | Same query with a built-in `CONNECTED_TO(from_port)` edge-property index; optimizer emits edge `TypedIndexRange` and expand drives from the selective indexed edge-row set. Median is −75.7% vs no-index. |
 
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:

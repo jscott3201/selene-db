@@ -315,6 +315,150 @@ fn old_snapshot_does_not_see_new_property_index() {
     assert_eq!(shared.read().property_index_count(), 1);
 }
 
+#[test]
+fn create_edge_property_index_builds_from_existing_edges() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let label = db_string("edge.prop.index.label").unwrap();
+    let other_label = db_string("edge.prop.index.other").unwrap();
+    let property = db_string("edge.prop.index.port").unwrap();
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let a = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        let b = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(
+                label.clone(),
+                a,
+                b,
+                property_map([(property.clone(), Value::Int(7))]),
+            )
+            .unwrap();
+        mutator
+            .create_edge(
+                label.clone(),
+                b,
+                a,
+                property_map([(property.clone(), Value::Int(9))]),
+            )
+            .unwrap();
+        mutator
+            .create_edge(
+                other_label,
+                a,
+                b,
+                property_map([(property.clone(), Value::Int(7))]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    shared
+        .create_edge_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
+        .unwrap();
+
+    let snapshot = shared.read();
+    let rows = snapshot
+        .edges_with_property_eq(&label, &property, &Value::Int(7))
+        .unwrap();
+    assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
+    assert_eq!(snapshot.edge_property_index_count(), 1);
+}
+
+#[test]
+fn edge_property_index_tracks_update_remove_and_delete() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let label = db_string("edge.prop.maint.label").unwrap();
+    let property = db_string("edge.prop.maint.port").unwrap();
+    let edge = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let a = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        let b = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        let edge = mutator
+            .create_edge(
+                label.clone(),
+                a,
+                b,
+                property_map([(property.clone(), Value::Int(1))]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+        edge
+    };
+    shared
+        .create_edge_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
+        .unwrap();
+
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .update_edge(
+                edge,
+                PropertyDiff::new([(property.clone(), Value::Int(2))], []).unwrap(),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    let snapshot = shared.read();
+    assert!(
+        snapshot
+            .edges_with_property_eq(&label, &property, &Value::Int(1))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        snapshot
+            .edges_with_property_eq(&label, &property, &Value::Int(2))
+            .unwrap()
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![0]
+    );
+
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .remove_edge_property(edge, property.clone())
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    assert!(
+        shared
+            .read()
+            .edges_with_property_eq(&label, &property, &Value::Int(2))
+            .unwrap()
+            .is_empty()
+    );
+
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .update_edge(
+                edge,
+                PropertyDiff::new([(property.clone(), Value::Int(3))], []).unwrap(),
+            )
+            .unwrap();
+        txn.mutator().delete_edge(edge).unwrap();
+        txn.commit().unwrap();
+    }
+    assert!(
+        shared
+            .read()
+            .edges_with_property_eq(&label, &property, &Value::Int(3))
+            .unwrap()
+            .is_empty()
+    );
+}
+
 proptest! {
     #[test]
     fn indexed_i64_sequence_matches_column_scan(ops in prop::collection::vec(0u8..32, 1..40)) {

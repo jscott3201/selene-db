@@ -14,11 +14,34 @@ use crate::{
 
 use super::codec::{decode_rkyv, encode_rkyv, ensure_section_within_cap, validate_sorted_unique};
 
+/// Entity family for a property-index schema entry.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub enum SchemaEntityKind {
+    /// Node property-index registration.
+    Node,
+    /// Edge property-index registration.
+    Edge,
+}
+
 /// Identity for an entry in the core schema section.
 ///
-/// Schema entries currently map one-to-one with built-in property index
-/// registrations. In-memory and `CORE/SCMA` wire order are lexicographic by
-/// `label.as_str()` and `property.as_str()` for cross-process stability.
+/// Schema entries currently map one-to-one with built-in node or edge property
+/// index registrations. In-memory and `CORE/SCMA` wire order are lexicographic
+/// by entity kind, `label.as_str()`, and `property.as_str()` for cross-process
+/// stability.
 #[derive(
     Clone,
     Debug,
@@ -33,7 +56,9 @@ use super::codec::{decode_rkyv, encode_rkyv, ensure_section_within_cap, validate
     Serialize,
 )]
 pub struct SchemaKey {
-    /// Node label the registration applies to.
+    /// Entity family the registration applies to.
+    pub entity: SchemaEntityKind,
+    /// Node or edge label the registration applies to.
     pub label: DbString,
     /// Property the registration applies to.
     pub property: DbString,
@@ -64,7 +89,7 @@ pub struct SchemaEntry {
 /// shipped consumers): the on-disk layout IS the contract. A missing or
 /// mismatched version byte is a hard decode error, never a silent legacy
 /// fall-through - mirrors the `CORE/GTYP` collapse.
-pub(in crate::core_provider) const SCMA_VERSION: u8 = 2;
+pub(in crate::core_provider) const SCMA_VERSION: u8 = 3;
 
 /// Identity for an entry in the composite-property-index snapshot section.
 #[derive(
@@ -199,6 +224,7 @@ pub(in crate::core_provider) fn encode_schemas(
         .map(|((label, property), entry)| {
             (
                 SchemaKey {
+                    entity: SchemaEntityKind::Node,
                     label: label.clone(),
                     property: property.clone(),
                 },
@@ -209,6 +235,24 @@ pub(in crate::core_provider) fn encode_schemas(
             )
         })
         .collect();
+    rows.extend(
+        graph
+            .edge_property_index
+            .iter()
+            .map(|((label, property), entry)| {
+                (
+                    SchemaKey {
+                        entity: SchemaEntityKind::Edge,
+                        label: label.clone(),
+                        property: property.clone(),
+                    },
+                    SchemaEntry {
+                        kind: entry.kind(),
+                        name: entry.name.clone(),
+                    },
+                )
+            }),
+    );
     rows.sort_by(schema_wire_cmp);
     let mut payload = Vec::with_capacity(1);
     payload.push(SCMA_VERSION);
@@ -240,8 +284,11 @@ pub(in crate::core_provider) fn decode_schemas(
 }
 
 fn schema_wire_cmp<V>(lhs: &(SchemaKey, V), rhs: &(SchemaKey, V)) -> std::cmp::Ordering {
-    (lhs.0.label.as_str(), lhs.0.property.as_str())
-        .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))
+    (lhs.0.entity, lhs.0.label.as_str(), lhs.0.property.as_str()).cmp(&(
+        rhs.0.entity,
+        rhs.0.label.as_str(),
+        rhs.0.property.as_str(),
+    ))
 }
 
 pub(in crate::core_provider) fn encode_composite_schemas(

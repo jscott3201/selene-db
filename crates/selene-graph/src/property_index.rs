@@ -50,6 +50,36 @@ pub(crate) fn apply_node_delete(
     Ok(())
 }
 
+pub(crate) fn apply_edge_create(
+    indexes: &mut PropertyIndexMap,
+    label: &DbString,
+    props: &PropertyMap,
+    row: u32,
+) -> GraphResult<()> {
+    for (property, value) in props.iter() {
+        if is_null(value) {
+            continue;
+        }
+        insert_commit(indexes, label.clone(), property.clone(), value, row)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_edge_delete(
+    indexes: &mut PropertyIndexMap,
+    label: &DbString,
+    props: &PropertyMap,
+    row: u32,
+) -> GraphResult<()> {
+    for (property, value) in props.iter() {
+        if is_null(value) {
+            continue;
+        }
+        remove_commit(indexes, label.clone(), property.clone(), value, row)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn apply_node_update(
     indexes: &mut PropertyIndexMap,
     old_labels: &LabelSet,
@@ -67,6 +97,44 @@ pub(crate) fn apply_node_update(
     for (label, property) in candidates {
         let old_value = indexable_value(old_labels, old_props, &label, &property);
         let new_value = indexable_value(new_labels, new_props, &label, &property);
+        if values_share_key(
+            indexes,
+            label.clone(),
+            property.clone(),
+            old_value,
+            new_value,
+        ) {
+            continue;
+        }
+        if let Some(value) = old_value {
+            remove_commit(indexes, label.clone(), property.clone(), value, row)?;
+        }
+        if let Some(value) = new_value {
+            insert_commit(indexes, label.clone(), property.clone(), value, row)?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_edge_update(
+    indexes: &mut PropertyIndexMap,
+    label: &DbString,
+    old_props: &PropertyMap,
+    new_props: &PropertyMap,
+    row: u32,
+) -> GraphResult<()> {
+    if indexes.is_empty() {
+        return Ok(());
+    }
+    let mut properties: BTreeSet<DbString> = BTreeSet::new();
+    properties.extend(old_props.keys().cloned());
+    properties.extend(new_props.keys().cloned());
+    for property in properties {
+        if !indexes.contains_key(&(label.clone(), property.clone())) {
+            continue;
+        }
+        let old_value = old_props.get(&property).filter(|value| !is_null(value));
+        let new_value = new_props.get(&property).filter(|value| !is_null(value));
         if values_share_key(
             indexes,
             label.clone(),
@@ -150,6 +218,26 @@ pub(crate) fn build_property_index_lenient(
     build_property_index_inner(graph, label, property, kind, BuildPolicy::Lenient)
 }
 
+/// Build an edge property index strictly over existing edge columns.
+pub(crate) fn build_edge_property_index(
+    graph: &crate::SeleneGraph,
+    label: DbString,
+    property: DbString,
+    kind: TypedIndexKind,
+) -> GraphResult<TypedIndex> {
+    build_edge_property_index_inner(graph, label, property, kind, BuildPolicy::Strict)
+}
+
+/// Build an edge property index leniently for recovery/rebuild paths.
+pub(crate) fn build_edge_property_index_lenient(
+    graph: &crate::SeleneGraph,
+    label: DbString,
+    property: DbString,
+    kind: TypedIndexKind,
+) -> GraphResult<TypedIndex> {
+    build_edge_property_index_inner(graph, label, property, kind, BuildPolicy::Lenient)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BuildPolicy {
     Strict,
@@ -204,6 +292,54 @@ fn build_property_index_inner(
     Ok(index)
 }
 
+fn build_edge_property_index_inner(
+    graph: &crate::SeleneGraph,
+    label: DbString,
+    property: DbString,
+    kind: TypedIndexKind,
+    policy: BuildPolicy,
+) -> GraphResult<TypedIndex> {
+    let mut index = TypedIndex::new(kind);
+    for row_index in 0..graph.edge_store.label.len() {
+        let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
+            reason: format!(
+                "edge store row index {row_index} exceeds u32::MAX; selene-graph \
+                 caps rows at u32::MAX",
+            ),
+        })?;
+        if !graph.edge_store.is_alive(row) {
+            continue;
+        }
+        let Some(edge_label) = graph.edge_store.label.get(row_index) else {
+            continue;
+        };
+        if edge_label != &label {
+            continue;
+        }
+        let Some(props) = graph.edge_store.properties.get(row_index) else {
+            continue;
+        };
+        let Some(value) = props.get(&property) else {
+            continue;
+        };
+        if is_null(value) {
+            continue;
+        }
+        match index.insert(value, row) {
+            Ok(()) => {}
+            Err(err) => match policy {
+                BuildPolicy::Strict => {
+                    return Err(index_rejection(label.clone(), property.clone(), err));
+                }
+                BuildPolicy::Lenient => {
+                    warn_rejected("edge rebuild", label.clone(), property.clone(), row, &err);
+                }
+            },
+        }
+    }
+    Ok(index)
+}
+
 /// Rebuild every registered property index from the graph's columns,
 /// using lenient (log-and-skip) semantics on kind mismatches so recovery
 /// of a runtime-accepted snapshot never fails. The strict policy lives
@@ -219,6 +355,24 @@ pub(crate) fn rebuild_property_indexes(graph: &mut crate::SeleneGraph) -> GraphR
         let index = build_property_index_lenient(graph, label.clone(), property.clone(), kind)?;
         graph
             .property_index
+            .insert((label, property), PropertyIndexEntry::new(index, name));
+    }
+    Ok(())
+}
+
+/// Rebuild every registered edge property index from the graph's edge columns.
+pub(crate) fn rebuild_edge_property_indexes(graph: &mut crate::SeleneGraph) -> GraphResult<()> {
+    let registrations: Vec<((DbString, DbString), TypedIndexKind, Option<DbString>)> = graph
+        .edge_property_index
+        .iter()
+        .map(|(key, entry)| (key.clone(), entry.kind(), entry.name.clone()))
+        .collect();
+    graph.edge_property_index.clear();
+    for ((label, property), kind, name) in registrations {
+        let index =
+            build_edge_property_index_lenient(graph, label.clone(), property.clone(), kind)?;
+        graph
+            .edge_property_index
             .insert((label, property), PropertyIndexEntry::new(index, name));
     }
     Ok(())

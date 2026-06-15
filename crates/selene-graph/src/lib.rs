@@ -5,8 +5,7 @@
 //! the CORE persistence provider. `SharedGraph` serializes writes through a
 //! transaction boundary while readers observe immutable snapshots. selene-db is
 //! a single native engine: the higher `selene-gql` layer owns GQL
-//! binding/planning and the one frozen native procedure registry. Edge property
-//! indexes remain outside the current storage contract.
+//! binding/planning and the one frozen native procedure registry.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

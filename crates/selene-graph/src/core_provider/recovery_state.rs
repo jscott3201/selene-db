@@ -7,8 +7,8 @@ use selene_core::{EdgeId, GraphId, NodeId, SchemaChange};
 use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
-    CompositeSchemaEntry, CompositeSchemaKey, EdgeRow, MetaPayload, NodeRow, SchemaEntry,
-    SchemaKey, TextSchemaEntry, TextSchemaKey, VectorSchemaEntry, VectorSchemaKey,
+    CompositeSchemaEntry, CompositeSchemaKey, EdgeRow, MetaPayload, NodeRow, SchemaEntityKind,
+    SchemaEntry, SchemaKey, TextSchemaEntry, TextSchemaKey, VectorSchemaEntry, VectorSchemaKey,
     decode_composite_schemas, decode_edges, decode_graph_types, decode_meta, decode_nodes,
     decode_schemas, decode_text_schemas, decode_vector_schemas,
 };
@@ -327,11 +327,15 @@ impl RecoveryState {
         graph.meta.next_edge_id = next_edge_id;
 
         // Re-register property indexes from SCMA. The empty TypedIndex placeholders
-        // are filled by `rebuild_property_indexes` (called downstream via
-        // `try_from_graph`) so the registration set survives restart even though
-        // the entry contents are derived from primary state.
+        // are filled by the downstream rebuild passes (`try_from_graph`) so the
+        // registration sets survive restart even though entry contents are
+        // derived from primary state.
         for (key, entry) in self.schemas {
-            graph.property_index.insert(
+            let target = match key.entity {
+                SchemaEntityKind::Node => &mut graph.property_index,
+                SchemaEntityKind::Edge => &mut graph.edge_property_index,
+            };
+            target.insert(
                 (key.label, key.property),
                 PropertyIndexEntry::new(TypedIndex::new(entry.kind), entry.name),
             );

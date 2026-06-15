@@ -78,11 +78,13 @@ impl IndexCatalog for LiveIndexCatalog {
         label: DbString,
         property: DbString,
     ) -> Option<TypedIndexLookup> {
-        // Built-in typed property indexes are node-only at HEAD.
-        if target != IndexTarget::Node {
-            return None;
-        }
-        let kind = self.snapshot.property_index_for(&label, &property)?.kind();
+        let kind = match target {
+            IndexTarget::Node => self.snapshot.property_index_for(&label, &property)?.kind(),
+            IndexTarget::Edge => self
+                .snapshot
+                .edge_property_index_for(&label, &property)?
+                .kind(),
+        };
         // The opaque handle is never dereferenced by the runtime; the scan
         // re-derives the actual index by (label, property) at execute time.
         Some(TypedIndexLookup::new(
@@ -156,9 +158,11 @@ impl IndexCatalog for LiveIndexCatalog {
                     .nodes_with_label(&label)
                     .map_or(0, |bm| bm.len()),
             ),
-            // Edge label cardinality is not exposed at HEAD; decline so the
-            // edge label-scan rule keeps its structural behavior.
-            IndexTarget::Edge => None,
+            IndexTarget::Edge => Some(
+                self.snapshot
+                    .edges_with_label(&label)
+                    .map_or(0, |bm| bm.len()),
+            ),
         }
     }
 
@@ -169,15 +173,16 @@ impl IndexCatalog for LiveIndexCatalog {
         property: DbString,
         value: &Value,
     ) -> Option<u64> {
-        if target != IndexTarget::Node {
-            return None;
+        match target {
+            IndexTarget::Node => self
+                .snapshot
+                .nodes_with_property_eq(&label, &property, value)
+                .map(|cow| cow.len()),
+            IndexTarget::Edge => self
+                .snapshot
+                .edges_with_property_eq(&label, &property, value)
+                .map(|cow| cow.len()),
         }
-        // `Some(cow)` = exact match count (possibly 0); `None` = no index or the
-        // value cannot be used with this index kind → decline so the caller
-        // keeps its structural decision.
-        self.snapshot
-            .nodes_with_property_eq(&label, &property, value)
-            .map(|cow| cow.len())
     }
 
     fn range_cardinality(
@@ -187,12 +192,16 @@ impl IndexCatalog for LiveIndexCatalog {
         property: DbString,
         range: (std::ops::Bound<Value>, std::ops::Bound<Value>),
     ) -> Option<u64> {
-        if target != IndexTarget::Node {
-            return None;
+        match target {
+            IndexTarget::Node => self
+                .snapshot
+                .nodes_with_property_range(&label, &property, range)
+                .map(|bm| bm.len()),
+            IndexTarget::Edge => self
+                .snapshot
+                .edges_with_property_range(&label, &property, range)
+                .map(|bm| bm.len()),
         }
-        self.snapshot
-            .nodes_with_property_range(&label, &property, range)
-            .map(|bm| bm.len())
     }
 
     fn typed_avg_bucket(
@@ -201,10 +210,10 @@ impl IndexCatalog for LiveIndexCatalog {
         label: DbString,
         property: DbString,
     ) -> Option<u64> {
-        if target != IndexTarget::Node {
-            return None;
-        }
-        let index = self.snapshot.property_index_for(&label, &property)?;
+        let index = match target {
+            IndexTarget::Node => self.snapshot.property_index_for(&label, &property)?,
+            IndexTarget::Edge => self.snapshot.edge_property_index_for(&label, &property)?,
+        };
         Some(avg_bucket(index.cardinality(), index.distinct_keys()))
     }
 
