@@ -1,0 +1,171 @@
+use super::*;
+
+#[test]
+fn builder_constructs_empty_graph() {
+    let shared = SharedGraph::builder(GraphId::new(1)).build().unwrap();
+    assert_eq!(shared.read().meta.graph_id, GraphId::new(1));
+    assert_eq!(
+        shared.providers[0].provider_tag(),
+        ProviderTag(CORE_PROVIDER_TAG)
+    );
+}
+
+#[test]
+fn durable_write_failure_rolls_back_in_memory_state() {
+    let durable: Arc<dyn DurableProvider> = Arc::new(FailingDurableProvider);
+    let shared = SharedGraph::from_graph_with_core_and_durables(
+        SeleneGraph::new(GraphId::new(1)),
+        Vec::new(),
+        vec![durable],
+        None,
+        None,
+        crate::committer_batch::CommitBatching::Off,
+    )
+    .unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        mutator
+            .create_node(
+                LabelSet::single(db_string("durable.rollback").unwrap()),
+                PropertyMap::new(),
+            )
+            .unwrap();
+    }
+
+    assert!(matches!(
+        txn.commit(),
+        Err(GraphError::Durable { reason }) if reason.contains("synthetic durable failure")
+    ));
+    assert_eq!(shared.read().node_count(), 0);
+}
+
+#[test]
+fn builder_bound_to_constructs_closed_graph() {
+    let graph_type = sample_type();
+    let shared = SharedGraph::builder(GraphId::new(1))
+        .bound_to(graph_type.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    assert!(shared.is_closed());
+    assert_eq!(shared.graph_type().as_deref(), Some(&graph_type));
+}
+
+#[test]
+fn builder_bound_to_rejects_invalid_type() {
+    let mut graph_type = sample_type();
+    graph_type.node_types[0].key_labels = LabelSet::new();
+    assert!(matches!(
+        SharedGraph::builder(GraphId::new(1)).bound_to(graph_type),
+        Err(GraphError::Inconsistent { reason }) if reason.contains("empty label set")
+    ));
+}
+
+#[test]
+fn builder_with_two_providers_preserves_registration_order() {
+    let first = Arc::new(TestProvider::new(ProviderTag(*b"ONE1")));
+    let second = Arc::new(TestProvider::new(ProviderTag(*b"TWO2")));
+    let shared = SharedGraph::builder(GraphId::new(1))
+        .with_provider(first)
+        .with_provider(second)
+        .build()
+        .unwrap();
+    assert_eq!(
+        shared.providers[0].provider_tag(),
+        ProviderTag(CORE_PROVIDER_TAG)
+    );
+    assert_eq!(shared.providers[1].provider_tag(), ProviderTag(*b"ONE1"));
+    assert_eq!(shared.providers[2].provider_tag(), ProviderTag(*b"TWO2"));
+}
+
+#[test]
+fn builder_rejects_duplicate_provider_tags() {
+    let result = SharedGraph::builder(GraphId::new(1))
+        .with_provider(Arc::new(TestProvider::new(ProviderTag(*b"DUPL"))))
+        .with_provider(Arc::new(TestProvider::new(ProviderTag(*b"DUPL"))))
+        .build();
+    let err = match result {
+        Ok(_) => panic!("duplicate provider tags should be rejected"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        GraphError::Provider(ProviderError::Inconsistent { reason })
+            if reason.contains("duplicate provider tag DUPL")
+    ));
+}
+
+#[test]
+fn from_graph_with_providers_validates_uniqueness() {
+    let graph = SeleneGraph::new(GraphId::new(1));
+    let result = SharedGraph::from_graph_with_providers(
+        graph,
+        vec![
+            Arc::new(TestProvider::new(ProviderTag(*b"SAME"))),
+            Arc::new(TestProvider::new(ProviderTag(*b"SAME"))),
+        ],
+    );
+    let err = match result {
+        Ok(_) => panic!("duplicate provider tags should be rejected"),
+        Err(err) => err,
+    };
+    assert!(matches!(
+        err,
+        GraphError::Provider(ProviderError::Inconsistent { .. })
+    ));
+}
+
+#[test]
+fn public_constructors_auto_register_core_provider() {
+    let from_new = SharedGraph::new(GraphId::new(1));
+    let from_graph = SharedGraph::from_graph(SeleneGraph::new(GraphId::new(2)));
+    assert!(
+        from_new
+            .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
+            .is_some()
+    );
+    assert!(
+        from_graph
+            .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
+            .is_some()
+    );
+}
+
+#[test]
+fn user_registered_core_tag_is_rejected() {
+    let result = SharedGraph::builder(GraphId::new(1))
+        .with_provider(Arc::new(TestProvider::new(ProviderTag(CORE_PROVIDER_TAG))))
+        .build();
+    assert!(matches!(
+        result,
+        Err(GraphError::Provider(ProviderError::Inconsistent { reason }))
+            if reason.contains("duplicate provider tag CORE")
+    ));
+}
+
+#[test]
+fn index_provider_by_tag_returns_registered_provider() {
+    let provider = Arc::new(TestProvider::new(ProviderTag(*b"FIND")));
+    let shared = SharedGraph::builder(GraphId::new(1))
+        .with_provider(provider)
+        .build()
+        .unwrap();
+    assert_eq!(
+        shared
+            .index_provider_by_tag(ProviderTag(*b"FIND"))
+            .unwrap()
+            .provider_tag(),
+        ProviderTag(*b"FIND")
+    );
+}
+
+#[test]
+fn index_provider_by_tag_returns_none_for_unknown_tag() {
+    let shared = SharedGraph::builder(GraphId::new(1)).build().unwrap();
+    assert!(
+        shared
+            .index_provider_by_tag(ProviderTag(*b"MISS"))
+            .is_none()
+    );
+}
