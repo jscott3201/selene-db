@@ -49,6 +49,16 @@ pub(crate) fn execute_pattern_with_seed_and_schema(
     schema: BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    execute_pattern_with_seed_schema_and_limit(pattern, seed, schema, ctx, None)
+}
+
+pub(crate) fn execute_pattern_with_seed_schema_and_limit(
+    pattern: &PatternPlan,
+    seed: Option<&Binding>,
+    schema: BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+    row_limit: Option<usize>,
+) -> Result<BindingTable, ExecutorError> {
     let env = WalkContext {
         pattern,
         schema: &schema,
@@ -56,11 +66,17 @@ pub(crate) fn execute_pattern_with_seed_and_schema(
         ctx,
     };
     let mut rows = Vec::new();
+    if row_limit == Some(0) {
+        return Ok(BindingTable::new(schema, rows));
+    }
     let mut rows_since_check = 0;
     for row in walk_join_tree(&pattern.join_tree, env)? {
         ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
         if pattern_filters_pass(pattern, &row, &schema, ctx)? {
             rows.push(row);
+            if row_limit.is_some_and(|limit| rows.len() >= limit) {
+                break;
+            }
         }
     }
     Ok(BindingTable::new(schema, rows))
