@@ -3,12 +3,12 @@
 //! gap (the declared 60%-read workload previously had only the correlated
 //! subquery bench timing read execution).
 //!
-//! Seven warm-plan-cache rows run on a no-WAL in-memory `SharedGraph`, so the
+//! Eight warm-plan-cache rows run on a no-WAL in-memory `SharedGraph`, so the
 //! timed body is pure execution + index access — not parse/plan/optimize and
 //! not durability: label scan + indexed range filter, two-leg hash join,
-//! ORDER BY top-K, high-cardinality GROUP BY, DISTINCT dedup, post-RETURN
-//! `LIMIT 10` (the B19 baseline), and pre-RETURN `LIMIT 10` (the safe pattern
-//! cap row). Cold and shared-cache
+//! ORDER BY top-K, high-cardinality GROUP BY, DISTINCT dedup, indexed `IN`
+//! bitmap union, post-RETURN `LIMIT 10` (the B19 baseline), and pre-RETURN
+//! `LIMIT 10` (the safe pattern cap row). Cold and shared-cache
 //! companions on the cheapest row rebuild a fresh session per iteration to
 //! isolate short-lived-session cache strategy.
 //!
@@ -44,6 +44,13 @@ const GROUP_BY_HIGHCARD_Q: &str =
     "MATCH (n:Person) RETURN n.score AS score, count(*) AS c GROUP BY n.score";
 /// DISTINCT over 256 distinct `name` values (high dedup ratio).
 const DISTINCT_DEDUP_Q: &str = "MATCH (n:Person) RETURN DISTINCT n.name AS name";
+/// Small indexed `IN` list over the fixture's maintained `Person(name)` index.
+const MATCH_NAME_IN_Q: &str = "MATCH (n:Person) FILTER n.name IN \
+    ['bench-name-0', 'bench-name-3', 'bench-name-6', 'bench-name-9', \
+     'bench-name-12', 'bench-name-15', 'bench-name-18', 'bench-name-21', \
+     'bench-name-24', 'bench-name-27', 'bench-name-30', 'bench-name-33', \
+     'bench-name-36', 'bench-name-39', 'bench-name-42', 'bench-name-45'] \
+    RETURN n.name AS name";
 /// Post-RETURN LIMIT with no ORDER BY — the B19 baseline remains scale-linear.
 const MATCH_LIMIT10_Q: &str = "MATCH (n:Person) RETURN n.name AS name LIMIT 10";
 /// Pre-RETURN LIMIT with no ORDER BY — can cap pattern materialization safely.
@@ -52,12 +59,13 @@ const MATCH_PRERETURN_LIMIT10_Q: &str = "MATCH (n:Person) LIMIT 10 RETURN n.name
 const EDGE_PROPERTY_FILTER_Q: &str =
     "MATCH ()-[e:CONNECTED_TO]->() WHERE e.from_port = 'port_17' RETURN e";
 
-const WARM_ROWS: [(&str, &str); 7] = [
+const WARM_ROWS: [(&str, &str); 8] = [
     ("match_filter_project", FILTER_PROJECT_Q),
     ("match_expand_hashjoin", EXPAND_HASHJOIN_Q),
     ("order_by_topk", ORDER_BY_TOPK_Q),
     ("group_by_highcard", GROUP_BY_HIGHCARD_Q),
     ("distinct_dedup", DISTINCT_DEDUP_Q),
+    ("match_name_in", MATCH_NAME_IN_Q),
     ("match_limit10", MATCH_LIMIT10_Q),
     ("match_prereturn_limit10", MATCH_PRERETURN_LIMIT10_Q),
 ];
@@ -86,7 +94,7 @@ fn bench_read_pipeline(c: &mut Criterion) {
             let primed = execute_read(&mut session, source);
             if matches!(
                 name,
-                "match_expand_hashjoin" | "group_by_highcard" | "distinct_dedup"
+                "match_expand_hashjoin" | "group_by_highcard" | "distinct_dedup" | "match_name_in"
             ) {
                 assert!(
                     primed > 0,

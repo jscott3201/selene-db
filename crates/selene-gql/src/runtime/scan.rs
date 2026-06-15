@@ -1,6 +1,5 @@
 //! Single-scan pattern executor.
 
-use std::collections::BTreeSet;
 use std::ops::Bound::{Excluded, Included, Unbounded};
 
 use selene_core::{DbString, LabelSet, Value};
@@ -234,18 +233,6 @@ fn bitmap_union_rows(
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<u32>, ExecutorError> {
-    Ok(union_property_eq(scan, property, kind, keys, ctx)?
-        .into_iter()
-        .collect())
-}
-
-fn union_property_eq(
-    scan: &NodeOrEdgeScan,
-    property: DbString,
-    kind: IndexKind,
-    keys: &[IndexKey],
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<BTreeSet<u32>, ExecutorError> {
     // Pre-resolve all keys once: scalar parameter slots resolve to concrete
     // Values, while declared list-parameter slots expand into many concrete
     // Values. Empty slots (NULL bindings or empty lists) drop out of the union
@@ -257,7 +244,7 @@ fn union_property_eq(
     // P3 short-circuit: if every key resolved to EmptyResult, the union is
     // empty by construction — no need to scan rows looking for matches.
     if resolved_keys.is_empty() && !keys.is_empty() {
-        return Ok(BTreeSet::new());
+        return Ok(Vec::new());
     }
     let Some(label) = single_label(&scan.label_predicate) else {
         return Ok(linear_rows(scan.kind, ctx)
@@ -267,25 +254,33 @@ fn union_property_eq(
             })
             .collect());
     };
-    let mut rows = BTreeSet::new();
-    let mut used_index = false;
-    for value in &resolved_keys {
-        if let Some(matches) =
-            property_eq_row_vec(ctx.tx.snapshot(), scan.kind, &label, &property, value)
-        {
-            used_index = true;
-            rows.extend(matches);
-        }
+    if let Some(rows) = property_any_row_bitmap(
+        ctx.tx.snapshot(),
+        scan.kind,
+        &label,
+        &property,
+        &resolved_keys,
+    ) {
+        return Ok(rows.iter().collect());
     }
-    if used_index {
-        Ok(rows)
-    } else {
-        Ok(linear_rows(scan.kind, ctx)
-            .into_iter()
-            .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
-            })
-            .collect())
+    Ok(linear_rows(scan.kind, ctx)
+        .into_iter()
+        .filter(|row| {
+            property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
+        })
+        .collect())
+}
+
+fn property_any_row_bitmap(
+    snapshot: &selene_graph::SeleneGraph,
+    kind: ScanKind,
+    label: &DbString,
+    property: &DbString,
+    values: &[Value],
+) -> Option<roaring::RoaringBitmap> {
+    match kind {
+        ScanKind::Node => snapshot.nodes_with_property_any(label, property, values),
+        ScanKind::Edge => snapshot.edges_with_property_any(label, property, values),
     }
 }
 

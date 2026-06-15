@@ -2056,8 +2056,8 @@ PR-local quick B2 shared source-plan cache row
 
 Read-execution coverage for the declared 60%-read workload: label scan +
 indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
-GROUP BY, DISTINCT dedup, post-RETURN bare `LIMIT 10`, and pre-RETURN bare
-`LIMIT 10`. Warm-plan-cache rows run over
+GROUP BY, DISTINCT dedup, indexed `IN` bitmap union, post-RETURN bare
+`LIMIT 10`, and pre-RETURN bare `LIMIT 10`. Warm-plan-cache rows run over
 `BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
 pure execution + index access — not parse/plan/optimize, not durability. Cold
 and shared-cache companions on the cheapest row rebuild a fresh session per
@@ -2132,6 +2132,18 @@ Command:
 |---|---:|---|
 | `read_pipeline/edge_property_filter_no_index/1000` | 476.73 µs | Warm unanchored edge-property query over `CONNECTED_TO` edges with no edge-property index; scans expand adjacency and evaluates `e.from_port = 'port_17'` as a residual predicate. |
 | `read_pipeline/edge_property_filter_indexed/1000` | 115.87 µs | Same query with a built-in `CONNECTED_TO(from_port)` edge-property index; optimizer emits edge `TypedIndexRange` and expand drives from the selective indexed edge-row set. Median is −75.7% vs no-index. |
+
+PR-local bitmap-union row-filter A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_name_in`
+and
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter edge_property_filter`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_name_in/1000` | 7.3209 µs | 6.8430 µs | 16-key `Person.name IN [...]` bitmap-union row over the maintained `Person(name)` index. Direct roaring bitmap union is −7.84% median, p=0.00. |
+| `read_pipeline/edge_property_filter_indexed/1000` | 115.83 µs | 117.14 µs | Existing indexed edge-property guard stayed neutral after edge-row filters moved from `BTreeSet` membership to roaring bitmap membership (p=0.20). |
 
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:
