@@ -7,9 +7,9 @@
 //! timed body is pure execution + index access — not parse/plan/optimize and
 //! not durability: label scan + indexed range filter, two-leg hash join,
 //! ORDER BY top-K, high-cardinality GROUP BY, DISTINCT dedup, and bare
-//! `LIMIT 10` (the scan short-circuit signal row). One `/cold` companion on
-//! the cheapest row re-plans per iteration with an uncached session,
-//! capturing the full read compile+execute pipeline.
+//! `LIMIT 10` (the scan short-circuit signal row). Cold and shared-cache
+//! companions on the cheapest row rebuild a fresh session per iteration to
+//! isolate short-lived-session cache strategy.
 //!
 //! Fixture topology note: every `KNOWS` offset in `BenchFixture` is ≡1 mod 3,
 //! so Person edges land on Sensor and Sensor edges land on Device —
@@ -22,11 +22,11 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
 
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
-use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};
+use selene_gql::{EmptyProcedureRegistry, Session, SharedPlanCache, StatementOutput};
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::BenchProfile;
 
@@ -101,6 +101,24 @@ fn bench_read_pipeline(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("match_limit10/cold", scale), |b| {
             b.iter_batched(
                 || Session::new(&state.graph),
+                |mut session| std::hint::black_box(execute_read(&mut session, MATCH_LIMIT10_Q)),
+                BatchSize::SmallInput,
+            );
+        });
+        let shared_cache = Arc::new(SharedPlanCache::new(
+            NonZeroUsize::new(64).expect("nonzero"),
+        ));
+        let mut warmup =
+            Session::new(&state.graph).with_shared_plan_cache(Arc::clone(&shared_cache));
+        execute_read(&mut warmup, MATCH_LIMIT10_Q);
+        assert_eq!(
+            shared_cache.stats().hits,
+            0,
+            "warmup should miss then insert"
+        );
+        group.bench_function(BenchmarkId::new("match_limit10/shared_cache", scale), |b| {
+            b.iter_batched(
+                || Session::new(&state.graph).with_shared_plan_cache(Arc::clone(&shared_cache)),
                 |mut session| std::hint::black_box(execute_read(&mut session, MATCH_LIMIT10_Q)),
                 BatchSize::SmallInput,
             );

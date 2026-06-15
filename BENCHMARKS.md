@@ -2038,9 +2038,10 @@ Read-execution coverage for the declared 60%-read workload: label scan +
 indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
 GROUP BY, DISTINCT dedup, and bare `LIMIT 10`. Six warm-plan-cache rows over
 `BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
-pure execution + index access — not parse/plan/optimize, not durability. One
-`/cold` companion on the cheapest row re-plans per iteration with an uncached
-session. The join targets `Person→Sensor→Device` deliberately: every fixture
+pure execution + index access — not parse/plan/optimize, not durability. Cold
+and shared-cache companions on the cheapest row rebuild a fresh session per
+iteration to isolate short-lived-session cache strategy. The join targets
+`Person→Sensor→Device` deliberately: every fixture
 `KNOWS` offset is ≡1 mod 3, so a `Person→Person` join would be empty.
 
 _Measured 2026-06-11 on the B3 feature branch (profile `full`, mimalloc), so
@@ -2066,6 +2067,17 @@ cold vs 81 µs warm) amortizes under the linear scan.
 | `read_pipeline/distinct_dedup` | 877 µs | 5.93 ms | 13.61 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
 | `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
 | `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
+
+PR-local short-lived-session source-plan cache A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_limit10`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/match_limit10/1000` | 67.839 µs | Warm same-session cache-hit baseline. |
+| `read_pipeline/match_limit10/cold/1000` | 132.41 µs | Fresh uncached `Session` per iter: parse/analyze/plan/optimize/execute. |
+| `read_pipeline/match_limit10/shared_cache/1000` | 66.491 µs | Fresh `Session` per iter over a warmed caller-owned `SharedPlanCache`; cache hit bypasses parse/analyze/plan/optimize and measures session churn + cached execute. Median is −49.8% vs uncached fresh sessions and within noise of the same-session warm row. |
 
 PR-local edge-index sprint A/B:
 
