@@ -23,6 +23,7 @@ parking_lot.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
 rust_decimal.workspace = true
+roaring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true

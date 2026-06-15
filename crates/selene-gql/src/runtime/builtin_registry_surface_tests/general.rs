@@ -18,11 +18,11 @@ fn pagerank_signature_has_optional_orientation_personalization_and_result_filter
         .lookup(&name(&["algo", "pagerank"]))
         .expect("pagerank resolves");
     let parameters = &metadata.signature.parameters;
-    assert_eq!(parameters.len(), 9);
+    assert_eq!(parameters.len(), 10);
 
     let arity = metadata.signature.arity();
     assert_eq!(arity.minimum, 5);
-    assert_eq!(arity.maximum, 9);
+    assert_eq!(arity.maximum, 10);
     for parameter in &parameters[1..5] {
         assert!(parameter.nullable, "{} should be nullable", parameter.name);
         assert_eq!(parameter.default_doc, Some("NULL (use procedure default)"));
@@ -71,6 +71,19 @@ fn pagerank_signature_has_optional_orientation_personalization_and_result_filter
     assert_eq!(limit.ty, crate::GqlType::Integer);
     assert_eq!(limit.default_doc, Some("NULL (all matching nodes)"));
     assert_eq!(limit.default, Some(crate::ProcedureDefaultValue::Null));
+
+    let result_nodes = &parameters[9];
+    assert_eq!(result_nodes.name.as_str(), "result_nodes");
+    assert!(result_nodes.nullable);
+    assert_eq!(
+        result_nodes.ty,
+        crate::GqlType::List(Box::new(crate::GqlType::NodeRef))
+    );
+    assert_eq!(result_nodes.default_doc, Some("NULL (all matching nodes)"));
+    assert_eq!(
+        result_nodes.default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
 
     assert_eq!(metadata.output_schema.columns.len(), 2);
     assert_eq!(metadata.output_schema.columns[0].name.as_str(), "node_id");

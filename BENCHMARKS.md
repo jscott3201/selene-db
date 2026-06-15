@@ -3265,6 +3265,16 @@ cycle on writes:
 | `graph_vector_active_set_maintenance_pressure/materialized_set_r60w40/...covbp10000_curbp10000_precbp10000` | 6.904 ms (`c31`) | 26.41 ms (`c32`) | Maintained active set keeps full quality and remains faster even after 40 balanced set updates per cycle. |
 | `graph_vector_active_set_maintenance_pressure/materialized_set_maintenance_w40/...` | 454.1 ns (`active248`) | 396.8 ns (`active512`) | Isolated 40-update HashSet maintenance is negligible next to exact vector rerank cost on this fixture. |
 
+## Retrieval scoping guards
+
+Focused local P0 row, measured 2026-06-15:
+
+Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_ann_property_filter --vector-scales 1000`
+
+| Bench | 1k quick median | Notes |
+|---|---:|---|
+| `graph_ann_property_filter/hnsw_cosine_namespace_sparse_d128_k10_ef64_rows4_...` | 6.0873 µs | High-cardinality `namespace` string index admits 4 of 1,000 rows before HNSW result admission; traversal stays bounded by the ANN search width instead of scanning the sparse property bucket. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work

@@ -18,6 +18,8 @@ use super::config::MAX_IVF_TARGET_CENTROIDS;
 
 #[path = "ivf/batch.rs"]
 mod batch;
+#[path = "ivf/filter.rs"]
+mod filter;
 #[path = "ivf/support.rs"]
 mod support;
 

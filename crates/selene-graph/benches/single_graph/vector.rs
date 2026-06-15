@@ -1,5 +1,10 @@
 use super::*;
 
+const ANN_PROPERTY_FILTER_DIMENSION: usize = 128;
+const ANN_PROPERTY_FILTER_K: usize = 10;
+const ANN_PROPERTY_FILTER_EF_SEARCH: usize = 64;
+const ANN_PROPERTY_FILTER_CARDINALITY: usize = 256;
+
 pub(super) fn bench_exact_vector_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_exact_vector_scan");
     for scale in vector_scan_scales() {
@@ -114,6 +119,48 @@ pub(super) fn bench_ann_recall(c: &mut Criterion) {
     group.finish();
 }
 
+pub(super) fn bench_ann_property_filter(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_ann_property_filter");
+    for scale in vector_scan_scales() {
+        let fixture = AnnPropertyFilterFixture::build(scale, ANN_PROPERTY_FILTER_DIMENSION);
+        let memory_suffix = fixture.memory_id_suffix();
+        group.throughput(Throughput::Elements(fixture.allowed_rows().len()));
+        group.bench_with_input(
+            BenchmarkId::new(
+                format!(
+                    "hnsw_cosine_namespace_sparse_d128_k{ANN_PROPERTY_FILTER_K}_ef{ANN_PROPERTY_FILTER_EF_SEARCH}_rows{}_{}",
+                    compact_count(fixture.allowed_rows().len()),
+                    memory_suffix
+                ),
+                fixture.scale(),
+            ),
+            &fixture,
+            |b, fixture| {
+                let checker = deadline_checker();
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .approximate_vector_search_nodes_in_rows_checked(
+                            fixture.label(),
+                            fixture.embedding_key(),
+                            fixture.query(),
+                            fixture.allowed_rows(),
+                            ApproximateVectorSearchOptions::new(
+                                VectorMetric::Cosine,
+                                ANN_PROPERTY_FILTER_K,
+                                ANN_PROPERTY_FILTER_EF_SEARCH,
+                            ),
+                            checker,
+                        )
+                        .expect("filtered HNSW fixture has a matching ANN index");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
 fn ann_recall_benchmark_name(fixture: &AnnRecallFixture) -> String {
     if fixture.variant_name_suffix().is_empty() {
         fixture.profile().name().to_owned()
@@ -208,6 +255,106 @@ impl VectorFixture {
     fn memory_id_suffix(&self) -> String {
         vector_index_memory_id_suffix(&self.graph, &self.label, &self.embedding_key)
     }
+}
+
+#[derive(Clone, Debug)]
+struct AnnPropertyFilterFixture {
+    scale: usize,
+    graph: SeleneGraph,
+    label: DbString,
+    embedding_key: DbString,
+    query: VectorValue,
+    allowed_rows: roaring::RoaringBitmap,
+}
+
+impl AnnPropertyFilterFixture {
+    fn build(scale: usize, dimension: usize) -> Self {
+        let scale = scale.max(1);
+        let namespace_count = scale.min(ANN_PROPERTY_FILTER_CARDINALITY);
+        let filter_bucket = namespace_count / 2;
+        let label = db_string("ScopedVectorDoc").expect("bench label is valid");
+        let embedding_key = db_string("embedding").expect("bench key is valid");
+        let namespace_key = db_string("namespace").expect("bench key is valid");
+        let shared = SharedGraph::new(GraphId::new(9_500 + scale as u64));
+        {
+            let mut txn = shared.begin_write();
+            let mut mutator = txn.mutator();
+            for idx in 0..scale {
+                let vector = Value::Vector(vector_value(idx, dimension));
+                let namespace = Value::String(namespace_value(idx % namespace_count));
+                let props = PropertyMap::from_pairs([
+                    (embedding_key.clone(), vector),
+                    (namespace_key.clone(), namespace),
+                ])
+                .expect("bench vector properties are valid");
+                mutator
+                    .create_node(LabelSet::single(label.clone()), props)
+                    .expect("bench vector node insert succeeds");
+            }
+            mutator
+                .create_property_index(label.clone(), namespace_key.clone(), TypedIndexKind::String)
+                .expect("bench namespace index build succeeds");
+            mutator
+                .create_vector_index(
+                    label.clone(),
+                    embedding_key.clone(),
+                    VectorIndexKind::HnswCosine,
+                    u32::try_from(dimension).expect("bench dimension fits u32"),
+                )
+                .expect("bench HNSW vector index build succeeds");
+            txn.commit()
+                .expect("bench filtered vector fixture commit succeeds");
+        }
+        let graph = shared.read().as_ref().clone();
+        let filter_value = Value::String(namespace_value(filter_bucket));
+        let allowed_rows = graph
+            .nodes_with_property_any(&label, &namespace_key, &[filter_value])
+            .expect("bench namespace index is available");
+        assert!(
+            !allowed_rows.is_empty(),
+            "bench namespace filter should admit at least one row"
+        );
+        Self {
+            scale,
+            graph,
+            label,
+            embedding_key,
+            query: vector_value(0, dimension),
+            allowed_rows,
+        }
+    }
+
+    const fn graph(&self) -> &SeleneGraph {
+        &self.graph
+    }
+
+    const fn scale(&self) -> usize {
+        self.scale
+    }
+
+    const fn label(&self) -> &DbString {
+        &self.label
+    }
+
+    const fn embedding_key(&self) -> &DbString {
+        &self.embedding_key
+    }
+
+    const fn query(&self) -> &VectorValue {
+        &self.query
+    }
+
+    const fn allowed_rows(&self) -> &roaring::RoaringBitmap {
+        &self.allowed_rows
+    }
+
+    fn memory_id_suffix(&self) -> String {
+        vector_index_memory_id_suffix(&self.graph, &self.label, &self.embedding_key)
+    }
+}
+
+fn namespace_value(bucket: usize) -> DbString {
+    db_string(&format!("ns_{bucket:04}")).expect("bench namespace is valid")
 }
 
 fn vector_index_memory_id_suffix(
