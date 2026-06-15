@@ -2,12 +2,14 @@
 
 mod aggregate;
 mod binding_refs;
+mod bindings;
 mod call;
 mod catalog;
 mod expr;
 mod match_clause;
 mod match_mode;
 mod mutation;
+mod optional_filters;
 mod path_mode;
 mod path_search;
 mod repeat;
