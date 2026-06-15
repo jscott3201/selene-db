@@ -357,6 +357,30 @@ pub enum SchemaChange {
         /// Indexed string property key.
         property: DbString,
     },
+    /// Edge property index creation with optional explicit catalog name.
+    ///
+    /// Declared after every existing variant so the `postcard` discriminants of
+    /// all earlier variants remain stable.
+    EdgePropertyIndexCreated {
+        /// Indexed edge label.
+        label: DbString,
+        /// Indexed edge property key.
+        property: DbString,
+        /// Declared index value kind.
+        kind: SchemaPropertyIndexKind,
+        /// Optional explicit catalog name.
+        name: Option<DbString>,
+    },
+    /// Edge property index deletion.
+    ///
+    /// Declared after every existing variant so the `postcard` discriminants of
+    /// all earlier variants remain stable.
+    EdgePropertyIndexDropped {
+        /// Indexed edge label.
+        label: DbString,
+        /// Indexed edge property key.
+        property: DbString,
+    },
 }
 
 /// Schema-level vector index algorithm kind.

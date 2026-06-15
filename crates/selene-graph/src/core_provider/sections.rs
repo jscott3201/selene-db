@@ -23,6 +23,9 @@
 //! `PropertyElementType` / `RecordFieldType`), which bumped
 //! `SNAPSHOT_VERSION_MINOR` 3 -> 4 and the section-internal `GTYP_VERSION`
 //! 1 -> 2.
+//! Edge-property index registrations then added an entity discriminator to
+//! `CORE/SCMA`, which bumped `SNAPSHOT_VERSION_MINOR` 4 -> 5 and
+//! `SCMA_VERSION` 2 -> 3.
 //!
 //! Schema rows are stored in canonical wire order by their string keys and are
 //! decoded defensively before duplicate validation.
@@ -43,8 +46,8 @@ pub(super) use rows::{
 #[cfg(test)]
 pub(super) use schema::SCMA_VERSION;
 pub(super) use schema::{
-    CompositeSchemaEntry, CompositeSchemaKey, SchemaEntry, SchemaKey, TextSchemaEntry,
-    TextSchemaKey, VectorSchemaEntry, VectorSchemaKey, decode_composite_schemas, decode_schemas,
-    decode_text_schemas, decode_vector_schemas, encode_composite_schemas, encode_schemas,
-    encode_text_schemas, encode_vector_schemas,
+    CompositeSchemaEntry, CompositeSchemaKey, SchemaEntityKind, SchemaEntry, SchemaKey,
+    TextSchemaEntry, TextSchemaKey, VectorSchemaEntry, VectorSchemaKey, decode_composite_schemas,
+    decode_schemas, decode_text_schemas, decode_vector_schemas, encode_composite_schemas,
+    encode_schemas, encode_text_schemas, encode_vector_schemas,
 };

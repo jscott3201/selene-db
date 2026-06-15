@@ -298,6 +298,12 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
             PropertyIndexEntry::new(TypedIndex::new(entry.kind()), entry.name.clone()),
         );
     }
+    for ((label, property), entry) in &graph.edge_property_index {
+        dense.edge_property_index.insert(
+            (label.clone(), property.clone()),
+            PropertyIndexEntry::new(TypedIndex::new(entry.kind()), entry.name.clone()),
+        );
+    }
     for (key, entry) in &graph.composite_property_index {
         dense.composite_property_index.insert(
             key.clone(),
@@ -336,6 +342,7 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     // SharedGraph::from_graph_parts_and_snapshot uses on the recovery path.
     crate::shared::rebuild_derived_state(&mut dense)?;
     crate::property_index::rebuild_property_indexes(&mut dense)?;
+    crate::property_index::rebuild_edge_property_indexes(&mut dense)?;
     crate::composite_property_index::rebuild_composite_property_indexes(&mut dense)?;
     crate::vector_index::rebuild_vector_indexes(&mut dense)?;
     crate::text_index::rebuild_text_indexes(&mut dense)?;

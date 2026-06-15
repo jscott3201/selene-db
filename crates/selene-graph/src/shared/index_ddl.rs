@@ -95,6 +95,59 @@ impl SharedGraph {
         Ok(())
     }
 
+    /// Register a built-in edge property index for `(label, property)`.
+    ///
+    /// The current edge columns are scanned under the write lock and the
+    /// published snapshot is updated in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::PropertyIndexAlreadyExists`] if the pair is
+    /// already registered, or [`GraphError::IndexValueRejected`] if any
+    /// existing edge with `label` has a non-null value that does not match
+    /// `kind`.
+    pub fn create_edge_property_index(
+        &self,
+        label: DbString,
+        property: DbString,
+        kind: TypedIndexKind,
+    ) -> GraphResult<()> {
+        self.create_edge_property_index_named(label, property, kind, None)
+    }
+
+    /// Register a built-in edge property index with optional catalog name.
+    pub fn create_edge_property_index_named(
+        &self,
+        label: DbString,
+        property: DbString,
+        kind: TypedIndexKind,
+        name: Option<DbString>,
+    ) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator()
+            .create_edge_property_index_named(label, property, kind, name)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Drop a built-in edge property index.
+    ///
+    /// The operation is idempotent; dropping an absent index succeeds without
+    /// publishing a new snapshot.
+    pub fn drop_edge_property_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        if !txn
+            .read()
+            .edge_property_index
+            .contains_key(&(label.clone(), property.clone()))
+        {
+            return Ok(());
+        }
+        txn.mutator().drop_edge_property_index(label, property)?;
+        txn.commit()?;
+        Ok(())
+    }
+
     /// Register a built-in node vector index for `(label, property)`.
     ///
     /// The current node columns are scanned under the write lock and the

@@ -10,9 +10,9 @@ use selene_core::{
 use selene_persist::{WalConfig, WalReader, WalWriter};
 
 use super::sections::{
-    SCMA_VERSION, SchemaEntry, SchemaKey, decode_edges, decode_graph_types, decode_meta,
-    decode_nodes, decode_schemas, encode_edges, encode_graph_types, encode_meta, encode_nodes,
-    ensure_section_within_cap,
+    SCMA_VERSION, SchemaEntityKind, SchemaEntry, SchemaKey, decode_edges, decode_graph_types,
+    decode_meta, decode_nodes, decode_schemas, encode_edges, encode_graph_types, encode_meta,
+    encode_nodes, ensure_section_within_cap,
 };
 use super::*;
 use crate::graph::PropertyIndexEntry;
@@ -260,10 +260,12 @@ fn scma_decode_resorts_rows_lexicographically() {
     let zebra_prop = db_string("core.scma.zebra.prop").unwrap();
     let apple_prop = db_string("core.scma.apple.prop").unwrap();
     let zebra_key = SchemaKey {
+        entity: SchemaEntityKind::Node,
         label: zebra,
         property: zebra_prop,
     };
     let apple_key = SchemaKey {
+        entity: SchemaEntityKind::Node,
         label: apple,
         property: apple_prop,
     };
@@ -318,27 +320,53 @@ fn scma_decode_resorts_rows_lexicographically() {
 }
 
 #[test]
-fn scma_v2_round_trip_preserves_property_index_name() {
+fn scma_v3_round_trip_preserves_property_index_names() {
     let label = db_string("core.scma.named.label").unwrap();
+    let edge_label = db_string("core.scma.named.edge").unwrap();
     let property = db_string("core.scma.named.property").unwrap();
     let name = db_string("core.scma.named.index").unwrap();
+    let edge_name = db_string("core.scma.named.edge.index").unwrap();
     let mut graph = SeleneGraph::new(GraphId::new(9991));
     graph.property_index.insert(
         (label.clone(), property.clone()),
         PropertyIndexEntry::new(TypedIndex::new(TypedIndexKind::String), Some(name.clone())),
+    );
+    graph.edge_property_index.insert(
+        (edge_label.clone(), property.clone()),
+        PropertyIndexEntry::new(
+            TypedIndex::new(TypedIndexKind::I64),
+            Some(edge_name.clone()),
+        ),
     );
 
     let decoded = decode_schemas(&encode_schemas(&graph).unwrap()).unwrap();
 
     assert_eq!(
         decoded,
-        vec![(
-            SchemaKey { label, property },
-            SchemaEntry {
-                kind: TypedIndexKind::String,
-                name: Some(name),
-            }
-        )]
+        vec![
+            (
+                SchemaKey {
+                    entity: SchemaEntityKind::Node,
+                    label,
+                    property: property.clone(),
+                },
+                SchemaEntry {
+                    kind: TypedIndexKind::String,
+                    name: Some(name),
+                }
+            ),
+            (
+                SchemaKey {
+                    entity: SchemaEntityKind::Edge,
+                    label: edge_label,
+                    property,
+                },
+                SchemaEntry {
+                    kind: TypedIndexKind::I64,
+                    name: Some(edge_name),
+                }
+            )
+        ]
     );
 }
 
@@ -346,7 +374,11 @@ fn scma_v2_round_trip_preserves_property_index_name() {
 fn scma_decode_rejects_duplicate_keys_after_resort() {
     let label = db_string("core.scma.dup.label").unwrap();
     let property = db_string("core.scma.dup.property").unwrap();
-    let key = SchemaKey { label, property };
+    let key = SchemaKey {
+        entity: SchemaEntityKind::Node,
+        label,
+        property,
+    };
     let rows = vec![
         (
             key.clone(),

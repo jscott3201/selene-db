@@ -225,6 +225,16 @@ impl SchemaChange {
             label: changeset_variant_string("schema.all.node"),
             property: changeset_variant_string("schema.all.text"),
         },
+        || Self::EdgePropertyIndexCreated {
+            label: changeset_variant_string("schema.all.edge"),
+            property: changeset_variant_string("schema.all.edge.property"),
+            kind: SchemaPropertyIndexKind::String,
+            name: Some(changeset_variant_string("schema.all.edge.index")),
+        },
+        || Self::EdgePropertyIndexDropped {
+            label: changeset_variant_string("schema.all.edge"),
+            property: changeset_variant_string("schema.all.edge.property"),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -254,6 +264,8 @@ impl SchemaChange {
             Self::VectorIndexDropped { .. } => "VectorIndexDropped",
             Self::TextIndexCreated { .. } => "TextIndexCreated",
             Self::TextIndexDropped { .. } => "TextIndexDropped",
+            Self::EdgePropertyIndexCreated { .. } => "EdgePropertyIndexCreated",
+            Self::EdgePropertyIndexDropped { .. } => "EdgePropertyIndexDropped",
         }
     }
 }

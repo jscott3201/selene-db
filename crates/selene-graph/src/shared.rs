@@ -202,6 +202,7 @@ impl SharedGraph {
         let mut graph = graph;
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
+        crate::property_index::rebuild_edge_property_indexes(&mut graph)?;
         crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
         crate::vector_index::rebuild_vector_indexes(&mut graph)?;
         crate::text_index::rebuild_text_indexes(&mut graph)?;

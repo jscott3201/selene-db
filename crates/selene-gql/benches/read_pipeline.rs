@@ -25,7 +25,9 @@ mod common;
 use std::num::NonZeroUsize;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};
+use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::BenchProfile;
 
 /// Label scan + indexed `age` range filter + projection (~half of Persons).
@@ -43,6 +45,9 @@ const GROUP_BY_HIGHCARD_Q: &str =
 const DISTINCT_DEDUP_Q: &str = "MATCH (n:Person) RETURN DISTINCT n.name AS name";
 /// Bare LIMIT with no ORDER BY — the B19 scan short-circuit signal row.
 const MATCH_LIMIT10_Q: &str = "MATCH (n:Person) RETURN n.name AS name LIMIT 10";
+/// Selective unanchored edge-property predicate used to A/B edge index access.
+const EDGE_PROPERTY_FILTER_Q: &str =
+    "MATCH ()-[e:CONNECTED_TO]->() WHERE e.from_port = 'port_17' RETURN e";
 
 const WARM_ROWS: [(&str, &str); 6] = [
     ("match_filter_project", FILTER_PROJECT_Q),
@@ -100,8 +105,74 @@ fn bench_read_pipeline(c: &mut Criterion) {
                 BatchSize::SmallInput,
             );
         });
+
+        for indexed in [false, true] {
+            let graph = edge_property_graph(scale, indexed);
+            let name = if indexed {
+                "edge_property_filter_indexed"
+            } else {
+                "edge_property_filter_no_index"
+            };
+            let mut session =
+                Session::new(&graph).with_plan_cache(NonZeroUsize::new(64).expect("nonzero"));
+            let primed = execute_read(&mut session, EDGE_PROPERTY_FILTER_Q);
+            assert!(primed > 0, "{name} produced no rows");
+            group.throughput(Throughput::Elements(scale as u64));
+            group.bench_function(BenchmarkId::new(name, scale), |b| {
+                b.iter(|| std::hint::black_box(execute_read(&mut session, EDGE_PROPERTY_FILTER_Q)));
+            });
+        }
     }
     group.finish();
+}
+
+fn edge_property_graph(scale: usize, indexed: bool) -> SharedGraph {
+    let scale = scale.max(1);
+    let graph = SharedGraph::new(GraphId::new(if indexed { 1_101 } else { 1_100 }));
+    let block = dbs("Block");
+    let connected = dbs("CONNECTED_TO");
+    let from_port = dbs("from_port");
+    {
+        let mut txn = graph.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            let mut nodes = Vec::with_capacity(scale);
+            for _ in 0..scale {
+                nodes.push(
+                    mutator
+                        .create_node(LabelSet::single(block.clone()), PropertyMap::new())
+                        .expect("edge bench node insert succeeds"),
+                );
+            }
+            for idx in 0..scale {
+                let source = nodes[idx];
+                for offset in [1_usize, 7, 31] {
+                    let target = nodes[(idx + offset) % scale];
+                    let port = dbs(&format!("port_{}", (idx + offset) % 128));
+                    mutator
+                        .create_edge(
+                            connected.clone(),
+                            source,
+                            target,
+                            PropertyMap::from_pairs([(from_port.clone(), Value::String(port))])
+                                .expect("edge bench properties fit"),
+                        )
+                        .expect("edge bench edge insert succeeds");
+                }
+            }
+        }
+        txn.commit().expect("edge bench fixture commits");
+    }
+    if indexed {
+        graph
+            .create_edge_property_index(connected, from_port, TypedIndexKind::String)
+            .expect("edge property index builds");
+    }
+    graph
+}
+
+fn dbs(value: &str) -> DbString {
+    selene_core::db_string(value).expect("bench string fits DB string cap")
 }
 
 criterion_group! {

@@ -86,7 +86,7 @@ fn collect_scan_entities(
     Ok(rows)
 }
 
-fn candidate_rows(
+pub(super) fn candidate_rows(
     scan: &NodeOrEdgeScan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<u32>, ExecutorError> {
@@ -161,42 +161,43 @@ fn typed_index_rows(
     if !range_satisfiable_runtime(&resolved) {
         return Ok(Vec::new());
     }
-    if scan.kind != ScanKind::Node {
-        return Ok(linear_rows_filtered_by_resolved_bounds(
-            scan, property, &resolved, ctx,
-        ));
-    }
     let Some(label) = single_label(&scan.label_predicate) else {
         return Ok(linear_rows_filtered_by_resolved_bounds(
             scan, property, &resolved, ctx,
         ));
     };
     let indexed_rows = match &resolved {
-        ResolvedBounds::Equality(value) => ctx
-            .tx
-            .snapshot()
-            .nodes_with_property_eq(&label, &property, value)
-            .map(|rows| rows.iter().collect::<Vec<_>>()),
-        ResolvedBounds::GreaterThan(value) => ctx
-            .tx
-            .snapshot()
-            .nodes_with_property_range(&label, &property, (Excluded(value.clone()), Unbounded))
-            .map(|rows| rows.iter().collect::<Vec<_>>()),
-        ResolvedBounds::GreaterEqual(value) => ctx
-            .tx
-            .snapshot()
-            .nodes_with_property_range(&label, &property, (Included(value.clone()), Unbounded))
-            .map(|rows| rows.iter().collect::<Vec<_>>()),
-        ResolvedBounds::LessThan(value) => ctx
-            .tx
-            .snapshot()
-            .nodes_with_property_range(&label, &property, (Unbounded, Excluded(value.clone())))
-            .map(|rows| rows.iter().collect::<Vec<_>>()),
-        ResolvedBounds::LessEqual(value) => ctx
-            .tx
-            .snapshot()
-            .nodes_with_property_range(&label, &property, (Unbounded, Included(value.clone())))
-            .map(|rows| rows.iter().collect::<Vec<_>>()),
+        ResolvedBounds::Equality(value) => {
+            property_eq_row_vec(ctx.tx.snapshot(), scan.kind, &label, &property, value)
+        }
+        ResolvedBounds::GreaterThan(value) => property_range_row_vec(
+            ctx.tx.snapshot(),
+            scan.kind,
+            &label,
+            &property,
+            (Excluded(value.clone()), Unbounded),
+        ),
+        ResolvedBounds::GreaterEqual(value) => property_range_row_vec(
+            ctx.tx.snapshot(),
+            scan.kind,
+            &label,
+            &property,
+            (Included(value.clone()), Unbounded),
+        ),
+        ResolvedBounds::LessThan(value) => property_range_row_vec(
+            ctx.tx.snapshot(),
+            scan.kind,
+            &label,
+            &property,
+            (Unbounded, Excluded(value.clone())),
+        ),
+        ResolvedBounds::LessEqual(value) => property_range_row_vec(
+            ctx.tx.snapshot(),
+            scan.kind,
+            &label,
+            &property,
+            (Unbounded, Included(value.clone())),
+        ),
         ResolvedBounds::Range {
             lo,
             lo_inclusive,
@@ -213,10 +214,13 @@ fn typed_index_rows(
             } else {
                 Excluded(hi.clone())
             };
-            ctx.tx
-                .snapshot()
-                .nodes_with_property_range(&label, &property, (lo_bound, hi_bound))
-                .map(|rows| rows.iter().collect::<Vec<_>>())
+            property_range_row_vec(
+                ctx.tx.snapshot(),
+                scan.kind,
+                &label,
+                &property,
+                (lo_bound, hi_bound),
+            )
         }
     };
     Ok(indexed_rows
@@ -255,14 +259,6 @@ fn union_property_eq(
     if resolved_keys.is_empty() && !keys.is_empty() {
         return Ok(BTreeSet::new());
     }
-    if scan.kind != ScanKind::Node {
-        return Ok(linear_rows(scan.kind, ctx)
-            .into_iter()
-            .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
-            })
-            .collect());
-    }
     let Some(label) = single_label(&scan.label_predicate) else {
         return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
@@ -274,13 +270,11 @@ fn union_property_eq(
     let mut rows = BTreeSet::new();
     let mut used_index = false;
     for value in &resolved_keys {
-        if let Some(matches) = ctx
-            .tx
-            .snapshot()
-            .nodes_with_property_eq(&label, &property, value)
+        if let Some(matches) =
+            property_eq_row_vec(ctx.tx.snapshot(), scan.kind, &label, &property, value)
         {
             used_index = true;
-            rows.extend(matches.iter());
+            rows.extend(matches);
         }
     }
     if used_index {
@@ -293,6 +287,37 @@ fn union_property_eq(
             })
             .collect())
     }
+}
+
+fn property_eq_row_vec(
+    snapshot: &selene_graph::SeleneGraph,
+    kind: ScanKind,
+    label: &DbString,
+    property: &DbString,
+    value: &Value,
+) -> Option<Vec<u32>> {
+    match kind {
+        ScanKind::Node => snapshot.nodes_with_property_eq(label, property, value),
+        ScanKind::Edge => snapshot.edges_with_property_eq(label, property, value),
+    }
+    .map(|rows| rows.iter().collect())
+}
+
+fn property_range_row_vec<R>(
+    snapshot: &selene_graph::SeleneGraph,
+    kind: ScanKind,
+    label: &DbString,
+    property: &DbString,
+    range: R,
+) -> Option<Vec<u32>>
+where
+    R: std::ops::RangeBounds<Value>,
+{
+    match kind {
+        ScanKind::Node => snapshot.nodes_with_property_range(label, property, range),
+        ScanKind::Edge => snapshot.edges_with_property_range(label, property, range),
+    }
+    .map(|rows| rows.iter().collect())
 }
 
 fn composite_lookup_rows(

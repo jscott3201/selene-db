@@ -6,6 +6,7 @@
 //! (`crate::mutator`) and rebuilt wholesale on the snapshot-load /
 //! recovery path (`crate::shared::rebuild_derived_state` +
 //! `crate::property_index::rebuild_property_indexes` +
+//! `crate::property_index::rebuild_edge_property_indexes` +
 //! `crate::composite_property_index::rebuild_composite_property_indexes` +
 //! `crate::vector_index::rebuild_vector_indexes` +
 //! `crate::text_index::rebuild_text_indexes`). A
@@ -71,6 +72,7 @@ impl SeleneGraph {
         self.check_label_index()?;
         self.check_edge_label_index()?;
         self.check_property_indexes()?;
+        self.check_edge_property_indexes()?;
         self.check_composite_property_indexes()?;
         self.check_vector_indexes()?;
         self.check_text_indexes()?;
@@ -166,6 +168,35 @@ impl SeleneGraph {
                 return Err(format!(
                     "property index ({label}, {property}) drifted from a fresh re-derivation \
                      (maintained cardinality {}, reference cardinality {})",
+                    entry.index.cardinality(),
+                    reference.cardinality(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Family (2b): edge typed property indexes.
+    fn check_edge_property_indexes(&self) -> Result<(), String> {
+        for ((label, property), entry) in &self.edge_property_index {
+            if entry.index.has_empty_bucket() {
+                return Err(format!(
+                    "edge property index ({label}, {property}) holds a present-but-empty bucket"
+                ));
+            }
+            let reference = crate::property_index::build_edge_property_index_lenient(
+                self,
+                label.clone(),
+                property.clone(),
+                entry.kind(),
+            )
+            .map_err(|err| {
+                format!("failed to re-derive edge property index ({label}, {property}): {err}")
+            })?;
+            if !entry.index.buckets_eq(&reference) {
+                return Err(format!(
+                    "edge property index ({label}, {property}) drifted from a fresh \
+                     re-derivation (maintained cardinality {}, reference cardinality {})",
                     entry.index.cardinality(),
                     reference.cardinality(),
                 ));

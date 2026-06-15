@@ -39,6 +39,8 @@ const SCHEMA_CHANGE_INTENT: &[SchemaChangeIntent] = &[
     schema_intent!(apply intent_property_index_created),
     schema_intent!(apply intent_property_index_dropped),
     schema_intent!(apply intent_property_index_created_named),
+    schema_intent!(apply intent_edge_property_index_created),
+    schema_intent!(apply intent_edge_property_index_dropped),
     schema_intent!(apply intent_node_type_added_v2),
     schema_intent!(apply intent_edge_type_added_v2),
     schema_intent!(apply intent_composite_property_index_created),
@@ -148,6 +150,22 @@ fn intent_property_index_created_named() -> SchemaChange {
         property: db_string("intentNamedIndexedProperty").unwrap(),
         kind: SchemaPropertyIndexKind::String,
         name: Some(db_string("intent_named_index").unwrap()),
+    }
+}
+
+fn intent_edge_property_index_created() -> SchemaChange {
+    SchemaChange::EdgePropertyIndexCreated {
+        label: db_string("INTENT_INDEXED_EDGE").unwrap(),
+        property: db_string("intentIndexedProperty").unwrap(),
+        kind: SchemaPropertyIndexKind::I64,
+        name: Some(db_string("intent_edge_index").unwrap()),
+    }
+}
+
+fn intent_edge_property_index_dropped() -> SchemaChange {
+    SchemaChange::EdgePropertyIndexDropped {
+        label: db_string("INTENT_INDEXED_EDGE").unwrap(),
+        property: db_string("intentIndexedProperty").unwrap(),
     }
 }
 

@@ -6,6 +6,8 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
+#[path = "single_graph/edge.rs"]
+mod edge;
 #[path = "single_graph/json.rs"]
 mod json;
 mod single_graph_ann_recall;
@@ -182,7 +184,10 @@ criterion_group! {
     name = graph_reads;
     config = common::criterion_config();
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
-        bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
+        bench_typed_index_range, bench_composite_index_proxy,
+        edge::bench_edge_property_scan, edge::bench_edge_property_index_lookup,
+        edge::bench_point_connected_traversal,
+        bench_exact_vector_scan,
         single_graph_vector_batch::bench_exact_vector_batch_scan,
         bench_exact_json_contains_scan, bench_exact_json_path_exists_scan,
         bench_exact_json_path_contains_scan, bench_exact_json_path_value_scan,

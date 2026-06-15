@@ -174,7 +174,9 @@ impl RecoveryState {
                 }
                 SchemaChange::PropertyIndexCreated { .. }
                 | SchemaChange::PropertyIndexCreatedNamed { .. }
-                | SchemaChange::PropertyIndexDropped { .. } => {
+                | SchemaChange::PropertyIndexDropped { .. }
+                | SchemaChange::EdgePropertyIndexCreated { .. }
+                | SchemaChange::EdgePropertyIndexDropped { .. } => {
                     let pending = pending_property_index_change(change)
                         .expect("property-index variants map to pending recovery intent");
                     self.pending_property_index_changes.push(pending);
