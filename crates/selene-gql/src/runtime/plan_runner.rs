@@ -163,9 +163,6 @@ fn leading_pattern_row_limit(pipeline: &[PipelineOp]) -> Option<usize> {
     let (LimitAmount::Literal(offset), LimitAmount::Literal(count)) = (offset, count) else {
         return None;
     };
-    if *count == 0 {
-        return Some(0);
-    }
     usize::try_from(offset.saturating_add(*count)).ok()
 }
 
@@ -307,10 +304,10 @@ mod tests {
     }
 
     #[test]
-    fn leading_pattern_row_limit_zero_count_caps_empty_result() {
+    fn leading_pattern_row_limit_includes_offset_for_zero_count() {
         let plan = planned("MATCH (n) LIMIT 0 OFFSET 5 RETURN n");
 
-        assert_eq!(super::leading_pattern_row_limit(&plan.pipeline), Some(0));
+        assert_eq!(super::leading_pattern_row_limit(&plan.pipeline), Some(5));
     }
 
     #[test]
