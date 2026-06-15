@@ -1757,6 +1757,26 @@ PR-local quick Reciprocal Rank Fusion procedure baseline:
 | `procedure_reciprocal_rank_fusion/shared_cache_rankings8x256_k10` | 81.46 µs (quick) | Cached RRF over eight ranked node lists of width 256. |
 | `procedure_reciprocal_rank_fusion/shared_cache_rankings8x1024_k10` | 473.3 µs (quick) | Cached RRF over eight ranked node lists of width 1,024. |
 
+PR-local quick RRF accumulation/top-k A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_reciprocal_rank_fusion --save-baseline rrf_btree`,
+then the same command with `--baseline rrf_btree` after replacing tree-backed
+RRF score/dedup accumulation with engine-id `FxHashMap` / `FxHashSet` and
+partial top-k selection before the final deterministic output sort.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x64_k10` | 5.0839 µs | 3.2698 µs | −35.69%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x256_k10` | 18.750 µs | 10.049 µs | −46.52%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x1024_k10` | 83.477 µs | 36.573 µs | −56.23%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x64_k10` | 10.159 µs | 5.5026 µs | −43.06%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x256_k10` | 38.327 µs | 19.407 µs | −49.73%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x1024_k10` | 207.16 µs | 70.854 µs | −66.40%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x64_k10` | 17.994 µs | 10.396 µs | −42.49%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x256_k10` | 81.288 µs | 38.434 µs | −52.88%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x1024_k10` | 508.41 µs | 141.27 µs | −72.22%, p=0.00. |
+
 PR-local quick vector procedure baseline:
 
 | Bench | Median | Notes |

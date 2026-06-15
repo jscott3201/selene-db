@@ -5,8 +5,7 @@
 //! `weight / (rank_constant + rank)` for each ranking that contains it, where
 //! `rank` is one-based.
 
-use std::collections::{BTreeMap, BTreeSet};
-
+use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::NodeId;
 use thiserror::Error;
 
@@ -69,13 +68,16 @@ pub fn reciprocal_rank_fusion(
         validate_weights(weights, rankings.len())?;
     }
 
-    let mut scores = BTreeMap::<NodeId, f64>::new();
+    let candidate_visits = rankings.iter().map(Vec::len).sum();
+    let mut scores = FxHashMap::<NodeId, f64>::default();
+    scores.reserve(candidate_visits);
     for (ranking_index, ranking) in rankings.iter().enumerate() {
         let weight = weights.map_or(1.0, |weights| weights[ranking_index]);
         if weight == 0.0 {
             continue;
         }
-        let mut seen = BTreeSet::new();
+        let mut seen = FxHashSet::default();
+        seen.reserve(ranking.len());
         for (rank_index, node_id) in ranking.iter().enumerate() {
             if !seen.insert(*node_id) {
                 continue;
@@ -89,13 +91,17 @@ pub fn reciprocal_rank_fusion(
         .into_iter()
         .map(|(node_id, score)| ReciprocalRankFusionHit { node_id, score })
         .collect();
-    hits.sort_by(|left, right| {
+    let by_score_then_node = |left: &ReciprocalRankFusionHit, right: &ReciprocalRankFusionHit| {
         right
             .score
             .total_cmp(&left.score)
             .then(left.node_id.cmp(&right.node_id))
-    });
-    hits.truncate(k);
+    };
+    if hits.len() > k {
+        hits.select_nth_unstable_by(k, by_score_then_node);
+        hits.truncate(k);
+    }
+    hits.sort_by(by_score_then_node);
     Ok(hits)
 }
 
@@ -198,6 +204,28 @@ mod tests {
             hits.iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
             [node(3), node(7)]
         );
+    }
+
+    #[test]
+    fn top_k_truncation_keeps_deterministic_score_order() {
+        let hits = reciprocal_rank_fusion(
+            &[
+                vec![node(8), node(4), node(2)],
+                vec![node(7), node(4), node(1)],
+                vec![node(6), node(4), node(3)],
+            ],
+            None,
+            DEFAULT_RRF_RANK_CONSTANT,
+            3,
+        )
+        .unwrap();
+
+        assert_eq!(
+            hits.iter().map(|hit| hit.node_id).collect::<Vec<_>>(),
+            [node(4), node(6), node(7)]
+        );
+        assert!(hits[0].score > hits[1].score);
+        assert_close(hits[1].score, hits[2].score);
     }
 
     #[test]
