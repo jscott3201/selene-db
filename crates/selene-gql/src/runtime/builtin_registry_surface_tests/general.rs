@@ -1,13 +1,13 @@
 use super::*;
 
 #[test]
-fn registers_all_sixty_five_procedures() {
+fn registers_all_sixty_seven_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        65,
-        "expected 19 algo procedures + 46 platform built-ins"
+        67,
+        "expected 19 algo procedures + 48 platform built-ins"
     );
 }
 
@@ -91,7 +91,7 @@ fn pagerank_signature_has_optional_orientation_personalization_and_result_filter
 }
 
 #[test]
-fn iter_handles_yields_all_forty_six_platform_builtins() {
+fn iter_handles_yields_all_forty_eight_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -146,6 +146,8 @@ fn iter_handles_yields_all_forty_six_platform_builtins() {
         ["selene", "text_search_nodes"],
         ["selene", "text_score_nodes"],
         ["selene", "text_score_nodes_batch"],
+        ["selene", "text_score_candidate_state"],
+        ["selene", "text_score_candidate_state_nodes"],
         ["selene", "text_score_candidate_state_expanded_batch"],
         ["selene", "reciprocal_rank_fusion"],
     ] {

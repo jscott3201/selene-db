@@ -17,8 +17,9 @@ use super::vector_candidate_state_common::{
     CandidateStateOperation, candidate_state_error, operation_arg,
 };
 use super::vector_common::{
-    BatchMismatch, candidate_sets_arg, cardinality_arg, expansion_direction_arg, invalid_arg,
-    node_list_arg, node_list_sets_arg, query_index_too_large, string_arg, vector_search_error,
+    BatchMismatch, candidate_set_arg, candidate_sets_arg, cardinality_arg, expansion_direction_arg,
+    invalid_arg, node_list_arg, node_list_sets_arg, query_index_too_large, string_arg,
+    vector_search_error,
 };
 use crate::procedure_registry::ProcedureError;
 use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, ProcedureResult};
@@ -26,6 +27,8 @@ use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, Pr
 const PROC_NAME: &str = "selene.text_search_nodes";
 const SCORE_PROC_NAME: &str = "selene.text_score_nodes";
 const SCORE_BATCH_PROC_NAME: &str = "selene.text_score_nodes_batch";
+const SCORE_STATE_PROC_NAME: &str = "selene.text_score_candidate_state";
+const SCORE_STATE_NODES_PROC_NAME: &str = "selene.text_score_candidate_state_nodes";
 const SCORE_STATE_EXPANDED_BATCH_PROC_NAME: &str =
     "selene.text_score_candidate_state_expanded_batch";
 
@@ -107,6 +110,44 @@ pub(super) fn score_batch_signature() -> Vec<ProcedureParameter> {
         .with_description("Per-query candidate nodes to score."),
         StaticParameter::new("k", GqlType::Integer, false)
             .with_description("Maximum result count per query."),
+    ]
+    .into_iter()
+    .map(StaticParameter::into_parameter)
+    .collect()
+}
+
+pub(super) fn score_state_signature() -> Vec<ProcedureParameter> {
+    [
+        StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
+        StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
+        StaticParameter::new("query", GqlType::String, false)
+            .with_description("Full-text query string."),
+        StaticParameter::new("state_name", GqlType::String, false)
+            .with_description("Maintained candidate-state name."),
+        StaticParameter::new("k", GqlType::Integer, false)
+            .with_description("Maximum result count."),
+    ]
+    .into_iter()
+    .map(StaticParameter::into_parameter)
+    .collect()
+}
+
+pub(super) fn score_state_nodes_signature() -> Vec<ProcedureParameter> {
+    [
+        StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
+        StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
+        StaticParameter::new("query", GqlType::String, false)
+            .with_description("Full-text query string."),
+        StaticParameter::new("state_name", GqlType::String, false)
+            .with_description("Maintained candidate-state name."),
+        StaticParameter::new("nodes", GqlType::List(Box::new(GqlType::NodeRef)), false)
+            .with_description("Explicit candidate nodes to compose with the maintained state."),
+        StaticParameter::new("k", GqlType::Integer, false)
+            .with_description("Maximum result count."),
+        StaticParameter::new("operation", GqlType::String, false)
+            .with_description("Candidate-set algebra operation.")
+            .with_default_doc("intersection")
+            .with_default(crate::ProcedureDefaultValue::String("intersection")),
     ]
     .into_iter()
     .map(StaticParameter::into_parameter)
@@ -311,6 +352,87 @@ pub(super) fn execute_score_batch(
     Ok(ProcedureResult { rows })
 }
 
+pub(super) fn execute_score_state(
+    ctx: &GraphContext<'_>,
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    if args.len() != 5 {
+        return Err(invalid_arg(format!(
+            "{SCORE_STATE_PROC_NAME} expects 5 arguments"
+        )));
+    }
+
+    let label = string_arg(SCORE_STATE_PROC_NAME, &args[0], "label")?;
+    let property = string_arg(SCORE_STATE_PROC_NAME, &args[1], "property")?;
+    let query = query_arg(SCORE_STATE_PROC_NAME, &args[2])?;
+    let state_name = string_arg(SCORE_STATE_PROC_NAME, &args[3], "state_name")?;
+    let k = cardinality_arg(SCORE_STATE_PROC_NAME, &args[4], "k")?;
+
+    let candidates = ctx
+        .vector_candidate_set(&state_name)
+        .map_err(|error| candidate_state_error(SCORE_STATE_PROC_NAME, error))?
+        .ok_or_else(|| {
+            invalid_arg(format!(
+                "{SCORE_STATE_PROC_NAME} unknown maintained candidate-state set '{}'",
+                state_name.as_str()
+            ))
+        })?;
+    let hits = text_index_for_score(ctx, SCORE_STATE_PROC_NAME, &label, &property)?
+        .search_candidates_checked(query, candidates.as_nodes(), k, ctx.cancellation_checker())
+        .map_err(text_search_error)?;
+
+    Ok(ProcedureResult {
+        rows: hits
+            .into_iter()
+            .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Float(hit.score)])
+            .collect(),
+    })
+}
+
+pub(super) fn execute_score_state_nodes(
+    ctx: &GraphContext<'_>,
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    if !(6..=7).contains(&args.len()) {
+        return Err(invalid_arg(format!(
+            "{SCORE_STATE_NODES_PROC_NAME} expects 6 or 7 arguments"
+        )));
+    }
+
+    let label = string_arg(SCORE_STATE_NODES_PROC_NAME, &args[0], "label")?;
+    let property = string_arg(SCORE_STATE_NODES_PROC_NAME, &args[1], "property")?;
+    let query = query_arg(SCORE_STATE_NODES_PROC_NAME, &args[2])?;
+    let state_name = string_arg(SCORE_STATE_NODES_PROC_NAME, &args[3], "state_name")?;
+    let nodes = candidate_set_arg(SCORE_STATE_NODES_PROC_NAME, &args[4], "nodes")?;
+    let k = cardinality_arg(SCORE_STATE_NODES_PROC_NAME, &args[5], "k")?;
+    let operation = args
+        .get(6)
+        .map(|arg| operation_arg(SCORE_STATE_NODES_PROC_NAME, arg))
+        .transpose()?
+        .unwrap_or(CandidateStateOperation::Intersection);
+
+    let state = ctx
+        .vector_candidate_set(&state_name)
+        .map_err(|error| candidate_state_error(SCORE_STATE_NODES_PROC_NAME, error))?
+        .ok_or_else(|| {
+            invalid_arg(format!(
+                "{SCORE_STATE_NODES_PROC_NAME} unknown maintained candidate-state set '{}'",
+                state_name.as_str()
+            ))
+        })?;
+    let candidates = operation.compose(&state, &nodes);
+    let hits = text_index_for_score(ctx, SCORE_STATE_NODES_PROC_NAME, &label, &property)?
+        .search_candidates_checked(query, candidates.as_nodes(), k, ctx.cancellation_checker())
+        .map_err(text_search_error)?;
+
+    Ok(ProcedureResult {
+        rows: hits
+            .into_iter()
+            .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Float(hit.score)])
+            .collect(),
+    })
+}
+
 pub(super) fn execute_score_state_expanded_batch(
     ctx: &GraphContext<'_>,
     args: &[Value],
@@ -405,6 +527,23 @@ pub(super) fn execute_score_state_expanded_batch(
         }
     }
     Ok(ProcedureResult { rows })
+}
+
+fn text_index_for_score(
+    ctx: &GraphContext<'_>,
+    proc_name: &'static str,
+    label: &DbString,
+    property: &DbString,
+) -> Result<std::sync::Arc<selene_graph::TextIndex>, ProcedureError> {
+    ctx.snapshot()
+        .text_index_for(label, property)
+        .ok_or_else(|| {
+            invalid_arg(format!(
+                "{proc_name} requires a text index for {}.{}; call selene.create_text_index first",
+                label.as_str(),
+                property.as_str()
+            ))
+        })
 }
 
 fn query_arg<'a>(proc_name: &'static str, value: &'a Value) -> Result<&'a str, ProcedureError> {

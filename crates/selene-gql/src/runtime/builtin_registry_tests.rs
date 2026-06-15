@@ -42,6 +42,8 @@ fn builtin_tiers_and_mutability_match_pack() {
         &["selene", "text_search_nodes"][..],
         &["selene", "text_score_nodes"][..],
         &["selene", "text_score_nodes_batch"][..],
+        &["selene", "text_score_candidate_state"][..],
+        &["selene", "text_score_candidate_state_nodes"][..],
         &["selene", "text_score_candidate_state_expanded_batch"][..],
         &["selene", "reciprocal_rank_fusion"][..],
     ] {
@@ -558,7 +560,7 @@ fn handles_are_unique_and_one_based() {
         .map(|(_, metadata)| metadata.handle.raw())
         .collect();
     handles.sort_unstable();
-    assert_eq!(handles, (1..=65).collect::<Vec<_>>());
+    assert_eq!(handles, (1..=67).collect::<Vec<_>>());
 }
 
 #[test]
