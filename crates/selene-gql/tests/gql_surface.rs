@@ -145,7 +145,7 @@ fn show_procedures_lists_default_registry() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = column_strings(&table, "name");
 
-    assert_eq!(table.row_count(), 65);
+    assert_eq!(table.row_count(), 67);
     assert!(names.contains(&"selene.compaction_stats".to_owned()));
     assert!(names.contains(&"selene.feature_status".to_owned()));
     assert!(names.contains(&"selene.verify".to_owned()));
@@ -164,6 +164,8 @@ fn show_procedures_lists_default_registry() {
     assert!(names.contains(&"selene.json_path_value_candidate_nodes".to_owned()));
     assert!(names.contains(&"selene.text_score_nodes".to_owned()));
     assert!(names.contains(&"selene.text_score_nodes_batch".to_owned()));
+    assert!(names.contains(&"selene.text_score_candidate_state".to_owned()));
+    assert!(names.contains(&"selene.text_score_candidate_state_nodes".to_owned()));
     assert!(names.contains(&"selene.text_score_candidate_state_expanded_batch".to_owned()));
     assert!(names.contains(&"selene.reciprocal_rank_fusion".to_owned()));
     assert!(names.contains(&"selene.vector_score_neighbors".to_owned()));
