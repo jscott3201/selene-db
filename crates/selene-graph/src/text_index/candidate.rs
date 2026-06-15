@@ -4,7 +4,7 @@ use rustc_hash::FxHashSet;
 
 use selene_core::{CancellationChecker, NodeId};
 
-use super::{TextIndex, TextPosting};
+use super::{QueryDocumentFrequencies, QueryPostings, TextIndex, TextPosting};
 use crate::text_search::{
     DocumentStats, TEXT_SEARCH_CANCEL_STRIDE, TextSearchError, TextSearchHit, TextTopK, bm25_score,
     unique_query_terms,
@@ -100,6 +100,7 @@ impl TextIndex {
         checker: CancellationChecker<'_>,
     ) -> Result<FxHashSet<NodeId>, TextSearchError> {
         let mut set = FxHashSet::default();
+        set.reserve(candidates.len().min(self.document_lengths.len()));
         let mut candidates_since_check = 0usize;
         for &candidate in candidates {
             candidates_since_check += 1;
@@ -120,9 +121,9 @@ impl TextIndex {
     fn query_postings<'a>(
         &'a self,
         query_terms: &[String],
-    ) -> (Vec<u32>, Vec<Option<&'a [TextPosting]>>) {
-        let mut document_frequencies = Vec::with_capacity(query_terms.len());
-        let mut postings_by_term = Vec::with_capacity(query_terms.len());
+    ) -> (QueryDocumentFrequencies, QueryPostings<'a>) {
+        let mut document_frequencies = QueryDocumentFrequencies::with_capacity(query_terms.len());
+        let mut postings_by_term = QueryPostings::with_capacity(query_terms.len());
         for term in query_terms {
             match self.postings.get(term) {
                 Some(postings) => {
