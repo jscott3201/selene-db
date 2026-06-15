@@ -63,6 +63,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             plan_subqueries: None,
             cancellation: None,
             deadline: None,
+            node_scan_budget: None,
             row_cap: None,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),

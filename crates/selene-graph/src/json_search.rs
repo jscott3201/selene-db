@@ -74,15 +74,25 @@ pub enum JsonSearchError {
         /// Wall-clock duration since the deadline elapsed.
         elapsed: Duration,
     },
+    /// Deterministic node-scan budget was exceeded.
+    #[error("JSON search node scan budget exceeded ({scanned} > {limit})")]
+    NodeScanBudgetExceeded {
+        /// Maximum allowed scanned nodes.
+        limit: usize,
+        /// Observed scanned nodes after the batch that crossed the limit.
+        scanned: usize,
+    },
 }
 
 impl JsonSearchError {
     pub(crate) fn into_graph_error(self) -> GraphError {
         match self {
             Self::Graph(error) => error,
-            Self::Cancelled | Self::Timeout { .. } => GraphError::Inconsistent {
-                reason: format!("disabled JSON-search checker returned {self}"),
-            },
+            Self::Cancelled | Self::Timeout { .. } | Self::NodeScanBudgetExceeded { .. } => {
+                GraphError::Inconsistent {
+                    reason: format!("disabled JSON-search checker returned {self}"),
+                }
+            }
         }
     }
 }
@@ -92,6 +102,9 @@ impl From<CancellationCause> for JsonSearchError {
         match cause {
             CancellationCause::Cancelled => Self::Cancelled,
             CancellationCause::Timeout { elapsed } => Self::Timeout { elapsed },
+            CancellationCause::NodeScanBudgetExceeded { limit, scanned } => {
+                Self::NodeScanBudgetExceeded { limit, scanned }
+            }
         }
     }
 }
@@ -141,7 +154,7 @@ impl SeleneGraph {
         for raw_row in label_rows.iter() {
             rows_since_check += 1;
             if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
-                checker.check()?;
+                checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
             if !self.node_store.is_alive(raw_row) {
@@ -172,6 +185,9 @@ impl SeleneGraph {
             if value.contains(candidate) {
                 top_k.push(node_id);
             }
+        }
+        if rows_since_check > 0 {
+            checker.note_nodes_scanned(rows_since_check)?;
         }
         Ok(top_k.into_hits())
     }
@@ -220,7 +236,7 @@ impl SeleneGraph {
         for raw_row in label_rows.iter() {
             rows_since_check += 1;
             if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
-                checker.check()?;
+                checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
             if !self.node_store.is_alive(raw_row) {
@@ -251,6 +267,9 @@ impl SeleneGraph {
             if value.path_exists(path) {
                 top_k.push(node_id);
             }
+        }
+        if rows_since_check > 0 {
+            checker.note_nodes_scanned(rows_since_check)?;
         }
         Ok(top_k.into_path_hits())
     }
@@ -303,7 +322,7 @@ impl SeleneGraph {
         for raw_row in label_rows.iter() {
             rows_since_check += 1;
             if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
-                checker.check()?;
+                checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
             if !self.node_store.is_alive(raw_row) {
@@ -334,6 +353,9 @@ impl SeleneGraph {
             if value.path_contains(path, candidate) {
                 top_k.push(node_id);
             }
+        }
+        if rows_since_check > 0 {
+            checker.note_nodes_scanned(rows_since_check)?;
         }
         Ok(top_k.into_path_containment_hits())
     }
@@ -382,7 +404,7 @@ impl SeleneGraph {
         for raw_row in label_rows.iter() {
             rows_since_check += 1;
             if rows_since_check >= JSON_SEARCH_CANCEL_STRIDE {
-                checker.check()?;
+                checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
             if !self.node_store.is_alive(raw_row) {
@@ -414,6 +436,9 @@ impl SeleneGraph {
                 continue;
             };
             top_k.push(node_id, value);
+        }
+        if rows_since_check > 0 {
+            checker.note_nodes_scanned(rows_since_check)?;
         }
         Ok(top_k.into_hits())
     }

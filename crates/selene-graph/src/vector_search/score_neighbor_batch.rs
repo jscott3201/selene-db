@@ -30,12 +30,13 @@ impl SeleneGraph {
         if let Some(first_anchor) = anchors.first()
             && anchors.iter().all(|anchor| anchor == first_anchor)
         {
-            checker.check()?;
+            checker.note_nodes_scanned(1)?;
             let candidates = self.vector_neighbor_candidates(*first_anchor, edge_label, direction);
             return Ok(vec![candidates; anchors.len()]);
         }
 
         if self.should_parallelize_neighbor_candidate_batch(anchors, edge_label, direction, k) {
+            checker.note_nodes_scanned(anchors.len())?;
             return anchors
                 .par_iter()
                 .map(|anchor| {
@@ -46,9 +47,17 @@ impl SeleneGraph {
         }
 
         let mut candidate_sets = Vec::with_capacity(anchors.len());
+        let mut anchors_since_check = 0usize;
         for anchor in anchors {
-            checker.check()?;
+            anchors_since_check += 1;
+            if anchors_since_check >= super::VECTOR_SEARCH_CANCEL_STRIDE {
+                checker.note_nodes_scanned(anchors_since_check)?;
+                anchors_since_check = 0;
+            }
             candidate_sets.push(self.vector_neighbor_candidates(*anchor, edge_label, direction));
+        }
+        if anchors_since_check > 0 {
+            checker.note_nodes_scanned(anchors_since_check)?;
         }
         Ok(candidate_sets)
     }

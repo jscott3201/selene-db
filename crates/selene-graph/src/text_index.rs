@@ -228,8 +228,9 @@ impl TextIndex {
     ///
     /// # Errors
     ///
-    /// Returns [`TextSearchError::Cancelled`] or [`TextSearchError::Timeout`] when
-    /// the supplied checker trips while collecting postings.
+    /// Returns [`TextSearchError::Cancelled`], [`TextSearchError::Timeout`], or
+    /// [`TextSearchError::NodeScanBudgetExceeded`] when the supplied checker
+    /// trips while collecting postings or scoring candidate documents.
     pub fn search_checked(
         &self,
         query: &str,
@@ -277,7 +278,13 @@ impl TextIndex {
         let corpus_len = self.document_lengths.len() as f64;
         let average_document_len = self.total_document_len as f64 / corpus_len;
         let mut top_k = TextTopK::new(k);
+        let mut docs_since_check = 0usize;
         for doc in candidates.into_values() {
+            docs_since_check += 1;
+            if docs_since_check >= crate::text_search::TEXT_SEARCH_CANCEL_STRIDE {
+                checker.note_nodes_scanned(docs_since_check)?;
+                docs_since_check = 0;
+            }
             let score = bm25_score(
                 &doc,
                 &document_frequencies,
@@ -287,6 +294,9 @@ impl TextIndex {
             if score > 0.0 {
                 top_k.push(doc.node_id, score);
             }
+        }
+        if docs_since_check > 0 {
+            checker.note_nodes_scanned(docs_since_check)?;
         }
         Ok(top_k.into_hits())
     }

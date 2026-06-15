@@ -622,6 +622,9 @@ fn text_search_error(error: TextSearchError) -> ProcedureError {
     match error {
         TextSearchError::Cancelled => ProcedureError::Cancelled,
         TextSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        TextSearchError::NodeScanBudgetExceeded { limit, scanned } => {
+            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+        }
         TextSearchError::Graph(GraphError::Inconsistent { reason }) => ProcedureError::Internal {
             detail: format!("graph inconsistency during text search: {reason}"),
         },

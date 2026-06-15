@@ -240,6 +240,9 @@ pub(super) fn vector_search_error(
         VectorSearchError::Graph(error) => graph_error(error, graph_context),
         VectorSearchError::Cancelled => ProcedureError::Cancelled,
         VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        VectorSearchError::NodeScanBudgetExceeded { limit, scanned } => {
+            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+        }
         VectorSearchError::BatchLengthMismatch { .. } => match batch_mismatch {
             BatchMismatch::InvalidArgument => invalid_arg(format!("{error}")),
             BatchMismatch::Internal(prefix) => ProcedureError::Internal {
@@ -264,6 +267,9 @@ pub(super) fn approximate_vector_search_error(
         VectorSearchError::Graph(error) => graph_error(error, graph_context),
         VectorSearchError::Cancelled => ProcedureError::Cancelled,
         VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        VectorSearchError::NodeScanBudgetExceeded { limit, scanned } => {
+            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+        }
         VectorSearchError::BatchLengthMismatch { .. } => match batch_mismatch {
             BatchMismatch::InvalidArgument => invalid_arg(format!("{error}")),
             BatchMismatch::Internal(prefix) => ProcedureError::Internal {

@@ -167,6 +167,9 @@ fn cancellation_error(cause: CancellationCause) -> ProcedureError {
     match cause {
         CancellationCause::Cancelled => ProcedureError::Cancelled,
         CancellationCause::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        CancellationCause::NodeScanBudgetExceeded { limit, scanned } => {
+            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+        }
     }
 }
 

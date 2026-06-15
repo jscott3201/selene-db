@@ -2,7 +2,7 @@
 
 use std::{rc::Rc, sync::Arc, time::Instant};
 
-use selene_core::{CancellationToken, Change, metrics};
+use selene_core::{CancellationToken, Change, NodeScanBudget, metrics};
 use selene_graph::CommitOutcome;
 
 use super::plan_cache::{SharedPlanCacheInsert, SharedPlanCacheLookup};
@@ -343,7 +343,7 @@ fn execute_read_only(
         &session.scalar_parameters,
         &binding_tables,
     );
-    let (cancellation, deadline, row_cap) = resource_limits(session);
+    let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let table = if let Some(txn) = session.active_txn.as_mut() {
         let mut ctx = TxContext::write_with_owned_parameters_and_registry(
@@ -355,7 +355,12 @@ fn execute_read_only(
             parameters,
             Rc::clone(&binding_tables),
         )
-        .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+        .with_resource_limits(
+            cancellation.as_ref(),
+            deadline,
+            row_cap,
+            node_scan_budget.as_ref(),
+        )
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()?;
@@ -371,7 +376,12 @@ fn execute_read_only(
             parameters,
             Rc::clone(&binding_tables),
         )
-        .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+        .with_resource_limits(
+            cancellation.as_ref(),
+            deadline,
+            row_cap,
+            node_scan_budget.as_ref(),
+        )
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()?;
@@ -413,7 +423,7 @@ fn execute_maintenance(
         &session.scalar_parameters,
         &binding_tables,
     );
-    let (cancellation, deadline, row_cap) = resource_limits(session);
+    let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let mut ctx = TxContext::maintenance_with_owned_parameters_and_registry(
         snapshot,
@@ -424,7 +434,12 @@ fn execute_maintenance(
         parameters,
         Rc::clone(&binding_tables),
     )
-    .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+    .with_resource_limits(
+        cancellation.as_ref(),
+        deadline,
+        row_cap,
+        node_scan_budget.as_ref(),
+    )
     .with_warning_sink(warning_sink)
     .with_session_time_zone(session_tz);
     ctx.check_cancellation()?;
@@ -447,7 +462,7 @@ fn execute_inside_explicit_tx(
         &session.scalar_parameters,
         &binding_tables,
     );
-    let (cancellation, deadline, row_cap) = resource_limits(session);
+    let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let txn = session
         .active_txn
@@ -464,7 +479,12 @@ fn execute_inside_explicit_tx(
         parameters,
         Rc::clone(&binding_tables),
     )
-    .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+    .with_resource_limits(
+        cancellation.as_ref(),
+        deadline,
+        row_cap,
+        node_scan_budget.as_ref(),
+    )
     .with_warning_sink(warning_sink)
     .with_session_time_zone(session_tz);
     let result = ctx
@@ -496,7 +516,7 @@ fn execute_auto_commit(
         &binding_tables,
     );
     let mut txn = session.graph().begin_write();
-    let (cancellation, deadline, row_cap) = resource_limits(session);
+    let (cancellation, deadline, row_cap, node_scan_budget) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let result = {
         let mut ctx = TxContext::write_with_owned_parameters_and_registry(
@@ -508,7 +528,12 @@ fn execute_auto_commit(
             parameters,
             Rc::clone(&binding_tables),
         )
-        .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+        .with_resource_limits(
+            cancellation.as_ref(),
+            deadline,
+            row_cap,
+            node_scan_budget.as_ref(),
+        )
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()
@@ -566,11 +591,13 @@ fn resource_limits(
     Option<CancellationToken>,
     Option<std::time::Instant>,
     Option<usize>,
+    Option<NodeScanBudget>,
 ) {
     (
         session.cancellation.clone(),
         session.deadline,
         session.row_cap,
+        session.max_nodes_scanned.map(NodeScanBudget::new),
     )
 }
 

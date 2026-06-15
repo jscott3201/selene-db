@@ -196,6 +196,9 @@ fn vector_search_error(error: VectorSearchError) -> ProcedureError {
         VectorSearchError::Graph(error) => graph_error(error),
         VectorSearchError::Cancelled => ProcedureError::Cancelled,
         VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        VectorSearchError::NodeScanBudgetExceeded { limit, scanned } => {
+            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+        }
         VectorSearchError::BatchLengthMismatch { .. } => ProcedureError::Internal {
             detail: format!(
                 "exact batched vector search received candidate-scoring error: {error}"

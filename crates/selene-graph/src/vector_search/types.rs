@@ -306,6 +306,14 @@ pub enum VectorSearchError {
         /// Duration since the deadline elapsed.
         elapsed: Duration,
     },
+    /// Deterministic node-scan budget was exceeded.
+    #[error("vector search node scan budget exceeded ({scanned} > {limit})")]
+    NodeScanBudgetExceeded {
+        /// Maximum allowed scanned nodes.
+        limit: usize,
+        /// Observed scanned nodes after the batch that crossed the limit.
+        scanned: usize,
+    },
     /// Approximate search was requested without a matching ANN index.
     #[error("matching ANN vector index not found")]
     ApproximateIndexMissing,
@@ -333,7 +341,9 @@ impl VectorSearchError {
     pub(crate) fn into_graph_error(self) -> GraphError {
         match self {
             Self::Graph(error) => error,
-            Self::Cancelled | Self::Timeout { .. } => GraphError::Cancelled,
+            Self::Cancelled | Self::Timeout { .. } | Self::NodeScanBudgetExceeded { .. } => {
+                GraphError::Cancelled
+            }
             Self::ApproximateIndexMissing
             | Self::ApproximateMetricMismatch { .. }
             | Self::BatchLengthMismatch { .. } => GraphError::Inconsistent {
@@ -348,6 +358,9 @@ impl From<CancellationCause> for VectorSearchError {
         match cause {
             CancellationCause::Cancelled => Self::Cancelled,
             CancellationCause::Timeout { elapsed } => Self::Timeout { elapsed },
+            CancellationCause::NodeScanBudgetExceeded { limit, scanned } => {
+                Self::NodeScanBudgetExceeded { limit, scanned }
+            }
         }
     }
 }

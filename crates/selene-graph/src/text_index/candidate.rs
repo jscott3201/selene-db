@@ -33,8 +33,9 @@ impl TextIndex {
     ///
     /// # Errors
     ///
-    /// Returns [`TextSearchError::Cancelled`] or [`TextSearchError::Timeout`] when
-    /// the supplied checker trips while deduplicating or scoring candidates.
+    /// Returns [`TextSearchError::Cancelled`], [`TextSearchError::Timeout`], or
+    /// [`TextSearchError::NodeScanBudgetExceeded`] when the supplied checker
+    /// trips while deduplicating or scoring candidates.
     pub fn search_candidates_checked(
         &self,
         query: &str,
@@ -67,7 +68,7 @@ impl TextIndex {
         for node_id in candidate_set {
             candidates_since_check += 1;
             if candidates_since_check >= TEXT_SEARCH_CANCEL_STRIDE {
-                checker.check()?;
+                checker.note_nodes_scanned(candidates_since_check)?;
                 candidates_since_check = 0;
             }
             let len = *self
@@ -87,6 +88,9 @@ impl TextIndex {
                 top_k.push(node_id, score);
             }
         }
+        if candidates_since_check > 0 {
+            checker.note_nodes_scanned(candidates_since_check)?;
+        }
         Ok(top_k.into_hits())
     }
 
@@ -100,12 +104,15 @@ impl TextIndex {
         for &candidate in candidates {
             candidates_since_check += 1;
             if candidates_since_check >= TEXT_SEARCH_CANCEL_STRIDE {
-                checker.check()?;
+                checker.note_nodes_scanned(candidates_since_check)?;
                 candidates_since_check = 0;
             }
             if self.document_lengths.contains_key(&candidate) {
                 set.insert(candidate);
             }
+        }
+        if candidates_since_check > 0 {
+            checker.note_nodes_scanned(candidates_since_check)?;
         }
         Ok(set)
     }
