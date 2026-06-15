@@ -3,11 +3,12 @@
 //! gap (the declared 60%-read workload previously had only the correlated
 //! subquery bench timing read execution).
 //!
-//! Six warm-plan-cache rows run on a no-WAL in-memory `SharedGraph`, so the
+//! Seven warm-plan-cache rows run on a no-WAL in-memory `SharedGraph`, so the
 //! timed body is pure execution + index access — not parse/plan/optimize and
 //! not durability: label scan + indexed range filter, two-leg hash join,
-//! ORDER BY top-K, high-cardinality GROUP BY, DISTINCT dedup, and bare
-//! `LIMIT 10` (the scan short-circuit signal row). Cold and shared-cache
+//! ORDER BY top-K, high-cardinality GROUP BY, DISTINCT dedup, post-RETURN
+//! `LIMIT 10` (the B19 baseline), and pre-RETURN `LIMIT 10` (the safe pattern
+//! cap row). Cold and shared-cache
 //! companions on the cheapest row rebuild a fresh session per iteration to
 //! isolate short-lived-session cache strategy.
 //!
@@ -43,19 +44,22 @@ const GROUP_BY_HIGHCARD_Q: &str =
     "MATCH (n:Person) RETURN n.score AS score, count(*) AS c GROUP BY n.score";
 /// DISTINCT over 256 distinct `name` values (high dedup ratio).
 const DISTINCT_DEDUP_Q: &str = "MATCH (n:Person) RETURN DISTINCT n.name AS name";
-/// Bare LIMIT with no ORDER BY — the B19 scan short-circuit signal row.
+/// Post-RETURN LIMIT with no ORDER BY — the B19 baseline remains scale-linear.
 const MATCH_LIMIT10_Q: &str = "MATCH (n:Person) RETURN n.name AS name LIMIT 10";
+/// Pre-RETURN LIMIT with no ORDER BY — can cap pattern materialization safely.
+const MATCH_PRERETURN_LIMIT10_Q: &str = "MATCH (n:Person) LIMIT 10 RETURN n.name AS name";
 /// Selective unanchored edge-property predicate used to A/B edge index access.
 const EDGE_PROPERTY_FILTER_Q: &str =
     "MATCH ()-[e:CONNECTED_TO]->() WHERE e.from_port = 'port_17' RETURN e";
 
-const WARM_ROWS: [(&str, &str); 6] = [
+const WARM_ROWS: [(&str, &str); 7] = [
     ("match_filter_project", FILTER_PROJECT_Q),
     ("match_expand_hashjoin", EXPAND_HASHJOIN_Q),
     ("order_by_topk", ORDER_BY_TOPK_Q),
     ("group_by_highcard", GROUP_BY_HIGHCARD_Q),
     ("distinct_dedup", DISTINCT_DEDUP_Q),
     ("match_limit10", MATCH_LIMIT10_Q),
+    ("match_prereturn_limit10", MATCH_PRERETURN_LIMIT10_Q),
 ];
 
 fn execute_read(session: &mut Session<'_>, source: &str) -> usize {

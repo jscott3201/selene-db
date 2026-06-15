@@ -1,7 +1,7 @@
 //! Standalone execution-plan runner used by recursive runtime operators.
 
 use crate::{
-    BindingTableSchema, ExecutionPlan,
+    BindingTableSchema, ExecutionPlan, LimitAmount, PipelineOp,
     runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext, pattern, pipeline},
 };
 
@@ -17,6 +17,7 @@ pub(crate) fn execute_plan_with_seed(
     seed: Option<BindingTable>,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    let row_limit = leading_pattern_row_limit(plan.pipeline.as_slice());
     let table = {
         let eval_ctx = EvalCtx {
             tx: ctx,
@@ -30,15 +31,23 @@ pub(crate) fn execute_plan_with_seed(
                     return Ok(BindingTable::new(schema, Vec::new()));
                 };
                 let target_schema = target_schema(&schema, pattern_plan);
-                pattern::execute_pattern_with_seed_and_schema(
+                pattern::execute_pattern_with_seed_schema_and_limit(
                     pattern_plan,
                     Some(row),
                     target_schema,
                     &eval_ctx,
+                    row_limit,
                 )?
             }
             (Some(pattern_plan), None) => {
-                pattern::execute_pattern_with_seed(pattern_plan, None, &eval_ctx)?
+                let schema = pattern::schema_for_pattern(pattern_plan);
+                pattern::execute_pattern_with_seed_schema_and_limit(
+                    pattern_plan,
+                    None,
+                    schema,
+                    &eval_ctx,
+                    row_limit,
+                )?
             }
             (None, Some(seed)) => seed,
             (None, None) => seed_table(),
@@ -65,6 +74,7 @@ pub(crate) fn execute_plan_read_only_with_seed(
     seed: Option<BindingTable>,
     ctx: &TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    let row_limit = leading_pattern_row_limit(plan.pipeline.as_slice());
     let table = {
         let eval_ctx = EvalCtx {
             tx: ctx,
@@ -78,15 +88,23 @@ pub(crate) fn execute_plan_read_only_with_seed(
                     return Ok(BindingTable::new(schema, Vec::new()));
                 };
                 let target_schema = target_schema(&schema, pattern_plan);
-                pattern::execute_pattern_with_seed_and_schema(
+                pattern::execute_pattern_with_seed_schema_and_limit(
                     pattern_plan,
                     Some(row),
                     target_schema,
                     &eval_ctx,
+                    row_limit,
                 )?
             }
             (Some(pattern_plan), None) => {
-                pattern::execute_pattern_with_seed(pattern_plan, None, &eval_ctx)?
+                let schema = pattern::schema_for_pattern(pattern_plan);
+                pattern::execute_pattern_with_seed_schema_and_limit(
+                    pattern_plan,
+                    None,
+                    schema,
+                    &eval_ctx,
+                    row_limit,
+                )?
             }
             (None, Some(seed)) => seed,
             (None, None) => seed_table(),
@@ -138,6 +156,19 @@ fn column_exists(schema: &BindingTableSchema, column: &crate::BindingTableColumn
     }
 }
 
+fn leading_pattern_row_limit(pipeline: &[PipelineOp]) -> Option<usize> {
+    let Some(PipelineOp::Limit { offset, count }) = pipeline.first() else {
+        return None;
+    };
+    let (LimitAmount::Literal(offset), LimitAmount::Literal(count)) = (offset, count) else {
+        return None;
+    };
+    if *count == 0 {
+        return Some(0);
+    }
+    usize::try_from(offset.saturating_add(*count)).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -147,7 +178,7 @@ mod tests {
 
     use crate::{
         EmptyProcedureRegistry, ExecutionPlan, analyze, parse, plan,
-        runtime::{TxContext, plan_runner::execute_plan},
+        runtime::{EvalCtx, TxContext, pattern, plan_runner::execute_plan},
     };
 
     fn planned(source: &str) -> ExecutionPlan {
@@ -227,5 +258,65 @@ mod tests {
         assert_eq!(table.row_count(), 1);
         assert_eq!(table.schema().columns.len(), 1);
         assert!(matches!(table.rows()[0].values(), [Value::NodeRef(_)]));
+    }
+
+    #[test]
+    fn pattern_row_limit_caps_accepted_rows_before_pipeline() {
+        let graph = SharedGraph::new(GraphId::new(994));
+        {
+            let mut txn = graph.begin_write();
+            let mut mutator = txn.mutator();
+            for _ in 0..3 {
+                mutator
+                    .create_node(LabelSet::new(), Default::default())
+                    .expect("node inserts");
+            }
+            txn.commit().expect("fixture commits");
+        }
+        let plan = planned("MATCH (n) RETURN n");
+        let pattern_plan = plan.pattern_plan.as_ref().expect("pattern plan");
+        let ctx = TxContext::read_only(
+            graph.read(),
+            &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
+            graph.index_providers(),
+        );
+        let eval_ctx = EvalCtx {
+            tx: &ctx,
+            expr_ids: &plan.expr_ids,
+            subqueries: &plan.subqueries,
+        };
+
+        let table = pattern::execute_pattern_with_seed_schema_and_limit(
+            pattern_plan,
+            None,
+            pattern::schema_for_pattern(pattern_plan),
+            &eval_ctx,
+            Some(2),
+        )
+        .expect("pattern executes");
+
+        assert_eq!(table.row_count(), 2);
+    }
+
+    #[test]
+    fn leading_pattern_row_limit_accepts_pre_return_literal_limit() {
+        let plan = planned("MATCH (n) LIMIT 10 OFFSET 5 RETURN n");
+
+        assert_eq!(super::leading_pattern_row_limit(&plan.pipeline), Some(15));
+    }
+
+    #[test]
+    fn leading_pattern_row_limit_zero_count_caps_empty_result() {
+        let plan = planned("MATCH (n) LIMIT 0 OFFSET 5 RETURN n");
+
+        assert_eq!(super::leading_pattern_row_limit(&plan.pipeline), Some(0));
+    }
+
+    #[test]
+    fn leading_pattern_row_limit_rejects_post_return_limit() {
+        let plan = planned("MATCH (n) RETURN n LIMIT 10");
+
+        assert_eq!(super::leading_pattern_row_limit(&plan.pipeline), None);
     }
 }

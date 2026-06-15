@@ -2036,7 +2036,8 @@ PR-local quick B2 shared source-plan cache row
 
 Read-execution coverage for the declared 60%-read workload: label scan +
 indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
-GROUP BY, DISTINCT dedup, and bare `LIMIT 10`. Six warm-plan-cache rows over
+GROUP BY, DISTINCT dedup, post-RETURN bare `LIMIT 10`, and pre-RETURN bare
+`LIMIT 10`. Warm-plan-cache rows run over
 `BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
 pure execution + index access — not parse/plan/optimize, not durability. Cold
 and shared-cache companions on the cheapest row rebuild a fresh session per
@@ -2078,6 +2079,18 @@ Command:
 | `read_pipeline/match_limit10/1000` | 67.839 µs | Warm same-session cache-hit baseline. |
 | `read_pipeline/match_limit10/cold/1000` | 132.41 µs | Fresh uncached `Session` per iter: parse/analyze/plan/optimize/execute. |
 | `read_pipeline/match_limit10/shared_cache/1000` | 66.491 µs | Fresh `Session` per iter over a warmed caller-owned `SharedPlanCache`; cache hit bypasses parse/analyze/plan/optimize and measures session churn + cached execute. Median is −49.8% vs uncached fresh sessions and within noise of the same-session warm row. |
+
+PR-local B19 pre-RETURN LIMIT cap A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter limit10`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/match_limit10/1000` | 65.732 µs | Post-RETURN `MATCH (n:Person) RETURN n.name AS name LIMIT 10`; projection precedes LIMIT, so pattern materialization stays uncapped. |
+| `read_pipeline/match_prereturn_limit10/1000` | 29.948 µs | Pre-RETURN `MATCH (n:Person) LIMIT 10 RETURN n.name AS name`; leading literal LIMIT caps accepted pattern rows before projection. Median is −54.4% vs the post-RETURN baseline. |
+| `read_pipeline/match_limit10/cold/1000` | 111.59 µs | Fresh uncached session companion from the same run. |
+| `read_pipeline/match_limit10/shared_cache/1000` | 62.931 µs | Fresh session over warmed shared source-plan cache companion from the same run. |
 
 PR-local edge-index sprint A/B:
 
