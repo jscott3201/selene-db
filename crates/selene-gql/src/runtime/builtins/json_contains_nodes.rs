@@ -79,6 +79,9 @@ fn json_search_error(error: JsonSearchError) -> ProcedureError {
     match error {
         JsonSearchError::Cancelled => ProcedureError::Cancelled,
         JsonSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        JsonSearchError::NodeScanBudgetExceeded { limit, scanned } => {
+            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+        }
         JsonSearchError::Graph(GraphError::Inconsistent { reason }) => ProcedureError::Internal {
             detail: format!("graph inconsistency during JSON containment search: {reason}"),
         },

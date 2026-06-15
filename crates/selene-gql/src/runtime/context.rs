@@ -12,8 +12,8 @@ use std::{
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{
-    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, DbString, Value,
-    metrics,
+    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, DbString,
+    NodeScanBudget, Value, metrics,
 };
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, SharedGraph, WriteTxn};
 
@@ -58,6 +58,7 @@ pub struct TxContext<'a, 'g> {
     plan_subqueries: Option<&'a SubqueryRegistry>,
     cancellation: Option<&'a CancellationToken>,
     deadline: Option<Instant>,
+    node_scan_budget: Option<&'a NodeScanBudget>,
     row_cap: Option<usize>,
     warning_sink: Option<&'a RefCell<Box<dyn WarningSink>>>,
     emitted_warnings: RefCell<FxHashSet<(GqlStatus, SourceSpan)>>,
@@ -114,16 +115,18 @@ impl<'a, 'ctx, 'g, 'plan> EvalCtx<'a, 'ctx, 'g, 'plan> {
 }
 
 impl<'a, 'g> TxContext<'a, 'g> {
-    /// Attach per-statement cooperative cancellation and output row-cap limits.
+    /// Attach per-statement cooperative cancellation, scan-budget, and output row-cap limits.
     #[must_use]
     pub fn with_resource_limits(
         mut self,
         cancellation: Option<&'a CancellationToken>,
         deadline: Option<Instant>,
         row_cap: Option<usize>,
+        node_scan_budget: Option<&'a NodeScanBudget>,
     ) -> Self {
         self.cancellation = cancellation;
         self.deadline = deadline;
+        self.node_scan_budget = node_scan_budget;
         self.row_cap = row_cap;
         self
     }
@@ -253,7 +256,11 @@ impl<'a, 'g> TxContext<'a, 'g> {
     /// built-in procedures.
     #[must_use]
     pub(crate) const fn cancellation_checker(&self) -> CancellationChecker<'a> {
-        CancellationChecker::new(self.cancellation, self.deadline)
+        CancellationChecker::new_with_node_scan_budget(
+            self.cancellation,
+            self.deadline,
+            self.node_scan_budget,
+        )
     }
 
     /// Return the configured absolute deadline for this statement, if any.
@@ -277,6 +284,12 @@ impl<'a, 'g> TxContext<'a, 'g> {
                 ExecutorError::Timeout {
                     deadline: self.deadline.unwrap_or_else(Instant::now),
                     elapsed,
+                    span,
+                }
+            }
+            CancellationCause::NodeScanBudgetExceeded { .. } => {
+                ExecutorError::ProgramLimitExceeded {
+                    detail: "node scan budget exceeded",
                     span,
                 }
             }
@@ -443,6 +456,7 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("plan_subqueries", &self.plan_subqueries.is_some())
             .field("cancellation", &self.cancellation.is_some())
             .field("deadline", &self.deadline.is_some())
+            .field("node_scan_budget", &self.node_scan_budget.is_some())
             .field("row_cap", &self.row_cap)
             .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
@@ -492,8 +506,12 @@ mod tests {
         let registry = EmptyProcedureRegistry;
         let token = CancellationToken::new();
         token.cancel();
-        let ctx =
-            read_only_ctx(&graph, &caps, &registry).with_resource_limits(Some(&token), None, None);
+        let ctx = read_only_ctx(&graph, &caps, &registry).with_resource_limits(
+            Some(&token),
+            None,
+            None,
+            None,
+        );
 
         let mut rows_since_check = 0usize;
         // Accumulate one short of the stride: no boundary crossed, no check.

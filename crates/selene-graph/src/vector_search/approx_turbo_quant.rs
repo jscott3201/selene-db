@@ -7,8 +7,9 @@ use crate::error::GraphError;
 use crate::graph::SeleneGraph;
 
 use super::{
-    ApproximateVectorSearchOptions, VectorCandidateSet, VectorNodeSearchHit, VectorSearchError,
-    approx_batch, rerank_ann_row_candidates, turbo_quant_exact,
+    ApproximateVectorSearchOptions, VECTOR_SEARCH_CANCEL_STRIDE, VectorCandidateSet,
+    VectorNodeSearchHit, VectorSearchError, approx_batch, rerank_ann_row_candidates,
+    turbo_quant_exact,
 };
 
 impl SeleneGraph {
@@ -232,8 +233,13 @@ impl SeleneGraph {
         checker: &CancellationChecker<'_>,
     ) -> Result<RoaringBitmap, VectorSearchError> {
         let mut rows = RoaringBitmap::new();
+        let mut candidates_since_check = 0usize;
         for node_id in candidates.as_nodes().iter().copied() {
-            checker.check()?;
+            candidates_since_check += 1;
+            if candidates_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
+                checker.note_nodes_scanned(candidates_since_check)?;
+                candidates_since_check = 0;
+            }
             let Some(row) = self.row_for_node_id(node_id) else {
                 continue;
             };
@@ -241,6 +247,9 @@ impl SeleneGraph {
             if self.node_store.is_alive(raw_row) && index_rows.contains(raw_row) {
                 rows.insert(raw_row);
             }
+        }
+        if candidates_since_check > 0 {
+            checker.note_nodes_scanned(candidates_since_check)?;
         }
         Ok(rows)
     }

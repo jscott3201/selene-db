@@ -111,7 +111,7 @@ impl SeleneGraph {
         for raw_row in rows.iter() {
             rows_since_check += 1;
             if rows_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
-                checker.check()?;
+                checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
             if !self.node_store.is_alive(raw_row) {
@@ -141,6 +141,9 @@ impl SeleneGraph {
             };
             let distance = scorer.distance(vector).map_err(GraphError::from)?;
             top_k.push_distance(node_id, distance);
+        }
+        if rows_since_check > 0 {
+            checker.note_nodes_scanned(rows_since_check)?;
         }
 
         Ok(top_k
@@ -515,8 +518,13 @@ fn ann_row_hits_to_node_hits(
 ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
     let mut hits = Vec::with_capacity(row_hits.len());
     let mut needs_sort = false;
+    let mut rows_since_check = 0usize;
     for hit in row_hits {
-        checker.check()?;
+        rows_since_check += 1;
+        if rows_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
+            checker.note_nodes_scanned(rows_since_check)?;
+            rows_since_check = 0;
+        }
         if !graph.node_store.is_alive(hit.row) {
             continue;
         }
@@ -539,6 +547,9 @@ fn ann_row_hits_to_node_hits(
             .is_some_and(|previous| compare_node_search_hit(previous, &node_hit).is_gt());
         hits.push(node_hit);
     }
+    if rows_since_check > 0 {
+        checker.note_nodes_scanned(rows_since_check)?;
+    }
     if needs_sort {
         hits.sort_by(compare_node_search_hit);
     }
@@ -556,8 +567,13 @@ fn rerank_ann_row_candidates(
 ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
     let scorer = metric.bind_query(query).map_err(GraphError::from)?;
     let mut top_k = VectorTopK::new(k);
+    let mut rows_since_check = 0usize;
     for hit in row_hits {
-        checker.check()?;
+        rows_since_check += 1;
+        if rows_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
+            checker.note_nodes_scanned(rows_since_check)?;
+            rows_since_check = 0;
+        }
         if !graph.node_store.is_alive(hit.row) {
             continue;
         }
@@ -579,6 +595,9 @@ fn rerank_ann_row_candidates(
         };
         let distance = scorer.distance(vector).map_err(GraphError::from)?;
         top_k.push_distance(node_id, distance);
+    }
+    if rows_since_check > 0 {
+        checker.note_nodes_scanned(rows_since_check)?;
     }
     Ok(vector_node_hits(top_k))
 }

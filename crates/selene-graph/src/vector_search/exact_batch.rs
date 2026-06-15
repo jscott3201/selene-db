@@ -108,10 +108,13 @@ impl SeleneGraph {
         for raw_row in rows.iter() {
             rows_since_check += 1;
             if rows_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
-                checker.check()?;
+                checker.note_nodes_scanned(rows_since_check)?;
                 rows_since_check = 0;
             }
             self.push_batch_row(label, property, scorers, &mut top_ks, raw_row)?;
+        }
+        if rows_since_check > 0 {
+            checker.note_nodes_scanned(rows_since_check)?;
         }
         Ok(top_ks)
     }

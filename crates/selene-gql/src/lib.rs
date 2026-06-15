@@ -85,7 +85,7 @@ pub use crate::runtime::{
     SharedPlanCacheStats, StatementOutput, TransactionOutcome, TxContext, WarningSink,
     WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
 };
-pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken};
+pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken, NodeScanBudget};
 
 #[cfg(any(test, feature = "test-harness"))]
 pub use crate::runtime::{

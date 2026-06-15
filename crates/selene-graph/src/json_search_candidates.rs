@@ -230,9 +230,12 @@ impl SeleneGraph {
         }
         let candidates = sorted_unique_candidates(candidates);
         let mut hits = Vec::new();
-        for (offset, node_id) in candidates.into_iter().enumerate() {
-            if offset % JSON_SEARCH_CANCEL_STRIDE == 0 {
-                checker.check()?;
+        let mut candidates_since_check = 0usize;
+        for node_id in candidates {
+            candidates_since_check += 1;
+            if candidates_since_check >= JSON_SEARCH_CANCEL_STRIDE {
+                checker.note_nodes_scanned(candidates_since_check)?;
+                candidates_since_check = 0;
             }
             let Some(value) = self.json_candidate_value(label, property, node_id) else {
                 continue;
@@ -243,6 +246,9 @@ impl SeleneGraph {
                     break;
                 }
             }
+        }
+        if candidates_since_check > 0 {
+            checker.note_nodes_scanned(candidates_since_check)?;
         }
         Ok(hits)
     }

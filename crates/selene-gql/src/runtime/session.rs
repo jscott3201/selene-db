@@ -44,6 +44,7 @@ pub struct Session<'g> {
     pub(crate) tx_statement_count: u32,
     pub(crate) cancellation: Option<CancellationToken>,
     pub(crate) deadline: Option<Instant>,
+    pub(crate) max_nodes_scanned: Option<usize>,
     pub(crate) row_cap: Option<usize>,
     pub(crate) warning_sink: Option<RefCell<Box<dyn WarningSink>>>,
     /// When set, `execute_source` runs the optimizer with a snapshot-pinned
@@ -159,6 +160,7 @@ impl<'g> Session<'g> {
             tx_statement_count: 0,
             cancellation: None,
             deadline: None,
+            max_nodes_scanned: None,
             row_cap: None,
             warning_sink: None,
             index_selection: true,
@@ -185,6 +187,7 @@ impl<'g> Session<'g> {
             tx_statement_count: 0,
             cancellation: None,
             deadline: None,
+            max_nodes_scanned: None,
             row_cap: None,
             warning_sink: None,
             index_selection: true,
@@ -215,6 +218,18 @@ impl<'g> Session<'g> {
     #[must_use]
     pub fn with_deadline(mut self, deadline: Instant) -> Self {
         self.deadline = Some(deadline);
+        self
+    }
+
+    /// Attach a deterministic per-statement node-scan budget.
+    ///
+    /// Scan-heavy graph and procedure loops debit this budget at batch
+    /// boundaries. Exceeding it returns GQLSTATUS `5GQL1`
+    /// (program-limit-exceeded); inside an explicit transaction that also
+    /// marks the transaction failed until `ROLLBACK`.
+    #[must_use]
+    pub fn with_max_nodes_scanned(mut self, max_nodes: usize) -> Self {
+        self.max_nodes_scanned = Some(max_nodes);
         self
     }
 

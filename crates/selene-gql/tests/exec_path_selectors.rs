@@ -526,7 +526,7 @@ fn path_selector_checks_cancellation_while_filtering_rows() {
         graph.index_providers(),
     )
     .with_plan_metadata(&plan.expr_ids, &plan.subqueries)
-    .with_resource_limits(Some(&token), None, None);
+    .with_resource_limits(Some(&token), None, None, None);
 
     let err = execute_pattern(pattern, &ctx).expect_err("path selector observes token");
 

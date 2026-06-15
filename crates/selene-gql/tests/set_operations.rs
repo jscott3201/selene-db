@@ -60,7 +60,7 @@ fn execute_manual_set_op(
         &EmptyProcedureRegistry,
         graph.index_providers(),
     )
-    .with_resource_limits(cancellation, None, None);
+    .with_resource_limits(cancellation, None, None, None);
     execute_pipeline(
         &[PipelineOp::Union {
             op,

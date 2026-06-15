@@ -50,7 +50,7 @@ where
     items
         .par_chunks(chunk_len)
         .map(|chunk| {
-            checker.check().map_err(E::from)?;
+            checker.note_nodes_scanned(chunk.len()).map_err(E::from)?;
             map(chunk)
         })
         .try_reduce(identity, reduce)

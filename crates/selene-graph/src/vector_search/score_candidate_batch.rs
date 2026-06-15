@@ -78,9 +78,12 @@ impl SeleneGraph {
         let mut top_ks = (0..queries.len())
             .map(|_| VectorTopK::new(k))
             .collect::<Vec<_>>();
-        for (offset, node_id) in candidates.as_nodes().iter().copied().enumerate() {
-            if offset % VECTOR_SEARCH_CANCEL_STRIDE == 0 {
-                checker.check()?;
+        let mut candidates_since_check = 0usize;
+        for node_id in candidates.as_nodes().iter().copied() {
+            candidates_since_check += 1;
+            if candidates_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
+                checker.note_nodes_scanned(candidates_since_check)?;
+                candidates_since_check = 0;
             }
             let Some(properties) = self.node_properties(node_id) else {
                 continue;
@@ -92,6 +95,9 @@ impl SeleneGraph {
                 let distance = scorer.distance(vector).map_err(GraphError::from)?;
                 top_k.push_distance(node_id, distance);
             }
+        }
+        if candidates_since_check > 0 {
+            checker.note_nodes_scanned(candidates_since_check)?;
         }
 
         Ok(top_ks.into_iter().map(vector_node_hits).collect())
@@ -206,9 +212,12 @@ impl SeleneGraph {
         let mut top_ks = (0..query_indices.len())
             .map(|_| VectorTopK::new(score.k))
             .collect::<Vec<_>>();
-        for (offset, node_id) in candidates.as_nodes().iter().copied().enumerate() {
-            if offset % VECTOR_SEARCH_CANCEL_STRIDE == 0 {
-                score.checker.check()?;
+        let mut candidates_since_check = 0usize;
+        for node_id in candidates.as_nodes().iter().copied() {
+            candidates_since_check += 1;
+            if candidates_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
+                score.checker.note_nodes_scanned(candidates_since_check)?;
+                candidates_since_check = 0;
             }
             let Some(properties) = self.node_properties(node_id) else {
                 continue;
@@ -220,6 +229,9 @@ impl SeleneGraph {
                 let distance = scorer.distance(vector).map_err(GraphError::from)?;
                 top_k.push_distance(node_id, distance);
             }
+        }
+        if candidates_since_check > 0 {
+            score.checker.note_nodes_scanned(candidates_since_check)?;
         }
 
         Ok(top_ks.into_iter().map(vector_node_hits).collect())
