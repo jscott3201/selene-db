@@ -2052,7 +2052,7 @@ same-session development guard stayed within noise for ordinary read rows; the
 significant change), and the seeded-scan branch does not show a persistent
 no-seed scan tax._
 
-Two baseline signals worth reading directly from the table: warm
+Historical baseline signals worth reading directly from the table: warm
 `match_limit10` is **scale-linear** (784 µs → 13.39 ms for ten output rows) —
 the scan does not short-circuit on LIMIT, which is the B19 baseline this row
 exists to expose; and `match_limit10/cold` ≈ warm at these scales because the
@@ -2091,6 +2091,17 @@ Command:
 | `read_pipeline/match_prereturn_limit10/1000` | 29.948 µs | Pre-RETURN `MATCH (n:Person) LIMIT 10 RETURN n.name AS name`; leading literal LIMIT caps accepted pattern rows before projection. Median is −54.4% vs the post-RETURN baseline. |
 | `read_pipeline/match_limit10/cold/1000` | 111.59 µs | Fresh uncached session companion from the same run. |
 | `read_pipeline/match_limit10/shared_cache/1000` | 62.931 µs | Fresh session over warmed shared source-plan cache companion from the same run. |
+
+PR-local passive post-RETURN LIMIT cap A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_limit10`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/match_limit10/1000` | 30.062 µs | Post-RETURN `MATCH (n:Person) RETURN n.name AS name LIMIT 10`; direct pattern-property projection plus literal LIMIT now caps accepted pattern rows before projection. Median is -54.3% vs the prior post-RETURN quick row (`65.732 µs`) and matches the pre-RETURN cap envelope. |
+| `read_pipeline/match_limit10/cold/1000` | 74.914 µs | Fresh uncached session companion; parse/analyze/plan/optimize cost is still visible, but execution no longer scans the full 1k fixture. |
+| `read_pipeline/match_limit10/shared_cache/1000` | 30.388 µs | Fresh session over warmed shared source-plan cache; session churn plus capped cached execute stays within noise of the same-session warm row. |
 
 PR-local edge-index sprint A/B:
 
