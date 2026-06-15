@@ -1,7 +1,8 @@
 //! Standalone execution-plan runner used by recursive runtime operators.
 
 use crate::{
-    BindingTableSchema, ExecutionPlan, LimitAmount, PipelineOp,
+    BindingElement, BindingTableSchema, ExecutionPlan, LimitAmount, PatternPlan, PipelineOp,
+    ProjectExpr, ValueExpr,
     runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext, pattern, pipeline},
 };
 
@@ -17,7 +18,7 @@ pub(crate) fn execute_plan_with_seed(
     seed: Option<BindingTable>,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let row_limit = leading_pattern_row_limit(plan.pipeline.as_slice());
+    let row_limit = pattern_row_limit(plan);
     let table = {
         let eval_ctx = EvalCtx {
             tx: ctx,
@@ -74,7 +75,7 @@ pub(crate) fn execute_plan_read_only_with_seed(
     seed: Option<BindingTable>,
     ctx: &TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let row_limit = leading_pattern_row_limit(plan.pipeline.as_slice());
+    let row_limit = pattern_row_limit(plan);
     let table = {
         let eval_ctx = EvalCtx {
             tx: ctx,
@@ -156,21 +157,76 @@ fn column_exists(schema: &BindingTableSchema, column: &crate::BindingTableColumn
     }
 }
 
+fn pattern_row_limit(plan: &ExecutionPlan) -> Option<usize> {
+    leading_pattern_row_limit(plan.pipeline.as_slice()).or_else(|| {
+        plan.pattern_plan
+            .as_ref()
+            .and_then(|pattern| post_return_project_row_limit(pattern, plan.pipeline.as_slice()))
+    })
+}
+
 fn leading_pattern_row_limit(pipeline: &[PipelineOp]) -> Option<usize> {
     let Some(PipelineOp::Limit { offset, count }) = pipeline.first() else {
         return None;
     };
+    literal_row_limit(offset, count)
+}
+
+fn post_return_project_row_limit(pattern: &PatternPlan, pipeline: &[PipelineOp]) -> Option<usize> {
+    let [
+        PipelineOp::Project(items),
+        PipelineOp::Limit { offset, count },
+        ..,
+    ] = pipeline
+    else {
+        return None;
+    };
+    if !items
+        .iter()
+        .all(|item| project_preserves_row_limit_safety(pattern, item))
+    {
+        return None;
+    }
+    literal_row_limit(offset, count)
+}
+
+fn literal_row_limit(offset: &LimitAmount, count: &LimitAmount) -> Option<usize> {
     let (LimitAmount::Literal(offset), LimitAmount::Literal(count)) = (offset, count) else {
         return None;
     };
     usize::try_from(offset.saturating_add(*count)).ok()
 }
 
+fn project_preserves_row_limit_safety(pattern: &PatternPlan, item: &ProjectExpr) -> bool {
+    match &item.expr {
+        ValueExpr::Literal(_) => true,
+        ValueExpr::Variable { name, .. } => pattern_binding(pattern, name).is_some(),
+        ValueExpr::PropertyAccess { target, .. } => {
+            let ValueExpr::Variable { name, .. } = target.as_ref() else {
+                return false;
+            };
+            matches!(
+                pattern_binding(pattern, name),
+                Some(BindingElement::Node | BindingElement::Edge)
+            )
+        }
+        _ => false,
+    }
+}
+
+fn pattern_binding(pattern: &PatternPlan, name: &selene_core::DbString) -> Option<BindingElement> {
+    pattern
+        .bindings
+        .iter()
+        .find(|binding| binding.name == *name)
+        .map(|binding| binding.element)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use selene_core::{GraphId, LabelSet, Value};
+    use selene_core::{GraphId, LabelSet, PropertyMap, Value, db_string};
     use selene_graph::SharedGraph;
 
     use crate::{
@@ -300,20 +356,85 @@ mod tests {
     fn leading_pattern_row_limit_accepts_pre_return_literal_limit() {
         let plan = planned("MATCH (n) LIMIT 10 OFFSET 5 RETURN n");
 
-        assert_eq!(super::leading_pattern_row_limit(&plan.pipeline), Some(15));
+        assert_eq!(super::pattern_row_limit(&plan), Some(15));
     }
 
     #[test]
     fn leading_pattern_row_limit_includes_offset_for_zero_count() {
         let plan = planned("MATCH (n) LIMIT 0 OFFSET 5 RETURN n");
 
-        assert_eq!(super::leading_pattern_row_limit(&plan.pipeline), Some(5));
+        assert_eq!(super::pattern_row_limit(&plan), Some(5));
     }
 
     #[test]
-    fn leading_pattern_row_limit_rejects_post_return_limit() {
+    fn post_return_project_row_limit_accepts_pattern_variable() {
         let plan = planned("MATCH (n) RETURN n LIMIT 10");
 
-        assert_eq!(super::leading_pattern_row_limit(&plan.pipeline), None);
+        assert_eq!(super::pattern_row_limit(&plan), Some(10));
+    }
+
+    #[test]
+    fn post_return_project_row_limit_accepts_direct_node_property() {
+        let plan = planned("MATCH (n) RETURN n.name AS name LIMIT 10 OFFSET 5");
+
+        assert_eq!(super::pattern_row_limit(&plan), Some(15));
+    }
+
+    #[test]
+    fn post_return_project_row_limit_rejects_computed_projection() {
+        let plan = planned("MATCH (n) RETURN n.age + 1 AS next_age LIMIT 10");
+
+        assert_eq!(super::pattern_row_limit(&plan), None);
+    }
+
+    #[test]
+    fn post_return_project_row_limit_rejects_nested_property_projection() {
+        let plan = planned("MATCH (n) RETURN n.payload.kind AS kind LIMIT 10");
+
+        assert_eq!(super::pattern_row_limit(&plan), None);
+    }
+
+    #[test]
+    fn post_return_project_row_limit_rejects_parameterized_limit() {
+        let plan = planned("MATCH (n) RETURN n.name AS name LIMIT $count :: INT");
+
+        assert_eq!(super::pattern_row_limit(&plan), None);
+    }
+
+    #[test]
+    fn post_return_project_row_limit_does_not_skip_computed_projection_errors() {
+        let graph = SharedGraph::new(GraphId::new(995));
+        {
+            let mut txn = graph.begin_write();
+            let mut mutator = txn.mutator();
+            let age = db_string("age").expect("test string fits");
+            mutator
+                .create_node(
+                    LabelSet::new(),
+                    PropertyMap::from_pairs([(age.clone(), Value::Int(41))])
+                        .expect("test properties fit"),
+                )
+                .expect("first node inserts");
+            mutator
+                .create_node(
+                    LabelSet::new(),
+                    PropertyMap::from_pairs([(
+                        age,
+                        Value::String(db_string("old").expect("test string fits")),
+                    )])
+                    .expect("test properties fit"),
+                )
+                .expect("second node inserts");
+            txn.commit().expect("fixture commits");
+        }
+        let plan = planned("MATCH (n) RETURN n.age + 1 AS next_age LIMIT 1");
+        let mut ctx = TxContext::read_only(
+            graph.read(),
+            &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
+            graph.index_providers(),
+        );
+
+        execute_plan(&plan, &mut ctx).expect_err("computed projection remains uncapped");
     }
 }
