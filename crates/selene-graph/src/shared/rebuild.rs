@@ -5,7 +5,15 @@
 //! `rebuild_derived_state` and `validate_unique_provider_tags` keep their
 //! `crate::shared::` paths through the parent's pub(crate) re-export.
 
-use super::*;
+use std::sync::Arc;
+
+use selene_core::DbString;
+
+use crate::adjacency::AdjacencyEdge;
+use crate::error::{GraphError, GraphResult};
+use crate::graph::SeleneGraph;
+use crate::index_provider::{IndexProvider, ProviderError};
+use crate::store::{EdgeStore, RowIndex};
 
 pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
     graph.idx_label.clear();

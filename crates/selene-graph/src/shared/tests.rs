@@ -7,6 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::CORE_PROVIDER_TAG;
+use crate::index_provider::ProviderError;
+use crate::typed_index::TypedIndexKind;
 
 struct TestProvider {
     tag: ProviderTag,
