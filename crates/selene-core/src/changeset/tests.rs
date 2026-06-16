@@ -92,6 +92,14 @@ fn label_diff_added_and_removed_independent() {
 }
 
 #[test]
+fn property_diff_accepts_singleton_set_input() {
+    let property = dbs("change.property.single.set");
+    let single_property = PropertyDiff::new([(property.clone(), Value::Int(7))], []).unwrap();
+    assert_eq!(single_property.set.as_slice(), &[(property, Value::Int(7))]);
+    assert!(single_property.removed.is_empty());
+}
+
+#[test]
 fn property_diff_set_includes_null_value() {
     let property = dbs("change.null");
     let diff = PropertyDiff::new([(property.clone(), Value::Null)], []).unwrap();
