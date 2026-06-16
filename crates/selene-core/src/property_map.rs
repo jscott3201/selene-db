@@ -86,26 +86,37 @@ impl PropertyMap {
         keys: impl IntoIterator<Item = DbString>,
         values: impl IntoIterator<Item = Option<Value>>,
     ) -> CoreResult<Self> {
-        let keys: Vec<DbString> = keys.into_iter().collect();
-        let values: Vec<Option<Value>> = values.into_iter().collect();
+        let keys: SmallVec<[DbString; 6]> = keys.into_iter().collect();
+        let values: SmallVec<[Option<Value>; 6]> = values.into_iter().collect();
         if keys.len() != values.len() {
             return Err(CoreError::CompactKeyValueLengthMismatch {
                 keys: keys.len(),
                 values: values.len(),
             });
         }
-        let mut slots: Vec<(DbString, Option<Value>)> = keys.into_iter().zip(values).collect();
-        ensure_within_cap(slots.len())?;
+        ensure_within_cap(keys.len())?;
+        if keys.len() <= 1 {
+            return Ok(Self::Compact {
+                keys: Arc::from(keys.into_vec()),
+                values,
+            });
+        }
+
+        let mut slots: SmallVec<[(DbString, Option<Value>); 6]> =
+            keys.into_iter().zip(values).collect();
         slots.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
-        slots.dedup_by(|(lhs_key, lhs_value), (rhs_key, rhs_value)| {
-            if lhs_key == rhs_key {
-                *lhs_value = rhs_value.take();
-                true
-            } else {
-                false
+
+        let mut deduped: SmallVec<[(DbString, Option<Value>); 6]> = SmallVec::new();
+        for (key, value) in slots {
+            if let Some((last_key, last_value)) = deduped.last_mut()
+                && last_key == &key
+            {
+                *last_value = value;
+                continue;
             }
-        });
-        let (keys, values): (Vec<_>, SmallVec<_>) = slots.into_iter().unzip();
+            deduped.push((key, value));
+        }
+        let (keys, values): (Vec<_>, SmallVec<_>) = deduped.into_iter().unzip();
         Ok(Self::Compact {
             keys: Arc::from(keys),
             values,

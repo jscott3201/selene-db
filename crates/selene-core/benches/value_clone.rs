@@ -124,6 +124,13 @@ fn single_property_pair() -> (selene_core::DbString, Value) {
     )
 }
 
+fn single_compact_key_value() -> (selene_core::DbString, Option<Value>) {
+    (
+        db_string("score").expect("key fits DB string cap"),
+        Some(Value::Int(42)),
+    )
+}
+
 fn wide_property_pairs(width: usize) -> Vec<(selene_core::DbString, Value)> {
     (0..width)
         .rev()
@@ -163,6 +170,17 @@ fn bench_value_clone(c: &mut Criterion) {
         b.iter(|| {
             PropertyMap::from_pairs(std::iter::once(black_box(single_pair.clone())))
                 .expect("property map fits core caps")
+        });
+    });
+
+    let (compact_key, compact_value) = single_compact_key_value();
+    group.bench_function("property_map_compact_1", |b| {
+        b.iter(|| {
+            PropertyMap::compact(
+                std::iter::once(black_box(compact_key.clone())),
+                std::iter::once(black_box(compact_value.clone())),
+            )
+            .expect("compact property map fits core caps")
         });
     });
 
