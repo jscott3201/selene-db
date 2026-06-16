@@ -3,12 +3,12 @@
 //! gap (the declared 60%-read workload previously had only the correlated
 //! subquery bench timing read execution).
 //!
-//! Eight warm-plan-cache rows run on a no-WAL in-memory `SharedGraph`, so the
-//! timed body is pure execution + index access — not parse/plan/optimize and
-//! not durability: label scan + indexed range filter, two-leg hash join,
-//! ORDER BY top-K, high-cardinality GROUP BY, DISTINCT dedup, indexed `IN`
-//! bitmap union, post-RETURN `LIMIT 10` (the B19 baseline), and pre-RETURN
-//! `LIMIT 10` (the safe pattern cap row). Cold and shared-cache
+//! Warm-plan-cache rows run on a no-WAL in-memory `SharedGraph`, so the timed
+//! body is pure execution + index access — not parse/plan/optimize and not
+//! durability: label scan + indexed range filter, two-leg hash join, ORDER BY
+//! top-K, high-cardinality GROUP BY, DISTINCT dedup, indexed `IN` bitmap union,
+//! composite equality lookup, post-RETURN `LIMIT 10` (the B19 baseline), and
+//! pre-RETURN `LIMIT 10` (the safe pattern cap row). Cold and shared-cache
 //! companions on the cheapest row rebuild a fresh session per iteration to
 //! isolate short-lived-session cache strategy.
 //!
@@ -30,6 +30,7 @@ use selene_core::{DbString, GraphId, LabelSet, PropertyMap, Value};
 use selene_gql::{EmptyProcedureRegistry, Session, SharedPlanCache, StatementOutput};
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::BenchProfile;
+use smallvec::smallvec;
 
 /// Label scan + indexed `age` range filter + projection (~half of Persons).
 const FILTER_PROJECT_Q: &str = "MATCH (n:Person) FILTER n.age >= 40 RETURN n.name AS name";
@@ -55,6 +56,9 @@ const MATCH_NAME_IN_Q: &str = "MATCH (n:Person) FILTER n.name IN \
 const MATCH_LIMIT10_Q: &str = "MATCH (n:Person) RETURN n.name AS name LIMIT 10";
 /// Pre-RETURN LIMIT with no ORDER BY — can cap pattern materialization safely.
 const MATCH_PRERETURN_LIMIT10_Q: &str = "MATCH (n:Person) LIMIT 10 RETURN n.name AS name";
+/// Two-key equality lookup over a maintained `Person(age, name)` composite index.
+const MATCH_COMPOSITE_LOOKUP_Q: &str =
+    "MATCH (n:Person) FILTER n.age = 20 AND n.name = 'bench-name-0' RETURN n.name AS name";
 /// Selective unanchored edge-property predicate used to A/B edge index access.
 const EDGE_PROPERTY_FILTER_Q: &str =
     "MATCH ()-[e:CONNECTED_TO]->() WHERE e.from_port = 'port_17' RETURN e";
@@ -136,6 +140,16 @@ fn bench_read_pipeline(c: &mut Criterion) {
             );
         });
 
+        let graph = composite_index_graph(scale);
+        let mut session =
+            Session::new(&graph).with_plan_cache(NonZeroUsize::new(64).expect("nonzero"));
+        let primed = execute_read(&mut session, MATCH_COMPOSITE_LOOKUP_Q);
+        assert!(primed > 0, "match_composite_lookup produced no rows");
+        group.throughput(Throughput::Elements(scale as u64));
+        group.bench_function(BenchmarkId::new("match_composite_lookup", scale), |b| {
+            b.iter(|| std::hint::black_box(execute_read(&mut session, MATCH_COMPOSITE_LOOKUP_Q)));
+        });
+
         for indexed in [false, true] {
             let graph = edge_property_graph(scale, indexed);
             let name = if indexed {
@@ -199,6 +213,26 @@ fn edge_property_graph(scale: usize, indexed: bool) -> SharedGraph {
             .expect("edge property index builds");
     }
     graph
+}
+
+fn composite_index_graph(scale: usize) -> SharedGraph {
+    let state = common::gql_write_state_in_memory(scale);
+    let person = dbs("Person");
+    let age = dbs("age");
+    let name = dbs("name");
+    {
+        let mut txn = state.graph.begin_write();
+        txn.mutator()
+            .create_composite_property_index_named(
+                person,
+                smallvec![age, name],
+                smallvec![TypedIndexKind::I64, TypedIndexKind::String],
+                Some(dbs("idx_person_age_name")),
+            )
+            .expect("read bench composite index builds");
+        txn.commit().expect("read bench composite index commits");
+    }
+    state.graph
 }
 
 fn dbs(value: &str) -> DbString {
