@@ -55,6 +55,19 @@ fn from_pairs_sorts_and_keeps_last_duplicate_value() {
 }
 
 #[test]
+fn from_pairs_accepts_empty_and_singleton_maps() {
+    let empty = PropertyMap::from_pairs([]).unwrap();
+    assert!(empty.is_empty());
+    assert!(empty.sorted_invariant_holds());
+
+    let score = key("pm.from_pairs.score");
+    let singleton = PropertyMap::from_pairs([(score.clone(), int(42))]).unwrap();
+    assert_eq!(singleton.len(), 1);
+    assert_eq!(singleton.get(&score), Some(&int(42)));
+    assert!(singleton.sorted_invariant_holds());
+}
+
+#[test]
 fn compact_get_by_known_key() {
     let a = key("pm.compact.a");
     let b = key("pm.compact.b");

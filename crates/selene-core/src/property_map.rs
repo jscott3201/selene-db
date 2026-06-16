@@ -52,6 +52,9 @@ impl PropertyMap {
         let mut entries = pairs
             .into_iter()
             .collect::<SmallVec<[(DbString, Value); 6]>>();
+        if entries.len() <= 1 {
+            return Ok(Self::Standard(entries));
+        }
         // `sort_by` is stable: equal keys keep source order, so the collapse
         // loop below preserves the documented "later duplicate wins" contract.
         entries.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
