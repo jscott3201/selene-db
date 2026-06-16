@@ -63,6 +63,15 @@ impl Binding {
             .iter()
             .find_map(|(site, id)| (*site == site_id).then_some(*id))
     }
+
+    pub(crate) fn with_appended_values(&self, values: impl IntoIterator<Item = Value>) -> Self {
+        let mut output = self.values.clone();
+        output.extend(values);
+        Self {
+            values: output,
+            insert_sites: self.insert_sites.clone(),
+        }
+    }
 }
 
 impl PartialEq for Binding {

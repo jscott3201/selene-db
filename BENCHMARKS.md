@@ -1781,6 +1781,16 @@ The first four are scale-independent (single-query CPU).
 | `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
 
+PR-local quick procedure-call row-extension A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter 'procedure_call_repeat/(no_cache|shared_cache)'`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_call_repeat/no_cache` | 3.1136 ms | 2.4171 ms | CALL yield row extension now stays in `Binding` inline storage; median -21.8%. |
+| `procedure_call_repeat/shared_cache` | 26.384 µs | 26.360 µs | Warm shared CALL-plan cache guard stayed neutral (`p = 0.74`). |
+
 PR-local quick JSON expression baseline. These rows bind `Value::Json` payloads
 as runtime parameters, so the timed body measures expression execution and
 JSON scalar work, not JSON text parsing during `json(...)`.
