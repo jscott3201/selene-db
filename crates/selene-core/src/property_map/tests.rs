@@ -77,6 +77,19 @@ fn compact_get_by_known_key() {
 }
 
 #[test]
+fn compact_accepts_empty_and_singleton_maps() {
+    let empty = PropertyMap::compact([], []).unwrap();
+    assert!(empty.is_empty());
+    assert!(empty.sorted_invariant_holds());
+
+    let score = key("pm.compact.score");
+    let singleton = PropertyMap::compact([score.clone()], [Some(int(42))]).unwrap();
+    assert_eq!(singleton.len(), 1);
+    assert_eq!(singleton.get(&score), Some(&int(42)));
+    assert!(singleton.sorted_invariant_holds());
+}
+
+#[test]
 fn compact_widens_on_unknown_key_insert() {
     let a = key("pm.widen.a");
     let b = key("pm.widen.b");
