@@ -138,8 +138,8 @@ clone by sharing storage rather than copying string bytes.
 The same bin also covers open and compact property-map construction paths so
 `from_pairs` stays linearithmic rather than repeated-insert quadratic for
 schema- or record-shaped maps with many properties, plus common one-property
-compact-map and mutation diff constructors. The `core_vector_value/*` rows are
-the first native vector
+compact-map construction, compact-map encoding, and mutation diff constructors.
+The `core_vector_value/*` rows are the first native vector
 baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
 round-trip cost at common embedding dimensions. The `core_vector_distance/*`
 and `core_vector_exact_top_k/*` rows are exact-search oracle baselines for the
@@ -173,6 +173,7 @@ production accelerator API.
 | `core_value_clone/property_map_5` | 45.5 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). Quick local A/B after `DbString` moved to shared storage: 55.2 ns → 45.5 ns. |
 | `core_value_clone/property_map_from_pairs_1` | 8.509 ns (quick) | Build a one-property standard `PropertyMap`. PR-local singleton fast path A/B: 20.617 ns → 8.509 ns by returning len 0/1 maps before sort/dedup work. |
 | `core_value_clone/property_map_compact_1` | 22.327 ns (quick) | Build a one-key compact `PropertyMap`. PR-local singleton fast path A/B: 50.580 ns → 22.327 ns by collecting keys/values inline and returning len 0/1 maps before sort/dedup work. |
+| `core_value_clone/property_map_compact_postcard_encode_1` | 35.470 ns (quick) | Encode a canonical one-key compact `PropertyMap` with postcard. PR-local canonical fast path A/B: 60.158 ns → 35.470 ns by reusing length-aligned sorted compact key/value storage instead of rebuilding sorted pairs. |
 | `core_value_clone/property_map_from_pairs_256_reverse` | 2.68 µs (quick) | Build a 256-property map from reverse-sorted pairs. Quick local A/B after `DbString` moved to shared storage: 3.45 µs → 2.68 µs. Singleton fast-path sanity after the change: 2.6669 µs. |
 | `core_change_diff/property_diff_set_1` | 9.0227 ns (quick) | Build a `PropertyDiff` with one set property and no removals. PR-local A/B: 23.291 ns → 9.0227 ns (-61.3%) by collecting directly into inline `SmallVec` storage and skipping sort/dedup for len 0/1 set inputs. |
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
