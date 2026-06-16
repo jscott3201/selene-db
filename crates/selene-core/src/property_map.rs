@@ -338,6 +338,14 @@ impl Serialize for PropertyMap {
                 PropertyMapWire::Standard(entries).serialize(serializer)
             }
             Self::Compact { keys, values } => {
+                if keys.len() == values.len() && compact_keys_are_canonical(keys) {
+                    return PropertyMapWire::Compact {
+                        keys: Arc::clone(keys),
+                        values: values.clone(),
+                    }
+                    .serialize(serializer);
+                }
+
                 let mut pairs: Vec<(DbString, Option<Value>)> =
                     keys.iter().cloned().zip(values.iter().cloned()).collect();
                 pairs.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
@@ -350,6 +358,10 @@ impl Serialize for PropertyMap {
             }
         }
     }
+}
+
+fn compact_keys_are_canonical(keys: &[DbString]) -> bool {
+    keys.windows(2).all(|pair| pair[0] < pair[1])
 }
 
 impl<'de> Deserialize<'de> for PropertyMap {

@@ -332,6 +332,30 @@ fn serialize_canonicalizes_non_canonical_standard_then_round_trips() {
 }
 
 #[test]
+fn serialize_canonicalizes_non_canonical_compact_then_round_trips() {
+    // `PropertyMap::Compact` is also public, so the serializer must still
+    // canonicalize direct non-canonical construction before strict decode.
+    let zebra = key("pm.noncanon.compact.zebra");
+    let apple = key("pm.noncanon.compact.apple");
+    let non_canonical = PropertyMap::Compact {
+        keys: Arc::from([zebra.clone(), apple.clone()]),
+        values: SmallVec::from_vec(vec![Some(int(2)), Some(int(1))]),
+    };
+    let bytes = postcard::to_allocvec(&non_canonical).unwrap();
+
+    let round: PropertyMap = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(round.get(&apple), Some(&int(1)));
+    assert_eq!(round.get(&zebra), Some(&int(2)));
+
+    let canonical = PropertyMap::compact([apple, zebra], [Some(int(1)), Some(int(2))]).unwrap();
+    assert_eq!(
+        bytes,
+        postcard::to_allocvec(&canonical).unwrap(),
+        "non-canonical compact construction must serialize to the same canonical bytes"
+    );
+}
+
+#[test]
 fn serialize_independent_of_insertion_order() {
     // Two maps built from different insertion orders of the same pairs
     // serialize to byte-identical wire.

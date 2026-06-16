@@ -131,6 +131,11 @@ fn single_compact_key_value() -> (selene_core::DbString, Option<Value>) {
     )
 }
 
+fn single_compact_property_map() -> PropertyMap {
+    let (key, value) = single_compact_key_value();
+    PropertyMap::compact([key], [value]).expect("compact property map fits core caps")
+}
+
 fn wide_property_pairs(width: usize) -> Vec<(selene_core::DbString, Value)> {
     (0..width)
         .rev()
@@ -181,6 +186,13 @@ fn bench_value_clone(c: &mut Criterion) {
                 std::iter::once(black_box(compact_value.clone())),
             )
             .expect("compact property map fits core caps")
+        });
+    });
+
+    let compact_map = single_compact_property_map();
+    group.bench_function("property_map_compact_postcard_encode_1", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&compact_map)).expect("compact property map serializes")
         });
     });
 
