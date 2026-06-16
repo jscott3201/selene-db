@@ -2115,6 +2115,16 @@ PR-local quick B2 shared source-plan cache row
 | `write_e2e/gql_insert_single_node_shared_cache/1000` | 53.509 µs (quick) | Fresh `Session` per request reusing shared non-CALL source-plan cache. |
 | `write_e2e/gql_insert_single_node_cached_with_schema_churn/1000` | 61.537 µs (quick) | Session-local cache under periodic schema-version invalidation. |
 
+PR-local quick mutation row-extension guard
+(`scripts/run-benches.sh --profile quick --bench write_e2e --filter 'gql_insert_single_node_cached|gql_insert_node_with_edge_preplanned|gql_multi_statement_txn_preplanned'`):
+
+| Bench | Development baseline | Inline Binding row extension | Notes |
+|---|---:|---:|---|
+| `write_e2e/gql_insert_single_node_cached/1000` | 52.698 µs | 52.297 µs | No statistically significant change. |
+| `write_e2e/gql_insert_single_node_cached_with_schema_churn/1000` | 61.294 µs | 61.207 µs | No statistically significant change. |
+| `write_e2e/gql_insert_node_with_edge_preplanned/1000` | 164.49 µs | 161.12 µs | −3.8% median; p < 0.01. |
+| `write_e2e/gql_multi_statement_txn_preplanned/1000` | 71.661 µs | 70.956 µs | −1.5% median; within noise threshold. |
+
 ### §5c `read_pipeline` — read-query pipeline execution
 
 Read-execution coverage for the declared 60%-read workload: label scan +

@@ -42,6 +42,16 @@ impl Binding {
         }
     }
 
+    pub(crate) fn from_parts(
+        values: SmallVec<[Value; 8]>,
+        insert_sites: SmallVec<[(InsertSiteId, NodeId); 4]>,
+    ) -> Self {
+        Self {
+            values,
+            insert_sites,
+        }
+    }
+
     /// Borrow the row's values.
     #[must_use]
     pub fn values(&self) -> &[Value] {
@@ -56,6 +66,14 @@ impl Binding {
 
     pub(crate) fn insert_sites(&self) -> &[(InsertSiteId, NodeId)] {
         &self.insert_sites
+    }
+
+    pub(crate) fn cloned_values(&self) -> SmallVec<[Value; 8]> {
+        self.values.clone()
+    }
+
+    pub(crate) fn cloned_insert_sites(&self) -> SmallVec<[(InsertSiteId, NodeId); 4]> {
+        self.insert_sites.clone()
     }
 
     pub(crate) fn inserted_node(&self, site_id: InsertSiteId) -> Option<NodeId> {

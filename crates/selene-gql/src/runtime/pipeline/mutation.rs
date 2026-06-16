@@ -2,8 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use smallvec::SmallVec;
-
 use selene_core::{
     DbString, EdgeId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value,
 };
@@ -186,13 +184,13 @@ fn execute_insert_node(
                 .create_node(labels.clone(), props)
                 .map_err(|source| graph_mutation(source, span))?
         };
-        let mut values = row.values().to_vec();
+        let mut values = row.cloned_values();
         if let Some(index) = output_column_index {
             set_output_value(&mut values, index, Value::NodeRef(node_id));
         }
-        let mut insert_sites = row.insert_sites().iter().copied().collect::<SmallVec<_>>();
+        let mut insert_sites = row.cloned_insert_sites();
         record_insert_site(&mut insert_sites, site_id, node_id);
-        output.push(Binding::with_insert_sites(values, insert_sites));
+        output.push(Binding::from_parts(values, insert_sites));
     }
     Ok(BindingTable::new(schema, output))
 }
@@ -243,14 +241,11 @@ fn execute_insert_edge(
                 .create_edge(label.clone(), source, target, props)
                 .map_err(|source| graph_mutation(source, span))?
         };
-        let mut values = row.values().to_vec();
+        let mut values = row.cloned_values();
         if let Some(index) = output_column_index {
             set_output_value(&mut values, index, Value::EdgeRef(edge_id));
         }
-        output.push(Binding::with_insert_sites(
-            values,
-            row.insert_sites().iter().copied().collect(),
-        ));
+        output.push(Binding::from_parts(values, row.cloned_insert_sites()));
     }
     Ok(BindingTable::new(schema, output))
 }
