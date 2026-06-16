@@ -1,11 +1,12 @@
 #![allow(missing_docs)]
-//! `Value` clone cost, `PropertyMap` construction, plus native vector-value
-//! construction and serde baselines.
+//! `Value` clone cost, `PropertyMap`/diff construction, plus native
+//! vector-value construction and serde baselines.
 //!
 //! `Value` boxes the formerly oversized variants, so the companion compile-time
 //! `size_of::<Value>` ceiling in `value.rs` is the zero-cost re-bloat tripwire.
 //! This bench keeps the clone rows visible and also covers common one-property
-//! and wide `PropertyMap::from_pairs` construction shapes.
+//! and wide `PropertyMap::from_pairs` construction shapes plus small mutation
+//! diff constructors.
 
 #[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
@@ -15,8 +16,8 @@ use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string, exact_vector_top_k,
-    vector_squared_norm,
+    PropertyDiff, PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string,
+    exact_vector_top_k, vector_squared_norm,
 };
 use wide::f64x4;
 
@@ -171,6 +172,24 @@ fn bench_value_clone(c: &mut Criterion) {
         b.iter(|| {
             PropertyMap::from_pairs(black_box(pairs.iter().cloned()))
                 .expect("property map fits core caps")
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_change_diff(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core_change_diff");
+
+    let single_pair = single_property_pair();
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("property_diff_set_1", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                std::iter::once(black_box(single_pair.clone())),
+                std::iter::empty::<selene_core::DbString>(),
+            )
+            .expect("one-property diff is valid")
         });
     });
 
@@ -607,6 +626,6 @@ fn f64x4_from_f32(chunk: &[f32]) -> f64x4 {
 criterion_group! {
     name = value_clone;
     config = bench_config();
-    targets = bench_value_clone, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k, bench_vector_gpu_baseline
+    targets = bench_value_clone, bench_change_diff, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k, bench_vector_gpu_baseline
 }
 criterion_main!(value_clone);

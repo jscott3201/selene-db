@@ -137,8 +137,9 @@ variants — plus `Duration`/`ZonedDateTime`/`ZonedTime`), down from 128 B.
 clone by sharing storage rather than copying string bytes.
 The same bin also covers the wide-map construction path so `from_pairs` stays
 linearithmic rather than repeated-insert quadratic for schema- or record-shaped
-maps with many properties. The `core_vector_value/*` rows are the first native
-vector baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
+maps with many properties, plus the common one-property mutation diff
+constructor. The `core_vector_value/*` rows are the first native vector
+baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
 round-trip cost at common embedding dimensions. The `core_vector_distance/*`
 and `core_vector_exact_top_k/*` rows are exact-search oracle baselines for the
 future ANN layer; current kernels use safe `wide::f64x4` accumulation over the
@@ -171,6 +172,7 @@ production accelerator API.
 | `core_value_clone/property_map_5` | 45.5 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). Quick local A/B after `DbString` moved to shared storage: 55.2 ns → 45.5 ns. |
 | `core_value_clone/property_map_from_pairs_1` | 8.509 ns (quick) | Build a one-property standard `PropertyMap`. PR-local singleton fast path A/B: 20.617 ns → 8.509 ns by returning len 0/1 maps before sort/dedup work. |
 | `core_value_clone/property_map_from_pairs_256_reverse` | 2.68 µs (quick) | Build a 256-property map from reverse-sorted pairs. Quick local A/B after `DbString` moved to shared storage: 3.45 µs → 2.68 µs. Singleton fast-path sanity after the change: 2.6669 µs. |
+| `core_change_diff/property_diff_set_1` | 9.0227 ns (quick) | Build a `PropertyDiff` with one set property and no removals. PR-local A/B: 23.291 ns → 9.0227 ns (-61.3%) by collecting directly into inline `SmallVec` storage and skipping sort/dedup for len 0/1 set inputs. |
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
 | `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
 | `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |

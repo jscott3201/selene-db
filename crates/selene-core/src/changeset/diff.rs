@@ -101,17 +101,21 @@ impl PropertyDiff {
         set: impl IntoIterator<Item = (DbString, Value)>,
         removed: impl IntoIterator<Item = DbString>,
     ) -> CoreResult<Self> {
-        let mut set: Vec<_> = set.into_iter().collect();
-        set.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
-        set.dedup_by(|(lhs_key, lhs_value), (rhs_key, rhs_value)| {
-            if lhs_key == rhs_key {
-                *lhs_value = rhs_value.clone();
-                true
-            } else {
-                false
+        let mut set: SmallVec<[(DbString, Value); 4]> = set.into_iter().collect();
+        if set.len() > 1 {
+            set.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+            let mut deduped = SmallVec::new();
+            for (key, value) in set {
+                if let Some((last_key, last_value)) = deduped.last_mut()
+                    && last_key == &key
+                {
+                    *last_value = value;
+                    continue;
+                }
+                deduped.push((key, value));
             }
-        });
-        let set: SmallVec<[(DbString, Value); 4]> = set.into_iter().collect();
+            set = deduped;
+        }
         let removed = sorted_deduped(removed);
         for (key, _) in set.iter() {
             if removed.binary_search(key).is_ok() {
