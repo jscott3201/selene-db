@@ -7,10 +7,11 @@
 //! body is pure execution + index access — not parse/plan/optimize and not
 //! durability: label scan + indexed range filter, two-leg hash join, ORDER BY
 //! top-K, high-cardinality GROUP BY, DISTINCT dedup, indexed `IN` bitmap union,
-//! composite equality lookup, post-RETURN `LIMIT 10` (the B19 baseline), and
-//! pre-RETURN `LIMIT 10` (the safe pattern cap row). Cold and shared-cache
-//! companions on the cheapest row rebuild a fresh session per iteration to
-//! isolate short-lived-session cache strategy.
+//! inline `CALL {}` table-subquery extension, composite equality lookup,
+//! post-RETURN `LIMIT 10` (the B19 baseline), and pre-RETURN `LIMIT 10` (the
+//! safe pattern cap row). Cold and shared-cache companions on the cheapest row
+//! rebuild a fresh session per iteration to isolate short-lived-session cache
+//! strategy.
 //!
 //! Fixture topology note: every `KNOWS` offset in `BenchFixture` is ≡1 mod 3,
 //! so Person edges land on Sensor and Sensor edges land on Device —
@@ -59,17 +60,30 @@ const MATCH_PRERETURN_LIMIT10_Q: &str = "MATCH (n:Person) LIMIT 10 RETURN n.name
 /// Two-key equality lookup over a maintained `Person(age, name)` composite index.
 const MATCH_COMPOSITE_LOOKUP_Q: &str =
     "MATCH (n:Person) FILTER n.age = 20 AND n.name = 'bench-name-0' RETURN n.name AS name";
+/// Correlated inline `CALL {}` row extension with two yielded scalar columns.
+const CALL_SUBQUERY_YIELD_Q: &str = "MATCH (a:Person) \
+    CALL (a) { RETURN a.name AS name_copy, a.age AS age_copy LIMIT 1 } \
+    YIELD name_copy, age_copy RETURN name_copy, age_copy";
+/// Optional inline `CALL {}` null-yield row extension.
+const OPTIONAL_CALL_SUBQUERY_NULL_YIELD_Q: &str = "MATCH (a:Person) \
+    OPTIONAL CALL (a) { MATCH (a)-[:KNOWS]->(:Nope) RETURN 1 AS none } \
+    YIELD none RETURN none";
 /// Selective unanchored edge-property predicate used to A/B edge index access.
 const EDGE_PROPERTY_FILTER_Q: &str =
     "MATCH ()-[e:CONNECTED_TO]->() WHERE e.from_port = 'port_17' RETURN e";
 
-const WARM_ROWS: [(&str, &str); 8] = [
+const WARM_ROWS: [(&str, &str); 10] = [
     ("match_filter_project", FILTER_PROJECT_Q),
     ("match_expand_hashjoin", EXPAND_HASHJOIN_Q),
     ("order_by_topk", ORDER_BY_TOPK_Q),
     ("group_by_highcard", GROUP_BY_HIGHCARD_Q),
     ("distinct_dedup", DISTINCT_DEDUP_Q),
     ("match_name_in", MATCH_NAME_IN_Q),
+    ("call_subquery_yield", CALL_SUBQUERY_YIELD_Q),
+    (
+        "optional_call_subquery_null_yield",
+        OPTIONAL_CALL_SUBQUERY_NULL_YIELD_Q,
+    ),
     ("match_limit10", MATCH_LIMIT10_Q),
     ("match_prereturn_limit10", MATCH_PRERETURN_LIMIT10_Q),
 ];
@@ -98,7 +112,12 @@ fn bench_read_pipeline(c: &mut Criterion) {
             let primed = execute_read(&mut session, source);
             if matches!(
                 name,
-                "match_expand_hashjoin" | "group_by_highcard" | "distinct_dedup" | "match_name_in"
+                "match_expand_hashjoin"
+                    | "group_by_highcard"
+                    | "distinct_dedup"
+                    | "match_name_in"
+                    | "call_subquery_yield"
+                    | "optional_call_subquery_null_yield"
             ) {
                 assert!(
                     primed > 0,

@@ -48,14 +48,13 @@ pub(super) fn execute_read_only(
         }
         for inner_row in inner.rows() {
             ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
-            let mut values = row.values().to_vec();
-            for index in &yield_indices {
-                values.push(inner_row.get(*index).cloned().unwrap_or(Value::Null));
-            }
-            output.push(Binding::with_insert_sites(
-                values,
-                row.insert_sites().iter().copied().collect(),
-            ));
+            output.push(
+                row.with_appended_values(
+                    yield_indices
+                        .iter()
+                        .map(|index| inner_row.get(*index).cloned().unwrap_or(Value::Null)),
+                ),
+            );
         }
     }
 
@@ -72,9 +71,7 @@ fn output_schema(
 }
 
 fn optional_output_row(call: &PlannedTableSubquery, input: &Binding) -> Binding {
-    let mut values = input.values().to_vec();
-    values.extend(std::iter::repeat_n(Value::Null, call.yield_schema.len()));
-    Binding::with_insert_sites(values, input.insert_sites().iter().copied().collect())
+    input.with_appended_values(std::iter::repeat_n(Value::Null, call.yield_schema.len()))
 }
 
 fn target_schema(
