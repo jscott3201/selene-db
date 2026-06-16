@@ -65,10 +65,15 @@ impl TextIndex {
     /// Returns [`GraphError::Inconsistent`] if the label index references a row
     /// without a resolvable node id or property row.
     pub fn build(graph: &SeleneGraph, label: DbString, property: DbString) -> GraphResult<Self> {
-        let mut index = TextIndexBuilder::empty(label.clone(), property.clone());
         let Some(label_rows) = graph.nodes_with_label(&label) else {
-            return Ok(index.finish());
+            return Ok(TextIndexBuilder::empty(label, property).finish());
         };
+        let label_row_capacity = usize::try_from(label_rows.len()).unwrap_or(usize::MAX);
+        let mut index = TextIndexBuilder::with_document_capacity(
+            label.clone(),
+            property.clone(),
+            label_row_capacity,
+        );
 
         for raw_row in label_rows.iter() {
             if !graph.node_store.is_alive(raw_row) {
