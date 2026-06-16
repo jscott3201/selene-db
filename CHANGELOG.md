@@ -6,6 +6,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-06-16
+
+### Added
+
+- **Expanded ISO GQL query surface.** GQL now supports typed `LET` value
+  variables, typed session value parameters, leading `OPTIONAL MATCH`,
+  `OPTIONAL CALL`, direct `EXISTS` graph patterns, correlated `NEXT`, ISO `FOR`
+  list row expansion and position outputs, simple `CASE` operand lists, counted
+  `ANY` path search, and counted shortest-path modes.
+- **More ISO lexical and type forms.** The parser now accepts ISO
+  double-quoted, accent-quoted, and GL11 no-escape string literals; list
+  cardinality bounds; temporal type synonyms; qualified duration types; record
+  type forms; open reference type forms; empty type forms; binding table
+  reference types; and graph element typed predicates.
+- **Edge and retrieval primitives.** Edge property indexes are now available,
+  retrieval filters can scope text/vector/PageRank candidate production, and
+  BM25 candidate-state scoring procedures ship as first-release `1.3.0`
+  built-ins.
+- **Deterministic scan-budget cancellation.** Runtime scan budgets now have a
+  deterministic cancellation path for bounded execution.
+- **Expanded fuzz coverage.** Nightly parser fuzzing and the release parser
+  fuzz budget now cover a broader syntax surface.
+
 ### Changed
 
 - Repository home metadata now points back to the personal
@@ -15,6 +38,44 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   User-Agent, nightly job owner gates, and generated third-party package table use
   `https://github.com/jscott3201/selene-db`; a cheap repository-home gate keeps
   the legacy organization owner from reappearing in tracked files.
+- The GQL grammar is stricter about ISO boundaries: non-ISO list subscript,
+  list iteration, `UNWIND`, count-subquery, `CALL ... YIELD ... WHERE`, and
+  `CALL ... IN TRANSACTIONS` shortcuts were removed or routed to explicit
+  unsupported diagnostics.
+- Unsupported session and transaction forms now reject earlier and more
+  consistently, including procedure reference arguments, session value
+  expressions, session binding tables, session graph parameters, catalog-target
+  resets, and deferred transaction forms.
+- Repository docs and rustdoc wording were refreshed to use version-neutral
+  release language where a hard-coded future version would go stale.
+
+### Fixed
+
+- Keyword-boundary handling was hardened across endpoint predicates, `EXPLAIN`,
+  scalar/approximate/integer/temporal/reference type keywords, session,
+  transaction, set, call, mutation, match, select, result, DDL, and expression
+  contexts.
+- Query validation now rejects invalid aggregate sort keys, value subqueries in
+  sort keys, ungrouped projection items, grouped star projections, `RETURN *`
+  over unit input, and `SELECT *` without a body.
+- Feature-register display names and stamps were aligned across core,
+  procedure, session, and query feature surfaces.
+
+### Performance
+
+- Compact property maps, small property diffs, singleton maps, and canonical
+  compact map serialization have faster paths.
+- GQL read pipelines now preallocate key hash tables, speed up bitmap-union row
+  filters, cap passive pre/post-return limit work, and keep call/mutation row
+  extension paths inline.
+- BM25 repeated-query paths now reserve candidate maps, streamline candidate
+  metadata, inline term counts, and preallocate builder maps.
+- Reciprocal rank fusion in graph algorithms is faster.
+
+### Internal
+
+- Large graph, GQL, and core test modules were split to keep the repository's
+  700-LOC tracked Rust file cap enforceable while preserving coverage.
 
 ## [1.2.0] — 2026-06-13
 
@@ -1762,7 +1823,8 @@ The following items are intentionally deferred and tracked for future
 - OPQ rotation inner-allocation tightening.
 - Fresh extension crates beyond `selene-vector` and `selene-algorithms`.
 
-[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/jscott3201/selene-db/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/jscott3201/selene-db/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.1.0
 [1.0.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.0.0

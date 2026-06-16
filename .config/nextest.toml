@@ -18,6 +18,13 @@ retries = 0
 # Run the full CI test set even if one test fails.
 fail-fast = false
 
+# This parser stress test intentionally builds, rejects, and drops a ~200k-node
+# expression tree. Keep the global CI timeout tight while giving this single
+# crash-safety regression enough room on slower Ubuntu runners.
+[[profile.ci.overrides]]
+filter = 'test(parsing_hostile_fold_then_dropping_is_safe)'
+slow-timeout = { period = "5s", terminate-after = 48 }
+
 # Future CI artifact hook:
 # [profile.ci.junit]
 # path = "target/nextest/ci/junit.xml"
