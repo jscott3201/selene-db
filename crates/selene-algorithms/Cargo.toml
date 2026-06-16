@@ -13,8 +13,8 @@ description = "Graph algorithms for selene-db (projection, structural, pathfindi
 name = "selene_algorithms"
 
 [dependencies]
-selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.2.0" }
-selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "1.2.0" }
+selene-core = { package = "selene-db-core", path = "../selene-core", version = "1.3.0" }
+selene-graph = { package = "selene-db-graph", path = "../selene-graph", version = "1.3.0" }
 parking_lot.workspace = true
 rayon.workspace = true
 roaring.workspace = true
