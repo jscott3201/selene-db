@@ -1,6 +1,6 @@
 use crate::{
     BindingTableColumn, BindingTableSchema, ProjectExpr,
-    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator},
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator, parameter_type},
 };
 
 pub(super) fn execute(
@@ -29,6 +29,14 @@ pub(super) fn execute(
         for (index, item) in items.iter().enumerate() {
             let current_row = Binding::new(values.clone());
             let value = evaluator::evaluate(&item.expr, &current_row, &prefix_schemas[index], ctx)?;
+            if let (Some(declared_type), Some(alias)) = (&item.declared_type, &item.alias) {
+                parameter_type::validate_declared_type(
+                    alias.clone(),
+                    &value,
+                    declared_type,
+                    item.span,
+                )?;
+            }
             values.push(value);
         }
         rows.push(Binding::new(values));

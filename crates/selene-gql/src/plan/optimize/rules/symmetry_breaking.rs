@@ -40,6 +40,7 @@ impl Rule for SymmetryBreaking {
 
 fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
     match tree {
+        JoinTree::Unit => false,
         JoinTree::WorstCaseOptimal {
             intersection,
             node_id_ordering,

@@ -69,7 +69,7 @@ fn folds_boolean_unary_and_string_byte_concat() {
     let plan = optimized_one("RETURN 'foo' || 'bar' AS x");
     assert!(matches!(
         project_expr(&plan),
-        ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "foobar"
+        ValueExpr::Literal(Literal::String(value, _, _)) if value.as_str() == "foobar"
     ));
 
     let plan = optimized_one("RETURN X'CA' || X'FE00' AS x");
@@ -85,7 +85,7 @@ fn string_byte_concat_folding_respects_length_caps() {
     let plan = optimized_one_with_caps("RETURN 'ab' || 'c  ' AS x", &string_caps);
     assert!(matches!(
         project_expr(&plan),
-        ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "abc"
+        ValueExpr::Literal(Literal::String(value, _, _)) if value.as_str() == "abc"
     ));
     let plan = optimized_one_with_caps("RETURN 'ab' || 'cd' AS x", &string_caps);
     assert!(matches!(
@@ -124,7 +124,7 @@ fn string_concat_folding_truncating_whitespace_is_space_only() {
     let plan = optimized_one_with_caps("RETURN 'ab' || 'c ' AS x", &caps);
     assert!(matches!(
         project_expr(&plan),
-        ValueExpr::Literal(Literal::String(value, _)) if value.as_str() == "abc"
+        ValueExpr::Literal(Literal::String(value, _, _)) if value.as_str() == "abc"
     ));
 
     for source in [
@@ -312,7 +312,7 @@ fn literal_summary(expr: &ValueExpr) -> String {
         ValueExpr::Literal(Literal::Bool(value, _)) => format!("Bool({value})"),
         ValueExpr::Literal(Literal::Integer(value, _)) => format!("Integer({value})"),
         ValueExpr::Literal(Literal::Float(value, _, _)) => format!("Float({value})"),
-        ValueExpr::Literal(Literal::String(value, _)) => format!("String({})", value.as_str()),
+        ValueExpr::Literal(Literal::String(value, _, _)) => format!("String({})", value.as_str()),
         ValueExpr::Literal(Literal::Null(_)) => "Null".to_string(),
         other => format!("{other:?}"),
     }

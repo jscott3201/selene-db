@@ -6,7 +6,8 @@ selene-db is a single native graph engine — there is no extension/procedure-pa
 
 ## 1. What "embedding" means here
 
-`selene-db` is a **library-only** engine. Per D1 (ISO/IEC 39075:2024 Clause 4.2.3 does not normatively define a wire format), v1.0 ships:
+`selene-db` is a **library-only** engine. Per D1 (ISO/IEC 39075:2024
+Clause 4.2.3 does not normatively define a wire format), the engine ships:
 
 - no server process,
 - no transport (HTTP, gRPC, BACnet, anything),
@@ -32,7 +33,10 @@ The engine's job ends at the public crate APIs. Everything outside the in-proces
 
 ## 2. Workspace dependencies
 
-`selene-db` is a multi-crate workspace with no umbrella crate (D8). Pull in only what you need.
+`selene-db` is a multi-crate workspace with no umbrella crate (D8). Pull in
+only what you need. The public packages are published to crates.io under the
+`selene-db-*` namespace; examples below use `package = ...` aliases so the
+Rust crate names remain `selene_core`, `selene_graph`, and so on.
 
 The crate set is layered so transitive footprint stays small:
 
@@ -48,8 +52,8 @@ The crate set is layered so transitive footprint stays small:
 
 ```toml
 [dependencies]
-selene-core  = { path = "path/to/selene-db/crates/selene-core" }
-selene-graph = { path = "path/to/selene-db/crates/selene-graph" }
+selene-core = { package = "selene-db-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", version = "1.2.0" }
 ```
 
 Use this when you only need the in-memory property graph: nodes, edges, label/property indexes, the `Mutator` write funnel. No parser, no executor, no disk.
@@ -58,9 +62,9 @@ Use this when you only need the in-memory property graph: nodes, edges, label/pr
 
 ```toml
 [dependencies]
-selene-core  = { path = "path/to/selene-db/crates/selene-core" }
-selene-graph = { path = "path/to/selene-db/crates/selene-graph" }
-selene-gql   = { path = "path/to/selene-db/crates/selene-gql" }
+selene-core = { package = "selene-db-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", version = "1.2.0" }
+selene-gql = { package = "selene-db-gql", version = "1.2.0" }
 ```
 
 Adds the Pest grammar, AST, semantic analyzer, planner, optimizer, and row-at-a-time executor. You can now `parse → analyze → plan → execute_statement`. `CALL` is still off (`EmptyProcedureRegistry` always returns `None`).
@@ -69,10 +73,10 @@ Adds the Pest grammar, AST, semantic analyzer, planner, optimizer, and row-at-a-
 
 ```toml
 [dependencies]
-selene-core    = { path = "path/to/selene-db/crates/selene-core" }
-selene-graph   = { path = "path/to/selene-db/crates/selene-graph" }
-selene-gql     = { path = "path/to/selene-db/crates/selene-gql" }
-selene-persist = { path = "path/to/selene-db/crates/selene-persist" }
+selene-core = { package = "selene-db-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", version = "1.2.0" }
+selene-gql = { package = "selene-db-gql", version = "1.2.0" }
+selene-persist = { package = "selene-db-persist", version = "1.2.0" }
 ```
 
 Adds the WAL writer (`SLDB` magic), the snapshot writer (`SLSN` magic), and the two-step recovery driver. `selene-persist` is graph-blind: it takes `&[Change]` slices and routes them by provider tag.
@@ -81,19 +85,23 @@ Adds the WAL writer (`SLDB` magic), the snapshot writer (`SLSN` magic), and the 
 
 ```toml
 [dependencies]
-selene-core       = { path = "path/to/selene-db/crates/selene-core" }
-selene-graph      = { path = "path/to/selene-db/crates/selene-graph" }
-selene-gql        = { path = "path/to/selene-db/crates/selene-gql" }
-selene-persist    = { path = "path/to/selene-db/crates/selene-persist" }
-selene-algorithms = { path = "path/to/selene-db/crates/selene-algorithms" }
+selene-core = { package = "selene-db-core", version = "1.2.0" }
+selene-graph = { package = "selene-db-graph", version = "1.2.0" }
+selene-gql = { package = "selene-db-gql", version = "1.2.0" }
+selene-persist = { package = "selene-db-persist", version = "1.2.0" }
+selene-algorithms = { package = "selene-db-algorithms", version = "1.2.0" }
 ```
 
-selene-db is a single native engine — there is no extension/procedure-pack model and nothing to load at runtime. `CALL` is served by the one frozen native `BuiltinProcedureRegistry` (`selene-gql/src/runtime/builtin_registry.rs`), constructed with `BuiltinProcedureRegistry::new()`. It registers exactly 24 procedures, fixed at construction:
+For local engine development, keep the `package = "selene-db-*"` aliases and
+replace only the `version = "1.2.0"` fields with
+`path = "path/to/selene-db/crates/<crate>"`.
 
-- 5 platform built-ins: `selene.health`, `selene.feature_status`, `selene.verify`, `selene.create_index`, `selene.drop_index`;
+selene-db is a single native engine — there is no extension/procedure-pack model and nothing to load at runtime. `CALL` is served by the one frozen native `BuiltinProcedureRegistry` (`selene-gql/src/runtime/builtin_registry.rs`), constructed with `BuiltinProcedureRegistry::new()`. It registers exactly 65 procedures, fixed at construction:
+
+- 46 platform built-ins covering health, feature reporting, verification, compaction stats, scalar/vector/text index management, vector search and scoring, BM25 scoring, JSON candidate production, Reciprocal Rank Fusion, and maintenance;
 - 19 `algo.*` procedures (projection lifecycle, PageRank, betweenness, label propagation, Louvain, triangle count, WCC, SCC, topological sort, articulation points, bridges, Dijkstra, SSSP, APSP), binding `CALL algo.*` directly over the `selene-algorithms` native API.
 
-`BuiltinProcedureRegistry` implements `selene_gql::ProcedureRegistry`; pass `&registry` everywhere the pipeline asks for `&dyn ProcedureRegistry` (see §6). The `CALL` grammar is plain ISO `CALL` (IW010), unchanged. `SHOW PROCEDURES` enumerates all 24:
+`BuiltinProcedureRegistry` implements `selene_gql::ProcedureRegistry`; pass `&registry` everywhere the pipeline asks for `&dyn ProcedureRegistry` (see §6). The `CALL` grammar is plain ISO `CALL` (IW010), unchanged. `SHOW PROCEDURES` enumerates all 65:
 
 ```rust
 use selene_gql::{BuiltinProcedureRegistry, Session};
@@ -411,18 +419,17 @@ The `analyze` schema argument is `Option<&GraphTypeDef>`. Pass `None` for open g
 
 ### 6.4 Schema validation
 
-The parser accepts `STRICT` and `WARN` validation modes on `CREATE NODE TYPE`
-and `CREATE EDGE TYPE`, but v1.1 does not enforce validation-mode semantics at
-runtime. Catalog DDL carrying a validation mode is rejected with GQLSTATUS
-`5GQL0`.
-
-Closed-graph validation is a separate hard-fail path. If a graph is bound to a
+`CREATE NODE TYPE` and `CREATE EDGE TYPE` accept `STRICT` and `WARN`
+validation modes. `STRICT` is the default: if a graph is bound to a
 `GraphTypeDef`, writes are checked against that type during analysis and again
-at commit; violations return `G2000`. They are not downgraded to warnings.
+at commit, and violations return `G2000`. `WARN` permits relaxed writes and
+emits `01N01` (`VALIDATION_MODE_RELAXED_WRITE`) through the session warning
+sink after commit.
 
 `DEFAULT` and `NOT NULL` are independent in the AST. A property with
-`DEFAULT <expr>` but no `NOT NULL` is nullable, and runtime DEFAULT application
-is not implemented in v1.1.
+`DEFAULT <expr>` but no `NOT NULL` is nullable. Catalog defaults are validated,
+stored in the graph type, shown by `SHOW NODE TYPES` / `SHOW EDGE TYPES`, and
+materialized when an inserted node or edge omits the property.
 
 ### 6.5 Warning channel
 
@@ -453,7 +460,9 @@ let mut session = Session::new(&graph).with_warning_sink(WarningLog::default());
 - `StatementOutput::Rows(BindingTable)` — the statement produced a row-bearing result. Iterate `table.rows()` for `&[Binding]`; each `Binding` is an ordered `&[Value]`. Use `table.schema().columns` to recover column names and types.
 - `StatementOutput::Empty` — the statement completed without rows (mutations with no `RETURN`, DDL, transaction control).
 
-Mutation statistics (rows inserted, edges updated, &c.) are not exposed as a separate variant in v1.0. If you need counts, plan an explicit `RETURN count(*)` or instrument via the WAL `Change` stream.
+Mutation statistics (rows inserted, edges updated, &c.) are not currently
+exposed as a separate variant. If you need counts, plan an explicit
+`RETURN count(*)` or instrument via the WAL `Change` stream.
 
 ### 6.7 Extracting values
 
@@ -723,7 +732,7 @@ Trade-offs:
 
 Use only when tenants are administratively trusted (e.g. departments inside one org) and graphs are tiny.
 
-The procedure surface is the same for every tenant: the frozen native `BuiltinProcedureRegistry` registers a fixed set of 24 procedures (5 platform built-ins + 19 `algo.*`) at construction. There is no per-tenant procedure surface to configure — selene-db is a single native engine with no loadable extensions. If a tenant must not be allowed to `CALL` a given procedure, gate it in the embedder's authorization wrapper (§8), not by handing out a different registry.
+The procedure surface is the same for every tenant: the frozen native `BuiltinProcedureRegistry` registers a fixed set of 65 procedures (46 platform built-ins plus 19 `algo.*`) at construction. There is no per-tenant procedure surface to configure — selene-db is a single native engine with no loadable extensions. If a tenant must not be allowed to `CALL` a given procedure, gate it in the embedder's authorization wrapper (§8), not by handing out a different registry.
 
 ## 10. Error handling
 

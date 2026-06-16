@@ -105,6 +105,171 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 }
 
 #[test]
+fn text_score_candidate_state_reranks_maintained_set() {
+    let graph = graph(431_604);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let seed = seed_state_graph(&graph);
+    execute_ok(
+        &mut session,
+        "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
+        &registry,
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.text_score_candidate_state( \
+            'TextDoc', 'body', 'graph', 'current_docs', 3) \
+         YIELD node_id, score",
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id"), vec![seed.current_graph]);
+}
+
+#[test]
+fn text_score_candidate_state_nodes_intersects_state_with_nodes_by_default() {
+    let graph = graph(431_605);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let seed = seed_state_graph(&graph);
+    execute_ok(
+        &mut session,
+        "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
+        &registry,
+    );
+    session.bind_parameter(
+        db_string("nodes"),
+        node_list(&[seed.current_graph, seed.stale_graph, seed.current_memory]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.text_score_candidate_state_nodes( \
+            'TextDoc', 'body', 'current', 'current_docs', $nodes, 3) \
+         YIELD node_id, score",
+        &registry,
+    );
+
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![seed.current_graph, seed.current_memory]
+    );
+}
+
+#[test]
+fn text_score_candidate_state_nodes_supports_explicit_set_algebra() {
+    let graph = graph(431_606);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let seed = seed_state_graph(&graph);
+    execute_ok(
+        &mut session,
+        "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
+        &registry,
+    );
+
+    session.bind_parameter(db_string("union_nodes"), node_list(&[seed.stale_graph]));
+    let union = execute_rows(
+        &mut session,
+        "CALL selene.text_score_candidate_state_nodes( \
+            'TextDoc', 'body', 'graph', 'current_docs', $union_nodes, 3, 'union') \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(
+        node_column(&union, "node_id"),
+        vec![seed.stale_graph, seed.current_graph]
+    );
+
+    session.bind_parameter(
+        db_string("state_diff_nodes"),
+        node_list(&[seed.current_graph]),
+    );
+    let state_difference = execute_rows(
+        &mut session,
+        "CALL selene.text_score_candidate_state_nodes( \
+            'TextDoc', 'body', 'memory', 'current_docs', $state_diff_nodes, 3, 'state_difference') \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(
+        node_column(&state_difference, "node_id"),
+        vec![seed.current_memory]
+    );
+
+    session.bind_parameter(
+        db_string("nodes_diff_nodes"),
+        node_list(&[seed.stale_graph, seed.current_memory]),
+    );
+    let nodes_difference = execute_rows(
+        &mut session,
+        "CALL selene.text_score_candidate_state_nodes( \
+            'TextDoc', 'body', 'graph', 'current_docs', $nodes_diff_nodes, 3, 'nodes_difference') \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(
+        node_column(&nodes_difference, "node_id"),
+        vec![seed.stale_graph]
+    );
+}
+
+#[test]
+fn text_score_candidate_state_nodes_rejects_unknown_operation() {
+    let graph = graph(431_607);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let seed = seed_state_graph(&graph);
+    execute_ok(
+        &mut session,
+        "CALL selene.create_text_index('TextDoc', 'body', 'body_idx')",
+        &registry,
+    );
+    session.bind_parameter(db_string("nodes"), node_list(&[seed.current_graph]));
+
+    let err = session
+        .execute_source(
+            "CALL selene.text_score_candidate_state_nodes( \
+                'TextDoc', 'body', 'graph', 'current_docs', $nodes, 3, 'xor')",
+            &registry,
+        )
+        .expect_err("unknown operation must fail");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("operation must be intersection")
+    ));
+}
+
+#[test]
+fn text_score_candidate_state_requires_registered_text_index() {
+    let graph = graph(431_608);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    seed_state_graph(&graph);
+
+    let err = session
+        .execute_source(
+            "CALL selene.text_score_candidate_state( \
+                'TextDoc', 'body', 'graph', 'current_docs', 3)",
+            &registry,
+        )
+        .expect_err("candidate-state text scoring requires text index");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("requires a text index")
+    ));
+}
+
+#[test]
 fn text_score_candidate_state_expanded_batch_filters_stale_candidates() {
     let graph = graph(431_601);
     let registry = BuiltinProcedureRegistry::new();
@@ -226,6 +391,56 @@ fn text_state_candidates_feed_vector_batch_rerank() {
         node_column(&table, "node_id"),
         vec![graph_target, memory_target]
     );
+}
+
+#[derive(Debug)]
+struct TextStateSeed {
+    current_graph: NodeId,
+    stale_graph: NodeId,
+    current_memory: NodeId,
+}
+
+fn seed_state_graph(graph: &SharedGraph) -> TextStateSeed {
+    let doc = db_string("TextDoc");
+    let body = db_string("body");
+    let negative = db_string("NEGATIVE");
+    let mut txn = graph.begin_write();
+    let mut mutator = txn.mutator();
+    let current_graph = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&body, Value::String(db_string("graph current fact"))),
+        )
+        .expect("current graph doc inserts");
+    let stale_graph = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&body, Value::String(db_string("graph graph stale fact"))),
+        )
+        .expect("stale graph doc inserts");
+    let current_memory = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&body, Value::String(db_string("memory current fact"))),
+        )
+        .expect("current memory doc inserts");
+    let stale_memory = mutator
+        .create_node(
+            LabelSet::single(doc),
+            props(&body, Value::String(db_string("memory memory stale fact"))),
+        )
+        .expect("stale memory doc inserts");
+    for stale in [stale_graph, stale_memory] {
+        mutator
+            .create_edge(negative.clone(), stale, current_graph, PropertyMap::new())
+            .expect("negative evidence edge inserts");
+    }
+    txn.commit().expect("state seed commits");
+    TextStateSeed {
+        current_graph,
+        stale_graph,
+        current_memory,
+    }
 }
 
 fn seed_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId) {

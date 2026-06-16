@@ -28,11 +28,11 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use selene_core::{CharacterStringCoercionError, DbString, JsonValue, Value};
+use selene_core::{CharacterStringCoercionError, DbString, JsonValue, PropertyValueType, Value};
 
 use crate::{
     GqlType, SourceSpan,
-    runtime::{DataExceptionSubclass, EvalCtx, ExecutorError},
+    runtime::{DataExceptionSubclass, EvalCtx, ExecutorError, value_type_match},
 };
 
 use super::uuid_fns::parse_uuid_string;
@@ -80,6 +80,10 @@ pub(super) fn eval_cast(
         return eval_cast(value, inner, span, ctx);
     }
 
+    if matches!(target_type, GqlType::ClosedDynamicUnion(_)) {
+        return cast_to_closed_dynamic_union(value, target_type, span);
+    }
+
     // §22 universal: NULL casts to NULL regardless of target.
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
@@ -100,6 +104,10 @@ pub(super) fn eval_cast(
             });
         }
         _ => {}
+    }
+
+    if matches!(target_type, GqlType::Any | GqlType::AnyProperty) {
+        return cast_to_dynamic_union(value, target_type, span);
     }
 
     // A RECORD target is handled before the generic source-rejection block: per ISO §20.8
@@ -209,12 +217,48 @@ pub(super) fn eval_cast(
         | GqlType::Duration
         | GqlType::DurationYearToMonth
         | GqlType::DurationDayToSecond => cast_to_temporal(value, target_type, span, ctx),
-        GqlType::List(element_type) => cast_to_list(value, element_type, span, ctx),
+        GqlType::List(element_type) => cast_to_list(value, element_type, None, span, ctx),
+        GqlType::BoundedList {
+            element_type,
+            max_len,
+        } => cast_to_list(value, element_type, Some(*max_len), span, ctx),
         other => Err(ExecutorError::FeatureNotSupportedYet {
             feature: cast_to_type_feature(other),
             span,
         }),
     }
+}
+
+fn cast_to_dynamic_union(
+    value: Value,
+    target_type: &GqlType,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match target_type {
+        GqlType::Any => Ok(value),
+        GqlType::AnyProperty if PropertyValueType::of(&value).is_some() => Ok(value),
+        GqlType::AnyProperty => Err(ExecutorError::data_exception(
+            DataExceptionSubclass::InvalidValueType,
+            "CAST source is not a supported property value",
+            span,
+        )),
+        _ => unreachable!("dynamic-union cast called for non-dynamic target"),
+    }
+}
+
+fn cast_to_closed_dynamic_union(
+    value: Value,
+    target_type: &GqlType,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    if value_type_match::value_matches_gql_type(&value, target_type) {
+        return Ok(value);
+    }
+    Err(ExecutorError::data_exception(
+        DataExceptionSubclass::InvalidValueType,
+        "CAST source is not a member of the closed dynamic union type",
+        span,
+    ))
 }
 
 fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -447,6 +491,7 @@ fn coerce_bytes_to_type(
 fn cast_to_list(
     value: Value,
     element_type: &GqlType,
+    max_len: Option<u64>,
     span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
@@ -463,6 +508,15 @@ fn cast_to_list(
             );
         }
     };
+    if let Some(max_len) = max_len
+        && u64::try_from(items.len()).map_or(true, |len| len > max_len)
+    {
+        return Err(ExecutorError::data_exception(
+            DataExceptionSubclass::InvalidValueType,
+            "LIST cast result exceeds declared maximum cardinality",
+            span,
+        ));
+    }
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         // Recursive element-wise cast preserves nested-list semantics per
@@ -563,12 +617,13 @@ fn cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::Vector => "CAST to VECTOR",
         GqlType::Json => "CAST to JSON",
         GqlType::Record(_) => "CAST to RECORD",
+        GqlType::ClosedDynamicUnion(_) => "CAST to closed dynamic union",
         GqlType::NotNull(inner) => cast_to_type_feature(inner),
         GqlType::Path => "CAST to PATH",
         GqlType::GraphRef => "CAST to GRAPH",
         GqlType::NodeRef => "CAST to NODE",
         GqlType::EdgeRef => "CAST to EDGE",
-        GqlType::TableRef => "CAST to TABLE",
+        GqlType::TableRef(_) => "CAST to TABLE",
         _ => "CAST to unsupported target type",
     }
 }

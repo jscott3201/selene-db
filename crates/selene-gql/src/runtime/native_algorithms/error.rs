@@ -26,6 +26,9 @@ pub(super) fn algorithm_aborted(error: AlgorithmAborted) -> ProcedureError {
     match error.cause {
         CancellationCause::Cancelled => ProcedureError::Cancelled,
         CancellationCause::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        CancellationCause::NodeScanBudgetExceeded { limit, scanned } => {
+            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+        }
     }
 }
 

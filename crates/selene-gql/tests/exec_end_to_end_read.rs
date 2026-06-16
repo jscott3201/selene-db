@@ -58,12 +58,40 @@ fn read_executes_let_then_return() {
 }
 
 #[test]
-fn read_executes_unwind_only_query() {
-    let table = execute_read("UNWIND [1, 2] AS x RETURN x");
+fn read_executes_for_list_query() {
+    let table = execute_read("FOR x IN [1, 2] RETURN x");
 
     assert_eq!(
         column_values(&table, "x"),
         vec![Value::Int(1), Value::Int(2)]
+    );
+}
+
+#[test]
+fn read_executes_for_ordinality_query() {
+    let table = execute_read("FOR x IN [10, 20] WITH ORDINALITY ord RETURN x, ord");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(10), Value::Int(20)]
+    );
+    assert_eq!(
+        column_values(&table, "ord"),
+        vec![Value::Int(1), Value::Int(2)]
+    );
+}
+
+#[test]
+fn read_executes_for_offset_query() {
+    let table = execute_read("FOR x IN [10, 20] WITH OFFSET off RETURN x, off");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(10), Value::Int(20)]
+    );
+    assert_eq!(
+        column_values(&table, "off"),
+        vec![Value::Int(0), Value::Int(1)]
     );
 }
 
@@ -77,6 +105,16 @@ fn read_executes_distinct_projection() {
             Value::String(exec_common::db_string("t1")),
             Value::String(exec_common::db_string("t2")),
         ]
+    );
+}
+
+#[test]
+fn read_executes_explicit_all_projection() {
+    let table = execute_read("FOR x IN [1, 1, 2] RETURN ALL x AS x ORDER BY x");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![Value::Int(1), Value::Int(1), Value::Int(2)]
     );
 }
 
@@ -95,7 +133,7 @@ fn read_executes_limit_with_offset() {
 
 #[test]
 fn stored_edges_are_directed_for_is_directed() {
-    let table = execute_read("MATCH ()-[e:KNOWS]->() RETURN e IS DIRECTED AS directed");
+    let table = execute_read("MATCH ()-[e:KNOWS]->() RETURN e IS DIRECTED AS \"directed\"");
 
     assert_eq!(
         column_values(&table, "directed"),
@@ -105,13 +143,13 @@ fn stored_edges_are_directed_for_is_directed() {
 
 #[test]
 fn stored_elements_match_is_labeled() {
-    let nodes = execute_read("MATCH (n:Person) RETURN n IS LABELED :Person AS labeled");
+    let nodes = execute_read("MATCH (n:Person) RETURN n IS LABELED :Person AS \"labeled\"");
     assert_eq!(
         column_values(&nodes, "labeled"),
         vec![Value::Bool(true), Value::Bool(true), Value::Bool(true)]
     );
 
-    let edges = execute_read("MATCH ()-[e:KNOWS]->() RETURN e IS LABELED :KNOWS AS labeled");
+    let edges = execute_read("MATCH ()-[e:KNOWS]->() RETURN e IS LABELED :KNOWS AS \"labeled\"");
     assert_eq!(
         column_values(&edges, "labeled"),
         vec![Value::Bool(true), Value::Bool(true)]

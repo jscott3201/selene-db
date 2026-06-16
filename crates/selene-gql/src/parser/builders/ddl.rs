@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    Rule, db_string_pair, expr, first_child, keyword_starts_with, keyword_tokens_eq, span,
-    unexpected_pair,
+    Rule, db_string_from_str, db_string_pair, expr, first_child, keyword_starts_with,
+    keyword_tokens_eq, span, unexpected_pair,
 };
 
 pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
@@ -39,6 +39,22 @@ pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, 
     }
 }
 
+fn is_ddl_keyword_token(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::ddl_create_kw
+            | Rule::ddl_drop_kw
+            | Rule::ddl_truncate_kw
+            | Rule::ddl_node_kw
+            | Rule::ddl_edge_kw
+            | Rule::ddl_type_kw
+            | Rule::ddl_graph_kw
+            | Rule::ddl_index_kw
+            | Rule::ddl_extends_kw
+            | Rule::ddl_on_kw
+    )
+}
+
 fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut name = None;
@@ -49,7 +65,12 @@ fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => name = Some(db_string_pair(child)?),
+            Rule::create_graph_name if name.is_none() => {
+                let name_span = span(&child);
+                name = Some(db_string_from_str(child.as_str(), name_span, "graph name")?);
+            }
+            Rule::create_graph_source | Rule::create_graph_copy => {}
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE GRAPH child")),
         }
     }
@@ -72,6 +93,7 @@ fn build_drop_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
             Rule::ident => name = Some(db_string_pair(child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected DROP GRAPH child")),
         }
     }
@@ -86,24 +108,21 @@ fn build_drop_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
 fn build_create_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut if_not_exists = false;
-    let mut idents = Vec::new();
+    let mut name = None;
+    let mut label = None;
+    let mut properties = Vec::new();
 
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => idents.push(db_string_pair(child)?),
+            Rule::ident if name.is_none() => name = Some(db_string_pair(child)?),
+            Rule::ident if label.is_none() => label = Some(db_string_pair(child)?),
+            Rule::prop_ident => properties.push(db_string_pair(child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE INDEX child")),
         }
     }
 
-    let mut idents = idents.into_iter();
-    let name = idents.next().ok_or_else(|| {
-        ParserError::syntax("CREATE INDEX is missing index name", source_span, None)
-    })?;
-    let label = idents.next().ok_or_else(|| {
-        ParserError::syntax("CREATE INDEX is missing target label", source_span, None)
-    })?;
-    let properties = idents.collect::<Vec<_>>();
     if properties.is_empty() {
         return Err(ParserError::syntax(
             "CREATE INDEX is missing property name",
@@ -113,8 +132,12 @@ fn build_create_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
     }
 
     Ok(DdlStatement::CreateIndex {
-        name,
-        label,
+        name: name.ok_or_else(|| {
+            ParserError::syntax("CREATE INDEX is missing index name", source_span, None)
+        })?,
+        label: label.ok_or_else(|| {
+            ParserError::syntax("CREATE INDEX is missing target label", source_span, None)
+        })?,
         properties,
         if_not_exists,
         span: source_span,
@@ -130,6 +153,7 @@ fn build_drop_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
             Rule::ident => name = Some(db_string_pair(child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected DROP INDEX child")),
         }
     }
@@ -162,6 +186,7 @@ fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
             Rule::ident => extends = Some(db_string_pair(child)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE NODE TYPE child")),
         }
     }
@@ -201,6 +226,7 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
             Rule::edge_endpoint_clause => endpoints = Some(build_edge_endpoint(child)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected CREATE EDGE TYPE child")),
         }
     }
@@ -340,6 +366,7 @@ fn build_truncate_label(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::ident => label = Some(db_string_pair(child)?),
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected TRUNCATE TYPE child")),
         }
     }
@@ -360,6 +387,7 @@ fn build_drop_type_parts(
             Rule::if_exists => if_exists = true,
             Rule::ident => label = Some(db_string_pair(child)?),
             Rule::drop_behavior => behavior = build_drop_behavior(&child)?,
+            rule if is_ddl_keyword_token(rule) => {}
             _ => return Err(unexpected_pair(child, "unexpected DROP TYPE child")),
         }
     }
@@ -398,6 +426,7 @@ fn build_type_prop_def(pair: Pair<'_, Rule>) -> Result<TypePropertyDef, ParserEr
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::ident => name = Some(db_string_pair(child)?),
+            Rule::typed_marker => {}
             Rule::type_name => gql_type = Some(expr::build_type_name(child)?),
             Rule::type_prop_constraint => {
                 constraints.push(build_type_prop_constraint(child)?);

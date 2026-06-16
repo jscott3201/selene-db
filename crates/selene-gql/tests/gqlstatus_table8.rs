@@ -226,7 +226,7 @@ fn closed_graph_schema_analysis_emits_g2000() {
         }],
         edge_types: Vec::new(),
     };
-    let statement = parse("INSERT (n:Project)").expect("test input parses");
+    let statement = parse("INSERT (n:UnknownProject)").expect("test input parses");
 
     let error = analyze(statement, &EmptyProcedureRegistry, Some(&graph_type))
         .expect_err("unknown node type rejects");
@@ -256,7 +256,7 @@ fn aggregate_null_skip_emits_01g11_once_per_aggregate_expression() {
 
     session
         .execute_source(
-            "UNWIND [1, NULL, NULL, 2] AS x RETURN sum(x) AS s",
+            "FOR x IN [1, NULL, NULL, 2] RETURN sum(x) AS s",
             &EmptyProcedureRegistry,
         )
         .expect("sum executes");
@@ -270,7 +270,7 @@ fn aggregate_null_skip_emits_01g11_once_per_aggregate_expression() {
     warnings.lock().expect("warning mutex").clear();
     session
         .execute_source(
-            "UNWIND [1, NULL] AS x RETURN count(x) AS c",
+            "FOR x IN [1, NULL] RETURN count(x) AS c",
             &EmptyProcedureRegistry,
         )
         .expect("count executes");
@@ -289,7 +289,7 @@ fn default_warning_sink_keeps_null_skip_non_fatal() {
 
     session
         .execute_source(
-            "UNWIND [NULL] AS x RETURN count(x) AS c",
+            "FOR x IN [NULL] RETURN count(x) AS c",
             &EmptyProcedureRegistry,
         )
         .expect("default sink discards warning");

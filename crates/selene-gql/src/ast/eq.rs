@@ -1,13 +1,13 @@
 //! Span-erasing AST equality helpers.
 
 use crate::ast::{
-    DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, MatchClause, MutationPipeline,
-    MutationStatement, MutationTerminator, NodePattern, PatternElement, ProcedureCall,
-    QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint,
-    TypePropertyDef, ValueExpr, WithClause,
+    DdlStatement, EdgePattern, ExistsBody, GraphPattern, InlineProcedureCall, MatchClause,
+    MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
+    ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement,
+    TypePropertyConstraint, TypePropertyDef, ValueExpr, WithClause,
 };
 
-use super::SourceSpan;
+use super::{CharacterStringLiteralKind, Literal, SourceSpan};
 
 /// Return true when two statements are structurally equal after removing spans.
 #[must_use]
@@ -16,6 +16,16 @@ pub fn structurally_eq(a: &Statement, b: &Statement) -> bool {
     let mut right = b.clone();
     scrub_statement(&mut left);
     scrub_statement(&mut right);
+    left == right
+}
+
+/// Return true when two value expressions are structurally equal after removing
+/// spans and source-spelling metadata.
+pub(crate) fn value_structurally_eq(a: &ValueExpr, b: &ValueExpr) -> bool {
+    let mut left = a.clone();
+    let mut right = b.clone();
+    scrub_value(&mut left);
+    scrub_value(&mut right);
     left == right
 }
 
@@ -49,9 +59,19 @@ fn scrub_statement(statement: &mut Statement) {
             *span = SourceSpan::default();
             scrub_value(value);
         }
-        Statement::SessionSetTimeZone { span, .. }
+        Statement::SessionSetTimeZone {
+            zone_source_kind,
+            span,
+            ..
+        } => {
+            *span = SourceSpan::default();
+            *zone_source_kind = CharacterStringLiteralKind::Escaped;
+        }
+        Statement::SessionSetGraph { span, .. }
         | Statement::SessionReset { span, .. }
-        | Statement::SessionClose { span } => *span = SourceSpan::default(),
+        | Statement::SessionClose { span } => {
+            *span = SourceSpan::default();
+        }
     }
 }
 
@@ -67,7 +87,7 @@ fn scrub_query_pipeline(pipeline: &mut QueryPipeline) {
                     scrub_value(&mut value.value);
                 }
             }
-            crate::PipelineStatement::Unwind(value) => {
+            crate::PipelineStatement::For(value) => {
                 value.span = SourceSpan::default();
                 scrub_value(&mut value.source);
             }
@@ -175,13 +195,43 @@ fn scrub_value(value: &mut ValueExpr) {
     // are `MatchClause` / `QueryPipeline`, not `ValueExpr` children, so they are
     // descended explicitly below.
     value.for_each_span_mut(&mut |span| *span = SourceSpan::default());
+    scrub_literal_source_kind(value);
     value.for_each_child_mut(&mut scrub_value);
     match value {
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-            scrub_match(pattern);
+        ValueExpr::PropertyExists {
+            key_source_kind, ..
+        } => {
+            *key_source_kind = CharacterStringLiteralKind::Escaped;
         }
+        ValueExpr::Exists { body, .. } => match body {
+            ExistsBody::Match(pattern) => scrub_match(pattern),
+            ExistsBody::Query(pipeline) => scrub_query_pipeline(pipeline),
+        },
         ValueExpr::ValueSubquery { body, .. } => scrub_query_pipeline(body),
         _ => {}
+    }
+}
+
+fn scrub_literal_source_kind(value: &mut ValueExpr) {
+    let ValueExpr::Literal(literal) = value else {
+        return;
+    };
+    match literal {
+        Literal::String(_, _, kind)
+        | Literal::Uuid(_, _, kind)
+        | Literal::ZonedDateTime(_, _, kind)
+        | Literal::LocalDateTime(_, _, kind)
+        | Literal::Date(_, _, kind)
+        | Literal::ZonedTime(_, _, kind)
+        | Literal::LocalTime(_, _, kind)
+        | Literal::Duration(_, _, kind) => *kind = CharacterStringLiteralKind::Escaped,
+        Literal::Bool(_, _)
+        | Literal::Integer(_, _)
+        | Literal::RadixInteger(_, _, _)
+        | Literal::Decimal(_, _, _)
+        | Literal::Float(_, _, _)
+        | Literal::Bytes(_, _)
+        | Literal::Null(_) => {}
     }
 }
 
@@ -300,9 +350,6 @@ fn scrub_call(call: &mut ProcedureCall) {
     }
     for item in &mut call.yield_items {
         item.span = SourceSpan::default();
-    }
-    if let Some(filter) = &mut call.yield_filter {
-        scrub_value(filter);
     }
 }
 

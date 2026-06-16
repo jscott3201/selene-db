@@ -30,8 +30,9 @@ pub use crate::ast::{
         TypePropertyDef, ValidationMode,
     },
     expr::{
-        BinaryOp, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, IsCheckKind, Literal,
-        NormalForm, TemporalDurationQualifier, TrimSpec, TruthValue, UnaryOp, ValueExpr,
+        BinaryOp, DecimalLiteralKind, ExistsBody, FloatLiteralKind, IntegerLiteralKind,
+        IsCheckKind, Literal, NormalForm, TemporalDurationQualifier, TrimSpec, TruthValue, UnaryOp,
+        ValueExpr,
     },
     format::format_procedure_call,
     mutation::{
@@ -44,11 +45,12 @@ pub use crate::ast::{
     },
     span::SourceSpan,
     statement::{
-        LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-        QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement,
-        UnwindStatement, WithClause,
+        ForStatement, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm,
+        PipelineStatement, QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition,
+        RowExpansionPositionKind, SessionResetTarget, SessionSetGraphTarget, SetOp, Statement,
+        WithClause,
     },
-    types::{GqlType, RecordType},
+    types::{BindingTableType, GqlType, RecordType},
     util::{EmptyVecError, NonEmpty, Vec2OrMore},
 };
 pub use crate::diagnostic::DiagnosticReport;
@@ -83,7 +85,7 @@ pub use crate::runtime::{
     SharedPlanCacheStats, StatementOutput, TransactionOutcome, TxContext, WarningSink,
     WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
 };
-pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken};
+pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken, NodeScanBudget};
 
 #[cfg(any(test, feature = "test-harness"))]
 pub use crate::runtime::{

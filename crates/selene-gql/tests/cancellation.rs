@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use selene_core::{CancellationToken, GraphId};
-use selene_gql::{EmptyProcedureRegistry, ExecutorError, Session, StatementOutput};
+use selene_gql::{
+    BuiltinProcedureRegistry, EmptyProcedureRegistry, ExecutorError, Session, StatementOutput,
+};
 use selene_graph::SharedGraph;
 
 fn graph(id: u64) -> SharedGraph {
@@ -47,7 +49,7 @@ fn mid_execution_cancellation_aborts_large_query_with_5gql2() {
         .map(|value| value.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    let source = format!("UNWIND [{list}] AS x RETURN count(*) AS c");
+    let source = format!("FOR x IN [{list}] RETURN count(*) AS c");
     let graph = graph(4130);
 
     // Sanity: uncancelled the query completes with the full count.
@@ -127,7 +129,7 @@ fn expired_deadline_returns_timeout() {
 #[test]
 fn row_cap_counts_outermost_result_rows_only() {
     let graph = graph(4119);
-    let source = "UNWIND [5, 1, 4, 2, 3] AS x RETURN x ORDER BY x LIMIT 2";
+    let source = "FOR x IN [5, 1, 4, 2, 3] RETURN x ORDER BY x LIMIT 2";
     let mut capped_at_result = Session::new(&graph).with_row_cap(2);
 
     let output = capped_at_result
@@ -141,6 +143,44 @@ fn row_cap_counts_outermost_result_rows_only() {
         .expect_err("outer result exceeds row cap");
 
     assert!(matches!(err, ExecutorError::RowCapExceeded { cap: 1, .. }));
+    assert_eq!(err.gqlstatus().as_str(), "5GQL1");
+}
+
+#[test]
+fn node_scan_budget_limits_scan_heavy_builtin() {
+    let graph = graph(4124);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut seed = Session::new(&graph);
+    for body in [
+        "graph memory graph retrieval",
+        "vector retrieval retrieval",
+        "graph search",
+    ] {
+        let source = format!("INSERT (:TextDoc {{body: '{body}'}})");
+        seed.execute_source(&source, &registry)
+            .expect("seed text doc inserts");
+    }
+    let source = "CALL selene.text_search_nodes('TextDoc', 'body', 'graph retrieval', 3) \
+                  YIELD node_id, score";
+
+    let mut enough = Session::new(&graph).with_max_nodes_scanned(3);
+    let output = enough
+        .execute_source(source, &registry)
+        .expect("budget equal to scan count succeeds");
+    assert_eq!(rows(output), 3);
+
+    let mut too_low = Session::new(&graph).with_max_nodes_scanned(0);
+    let err = too_low
+        .execute_source(source, &registry)
+        .expect_err("zero scan budget fails at text scan boundary");
+
+    assert!(matches!(
+        err,
+        ExecutorError::ProgramLimitExceeded {
+            detail: "node scan budget exceeded",
+            ..
+        }
+    ));
     assert_eq!(err.gqlstatus().as_str(), "5GQL1");
 }
 

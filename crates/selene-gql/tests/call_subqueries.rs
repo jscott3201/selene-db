@@ -6,8 +6,10 @@ use std::num::NonZeroUsize;
 
 use exec_common::{ExecFixture, column_values};
 use selene_core::Value;
+use selene_gql::ast::format_read_statement;
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutorError, ProcedureMutability, Session, StatementOutput,
+    AnalyzedType, EmptyProcedureRegistry, ExecutorError, GqlType, ProcedureMutability, Session,
+    StatementOutput, analyze, parse, plan,
 };
 use selene_testing::MockProcedureRegistry;
 
@@ -130,6 +132,79 @@ fn call_subquery_without_yield_drops_outer_rows_when_inner_is_empty() {
 }
 
 #[test]
+fn optional_call_subquery_with_empty_body_preserves_rows_with_null_yields() {
+    let table = execute(
+        "MATCH (a:Person)
+         OPTIONAL CALL { MATCH (a)-[:KNOWS]->(:Nope) RETURN 1 AS n }
+         YIELD n
+         RETURN a.name AS name, n
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(
+        value_values(&table, "n"),
+        vec![Value::Null, Value::Null, Value::Null]
+    );
+}
+
+#[test]
+fn optional_call_subquery_without_yield_preserves_rows_for_empty_body() {
+    let table = execute(
+        "MATCH (a:Person)
+         OPTIONAL CALL { MATCH (a)-[:KNOWS]->(:Nope) }
+         RETURN a.name AS name
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+}
+
+#[test]
+fn optional_call_subquery_yield_schema_relaxes_non_null_columns() {
+    let source =
+        "OPTIONAL CALL { RETURN CAST(1 AS INTEGER NOT NULL) AS n LIMIT 0 } YIELD n RETURN n";
+    let parsed = parse(source).expect("optional inline CALL parses");
+    let analyzed = analyze(parsed, &EmptyProcedureRegistry, None).expect("query analyzes");
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("query plans");
+
+    assert_eq!(
+        plan.output_schema.columns[0].ty,
+        AnalyzedType::Resolved(GqlType::Integer)
+    );
+}
+
+#[test]
+fn optional_call_subquery_null_yield_does_not_satisfy_not_null_type_check() {
+    let table = execute(
+        "OPTIONAL CALL { RETURN CAST(1 AS INTEGER NOT NULL) AS n LIMIT 0 }
+         YIELD n
+         RETURN n IS TYPED INTEGER NOT NULL AS ok",
+    );
+
+    assert_eq!(value_values(&table, "ok"), vec![Value::Bool(false)]);
+}
+
+#[test]
+fn optional_call_subquery_formats_and_reparses() {
+    let parsed = parse("OPTIONAL CALL { RETURN 1 AS one LIMIT 1 } YIELD one")
+        .expect("optional inline CALL parses");
+    let formatted = format_read_statement(&parsed).expect("optional inline CALL formats");
+
+    assert_eq!(
+        formatted,
+        "OPTIONAL CALL { RETURN 1 AS one\nLIMIT 1 } YIELD one"
+    );
+    parse(&formatted).expect("formatted optional inline CALL reparses");
+}
+
+#[test]
 fn call_subquery_without_yield_preserves_rows_for_unit_result() {
     let table = execute(
         "MATCH (a:Person)
@@ -174,7 +249,13 @@ fn call_subquery_runs_after_with_projection() {
 
 #[test]
 fn call_subquery_rejects_in_transactions() {
-    assert_status("CALL { RETURN 1 LIMIT 1 } IN TRANSACTIONS", "42N01");
+    let err = parse("CALL { RETURN 1 LIMIT 1 } IN TRANSACTIONS")
+        .expect_err("IN TRANSACTIONS is not ISO inline CALL syntax");
+    assert!(
+        matches!(err, selene_gql::ParserError::SyntaxError { .. }),
+        "expected syntax error, got {err:?}"
+    );
+    assert_eq!(err.gqlstatus().as_str(), "42001");
 }
 
 // GP03 (ISO/IEC 39075:2024 §15.2): explicit variable-scope CALL subqueries.

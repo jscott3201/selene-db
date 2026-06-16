@@ -1,10 +1,9 @@
 //! Propagate inline parameter declarations to bare references in the same statement.
 
 use crate::{
-    DdlStatement, IsCheckKind, LimitValue, MatchClause, MutationPipeline, MutationStatement,
-    MutationTerminator, PatternElement, PipelineStatement, ProcedureCall, QueryPipeline,
-    ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint, UnwindStatement,
-    ValueExpr,
+    DdlStatement, ExistsBody, ForStatement, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
+    MutationStatement, MutationTerminator, PatternElement, PipelineStatement, ProcedureCall,
+    QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint, ValueExpr,
 };
 
 use super::parameters::DeclarationMap;
@@ -45,6 +44,7 @@ pub(super) fn inherit_statement_parameter_declarations(
         | Statement::Rollback { .. }
         | Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => {}
     }
@@ -60,7 +60,7 @@ fn inherit_pipeline_parameter_declarations(
                 inherit_match_clause_parameter_declarations(clause, declarations);
             }
             PipelineStatement::Filter(value)
-            | PipelineStatement::Unwind(UnwindStatement { source: value, .. }) => {
+            | PipelineStatement::For(ForStatement { source: value, .. }) => {
                 inherit_value_parameter_declarations(value, declarations);
             }
             PipelineStatement::Let(bindings) => {
@@ -199,9 +199,6 @@ fn inherit_call_parameter_declarations(call: &mut ProcedureCall, declarations: &
     for arg in &mut call.args {
         inherit_value_parameter_declarations(arg, declarations);
     }
-    if let Some(filter) = &mut call.yield_filter {
-        inherit_value_parameter_declarations(filter, declarations);
-    }
 }
 
 fn inherit_match_clause_parameter_declarations(
@@ -277,10 +274,6 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
             | ValueExpr::PropertyExists { target, .. }
             | ValueExpr::Normalize { source: target, .. }
             | ValueExpr::Cast { value: target, .. } => stack.push(target.as_mut()),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push(index.as_mut());
-                stack.push(target.as_mut());
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..
@@ -342,9 +335,14 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
                     stack.push(character.as_mut());
                 }
             }
-            ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-                inherit_match_clause_parameter_declarations(pattern, declarations);
-            }
+            ValueExpr::Exists { body, .. } => match body {
+                ExistsBody::Match(pattern) => {
+                    inherit_match_clause_parameter_declarations(pattern, declarations);
+                }
+                ExistsBody::Query(pipeline) => {
+                    inherit_pipeline_parameter_declarations(pipeline, declarations);
+                }
+            },
             ValueExpr::ValueSubquery { body, .. } => {
                 inherit_pipeline_parameter_declarations(body, declarations);
             }

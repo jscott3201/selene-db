@@ -1,11 +1,18 @@
 //! GQL type-name rendering for the read-side formatter.
 
 use crate::GqlType;
-use crate::ast::RecordType;
 use crate::ast::format_ident::fmt_ident;
+use crate::ast::{BindingTableType, RecordType};
 
 pub(crate) fn fmt_type(ty: &GqlType) -> String {
     match ty {
+        GqlType::Any => "ANY".to_owned(),
+        GqlType::AnyProperty => "ANY PROPERTY VALUE".to_owned(),
+        GqlType::ClosedDynamicUnion(components) => components
+            .iter()
+            .map(fmt_type)
+            .collect::<Vec<_>>()
+            .join(" | "),
         GqlType::String => "STRING".to_owned(),
         GqlType::CharacterString(character) if character.min_len == 0 => {
             format!("STRING({})", character.max_len)
@@ -63,6 +70,12 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         // Recurse into the element type so `LIST<INT8>` round-trips through
         // parse-format-parse without rewriting the element type.
         GqlType::List(inner) => format!("LIST<{}>", fmt_type(inner)),
+        GqlType::BoundedList {
+            element_type,
+            max_len,
+        } => {
+            format!("LIST<{}>[{}]", fmt_type(element_type), max_len)
+        }
         GqlType::NotNull(inner) => format!("{} NOT NULL", fmt_type(inner)),
         GqlType::Path => "PATH".to_owned(),
         GqlType::Null => "NULL".to_owned(),
@@ -75,21 +88,25 @@ pub(crate) fn fmt_type(ty: &GqlType) -> String {
         // §18.10 <field types specification>).
         GqlType::Record(RecordType::Open) => "RECORD".to_owned(),
         GqlType::Record(RecordType::Closed(fields)) => {
-            let body = fields
-                .iter()
-                .map(|(name, field_ty)| {
-                    format!("{} :: {}", fmt_ident(name.clone()), fmt_type(field_ty))
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("RECORD{{{body}}}")
+            format!("RECORD{{{}}}", fmt_field_types(fields))
         }
-        // validate_formattable rejects these AST-only reference variants before
-        // read-side source formatting starts. Crate-internal diagnostics still
-        // use this renderer directly, so preserve the logical type names here.
+        // validate_formattable still rejects graph and binding-table references
+        // before read-side source formatting starts. Graph-element references
+        // are formattable and canonicalize to their primary ISO names.
         GqlType::GraphRef => "GRAPH".to_owned(),
         GqlType::NodeRef => "NODE".to_owned(),
         GqlType::EdgeRef => "EDGE".to_owned(),
-        GqlType::TableRef => "TABLE".to_owned(),
+        GqlType::TableRef(BindingTableType::Any) => "TABLE".to_owned(),
+        GqlType::TableRef(BindingTableType::Closed(fields)) => {
+            format!("TABLE{{{}}}", fmt_field_types(fields))
+        }
     }
+}
+
+fn fmt_field_types(fields: &[(selene_core::DbString, GqlType)]) -> String {
+    fields
+        .iter()
+        .map(|(name, field_ty)| format!("{} :: {}", fmt_ident(name.clone()), fmt_type(field_ty)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

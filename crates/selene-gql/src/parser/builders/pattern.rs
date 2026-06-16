@@ -20,6 +20,7 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
     let mut match_mode = None;
     let mut path_mode = PathMode::Walk;
     let mut path_mode_explicit = false;
+    let mut trailing_path_mode = false;
     // ISO §16.6 <path or paths> (Feature G014) is pure surface sugar (§1.2.4). It
     // reaches the AST from two grammar sites: nested inside `counted_shortest_tail`
     // (its ISO position for the counted SHORTEST forms) or the trailing `match_stmt`
@@ -33,26 +34,46 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
 
     for child in pair.into_inner() {
         match child.as_rule() {
+            Rule::match_kw => {}
             Rule::optional_modifier => optional = true,
             Rule::path_selector => {
                 selector = Some(build_path_selector(&child)?);
-                // A counted SHORTEST form may carry <path or paths> in its ISO
-                // position inside counted_shortest_tail — recover the presence bit.
-                if child
-                    .clone()
-                    .into_inner()
-                    .flatten()
-                    .any(|p| p.as_rule() == Rule::path_or_paths)
-                {
-                    path_or_paths = true;
+                // A counted SHORTEST form may carry <path mode> and <path or
+                // paths> in their ISO positions inside counted_shortest_tail.
+                // Recover those surface bits because they still belong to the
+                // MatchClause, not the selector enum.
+                for nested in child.clone().into_inner().flatten() {
+                    match nested.as_rule() {
+                        Rule::path_or_paths => path_or_paths = true,
+                        Rule::path_modifier => {
+                            path_mode = build_path_mode(&nested)?;
+                            path_mode_explicit = true;
+                        }
+                        _ => {}
+                    }
                 }
             }
             Rule::match_mode => match_mode = Some(build_match_mode(&child)?),
             Rule::path_modifier => {
+                if path_mode_explicit {
+                    return Err(ParserError::syntax(
+                        "path mode may be specified only once in a MATCH prefix",
+                        span(&child),
+                        None,
+                    ));
+                }
                 path_mode = build_path_mode(&child)?;
                 path_mode_explicit = true;
+                trailing_path_mode = true;
             }
             Rule::path_or_paths => {
+                if path_or_paths {
+                    return Err(ParserError::syntax(
+                        "PATH/PATHS may be specified only once in a MATCH prefix",
+                        span(&child),
+                        None,
+                    ));
+                }
                 path_or_paths = true;
                 trailing_path_or_paths = true;
             }
@@ -103,13 +124,26 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
 
     // ISO §16.6 <counted shortest group search> places <path or paths> BEFORE the
     // GROUP/GROUPS discriminator (`SHORTEST [n] [mode] [path-or-paths] {GROUP|
-    // GROUPS}`). The conforming `SHORTEST n PATHS GROUPS` spelling is parsed inside
-    // counted_shortest_tail; a TRAILING slot here means PATH/PATHS came AFTER
+    // GROUPS}`). The conforming `SHORTEST n TRAIL PATHS GROUPS` spelling is parsed
+    // inside counted_shortest_tail; a TRAILING slot here means PATH/PATHS came AFTER
     // GROUP[S] (`SHORTEST n GROUPS PATHS`), which is the wrong ISO order — reject it.
     if trailing_path_or_paths && matches!(selector, Some(PathSelector::CountedShortestGroup { .. }))
     {
         return Err(ParserError::syntax(
             "PATH/PATHS must precede GROUP/GROUPS (write SHORTEST n PATHS GROUPS) per \
+             ISO/IEC 39075:2024 §16.6",
+            source_span,
+            None,
+        ));
+    }
+
+    // Same ordering rule for <path mode>: in counted group syntax, WALK/TRAIL/
+    // SIMPLE/ACYCLIC appears before GROUP/GROUPS. The flattened top-level
+    // path_modifier slot can otherwise accept `SHORTEST n GROUPS TRAIL`, so
+    // reject that wrong-order spelling here.
+    if trailing_path_mode && matches!(selector, Some(PathSelector::CountedShortestGroup { .. })) {
+        return Err(ParserError::syntax(
+            "path mode must precede GROUP/GROUPS (write SHORTEST n TRAIL GROUPS) per \
              ISO/IEC 39075:2024 §16.6",
             source_span,
             None,
@@ -129,18 +163,51 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
     })
 }
 
+pub(super) fn build_match_clause_from_graph_pattern_list(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<MatchClause, ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::graph_pattern_list);
+    let patterns = build_graph_pattern_list(pair)?;
+    if patterns.is_empty() {
+        return Err(ParserError::syntax(
+            "EXISTS graph pattern is missing a graph pattern",
+            source_span,
+            None,
+        ));
+    }
+    Ok(MatchClause {
+        optional: false,
+        selector: None,
+        match_mode: None,
+        path_mode: PathMode::Walk,
+        path_mode_explicit: false,
+        path_or_paths: false,
+        patterns,
+        where_clause: None,
+        span: source_span,
+    })
+}
+
 fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserError> {
-    // Per ISO 39075:2024 §16.6: the `SHORTEST <n> [GROUP[S]]` / `SHORTEST
-    // GROUP[S]` forms (counted shortest path G019 / group G020) carry a
-    // `counted_shortest_tail` child; the bare `ANY`/`ALL`/`ANY SHORTEST`/
-    // `ALL SHORTEST` forms do not. Dispatch on the structured child first so the
-    // counted forms never fall through to the keyword-text match below.
+    // Per ISO 39075:2024 §16.6: counted selector forms carry structured count
+    // children. Dispatch on those children first so they never fall through to
+    // the keyword-text match below.
     if let Some(tail) = pair
         .clone()
         .into_inner()
         .find(|child| child.as_rule() == Rule::counted_shortest_tail)
     {
         return build_counted_shortest(tail);
+    }
+    if let Some(count) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::any_path_count)
+    {
+        return Ok(PathSelector::Any {
+            paths: parse_positive_path_count(&count)?,
+        });
     }
 
     // Match the selector keyword(s) token-wise (case- and whitespace-
@@ -153,7 +220,7 @@ fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserErro
     } else if keyword_tokens_eq(text, &["ALL", "SHORTEST"]) {
         Ok(PathSelector::AllShortest)
     } else if keyword_tokens_eq(text, &["ANY"]) {
-        Ok(PathSelector::Any)
+        Ok(PathSelector::Any { paths: 1 })
     } else if keyword_tokens_eq(text, &["ALL"]) {
         Ok(PathSelector::All)
     } else {
@@ -167,8 +234,10 @@ fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserErro
 
 // Build the counted shortest selector from a `counted_shortest_tail` pair.
 //
-// Per ISO 39075:2024 §16.6 the tail is `uint ~ counted_group_kw?` or a bare
-// `counted_group_kw`:
+// Per ISO 39075:2024 §16.6 the tail is either a counted shortest path
+// (`uint` plus optional path-mode / PATHS surface tokens) or a counted shortest
+// group (`counted_group_kw` with optional leading count and optional path-mode /
+// PATHS surface tokens):
 //   - a `uint` with no GROUP keyword -> G019 counted shortest PATH (paths = N);
 //   - a `counted_group_kw` (with or without a leading `uint`) -> G020 counted
 //     shortest GROUP (groups = N, defaulting to 1 when no `uint` is written,
@@ -185,8 +254,9 @@ fn build_counted_shortest(tail: Pair<'_, Rule>) -> Result<PathSelector, ParserEr
     let mut is_group = false;
     for child in tail.into_inner() {
         match child.as_rule() {
-            Rule::uint => count = Some(parse_counted_uint(&child)?),
+            Rule::uint => count = Some(parse_positive_path_count(&child)?),
             Rule::counted_group_kw => is_group = true,
+            Rule::path_modifier => {}
             // ISO §16.6 <path or paths> (Feature G014) in its counted-form position.
             // It is pure surface sugar with no effect on the selector; the presence
             // bit is recovered by build_match_clause (which scans the path_selector
@@ -214,18 +284,20 @@ fn build_counted_shortest(tail: Pair<'_, Rule>) -> Result<PathSelector, ParserEr
     }
 }
 
-// Parse a counted shortest path/group `uint` literal to a positive `u32`.
+// Parse an ISO path-selector count literal to a positive `u32`.
 //
 // Saturates an out-of-range literal to `u32::MAX` (keep-all). Rejects a literal
 // `0` with GQLSTATUS 22G0F per ISO 39075:2024 §16.6 SR2bii / §22.4 GR7.
-fn parse_counted_uint(pair: &Pair<'_, Rule>) -> Result<u32, ParserError> {
+fn parse_positive_path_count(pair: &Pair<'_, Rule>) -> Result<u32, ParserError> {
     let value = pair.as_str().parse::<u32>().unwrap_or(u32::MAX);
     if value == 0 {
         return Err(ParserError::syntax_with_status(
             crate::error::GqlStatus::INVALID_NUMBER_OF_PATHS_OR_GROUPS,
-            "counted shortest path/group count must be a positive integer",
+            "path selector count must be a positive integer",
             span(pair),
-            Some("write SHORTEST 1 (or more); 0 is invalid per ISO 39075:2024 §16.6".into()),
+            Some(
+                "write a positive ANY/SHORTEST count; 0 is invalid per ISO 39075:2024 §16.6".into(),
+            ),
         ));
     }
     Ok(value)

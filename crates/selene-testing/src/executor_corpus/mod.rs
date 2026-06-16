@@ -226,8 +226,8 @@ const ENTRIES: &[ExecutorCorpusEntry] = &[
         [Subplan, Project]
     ),
     e!(
-        "read_let_unwind_distinct_limit",
-        Single("UNWIND [1, 2, 2] AS x LET y = x RETURN DISTINCT y LIMIT 2"),
+        "read_let_for_distinct_limit",
+        Single("FOR x IN [1, 2, 2] LET y = x RETURN DISTINCT y LIMIT 2"),
         EmptyOpen,
         Read,
         false,
@@ -345,7 +345,7 @@ const ENTRIES: &[ExecutorCorpusEntry] = &[
     ),
     e!(
         "call_read_tier_yield_named",
-        Single("CALL pkg.all() YIELD outA AS first, outB AS second"),
+        Single("CALL pkg.all() YIELD outA AS first, outB AS \"second\""),
         EmptyOpen,
         Call,
         false,

@@ -113,7 +113,7 @@ fn quantifier_features_are_claimed_supported() {
 }
 
 #[test]
-fn numeric_literal_features_are_claimed_supported() {
+fn literal_features_are_claimed_supported() {
     for feature in [
         FeatureId::GL01,
         FeatureId::GL02,
@@ -125,6 +125,7 @@ fn numeric_literal_features_are_claimed_supported() {
         FeatureId::GL08,
         FeatureId::GL09,
         FeatureId::GL10,
+        FeatureId::GL11,
     ] {
         assert!(SUPPORTED_FEATURES.contains(&feature));
         assert!(

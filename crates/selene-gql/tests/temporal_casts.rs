@@ -1,7 +1,7 @@
 //! Temporal CAST conformance cases.
 
 use selene_core::{GraphId, Value, db_string};
-use selene_gql::{EmptyProcedureRegistry, GqlStatus, Session, StatementOutput};
+use selene_gql::{EmptyProcedureRegistry, GqlStatus, ParserError, Session, StatementOutput, parse};
 use selene_graph::{GraphTypeDef, SharedGraph};
 
 fn cast_bound(value: Value, target: &str) -> Value {
@@ -59,7 +59,7 @@ fn cast_bound_in_zone(value: Value, target: &str, zone: &str) -> Value {
 
 fn current_date(session: &mut Session<'_>) -> jiff::civil::Date {
     let output = session
-        .execute_source("RETURN current_date() AS d", &EmptyProcedureRegistry)
+        .execute_source("RETURN current_date AS d", &EmptyProcedureRegistry)
         .expect("current date");
     let StatementOutput::Rows(table) = output else {
         panic!("current_date produced non-row output");
@@ -137,6 +137,53 @@ fn read_values(source: &str) -> Vec<Value> {
         panic!("query produced non-row output");
     };
     table.rows()[0].values().to_vec()
+}
+
+fn assert_syntax_error(source: &str) {
+    let error = parse(source).expect_err(source);
+    assert!(
+        matches!(error, ParserError::SyntaxError { .. }),
+        "{source} must reject as syntax, got {error:?}"
+    );
+}
+
+#[test]
+fn temporal_type_keywords_require_boundaries() {
+    for source in [
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS ZONEDDATETIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS LOCALDATETIME) AS v",
+        "RETURN CAST('12:34:56-04:00' AS ZONEDTIME) AS v",
+        "RETURN CAST('12:34:56' AS LOCALTIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS TIMESTAMPWITHTIMEZONE) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMPWITHOUTTIMEZONE) AS v",
+        "RETURN CAST('12:34:56-04:00' AS TIMEWITHTIMEZONE) AS v",
+        "RETURN CAST('12:34:56' AS TIMEWITHOUTTIMEZONE) AS v",
+        "RETURN CAST('2026-05-07' AS DATEx) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMPx) AS v",
+        "RETURN CAST('PT1H' AS DURATIONx (DAY TO SECOND)) AS v",
+        "RETURN CAST('P1M' AS DURATION (YEARTOMONTH)) AS v",
+        "RETURN CAST('PT1H' AS DURATION (DAYTOSECOND)) AS v",
+    ] {
+        assert_syntax_error(source);
+    }
+}
+
+#[test]
+fn guarded_temporal_type_keywords_still_accept_separated_forms() {
+    for source in [
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS ZONED /* c */ DATETIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS LOCAL /* c */ DATETIME) AS v",
+        "RETURN CAST('12:34:56-04:00' AS ZONED /* c */ TIME) AS v",
+        "RETURN CAST('12:34:56' AS LOCAL /* c */ TIME) AS v",
+        "RETURN CAST('2026-05-07T12:34:56-04:00' AS TIMESTAMP /* c */ WITH /* c */ TIME /* c */ ZONE) AS v",
+        "RETURN CAST('2026-05-07T12:34:56' AS TIMESTAMP /* c */ WITHOUT /* c */ TIME /* c */ ZONE) AS v",
+        "RETURN CAST('12:34:56-04:00' AS TIME /* c */ WITH /* c */ TIME /* c */ ZONE) AS v",
+        "RETURN CAST('12:34:56' AS TIME /* c */ WITHOUT /* c */ TIME /* c */ ZONE) AS v",
+        "RETURN CAST('P1M' AS DURATION (YEAR /* c */ TO /* c */ MONTH)) AS v",
+        "RETURN CAST('PT1H' AS DURATION (DAY /* c */ TO /* c */ SECOND)) AS v",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+    }
 }
 
 #[test]
@@ -224,7 +271,7 @@ fn temporal_default_literals_materialize_and_round_trip() {
              zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04:00', \
              lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
              zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04:00', \
-             dur :: DURATION DEFAULT DURATION 'PT1H2S')",
+             dur :: DURATION (DAY TO SECOND) DEFAULT DURATION 'PT1H2S')",
             &EmptyProcedureRegistry,
         )
         .expect("temporal defaults are accepted");
@@ -269,7 +316,7 @@ fn temporal_default_literals_materialize_and_round_trip() {
              zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04', \
              lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
              zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04', \
-             dur :: DURATION DEFAULT DURATION 'PT1H2S')"
+             dur :: DURATION (DAY TO SECOND) DEFAULT DURATION 'PT1H2S')"
             )
             .unwrap()
         )
@@ -291,15 +338,27 @@ fn cast_strings_to_temporal_values() {
         Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
     );
     assert_eq!(
+        cast_string("2026-05-07T12:34:56", "TIMESTAMP"),
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        cast_string("2026-05-07T12:34:56", "TIMESTAMP WITHOUT TIME ZONE"),
+        Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap())
+    );
+    assert_eq!(
         cast_string("12:34:56", "LOCAL TIME"),
         Value::LocalTime("12:34:56".parse().unwrap())
     );
     assert_eq!(
-        cast_string("PT1H2S", "DURATION"),
+        cast_string("12:34:56", "TIME WITHOUT TIME ZONE"),
+        Value::LocalTime("12:34:56".parse().unwrap())
+    );
+    assert_eq!(
+        cast_string("PT1H2S", "DURATION (DAY TO SECOND)"),
         Value::Duration(Box::new("PT1H2S".parse().unwrap()))
     );
     assert_eq!(
-        cast_string(" PT1H2S ", "DURATION"),
+        cast_string(" PT1H2S ", "DURATION (DAY TO SECOND)"),
         Value::Duration(Box::new("PT1H2S".parse().unwrap()))
     );
 
@@ -310,7 +369,21 @@ fn cast_strings_to_temporal_values() {
     assert_eq!(value.datetime().to_string(), "2026-05-07T12:34:56");
     assert_eq!(value.offset().to_string(), "-04");
 
+    let Value::ZonedDateTime(value) =
+        cast_string("2026-05-07T12:34:56-04:00", "TIMESTAMP WITH TIME ZONE")
+    else {
+        panic!("expected zoned datetime");
+    };
+    assert_eq!(value.datetime().to_string(), "2026-05-07T12:34:56");
+    assert_eq!(value.offset().to_string(), "-04");
+
     let Value::ZonedTime(value) = cast_string("12:34:56-04:00", "ZONED TIME") else {
+        panic!("expected zoned time");
+    };
+    assert_eq!(value.time().to_string(), "12:34:56");
+    assert_eq!(value.offset().to_string(), "-04");
+
+    let Value::ZonedTime(value) = cast_string("12:34:56-04:00", "TIME WITH TIME ZONE") else {
         panic!("expected zoned time");
     };
     assert_eq!(value.time().to_string(), "12:34:56");
@@ -495,7 +568,7 @@ fn cast_invalid_strings_to_temporal_values_returns_22007() {
 #[test]
 fn cast_invalid_strings_to_duration_returns_22g0h() {
     assert_eq!(
-        cast_string_status("not-duration", "DURATION"),
+        cast_string_status("not-duration", "DURATION (DAY TO SECOND)"),
         GqlStatus::INVALID_DURATION_FORMAT
     );
 }

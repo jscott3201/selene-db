@@ -171,11 +171,18 @@ fn implies_keyword_is_accepted_like_the_symbolic_form() {
     );
     assert_eq!(keyword_changes, symbol_changes);
 
-    // Case-insensitive; and `implies` is matched only in the key-label-set
-    // position — it is NOT a global reserved word, so a type/label literally
-    // named `implies` still parses as the bare GG20 form.
+    // Case-insensitive in key-label-set position. A type/label literally named
+    // `implies` must be delimited because IMPLIES is globally reserved by
+    // ISO §21.3.
     planned("CREATE EDGE TYPE :KNOWS implies (since :: INTEGER)");
-    planned("CREATE NODE TYPE :implies (x :: INT)");
+    planned("CREATE NODE TYPE :\"implies\" (x :: INT)");
+
+    let err =
+        parse("CREATE NODE TYPE :implies (x :: INT)").expect_err("bare IMPLIES label must reject");
+    assert!(
+        matches!(err, selene_gql::ParserError::SyntaxError { .. }),
+        "expected SyntaxError for bare IMPLIES label, got {err:?}"
+    );
 }
 
 // --- IL003 cardinality rejects (the spec-defined GQLSTATUS) ------------------

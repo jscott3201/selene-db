@@ -16,14 +16,14 @@ fn avg_empty_group_returns_null_not_division_by_zero() {
 
 #[test]
 fn avg_skips_null_inputs() {
-    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN avg(x) AS a");
+    let table = execute_read("FOR x IN [1, NULL, 3] RETURN avg(x) AS a");
 
     assert_eq!(column_values(&table, "a"), vec![Value::Float(2.0)]);
 }
 
 #[test]
 fn avg_preserves_integer_precision_when_inputs_are_int() {
-    let table = execute_read("UNWIND [2, 4] AS x RETURN avg(x) AS a");
+    let table = execute_read("FOR x IN [2, 4] RETURN avg(x) AS a");
 
     assert_eq!(column_values(&table, "a"), vec![Value::Float(3.0)]);
 }
@@ -31,7 +31,7 @@ fn avg_preserves_integer_precision_when_inputs_are_int() {
 #[test]
 fn stddev_pop_and_samp_use_welford_accumulator() {
     let table = execute_read(
-        "UNWIND [2, 4, 4, 4, 5, 5, 7, 9] AS x \
+        "FOR x IN [2, 4, 4, 4, 5, 5, 7, 9] \
          RETURN stddev_pop(x) AS pop, stddev_samp(x) AS samp",
     );
 
@@ -60,7 +60,7 @@ fn stddev_is_numerically_stable_under_large_offset() {
         .collect::<Vec<_>>()
         .join(", ");
     let table = execute_read(&format!(
-        "UNWIND [{values}] AS x RETURN stddev_pop(x) AS pop, stddev_samp(x) AS samp"
+        "FOR x IN [{values}] RETURN stddev_pop(x) AS pop, stddev_samp(x) AS samp"
     ));
 
     let pop_values = column_values(&table, "pop");
@@ -92,7 +92,7 @@ fn stddev_is_numerically_stable_under_large_offset() {
 #[test]
 fn stddev_skips_null_inputs_and_sample_requires_two_values() {
     let table = execute_read(
-        "UNWIND [1, NULL, 3] AS x \
+        "FOR x IN [1, NULL, 3] \
          RETURN stddev_pop(x) AS pop, stddev_samp(NULL) AS samp",
     );
 
@@ -134,7 +134,7 @@ fn sum_empty_returns_int_zero_not_null() {
 
 #[test]
 fn sum_skips_null_inputs() {
-    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN sum(x) AS s");
+    let table = execute_read("FOR x IN [1, NULL, 3] RETURN sum(x) AS s");
 
     assert_eq!(column_values(&table, "s"), vec![Value::Int(4)]);
 }
@@ -144,7 +144,7 @@ fn sum_widens_past_i64_into_i128() {
     // GQLRT-27: an i64 SUM that overflows i64 widens to i128 rather than
     // erroring (GV13/GV14 128-bit support is honest). `i64::MAX + 1` is exactly
     // `i128::from(i64::MAX) + 1`.
-    let table = execute_read("UNWIND [9223372036854775807, 1] AS x RETURN sum(x) AS s");
+    let table = execute_read("FOR x IN [9223372036854775807, 1] RETURN sum(x) AS s");
 
     assert_eq!(
         column_values(&table, "s"),
@@ -154,7 +154,7 @@ fn sum_widens_past_i64_into_i128() {
 
 #[test]
 fn count_skips_null_inputs() {
-    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN count(x) AS c");
+    let table = execute_read("FOR x IN [1, NULL, 3] RETURN count(x) AS c");
 
     assert_eq!(column_values(&table, "c"), vec![Value::Int(2)]);
 }
@@ -168,14 +168,14 @@ fn count_empty_returns_zero() {
 
 #[test]
 fn count_star_includes_null_rows() {
-    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN count(*) AS c");
+    let table = execute_read("FOR x IN [1, NULL, 3] RETURN count(*) AS c");
 
     assert_eq!(column_values(&table, "c"), vec![Value::Int(3)]);
 }
 
 #[test]
 fn count_distinct_dedups_cross_type_numeric_equivalents() {
-    let table = execute_read("UNWIND [1, 1.0, 2, 2.0] AS x RETURN count(DISTINCT x) AS c");
+    let table = execute_read("FOR x IN [1, 1.0, 2, 2.0] RETURN count(DISTINCT x) AS c");
 
     assert_eq!(column_values(&table, "c"), vec![Value::Int(2)]);
 }
@@ -183,7 +183,7 @@ fn count_distinct_dedups_cross_type_numeric_equivalents() {
 #[test]
 fn aggregate_all_quantifier_matches_implicit_all() {
     let table = execute_read(
-        "UNWIND [1, 1, 3] AS x \
+        "FOR x IN [1, 1, 3] \
          RETURN sum(ALL x) AS s, count(ALL x) AS c, collect_list(ALL x) AS xs",
     );
 
@@ -209,10 +209,10 @@ fn aggregate_set_quantifier_does_not_apply_to_count_star() {
 #[test]
 fn nested_aggregate_calls_reject_during_analysis() {
     for source in [
-        "UNWIND [1, 2] AS x RETURN sum(count(x)) AS nested",
-        "UNWIND [1, 2] AS x RETURN sum(abs(count(x))) AS nested",
-        "UNWIND [1, 2] AS x RETURN percentile_cont(x, avg(x)) AS nested",
-        "UNWIND [1, 2] AS x RETURN sum(x) AS s HAVING max(count(x)) > 1",
+        "FOR x IN [1, 2] RETURN sum(count(x)) AS nested",
+        "FOR x IN [1, 2] RETURN sum(abs(count(x))) AS nested",
+        "FOR x IN [1, 2] RETURN percentile_cont(x, avg(x)) AS nested",
+        "FOR x IN [1, 2] RETURN sum(x) AS s HAVING max(count(x)) > 1",
     ] {
         let statement = parse(source).expect("source parses");
         let error = analyze(statement, &EmptyProcedureRegistry, None)
@@ -223,7 +223,7 @@ fn nested_aggregate_calls_reject_during_analysis() {
 
 #[test]
 fn aggregate_distinct_uses_runtime_eq_semantics() {
-    let table = execute_read("UNWIND [1, 1.0, 1] AS x RETURN count(DISTINCT x) AS c");
+    let table = execute_read("FOR x IN [1, 1.0, 1] RETURN count(DISTINCT x) AS c");
 
     assert_eq!(column_values(&table, "c"), vec![Value::Int(1)]);
 }
@@ -238,7 +238,7 @@ fn min_max_empty_returns_null() {
 
 #[test]
 fn min_max_skip_null_inputs() {
-    let table = execute_read("UNWIND [2, NULL, 4, 1] AS x RETURN min(x) AS mn, max(x) AS mx");
+    let table = execute_read("FOR x IN [2, NULL, 4, 1] RETURN min(x) AS mn, max(x) AS mx");
 
     assert_eq!(column_values(&table, "mn"), vec![Value::Int(1)]);
     assert_eq!(column_values(&table, "mx"), vec![Value::Int(4)]);
@@ -246,7 +246,7 @@ fn min_max_skip_null_inputs() {
 
 #[test]
 fn collect_list_preserves_input_order() {
-    let table = execute_read("UNWIND [3, 1, 2] AS x RETURN collect_list(x) AS xs");
+    let table = execute_read("FOR x IN [3, 1, 2] RETURN collect_list(x) AS xs");
 
     assert_eq!(
         column_values(&table, "xs"),
@@ -260,7 +260,7 @@ fn collect_list_preserves_input_order() {
 
 #[test]
 fn collect_list_includes_nulls() {
-    let table = execute_read("UNWIND [1, NULL, 3] AS x RETURN collect_list(x) AS xs");
+    let table = execute_read("FOR x IN [1, NULL, 3] RETURN collect_list(x) AS xs");
 
     assert_eq!(
         column_values(&table, "xs"),
@@ -270,7 +270,7 @@ fn collect_list_includes_nulls() {
 
 #[test]
 fn collect_list_distinct_dedups_cross_type_numeric_equivalents() {
-    let table = execute_read("UNWIND [1, 1.0, 2] AS x RETURN collect_list(DISTINCT x) AS xs");
+    let table = execute_read("FOR x IN [1, 1.0, 2] RETURN collect_list(DISTINCT x) AS xs");
     let values = column_values(&table, "xs");
 
     assert_eq!(values.len(), 1);
@@ -290,8 +290,8 @@ fn collect_list_empty_returns_empty_list() {
 #[test]
 fn non_iso_aggregate_aliases_are_not_in_the_aggregate_set() {
     for source in [
-        "UNWIND [1, 2] AS x RETURN collect(x) AS xs",
-        "UNWIND [1, 2] AS x RETURN average(x) AS a",
+        "FOR x IN [1, 2] RETURN collect(x) AS xs",
+        "FOR x IN [1, 2] RETURN average(x) AS a",
     ] {
         let err = execute_read_result(source).expect_err("non-ISO aggregate alias rejects");
         assert_eq!(err.gqlstatus().as_str(), "22G03", "{source}");

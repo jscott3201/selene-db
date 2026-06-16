@@ -76,6 +76,28 @@ fn show_node_types_renders_nested_open_record_fields() {
 }
 
 #[test]
+fn show_node_types_distinguishes_open_and_closed_unit_record_types() {
+    let graph = empty_closed_graph(3748);
+    let ddl = planned("CREATE NODE TYPE :Event (\"open\" :: ANY RECORD, closed :: RECORD{})");
+    run_write(&graph, &ddl)
+        .expect("record type DDL executes")
+        .1
+        .expect("record type DDL commits");
+
+    let (table, outcome) = run_write(&graph, &planned("SHOW NODE TYPES")).expect("show executes");
+    outcome.expect("show commits");
+
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
+        panic!("definition is a string");
+    };
+    assert_eq!(
+        definition.as_str(),
+        "CREATE NODE TYPE :Event (\"open\" :: RECORD, closed :: RECORD {})"
+    );
+    parse(definition.as_str()).expect("closed unit RECORD definition round-trips");
+}
+
+#[test]
 fn closed_record_property_type_lowers_end_to_end() {
     // Full grammar -> builder -> analyzer -> lowering -> closed-graph commit for a typed
     // RECORD declaration.

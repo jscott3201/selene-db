@@ -42,6 +42,16 @@ impl Binding {
         }
     }
 
+    pub(crate) fn from_parts(
+        values: SmallVec<[Value; 8]>,
+        insert_sites: SmallVec<[(InsertSiteId, NodeId); 4]>,
+    ) -> Self {
+        Self {
+            values,
+            insert_sites,
+        }
+    }
+
     /// Borrow the row's values.
     #[must_use]
     pub fn values(&self) -> &[Value] {
@@ -58,10 +68,27 @@ impl Binding {
         &self.insert_sites
     }
 
+    pub(crate) fn cloned_values(&self) -> SmallVec<[Value; 8]> {
+        self.values.clone()
+    }
+
+    pub(crate) fn cloned_insert_sites(&self) -> SmallVec<[(InsertSiteId, NodeId); 4]> {
+        self.insert_sites.clone()
+    }
+
     pub(crate) fn inserted_node(&self, site_id: InsertSiteId) -> Option<NodeId> {
         self.insert_sites
             .iter()
             .find_map(|(site, id)| (*site == site_id).then_some(*id))
+    }
+
+    pub(crate) fn with_appended_values(&self, values: impl IntoIterator<Item = Value>) -> Self {
+        let mut output = self.values.clone();
+        output.extend(values);
+        Self {
+            values: output,
+            insert_sites: self.insert_sites.clone(),
+        }
     }
 }
 

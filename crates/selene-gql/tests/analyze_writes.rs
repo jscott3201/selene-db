@@ -399,7 +399,7 @@ fn mutation_pipeline_classifies_as_data_modifying() {
 
 #[test]
 fn create_graph_classifies_as_catalog_modifying() {
-    let error = parse("CREATE GRAPH demo").expect_err("graph management is outside v1.0");
+    let error = parse("CREATE GRAPH demo").expect_err("CREATE GRAPH is outside D1");
     assert_eq!(error.gqlstatus().as_str(), "42N01");
 }
 

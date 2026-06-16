@@ -5,7 +5,7 @@ pub mod ddl;
 pub mod eq;
 pub mod expr;
 pub mod format;
-mod format_ident;
+pub(crate) mod format_ident;
 pub mod mutation;
 pub mod pattern;
 pub mod span;
@@ -21,8 +21,9 @@ pub use ddl::{
 };
 pub use eq::structurally_eq;
 pub use expr::{
-    BinaryOp, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, IsCheckKind, Literal,
-    NormalForm, TemporalDurationQualifier, TrimSpec, TruthValue, UnaryOp, ValueExpr,
+    BinaryOp, CharacterStringLiteralKind, DecimalLiteralKind, ExistsBody, FloatLiteralKind,
+    IntegerLiteralKind, IsCheckKind, Literal, NormalForm, TemporalDurationQualifier, TrimSpec,
+    TruthValue, UnaryOp, ValueExpr,
 };
 pub use format::{FormatError, format_procedure_call, format_read_statement};
 pub use mutation::{
@@ -39,12 +40,13 @@ pub use selene_core::{
 };
 pub use span::SourceSpan;
 pub use statement::{
-    LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-    QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement, TypedBinding,
-    UnwindStatement, WithClause,
+    ForStatement, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm,
+    PipelineStatement, QueryPipeline, ReturnClause, ReturnItem, RowExpansionPosition,
+    RowExpansionPositionKind, SessionResetTarget, SessionSetGraphTarget, SetOp, Statement,
+    TypedBinding, WithClause,
 };
 pub use types::{
-    ByteStringType, ByteStringTypeForm, CharacterStringType, CharacterStringTypeForm, GqlType,
-    RecordType,
+    BindingTableType, ByteStringType, ByteStringTypeForm, CharacterStringType,
+    CharacterStringTypeForm, GqlType, RecordType,
 };
 pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};

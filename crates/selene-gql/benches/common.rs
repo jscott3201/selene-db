@@ -116,7 +116,7 @@ pub(crate) fn gql_write_state(scale: usize, sync_policy: SyncPolicy) -> GqlWrite
 /// CPU from durability.
 ///
 /// `SharedGraph::from_graph_with_wal` ALWAYS forces `OnFlushOnly` +
-/// `CommitBatching::Off` (the committer owns fsync since v1.1, overwriting any
+/// `CommitBatching::Off` (the committer owns fsync since v1.2, overwriting any
 /// caller `SyncPolicy`), so a WAL-backed write bench secretly pays one real
 /// fsync per commit — which swamps the GQL CPU deltas (GQLRT-05 / CORE-06) the
 /// write-path arms exist to measure. This variant attaches no WAL, so the timed

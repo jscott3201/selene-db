@@ -182,10 +182,18 @@ fn dispatch_pipeline(
             PipelineOp::Unwind {
                 source,
                 alias,
+                position,
                 span,
             } => {
                 let eval_ctx = ctx.eval_ctx(expr_ids, subqueries);
-                unwind::execute(source, alias.clone(), *span, table, &eval_ctx)?
+                unwind::execute(
+                    source,
+                    alias.clone(),
+                    position.clone(),
+                    *span,
+                    table,
+                    &eval_ctx,
+                )?
             }
             PipelineOp::OrderBy(keys) => {
                 let eval_ctx = ctx.eval_ctx(expr_ids, subqueries);
@@ -221,6 +229,10 @@ fn dispatch_pipeline(
             PipelineOp::Chain(rhs) => match &mut ctx {
                 TxCtxRef::ReadWrite(ctx) => chain::execute(rhs, table, ctx)?,
                 TxCtxRef::ReadOnly(ctx) => plan_runner::execute_plan_read_only(rhs, ctx)?,
+            },
+            PipelineOp::CorrelatedChain(rhs) => match &mut ctx {
+                TxCtxRef::ReadWrite(ctx) => chain::execute_correlated(rhs, table, ctx)?,
+                TxCtxRef::ReadOnly(ctx) => chain::execute_correlated_read_only(rhs, table, ctx)?,
             },
             PipelineOp::Call(call) => match &mut ctx {
                 TxCtxRef::ReadWrite(ctx) => call::execute(call, table, ctx, expr_ids, subqueries)?,

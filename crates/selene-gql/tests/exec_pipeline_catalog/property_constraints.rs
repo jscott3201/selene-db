@@ -396,7 +396,7 @@ fn list_default_property_constraint_rejects_nested_shape_mismatch() {
 fn float_default_property_constraint_accepts_float_literal() {
     let graph = empty_closed_graph(3724);
     let plan = planned(
-        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5D, small :: FLOAT32 DEFAULT 2.25D)",
+        "CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5D, \"small\" :: FLOAT32 DEFAULT 2.25D)",
     );
 
     run_write(&graph, &plan)
@@ -417,7 +417,7 @@ fn float_default_property_constraint_accepts_float_literal() {
 #[test]
 fn floating_type_synonym_properties_lower_to_canonical_catalog_types() {
     let graph = empty_closed_graph(3736);
-    let plan = planned("CREATE NODE TYPE :Metric (small :: REAL, wide :: DOUBLE PRECISION)");
+    let plan = planned("CREATE NODE TYPE :Metric (\"small\" :: REAL, wide :: DOUBLE PRECISION)");
 
     run_write(&graph, &plan)
         .expect("floating synonym properties execute")
@@ -438,7 +438,7 @@ fn floating_type_synonym_properties_lower_to_canonical_catalog_types() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(db_string(
-            "CREATE NODE TYPE :Metric (small :: FLOAT32, wide :: FLOAT)"
+            "CREATE NODE TYPE :Metric (\"small\" :: FLOAT32, wide :: FLOAT)"
         ))
     );
 }
@@ -551,7 +551,7 @@ fn temporal_default_property_constraint_accepts_temporal_literals() {
          zdt :: ZONED DATETIME DEFAULT ZONED DATETIME '2026-05-07T12:34:56-04:00', \
          lt :: LOCAL TIME DEFAULT LOCAL TIME '12:34:56', \
          zt :: ZONED TIME DEFAULT ZONED TIME '12:34:56-04:00', \
-         dur :: DURATION DEFAULT DURATION 'PT1H2S')",
+         dur :: DURATION (DAY TO SECOND) DEFAULT DURATION 'PT1H2S')",
     );
 
     run_write(&graph, &plan)

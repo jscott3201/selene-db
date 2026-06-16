@@ -3,8 +3,8 @@
 use selene_core::DbString;
 
 use crate::{
-    DdlStatement, MutationPipeline, NonEmpty, ProcedureCall, QueryPipeline, SessionResetTarget,
-    SetOp, SourceSpan, Statement, ValueExpr,
+    DdlStatement, GqlType, MutationPipeline, NonEmpty, ProcedureCall, QueryPipeline,
+    SessionResetTarget, SessionSetGraphTarget, SetOp, SourceSpan, Statement, ValueExpr,
     analyze::{
         binding::BindingUse,
         category::StatementCategory,
@@ -106,10 +106,12 @@ pub enum AnalyzedStatementKind {
     Commit(SourceSpan),
     /// `ROLLBACK`.
     Rollback(SourceSpan),
-    /// `SESSION SET VALUE <param> = <value expression>` (ISO feature GS03).
+    /// `SESSION SET VALUE <param> [<type>] = <value expression>` (ISO feature GS03).
     SessionSetValue {
         /// Database-string parameter name without the leading `$`.
         param: DbString,
+        /// Optional declared type for the target session parameter.
+        declared_type: Option<GqlType>,
         /// Value expression bound to the parameter.
         value: Box<ValueExpr>,
         /// `IF NOT EXISTS` was present on the parameter specification.
@@ -121,6 +123,13 @@ pub enum AnalyzedStatementKind {
     SessionSetTimeZone {
         /// Decoded IANA region name or fixed-offset string.
         zone: String,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION SET [PROPERTY] GRAPH <current graph>` (ISO/IEC 39075:2024 section 7.1).
+    SessionSetGraph {
+        /// Current-graph expression selected by the command.
+        target: SessionSetGraphTarget,
         /// Source span.
         span: SourceSpan,
     },
@@ -153,16 +162,21 @@ impl AnalyzedStatementKind {
             Statement::Rollback { span } => Self::Rollback(span),
             Statement::SessionSetValue {
                 param,
+                declared_type,
                 value,
                 if_not_exists,
                 span,
             } => Self::SessionSetValue {
                 param,
+                declared_type,
                 value,
                 if_not_exists,
                 span,
             },
-            Statement::SessionSetTimeZone { zone, span } => Self::SessionSetTimeZone { zone, span },
+            Statement::SessionSetTimeZone { zone, span, .. } => {
+                Self::SessionSetTimeZone { zone, span }
+            }
+            Statement::SessionSetGraph { target, span } => Self::SessionSetGraph { target, span },
             Statement::SessionReset { target, span } => Self::SessionReset { target, span },
             Statement::SessionClose { span } => Self::SessionClose(span),
         }

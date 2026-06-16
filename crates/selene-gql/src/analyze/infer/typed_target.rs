@@ -5,7 +5,9 @@ use crate::{GqlType, RecordType};
 pub(super) fn is_supported_typed_target(ty: &GqlType) -> bool {
     match ty {
         GqlType::NotNull(inner) => is_supported_typed_target(inner),
-        GqlType::String
+        GqlType::Any
+        | GqlType::AnyProperty
+        | GqlType::String
         | GqlType::CharacterString(_)
         | GqlType::Boolean
         | GqlType::Integer
@@ -47,11 +49,17 @@ pub(super) fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Path
         | GqlType::Null
         | GqlType::Nothing => true,
-        GqlType::List(inner) => is_supported_typed_target(inner),
+        GqlType::List(inner)
+        | GqlType::BoundedList {
+            element_type: inner,
+            ..
+        } => is_supported_typed_target(inner),
+        GqlType::ClosedDynamicUnion(components) => components.iter().all(is_supported_typed_target),
         GqlType::Record(RecordType::Open) => true,
         GqlType::Record(RecordType::Closed(fields)) => {
             fields.iter().all(|(_, ty)| is_supported_typed_target(ty))
         }
-        GqlType::GraphRef | GqlType::NodeRef | GqlType::EdgeRef | GqlType::TableRef => false,
+        GqlType::NodeRef | GqlType::EdgeRef => true,
+        GqlType::GraphRef | GqlType::TableRef(_) => false,
     }
 }

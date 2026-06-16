@@ -40,6 +40,7 @@ pub(crate) fn classify(
         | Statement::Rollback { .. } => StatementCategory::TransactionControl,
         Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => StatementCategory::SessionControl,
     }

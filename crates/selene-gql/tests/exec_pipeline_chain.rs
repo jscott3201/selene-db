@@ -41,26 +41,32 @@ fn chain_replaces_schema_completely_does_not_extend_lhs_columns() {
 
 #[test]
 fn chain_discards_lhs_rows_when_rhs_has_no_input_refs() {
-    let table = execute_read("UNWIND [1, 2, 3] AS a RETURN a NEXT RETURN 9 AS b");
+    let table = execute_read("FOR a IN [1, 2, 3] RETURN a NEXT RETURN 9 AS b");
 
     assert_eq!(column_values(&table, "b"), vec![Value::Int(9)]);
 }
 
 #[test]
-fn correlated_next_returns_planner_not_implemented() {
-    use selene_gql::{EmptyProcedureRegistry, PlannerError, analyze, parse, plan};
+fn correlated_next_runs_rhs_per_input_row() {
+    let table = execute_read("FOR a IN [1, 2] RETURN a NEXT RETURN a + 10 AS b ORDER BY b");
 
-    let parsed = parse("UNWIND [1, 2] AS a RETURN a NEXT RETURN a + 10 AS b").expect("parses");
-    let analyzed = analyze(parsed, &EmptyProcedureRegistry, None).expect("analyzes");
-    let err = plan(&analyzed, &EmptyProcedureRegistry).expect_err("correlated NEXT rejected");
+    assert_eq!(
+        column_values(&table, "b"),
+        vec![Value::Int(11), Value::Int(12)]
+    );
+}
 
-    assert!(matches!(
-        err,
-        PlannerError::NotImplemented {
-            feature: "correlated NEXT (RHS references prior-block bindings)",
-            ..
-        }
-    ));
+#[test]
+fn correlated_next_pattern_sees_prior_bindings() {
+    let table = execute_read(
+        "MATCH (a:Person) RETURN a ORDER BY a.name
+         NEXT MATCH (b:Person) FILTER b = a RETURN b ORDER BY b.name",
+    );
+
+    assert_eq!(
+        exec_common::node_ids_for(&table, "b"),
+        vec![Some(1), Some(2), Some(3)]
+    );
 }
 
 #[test]
@@ -150,8 +156,8 @@ fn chain_rhs_sees_same_snapshot_as_lhs() {
 #[test]
 fn chain_rhs_order_by_limit_uses_rhs_pipeline() {
     let table = execute_read(
-        "UNWIND [3, 1, 2] AS a RETURN a ORDER BY a LIMIT 1 \
-         NEXT UNWIND [2, 1] AS b RETURN b ORDER BY b DESC LIMIT 1",
+        "FOR a IN [3, 1, 2] RETURN a ORDER BY a LIMIT 1 \
+         NEXT FOR b IN [2, 1] RETURN b ORDER BY b DESC LIMIT 1",
     );
 
     assert_eq!(column_values(&table, "b"), vec![Value::Int(2)]);

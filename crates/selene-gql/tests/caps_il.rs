@@ -232,7 +232,7 @@ fn session_set_op_key_cap_flows_to_runtime() {
 
     let err = session
         .execute_source(
-            "UNWIND [1, 2] AS n RETURN n EXCEPT RETURN 99 AS n",
+            "FOR n IN [1, 2] RETURN n EXCEPT RETURN 99 AS n",
             &EmptyProcedureRegistry,
         )
         .expect_err("two distinct keys exceed the set-op key cap of 1");
@@ -264,7 +264,7 @@ fn session_group_by_key_cap_flows_to_runtime() {
 
     let err = session
         .execute_source(
-            "UNWIND [1, 2] AS x RETURN x AS g, count(*) AS c GROUP BY x",
+            "FOR x IN [1, 2] RETURN x AS g, count(*) AS c GROUP BY x",
             &EmptyProcedureRegistry,
         )
         .expect_err("two distinct group keys exceed the group-by cap of 1");

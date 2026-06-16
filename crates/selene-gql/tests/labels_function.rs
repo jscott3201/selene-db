@@ -30,7 +30,7 @@ fn single_value(session: &mut Session<'_>, source: &str) -> Value {
 
 #[test]
 fn labels_expr_parses_as_keyword_function() {
-    let statement = selene_gql::parse("MATCH (n) RETURN LABELS(n) AS labels").unwrap();
+    let statement = selene_gql::parse("MATCH (n) RETURN LABELS(n) AS \"labels\"").unwrap();
     let selene_gql::Statement::Query(pipeline) = statement else {
         panic!("expected query");
     };
@@ -46,7 +46,7 @@ fn labels_expr_parses_as_keyword_function() {
 
 #[test]
 fn labels_expr_formats_as_keyword_function() {
-    let parsed = selene_gql::parse("MATCH (n) RETURN labels(n) AS labels").unwrap();
+    let parsed = selene_gql::parse("MATCH (n) RETURN labels(n) AS \"labels\"").unwrap();
     let formatted = format_read_statement(&parsed).expect("formats");
     assert_eq!(formatted, "MATCH (n)\nRETURN LABELS(n) AS \"labels\"");
     let reparsed = selene_gql::parse(&formatted).expect("formatted source reparses");
@@ -69,7 +69,10 @@ fn labels_returns_sorted_node_labels() {
 
     let mut session = Session::new(&graph);
     assert_eq!(
-        single_value(&mut session, "MATCH (n:Alpha) RETURN LABELS(n) AS labels"),
+        single_value(
+            &mut session,
+            "MATCH (n:Alpha) RETURN LABELS(n) AS \"labels\""
+        ),
         Value::List(vec![
             Value::String(db_string("Alpha")),
             Value::String(db_string("Beta")),
@@ -99,7 +102,7 @@ fn labels_returns_edge_label_singleton() {
     assert_eq!(
         single_value(
             &mut session,
-            "MATCH ()-[e:KNOWS]->() RETURN LABELS(e) AS labels"
+            "MATCH ()-[e:KNOWS]->() RETURN LABELS(e) AS \"labels\""
         ),
         Value::List(vec![Value::String(db_string("KNOWS"))])
     );
@@ -111,11 +114,11 @@ fn labels_propagates_null_and_rejects_non_elements() {
     let mut session = Session::new(&graph);
 
     assert_eq!(
-        single_value(&mut session, "RETURN LABELS(NULL) AS labels"),
+        single_value(&mut session, "RETURN LABELS(NULL) AS \"labels\""),
         Value::Null
     );
     let err = session
-        .execute_source("RETURN LABELS(1) AS labels", &EmptyProcedureRegistry)
+        .execute_source("RETURN LABELS(1) AS \"labels\"", &EmptyProcedureRegistry)
         .expect_err("non-element LABELS argument rejects");
     assert_eq!(err.gqlstatus().as_str(), "22G03");
 }
@@ -127,13 +130,13 @@ fn labels_returns_empty_for_unknown_element_reference() {
 
     session.bind_parameter(db_string("node"), Value::NodeRef(NodeId::new(999)));
     assert_eq!(
-        single_value(&mut session, "RETURN LABELS($node) AS labels"),
+        single_value(&mut session, "RETURN LABELS($node) AS \"labels\""),
         Value::List(Vec::new())
     );
 
     session.bind_parameter(db_string("edge"), Value::EdgeRef(EdgeId::new(999)));
     assert_eq!(
-        single_value(&mut session, "RETURN LABELS($edge) AS labels"),
+        single_value(&mut session, "RETURN LABELS($edge) AS \"labels\""),
         Value::List(Vec::new())
     );
 }

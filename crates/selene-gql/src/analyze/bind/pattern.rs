@@ -64,7 +64,7 @@ fn is_selective(selector: Option<PathSelector>) -> bool {
     matches!(
         selector,
         Some(
-            PathSelector::Any
+            PathSelector::Any { .. }
                 | PathSelector::AnyShortest
                 | PathSelector::AllShortest
                 | PathSelector::CountedShortest { .. }

@@ -1,13 +1,19 @@
 //! GQL type-name builders.
 
+mod approximate_numeric;
+mod dynamic_union;
+mod exact_numeric;
+mod list;
+mod strings;
+mod temporal;
+
 use pest::iterators::Pair;
-use selene_core::feature_register::FeatureId;
+use selene_core::{DbString, feature_register::FeatureId};
 
 use crate::{
     ast::{
-        ByteStringType, ByteStringTypeForm, CharacterStringType, CharacterStringTypeForm,
-        DecimalType, GqlType, MAX_BYTE_STRING_TYPE_LENGTH, MAX_CHARACTER_STRING_TYPE_LENGTH,
-        MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE, RecordType, SourceSpan,
+        BindingTableType, DecimalType, GqlType, MAX_DECIMAL_PRECISION, MAX_DECIMAL_SCALE,
+        RecordType, SourceSpan,
     },
     error::ParserError,
     parser::MAX_NESTING_DEPTH,
@@ -25,8 +31,13 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
 fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
     debug_assert!(matches!(
         pair.as_rule(),
-        Rule::type_name | Rule::type_name_base
+        Rule::type_name
+            | Rule::infix_type_name
+            | Rule::type_name_primary
+            | Rule::type_name_base
+            | Rule::prefixed_closed_dynamic_union_type
     ));
+    let pair_rule = pair.as_rule();
     let source_span = span(&pair);
     if depth > MAX_NESTING_DEPTH {
         return Err(ParserError::NestingLimitExceeded {
@@ -35,18 +46,75 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         });
     }
 
-    if pair.as_rule() == Rule::type_name {
+    if pair_rule == Rule::type_name {
         let mut children = pair.into_inner();
         let base = children.next().ok_or_else(|| {
             ParserError::syntax("type name is missing base type", source_span, None)
         })?;
-        let has_not_null = children.any(|child| child.as_rule() == Rule::type_not_null);
-        let ty = build_type_name_with_depth(base, depth)?;
-        return Ok(if has_not_null {
-            GqlType::NotNull(Box::new(ty))
+        if children.next().is_some() {
+            return Err(ParserError::syntax(
+                "type name has unexpected trailing terms",
+                source_span,
+                None,
+            ));
+        }
+        return build_type_name_with_depth(base, depth);
+    }
+
+    if pair_rule == Rule::infix_type_name {
+        let mut children = pair.into_inner();
+        let first = children.next().ok_or_else(|| {
+            ParserError::syntax("type name is missing base type", source_span, None)
+        })?;
+        let Some(second) = children.next() else {
+            return build_type_name_with_depth(first, depth);
+        };
+        let mut components = vec![first, second];
+        components.extend(children);
+        return dynamic_union::build_closed_dynamic_union_components(
+            components,
+            depth + 1,
+            source_span,
+        );
+    }
+
+    if pair_rule == Rule::type_name_primary {
+        let mut children = pair.into_inner();
+        let base = children.next().ok_or_else(|| {
+            ParserError::syntax("type name is missing base type", source_span, None)
+        })?;
+        let mut ty = build_type_name_with_depth(base, depth)?;
+        let mut suffix_depth = depth;
+        let mut outer_not_null = false;
+        for child in children {
+            match child.as_rule() {
+                Rule::postfix_list_suffix => {
+                    suffix_depth += 1;
+                    if suffix_depth > MAX_NESTING_DEPTH {
+                        return Err(ParserError::NestingLimitExceeded {
+                            limit: MAX_NESTING_DEPTH,
+                            span: span(&child),
+                        });
+                    }
+                    let child_span = span(&child);
+                    let (element_not_null, max_len) = list::build_postfix_list_suffix(child)?;
+                    if element_not_null {
+                        ty = apply_not_null(ty, child_span)?;
+                    }
+                    ty = list::build_list_type(ty, max_len);
+                }
+                Rule::type_not_null => outer_not_null = true,
+                _ => return Err(unexpected_pair(child, "expected type-name suffix")),
+            }
+        }
+        return Ok(if outer_not_null {
+            apply_not_null(ty, source_span)?
         } else {
             ty
         });
+    }
+    if pair_rule == Rule::prefixed_closed_dynamic_union_type {
+        return dynamic_union::build_closed_dynamic_union_type_name(pair, depth, source_span);
     }
 
     // Match the raw token sequence case- and whitespace-insensitively rather
@@ -75,114 +143,101 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     {
         return build_decimal_precision_type_name(decimal_precision, source_span);
     }
-    if keyword_tokens_eq(text, &["FLOAT16"]) {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV20,
-            display_name: "16 bit floating point numbers",
-            span: source_span,
-            hint: "FLOAT16 is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
-        });
+    if let Some(exact_numeric_type) = exact_numeric::build_keyword_type_name(&pair)? {
+        return Ok(exact_numeric_type);
     }
-    if keyword_tokens_eq(text, &["UINT256"]) || keyword_tokens_eq(text, &["UNSIGNED", "INTEGER256"])
+    if let Some(approximate_numeric_type) = approximate_numeric::build_keyword_type_name(&pair)? {
+        return Ok(approximate_numeric_type);
+    }
+    if let Some(character_string_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::character_string_type)
     {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV15,
-            display_name: "256 bit unsigned integer numbers",
-            span: source_span,
-            hint: "UINT256 is outside the selene-db v1.0 claim list",
-        });
+        return strings::build_character_string_type_name(character_string_type, source_span);
     }
-    if keyword_tokens_eq(text, &["INT256"])
-        || keyword_tokens_eq(text, &["INTEGER256"])
-        || keyword_tokens_eq(text, &["SIGNED", "INTEGER256"])
+    if let Some(byte_string_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::byte_string_type)
     {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV16,
-            display_name: "256 bit signed integer numbers",
-            span: source_span,
-            hint: "INT256 is outside the selene-db v1.0 claim list",
-        });
+        return strings::build_byte_string_type_name(byte_string_type, source_span);
     }
-    if keyword_tokens_eq(text, &["FLOAT128"]) {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV25,
-            display_name: "128 bit floating point numbers",
-            span: source_span,
-            hint: "FLOAT128 is outside the selene-db v1.0 claim list",
-        });
-    }
-    if keyword_tokens_eq(text, &["FLOAT256"]) {
-        return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV26,
-            display_name: "256 bit floating point numbers",
-            span: source_span,
-            hint: "FLOAT256 is outside the selene-db v1.0 claim list",
-        });
-    }
-    if keyword_starts_with(text, "BYTES")
-        || keyword_starts_with(text, "BINARY")
-        || keyword_starts_with(text, "VARBINARY")
-    {
-        return build_byte_string_type_name(text, source_span);
-    }
-    if keyword_starts_with(text, "STRING")
-        || keyword_starts_with(text, "CHAR")
-        || keyword_starts_with(text, "VARCHAR")
-    {
-        return build_character_string_type_name(text, source_span);
+    if let Some(temporal_type) = temporal::build_keyword_type_name(&pair) {
+        return Ok(temporal_type);
     }
     if keyword_starts_with(text, "DURATION") {
-        return build_duration_type_name(pair);
+        return temporal::build_duration_type_name(pair);
     }
-    if keyword_starts_with(text, "LIST") {
-        let inner = pair
-            .into_inner()
-            .find(|child| child.as_rule() == Rule::type_name)
-            .ok_or_else(|| {
-                ParserError::syntax("LIST type is missing element type", source_span, None)
-            })?;
-        return Ok(GqlType::List(Box::new(build_type_name_with_depth(
-            inner,
-            depth + 1,
-        )?)));
+    if let Some(binding_table_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::binding_table_type)
+    {
+        return build_binding_table_type_name(binding_table_type, depth);
+    }
+    if let Some(open_reference_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::open_reference_value_type)
+    {
+        return build_open_reference_value_type_name(open_reference_type);
+    }
+    if let Some(dynamic_union_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::dynamic_union_type)
+    {
+        return dynamic_union::build_open_dynamic_union_type_name(dynamic_union_type, source_span);
+    }
+    if let Some(list_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::angle_list_type)
+    {
+        let mut inner_type = None;
+        let mut max_len = None;
+        for child in list_type.into_inner() {
+            match child.as_rule() {
+                Rule::list_value_type_name_synonym => {}
+                Rule::type_name => {
+                    inner_type = Some(build_type_name_with_depth(child, depth + 1)?);
+                }
+                Rule::list_max_cardinality => {
+                    max_len = Some(list::build_list_max_cardinality(child)?);
+                }
+                _ => return Err(unexpected_pair(child, "unexpected list type child")),
+            }
+        }
+        let inner_type = inner_type.ok_or_else(|| {
+            ParserError::syntax("list type is missing element type", source_span, None)
+        })?;
+        return Ok(list::build_list_type(inner_type, max_len));
+    }
+    if let Some(list_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::bare_list_type)
+    {
+        let mut max_len = None;
+        for child in list_type.into_inner() {
+            match child.as_rule() {
+                Rule::list_value_type_name_synonym => {}
+                Rule::list_max_cardinality => {
+                    max_len = Some(list::build_list_max_cardinality(child)?);
+                }
+                _ => return Err(unexpected_pair(child, "unexpected bare list type child")),
+            }
+        }
+        return Ok(list::build_list_type(GqlType::Any, max_len));
     }
 
-    if keyword_starts_with(text, "RECORD") {
-        // Per ISO 39075:2024 section18.9 <record type> / <field types specification> +
-        // section18.10 <field type>: a braced `RECORD { a :: INT }` is a closed record
-        // type; bare `RECORD` (no fields) is the open record type. Field names are
-        // user-controlled; construction applies the per-string byte cap (IL013).
-        let mut fields = Vec::new();
-        for field in pair
-            .into_inner()
-            .filter(|child| child.as_rule() == Rule::record_field_type)
-        {
-            let field_span = span(&field);
-            let mut children = field.into_inner();
-            let name_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("record field type is missing name", field_span, None)
-            })?;
-            let type_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("record field type is missing type", field_span, None)
-            })?;
-            let name = db_string_pair(name_pair)?;
-            if fields
-                .iter()
-                .any(|(existing_name, _)| existing_name == &name)
-            {
-                return Err(ParserError::syntax(
-                    format!("duplicate record field type name: {}", name.as_str()),
-                    field_span,
-                    Some("each closed RECORD type field name must be declared once".into()),
-                ));
-            }
-            fields.push((name, build_type_name_with_depth(type_pair, depth + 1)?));
-        }
-        return Ok(if fields.is_empty() {
-            GqlType::Record(RecordType::Open)
-        } else {
-            GqlType::Record(RecordType::Closed(fields))
-        });
+    if let Some(record_type) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::record_type)
+    {
+        return build_record_type_name(record_type, depth);
     }
 
     // Scalar / reference type names, matched token-wise (case- and
@@ -239,15 +294,42 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         (&["REAL"], GqlType::Real),
         (&["DOUBLE"], GqlType::Double),
         (&["DOUBLE", "PRECISION"], GqlType::Double),
+        (&["ANY"], GqlType::Any),
+        (&["ANY", "VALUE"], GqlType::Any),
+        (&["PROPERTY", "VALUE"], GqlType::AnyProperty),
+        (&["ANY", "PROPERTY", "VALUE"], GqlType::AnyProperty),
         (&["UUID"], GqlType::Uuid),
         (&["JSON"], GqlType::Json),
         (&["VECTOR"], GqlType::Vector),
         (&["BYTEA"], GqlType::Bytes),
+        (
+            &["TIMESTAMP", "WITH", "TIME", "ZONE"],
+            GqlType::ZonedDateTime,
+        ),
+        (
+            &["TIMESTAMP", "WITHOUT", "TIME", "ZONE"],
+            GqlType::LocalDateTime,
+        ),
+        (&["TIMESTAMP"], GqlType::LocalDateTime),
+        (&["TIME", "WITH", "TIME", "ZONE"], GqlType::ZonedTime),
+        (&["TIME", "WITHOUT", "TIME", "ZONE"], GqlType::LocalTime),
         (&["ZONED", "DATETIME"], GqlType::ZonedDateTime),
         (&["LOCAL", "DATETIME"], GqlType::LocalDateTime),
         (&["ZONED", "TIME"], GqlType::ZonedTime),
         (&["LOCAL", "TIME"], GqlType::LocalTime),
         (&["DATE"], GqlType::Date),
+        (&["ANY", "PROPERTY", "GRAPH"], GqlType::GraphRef),
+        (&["PROPERTY", "GRAPH"], GqlType::GraphRef),
+        (&["ANY", "GRAPH"], GqlType::GraphRef),
+        (&["GRAPH"], GqlType::GraphRef),
+        (&["ANY", "NODE"], GqlType::NodeRef),
+        (&["NODE"], GqlType::NodeRef),
+        (&["ANY", "VERTEX"], GqlType::NodeRef),
+        (&["VERTEX"], GqlType::NodeRef),
+        (&["ANY", "EDGE"], GqlType::EdgeRef),
+        (&["EDGE"], GqlType::EdgeRef),
+        (&["ANY", "RELATIONSHIP"], GqlType::EdgeRef),
+        (&["RELATIONSHIP"], GqlType::EdgeRef),
         (&["PATH"], GqlType::Path),
         (&["NULL"], GqlType::Null),
         (&["NOTHING"], GqlType::Nothing),
@@ -263,33 +345,123 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     ))
 }
 
-fn build_character_string_type_name(text: &str, span: SourceSpan) -> Result<GqlType, ParserError> {
-    if !text.contains('(') {
-        if keyword_tokens_eq(text, &["CHAR"]) {
-            return character_string_type(1, 1, CharacterStringTypeForm::CharFixed, span);
+fn build_open_reference_value_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
+    let source_span = span(&pair);
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::any_value_type_kw | Rule::property_type_kw => {}
+            Rule::graph_kw => return Ok(GqlType::GraphRef),
+            Rule::node_synonym => return Ok(GqlType::NodeRef),
+            Rule::edge_synonym => return Ok(GqlType::EdgeRef),
+            _ => {
+                return Err(unexpected_pair(
+                    child,
+                    "unexpected open reference value type child",
+                ));
+            }
         }
-        return Ok(GqlType::String);
     }
-    let lengths = parse_string_type_lengths(text, span, "character string")?;
-    if keyword_starts_with(text, "CHAR") {
-        let [length] = string_type_single_length(&lengths, span, "character string")?;
-        return character_string_type(length, length, CharacterStringTypeForm::CharFixed, span);
-    }
-    if keyword_starts_with(text, "VARCHAR") {
-        let [max] = string_type_single_length(&lengths, span, "character string")?;
-        return character_string_type(0, max, CharacterStringTypeForm::VarcharMax, span);
-    }
-    match lengths.as_slice() {
-        [max] => character_string_type(0, *max, CharacterStringTypeForm::StringMax, span),
-        [min, max] => {
-            character_string_type(*min, *max, CharacterStringTypeForm::StringMinMax, span)
-        }
-        _ => Err(ParserError::syntax(
-            "character string type expects one or two length bounds",
+    Err(ParserError::syntax(
+        "open reference value type is missing reference kind",
+        source_span,
+        None,
+    ))
+}
+
+fn apply_not_null(ty: GqlType, span: SourceSpan) -> Result<GqlType, ParserError> {
+    match ty {
+        GqlType::Null => Ok(GqlType::Nothing),
+        GqlType::Nothing => Err(ParserError::syntax(
+            "NOTHING is already the non-null empty type",
             span,
-            None,
+            Some("use NOTHING, or write NULL NOT NULL for the ISO empty type".into()),
         )),
+        other => Ok(GqlType::NotNull(Box::new(other))),
     }
+}
+
+fn build_record_type_name(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
+    // Per ISO/IEC 39075:2024 §18.9, bare `RECORD` and `ANY RECORD` are open
+    // record types. A field-types specification, even `{}`, is a closed record
+    // type; field syntax itself is §18.10 `<field type>` (`name :: type`).
+    for child in pair.into_inner() {
+        if child.as_rule() != Rule::field_types_specification {
+            continue;
+        }
+        return Ok(GqlType::Record(RecordType::Closed(
+            build_field_types_specification(
+                child,
+                depth,
+                "duplicate record field type name",
+                "each closed RECORD type field name must be declared once",
+            )?,
+        )));
+    }
+    Ok(GqlType::Record(RecordType::Open))
+}
+
+fn build_binding_table_type_name(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
+    let source_span = span(&pair);
+    let field_spec = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::field_types_specification)
+        .ok_or_else(|| {
+            ParserError::syntax(
+                "binding table type is missing field types specification",
+                source_span,
+                Some("write TABLE { column :: TYPE, ... }".into()),
+            )
+        })?;
+    Ok(GqlType::TableRef(BindingTableType::Closed(
+        build_field_types_specification(
+            field_spec,
+            depth,
+            "duplicate binding table field type name",
+            "each TABLE field name must be declared once",
+        )?,
+    )))
+}
+
+fn build_field_types_specification(
+    pair: Pair<'_, Rule>,
+    depth: u32,
+    duplicate_message: &'static str,
+    duplicate_hint: &'static str,
+) -> Result<Vec<(DbString, GqlType)>, ParserError> {
+    let mut fields = Vec::new();
+    for field in pair
+        .into_inner()
+        .filter(|field| field.as_rule() == Rule::record_field_type)
+    {
+        let field_span = span(&field);
+        let mut name_pair = None;
+        let mut type_pair = None;
+        for child in field.into_inner() {
+            match child.as_rule() {
+                Rule::prop_ident => name_pair = Some(child),
+                Rule::typed_marker => {}
+                Rule::type_name => type_pair = Some(child),
+                _ => return Err(unexpected_pair(child, "unexpected field type child")),
+            }
+        }
+        let name_pair = name_pair
+            .ok_or_else(|| ParserError::syntax("field type is missing name", field_span, None))?;
+        let type_pair = type_pair
+            .ok_or_else(|| ParserError::syntax("field type is missing type", field_span, None))?;
+        let name = db_string_pair(name_pair)?;
+        if fields
+            .iter()
+            .any(|(existing_name, _)| existing_name == &name)
+        {
+            return Err(ParserError::syntax(
+                format!("{duplicate_message}: {}", name.as_str()),
+                field_span,
+                Some(duplicate_hint.into()),
+            ));
+        }
+        fields.push((name, build_type_name_with_depth(type_pair, depth + 1)?));
+    }
+    Ok(fields)
 }
 
 fn build_integer_precision_type_name(
@@ -438,14 +610,14 @@ fn float_precision_type(
             feature_id: FeatureId::GV25,
             display_name: "128 bit floating point numbers",
             span,
-            hint: "this precision/scale request requires FLOAT128, which is outside the selene-db v1.0 claim list",
+            hint: "this precision/scale request requires FLOAT128, which is outside the selene-db D1 claim list",
         });
     }
     Err(ParserError::UnsupportedFeature {
         feature_id: FeatureId::GV26,
         display_name: "256 bit floating point numbers",
         span,
-        hint: "this precision/scale request requires FLOAT256 or a floating-point type wider than FLOAT128, which is outside the selene-db v1.0 claim list",
+        hint: "this precision/scale request requires FLOAT256 or a floating-point type wider than FLOAT128, which is outside the selene-db D1 claim list",
     })
 }
 
@@ -460,7 +632,7 @@ fn signed_integer_precision_type(precision: u16, span: SourceSpan) -> Result<Gql
             feature_id: FeatureId::GV16,
             display_name: "256 bit signed integer numbers",
             span,
-            hint: "this precision requires a signed integer wider than INT128, which is outside the selene-db v1.0 claim list",
+            hint: "this precision requires a signed integer wider than INT128, which is outside the selene-db D1 claim list",
         }),
     }
 }
@@ -479,153 +651,7 @@ fn unsigned_integer_precision_type(
             feature_id: FeatureId::GV15,
             display_name: "256 bit unsigned integer numbers",
             span,
-            hint: "this precision requires an unsigned integer wider than UINT128, which is outside the selene-db v1.0 claim list",
+            hint: "this precision requires an unsigned integer wider than UINT128, which is outside the selene-db D1 claim list",
         }),
     }
-}
-
-fn build_duration_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
-    let qualifier = pair
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::duration_type)
-        .and_then(|duration| {
-            duration
-                .into_inner()
-                .find(|child| child.as_rule() == Rule::temporal_duration_qualifier)
-        });
-    let Some(qualifier) = qualifier else {
-        return Ok(GqlType::Duration);
-    };
-    Ok(match qualifier.as_str().to_ascii_uppercase().as_str() {
-        "YEAR TO MONTH" => GqlType::DurationYearToMonth,
-        "DAY TO SECOND" => GqlType::DurationDayToSecond,
-        _ => unreachable!("grammar restricts temporal_duration_qualifier"),
-    })
-}
-
-fn build_byte_string_type_name(text: &str, span: SourceSpan) -> Result<GqlType, ParserError> {
-    if !text.contains('(') {
-        return Ok(GqlType::Bytes);
-    }
-    let lengths = parse_string_type_lengths(text, span, "byte string")?;
-    if keyword_starts_with(text, "BINARY") {
-        let [length] = byte_string_single_length(&lengths, span)?;
-        return byte_string_type(length, length, ByteStringTypeForm::BinaryFixed, span);
-    }
-    if keyword_starts_with(text, "VARBINARY") {
-        let [max] = byte_string_single_length(&lengths, span)?;
-        return byte_string_type(0, max, ByteStringTypeForm::VarbinaryMax, span);
-    }
-    match lengths.as_slice() {
-        [max] => byte_string_type(0, *max, ByteStringTypeForm::BytesMax, span),
-        [min, max] => byte_string_type(*min, *max, ByteStringTypeForm::BytesMinMax, span),
-        _ => Err(ParserError::syntax(
-            "byte string type expects one or two length bounds",
-            span,
-            None,
-        )),
-    }
-}
-
-fn parse_string_type_lengths(
-    text: &str,
-    span: SourceSpan,
-    kind: &'static str,
-) -> Result<Vec<u64>, ParserError> {
-    let open = text.find('(').ok_or_else(|| {
-        ParserError::syntax(format!("{kind} type is missing length bounds"), span, None)
-    })?;
-    let close = text.rfind(')').ok_or_else(|| {
-        ParserError::syntax(
-            format!("{kind} type is missing closing parenthesis"),
-            span,
-            None,
-        )
-    })?;
-    text[open + 1..close]
-        .split(',')
-        .map(str::trim)
-        .map(|part| {
-            part.parse::<u64>().map_err(|_| {
-                ParserError::syntax(format!("{kind} length exceeds supported range"), span, None)
-            })
-        })
-        .collect()
-}
-
-fn byte_string_single_length(lengths: &[u64], span: SourceSpan) -> Result<[u64; 1], ParserError> {
-    string_type_single_length(lengths, span, "byte string")
-}
-
-fn string_type_single_length(
-    lengths: &[u64],
-    span: SourceSpan,
-    kind: &'static str,
-) -> Result<[u64; 1], ParserError> {
-    match lengths {
-        [length] => Ok([*length]),
-        _ => Err(ParserError::syntax(
-            format!("{kind} type expects exactly one length bound"),
-            span,
-            None,
-        )),
-    }
-}
-
-fn character_string_type(
-    min_len: u64,
-    max_len: u64,
-    form: CharacterStringTypeForm,
-    span: SourceSpan,
-) -> Result<GqlType, ParserError> {
-    // Fixed-length coercion pads values up to `min_len`, so an unbounded
-    // declared length is an allocation primitive in read-only statements.
-    // Checking `max_len` alone is sufficient: `new` rejects min > max.
-    if max_len > MAX_CHARACTER_STRING_TYPE_LENGTH {
-        return Err(ParserError::syntax(
-            "character string length exceeds the implementation-defined maximum",
-            span,
-            Some(format!(
-                "selene-db currently supports declared character string lengths up to {MAX_CHARACTER_STRING_TYPE_LENGTH} characters"
-            )),
-        ));
-    }
-    CharacterStringType::new(min_len, max_len, form)
-        .map(GqlType::CharacterString)
-        .ok_or_else(|| {
-            ParserError::syntax(
-                "character string length bounds require max > 0 and min <= max",
-                span,
-                None,
-            )
-        })
-}
-
-fn byte_string_type(
-    min_len: u64,
-    max_len: u64,
-    form: ByteStringTypeForm,
-    span: SourceSpan,
-) -> Result<GqlType, ParserError> {
-    // Fixed-length coercion zero-pads values up to `min_len`, so an unbounded
-    // declared length is an allocation primitive in read-only statements.
-    // Checking `max_len` alone is sufficient: `new` rejects min > max.
-    if max_len > MAX_BYTE_STRING_TYPE_LENGTH {
-        return Err(ParserError::syntax(
-            "byte string length exceeds the implementation-defined maximum",
-            span,
-            Some(format!(
-                "selene-db currently supports declared byte string lengths up to {MAX_BYTE_STRING_TYPE_LENGTH} bytes"
-            )),
-        ));
-    }
-    ByteStringType::new(min_len, max_len, form)
-        .map(GqlType::ByteString)
-        .ok_or_else(|| {
-            ParserError::syntax(
-                "byte string length bounds require max > 0 and min <= max",
-                span,
-                None,
-            )
-        })
 }

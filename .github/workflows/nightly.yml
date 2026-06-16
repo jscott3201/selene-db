@@ -4,14 +4,18 @@
 # per CI spend triage 2026-05-24:
 #
 #   - clippy + test on macos-latest   (dev-host validation; 10x billing on PR)
-#   - parse-fuzz (1h soak)            (was 60s/PR floor; nightly soak is better
-#                                      coverage for the same workload class)
+#   - parse-fuzz (15m soak)           (was 60s/PR floor; nightly soak is better
+#                                      coverage without 1h runner spend)
 #
 # Triggers:
 #   - schedule  06:30 UTC daily       (catches deps that didn't change between
 #                                      merges but accumulate drift over time)
 #   - push:main                       (post-merge double-check of main)
 #   - workflow_dispatch               (on-demand)
+#
+# Nightly jobs are canonical-repository-only. Forks, redirects, and legacy
+# repository homes should not spend Actions minutes or report authoritative
+# health for selene-db.
 #
 # Security notes:
 #   - No `${{ github.event.* }}` interpolations appear in any `run:` command;
@@ -42,6 +46,7 @@ permissions:
 
 jobs:
   clippy-macos:
+    if: github.repository == 'jscott3201/selene-db'
     name: clippy (macos-latest)
     runs-on: macos-latest
     steps:
@@ -54,6 +59,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test-macos:
+    if: github.repository == 'jscott3201/selene-db'
     name: test (macos-latest)
     runs-on: macos-latest
     env:
@@ -76,6 +82,7 @@ jobs:
   # closes that gap by re-running audit against current Cargo.lock every day
   # with a fresh advisory-db.
   audit:
+    if: github.repository == 'jscott3201/selene-db'
     name: cargo-audit (advisory-db drift)
     runs-on: ubuntu-latest
     steps:
@@ -91,7 +98,8 @@ jobs:
       - run: cargo audit --color always
 
   parse-fuzz:
-    name: parse-fuzz (1h soak)
+    if: github.repository == 'jscott3201/selene-db'
+    name: parse-fuzz (parse, batch, round-trip soak)
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     runs-on: ubuntu-latest
     steps:
@@ -107,13 +115,26 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: crates/selene-gql/fuzz/corpus
-          key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql') }}
+          key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql', 'crates/selene-gql/fuzz/fuzz_targets/**') }}
           restore-keys: gql-fuzz-corpus-${{ runner.os }}-
       - name: seed parse corpus
         run: |
-          mkdir -p crates/selene-gql/fuzz/corpus/parse_gql
+          mkdir -p \
+            crates/selene-gql/fuzz/corpus/parse_gql \
+            crates/selene-gql/fuzz/corpus/parse_many_gql \
+            crates/selene-gql/fuzz/corpus/round_trip
           find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/parse_gql/ \;
-      - name: fuzz parser (1h soak)
+          find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/round_trip/ \;
+          cat > crates/selene-gql/fuzz/corpus/parse_many_gql/basic-batch.gql <<'EOF'
+          RETURN 1 AS n; RETURN 2 AS n
+          EOF
+          cat > crates/selene-gql/fuzz/corpus/parse_many_gql/mixed-batch.gql <<'EOF'
+          CREATE NODE TYPE :Person (name STRING); INSERT (:Person {name: 'Alice'}) FINISH; MATCH (n:Person) RETURN n
+          EOF
+          cat > crates/selene-gql/fuzz/corpus/parse_many_gql/semicolon-delimiters.gql <<'EOF'
+          RETURN 'a;b' AS value; /* c;d */ RETURN @"x;y" AS quoted
+          EOF
+      - name: fuzz parser (15m soak)
         working-directory: crates/selene-gql/fuzz
         # -timeout=20 caps per-input parse time at 20s. The default (1200s)
         # silently tolerated the super-linear bracket-backtracking blow-up; a
@@ -123,13 +144,24 @@ jobs:
         # reach the zero-delimiter deep-recursion crash thresholds (a sign/NOT
         # chain only crashes in the thousands-to-tens-of-thousands of bytes); the
         # default could never generate an input long enough to trip them.
-        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=3600 -timeout=20 -max_len=65536
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=900 -timeout=20 -max_len=65536
+      - name: fuzz batch parser (2m soak)
+        working-directory: crates/selene-gql/fuzz
+        # parse_many_gql covers the semicolon-boundary scanner and span-rebase
+        # path around the same single-statement parser guarded above.
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_many_gql -- -max_total_time=120 -timeout=20 -max_len=65536
+      - name: fuzz formatter round trip (2m soak)
+        working-directory: crates/selene-gql/fuzz
+        # round_trip exercises parse -> AST format -> parse -> structural
+        # equality, catching formatter/AST drift that parse-only fuzz cannot.
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu round_trip -- -max_total_time=120 -timeout=20 -max_len=65536
 
   persist-decode-fuzz:
+    if: github.repository == 'jscott3201/selene-db'
     name: persist-decode-fuzz (short soak)
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     # One job runs the four crash-recovery decoder targets sequentially (60s
-    # each). The budget is intentionally modest, not a 1h soak like the parser:
+    # each). The budget is intentionally modest, shorter than the parser soak:
     # these decoders are small, linear, fixed-layout readers with no deep state
     # space, so coverage saturates fast; a long soak would just burn runner
     # minutes. The cached corpus carries discovered inputs forward across nights.

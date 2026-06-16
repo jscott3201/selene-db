@@ -3,6 +3,8 @@
 //! diffs, and error mapping. Split from the parent operator file to keep both
 //! under the repository 700-LOC cap; reached only through `super::mutation`.
 
+use smallvec::SmallVec;
+
 use super::*;
 
 #[derive(Clone, Copy)]
@@ -192,7 +194,7 @@ pub(super) fn extend_schema(
     Ok(())
 }
 
-pub(super) fn set_output_value(values: &mut Vec<Value>, column_index: u32, value: Value) {
+pub(super) fn set_output_value(values: &mut SmallVec<[Value; 8]>, column_index: u32, value: Value) {
     let column_index = column_index as usize;
     values.resize(column_index + 1, Value::Null);
     values[column_index] = value;

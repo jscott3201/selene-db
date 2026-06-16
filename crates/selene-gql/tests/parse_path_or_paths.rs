@@ -121,22 +121,34 @@ fn path_or_paths_is_accepted_in_a_data_modifying_match() {
 }
 
 #[test]
-fn path_variable_named_path_or_paths_is_preserved() {
-    // Codex (PR #244, P2): PATH/PATHS stay non-reserved, so a path variable literally
-    // named `path` / `paths` must win over the optional G014 keyword. The `!("=")`
-    // guard releases it to path_var_binding (`ident ~ "="`); the keyword is NOT
-    // consumed (flag stays false), mirroring the BINDINGS handling in §16.4.
+fn path_keywords_require_delimited_path_variables() {
+    // PATH/PATHS are ISO §21.3 reserved words. They remain legal path-variable
+    // names only when delimited, and the G014 surface flag stays false because
+    // the quoted identifier is a binding name rather than the optional keyword.
     for source in [
         "MATCH paths = (n) RETURN paths",
         "MATCH path = (n) RETURN path",
         "MATCH ALL paths = (n) RETURN paths",
         "MATCH WALK path = (n) RETURN path",
-        // The same `!("=")` guard applies to the counted-tail <path or paths> site.
         "MATCH SHORTEST 2 paths = (n)-[:K]->(m) RETURN paths",
+    ] {
+        let err = parse(source).expect_err(&format!("{source:?} must be rejected"));
+        assert!(
+            matches!(err, ParserError::SyntaxError { .. }),
+            "expected SyntaxError for {source:?}, got {err:?}"
+        );
+    }
+
+    for source in [
+        "MATCH \"paths\" = (n) RETURN \"paths\"",
+        "MATCH \"path\" = (n) RETURN \"path\"",
+        "MATCH ALL \"paths\" = (n) RETURN \"paths\"",
+        "MATCH WALK \"path\" = (n) RETURN \"path\"",
+        "MATCH SHORTEST 2 \"paths\" = (n)-[:K]->(m) RETURN \"paths\"",
     ] {
         assert!(
             !match_path_or_paths(source),
-            "{source:?} must parse with `path(s)` as the path variable, G014 flag false"
+            "{source:?} must parse with a delimited path variable, G014 flag false"
         );
     }
 }
@@ -346,18 +358,30 @@ fn misplaced_path_or_paths_is_rejected() {
 }
 
 #[test]
-fn path_is_not_reserved_so_stays_usable_as_identifier() {
-    // PATH / PATHS are recognised purely contextually in the trailing match
-    // prefix; they are NOT in the global `keyword` rule, so they remain usable
-    // as ordinary property and variable identifiers.
+fn path_keywords_stay_available_for_properties_and_delimited_identifiers() {
+    // Property keys use `prop_ident`, so keyword-shaped property names remain
+    // available. Binding and alias positions must use delimited identifiers.
     for source in [
         "MATCH (n) RETURN n.path",
         "MATCH (n) RETURN n.paths",
-        "MATCH (path) RETURN path",
-        "MATCH (paths) RETURN paths",
+        "MATCH (\"path\") RETURN \"path\"",
+        "MATCH (\"paths\") RETURN \"paths\"",
     ] {
         parse(source).unwrap_or_else(|err| {
-            panic!("{source:?} must parse (PATH/PATHS not reserved), got {err:?}")
+            panic!("{source:?} must parse with reserved PATH/PATHS usage, got {err:?}")
         });
+    }
+
+    for source in [
+        "MATCH (path) RETURN path",
+        "MATCH (paths) RETURN paths",
+        "RETURN 1 AS path",
+        "RETURN 1 AS paths",
+    ] {
+        let err = parse(source).expect_err(&format!("{source:?} must be rejected"));
+        assert!(
+            matches!(err, ParserError::SyntaxError { .. }),
+            "expected SyntaxError for {source:?}, got {err:?}"
+        );
     }
 }

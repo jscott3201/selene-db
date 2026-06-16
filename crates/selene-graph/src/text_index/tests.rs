@@ -243,6 +243,48 @@ fn text_index_reports_stats_and_memory() {
 }
 
 #[test]
+fn text_index_sparse_label_build_does_not_keep_label_row_capacity() {
+    let graph = SharedGraph::new(GraphId::new(433_901));
+    let doc = db_string("TextSparseDoc");
+    let body = db_string("body");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for row in 0..512 {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&body, Value::Int(i64::from(row))),
+                )
+                .unwrap();
+        }
+        mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent memory"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let index = graph.build_text_index(&doc, &body).unwrap();
+    let usage = index.memory_usage();
+
+    assert_eq!(index.document_count(), 1);
+    assert_eq!(index.posting_count(), 2);
+    assert!(
+        usage.document_length_bytes < 4096,
+        "sparse text index retained {} bytes of document-length capacity",
+        usage.document_length_bytes
+    );
+    assert!(
+        usage.document_term_bytes < 4096,
+        "sparse text index retained {} bytes of document-term capacity",
+        usage.document_term_bytes
+    );
+}
+
+#[test]
 fn text_index_empty_query_and_zero_k_are_empty() {
     let graph = SharedGraph::new(GraphId::new(433_004));
     let doc = db_string("TextIndexedEmptyDoc");

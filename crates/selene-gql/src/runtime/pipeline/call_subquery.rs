@@ -30,6 +30,9 @@ pub(super) fn execute_read_only(
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let target_schema = target_schema(call, &input_schema)?;
         if null_outer_binding_is_plan_pattern_binding(call, &row, &input_schema)? {
+            if call.optional {
+                output.push(optional_output_row(call, &row));
+            }
             continue;
         }
         let seed = seed_binding(call, &row, &input_schema, &target_schema)?;
@@ -39,16 +42,19 @@ pub(super) fn execute_read_only(
             ctx,
         )?;
         let yield_indices = yield_indices(call, inner.schema())?;
+        if call.optional && inner.rows().is_empty() {
+            output.push(optional_output_row(call, &row));
+            continue;
+        }
         for inner_row in inner.rows() {
             ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
-            let mut values = row.values().to_vec();
-            for index in &yield_indices {
-                values.push(inner_row.get(*index).cloned().unwrap_or(Value::Null));
-            }
-            output.push(Binding::with_insert_sites(
-                values,
-                row.insert_sites().iter().copied().collect(),
-            ));
+            output.push(
+                row.with_appended_values(
+                    yield_indices
+                        .iter()
+                        .map(|index| inner_row.get(*index).cloned().unwrap_or(Value::Null)),
+                ),
+            );
         }
     }
 
@@ -62,6 +68,10 @@ fn output_schema(
     let mut schema = input_schema.clone();
     schema.columns.extend(call.yield_schema.clone());
     schema
+}
+
+fn optional_output_row(call: &PlannedTableSubquery, input: &Binding) -> Binding {
+    input.with_appended_values(std::iter::repeat_n(Value::Null, call.yield_schema.len()))
 }
 
 fn target_schema(
@@ -145,6 +155,7 @@ fn op_binds_name(op: &PipelineOp, name: selene_core::DbString) -> bool {
         }
         PipelineOp::Union { rhs, .. }
         | PipelineOp::Chain(rhs)
+        | PipelineOp::CorrelatedChain(rhs)
         | PipelineOp::ExplainPlan { inner: rhs, .. } => plan_binds_name(rhs, name),
         PipelineOp::CallSubquery(subquery) => plan_binds_name(&subquery.body, name),
         _ => false,

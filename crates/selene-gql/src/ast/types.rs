@@ -10,6 +10,12 @@ use selene_core::{
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub enum GqlType {
+    /// `ANY`.
+    Any,
+    /// `PROPERTY VALUE`.
+    AnyProperty,
+    /// Closed dynamic union value type.
+    ClosedDynamicUnion(Vec<GqlType>),
     /// `STRING`.
     String,
     /// Bounded character-string type.
@@ -88,7 +94,9 @@ pub enum GqlType {
     ZonedTime,
     /// `LOCAL TIME`.
     LocalTime,
-    /// `DURATION`.
+    /// Internal broad duration value family.
+    ///
+    /// Parsed duration type names use the qualified variants below.
     Duration,
     /// `DURATION (YEAR TO MONTH)`.
     DurationYearToMonth,
@@ -104,6 +112,13 @@ pub enum GqlType {
     Record(RecordType),
     /// `LIST<T>`.
     List(Box<GqlType>),
+    /// `LIST<T>[n]`.
+    BoundedList {
+        /// Element value type.
+        element_type: Box<GqlType>,
+        /// Maximum list cardinality.
+        max_len: u64,
+    },
     /// Explicitly non-null value type (`<value type> NOT NULL`).
     NotNull(Box<GqlType>),
     /// `PATH`.
@@ -115,11 +130,21 @@ pub enum GqlType {
     /// Edge reference.
     EdgeRef,
     /// Binding-table reference.
-    TableRef,
+    TableRef(BindingTableType),
     /// `NULL`.
     Null,
     /// `NOTHING`.
     Nothing,
+}
+
+/// Binding table type carried by a binding-table reference value type.
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum BindingTableType {
+    /// Internal unconstrained table reference used where a procedure surface
+    /// cannot statically describe the returned table's field set.
+    Any,
+    /// ISO `[BINDING] TABLE <field types specification>`.
+    Closed(Vec<(DbString, GqlType)>),
 }
 
 /// Parsed bounded character-string type metadata.

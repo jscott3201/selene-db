@@ -144,10 +144,6 @@ fn collect_aggregates(
         | ValueExpr::PropertyExists { target, .. } => {
             collect_aggregates(target, analyzed, rewrite)?;
         }
-        ValueExpr::ListAccess { target, index, .. } => {
-            collect_aggregates(target, analyzed, rewrite)?;
-            collect_aggregates(index, analyzed, rewrite)?;
-        }
         ValueExpr::ListLiteral { items, .. }
         | ValueExpr::PathConstructor {
             elements: items, ..
@@ -213,9 +209,7 @@ fn collect_aggregates(
             }
             collect_aggregates(source, analyzed, rewrite)?;
         }
-        ValueExpr::Exists { .. }
-        | ValueExpr::CountSubquery { .. }
-        | ValueExpr::ValueSubquery { .. } => {}
+        ValueExpr::Exists { .. } | ValueExpr::ValueSubquery { .. } => {}
     }
     Ok(())
 }
@@ -260,6 +254,7 @@ fn project_expr(
         expr: rewrite_aggregate_refs(original, aggregate_names, analyzed),
         expr_id,
         ty,
+        declared_type: None,
         alias,
         binding_refs: expr::binding_refs_in(original, analyzed)?,
         span: original.span(),
@@ -287,20 +282,10 @@ fn rewrite_aggregate_refs(
         | ValueExpr::Variable { .. }
         | ValueExpr::Parameter { .. }
         | ValueExpr::Exists { .. }
-        | ValueExpr::CountSubquery { .. }
         | ValueExpr::ValueSubquery { .. } => value.clone(),
         ValueExpr::PropertyAccess { target, key, span } => ValueExpr::PropertyAccess {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
             key: key.clone(),
-            span: *span,
-        },
-        ValueExpr::ListAccess {
-            target,
-            index,
-            span,
-        } => ValueExpr::ListAccess {
-            target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
-            index: Box::new(rewrite_aggregate_refs(index, aggregate_names, analyzed)),
             span: *span,
         },
         ValueExpr::ListLiteral { items, span } => ValueExpr::ListLiteral {
@@ -399,9 +384,15 @@ fn rewrite_aggregate_refs(
             items: rewrite_exprs(items, aggregate_names, analyzed),
             span: *span,
         },
-        ValueExpr::PropertyExists { target, key, span } => ValueExpr::PropertyExists {
+        ValueExpr::PropertyExists {
+            target,
+            key,
+            key_source_kind,
+            span,
+        } => ValueExpr::PropertyExists {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
             key: key.clone(),
+            key_source_kind: *key_source_kind,
             span: *span,
         },
         ValueExpr::Case {

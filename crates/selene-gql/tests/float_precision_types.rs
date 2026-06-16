@@ -35,6 +35,14 @@ fn bind_and_eval(value: Value, source: &str) -> Value {
     first_value_in(&mut session, source)
 }
 
+fn assert_syntax_error(source: &str) {
+    let err = parse(source).expect_err(source);
+    assert!(
+        matches!(err, ParserError::SyntaxError { .. }),
+        "expected syntax error for `{source}`, got {err:?}"
+    );
+}
+
 fn empty_closed_graph(id: u64) -> SharedGraph {
     SharedGraph::builder(GraphId::new(id))
         .bound_to(GraphTypeDef {
@@ -51,6 +59,10 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
 fn specified_float_precision_formats_to_supported_normal_form() {
     for (source, expected) in [
         ("RETURN n IS TYPED FLOAT(1)", "RETURN n IS TYPED FLOAT32"),
+        (
+            "RETURN n IS TYPED FLOAT /* c */ (1)",
+            "RETURN n IS TYPED FLOAT32",
+        ),
         ("RETURN n IS TYPED FLOAT(23)", "RETURN n IS TYPED FLOAT32"),
         ("RETURN n IS TYPED FLOAT(1, 0)", "RETURN n IS TYPED FLOAT32"),
         ("RETURN n IS TYPED FLOAT(24)", "RETURN n IS TYPED FLOAT64"),
@@ -73,6 +85,20 @@ fn specified_float_precision_formats_to_supported_normal_form() {
         assert_eq!(formatted, expected);
         let reparsed = parse(&formatted).expect("formatted source parses");
         assert!(structurally_eq(&parsed, &reparsed), "{source}");
+    }
+}
+
+#[test]
+fn specified_float_precision_keywords_require_boundaries() {
+    for source in [
+        "RETURN n IS TYPED FLOATx(23)",
+        "RETURN n IS TYPED FLOAT32x",
+        "RETURN n IS TYPED FLOAT64x",
+        "RETURN n IS TYPED FLOAT16x",
+        "RETURN n IS TYPED FLOAT128x",
+        "RETURN n IS TYPED FLOAT256x",
+    ] {
+        assert_syntax_error(source);
     }
 }
 
@@ -137,7 +163,7 @@ fn specified_float_precision_lowers_catalog_property_types() {
     let mut session = Session::new(&graph);
     session
         .execute_source(
-            "CREATE NODE TYPE :Metric (small :: FLOAT(23, 7), wide :: FLOAT(24), scaled :: FLOAT(23, 8))",
+            "CREATE NODE TYPE :Metric (\"small\" :: FLOAT(23, 7), wide :: FLOAT(24), scaled :: FLOAT(23, 8))",
             &EmptyProcedureRegistry,
         )
         .expect("catalog DDL executes");
@@ -157,7 +183,7 @@ fn specified_float_precision_lowers_catalog_property_types() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(db_string(
-            "CREATE NODE TYPE :Metric (small :: FLOAT32, wide :: FLOAT, scaled :: FLOAT)"
+            "CREATE NODE TYPE :Metric (\"small\" :: FLOAT32, wide :: FLOAT, scaled :: FLOAT)"
         ))
     );
 }
@@ -171,11 +197,7 @@ fn invalid_or_unsupported_float_precision_reports_honest_parse_errors() {
         "RETURN n IS TYPED FLOAT(10, 1__0)",
         "RETURN n IS TYPED FLOAT(10, 11)",
     ] {
-        let err = parse(source).expect_err(source);
-        assert!(
-            matches!(err, ParserError::SyntaxError { .. }),
-            "expected syntax error for `{source}`, got {err:?}"
-        );
+        assert_syntax_error(source);
     }
 
     for (source, expected_feature) in [

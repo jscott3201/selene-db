@@ -1,0 +1,6 @@
+// corpus: positive
+// feature: GF20
+// expects: parse-ok
+FOR x IN [1, 2]
+RETURN x AS x, count(*) AS c GROUP BY x
+ORDER BY count(*)

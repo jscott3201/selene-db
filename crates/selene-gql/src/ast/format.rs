@@ -15,9 +15,9 @@ use selene_core::DbString;
 use super::format_ident::fmt_ident;
 use crate::ast::{
     EdgeDirection, EdgePattern, GqlType, GraphPattern, InlineProcedureCall, LabelExpr, LimitValue,
-    MatchClause, NodePattern, NullsPolicy, OrderDirection, OrderTerm, PathMode, PatternElement,
-    ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem, Statement, ValueExpr,
-    WithClause,
+    MatchClause, NodePattern, NullsPolicy, OrderDirection, OrderTerm, PathMode, PathSelector,
+    PatternElement, ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem, Statement,
+    ValueExpr, WithClause,
 };
 
 use expr::fmt_expr;
@@ -31,7 +31,9 @@ pub(crate) use type_name::fmt_type as format_gql_type;
 ///
 /// # Errors
 ///
-/// Returns [`FormatError::Unsupported`] for write-side AST surfaces.
+/// Returns [`FormatError::Unsupported`] for write-side AST surfaces and
+/// [`FormatError::Invalid`] for ASTs that violate parser-level syntax
+/// invariants.
 pub fn format_read_statement(stmt: &Statement) -> Result<String, FormatError> {
     validate_formattable(stmt)?;
 
@@ -82,6 +84,7 @@ pub fn format_read_statement(stmt: &Statement) -> Result<String, FormatError> {
         }
         Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => {
             return Err(FormatError::Unsupported {
@@ -116,6 +119,12 @@ pub enum FormatError {
         /// Stable AST variant name.
         variant: &'static str,
     },
+    /// AST violates a syntax invariant enforced by the parser.
+    #[error("AST is not valid GQL: {reason}")]
+    Invalid {
+        /// Stable reason string for the invalid AST shape.
+        reason: &'static str,
+    },
     /// Formatting failed.
     #[error("formatting failed")]
     Fmt(#[from] fmt::Error),
@@ -138,14 +147,33 @@ pub(super) fn fmt_pipeline(out: &mut String, pipeline: &QueryPipeline) -> fmt::R
                     if index > 0 {
                         out.push_str(", ");
                     }
-                    write!(out, "{} = ", fmt_ident(value.alias.clone()))?;
+                    if let Some(declared_type) = &value.declared_type {
+                        write!(
+                            out,
+                            "VALUE {} :: {} = ",
+                            fmt_ident(value.alias.clone()),
+                            fmt_type(declared_type)
+                        )?;
+                    } else {
+                        write!(out, "{} = ", fmt_ident(value.alias.clone()))?;
+                    }
                     fmt_expr(out, &value.value)?;
                 }
             }
-            crate::PipelineStatement::Unwind(value) => {
-                out.push_str("UNWIND ");
+            crate::PipelineStatement::For(value) => {
+                write!(out, "FOR {} IN ", fmt_ident(value.alias.clone()))?;
                 fmt_expr(out, &value.source)?;
-                write!(out, " AS {}", fmt_ident(value.alias.clone()))?;
+                if let Some(position) = &value.position {
+                    match position.kind {
+                        crate::RowExpansionPositionKind::Ordinality => {
+                            out.push_str(" WITH ORDINALITY ");
+                        }
+                        crate::RowExpansionPositionKind::Offset => {
+                            out.push_str(" WITH OFFSET ");
+                        }
+                    }
+                    out.push_str(&fmt_ident(position.alias.clone()));
+                }
             }
             crate::PipelineStatement::Sorting(values) => fmt_order(out, values)?,
             crate::PipelineStatement::Limit(value) => {
@@ -170,15 +198,32 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
         out.push_str("OPTIONAL ");
     }
     out.push_str("MATCH");
-    if let Some(selector) = clause.selector {
-        out.push(' ');
-        fmt_path_selector(out, selector)?;
-    }
+    let selector_consumes_mode_and_paths =
+        if let Some(PathSelector::CountedShortestGroup { groups }) = clause.selector {
+            write!(out, " SHORTEST {groups}")?;
+            if clause.path_mode != PathMode::Walk
+                || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit)
+            {
+                write!(out, " {}", fmt_path_mode(clause.path_mode))?;
+            }
+            if clause.path_or_paths {
+                out.push_str(" PATHS");
+            }
+            out.push_str(" GROUPS");
+            true
+        } else {
+            if let Some(selector) = clause.selector {
+                out.push(' ');
+                fmt_path_selector(out, selector)?;
+            }
+            false
+        };
     if let Some(mode) = clause.match_mode {
         write!(out, " {}", fmt_match_mode(mode))?;
     }
-    if clause.path_mode != PathMode::Walk
-        || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit)
+    if !selector_consumes_mode_and_paths
+        && (clause.path_mode != PathMode::Walk
+            || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit))
     {
         write!(out, " {}", fmt_path_mode(clause.path_mode))?;
     }
@@ -186,7 +231,7 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
     // explicit PATH/PATHS keyword so a parse->format->parse round trip
     // preserves the AST `path_or_paths` flag (mirrors the explicit-WALK
     // handling above). Canonical plural `PATHS` per §16.6 SR1.
-    if clause.path_or_paths {
+    if clause.path_or_paths && !selector_consumes_mode_and_paths {
         out.push_str(" PATHS");
     }
     out.push(' ');
@@ -367,11 +412,15 @@ fn fmt_group_having(
 ) -> fmt::Result {
     if let Some(group_by) = group_by {
         out.push_str(" GROUP BY ");
-        for (index, item) in group_by.iter().enumerate() {
-            if index > 0 {
-                out.push_str(", ");
+        if group_by.is_empty() {
+            out.push_str("()");
+        } else {
+            for (index, item) in group_by.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                fmt_expr(out, item)?;
             }
-            fmt_expr(out, item)?;
         }
     }
     if let Some(having) = having {
@@ -413,6 +462,9 @@ fn fmt_limit(out: &mut String, value: &LimitValue) -> fmt::Result {
 }
 
 fn fmt_call(out: &mut String, call: &ProcedureCall) -> fmt::Result {
+    if call.optional {
+        out.push_str("OPTIONAL ");
+    }
     out.push_str("CALL ");
     for (index, part) in call.name.iter().enumerate() {
         if index > 0 {
@@ -443,14 +495,13 @@ fn fmt_call(out: &mut String, call: &ProcedureCall) -> fmt::Result {
             }
         }
     }
-    if let Some(filter) = &call.yield_filter {
-        out.push_str(" WHERE ");
-        fmt_expr(out, filter)?;
-    }
     Ok(())
 }
 
 fn fmt_inline_call(out: &mut String, call: &InlineProcedureCall) -> fmt::Result {
+    if call.optional {
+        out.push_str("OPTIONAL ");
+    }
     out.push_str("CALL ");
     if let Some(scope) = &call.variable_scope {
         out.push('(');
@@ -468,9 +519,6 @@ fn fmt_inline_call(out: &mut String, call: &InlineProcedureCall) -> fmt::Result 
     if !call.yield_items.is_empty() {
         out.push_str(" YIELD ");
         fmt_yield_items(out, &call.yield_items)?;
-    }
-    if call.in_transactions {
-        out.push_str(" IN TRANSACTIONS");
     }
     Ok(())
 }

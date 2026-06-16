@@ -72,7 +72,7 @@ impl ProcedureRegistry for BindingTableFixtureRegistry {
             ProcedureOutputSchema {
                 columns: vec![ProcedureOutputColumn::new(
                     db_string("t"),
-                    GqlType::TableRef,
+                    GqlType::TableRef(selene_gql::BindingTableType::Any),
                 )],
             },
             ProcedureTier::Graph,
@@ -190,7 +190,7 @@ fn element_id_rejects_wrong_arity() {
 fn element_id_is_stable_for_equality_within_statement() {
     assert_eq!(
         single_value(
-            "MATCH (n:Person) RETURN element_id(n) = element_id(n) AS same LIMIT 1",
+            "MATCH (n:Person) RETURN element_id(n) = element_id(n) AS \"same\" LIMIT 1",
             "same",
         ),
         Value::Bool(true)
@@ -262,7 +262,7 @@ fn cardinality_counts_session_table_parameter() {
 #[test]
 fn cardinality_counts_call_yield_table_ref() {
     let table = execute_with_registry(
-        "UNWIND [0] AS seed CALL selene_test.binding_table_with_rows(7) YIELD t RETURN cardinality(t) AS value",
+        "FOR seed IN [0] CALL selene_test.binding_table_with_rows(7) YIELD t RETURN cardinality(t) AS value",
         &BindingTableFixtureRegistry,
     );
 

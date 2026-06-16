@@ -8,8 +8,8 @@ architecture decisions that shape the workspace.
 selene-db is an embeddable property graph engine for Rust that targets
 ISO/IEC 39075:2024 GQL minimum conformance plus a curated subset of optional
 features. The engine is library-only: no transport, no auth, no server.
-Embedders pull the workspace crates as path dependencies and run the engine
-in-process.
+Embedders depend on the published workspace crates or a local checkout and run
+the engine in-process.
 
 For operational detail on durability and recovery see
 [`persistence-and-recovery.md`](persistence-and-recovery.md). For the GQL
@@ -42,7 +42,7 @@ and is consumed via `[dev-dependencies]`.
 | `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + imbl storage primitives, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
 | `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`, D17). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
 | `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the D20 snapshot harness. Independent of `selene-gql`. |
-| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait (D15), and its sole frozen production impl `BuiltinProcedureRegistry` — 5 platform built-ins (`selene.{health,feature_status,verify,create_index,drop_index}`) + 19 `algo.*` procedures binding `CALL algo.*` directly over the native algorithms API. |
+| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait (D15), and its sole frozen production impl `BuiltinProcedureRegistry` — 46 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
 | `selene-testing` | core, graph (+ algorithms for fixtures) | Shared fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / algorithm corpora. Consumed via `[dev-dependencies]`. |
 
 The dependency graph is intentionally acyclic with a single sink
@@ -102,8 +102,8 @@ AnalysisError>` runs semantic checks: scope resolution, binding decls
 (`ExprTypeTable`), statement-category classification (`ReadOnly`,
 `DataModifying`, `CatalogModifying`, `TransactionControl`), and the mutation
 write set (`MutationWriteSet`, `WriteSetEntry`). The Flagger runs in this
-phase: any construct outside the v1.0 claimed feature register is rejected
-with a `GqlStatus` flag.
+phase: any construct outside the D1 claimed feature register is rejected with
+a `GqlStatus` flag.
 
 ### Plan
 
@@ -307,8 +307,8 @@ in `selene-gql`. It is the plan/execute seam: the planner resolves procedure
 signatures and the executor dispatches calls through a `&dyn
 ProcedureRegistry`. The trait has exactly one frozen production
 implementation — the concrete native `BuiltinProcedureRegistry`
-(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 24
-procedures at construction (the 5 `selene.*` platform built-ins plus the 19
+(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 65
+procedures at construction (the 46 `selene.*` platform built-ins plus the 19
 `algo.*` procedures) and reports a constant `registry_version()` of `0` so
 the CALL plan cache never invalidates. The injectable `&dyn` seam exists for
 the test harness, not for third-party packs: there is no loadable-pack
@@ -335,17 +335,17 @@ referenced from spec files and brief logs throughout the codebase.
 
 ### D1 — Library only
 
-selene-db v1.0 is an embeddable Rust library. No server process, no
-transport, no auth layer. Embedders own the network and policy surfaces.
-This decision is what lets selene-db ship without a wire format claim
-(ISO 39075 clause 4.2.3) and what makes `IW001` / `IW002` (principals and
-authorization) the caller's responsibility.
+selene-db is an embeddable Rust library. No server process, no transport, no
+auth layer. Embedders own the network and policy surfaces. This decision is
+what lets selene-db ship without a wire format claim (ISO 39075 clause 4.2.3)
+and what makes `IW001` / `IW002` (principals and authorization) the caller's
+responsibility.
 
 ### D2 — Strict ISO GQL parser
 
 The query language is ISO/IEC 39075:2024 GQL. No Cypher, no SQL, no SPARQL
-grammar in the parser. Constructs outside the v1.0 claimed feature register
-are rejected by the Flagger at parse time. This eliminates a class of
+grammar in the parser. Constructs outside the D1 claimed feature register are
+rejected by the Flagger at parse time. This eliminates a class of
 "works on Neo4j but not on us" surprises and pins the language surface to
 a stable external standard.
 
@@ -353,8 +353,8 @@ a stable external standard.
 
 A single process can host multiple `SharedGraph` instances side by side,
 each with its own snapshot, write lock, WAL directory, and provider set.
-Cross-graph transactions are out of v1.0 scope (feature `GT03` is not
-claimed). This decision lets embedders run shard-per-graph or
+Cross-graph transactions are outside the current D1 scope (feature `GT03` is
+not claimed). This decision lets embedders run shard-per-graph or
 tenant-per-graph patterns without process-level coordination.
 
 ### D4 — Snapshot isolation by ArcSwap publication
@@ -442,7 +442,7 @@ buffers, which is what the snapshot reader produces.
 
 `CALL` is dispatched through the `ProcedureRegistry` trait, whose sole
 production implementation, `BuiltinProcedureRegistry`, registers its full
-procedure set (24 procedures: 5 `selene.*` platform built-ins + 19 `algo.*`
+procedure set (65 procedures: 46 `selene.*` platform built-ins plus 19 `algo.*`
 procedures) once at construction. The registry is frozen — nothing is added
 or removed after construction, and `registry_version()` is a constant `0` —
 which lets the analyzer and planner trust the registry and keep the CALL plan

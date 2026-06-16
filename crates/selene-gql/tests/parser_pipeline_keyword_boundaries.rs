@@ -1,0 +1,135 @@
+//! Pipeline keyword boundary regression coverage.
+
+use selene_gql::{ParserError, ast::format_read_statement, parse};
+
+#[test]
+fn pipeline_statement_keywords_require_boundaries() {
+    for source in [
+        "LETx = 1 RETURN x",
+        "FORx IN [1] RETURN x",
+        "FOR x INDEX [1] RETURN x",
+        "FOR x IN [1] WITHORDINALITY ord RETURN x",
+        "FOR x IN [1] WITHOFFSET off RETURN x",
+        "WITHx AS x RETURN x",
+        "FILTERWHERE true RETURN true",
+        "FILTERx RETURN x",
+        "RETURN 1 AS x ORDERBY x",
+        "RETURN 1 AS x ORDER BY x DESCNULLS FIRST",
+        "RETURN 1 AS x ORDER BY x NULLSFIRST",
+        "OFFSET1 RETURN 1",
+        "SKIP1 RETURN 1",
+        "LIMIT1 RETURN 1",
+        "RETURNx AS x",
+        "RETURN NO BINDINGSx",
+        "RETURN 1 ASx",
+        "RETURN 1 AS x GROUPBY x",
+        "RETURN 1 AS x HAVINGtrue",
+        "MATCH (n) WHEREtrue RETURN n",
+        "MATCH (n WHEREtrue) RETURN n",
+        "CALL foo() YIELD bar ASbaz RETURN baz",
+        "RETURN CAST(1 ASINT8) AS x",
+        "CALLx()",
+        "CALL pkg.fn() YIELDx",
+        "CALL { RETURN 1 AS x } YIELDx",
+        "SELECTx AS x",
+        "SELECTALL 1 AS x",
+        "SELECT 1 AS x FROMMATCH (n)",
+        "SELECT 1 AS x FROMx",
+        "MATCHx (n) RETURN n",
+        "MATCHOPTIONAL (n) RETURN n",
+        "OPTIONALMATCH (n) RETURN n",
+        "OPTIONALx MATCH (n) RETURN n",
+        "MATCH (n) SETx n.age = 1 FINISH",
+        "MATCH (n) SET n ISx FINISH",
+        "INSERTx (n) FINISH",
+        "INSERT (n) FINISHx",
+        "MATCH (n) REMOVEn.age FINISH",
+        "MATCH (n) REMOVE n ISx FINISH",
+        "MATCH (n) DELETEn FINISH",
+        "MATCH (n) DETACHDELETE n FINISH",
+        "MATCH (n) DETACH DELETEn FINISH",
+        "MATCH (n) NODETACHDELETE n FINISH",
+        "MATCH (n) NODETACH DELETEn FINISH",
+    ] {
+        assert!(
+            parse(source).is_err(),
+            "{source} must reject keyword prefix"
+        );
+    }
+}
+
+#[test]
+fn guarded_modifier_prefixes_stay_identifiers() {
+    for source in ["RETURN DISTINCTx AS x", "RETURN NOBINDINGS AS x"] {
+        let statement =
+            parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+        let formatted = format_read_statement(&statement)
+            .unwrap_or_else(|error| panic!("{source} should format: {error:?}"));
+        assert_eq!(formatted, source);
+    }
+}
+
+#[test]
+fn guarded_pipeline_keywords_still_accept_iso_forms() {
+    for source in [
+        "LET x = 1 RETURN x",
+        "LET VALUE x INT8 = 1 RETURN x",
+        "FOR x IN [1] RETURN x",
+        "FOR x IN [1] WITH ORDINALITY ord RETURN x, ord",
+        "FOR x IN [1] WITH OFFSET off RETURN x, off",
+        "WITH 1 AS x RETURN x",
+        "FILTER WHERE true RETURN true",
+        "FILTER true RETURN true",
+        "RETURN 1 AS x ORDER BY x DESC NULLS FIRST",
+        "RETURN 1 AS x ORDER BY x ASC NULLS LAST",
+        "OFFSET 1 RETURN 1",
+        "SKIP 1 RETURN 1",
+        "LIMIT 1 RETURN 1",
+        "RETURN DISTINCT 1 AS x",
+        "RETURN 1 AS x GROUP BY x",
+        "RETURN 1 AS x HAVING true",
+        "MATCH (n) WHERE true RETURN n",
+        "MATCH (n WHERE true) RETURN n",
+        "CALL foo() YIELD bar AS baz RETURN baz",
+        "RETURN CAST(1 AS INT8) AS x",
+        "CALL pkg.fn()",
+        "CALL pkg.fn() YIELD col",
+        "CALL { RETURN 1 AS x } YIELD x",
+        "SELECT 1 AS x",
+        "SELECT ALL 1 AS x",
+        "SELECT 1 AS x FROM MATCH (n)",
+        "SELECT * FROM MATCH (n)",
+        "MATCH (n) RETURN n",
+        "OPTIONAL MATCH (n) RETURN n",
+        "MATCH (n) SET n.age = 1 FINISH",
+        "MATCH (n) SET n IS Label FINISH",
+        "INSERT (n) FINISH",
+        "MATCH (n) REMOVE n.age FINISH",
+        "MATCH (n) REMOVE n IS Label FINISH",
+        "MATCH (n) DELETE n FINISH",
+        "MATCH (n) DETACH DELETE n FINISH",
+        "MATCH (n) NODETACH DELETE n FINISH",
+    ] {
+        parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error:?}"));
+    }
+}
+
+#[test]
+fn deferred_merge_clause_keywords_require_boundaries() {
+    for source in [
+        "MERGEx (n)",
+        "MERGE (n) ONCREATE SET n.x = 1",
+        "MERGE (n) ON CREATE SETn.x = 1",
+        "MERGE (n) ONMATCH SET n.x = 1",
+        "MERGE (n) ON MATCHSET n.x = 1",
+    ] {
+        let error = match parse(source) {
+            Ok(_) => panic!("{source} must not parse as a MERGE statement with prefixed keywords"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(error, ParserError::SyntaxError { .. }),
+            "{source} must be a syntax error, got {error:?}"
+        );
+    }
+}

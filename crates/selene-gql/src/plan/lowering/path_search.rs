@@ -24,6 +24,7 @@ pub(super) fn wrap_in_path_search(
 
 fn final_binding(tree: &JoinTree, span: SourceSpan) -> Result<TailBinding, PlannerError> {
     match tree {
+        JoinTree::Unit => None,
         JoinTree::Scan(scan) => scan
             .binding
             .map(TailBinding::Named)
@@ -76,6 +77,7 @@ fn collect_hop_contributors(
     contributors: &mut Vec<HopContributor>,
 ) -> Result<(), PlannerError> {
     match tree {
+        JoinTree::Unit => {}
         JoinTree::Scan(_) => {}
         JoinTree::Expand { child, edge, .. } => {
             collect_hop_contributors(child, span, contributors)?;

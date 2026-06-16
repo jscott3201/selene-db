@@ -43,11 +43,11 @@ use crate::{SubqueryRegistry, analyze::ExprIdLookup, runtime::TxContext};
 use self::{
     binary_ops::{eval_binary, eval_in_list, eval_in_list_expression, eval_unary},
     case::eval_case,
-    collections::{eval_list_access, eval_record_literal, record_field},
+    collections::{eval_record_literal, record_field},
     concat_ops::ConcatCaps,
     predicates::{eval_all_different, eval_is_check, eval_property_exists, eval_same},
     scalar_fns::eval_function_call,
-    subquery::{eval_count_subquery, eval_exists, eval_value_subquery},
+    subquery::{eval_exists, eval_value_subquery},
 };
 
 /// Evaluate a value expression against one binding-table row.
@@ -172,9 +172,6 @@ pub fn evaluate(
         ValueExpr::Exists { negated, span, .. } => {
             eval_exists(expr, *negated, *span, binding, schema, ctx)
         }
-        ValueExpr::CountSubquery { span, .. } => {
-            eval_count_subquery(expr, *span, binding, schema, ctx)
-        }
         ValueExpr::ValueSubquery { span, .. } => {
             eval_value_subquery(expr, *span, binding, schema, ctx)
         }
@@ -182,14 +179,9 @@ pub fn evaluate(
             eval_all_different(items, *span, binding, schema, ctx)
         }
         ValueExpr::Same { items, span } => eval_same(items, *span, binding, schema, ctx),
-        ValueExpr::PropertyExists { target, key, span } => {
-            eval_property_exists(target, key.clone(), *span, binding, schema, ctx)
-        }
-        ValueExpr::ListAccess {
-            target,
-            index,
-            span,
-        } => eval_list_access(target, index, *span, binding, schema, ctx),
+        ValueExpr::PropertyExists {
+            target, key, span, ..
+        } => eval_property_exists(target, key.clone(), *span, binding, schema, ctx),
         ValueExpr::RecordLiteral { fields, span } => {
             eval_record_literal(fields, *span, binding, schema, ctx)
         }
@@ -230,7 +222,7 @@ fn eval_list_literal(
 /// Evaluate an expression without a plan-level subquery registry.
 ///
 /// This preserves the public test helper surface for expression families that
-/// do not require planned subqueries. Statement execution uses [`evaluate`]
+/// do not require planned subqueries. Statement execution uses `evaluate`
 /// with the owning execution plan's registries.
 ///
 /// Gated to the test/`test-harness` surface (D21) so this scaffolding stays off
@@ -382,15 +374,15 @@ fn literal_value(literal: &Literal) -> Value {
         Literal::Integer(value, _) | Literal::RadixInteger(value, _, _) => Value::Int(*value),
         Literal::Decimal(value, _, _) => Value::Decimal(*value),
         Literal::Float(value, _, _) => Value::Float(*value),
-        Literal::String(value, _) => Value::String(value.clone()),
+        Literal::String(value, _, _) => Value::String(value.clone()),
         Literal::Bytes(value, _) => Value::Bytes(value.clone()),
-        Literal::Uuid(value, _) => Value::Uuid(*value),
-        Literal::ZonedDateTime(value, _) => Value::ZonedDateTime(value.clone()),
-        Literal::LocalDateTime(value, _) => Value::LocalDateTime(*value),
-        Literal::Date(value, _) => Value::Date(*value),
-        Literal::ZonedTime(value, _) => Value::ZonedTime(value.clone()),
-        Literal::LocalTime(value, _) => Value::LocalTime(*value),
-        Literal::Duration(value, _) => Value::Duration(value.clone()),
+        Literal::Uuid(value, _, _) => Value::Uuid(*value),
+        Literal::ZonedDateTime(value, _, _) => Value::ZonedDateTime(value.clone()),
+        Literal::LocalDateTime(value, _, _) => Value::LocalDateTime(*value),
+        Literal::Date(value, _, _) => Value::Date(*value),
+        Literal::ZonedTime(value, _, _) => Value::ZonedTime(value.clone()),
+        Literal::LocalTime(value, _, _) => Value::LocalTime(*value),
+        Literal::Duration(value, _, _) => Value::Duration(value.clone()),
         Literal::Null(_) => Value::Null,
     }
 }

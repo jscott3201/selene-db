@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use selene_core::DbString;
 
 use crate::{
-    DdlStatement, GqlType, IsCheckKind, LimitValue, MatchClause, MutationPipeline,
-    MutationStatement, MutationTerminator, PatternElement, PipelineStatement, ProcedureCall,
-    QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
-    TypePropertyConstraint, UnwindStatement, ValueExpr, analyze::error::AnalysisError,
+    DdlStatement, ExistsBody, ForStatement, GqlType, IsCheckKind, LimitValue, MatchClause,
+    MutationPipeline, MutationStatement, MutationTerminator, PatternElement, PipelineStatement,
+    ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
+    TypePropertyConstraint, ValueExpr, analyze::error::AnalysisError,
 };
 
 pub(super) type DeclarationMap = BTreeMap<DbString, (GqlType, SourceSpan)>;
@@ -68,6 +68,7 @@ fn collect_statement_parameter_declarations(
         | Statement::Rollback { .. }
         | Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => Ok(()),
     }
@@ -83,7 +84,7 @@ fn collect_pipeline_parameter_declarations(
                 collect_match_clause_parameter_declarations(clause, declarations)?;
             }
             PipelineStatement::Filter(value)
-            | PipelineStatement::Unwind(UnwindStatement { source: value, .. }) => {
+            | PipelineStatement::For(ForStatement { source: value, .. }) => {
                 collect_value_parameter_declarations(value, declarations)?;
             }
             PipelineStatement::Let(bindings) => {
@@ -235,9 +236,6 @@ fn collect_call_parameter_declarations(
     for arg in &call.args {
         collect_value_parameter_declarations(arg, declarations)?;
     }
-    if let Some(filter) = &call.yield_filter {
-        collect_value_parameter_declarations(filter, declarations)?;
-    }
     Ok(())
 }
 
@@ -317,10 +315,6 @@ fn collect_value_parameter_declarations(
             | ValueExpr::PropertyExists { target, .. }
             | ValueExpr::Normalize { source: target, .. }
             | ValueExpr::Cast { value: target, .. } => stack.push(target),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push(index);
-                stack.push(target);
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..
@@ -382,9 +376,14 @@ fn collect_value_parameter_declarations(
                     stack.push(character);
                 }
             }
-            ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-                collect_match_clause_parameter_declarations(pattern, declarations)?;
-            }
+            ValueExpr::Exists { body, .. } => match body {
+                ExistsBody::Match(pattern) => {
+                    collect_match_clause_parameter_declarations(pattern, declarations)?;
+                }
+                ExistsBody::Query(pipeline) => {
+                    collect_pipeline_parameter_declarations(pipeline, declarations)?;
+                }
+            },
             ValueExpr::ValueSubquery { body, .. } => {
                 collect_pipeline_parameter_declarations(body, declarations)?;
             }

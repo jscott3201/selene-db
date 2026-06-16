@@ -9,24 +9,18 @@ use std::sync::{
 use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
-use selene_core::{Change, DbString, GraphId, HnswIndexConfig, SchemaChange};
+use selene_core::GraphId;
 use selene_persist::{AuditLog, SyncPolicy, WalConfig, WalWriter};
 
-use crate::adjacency::AdjacencyEdge;
 use crate::committer_batch::CommitBatching;
 use crate::core_provider::{CoreProvider, DurableState};
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
-use crate::graph::{PropertyIndexEntry, SeleneGraph};
+use crate::graph::SeleneGraph;
 use crate::graph_types::GraphTypeDef;
 use crate::id_allocator::IdAllocator;
-use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
-use crate::schema_index_kind::schema_kind_from;
-use crate::store::{EdgeStore, RowIndex};
-use crate::typed_index::TypedIndexKind;
-use crate::vector_index::{
-    VectorIndexConfig, VectorIndexKind, VectorIndexMaintenancePolicy, VectorIndexRebuildReport,
-};
+use crate::index_provider::{IndexProvider, ProviderTag};
+use crate::vector_index::{VectorIndexMaintenancePolicy, VectorIndexRebuildReport};
 use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
@@ -55,15 +49,6 @@ pub struct SharedGraph {
     committer: crate::committer::CommitterThread,
 }
 
-/// Builder for a [`SharedGraph`] and its fixed provider registry.
-pub struct SharedGraphBuilder {
-    graph: SeleneGraph,
-    providers: Vec<Arc<dyn IndexProvider>>,
-    wal_writer: Option<WalWriter>,
-    audit_log: Option<AuditLog>,
-    commit_batching: CommitBatching,
-}
-
 impl SharedGraph {
     /// Construct an empty shared graph.
     #[must_use]
@@ -74,13 +59,7 @@ impl SharedGraph {
     /// Start building an empty shared graph with optional providers.
     #[must_use]
     pub fn builder(graph_id: GraphId) -> SharedGraphBuilder {
-        SharedGraphBuilder {
-            graph: SeleneGraph::new(graph_id),
-            providers: Vec::new(),
-            wal_writer: None,
-            audit_log: None,
-            commit_batching: CommitBatching::Off,
-        }
+        SharedGraphBuilder::new(graph_id)
     }
 
     /// Construct shared state from a pre-built graph snapshot.
@@ -223,6 +202,7 @@ impl SharedGraph {
         let mut graph = graph;
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
+        crate::property_index::rebuild_edge_property_indexes(&mut graph)?;
         crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
         crate::vector_index::rebuild_vector_indexes(&mut graph)?;
         crate::text_index::rebuild_text_indexes(&mut graph)?;
@@ -300,7 +280,7 @@ impl SharedGraph {
     ///
     /// This is pure space reclamation: it changes only the internal row layout,
     /// never external `NodeId`/`EdgeId`, properties, or labels, so it emits **no**
-    /// [`Change`] and writes **no** WAL entry. Durability
+    /// [`selene_core::Change`] and writes **no** WAL entry. Durability
     /// comes from the next snapshot, which encodes the now-dense live graph (the
     /// CORE provider reads the same `snapshot` cell this method publishes into). A
     /// crash before that snapshot simply reloads the pre-compaction state and
@@ -366,7 +346,7 @@ impl SharedGraph {
     /// in-flight search can still traverse the neighbor graph safely. This
     /// maintenance path reclaims those stale entries by rebuilding only the
     /// derived vector-index state; it does not change graph data, emit
-    /// [`Change`], write a WAL entry, bump schema epoch, or
+    /// [`selene_core::Change`], write a WAL entry, bump schema epoch, or
     /// notify providers. The HNSW graph is derived, not durable: snapshots and
     /// recovery persist only vector-index registrations plus primary values, so
     /// a reopen rebuilds the index from that authoritative state.
@@ -436,7 +416,7 @@ impl SharedGraph {
     ///
     /// The epoch starts at zero for each [`SharedGraph`] instance and advances
     /// only after a successful commit whose change set contains
-    /// [`Change::SchemaChanged`].
+    /// [`selene_core::Change::SchemaChanged`].
     #[must_use]
     pub fn schema_version(&self) -> u64 {
         self.schema_version.load(Ordering::Acquire)
@@ -472,213 +452,6 @@ impl SharedGraph {
     #[must_use]
     pub fn durable_providers(&self) -> &[Arc<dyn DurableProvider>] {
         &self.durable_providers
-    }
-
-    /// Register a built-in node property index for `(label, property)`.
-    ///
-    /// The current node columns are scanned under the write lock and the
-    /// published snapshot is updated in one transaction.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::PropertyIndexAlreadyExists`] if the pair is
-    /// already registered, or [`GraphError::IndexValueRejected`] if any
-    /// existing node with `label` has a non-null value that does not match
-    /// `kind`.
-    pub fn create_property_index(
-        &self,
-        label: DbString,
-        property: DbString,
-        kind: TypedIndexKind,
-    ) -> GraphResult<()> {
-        self.create_property_index_named(label, property, kind, None)
-    }
-
-    /// Register a built-in node property index with optional catalog name.
-    pub fn create_property_index_named(
-        &self,
-        label: DbString,
-        property: DbString,
-        kind: TypedIndexKind,
-        name: Option<DbString>,
-    ) -> GraphResult<()> {
-        let mut txn = self.begin_write();
-        if txn
-            .read()
-            .property_index
-            .contains_key(&(label.clone(), property.clone()))
-        {
-            return Err(GraphError::PropertyIndexAlreadyExists { label, property });
-        }
-        let index = crate::property_index::build_property_index(
-            txn.read(),
-            label.clone(),
-            property.clone(),
-            kind,
-        )?;
-        txn.guard_mut().property_index.insert(
-            (label.clone(), property.clone()),
-            PropertyIndexEntry::new(index, name.clone()),
-        );
-        let graph = txn.read().graph_id();
-        txn.changes.push(Change::SchemaChanged {
-            graph,
-            change: SchemaChange::PropertyIndexCreatedNamed {
-                label,
-                property,
-                kind: schema_kind_from(kind),
-                name,
-            },
-        });
-        txn.commit()?;
-        Ok(())
-    }
-
-    /// Drop a built-in node property index.
-    ///
-    /// The operation is idempotent; dropping an absent index succeeds without
-    /// publishing a new snapshot.
-    pub fn drop_property_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
-        let mut txn = self.begin_write();
-        if !txn
-            .read()
-            .property_index
-            .contains_key(&(label.clone(), property.clone()))
-        {
-            return Ok(());
-        }
-        txn.guard_mut()
-            .property_index
-            .remove(&(label.clone(), property.clone()));
-        let graph = txn.read().graph_id();
-        txn.changes.push(Change::SchemaChanged {
-            graph,
-            change: SchemaChange::PropertyIndexDropped { label, property },
-        });
-        txn.commit()?;
-        Ok(())
-    }
-
-    /// Register a built-in node vector index for `(label, property)`.
-    ///
-    /// The current node columns are scanned under the write lock and the
-    /// published snapshot is updated in one transaction.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::VectorIndexAlreadyExists`] if the pair is already
-    /// registered, [`GraphError::VectorIndexInvalidDimension`] when `dimension`
-    /// is zero, or [`GraphError::VectorIndexValueRejected`] if any existing
-    /// node with `label` has a non-null value for `property` that is not a
-    /// vector with the declared dimension.
-    pub fn create_vector_index(
-        &self,
-        label: DbString,
-        property: DbString,
-        kind: VectorIndexKind,
-        dimension: u32,
-    ) -> GraphResult<()> {
-        self.create_vector_index_named(label, property, kind, dimension, None)
-    }
-
-    /// Register a built-in node vector index with optional catalog name.
-    pub fn create_vector_index_named(
-        &self,
-        label: DbString,
-        property: DbString,
-        kind: VectorIndexKind,
-        dimension: u32,
-        name: Option<DbString>,
-    ) -> GraphResult<()> {
-        self.create_vector_index_named_with_config(label, property, kind, dimension, name, None)
-    }
-
-    /// Register a built-in node vector index with optional HNSW construction config.
-    pub fn create_vector_index_named_with_config(
-        &self,
-        label: DbString,
-        property: DbString,
-        kind: VectorIndexKind,
-        dimension: u32,
-        name: Option<DbString>,
-        hnsw_config: Option<HnswIndexConfig>,
-    ) -> GraphResult<()> {
-        self.create_vector_index_named_with_configs(
-            label,
-            property,
-            kind,
-            dimension,
-            name,
-            VectorIndexConfig::new(hnsw_config, None),
-        )
-    }
-
-    /// Register a built-in node vector index with optional ANN construction config.
-    pub fn create_vector_index_named_with_configs(
-        &self,
-        label: DbString,
-        property: DbString,
-        kind: VectorIndexKind,
-        dimension: u32,
-        name: Option<DbString>,
-        config: VectorIndexConfig,
-    ) -> GraphResult<()> {
-        let mut txn = self.begin_write();
-        txn.mutator().create_vector_index_named_with_configs(
-            label, property, kind, dimension, name, config,
-        )?;
-        txn.commit()?;
-        Ok(())
-    }
-
-    /// Drop a built-in node vector index.
-    ///
-    /// The operation is idempotent; dropping an absent index succeeds without
-    /// publishing a new snapshot.
-    pub fn drop_vector_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
-        let mut txn = self.begin_write();
-        txn.mutator().drop_vector_index(label, property)?;
-        txn.commit()?;
-        Ok(())
-    }
-
-    /// Register a built-in node text index for `(label, property)`.
-    ///
-    /// The current node columns are scanned under the write lock and the
-    /// published snapshot is updated in one transaction.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::TextIndexAlreadyExists`] if the pair is already
-    /// registered, or [`GraphError::Inconsistent`] if index construction
-    /// observes corrupt graph columns.
-    pub fn create_text_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
-        self.create_text_index_named(label, property, None)
-    }
-
-    /// Register a built-in node text index with optional catalog name.
-    pub fn create_text_index_named(
-        &self,
-        label: DbString,
-        property: DbString,
-        name: Option<DbString>,
-    ) -> GraphResult<()> {
-        let mut txn = self.begin_write();
-        txn.mutator()
-            .create_text_index_named(label, property, name)?;
-        txn.commit()?;
-        Ok(())
-    }
-
-    /// Drop a built-in node text index.
-    ///
-    /// The operation is idempotent; dropping an absent index succeeds without
-    /// publishing a new snapshot.
-    pub fn drop_text_index(&self, label: DbString, property: DbString) -> GraphResult<()> {
-        let mut txn = self.begin_write();
-        txn.mutator().drop_text_index(label, property)?;
-        txn.commit()?;
-        Ok(())
     }
 
     /// Begin a write transaction by acquiring the single graph write lock.
@@ -766,118 +539,10 @@ impl SharedGraph {
     }
 }
 
-impl SharedGraphBuilder {
-    /// Register an index provider.
-    ///
-    /// Providers are retained in registration order, which is the order used
-    /// for committed mutation delivery.
-    #[must_use]
-    pub fn with_provider(mut self, provider: Arc<dyn IndexProvider>) -> Self {
-        self.providers.push(provider);
-        self
-    }
-
-    /// Open a WAL file and route commits through the CORE durable provider.
-    ///
-    /// The path is the WAL file path, not a directory. Callers using the
-    /// conventional layout should pass `dir.join(selene_persist::DEFAULT_WAL_FILE_NAME)`.
-    ///
-    /// # SyncPolicy is OVERRIDDEN (v1.2 BRIEF 2 — read this)
-    ///
-    /// The single per-graph committer thread is the **sole fsync caller** for the
-    /// committer-managed WAL: it appends a contiguous run of commits with fsync
-    /// deferred, then issues exactly one [`WalWriter::flush`] per run (the R1
-    /// fsync-before-publish barrier). To make that the *only* fsync path, this
-    /// method **forces `config.sync_policy` to [`SyncPolicy::OnFlushOnly`]**
-    /// before opening the WAL — **whatever policy you pass is discarded.** The
-    /// fsync cadence is instead controlled by [`Self::with_commit_batching`]:
-    /// [`CommitBatching::Off`] (the default) fsyncs once per commit (behaviorally
-    /// identical to the old `EveryN(1)`), and [`CommitBatching::On`] coalesces a
-    /// contiguous run into one fsync. `config.snapshot_seq` is passed through
-    /// verbatim. Durability is unchanged: the committer always flushes before it
-    /// publishes or acks, so a commit is durable before it is ever visible.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::Persist`] when the WAL cannot be opened, including
-    /// when another writer already holds the file lock.
-    pub fn with_wal(mut self, path: impl AsRef<Path>, mut config: WalConfig) -> GraphResult<Self> {
-        // BRIEF 2: the committer owns fsync. Force OnFlushOnly before opening so
-        // the committer's group flush is the single durability barrier. Done
-        // before WalWriter::open so open-error timing (e.g. WriterLockHeld) is
-        // unchanged for existing .unwrap() call sites.
-        config.sync_policy = SyncPolicy::OnFlushOnly;
-        self.wal_writer = Some(WalWriter::open(path.as_ref(), config)?);
-        Ok(self)
-    }
-
-    /// Set the group-commit batching policy for the committer-managed WAL
-    /// (v1.2 BRIEF 2). Default [`CommitBatching::Off`].
-    ///
-    /// With [`CommitBatching::Off`] the committer fsyncs once per commit
-    /// (behaviorally identical to BRIEF 1). With [`CommitBatching::On`] it
-    /// coalesces up to `max_commits` (capped by aggregate `max_bytes`) contiguous
-    /// commits into one fsync — higher throughput + lower tail latency under
-    /// fan-in, at the cost of grouping several commits behind one barrier (all
-    /// still durable before any of them is acked or published). Has no effect
-    /// without [`Self::with_wal`] (no durable provider to flush).
-    #[must_use]
-    pub fn with_commit_batching(mut self, batching: CommitBatching) -> Self {
-        self.commit_batching = batching;
-        self
-    }
-
-    /// Attach a durable audit log at `path` (conventionally
-    /// `dir.join(selene_persist::DEFAULT_AUDIT_FILE_NAME)`).
-    ///
-    /// Engine-owned audit events committed through this graph are mirrored to
-    /// the audit log so they survive WAL-archive pruning (Item 7 / Seam D, D24).
-    /// Requires [`Self::with_wal`]: audit mirroring is part of the durable
-    /// commit path, so [`Self::build`] errors if an audit log is configured
-    /// without a WAL.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::Persist`] when the audit log cannot be opened.
-    pub fn with_audit_log(mut self, path: impl AsRef<Path>) -> GraphResult<Self> {
-        self.audit_log = Some(AuditLog::open(path.as_ref()).map_err(GraphError::Persist)?);
-        Ok(self)
-    }
-
-    /// Bind this graph to `type_def` at construction time.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::Inconsistent`] when the builder is already bound
-    /// or when `type_def` fails self-consistency validation.
-    pub fn bound_to(mut self, type_def: GraphTypeDef) -> GraphResult<Self> {
-        if self.graph.meta.bound_type.is_some() {
-            return Err(GraphError::Inconsistent {
-                reason: "graph builder is already bound to a graph type".to_owned(),
-            });
-        }
-        self.graph.meta.bound_type = Some(Arc::new(type_def.validate()?));
-        Ok(self)
-    }
-
-    /// Build shared graph state and validate provider registration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`GraphError::Provider`] when provider tags are duplicated.
-    pub fn build(self) -> GraphResult<SharedGraph> {
-        SharedGraph::from_graph_with_core_and_durables(
-            self.graph,
-            self.providers,
-            Vec::new(),
-            self.wal_writer,
-            self.audit_log,
-            self.commit_batching,
-        )
-    }
-}
-
+mod builder;
+mod index_ddl;
 mod rebuild;
+pub use builder::SharedGraphBuilder;
 pub(crate) use rebuild::{rebuild_derived_state, validate_unique_provider_tags};
 
 #[cfg(test)]

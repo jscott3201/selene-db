@@ -9,6 +9,7 @@ use exec_common::{column_values, db_string, execute_read, execute_read_result};
 use selene_core::Value;
 use selene_gql::{
     Binding, BindingTableSchema, GqlStatus, Literal, NonEmpty, SourceSpan, ValueExpr,
+    ast::CharacterStringLiteralKind,
 };
 
 fn span() -> SourceSpan {
@@ -16,7 +17,11 @@ fn span() -> SourceSpan {
 }
 
 fn string_lit(value: &str) -> ValueExpr {
-    ValueExpr::Literal(Literal::String(db_string(value), span()))
+    ValueExpr::Literal(Literal::String(
+        db_string(value),
+        span(),
+        CharacterStringLiteralKind::Escaped,
+    ))
 }
 
 fn null_lit() -> ValueExpr {
@@ -58,6 +63,12 @@ fn single_value(source: &str, column: &str) -> Value {
 fn status_for(source: &str) -> GqlStatus {
     execute_read_result(source)
         .expect_err("statement errors")
+        .gqlstatus()
+}
+
+fn parse_status_for(source: &str) -> GqlStatus {
+    selene_gql::parse(source)
+        .expect_err("statement fails to parse")
         .gqlstatus()
 }
 
@@ -377,11 +388,11 @@ fn duration_between_rejects_non_temporal_and_mixed_temporal_families() {
         "22G03"
     );
     assert_eq!(
-        status_for(
+        parse_status_for(
             "RETURN DURATION_BETWEEN(DATE('2026-01-01'), DATE('2026-01-02'), \
              'DAY TO SECOND') AS value"
         ),
-        GqlStatus::DATATYPE_MISMATCH
+        GqlStatus::SYNTAX_ERROR
     );
 }
 

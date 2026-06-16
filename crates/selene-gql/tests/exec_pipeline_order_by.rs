@@ -8,7 +8,7 @@ use exec_common::{column_values, execute_read, node_ids_for};
 
 #[test]
 fn order_by_single_key_ascending() {
-    let table = execute_read("UNWIND [3, 1, 2] AS x RETURN x ORDER BY x");
+    let table = execute_read("FOR x IN [3, 1, 2] RETURN x ORDER BY x");
 
     assert_eq!(
         column_values(&table, "x"),
@@ -18,7 +18,7 @@ fn order_by_single_key_ascending() {
 
 #[test]
 fn order_by_single_key_descending() {
-    let table = execute_read("UNWIND [3, 1, 2] AS x RETURN x ORDER BY x DESC");
+    let table = execute_read("FOR x IN [3, 1, 2] RETURN x ORDER BY x DESC");
 
     assert_eq!(
         column_values(&table, "x"),
@@ -42,7 +42,7 @@ fn order_by_is_stable_for_equal_keys() {
 
 #[test]
 fn order_by_nulls_last_under_ascending() {
-    let table = execute_read("UNWIND [2, NULL, 1] AS x RETURN x ORDER BY x");
+    let table = execute_read("FOR x IN [2, NULL, 1] RETURN x ORDER BY x");
 
     assert_eq!(
         column_values(&table, "x"),
@@ -52,7 +52,7 @@ fn order_by_nulls_last_under_ascending() {
 
 #[test]
 fn order_by_nulls_first_under_descending() {
-    let table = execute_read("UNWIND [2, NULL, 1] AS x RETURN x ORDER BY x DESC");
+    let table = execute_read("FOR x IN [2, NULL, 1] RETURN x ORDER BY x DESC");
 
     assert_eq!(
         column_values(&table, "x"),
@@ -67,7 +67,7 @@ fn order_by_explicit_nulls_policy_is_direction_aware_across_all_four_combos() {
     // the direction-aware flip in `order_by::null_sort_order` (under DESC the
     // comparator reverses, so the policy must be flipped to land NULLs where the
     // user asked). Assert the full row order for all four combinations.
-    let source = "UNWIND [2, NULL, 1] AS x RETURN x ORDER BY x";
+    let source = "FOR x IN [2, NULL, 1] RETURN x ORDER BY x";
 
     // ASC: data ascends 1,2; NULLS FIRST puts NULL at the head, LAST at the tail.
     assert_eq!(
@@ -95,7 +95,7 @@ fn order_by_explicit_nulls_policy_is_direction_aware_across_all_four_combos() {
 fn order_by_list_values_sort_lexicographically() {
     // ISO §22.14 ordering: lists order element-wise by ascending ordinal; the
     // first differing element decides ([1,2] < [1,3] < [2,0]).
-    let table = execute_read("UNWIND [[2, 0], [1, 3], [1, 2]] AS x RETURN x ORDER BY x");
+    let table = execute_read("FOR x IN [[2, 0], [1, 3], [1, 2]] RETURN x ORDER BY x");
 
     assert_eq!(
         column_values(&table, "x"),
@@ -110,7 +110,7 @@ fn order_by_list_values_sort_lexicographically() {
 #[test]
 fn order_by_list_values_shorter_prefix_precedes() {
     // Cardinality tiebreak: on an equal prefix the shorter list sorts first.
-    let table = execute_read("UNWIND [[1, 2, 3], [1, 2]] AS x RETURN x ORDER BY x");
+    let table = execute_read("FOR x IN [[1, 2, 3], [1, 2]] RETURN x ORDER BY x");
 
     assert_eq!(
         column_values(&table, "x"),
@@ -123,7 +123,7 @@ fn order_by_list_values_shorter_prefix_precedes() {
 
 #[test]
 fn order_by_list_values_descending_reverses_lexicographic_order() {
-    let table = execute_read("UNWIND [[1, 2], [2, 0], [1, 3]] AS x RETURN x ORDER BY x DESC");
+    let table = execute_read("FOR x IN [[1, 2], [2, 0], [1, 3]] RETURN x ORDER BY x DESC");
 
     assert_eq!(
         column_values(&table, "x"),

@@ -61,14 +61,14 @@ impl WarningSink for RecordingSink {
 
 #[test]
 fn percentile_cont_uses_linear_interpolation() {
-    let odd = execute("UNWIND [1, 2, 3] AS x RETURN percentile_cont(x, 0.5) AS p");
+    let odd = execute("FOR x IN [1, 2, 3] RETURN percentile_cont(x, 0.5) AS p");
     assert_eq!(column_values(&odd, "p"), vec![Value::Float(2.0)]);
 
     let even = execute(
-        "UNWIND [1, 2, 3, 4] AS x \
+        "FOR x IN [1, 2, 3, 4] \
          RETURN percentile_cont(x, 0.5) AS mid, \
-                percentile_cont(x, 0.0) AS min, \
-                percentile_cont(x, 1.0) AS max",
+                percentile_cont(x, 0.0) AS \"min\", \
+                percentile_cont(x, 1.0) AS \"max\"",
     );
     assert_eq!(column_values(&even, "mid"), vec![Value::Float(2.5)]);
     assert_eq!(column_values(&even, "min"), vec![Value::Float(1.0)]);
@@ -78,8 +78,8 @@ fn percentile_cont_uses_linear_interpolation() {
 #[test]
 fn percentile_disc_uses_ties_even_on_one_based_index() {
     let table = execute(
-        "UNWIND [1, 2, 3, 4] AS x \
-         RETURN percentile_disc(x, 0.5) AS half, percentile_disc(x, 0.75) AS upper",
+        "FOR x IN [1, 2, 3, 4] \
+         RETURN percentile_disc(x, 0.5) AS half, percentile_disc(x, 0.75) AS \"upper\"",
     );
 
     assert_eq!(column_values(&table, "half"), vec![Value::Int(2)]);
@@ -89,7 +89,7 @@ fn percentile_disc_uses_ties_even_on_one_based_index() {
 #[test]
 fn percentile_distinct_applies_to_dependent_values() {
     let table = execute(
-        "UNWIND [1, 1, 4] AS x \
+        "FOR x IN [1, 1, 4] \
          RETURN percentile_cont(DISTINCT x, 0.5) AS continuous, \
                 percentile_disc(DISTINCT x, 0.5) AS discrete",
     );
@@ -101,7 +101,7 @@ fn percentile_distinct_applies_to_dependent_values() {
 #[test]
 fn percentile_all_quantifier_matches_implicit_all() {
     let table = execute(
-        "UNWIND [1, 1, 4] AS x \
+        "FOR x IN [1, 1, 4] \
          RETURN percentile_cont(ALL x, 0.5) AS continuous, \
                 percentile_disc(ALL x, 0.5) AS discrete",
     );
@@ -119,7 +119,7 @@ fn percentile_functions_accept_wide_unsigned_dependent_values() {
 
     let table = execute_rows(
         &mut session,
-        "UNWIND [$lo, $hi] AS x \
+        "FOR x IN [$lo, $hi] \
          RETURN percentile_disc(x, 1.0) AS discrete, \
                 percentile_cont(x, 1.0) AS continuous",
     );
@@ -156,7 +156,7 @@ fn percentile_null_handling_matches_set_function_warning_contract() {
 
     let all_null = execute_rows(
         &mut session,
-        "UNWIND [NULL, NULL] AS x RETURN percentile_cont(x, 0.5) AS p",
+        "FOR x IN [NULL, NULL] RETURN percentile_cont(x, 0.5) AS p",
     );
     assert_eq!(column_values(&all_null, "p"), vec![Value::Null]);
     let observed = warnings.lock().expect("warning mutex").clone();
@@ -175,13 +175,13 @@ fn percentile_independent_expression_accepts_parameters_and_arithmetic() {
 
     let parameterized = execute_rows(
         &mut session,
-        "UNWIND [1, 2, 3, 4] AS x RETURN percentile_cont(x, $p) AS p",
+        "FOR x IN [1, 2, 3, 4] RETURN percentile_cont(x, $p) AS p",
     );
     assert_eq!(column_values(&parameterized, "p"), vec![Value::Float(3.25)]);
 
     let arithmetic = execute_rows(
         &mut session,
-        "UNWIND [1, 2, 3, 4] AS x RETURN percentile_cont(x, 0.5 + 0.25) AS p",
+        "FOR x IN [1, 2, 3, 4] RETURN percentile_cont(x, 0.5 + 0.25) AS p",
     );
     assert_eq!(column_values(&arithmetic, "p"), vec![Value::Float(3.25)]);
 }
@@ -189,7 +189,7 @@ fn percentile_independent_expression_accepts_parameters_and_arithmetic() {
 #[test]
 fn percentile_independent_expression_can_reference_group_key() {
     let table = execute(
-        "UNWIND [1, 2, 10, 20] AS value \
+        "FOR value IN [1, 2, 10, 20] \
          LET p = CASE WHEN value < 10 THEN 0.0 ELSE 1.0 END \
          RETURN p, percentile_cont(value, p) AS result GROUP BY p ORDER BY p",
     );
@@ -203,7 +203,7 @@ fn percentile_independent_expression_can_reference_group_key() {
 #[test]
 fn percentile_independent_expression_rejects_per_row_binding_reference() {
     let statement =
-        parse("UNWIND [1, 2] AS x RETURN percentile_cont(x, x) AS p").expect("source parses");
+        parse("FOR x IN [1, 2] RETURN percentile_cont(x, x) AS p").expect("source parses");
     let error = analyze(statement, &EmptyProcedureRegistry, None)
         .expect_err("independent arg cannot reference per-row binding");
 
@@ -213,7 +213,7 @@ fn percentile_independent_expression_rejects_per_row_binding_reference() {
 #[test]
 fn percentile_independent_expression_rejects_binding_inside_complex_group_key() {
     let statement = parse(
-        "UNWIND [1, 2] AS x \
+        "FOR x IN [1, 2] \
          RETURN x < 3 AS grouped, percentile_cont(x, x) AS p GROUP BY x < 3",
     )
     .expect("source parses");
@@ -230,7 +230,7 @@ fn percentile_runtime_errors_use_data_exception_codes() {
 
     let out_of_range = session
         .execute_source(
-            "UNWIND [1] AS x RETURN percentile_cont(x, 2) AS p",
+            "FOR x IN [1] RETURN percentile_cont(x, 2) AS p",
             &EmptyProcedureRegistry,
         )
         .expect_err("percentile outside [0, 1] errors");
@@ -238,7 +238,7 @@ fn percentile_runtime_errors_use_data_exception_codes() {
 
     let invalid_dependent = session
         .execute_source(
-            "UNWIND ['x'] AS x RETURN percentile_cont(x, 0.5) AS p",
+            "FOR x IN ['x'] RETURN percentile_cont(x, 0.5) AS p",
             &EmptyProcedureRegistry,
         )
         .expect_err("non-numeric dependent value errors");
@@ -248,7 +248,7 @@ fn percentile_runtime_errors_use_data_exception_codes() {
 #[test]
 fn percentile_functions_record_gf11_feature() {
     let statement = parse(
-        "UNWIND [1, 2, 3] AS x \
+        "FOR x IN [1, 2, 3] \
          RETURN percentile_cont(x, 0.5) AS c, percentile_disc(x, 0.5) AS d",
     )
     .expect("source parses");

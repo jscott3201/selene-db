@@ -22,9 +22,11 @@ pub(super) fn execute(
     // equality matches the prior `key_values_equal` exactly (Null/Null⇒equal,
     // Null/non-null⇒distinct, else `equal_non_null`), so grouping semantics are
     // unchanged; DISTINCT/set-ops already use the same key.
-    let mut groups = Vec::<Group<'_>>::new();
-    let mut group_index = FxHashMap::<RuntimeEqKey, usize>::default();
     let group_cap = ctx.tx.impl_defined_caps().group_by_key_cap();
+    let hash_capacity = input_rows.len().min(group_cap);
+    let mut groups = Vec::<Group<'_>>::with_capacity(hash_capacity);
+    let mut group_index = FxHashMap::<RuntimeEqKey, usize>::default();
+    group_index.reserve(hash_capacity);
     let mut rows_since_check = 0;
 
     for row in &input_rows {

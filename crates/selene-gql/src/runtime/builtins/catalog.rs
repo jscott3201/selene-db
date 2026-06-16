@@ -116,6 +116,10 @@ pub(in crate::runtime) enum BuiltinKind {
     TextScoreNodes,
     /// `selene.text_score_nodes_batch` — batched BM25 scoring for explicit node candidates.
     TextScoreNodesBatch,
+    /// `selene.text_score_candidate_state` — BM25 scoring for maintained candidate state.
+    TextScoreCandidateState,
+    /// `selene.text_score_candidate_state_nodes` — BM25 scoring for composed maintained state and node candidates.
+    TextScoreCandidateStateNodes,
     /// `selene.text_score_candidate_state_expanded_batch` — batched BM25 scoring for maintained state composed with expanded roots.
     TextScoreCandidateStateExpandedBatch,
     /// `selene.reciprocal_rank_fusion` — fuse ranked node lists with RRF.
@@ -186,6 +190,8 @@ impl BuiltinKind {
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
+            | Self::TextScoreCandidateState
+            | Self::TextScoreCandidateStateNodes
             | Self::TextScoreCandidateStateExpandedBatch
             | Self::ReciprocalRankFusion => ProcedureTier::Graph,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes | Self::Compact => {
@@ -238,6 +244,8 @@ impl BuiltinKind {
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
+            | Self::TextScoreCandidateState
+            | Self::TextScoreCandidateStateNodes
             | Self::TextScoreCandidateStateExpandedBatch
             | Self::ReciprocalRankFusion => ProcedureMutability::Read,
             Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes | Self::Compact => {
@@ -311,6 +319,8 @@ impl BuiltinKind {
             Self::TextSearchNodes => text_search::signature(),
             Self::TextScoreNodes => text_search::score_signature(),
             Self::TextScoreNodesBatch => text_search::score_batch_signature(),
+            Self::TextScoreCandidateState => text_search::score_state_signature(),
+            Self::TextScoreCandidateStateNodes => text_search::score_state_nodes_signature(),
             Self::TextScoreCandidateStateExpandedBatch => {
                 text_search::score_state_expanded_batch_signature()
             }
@@ -378,7 +388,10 @@ impl BuiltinKind {
             Self::DropVectorIndex => drop_vector_index::output_columns(),
             Self::CreateTextIndex => create_text_index::output_columns(),
             Self::DropTextIndex => drop_text_index::output_columns(),
-            Self::TextSearchNodes | Self::TextScoreNodes => text_search::output_columns(),
+            Self::TextSearchNodes
+            | Self::TextScoreNodes
+            | Self::TextScoreCandidateState
+            | Self::TextScoreCandidateStateNodes => text_search::output_columns(),
             Self::TextScoreNodesBatch | Self::TextScoreCandidateStateExpandedBatch => {
                 text_search::score_batch_output_columns()
             }
@@ -457,6 +470,8 @@ impl BuiltinKind {
             Self::TextSearchNodes => text_search::execute(ctx, args),
             Self::TextScoreNodes => text_search::execute_score(ctx, args),
             Self::TextScoreNodesBatch => text_search::execute_score_batch(ctx, args),
+            Self::TextScoreCandidateState => text_search::execute_score_state(ctx, args),
+            Self::TextScoreCandidateStateNodes => text_search::execute_score_state_nodes(ctx, args),
             Self::TextScoreCandidateStateExpandedBatch => {
                 text_search::execute_score_state_expanded_batch(ctx, args)
             }
@@ -528,6 +543,8 @@ impl BuiltinKind {
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
+            | Self::TextScoreCandidateState
+            | Self::TextScoreCandidateStateNodes
             | Self::TextScoreCandidateStateExpandedBatch
             | Self::ReciprocalRankFusion => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,
@@ -589,6 +606,8 @@ impl BuiltinKind {
             | Self::TextSearchNodes
             | Self::TextScoreNodes
             | Self::TextScoreNodesBatch
+            | Self::TextScoreCandidateState
+            | Self::TextScoreCandidateStateNodes
             | Self::TextScoreCandidateStateExpandedBatch
             | Self::ReciprocalRankFusion => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Graph,

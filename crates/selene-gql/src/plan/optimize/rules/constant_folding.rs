@@ -6,6 +6,7 @@ use unicode_normalization::UnicodeNormalization;
 use crate::{
     BinaryOp, DecimalLiteralKind, FloatLiteralKind, ImplDefinedCaps, Literal, SourceSpan, UnaryOp,
     ValueExpr,
+    ast::CharacterStringLiteralKind,
     plan::{
         ExecutionPlan,
         optimize::{OptimizeContext, Rule, Transformed, walk},
@@ -76,15 +77,15 @@ fn fold_unary(op: UnaryOp, operand: &ValueExpr, span: SourceSpan) -> Option<Valu
         (UnaryOp::Negate, Literal::Float(value, _, kind)) => finite_float(-value, span, *kind),
         (UnaryOp::Not, _)
         | (UnaryOp::Negate, Literal::Bool(_, _))
-        | (UnaryOp::Negate, Literal::String(_, _))
+        | (UnaryOp::Negate, Literal::String(_, _, _))
         | (UnaryOp::Negate, Literal::Bytes(_, _))
-        | (UnaryOp::Negate, Literal::Uuid(_, _))
-        | (UnaryOp::Negate, Literal::ZonedDateTime(_, _))
-        | (UnaryOp::Negate, Literal::LocalDateTime(_, _))
-        | (UnaryOp::Negate, Literal::Date(_, _))
-        | (UnaryOp::Negate, Literal::ZonedTime(_, _))
-        | (UnaryOp::Negate, Literal::LocalTime(_, _))
-        | (UnaryOp::Negate, Literal::Duration(_, _))
+        | (UnaryOp::Negate, Literal::Uuid(_, _, _))
+        | (UnaryOp::Negate, Literal::ZonedDateTime(_, _, _))
+        | (UnaryOp::Negate, Literal::LocalDateTime(_, _, _))
+        | (UnaryOp::Negate, Literal::Date(_, _, _))
+        | (UnaryOp::Negate, Literal::ZonedTime(_, _, _))
+        | (UnaryOp::Negate, Literal::LocalTime(_, _, _))
+        | (UnaryOp::Negate, Literal::Duration(_, _, _))
         | (UnaryOp::Negate, Literal::Null(_)) => None,
     }
 }
@@ -203,17 +204,19 @@ fn fold_comparison(
         (Literal::Decimal(left, _, _), Literal::Decimal(right, _, _)) => {
             compare_ordering(op, left, right)
         }
-        (Literal::String(left, _), Literal::String(right, _)) => {
+        (Literal::String(left, _, _), Literal::String(right, _, _)) => {
             compare_ordering(op, left.as_str(), right.as_str())
         }
         (Literal::Bytes(left, _), Literal::Bytes(right, _)) => {
             compare_ordering(op, left.as_ref(), right.as_ref())
         }
-        (Literal::Date(left, _), Literal::Date(right, _)) => compare_ordering(op, left, right),
-        (Literal::LocalDateTime(left, _), Literal::LocalDateTime(right, _)) => {
+        (Literal::Date(left, _, _), Literal::Date(right, _, _)) => {
             compare_ordering(op, left, right)
         }
-        (Literal::LocalTime(left, _), Literal::LocalTime(right, _)) => {
+        (Literal::LocalDateTime(left, _, _), Literal::LocalDateTime(right, _, _)) => {
+            compare_ordering(op, left, right)
+        }
+        (Literal::LocalTime(left, _, _), Literal::LocalTime(right, _, _)) => {
             compare_ordering(op, left, right)
         }
         _ => return None,
@@ -241,10 +244,14 @@ fn fold_concat(
     caps: &ImplDefinedCaps,
 ) -> Option<ValueExpr> {
     match (lhs, rhs) {
-        (Literal::String(left, _), Literal::String(right, _)) => {
+        (Literal::String(left, _, _), Literal::String(right, _, _)) => {
             let value = folded_string_concat(left.as_str(), right.as_str(), caps)?;
             let db_string_value = DbString::from_string(value).ok()?;
-            Some(ValueExpr::Literal(Literal::String(db_string_value, span)))
+            Some(ValueExpr::Literal(Literal::String(
+                db_string_value,
+                span,
+                CharacterStringLiteralKind::Escaped,
+            )))
         }
         (Literal::Bytes(left, _), Literal::Bytes(right, _)) => {
             let value = folded_byte_concat(left, right, caps)?;

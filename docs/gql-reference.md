@@ -6,8 +6,8 @@ build a `SharedGraph` plus an `EmptyProcedureRegistry`.
 
 selene-db targets **ISO/IEC 39075:2024 minimum conformance** plus a curated
 subset of optional features. The parser is **strict ISO GQL**: no Cypher,
-no SQL, no SPARQL grammar. Constructs outside the v1.0 claimed feature
-register are rejected at parse time by the GQL Flagger (ISO GQL Clause 24.6).
+no SQL, no SPARQL grammar. Constructs outside the D1 claimed feature register
+are rejected at parse time by the GQL Flagger (ISO GQL Clause 24.6).
 
 For the engine architecture see [`architecture.md`](architecture.md). For
 durability and recovery see
@@ -45,14 +45,14 @@ spec docs by the build. The table below summarizes the major clause groups.
 
 | Group | Coverage | Notes |
 |---|---|---|
-| Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `UNWIND`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
-| Set composition (`UNION`, chained `NEXT`) | Partial | Only `UNION` / `UNION ALL` / `UNION DISTINCT` are supported (feature `GQ03`). `EXCEPT`, `INTERSECT`, and `OTHERWISE` parse but the analyzer rejects them. |
+| Read query (`MATCH`, `OPTIONAL MATCH`, `WHERE`, `RETURN`, `WITH`, `FOR`, `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`) | Full | The pipeline form is canonical; `SELECT ... FROM` desugars at the AST level. |
+| Set composition (`UNION`, `EXCEPT`, `INTERSECT`, `OTHERWISE`, chained `NEXT`) | Full | `OTHERWISE` is `GQ02`; `UNION`, `EXCEPT`, and `INTERSECT` support `ALL` / `DISTINCT` variants (`GQ03`-`GQ07`). |
 | Aggregation (`count`, `sum`, `avg`, `min`, `max`, `collect`, `stddev_pop`, `stddev_samp`) | Full | `GROUP BY` is feature `GQ15` and is claimed. |
-| Mutation (`INSERT`, `MERGE`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). |
-| DDL (`CREATE/DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Full | Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
-| Procedure calls (`CALL ns.proc(args) YIELD col1, col2`) | Full | Named procedure call is feature `GP04`. Inline procedures (`GP01`-`GP15`) are not claimed in v1.0. |
+| Mutation (`INSERT`, `SET`, `REMOVE`, `DELETE`, `DETACH DELETE`) | Full | `MutationPipeline` accepts an optional terminator (`RETURN` or `FINISH`). `MERGE` remains deferred. |
+| DDL (`DROP GRAPH`, `CREATE/DROP NODE TYPE`, `CREATE/DROP EDGE TYPE`, `SHOW NODE TYPES`, `SHOW EDGE TYPES`) | Partial | `DROP GRAPH` is the implementation-defined factory-reset surface. `CREATE GRAPH` remains unclaimed (`GC04`). Graph types claim features `GG01` (open) and `GG02` (closed); explicit element type names and key label sets are `GG20` / `GG21`. |
+| Procedure calls (`CALL ns.proc(args) YIELD col1, col2`, `CALL { ... }`) | Full | Named procedure calls are feature `GP04`; inline `CALL` query subqueries claim `GP01`-`GP03`. Procedure-local definitions remain out of scope. |
 | Transaction control (`START TRANSACTION`, `COMMIT`, `ROLLBACK`) | Full | Feature `GT01`. Multi-graph transactions (`GT03`) are not claimed. |
-| Path patterns (variable-length, ANY/ALL SHORTEST) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST` selectors are claimed (`G015`-`G018`). Counted shortest selectors (`G019`, `G020`) are not. |
+| Path patterns (variable-length, ANY/ALL SHORTEST, counted shortest) | Partial | `ANY`, `ANY SHORTEST`, `ALL`, `ALL SHORTEST`, and counted shortest path/group selectors are claimed (`G015`-`G020`). Implementation-defined quantifier caps still apply to unbounded cyclic searches. |
 | Predicates (`IS DIRECTED`, `IS LABELED`, `IS SOURCE/DESTINATION OF`, `ALL_DIFFERENT`, `SAME`, `PROPERTY_EXISTS`) | Full | Features `G110`-`G115`. |
 
 Statements outside the claimed feature set fail with a Flagger error during
@@ -69,9 +69,9 @@ parsing or analysis, never at runtime.
 | `BOOLEAN` | `TRUE`, `FALSE`, `UNKNOWN` | `Value::Bool` | Three-valued logic applies to `=`, `<>`, comparisons, and Boolean composition. |
 | `INTEGER` / `INT` | `42`, `-17`, `0`, `1_000` (underscores allowed) | `Value::Int` (i64) | Default integer is i64. Implementation-defined IA037 / ID028 set i64 default with i128 promotion when context demands. |
 | `FLOAT` | `3.14`, `-0.5`, `1.0e6`, `2.5e-3` | `Value::Float` (f64) | IEEE 754 binary64 (feature `GA01`). |
-| `STRING` | `'single quotes only'`, `'it''s ok'`, `'\n'` escapes | `Value::String(DbString)` | Single quotes only — double quotes are delimited identifiers. `''` and backslash escapes are honored. |
+| `STRING` | `'single quotes'`, `"double quotes"`, `` `accent quotes` ``, `'\n'` escapes | `Value::String(DbString)` | ISO single-, double-, and accent-quoted character strings. Doubled delimiters and backslash escapes are honored unless the literal uses `@` no-escape form. |
 
-### Optional types claimed in v1.0
+### Optional types claimed under D1
 
 | GQL type | Literal syntax | `Value` variant | Feature |
 |:---|:---|:---|:---|
@@ -79,15 +79,16 @@ parsing or analysis, never at runtime.
 | `UINT8`, `UINT16`, `UINT32`, `UINT64` | `CAST(x AS UINT32)` | `Value::Uint` | `GV01`, `GV03`, `GV06`, `GV11` |
 | `INT128`, `UINT128` | `CAST(x AS INT128)`, `CAST(x AS UINT128)` | `Value::Int128`, `Value::Uint128` | `GV13`, `GV14` |
 | `DECIMAL` | `CAST('1.23' AS DECIMAL)` | `Value::Decimal` (`rust_decimal::Decimal`) | `GV17`, 28 significant digits |
-| `FLOAT32` | `1.5f` | `Value::Float32` | `GV21` |
-| `BYTES` / bare `BINARY` / bare `VARBINARY` | `CAST(x AS BYTES)` | `Value::Bytes` | `GV35`; Selene normalizes all three unqualified spellings to the unbounded `BYTES` form. |
+| `FLOAT32`, `REAL` | `1.5f`, `CAST(x AS REAL)` | `Value::Float32` | `GV21`, `GV23` |
+| `FLOAT64`, `DOUBLE`, `DOUBLE PRECISION` | `CAST(x AS DOUBLE)` | `Value::Float` | `GV24`, `GV23` |
+| `BYTES`, `BYTES(n)`, `BYTES(min,max)`, `BINARY(n)`, `VARBINARY(n)` | `CAST(x AS BYTES(2,4))` | `Value::Bytes` | `GV35`-`GV38`; fixed/variable bounded aliases canonicalize to `BYTES(min,max)` descriptors. |
 | `DATE` | `DATE '2026-05-16'` | `Value::Date` | `GV39` |
 | `LOCAL DATETIME` | `LOCAL DATETIME '2026-05-16T08:30:00'` | `Value::LocalDateTime` | `GV39` |
 | `LOCAL TIME` | `LOCAL TIME '08:30:00'` | `Value::LocalTime` | `GV39` |
 | `ZONED DATETIME` | `ZONED DATETIME '2026-05-16T08:30:00-07:00'` | `Value::ZonedDateTime` | `GV40` |
 | `ZONED TIME` | `ZONED TIME '08:30:00-07:00'` | `Value::ZonedTime` | `GV40` |
 | `DURATION` | `DURATION 'PT1H30M'` or `DURATION('1h30m')` | `Value::Duration` | `GV41` |
-| `LIST<T>` | `[1, 2, 3]`, `CAST(x AS LIST<INTEGER>)` | `Value::List` | `GV50` |
+| `LIST<T>`, `ARRAY<T>`, postfix `T LIST` / `T ARRAY` | `[1, 2, 3]`, `CAST(x AS LIST<INTEGER>)` | `Value::List` | `GV50`; formatter canonicalizes to `LIST<...>`. |
 | `PATH` | constructed by `MATCH` path variables | `Value::Path` | `GV55` |
 
 String-source numeric casts follow the ISO signed/unsigned numeric literal image
@@ -102,12 +103,14 @@ the comparison family.
 
 ### Optional type surfaces deliberately not claimed
 
-Graph and binding-table reference types (`GV60`-`GV61`), explicit value-type
-nullability syntax (`GV90`), length-qualified byte-string types (`GV36`-`GV38`),
-`FLOAT16` / `FLOAT128` / `FLOAT256`, 256-bit integers, and the
-`REAL`/`DOUBLE` synonyms all carry rationale entries in
-`feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of
-these types is rejected at parse or analyze time.
+Graph and binding-table reference type spellings (`GV60`-`GV61`), `FLOAT16` /
+`FLOAT128` / `FLOAT256`, and 256-bit integers carry rationale entries in
+`feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of these
+deferred types is rejected at parse or analyze time.
+
+Explicit value-type nullability (`GV90`), length-qualified byte-string types
+(`GV36`-`GV38`), and `REAL` / `DOUBLE` synonyms (`GV23` / `GV24`) are claimed
+and covered by conformance corpus rows.
 
 ### Numeric literal forms
 
@@ -120,13 +123,22 @@ these types is rejected at parse or analyze time.
 | Exact decimal | `1.5`, `.5`, `1.`, `1.5M`, `1e2M` | Features `GL04`-`GL06`; lowers to `DECIMAL`. |
 | Approximate float | `1e2`, `1.5F`, `1.5D`, `1e2F`, `1e2D` | Features `GL07`-`GL10` for suffix forms; lowers to f64. |
 
+### Character string literal forms
+
+| Form | Example | Notes |
+|---|---|---|
+| Single-quoted | `'Ada''s graph'`, `'line\nnext'` | Standard escaped form; doubled delimiters and backslash escapes are decoded. |
+| Double-quoted | `"Ada ""graph"""`, `"line\nnext"` | Expression slots treat this as a string literal; identifier slots still use double quotes for delimited identifiers. |
+| Accent-quoted | `` `Ada graph` ``, `` `line\nnext` `` | Expression slots treat this as a string literal; identifier slots still use accent quotes for delimited identifiers. Doubled grave accents escape a literal grave accent. |
+| No escape | `@'path\raw'`, `@"path\raw"`, `` @`path\raw` `` | Feature `GL11`; backslashes are literal and the active quote delimiter cannot appear inside the body. |
+
 ### Identifiers and delimited identifiers
 
 | Form | Example | Notes |
 |---|---|---|
 | Unquoted | `name`, `Person`, `customer_id` | Unicode letters / digits / underscore. Reserved keywords cannot appear unquoted. |
 | Double-quoted | `"first name"`, `"with ""quote"""` | Spec form. `""` escapes a literal double quote. |
-| Backtick-quoted | `` `first name` `` | selene extension; semantically identical to double-quoted. |
+| Accent-quoted | `` `first name` `` | Spec form. Doubled grave accents escape a literal grave accent. |
 | Property identifier | `n.date`, `{date: 1}` | Keywords like `date`, `time`, `type` are valid property names without quoting. |
 
 ---
@@ -174,8 +186,8 @@ RETURN r.score AS path_scores
 
 Each row's `path_scores` value is a list. Missing edge properties become
 `NULL` at the corresponding list position. `PROPERTY_EXISTS` remains scalar
-over graph elements and records; use `UNWIND` when per-element existence checks
-are needed.
+over graph elements and records; use `FOR` when per-element existence checks are
+needed.
 
 ### `OPTIONAL MATCH`
 
@@ -226,16 +238,24 @@ RETURN c.name, headcount
 are exactly the projected aliases. `DISTINCT`, `GROUP BY`, `HAVING`, and
 `WHERE` are all valid after `WITH`.
 
-### `UNWIND`
+### `FOR`
 
 ```gql
-UNWIND [1, 2, 3, 4] AS x
+FOR x IN [1, 2, 3, 4]
 RETURN x * x AS squared
+
+FOR x IN [1, 2, 3, 4] WITH ORDINALITY ord
+RETURN x, ord
+
+FOR x IN [1, 2, 3, 4] WITH OFFSET off
+RETURN x, off
 ```
 
-`UNWIND` flattens a list expression into row-per-element. The expression
-can be a list literal, a list-typed property, or any expression evaluating
-to `LIST<T>`.
+`FOR` is the ISO list-value row-expansion statement. It flattens a list
+expression into row-per-element. The expression can be a list literal, a
+list-typed property, or any expression evaluating to `LIST<T>`. `WITH
+ORDINALITY` adds a one-based position column; `WITH OFFSET` adds a zero-based
+position column.
 
 ### `ORDER BY`, `LIMIT`, `OFFSET`, `DISTINCT`
 
@@ -259,7 +279,7 @@ RETURN total, prefix
 ```
 
 `LET` binds value variables. `FOR x IN expr` iterates over a list-typed
-expression (similar to `UNWIND` but as a pipeline op).
+expression using ISO row-expansion syntax.
 
 ### `FILTER`
 
@@ -285,20 +305,24 @@ RETURN p.name
 | `ALL_DIFFERENT(a, b, c, ...)` | `WHERE ALL_DIFFERENT(p1, p2, p3)` | `G113` |
 | `SAME(a, b, c, ...)` | `WHERE SAME(a, b)` | `G114` |
 | `PROPERTY_EXISTS(n, 'key')` | `WHERE PROPERTY_EXISTS(p, 'email')` | `G115` |
-| `BETWEEN a AND b` | `WHERE x BETWEEN 0 AND 100` | mandatory |
 | `IN list` | `WHERE country IN ['NZ', 'AU']` | mandatory |
-| `LIKE pattern` | `WHERE name LIKE 'A%'` | mandatory |
 | `STARTS WITH`, `ENDS WITH`, `CONTAINS` | `WHERE name STARTS WITH 'A'` | mandatory |
 | `EXISTS { MATCH ... }` | `WHERE EXISTS { MATCH (p)-[:KNOWS]->() }` | mandatory |
-| `COUNT { MATCH ... }` | `RETURN COUNT { MATCH (p)-[:KNOWS]->() }` | mandatory |
+
+SQL-style predicate `LIKE` and `BETWEEN` syntax is not part of Selene's GQL
+surface. Use `STARTS WITH`, `ENDS WITH`, or `CONTAINS` for string predicates,
+and spell ranges as ordinary comparisons such as `x >= 0 AND x <= 100`.
 
 ### Expressions
 
 Operators in precedence order (low to high): `OR`, `XOR`, `AND`, `NOT`,
-predicate family (`IS ...`, `IN`, `LIKE`, `BETWEEN`, string match),
+predicate family (`IS ...`, `IN`, string match),
 comparison (`<`, `<=`, `>`, `>=`, `=`, `<>`), concatenation (`||`),
-addition (`+`, `-`), multiplication (`*`, `/`, `%`), unary (`+`, `-`),
-postfix (`.prop`, `[index]`, `.prop AT TIME 'ts'`).
+addition (`+`, `-`), multiplication (`*`, `/`), unary (`+`, `-`),
+postfix (`.prop`).
+
+Use the ISO `MOD(x, y)` numeric function for modulus. Infix `%` and temporal
+property postfix forms such as `.prop AT TIME 'ts'` are rejected at parse time.
 
 The arithmetic and comparison operators flow through three-valued logic
 when any operand is `NULL`.
@@ -306,13 +330,16 @@ when any operand is `NULL`.
 ### List expressions
 
 ```gql
-RETURN [x IN [1, 2, 3, 4] WHERE x > 2 | x * x]              // list comprehension
-RETURN ALL(x IN range WHERE x > 0)                           // universal quantifier
-RETURN ANY(x IN range WHERE x = target)                      // existential quantifier
-RETURN NONE(x IN range WHERE x = forbidden)
-RETURN SINGLE(x IN range WHERE x = unique_target)
-RETURN REDUCE(acc = 0, x IN [1, 2, 3] | acc + x)            // fold
+RETURN [1, 2, 3] AS values
+RETURN [1, 2] || [3, 4] AS values
+RETURN CARDINALITY([1, 2, 3]) AS count
+RETURN TRIM([1, 2, 3, 4], 2) AS prefix
 ```
+
+Selene supports ISO list value constructors, concatenation, `CARDINALITY`, and
+the ISO list `TRIM(list, count)` function. Cypher-style list subscript,
+comprehension, list quantifier, and `REDUCE` expression syntax is not ISO GQL
+and is rejected at parse time.
 
 ### `CASE`, `CAST`, `TRIM`, `LABELS`
 
@@ -365,12 +392,12 @@ UNION
 MATCH (p:Person) WHERE p.country = 'AU' RETURN p.name
 ```
 
-| Operator | v1.0 status |
+| Operator | Status |
 |---|---|
 | `UNION`, `UNION ALL`, `UNION DISTINCT` | Supported (feature `GQ03`). |
-| `EXCEPT`, `EXCEPT ALL`, `EXCEPT DISTINCT` | Parses; analyzer rejects (features `GQ04`, `GQ05` not claimed). |
-| `INTERSECT`, `INTERSECT ALL`, `INTERSECT DISTINCT` | Parses; analyzer rejects (`GQ06`, `GQ07` not claimed). |
-| `OTHERWISE` | Parses; analyzer rejects (`GQ09` not claimed). |
+| `EXCEPT`, `EXCEPT ALL`, `EXCEPT DISTINCT` | Supported (features `GQ04`, `GQ05`). |
+| `INTERSECT`, `INTERSECT ALL`, `INTERSECT DISTINCT` | Supported (features `GQ06`, `GQ07`). |
+| `OTHERWISE` | Supported (feature `GQ02`). |
 
 ### `LIMIT` precedence under `UNION ALL`
 
@@ -475,18 +502,12 @@ let planned = plan(&analyzed, &registry)?;
 execute_statement(&planned, &mut session, &registry)?;
 ```
 
-### `MERGE`
+### `MERGE` (deferred)
 
-```gql
-MERGE (p:Person {email: 'ada@example.org'})
-ON CREATE SET p.created = LOCAL DATETIME '2026-05-16T00:00:00'
-ON MATCH SET p.last_seen = LOCAL DATETIME '2026-05-16T00:00:00'
-```
-
-`MERGE` matches the pattern; if no row matches, the pattern is created.
-`ON CREATE SET` runs for newly-created rows; `ON MATCH SET` runs for
-existing rows. Either clause is optional. Repetition of the same clause
-is rejected at parse time.
+`MERGE` is grammar-reserved, but the AST builder deliberately rejects it
+with feature-not-supported status `42N01`. selene-db does not claim this
+mutation surface yet. Use explicit `MATCH` plus `INSERT` application logic
+until a dedicated `MERGE` implementation lands.
 
 ### `SET`
 
@@ -545,19 +566,21 @@ selene-db supports two graph types: GG01 (open, schema-on-read) and GG02
 (closed, schema-validated). The default is open; closed graphs are
 opt-in.
 
-### `CREATE GRAPH` / `DROP GRAPH`
-
-```gql
-CREATE GRAPH analytics IF NOT EXISTS
-```
+### `DROP GRAPH`
 
 ```gql
 DROP GRAPH analytics IF EXISTS
 ```
 
-`CREATE GRAPH` and `DROP GRAPH` accept the `IF [NOT] EXISTS` modifier
-(feature `GC05`). `CREATE OR REPLACE GRAPH` replaces an existing graph
-atomically. Graph management is feature `GC04`.
+`DROP GRAPH` is supported as the implementation-defined
+`IM_DROP_GRAPH` factory-reset surface. Under D1, selene-db embeds exactly
+one current graph; the parsed graph name is informational and the command
+resets the current session graph. `DROP GRAPH IF EXISTS` parses too; the
+modifier is informational under the same single-graph model.
+
+`CREATE GRAPH` remains outside the current claim. It rejects before planning
+with feature-not-supported status `42N01` for `GC04`, because the embedded
+engine does not create a second graph from GQL.
 
 ### `CREATE NODE TYPE` / `CREATE EDGE TYPE`
 
@@ -578,23 +601,24 @@ CREATE EDGE TYPE :KNOWS (
 ) STRICT
 ```
 
-Property constraints recognized by the AST (`TypePropertyConstraint`):
-`NOT NULL`, `DEFAULT <expr>`, `IMMUTABLE`, `UNIQUE`, `INDEXED`,
-`SEARCHABLE`, `DICTIONARY`, `FILL <name>`, `INTERVAL '<duration>'`,
-`ENCODING <name>`.
+Catalog DDL accepts `NOT NULL`, `DEFAULT <expr>`, `IMMUTABLE`, `UNIQUE`, and
+`INDEXED [AS <name>]` property annotations. Donor full-text and time-series
+constraints such as `SEARCHABLE`, `DICTIONARY`, `FILL`, `INTERVAL`, and
+`ENCODING` are not part of the supported grammar and reject as syntax errors.
 
 The trailing `STRICT` or `WARN` keyword is accepted by the grammar and stored
-as `ValidationMode`, but v1.1 does not enforce validation-mode semantics at
-runtime. Catalog DDL carrying `STRICT` or `WARN` is currently rejected with
-GQLSTATUS `5GQL0`. Closed-graph type validation is separate from
-`ValidationMode`: writes against a closed graph hard-fail with `G2000` when
-they violate the bound graph type. Element type names (`GG20`) and explicit
-key label sets (`GG21`) are claimed.
+as `ValidationMode`. `STRICT` is the default closed-graph validation mode:
+writes against a closed graph hard-fail with `G2000` when they violate the
+bound graph type. `WARN` permits relaxed writes and emits warning `01N01`
+(`VALIDATION_MODE_RELAXED_WRITE`) through the session warning sink after
+commit. Element type names (`GG20`) and explicit key label sets (`GG21`) are
+claimed.
 
 `DEFAULT <expr>` is represented in the AST and is independent from `NOT NULL`:
-a property with `DEFAULT` but no `NOT NULL` remains nullable. Runtime DEFAULT
-application is not implemented in v1.1, and catalog DDL containing `DEFAULT`
-is rejected with `5GQL0`.
+a property with `DEFAULT` but no `NOT NULL` remains nullable. Catalog defaults
+are validated against the declared property type, stored in the graph type,
+round-tripped by `SHOW NODE TYPES` / `SHOW EDGE TYPES`, recovered from durable
+state, and materialized when an inserted node or edge omits the property.
 
 `OR REPLACE` and `IF NOT EXISTS` modifiers are accepted on `CREATE NODE
 TYPE` and `CREATE EDGE TYPE` (feature `GC03`).
@@ -634,15 +658,16 @@ emitted from the CALL or the DDL form.
 ## 8. `CALL` and procedures
 
 Procedure calls invoke named functions registered in the native procedure
-registry. A `CALL` accepts positional arguments and yields a tabular
-result via `YIELD`. The `CALL` grammar is unchanged ISO GQL (external
-procedures per ISO `IW010`); there is no procedure-pack or loadable-extension
-machinery behind it.
+registry, or execute an inline query subquery with `CALL { ... }`. A
+named `CALL` accepts positional arguments and yields a tabular result via
+`YIELD`. `OPTIONAL CALL` preserves each input row when the call result is
+empty, filling yielded columns with `NULL`. There is no procedure-pack or
+loadable-extension machinery behind the native registry.
 
 ```gql
 CALL algo.pagerank('person_graph', 0.85, 30)
 YIELD node_id, score
-WHERE score > 0.01
+FILTER score > 0.01
 RETURN node_id, score
 ORDER BY score DESC
 LIMIT 20
@@ -651,12 +676,13 @@ LIMIT 20
 Form:
 
 ```text
-CALL <namespace>.<procedure>(args) [ YIELD col1 [, col2 ...] [ WHERE expr ] ]
+[ OPTIONAL ] CALL <namespace>.<procedure>(args) [ YIELD col1 [, col2 ...] ]
+[ OPTIONAL ] CALL [ (var1 [, var2 ...]) ] { <query pipeline> } [ YIELD col1 [, col2 ...] ]
 ```
 
 `YIELD *` yields every output column. Each yield column can be aliased
-(`YIELD col AS alias`). The optional inline `WHERE` filters the call's
-output before it joins the surrounding pipeline.
+(`YIELD col AS alias`). Use a following pipeline `FILTER` statement to filter
+procedure output.
 
 ### Built-in `selene.*` procedures
 
@@ -675,11 +701,12 @@ output before it joins the surrounding pipeline.
 | `selene.create_text_index`, `selene.drop_text_index` | Mutation | Register or drop maintained BM25 text indexes. |
 | `selene.text_index_stats` | Graph | Text index memory and cardinality statistics. |
 | `selene.text_search_nodes`, `selene.text_score_nodes`, `selene.text_score_nodes_batch`, `selene.text_score_candidate_state_expanded_batch` | Graph | Exact BM25 search and candidate-scoped text scoring. |
+| `selene.reciprocal_rank_fusion` | Graph | Fuse ranked node lists with Reciprocal Rank Fusion. |
 | `selene.json_contains_nodes`, `selene.json_path_*_nodes` | Graph | Exact JSON containment, path-existence, path-containment, and path-value search over node properties. |
 | `selene.json_contains_candidate_nodes`, `selene.json_path_*_candidate_nodes` | Graph | Candidate-scoped JSON filters over explicit `LIST<NODE>` inputs. |
 | `selene.compact` | Maintenance | Compact dead graph rows out of the live store. |
 
-The 45 platform built-ins are registered by the native
+The 46 platform built-ins are registered by the native
 `selene-gql` `BuiltinProcedureRegistry` (the sole frozen production
 `ProcedureRegistry` impl) and documented in its rustdoc.
 
@@ -703,8 +730,8 @@ result columns.
 
 `EmptyProcedureRegistry` is the no-op registry used by the README example.
 A real embedder constructs the native `BuiltinProcedureRegistry`, which is
-frozen at construction (D16): it allocates a fixed set of handles for the 5
-platform built-ins + 19 `algo.*` procedures and never changes thereafter
+frozen at construction (D16): it allocates a fixed set of handles for the 46
+platform built-ins plus 19 `algo.*` procedures and never changes thereafter
 (`registry_version()` is a constant `0`). It can be shared across threads
 via `Arc`. There are no loadable third-party packs to register.
 
@@ -749,7 +776,7 @@ execute_statement(&plan_for("COMMIT"), &mut session, &registry)?;
 Mixed catalog-and-data transactions are forbidden (implementation-defined
 choices `IE006`, `IE007`): a transaction may either modify schema or
 modify data, but not both. Feature `GP18` (mixed catalog/data) is not
-claimed in v1.0.
+claimed under D1.
 
 Multi-graph transactions (`GT03`) are not claimed; one transaction touches
 exactly one graph.
@@ -758,29 +785,31 @@ exactly one graph.
 
 ## 10. GQL Flagger
 
-The Flagger (ISO GQL Clause 24.6) rejects constructs outside the v1.0
-claimed feature register at parse or analysis time. Rejection happens
+The Flagger (ISO GQL Clause 24.6) rejects constructs outside the D1 claimed
+feature register at parse or analysis time. Rejection happens
 **before** execution; there is no runtime "unsupported feature" surprise.
 
 Examples of rejected constructs:
 
 | Construct | Reason | Failure mode |
 |---|---|---|
-| `MATCH (p) RETURN ALL SHORTEST 3 PATH ...` | Feature `G019` (counted shortest) not claimed. | Flagger error. |
-| `CALL { CREATE PROCEDURE ... }` (inline procedure body) | Features `GP01`-`GP15` not claimed. | Flagger error. |
-| `MATCH ... RETURN ... EXCEPT MATCH ...` | Feature `GQ04` not claimed. | Flagger error. |
-| `RECORD<a INTEGER, b STRING>` in a type position | Features `GV45`-`GV48` not claimed. | Flagger error. |
+| `CREATE PROCEDURE pkg.fn() { LET x = 1 RETURN x }` | Procedure-local definitions (`GP05`-`GP13`) are deferred. | Parser error. |
+| `CALL pkg.fn(TABLE rows)` | Binding tables as procedure arguments (`GP14`) are deferred. | Parser error. |
+| `CALL pkg.fn(GRAPH g)` | Graphs as procedure arguments (`GP15`) are deferred. | Parser error. |
+| `CREATE GRAPH demo` | Graph management (`GC04`) is unclaimed under the D1 single-graph embedder model. | Flagger error. |
+| `MERGE (n:Person {id: 1})` | `MERGE` mutation lowering is deferred. | Parser error. |
+| `RETURN NULL IS TYPED GRAPH AS ok` | Graph reference value types (`GV60`) are deferred. | Flagger error. |
 | `CAST(x AS FLOAT16)` | Feature `GV20` not claimed. | Flagger error. |
-| `CAST(x AS BYTES(16))`, `BINARY(16)`, `VARBINARY(16)` | Byte-string length features `GV36`-`GV38` not claimed. | Flagger error. |
+| `CAST(x AS FLOAT128)` | Feature `GV25` not claimed. | Flagger error. |
 | Cypher-only `CREATE (n:Foo)-[:R]->(m:Bar)` (without the `INSERT` keyword) | Not ISO GQL surface. | Parser error. |
 | Cypher-only `WHERE n.x =~ '.*foo.*'` (regex match) | Not ISO GQL surface. | Parser error. |
 
 ### Runtime feature introspection
 
-A future `CALL selene.feature_status` procedure may surface the claimed
-feature register at runtime. The canonical source today is the
-`feature_register` module in `selene-core`:
-`SUPPORTED_FEATURES`, `NOT_SUPPORTED_RATIONALE`, and `is_supported`.
+`CALL selene.feature_status()` surfaces the claimed feature register at
+runtime with `feature_id`, `status`, and `rationale` columns. It is backed by
+the `feature_register` module in `selene-core`: `SUPPORTED_FEATURES`,
+`NOT_SUPPORTED_RATIONALE`, and `is_supported`.
 
 ---
 
@@ -804,7 +833,7 @@ diagnostic codes follow the GQLSTATUS table in
 
 ## 12. What's NOT supported
 
-The v1.0 surface is deliberately narrow. The list below names what is
+The current D1 surface is deliberately narrow. The list below names what is
 explicitly absent. The canonical rationale is
 `feature_register::NOT_SUPPORTED_RATIONALE`.
 
@@ -813,16 +842,13 @@ explicitly absent. The canonical rationale is
 | Cypher grammar | Not supported. Use ISO GQL syntax. |
 | SQL grammar | Not supported. |
 | SPARQL grammar | Not supported. |
-| `EXCEPT`, `INTERSECT`, `OTHERWISE` set operators | Parses; analyzer rejects (features `GQ04`-`GQ09`). |
-| Counted shortest path (`G019`, `G020`) | Not claimed. Use `ANY SHORTEST` or `ALL SHORTEST`. |
-| Inline procedure definitions (`CREATE PROCEDURE { ... }`) | Not claimed (features `GP01`-`GP03`, `GP05`-`GP15`). Named procedures (`GP04`) are served only by the native built-in registry. |
+| Procedure-local definitions (`CREATE PROCEDURE { ... }`) | Not claimed (features `GP05`-`GP13`). Inline query subqueries (`GP01`-`GP03`) and named procedure calls (`GP04`) are supported. |
+| Binding tables or graphs as procedure arguments | Not claimed (features `GP14`, `GP15`). |
 | Procedure-local variables | Not claimed (features `GP05`-`GP15`). |
 | Mixed catalog/data transactions | Not claimed (feature `GP18`). |
 | Multi-graph transactions | Not claimed (feature `GT03`). |
 | Graph / table reference type spellings (`GRAPH`, `TABLE` as types) | Not claimed (features `GV60`-`GV61`). |
-| Explicit value-type nullability syntax (`STRING NOT NULL` in type expressions) | Not claimed (feature `GV90`). The DDL `NOT NULL` property constraint is supported separately. |
-| Length-qualified byte-string types (`BYTES(max)`, `BYTES(min,max)`, `BINARY(n)`, `VARBINARY(n)`) | Not claimed (features `GV36`-`GV38`). Bare `BYTES`, `BINARY`, and `VARBINARY` all normalize to unbounded `BYTES`. |
-| `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL`/`DOUBLE` synonyms | Not claimed. |
+| `FLOAT16`, `FLOAT128`, `FLOAT256` | Not claimed (`GV20`, `GV25`, `GV26`). `REAL` / `DOUBLE` synonyms are supported. |
 | 256-bit integers (`INT256`, `UINT256`) | Not claimed. |
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |
 | RDF / SPARQL bridge syntax | Out of scope. Future first-party extension allocation `GRPR`. |

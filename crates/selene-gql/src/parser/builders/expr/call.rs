@@ -5,16 +5,16 @@ use selene_core::DbString;
 
 use crate::{
     ast::{
-        BinaryOp, NormalForm, SourceSpan, TemporalDurationQualifier, TrimSpec, ValueExpr,
-        util::NonEmpty,
+        BinaryOp, ExistsBody, NormalForm, SourceSpan, TemporalDurationQualifier, TrimSpec,
+        ValueExpr, util::NonEmpty,
     },
     error::ParserError,
 };
 
 use super::{Rule, build_value_expr, first_child, literal};
 use crate::parser::builders::{
-    build_qualified_name, build_query_pipeline, db_string_from_owned, pattern, span,
-    unexpected_pair,
+    build_exists_match_body_pipeline, build_qualified_name, build_query_pipeline,
+    db_string_from_owned, pattern, span, unexpected_pair,
 };
 
 pub(super) enum PredicateKind {
@@ -53,6 +53,43 @@ pub(super) fn build_function_call(pair: Pair<'_, Rule>) -> Result<ValueExpr, Par
 
 pub(super) fn build_elements_function(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     build_keyword_function(pair, "elements")
+}
+
+pub(super) fn build_scalar_keyword_function_call(
+    pair: Pair<'_, Rule>,
+) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut name = None;
+    let mut args = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::scalar_keyword_function_name => name = Some(lowercase_db_string(child)?),
+            Rule::arg_list => {
+                args = child
+                    .into_inner()
+                    .filter(|arg| arg.as_rule() == Rule::expr)
+                    .map(build_value_expr)
+                    .collect::<Result<Vec<_>, _>>()?;
+            }
+            _ => {
+                return Err(unexpected_pair(
+                    child,
+                    "unexpected scalar keyword function child",
+                ));
+            }
+        }
+    }
+    let name = name.ok_or_else(|| {
+        ParserError::syntax("scalar keyword function is missing name", source_span, None)
+    })?;
+    Ok(ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![name])
+            .expect("scalar keyword function name is non-empty"),
+        args,
+        star: false,
+        distinct: false,
+        span: source_span,
+    })
 }
 
 pub(super) fn build_labels_function(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
@@ -183,6 +220,14 @@ fn build_keyword_function(pair: Pair<'_, Rule>, name: &str) -> Result<ValueExpr,
             _ => return Err(unexpected_pair(child, "unexpected keyword-function child")),
         }
     }
+    keyword_function_expr(name, args, source_span)
+}
+
+fn keyword_function_expr(
+    name: &str,
+    args: Vec<ValueExpr>,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
     Ok(ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![db_string_from_owned(
             name.to_owned(),
@@ -283,42 +328,88 @@ pub(super) fn build_normalize_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
 
 pub(super) fn build_trim_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
-    let mut spec = TrimSpec::Both;
-    let mut has_spec = false;
-    let mut has_character = false;
-    let mut values = Vec::new();
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::trim_spec => {
-                has_spec = true;
-                spec = parse_trim_spec(child.as_str());
-            }
-            Rule::expr => values.push(build_value_expr(child)?),
-            Rule::trim_char => {
-                has_character = true;
-                values.push(build_value_expr(first_child(child)?)?);
-            }
+            Rule::trim_kw => {}
+            Rule::trim_spec_operands => return build_trim_spec_operands(child, source_span),
+            Rule::trim_value_operands => return build_trim_value_operands(child, source_span),
             _ => return Err(unexpected_pair(child, "unexpected TRIM child")),
         }
     }
-    if !has_spec && !has_character {
-        return Err(ParserError::syntax(
-            "TRIM with FROM requires a trim specification or trim character",
-            source_span,
-            None,
-        ));
+    Err(ParserError::syntax(
+        "TRIM is missing operands",
+        source_span,
+        None,
+    ))
+}
+
+fn build_trim_spec_operands(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
+    let mut spec = TrimSpec::Both;
+    let mut character = None;
+    let mut source = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::trim_spec => spec = parse_trim_spec(child.as_str()),
+            Rule::trim_char => {
+                character = Some(Box::new(build_value_expr(first_child(child)?)?));
+            }
+            Rule::from_kw => {}
+            Rule::expr => source = Some(build_value_expr(child)?),
+            _ => return Err(unexpected_pair(child, "unexpected explicit TRIM child")),
+        }
     }
-    let source = values.pop().ok_or_else(|| {
+    trim_from_expr(spec, character, source, source_span)
+}
+
+fn build_trim_value_operands(
+    pair: Pair<'_, Rule>,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
+    let mut children = pair.into_inner();
+    let first_pair = children.next().ok_or_else(|| {
         ParserError::syntax("TRIM is missing source expression", source_span, None)
     })?;
-    let character = values.pop().map(Box::new);
-    if !values.is_empty() {
-        return Err(ParserError::syntax(
-            "TRIM has too many value expressions",
-            source_span,
-            None,
-        ));
+    let first = build_value_expr(first_pair)?;
+    match children.next() {
+        None => keyword_function_expr("trim", vec![first], source_span),
+        Some(tail) => {
+            let tail = if tail.as_rule() == Rule::trim_value_tail {
+                first_child(tail)?
+            } else {
+                tail
+            };
+            match tail.as_rule() {
+                Rule::trim_from_tail => {
+                    let source = expr_from_child(tail)?;
+                    trim_from_expr(
+                        TrimSpec::Both,
+                        Some(Box::new(first)),
+                        Some(source),
+                        source_span,
+                    )
+                }
+                Rule::trim_list_tail => {
+                    let count = expr_from_child(tail)?;
+                    keyword_function_expr("trim", vec![first, count], source_span)
+                }
+                _ => Err(unexpected_pair(tail, "unexpected TRIM operand tail")),
+            }
+        }
     }
+}
+
+fn trim_from_expr(
+    spec: TrimSpec,
+    character: Option<Box<ValueExpr>>,
+    source: Option<ValueExpr>,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
+    let source = source.ok_or_else(|| {
+        ParserError::syntax("TRIM is missing source expression", source_span, None)
+    })?;
     Ok(ValueExpr::Trim {
         spec,
         character,
@@ -353,10 +444,15 @@ pub(super) fn build_property_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, P
     let source_span = span(&pair);
     let mut target = None;
     let mut key = None;
+    let mut key_source_kind = None;
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::expr => target = Some(build_value_expr(child)?),
-            Rule::string_lit => key = Some(literal::parse_string_pair(child)?),
+            Rule::string_lit => {
+                let (parsed_key, parsed_kind) = literal::parse_string_pair_with_kind(child)?;
+                key = Some(parsed_key);
+                key_source_kind = Some(parsed_kind);
+            }
             _ => return Err(unexpected_pair(child, "unexpected PROPERTY_EXISTS child")),
         }
     }
@@ -367,6 +463,9 @@ pub(super) fn build_property_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, P
         key: key.ok_or_else(|| {
             ParserError::syntax("PROPERTY_EXISTS is missing property key", source_span, None)
         })?,
+        key_source_kind: key_source_kind.ok_or_else(|| {
+            ParserError::syntax("PROPERTY_EXISTS is missing property key", source_span, None)
+        })?,
         span: source_span,
     })
 }
@@ -374,27 +473,39 @@ pub(super) fn build_property_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, P
 pub(super) fn build_exists(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let negated = pair.as_str().to_ascii_uppercase().starts_with("NOT");
-    let match_pair = pair
+    let body_pair = pair
         .into_inner()
-        .find(|child| child.as_rule() == Rule::match_stmt)
-        .ok_or_else(|| ParserError::syntax("EXISTS is missing MATCH pattern", source_span, None))?;
+        .find(|child| child.as_rule() == Rule::exists_body)
+        .ok_or_else(|| ParserError::syntax("EXISTS is missing body", source_span, None))?;
+    let body_child = body_pair
+        .into_inner()
+        .find(|child| {
+            matches!(
+                child.as_rule(),
+                Rule::exists_match_body | Rule::graph_pattern_list
+            )
+        })
+        .ok_or_else(|| ParserError::syntax("EXISTS is missing pattern", source_span, None))?;
+    let body = match body_child.as_rule() {
+        Rule::exists_match_body => {
+            let mut children = body_child.clone().into_inner();
+            let first = children.next().ok_or_else(|| {
+                ParserError::syntax("EXISTS match body is missing MATCH", source_span, None)
+            })?;
+            if children.next().is_some() {
+                ExistsBody::Query(Box::new(build_exists_match_body_pipeline(body_child)?))
+            } else {
+                ExistsBody::Match(Box::new(pattern::build_match_clause(first)?))
+            }
+        }
+        Rule::graph_pattern_list => ExistsBody::Match(Box::new(
+            pattern::build_match_clause_from_graph_pattern_list(body_child, source_span)?,
+        )),
+        _ => return Err(unexpected_pair(body_child, "unexpected EXISTS body")),
+    };
     Ok(ValueExpr::Exists {
-        pattern: Box::new(pattern::build_match_clause(match_pair)?),
+        body,
         negated,
-        span: source_span,
-    })
-}
-
-pub(super) fn build_count_subquery(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
-    let source_span = span(&pair);
-    let match_pair = pair
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::match_stmt)
-        .ok_or_else(|| {
-            ParserError::syntax("COUNT subquery is missing MATCH pattern", source_span, None)
-        })?;
-    Ok(ValueExpr::CountSubquery {
-        pattern: Box::new(pattern::build_match_clause(match_pair)?),
         span: source_span,
     })
 }
@@ -422,13 +533,20 @@ pub(super) fn build_case_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserE
     }
 }
 
+fn is_case_keyword_token(rule: Rule) -> bool {
+    matches!(
+        rule,
+        Rule::case_kw | Rule::when_kw | Rule::then_kw | Rule::else_kw | Rule::end_kw
+    )
+}
+
 fn build_simple_case(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<ValueExpr, ParserError> {
     let mut children = pair
         .into_inner()
-        .filter(|child| child.as_rule() != Rule::case_kw);
+        .filter(|child| !is_case_keyword_token(child.as_rule()));
     let base =
         build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("simple CASE is missing input", source_span, None)
@@ -456,25 +574,38 @@ fn simple_when_branch(
     base: &ValueExpr,
 ) -> Result<(ValueExpr, ValueExpr), ParserError> {
     let when_span = span(&pair);
-    let mut children = pair.into_inner();
-    let when_value =
-        build_value_expr(children.next().ok_or_else(|| {
-            ParserError::syntax("CASE WHEN is missing expression", when_span, None)
-        })?)?;
-    let then_value =
-        build_value_expr(children.next().ok_or_else(|| {
-            ParserError::syntax("CASE THEN is missing expression", when_span, None)
-        })?)?;
-    let condition_span = SourceSpan::merge(base.span(), when_value.span());
-    Ok((
-        ValueExpr::BinaryOp {
-            op: BinaryOp::Eq,
-            lhs: Box::new(base.clone()),
-            rhs: Box::new(when_value),
-            span: condition_span,
-        },
-        then_value,
-    ))
+    let mut operands = pair
+        .into_inner()
+        .filter(|child| child.as_rule() == Rule::expr)
+        .map(build_value_expr)
+        .collect::<Result<Vec<_>, _>>()?;
+    let then_value = operands
+        .pop()
+        .ok_or_else(|| ParserError::syntax("CASE THEN is missing expression", when_span, None))?;
+    let mut operands = operands.into_iter();
+    let first_operand = operands
+        .next()
+        .ok_or_else(|| ParserError::syntax("CASE WHEN is missing expression", when_span, None))?;
+    let mut condition = simple_when_comparison(base, first_operand);
+    for operand in operands {
+        let rhs = simple_when_comparison(base, operand);
+        condition = ValueExpr::BinaryOp {
+            op: BinaryOp::Or,
+            span: SourceSpan::merge(condition.span(), rhs.span()),
+            lhs: Box::new(condition),
+            rhs: Box::new(rhs),
+        };
+    }
+    Ok((condition, then_value))
+}
+
+fn simple_when_comparison(base: &ValueExpr, operand: ValueExpr) -> ValueExpr {
+    ValueExpr::BinaryOp {
+        op: BinaryOp::Eq,
+        span: SourceSpan::merge(base.span(), operand.span()),
+        lhs: Box::new(base.clone()),
+        rhs: Box::new(operand),
+    }
 }
 
 fn build_searched_case(
@@ -485,7 +616,7 @@ fn build_searched_case(
     let mut else_branch = None;
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::case_kw => {}
+            rule if is_case_keyword_token(rule) => {}
             Rule::when_clause => branches.push(searched_when_branch(child)?),
             Rule::else_clause => else_branch = Some(Box::new(expr_from_child(child)?)),
             _ => return Err(unexpected_pair(child, "unexpected CASE child")),
@@ -500,7 +631,9 @@ fn build_searched_case(
 
 fn searched_when_branch(pair: Pair<'_, Rule>) -> Result<(ValueExpr, ValueExpr), ParserError> {
     let when_span = span(&pair);
-    let mut children = pair.into_inner();
+    let mut children = pair
+        .into_inner()
+        .filter(|child| child.as_rule() == Rule::expr);
     let condition =
         build_value_expr(children.next().ok_or_else(|| {
             ParserError::syntax("CASE WHEN is missing condition", when_span, None)

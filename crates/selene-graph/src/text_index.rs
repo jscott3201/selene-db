@@ -7,17 +7,17 @@
 //! correctness oracle; this module reuses the same tokenizer, IDF formula, and
 //! top-k ordering.
 
-use std::collections::BTreeSet;
 use std::mem::size_of;
 use std::sync::Arc;
 
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
-use selene_core::{CancellationChecker, DbString, LabelSet, NodeId, PropertyMap, Value};
+use selene_core::{CancellationChecker, DbString, NodeId, Value};
 
 use crate::error::{GraphError, GraphResult};
-use crate::graph::{SeleneGraph, TextIndexEntry};
+use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
 use crate::text_search::{
@@ -29,7 +29,16 @@ use crate::text_search::{
 mod builder;
 #[path = "text_index/candidate.rs"]
 mod candidate;
+#[path = "text_index/maintenance.rs"]
+mod maintenance;
 use builder::TextIndexBuilder;
+
+type QueryDocumentFrequencies = SmallVec<[u32; 4]>;
+type QueryPostings<'a> = SmallVec<[Option<&'a [TextPosting]>; 4]>;
+
+pub(crate) use maintenance::{
+    apply_node_create, apply_node_delete, apply_node_update, rebuild_text_indexes,
+};
 
 /// In-memory BM25 postings index for one node `(label, property)` pair.
 #[derive(Clone, Debug)]
@@ -56,10 +65,15 @@ impl TextIndex {
     /// Returns [`GraphError::Inconsistent`] if the label index references a row
     /// without a resolvable node id or property row.
     pub fn build(graph: &SeleneGraph, label: DbString, property: DbString) -> GraphResult<Self> {
-        let mut index = TextIndexBuilder::empty(label.clone(), property.clone());
         let Some(label_rows) = graph.nodes_with_label(&label) else {
-            return Ok(index.finish());
+            return Ok(TextIndexBuilder::empty(label, property).finish());
         };
+        let label_row_capacity = usize::try_from(label_rows.len()).unwrap_or(usize::MAX);
+        let mut index = TextIndexBuilder::with_document_capacity(
+            label.clone(),
+            property.clone(),
+            label_row_capacity,
+        );
 
         for raw_row in label_rows.iter() {
             if !graph.node_store.is_alive(raw_row) {
@@ -223,8 +237,9 @@ impl TextIndex {
     ///
     /// # Errors
     ///
-    /// Returns [`TextSearchError::Cancelled`] or [`TextSearchError::Timeout`] when
-    /// the supplied checker trips while collecting postings.
+    /// Returns [`TextSearchError::Cancelled`], [`TextSearchError::Timeout`], or
+    /// [`TextSearchError::NodeScanBudgetExceeded`] when the supplied checker
+    /// trips while collecting postings or scoring candidate documents.
     pub fn search_checked(
         &self,
         query: &str,
@@ -240,16 +255,36 @@ impl TextIndex {
             return Ok(Vec::new());
         }
 
-        let mut document_frequencies = vec![0_u32; query_terms.len()];
+        let mut document_frequencies = QueryDocumentFrequencies::with_capacity(query_terms.len());
+        let mut postings_by_term = QueryPostings::with_capacity(query_terms.len());
+        let mut candidate_capacity = 0usize;
+        for term in &query_terms {
+            match self.postings.get(term) {
+                Some(postings) => {
+                    candidate_capacity = candidate_capacity.saturating_add(postings.len());
+                    document_frequencies.push(u32::try_from(postings.len()).unwrap_or(u32::MAX));
+                    postings_by_term.push(Some(postings.as_slice()));
+                }
+                None => {
+                    document_frequencies.push(0);
+                    postings_by_term.push(None);
+                }
+            }
+        }
+        let candidate_capacity = candidate_capacity.min(self.document_lengths.len());
+        if candidate_capacity == 0 {
+            return Ok(Vec::new());
+        }
+
         let mut candidates: FxHashMap<NodeId, DocumentStats> = FxHashMap::default();
+        candidates.reserve(candidate_capacity);
         let mut postings_since_check = 0usize;
 
-        for (term_index, term) in query_terms.iter().enumerate() {
-            let Some(postings) = self.postings.get(term) else {
+        for (term_index, postings) in postings_by_term.into_iter().enumerate() {
+            let Some(postings) = postings else {
                 continue;
             };
-            document_frequencies[term_index] = u32::try_from(postings.len()).unwrap_or(u32::MAX);
-            for posting in postings.iter() {
+            for posting in postings {
                 postings_since_check += 1;
                 if postings_since_check >= crate::text_search::TEXT_SEARCH_CANCEL_STRIDE {
                     checker.check()?;
@@ -272,7 +307,13 @@ impl TextIndex {
         let corpus_len = self.document_lengths.len() as f64;
         let average_document_len = self.total_document_len as f64 / corpus_len;
         let mut top_k = TextTopK::new(k);
+        let mut docs_since_check = 0usize;
         for doc in candidates.into_values() {
+            docs_since_check += 1;
+            if docs_since_check >= crate::text_search::TEXT_SEARCH_CANCEL_STRIDE {
+                checker.note_nodes_scanned(docs_since_check)?;
+                docs_since_check = 0;
+            }
             let score = bm25_score(
                 &doc,
                 &document_frequencies,
@@ -282,6 +323,9 @@ impl TextIndex {
             if score > 0.0 {
                 top_k.push(doc.node_id, score);
             }
+        }
+        if docs_since_check > 0 {
+            checker.note_nodes_scanned(docs_since_check)?;
         }
         Ok(top_k.into_hits())
     }
@@ -480,213 +524,6 @@ impl SharedGraph {
     ) -> GraphResult<Vec<TextSearchHit>> {
         self.read()
             .indexed_text_search_nodes(label, property, query, k)
-    }
-}
-
-type TextIndexMap = FxHashMap<(DbString, DbString), TextIndexEntry>;
-
-pub(crate) fn apply_node_create(
-    indexes: &mut TextIndexMap,
-    labels: &LabelSet,
-    props: &PropertyMap,
-    row: u32,
-    node_id: NodeId,
-) {
-    for label in labels.iter() {
-        for (property, value) in props.iter() {
-            insert_commit(
-                indexes,
-                label.clone(),
-                property.clone(),
-                value,
-                row,
-                node_id,
-            );
-        }
-    }
-}
-
-pub(crate) fn apply_node_delete(
-    indexes: &mut TextIndexMap,
-    labels: &LabelSet,
-    props: &PropertyMap,
-    row: u32,
-    node_id: NodeId,
-) {
-    for label in labels.iter() {
-        for (property, value) in props.iter() {
-            remove_commit(
-                indexes,
-                label.clone(),
-                property.clone(),
-                value,
-                row,
-                node_id,
-            );
-        }
-    }
-}
-
-pub(crate) fn apply_node_update(
-    indexes: &mut TextIndexMap,
-    old_labels: &LabelSet,
-    old_props: &PropertyMap,
-    new_labels: &LabelSet,
-    new_props: &PropertyMap,
-    row: u32,
-    node_id: NodeId,
-) {
-    let candidates = candidate_keys(indexes, old_labels, old_props, new_labels, new_props);
-    for (label, property) in candidates {
-        match (
-            indexable_text(old_labels, old_props, &label, &property),
-            indexable_text(new_labels, new_props, &label, &property),
-        ) {
-            (Some(old_text), Some(new_text)) if old_text == new_text => {}
-            (Some(_), Some(new_text)) => {
-                insert_commit(
-                    indexes,
-                    label.clone(),
-                    property.clone(),
-                    new_text,
-                    row,
-                    node_id,
-                );
-            }
-            (Some(old_text), None) => {
-                remove_commit(
-                    indexes,
-                    label.clone(),
-                    property.clone(),
-                    old_text,
-                    row,
-                    node_id,
-                );
-            }
-            (None, Some(new_text)) => {
-                insert_commit(
-                    indexes,
-                    label.clone(),
-                    property.clone(),
-                    new_text,
-                    row,
-                    node_id,
-                );
-            }
-            (None, None) => {}
-        }
-    }
-}
-
-pub(crate) fn rebuild_text_indexes(graph: &mut SeleneGraph) -> GraphResult<()> {
-    let registrations: Vec<((DbString, DbString), Option<DbString>)> = graph
-        .text_index
-        .iter()
-        .map(|(key, entry)| (key.clone(), entry.name.clone()))
-        .collect();
-    graph.text_index.clear();
-    for ((label, property), name) in registrations {
-        let index = TextIndex::build(graph, label.clone(), property.clone())?;
-        graph
-            .text_index
-            .insert((label, property), TextIndexEntry::new(index, name));
-    }
-    Ok(())
-}
-
-fn candidate_keys(
-    indexes: &TextIndexMap,
-    old_labels: &LabelSet,
-    old_props: &PropertyMap,
-    new_labels: &LabelSet,
-    new_props: &PropertyMap,
-) -> BTreeSet<(DbString, DbString)> {
-    if indexes.is_empty() {
-        return BTreeSet::new();
-    }
-    let mut labels: BTreeSet<DbString> = BTreeSet::new();
-    labels.extend(old_labels.iter().cloned());
-    labels.extend(new_labels.iter().cloned());
-
-    let mut properties: BTreeSet<DbString> = BTreeSet::new();
-    properties.extend(old_props.keys().cloned());
-    properties.extend(new_props.keys().cloned());
-
-    let mut candidates = BTreeSet::new();
-    for label in &labels {
-        for property in &properties {
-            let key = (label.clone(), property.clone());
-            if indexes.contains_key(&key) {
-                candidates.insert(key);
-            }
-        }
-    }
-    candidates
-}
-
-fn indexable_text<'a>(
-    labels: &LabelSet,
-    props: &'a PropertyMap,
-    label: &DbString,
-    property: &DbString,
-) -> Option<&'a str> {
-    if !labels.contains(label) {
-        return None;
-    }
-    match props.get(property) {
-        Some(Value::String(text)) => Some(text.as_str()),
-        _ => None,
-    }
-}
-
-fn insert_commit(
-    indexes: &mut TextIndexMap,
-    label: DbString,
-    property: DbString,
-    value: impl TextValue,
-    row: u32,
-    node_id: NodeId,
-) {
-    let Some(text) = value.text() else {
-        return;
-    };
-    if let Some(entry) = indexes.get_mut(&(label, property)) {
-        std::sync::Arc::make_mut(&mut entry.index).insert_document(row, node_id, text);
-    }
-}
-
-fn remove_commit(
-    indexes: &mut TextIndexMap,
-    label: DbString,
-    property: DbString,
-    value: impl TextValue,
-    row: u32,
-    node_id: NodeId,
-) {
-    if value.text().is_none() {
-        return;
-    }
-    if let Some(entry) = indexes.get_mut(&(label, property)) {
-        std::sync::Arc::make_mut(&mut entry.index).remove_document(row, node_id);
-    }
-}
-
-trait TextValue {
-    fn text(&self) -> Option<&str>;
-}
-
-impl TextValue for &Value {
-    fn text(&self) -> Option<&str> {
-        match self {
-            Value::String(text) => Some(text.as_str()),
-            _ => None,
-        }
-    }
-}
-
-impl TextValue for &str {
-    fn text(&self) -> Option<&str> {
-        Some(self)
     }
 }
 

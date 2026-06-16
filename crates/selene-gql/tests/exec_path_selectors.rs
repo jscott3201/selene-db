@@ -167,6 +167,23 @@ fn any_selector_keeps_one_row_per_endpoint_pair_across_path_shapes() {
 }
 
 #[test]
+fn any_count_keeps_up_to_n_rows_per_endpoint_partition() {
+    let fixture = PathSelectorFixture::build();
+
+    // Endpoint partitions for A-[K*1..2]->t are:
+    // (A,C): 4 bindings, (A,B1): 1, (A,B2): 1, (A,D): 1.
+    // ANY 2 keeps at most two implementation-chosen bindings per partition.
+    assert_eq!(
+        fixture.row_count("MATCH ANY 2 (a:N {name: 'A'})-[r:K*1..2]->(t:N) RETURN r"),
+        5
+    );
+    assert_eq!(
+        fixture.row_count("MATCH ANY 99 (a:N {name: 'A'})-[r:K*1..2]->(t:N) RETURN r"),
+        fixture.row_count("MATCH ALL (a:N {name: 'A'})-[r:K*1..2]->(t:N) RETURN r")
+    );
+}
+
+#[test]
 fn all_shortest_keeps_all_minimum_hop_rows_across_path_shapes() {
     let fixture = PathSelectorFixture::build();
 
@@ -509,7 +526,7 @@ fn path_selector_checks_cancellation_while_filtering_rows() {
         graph.index_providers(),
     )
     .with_plan_metadata(&plan.expr_ids, &plan.subqueries)
-    .with_resource_limits(Some(&token), None, None);
+    .with_resource_limits(Some(&token), None, None, None);
 
     let err = execute_pattern(pattern, &ctx).expect_err("path selector observes token");
 

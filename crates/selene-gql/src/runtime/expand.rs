@@ -1,15 +1,17 @@
 //! Expand join-tree operator.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use roaring::RoaringBitmap;
 use selene_core::{EdgeId, NodeId, Value};
+use selene_graph::RowIndex;
 
 use crate::{
     EdgeDirection, EdgeMatch, JoinTree, PatternPlan,
     runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
-use super::{pattern, scan};
+use super::{edge_access, pattern, scan};
 
 pub(crate) fn execute(
     child: &JoinTree,
@@ -26,6 +28,7 @@ pub(crate) fn execute(
     )?;
     let child_rows = pattern::walk_join_tree(child, env)?;
     let mut rows = Vec::new();
+    let edge_row_filter = edge_access::candidate_row_filter(edge, env.ctx)?;
     let mut state = ExpandState {
         edge,
         pattern_plan: env.pattern,
@@ -53,19 +56,28 @@ pub(crate) fn execute(
             edge.right_hidden_binding,
             "expand right hidden binding column missing",
         )?,
+        edge_row_filter,
         ctx: env.ctx,
         output: &mut rows,
     };
-    for row in child_rows {
-        let Some(source) = pattern::node_at_index(
-            &row,
-            state.source_index,
-            "expand source binding is not a node",
-        )?
-        else {
-            continue;
-        };
-        expand_from_source(source, &row, direction, &mut state)?;
+    if state
+        .edge_row_filter
+        .as_ref()
+        .is_some_and(|filter| filter.len() <= child_rows.len() as u64)
+    {
+        expand_from_indexed_edges(&child_rows, direction, &mut state)?;
+    } else {
+        for row in child_rows {
+            let Some(source) = pattern::node_at_index(
+                &row,
+                state.source_index,
+                "expand source binding is not a node",
+            )?
+            else {
+                continue;
+            };
+            expand_from_source(source, &row, direction, &mut state)?;
+        }
     }
     Ok(rows)
 }
@@ -79,6 +91,7 @@ struct ExpandState<'a, 'eval, 'ctx, 'g, 'plan, 'out> {
     edge_hidden_slot: pattern::ColumnSlot,
     right_slot: pattern::ColumnSlot,
     right_hidden_slot: pattern::ColumnSlot,
+    edge_row_filter: Option<RoaringBitmap>,
     ctx: &'a EvalCtx<'eval, 'ctx, 'g, 'plan>,
     output: &'out mut Vec<Binding>,
 }
@@ -125,12 +138,77 @@ fn expand_from_source(
     Ok(())
 }
 
+fn expand_from_indexed_edges(
+    child_rows: &[Binding],
+    direction: EdgeDirection,
+    state: &mut ExpandState<'_, '_, '_, '_, '_, '_>,
+) -> Result<(), ExecutorError> {
+    let Some(edge_rows) = state.edge_row_filter.as_ref() else {
+        return Ok(());
+    };
+    let mut rows_by_source: BTreeMap<NodeId, Vec<&Binding>> = BTreeMap::new();
+    for row in child_rows {
+        let Some(source) = pattern::node_at_index(
+            row,
+            state.source_index,
+            "expand source binding is not a node",
+        )?
+        else {
+            continue;
+        };
+        rows_by_source.entry(source).or_default().push(row);
+    }
+    let edge_rows: Vec<u32> = edge_rows.iter().collect();
+    for row in edge_rows {
+        let Some(edge_id) = state.ctx.tx.snapshot().edge_id_for_row(RowIndex::new(row)) else {
+            continue;
+        };
+        let Some((source, target)) = state.ctx.tx.snapshot().edge_endpoints(edge_id) else {
+            continue;
+        };
+        match direction {
+            EdgeDirection::Right => {
+                emit_indexed_edge_for_source(edge_id, target, source, &rows_by_source, state)?;
+            }
+            EdgeDirection::Left => {
+                emit_indexed_edge_for_source(edge_id, source, target, &rows_by_source, state)?;
+            }
+            EdgeDirection::Undirected => {
+                emit_indexed_edge_for_source(edge_id, target, source, &rows_by_source, state)?;
+                if source != target {
+                    emit_indexed_edge_for_source(edge_id, source, target, &rows_by_source, state)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn emit_indexed_edge_for_source(
+    edge_id: EdgeId,
+    right_node: NodeId,
+    source: NodeId,
+    rows_by_source: &BTreeMap<NodeId, Vec<&Binding>>,
+    state: &mut ExpandState<'_, '_, '_, '_, '_, '_>,
+) -> Result<(), ExecutorError> {
+    let Some(rows) = rows_by_source.get(&source) else {
+        return Ok(());
+    };
+    for row in rows {
+        maybe_emit(edge_id, right_node, row, state)?;
+    }
+    Ok(())
+}
+
 fn maybe_emit(
     edge_id: EdgeId,
     right_node: NodeId,
     row: &Binding,
     state: &mut ExpandState<'_, '_, '_, '_, '_, '_>,
 ) -> Result<(), ExecutorError> {
+    if !edge_access::row_filter_matches(state.edge_row_filter.as_ref(), edge_id, state.ctx) {
+        return Ok(());
+    }
     if !edge_label_matches(state.edge, edge_id, state.ctx)
         || !right_node_matches(state.edge, right_node, state.ctx)
     {

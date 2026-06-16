@@ -2,7 +2,7 @@
 
 use pest::iterators::Pair;
 
-use selene_core::DbString;
+use selene_core::{DbString, feature_register::FeatureId};
 
 use crate::{
     ast::{
@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, first_child, span,
-    unexpected_pair,
+    Rule, build_qualified_name, build_query_pipeline, db_string_pair, expr, span, unexpected_pair,
+    unsupported_feature,
 };
 
 pub(super) fn build_top_level_call(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
@@ -42,10 +42,28 @@ enum BuiltCall {
 
 fn build_call_stmt(pair: Pair<'_, Rule>) -> Result<BuiltCall, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::call_stmt);
-    let inner = first_child(pair)?;
+    let mut optional = false;
+    let mut body = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::optional_modifier => optional = true,
+            Rule::call_kw => {}
+            Rule::call_procedure | Rule::call_subquery => body = Some(child),
+            _ => return Err(unexpected_pair(child, "expected CALL body")),
+        }
+    }
+    let inner = body.ok_or_else(ParserError::empty_program)?;
     match inner.as_rule() {
-        Rule::call_procedure => build_procedure_call(inner).map(BuiltCall::Procedure),
-        Rule::call_subquery => build_inline_call(inner).map(BuiltCall::Inline),
+        Rule::call_procedure => {
+            let mut call = build_procedure_call(inner)?;
+            call.optional = optional;
+            Ok(BuiltCall::Procedure(call))
+        }
+        Rule::call_subquery => {
+            let mut call = build_inline_call(inner)?;
+            call.optional = optional;
+            Ok(BuiltCall::Inline(call))
+        }
         _ => Err(unexpected_pair(inner, "expected CALL body")),
     }
 }
@@ -56,7 +74,6 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
     let mut variable_scope = None;
     let mut body = None;
     let mut yield_items = Vec::new();
-    let mut in_transactions = false;
 
     for child in pair.into_inner() {
         match child.as_rule() {
@@ -65,18 +82,17 @@ fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, Parser
             }
             Rule::query_pipeline => body = Some(build_query_pipeline(child)?),
             Rule::yield_clause => yield_items = build_yield_items(child)?,
-            Rule::call_transactions_clause => in_transactions = true,
             _ => return Err(unexpected_pair(child, "unexpected CALL subquery child")),
         }
     }
 
     Ok(InlineProcedureCall {
+        optional: false,
         variable_scope,
         body: Box::new(body.ok_or_else(|| {
             ParserError::syntax("CALL subquery is missing body", source_span, None)
         })?),
         yield_items,
-        in_transactions,
         span: source_span,
     })
 }
@@ -94,36 +110,51 @@ fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserErr
     let mut name = None;
     let mut args = Vec::new();
     let mut yield_items = Vec::new();
-    let mut yield_filter = None;
 
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::qualified_name => name = Some(build_qualified_name(child)?),
-            Rule::arg_list => {
-                args = child
-                    .into_inner()
-                    .filter(|arg| arg.as_rule() == Rule::expr)
-                    .map(|arg| expr::build_value_expr(arg))
-                    .collect::<Result<Vec<_>, _>>()?;
-            }
+            Rule::procedure_arg_list => args = build_procedure_args(child)?,
             Rule::yield_clause => yield_items = build_yield_items(child)?,
-            Rule::yield_filter => {
-                yield_filter = Some(expr::build_value_expr(first_child(child)?)?);
-            }
             _ => return Err(unexpected_pair(child, "unexpected procedure-call child")),
         }
     }
 
     Ok(ProcedureCall {
+        optional: false,
         name: NonEmpty::try_from_vec(name.ok_or_else(|| {
             ParserError::syntax("procedure call is missing name", source_span, None)
         })?)
         .expect("grammar guarantees >= 1: qualified_name"),
         args,
         yield_items,
-        yield_filter,
         span: source_span,
     })
+}
+
+fn build_procedure_args(pair: Pair<'_, Rule>) -> Result<Vec<crate::ast::ValueExpr>, ParserError> {
+    let mut args = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::expr => args.push(expr::build_value_expr(child)?),
+            Rule::procedure_binding_table_arg => {
+                return Err(unsupported_feature(
+                    &child,
+                    FeatureId::GP14,
+                    "binding-table procedure arguments are outside the current procedure claim",
+                ));
+            }
+            Rule::procedure_graph_arg => {
+                return Err(unsupported_feature(
+                    &child,
+                    FeatureId::GP15,
+                    "graph procedure arguments are outside the current procedure claim",
+                ));
+            }
+            _ => return Err(unexpected_pair(child, "unexpected procedure argument")),
+        }
+    }
+    Ok(args)
 }
 
 pub(super) fn build_yield_items(pair: Pair<'_, Rule>) -> Result<Vec<YieldItem>, ParserError> {
@@ -148,7 +179,15 @@ fn build_yield_item(pair: Pair<'_, Rule>) -> Result<YieldItem, ParserError> {
             Rule::prop_ident if column.is_none() => {
                 column = Some(YieldColumn::Named(db_string_pair(child)?));
             }
-            Rule::alias => alias = Some(db_string_pair(first_child(child)?)?),
+            Rule::alias => {
+                let alias_pair = child
+                    .into_inner()
+                    .find(|nested| nested.as_rule() == Rule::ident)
+                    .ok_or_else(|| {
+                        ParserError::syntax("YIELD alias is missing identifier", source_span, None)
+                    })?;
+                alias = Some(db_string_pair(alias_pair)?);
+            }
             _ => return Err(unexpected_pair(child, "unexpected YIELD item child")),
         }
     }

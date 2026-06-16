@@ -308,7 +308,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Uuid, G::Uuid)
             | (P::Bytes, G::Bytes | G::ByteString(_))
             | (P::Json, G::Json)
-            | (P::List, G::List(_))
+            | (P::List, G::List(_) | G::BoundedList { .. })
             // Every record property declaration — open `RECORD` and closed `RECORD{..}`
             // alike — lowers to `P::RecordTyped` (catalog/property.rs), while a `RECORD{..}`
             // constructor always analyzes to the OPEN record type (bind/expr.rs). Accept the
@@ -333,7 +333,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::NodeRef, G::NodeRef)
             | (P::EdgeRef, G::EdgeRef)
             | (P::GraphRef, G::GraphRef)
-            | (P::TableRef, G::TableRef)
+            | (P::TableRef, G::TableRef(_))
     )
 }
 
@@ -529,7 +529,7 @@ mod tests {
             ),
             (
                 PropertyValueType::TableRef,
-                GqlType::TableRef,
+                GqlType::TableRef(crate::BindingTableType::Any),
                 Value::TableRef(BindingTableId::new(1)),
             ),
             (

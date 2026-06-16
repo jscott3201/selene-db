@@ -36,7 +36,12 @@ pub const SNAPSHOT_VERSION_MAJOR: u16 = 1;
 /// `PropertyElementType` / `RecordFieldType` enums gained descriptor variants
 /// ahead of existing ones. The exact-match gate rejects pre-descriptor
 /// snapshots rather than decoding them against the wrong archived shape.
-pub const SNAPSHOT_VERSION_MINOR: u16 = 4;
+///
+/// Bumped `4 -> 5` when `CORE/SCMA` added an entity discriminator so the same
+/// section can persist both node-property and edge-property index
+/// registrations. The exact-match gate rejects pre-edge-index schema rows
+/// rather than decoding them against the wrong archived key shape.
+pub const SNAPSHOT_VERSION_MINOR: u16 = 5;
 /// Fixed snapshot file-header length.
 pub const SNAPSHOT_FILE_HEADER_LEN: usize = 32;
 /// Whole-body compression flag, reserved in v1.0.
@@ -225,11 +230,11 @@ mod tests {
             .write_to(&mut bytes)
             .unwrap();
         bytes[4..6].copy_from_slice(&2_u16.to_le_bytes());
-        // `new()` writes the current minor (4 after the descriptor bump); patching
-        // only the major byte leaves minor at its written value.
+        // `new()` writes the current minor; patching only the major byte leaves
+        // minor at its written value.
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 4 })
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 5 })
         ));
     }
 

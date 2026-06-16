@@ -4,14 +4,15 @@ use selene_core::{DbString, db_string};
 
 use super::{BindContext, expr};
 use crate::{
-    Literal, ProcedureCall, ProcedureDefaultValue, ProcedureMetadata, ProcedureOutputColumn,
-    ValueExpr, YieldColumn,
+    GqlType, Literal, ProcedureCall, ProcedureDefaultValue, ProcedureMetadata,
+    ProcedureOutputColumn, ValueExpr, YieldColumn,
     analyze::{
         binding::BindingDeclKind,
-        error::{AnalysisError, ConditionClause, ExpectedType, TypeMismatchContext},
+        error::{AnalysisError, ExpectedType, TypeMismatchContext},
         infer,
         types::AnalyzedType,
     },
+    ast::CharacterStringLiteralKind,
 };
 
 pub(crate) fn bind_procedure_call(
@@ -97,7 +98,7 @@ pub(crate) fn bind_procedure_call_with_metadata(
         .map(|item| item.span)
     {
         for column in &metadata.output_schema.columns {
-            declare_output(ctx, column, column.name.clone(), star_span)?;
+            declare_output(ctx, column, column.name.clone(), star_span, call.optional)?;
         }
     }
 
@@ -116,11 +117,8 @@ pub(crate) fn bind_procedure_call_with_metadata(
                 });
             };
             let name = item.alias.clone().unwrap_or_else(|| column.clone());
-            declare_output(ctx, output, name, item.span)?;
+            declare_output(ctx, output, name, item.span, call.optional)?;
         }
-    }
-    if let Some(filter) = &call.yield_filter {
-        expr::bind_condition(ctx, filter, ConditionClause::YieldWhere)?;
     }
     Ok(())
 }
@@ -164,7 +162,7 @@ fn default_expr(
                 span,
                 hint: None,
             })?;
-            Literal::String(default_value, span)
+            Literal::String(default_value, span, CharacterStringLiteralKind::Escaped)
         }
     };
     Ok(ValueExpr::Literal(literal))
@@ -175,12 +173,30 @@ fn declare_output(
     column: &ProcedureOutputColumn,
     name: DbString,
     span: crate::SourceSpan,
+    optional: bool,
 ) -> Result<(), AnalysisError> {
     ctx.declare_strict_typed(
         BindingDeclKind::YieldColumn,
         name,
         span,
-        AnalyzedType::Resolved(column.ty.clone()),
+        nullable_call_yield_type(AnalyzedType::Resolved(column.ty.clone()), optional),
     )?;
     Ok(())
+}
+
+pub(super) fn nullable_call_yield_type(ty: AnalyzedType, optional: bool) -> AnalyzedType {
+    if !optional {
+        return ty;
+    }
+    match ty {
+        AnalyzedType::Resolved(ty) => AnalyzedType::Resolved(nullable_gql_type(ty)),
+        AnalyzedType::Dynamic => AnalyzedType::Dynamic,
+    }
+}
+
+fn nullable_gql_type(ty: GqlType) -> GqlType {
+    match ty {
+        GqlType::NotNull(inner) => *inner,
+        other => other,
+    }
 }

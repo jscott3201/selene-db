@@ -10,15 +10,16 @@
 //! values.
 
 use selene_core::{DbString, Value};
-use selene_graph::{GraphError, TextSearchError};
+use selene_graph::{GraphError, RowIndex, SeleneGraph, TextSearchError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::vector_candidate_state_common::{
     CandidateStateOperation, candidate_state_error, operation_arg,
 };
 use super::vector_common::{
-    BatchMismatch, candidate_sets_arg, cardinality_arg, expansion_direction_arg, invalid_arg,
-    node_list_arg, node_list_sets_arg, query_index_too_large, string_arg, vector_search_error,
+    BatchMismatch, candidate_set_arg, candidate_sets_arg, cardinality_arg, expansion_direction_arg,
+    invalid_arg, node_list_arg, node_list_sets_arg, query_index_too_large, string_arg,
+    vector_search_error,
 };
 use crate::procedure_registry::ProcedureError;
 use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, ProcedureResult};
@@ -26,6 +27,8 @@ use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, Pr
 const PROC_NAME: &str = "selene.text_search_nodes";
 const SCORE_PROC_NAME: &str = "selene.text_score_nodes";
 const SCORE_BATCH_PROC_NAME: &str = "selene.text_score_nodes_batch";
+const SCORE_STATE_PROC_NAME: &str = "selene.text_score_candidate_state";
+const SCORE_STATE_NODES_PROC_NAME: &str = "selene.text_score_candidate_state_nodes";
 const SCORE_STATE_EXPANDED_BATCH_PROC_NAME: &str =
     "selene.text_score_candidate_state_expanded_batch";
 
@@ -51,11 +54,30 @@ static TEXT_SCORE_BATCH_OUTPUTS: [StaticOutputColumn; 3] = [
 ];
 
 pub(super) fn signature() -> Vec<ProcedureParameter> {
-    TEXT_SEARCH_PARAMS
+    let mut params: Vec<_> = TEXT_SEARCH_PARAMS
         .iter()
         .cloned()
         .map(StaticParameter::into_parameter)
-        .collect()
+        .collect();
+    params.push(
+        StaticParameter::new("filter_property", GqlType::String, true)
+            .with_description("Indexed scalar property used to admit matching nodes.")
+            .with_default_doc("NULL (no property filter)")
+            .with_default(crate::ProcedureDefaultValue::Null)
+            .into_parameter(),
+    );
+    params.push(
+        StaticParameter::new(
+            "filter_values",
+            GqlType::List(Box::new(GqlType::AnyProperty)),
+            true,
+        )
+        .with_description("Indexed scalar values admitted by filter_property.")
+        .with_default_doc("NULL (no property filter)")
+        .with_default(crate::ProcedureDefaultValue::Null)
+        .into_parameter(),
+    );
+    params
 }
 
 pub(super) fn score_signature() -> Vec<ProcedureParameter> {
@@ -88,6 +110,44 @@ pub(super) fn score_batch_signature() -> Vec<ProcedureParameter> {
         .with_description("Per-query candidate nodes to score."),
         StaticParameter::new("k", GqlType::Integer, false)
             .with_description("Maximum result count per query."),
+    ]
+    .into_iter()
+    .map(StaticParameter::into_parameter)
+    .collect()
+}
+
+pub(super) fn score_state_signature() -> Vec<ProcedureParameter> {
+    [
+        StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
+        StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
+        StaticParameter::new("query", GqlType::String, false)
+            .with_description("Full-text query string."),
+        StaticParameter::new("state_name", GqlType::String, false)
+            .with_description("Maintained candidate-state name."),
+        StaticParameter::new("k", GqlType::Integer, false)
+            .with_description("Maximum result count."),
+    ]
+    .into_iter()
+    .map(StaticParameter::into_parameter)
+    .collect()
+}
+
+pub(super) fn score_state_nodes_signature() -> Vec<ProcedureParameter> {
+    [
+        StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
+        StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
+        StaticParameter::new("query", GqlType::String, false)
+            .with_description("Full-text query string."),
+        StaticParameter::new("state_name", GqlType::String, false)
+            .with_description("Maintained candidate-state name."),
+        StaticParameter::new("nodes", GqlType::List(Box::new(GqlType::NodeRef)), false)
+            .with_description("Explicit candidate nodes to compose with the maintained state."),
+        StaticParameter::new("k", GqlType::Integer, false)
+            .with_description("Maximum result count."),
+        StaticParameter::new("operation", GqlType::String, false)
+            .with_description("Candidate-set algebra operation.")
+            .with_default_doc("intersection")
+            .with_default(crate::ProcedureDefaultValue::String("intersection")),
     ]
     .into_iter()
     .map(StaticParameter::into_parameter)
@@ -146,8 +206,8 @@ pub(super) fn execute(
     ctx: &GraphContext<'_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    if args.len() != 4 {
-        return Err(invalid_arg(format!("{PROC_NAME} expects 4 arguments")));
+    if args.len() != 4 && args.len() != 6 {
+        return Err(invalid_arg(format!("{PROC_NAME} expects 4 or 6 arguments")));
     }
 
     let label = string_arg(PROC_NAME, &args[0], "label")?;
@@ -156,19 +216,48 @@ pub(super) fn execute(
     let k = cardinality_arg(PROC_NAME, &args[3], "k")?;
 
     let snapshot = ctx.snapshot();
+    let filter_rows = if args.len() == 6 {
+        optional_filter_rows(PROC_NAME, snapshot, &label, &args[4], &args[5])?
+    } else {
+        None
+    };
     let hits = match snapshot.text_index_for(&label, &property) {
-        Some(index) => index
-            .search_checked(query, k, ctx.cancellation_checker())
-            .map_err(text_search_error)?,
-        None => snapshot
-            .exact_text_search_nodes_checked(
-                &label,
-                &property,
-                query,
-                k,
-                ctx.cancellation_checker(),
-            )
-            .map_err(text_search_error)?,
+        Some(index) => {
+            if let Some(rows) = &filter_rows {
+                let nodes = node_ids_for_rows(PROC_NAME, snapshot, rows)?;
+                index
+                    .search_candidates_checked(query, &nodes, k, ctx.cancellation_checker())
+                    .map_err(text_search_error)?
+            } else {
+                index
+                    .search_checked(query, k, ctx.cancellation_checker())
+                    .map_err(text_search_error)?
+            }
+        }
+        None => {
+            if let Some(rows) = &filter_rows {
+                snapshot
+                    .exact_text_search_nodes_in_rows_checked(
+                        &label,
+                        &property,
+                        query,
+                        k,
+                        rows,
+                        ctx.cancellation_checker(),
+                    )
+                    .map_err(text_search_error)?
+            } else {
+                snapshot
+                    .exact_text_search_nodes_checked(
+                        &label,
+                        &property,
+                        query,
+                        k,
+                        ctx.cancellation_checker(),
+                    )
+                    .map_err(text_search_error)?
+            }
+        }
     };
     Ok(ProcedureResult {
         rows: hits
@@ -261,6 +350,87 @@ pub(super) fn execute_score_batch(
         }
     }
     Ok(ProcedureResult { rows })
+}
+
+pub(super) fn execute_score_state(
+    ctx: &GraphContext<'_>,
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    if args.len() != 5 {
+        return Err(invalid_arg(format!(
+            "{SCORE_STATE_PROC_NAME} expects 5 arguments"
+        )));
+    }
+
+    let label = string_arg(SCORE_STATE_PROC_NAME, &args[0], "label")?;
+    let property = string_arg(SCORE_STATE_PROC_NAME, &args[1], "property")?;
+    let query = query_arg(SCORE_STATE_PROC_NAME, &args[2])?;
+    let state_name = string_arg(SCORE_STATE_PROC_NAME, &args[3], "state_name")?;
+    let k = cardinality_arg(SCORE_STATE_PROC_NAME, &args[4], "k")?;
+
+    let candidates = ctx
+        .vector_candidate_set(&state_name)
+        .map_err(|error| candidate_state_error(SCORE_STATE_PROC_NAME, error))?
+        .ok_or_else(|| {
+            invalid_arg(format!(
+                "{SCORE_STATE_PROC_NAME} unknown maintained candidate-state set '{}'",
+                state_name.as_str()
+            ))
+        })?;
+    let hits = text_index_for_score(ctx, SCORE_STATE_PROC_NAME, &label, &property)?
+        .search_candidates_checked(query, candidates.as_nodes(), k, ctx.cancellation_checker())
+        .map_err(text_search_error)?;
+
+    Ok(ProcedureResult {
+        rows: hits
+            .into_iter()
+            .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Float(hit.score)])
+            .collect(),
+    })
+}
+
+pub(super) fn execute_score_state_nodes(
+    ctx: &GraphContext<'_>,
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    if !(6..=7).contains(&args.len()) {
+        return Err(invalid_arg(format!(
+            "{SCORE_STATE_NODES_PROC_NAME} expects 6 or 7 arguments"
+        )));
+    }
+
+    let label = string_arg(SCORE_STATE_NODES_PROC_NAME, &args[0], "label")?;
+    let property = string_arg(SCORE_STATE_NODES_PROC_NAME, &args[1], "property")?;
+    let query = query_arg(SCORE_STATE_NODES_PROC_NAME, &args[2])?;
+    let state_name = string_arg(SCORE_STATE_NODES_PROC_NAME, &args[3], "state_name")?;
+    let nodes = candidate_set_arg(SCORE_STATE_NODES_PROC_NAME, &args[4], "nodes")?;
+    let k = cardinality_arg(SCORE_STATE_NODES_PROC_NAME, &args[5], "k")?;
+    let operation = args
+        .get(6)
+        .map(|arg| operation_arg(SCORE_STATE_NODES_PROC_NAME, arg))
+        .transpose()?
+        .unwrap_or(CandidateStateOperation::Intersection);
+
+    let state = ctx
+        .vector_candidate_set(&state_name)
+        .map_err(|error| candidate_state_error(SCORE_STATE_NODES_PROC_NAME, error))?
+        .ok_or_else(|| {
+            invalid_arg(format!(
+                "{SCORE_STATE_NODES_PROC_NAME} unknown maintained candidate-state set '{}'",
+                state_name.as_str()
+            ))
+        })?;
+    let candidates = operation.compose(&state, &nodes);
+    let hits = text_index_for_score(ctx, SCORE_STATE_NODES_PROC_NAME, &label, &property)?
+        .search_candidates_checked(query, candidates.as_nodes(), k, ctx.cancellation_checker())
+        .map_err(text_search_error)?;
+
+    Ok(ProcedureResult {
+        rows: hits
+            .into_iter()
+            .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Float(hit.score)])
+            .collect(),
+    })
 }
 
 pub(super) fn execute_score_state_expanded_batch(
@@ -359,11 +529,75 @@ pub(super) fn execute_score_state_expanded_batch(
     Ok(ProcedureResult { rows })
 }
 
+fn text_index_for_score(
+    ctx: &GraphContext<'_>,
+    proc_name: &'static str,
+    label: &DbString,
+    property: &DbString,
+) -> Result<std::sync::Arc<selene_graph::TextIndex>, ProcedureError> {
+    ctx.snapshot()
+        .text_index_for(label, property)
+        .ok_or_else(|| {
+            invalid_arg(format!(
+                "{proc_name} requires a text index for {}.{}; call selene.create_text_index first",
+                label.as_str(),
+                property.as_str()
+            ))
+        })
+}
+
 fn query_arg<'a>(proc_name: &'static str, value: &'a Value) -> Result<&'a str, ProcedureError> {
     let Value::String(value) = value else {
         return Err(invalid_arg(format!("{proc_name} query must be a STRING")));
     };
     Ok(value.as_str())
+}
+
+fn optional_filter_rows(
+    proc_name: &'static str,
+    snapshot: &SeleneGraph,
+    label: &DbString,
+    property: &Value,
+    values: &Value,
+) -> Result<Option<roaring::RoaringBitmap>, ProcedureError> {
+    match (property, values) {
+        (Value::Null, Value::Null) => Ok(None),
+        (Value::Null, _) | (_, Value::Null) => Err(invalid_arg(format!(
+            "{proc_name} filter_property and filter_values must both be NULL or both be supplied"
+        ))),
+        (_, Value::List(values)) => {
+            let property = string_arg(proc_name, property, "filter_property")?;
+            snapshot
+                .nodes_with_property_any(label, &property, values)
+                .map(Some)
+                .ok_or_else(|| {
+                    invalid_arg(format!(
+                        "{proc_name} filter_property must name an indexed scalar node property and filter_values must match that index kind"
+                    ))
+                })
+        }
+        (_, _) => Err(invalid_arg(format!(
+            "{proc_name} filter_values must be a LIST<VALUE> or NULL"
+        ))),
+    }
+}
+
+fn node_ids_for_rows(
+    proc_name: &'static str,
+    snapshot: &SeleneGraph,
+    rows: &roaring::RoaringBitmap,
+) -> Result<Vec<selene_core::NodeId>, ProcedureError> {
+    let mut nodes = Vec::with_capacity(usize::try_from(rows.len()).unwrap_or(usize::MAX));
+    for raw_row in rows.iter() {
+        let row = RowIndex::new(raw_row);
+        let node_id = snapshot
+            .node_id_for_row(row)
+            .ok_or_else(|| ProcedureError::Internal {
+                detail: format!("{proc_name} indexed filter row {raw_row} has no node id"),
+            })?;
+        nodes.push(node_id);
+    }
+    Ok(nodes)
 }
 
 fn query_list_arg(proc_name: &'static str, value: &Value) -> Result<Vec<DbString>, ProcedureError> {
@@ -388,6 +622,9 @@ fn text_search_error(error: TextSearchError) -> ProcedureError {
     match error {
         TextSearchError::Cancelled => ProcedureError::Cancelled,
         TextSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+        TextSearchError::NodeScanBudgetExceeded { limit, scanned } => {
+            ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+        }
         TextSearchError::Graph(GraphError::Inconsistent { reason }) => ProcedureError::Internal {
             detail: format!("graph inconsistency during text search: {reason}"),
         },

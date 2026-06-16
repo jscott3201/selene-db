@@ -1,8 +1,12 @@
 //! Small `IN` list typed-index optimization.
 
-use crate::plan::{
-    BindingDef, ExecutionPlan, IndexKey, IndexTarget, JoinTree, ScanAccess, ScanKind,
-    optimize::{OptimizeContext, Rule, Transformed, binding_refs, cost, walk},
+use crate::{
+    EdgeMatch,
+    plan::{
+        BindingDef, BindingElement, ExecutionPlan, IndexKey, IndexTarget, JoinTree, ScanAccess,
+        ScanKind,
+        optimize::{OptimizeContext, Rule, Transformed, binding_refs, cost, walk},
+    },
 };
 
 use super::index_helpers::{compatible_list_parameter, compatible_value, single_label};
@@ -44,10 +48,12 @@ fn rewrite_tree(
     catalog: &dyn crate::IndexCatalog,
 ) -> bool {
     match tree {
+        JoinTree::Unit => false,
         JoinTree::Scan(scan) => rewrite_scan(scan, bindings, catalog),
-        JoinTree::Expand { child, .. }
-        | JoinTree::Questioned { child, .. }
-        | JoinTree::Repeat { child, .. } => rewrite_tree(child, bindings, catalog),
+        JoinTree::Expand { child, edge, .. } | JoinTree::Questioned { child, edge, .. } => {
+            rewrite_tree(child, bindings, catalog) | rewrite_edge(edge, bindings, catalog)
+        }
+        JoinTree::Repeat { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
@@ -71,23 +77,61 @@ fn rewrite_scan(
     bindings: &[BindingDef],
     catalog: &dyn crate::IndexCatalog,
 ) -> bool {
-    if scan.kind != ScanKind::Node || !matches!(scan.access, ScanAccess::Linear) {
+    if !matches!(scan.access, ScanAccess::Linear) {
         return false;
     }
     let Some(label) = single_label(&scan.label_predicate) else {
         return false;
     };
-    for index in 0..scan.property_predicates.len() {
-        let pred = &scan.property_predicates[index];
+    let target = target_for_scan_kind(scan.kind);
+    rewrite_access(
+        &mut scan.access,
+        &mut scan.property_predicates,
+        bindings,
+        catalog,
+        target,
+        label,
+    )
+}
+
+fn rewrite_edge(
+    edge: &mut EdgeMatch,
+    bindings: &[BindingDef],
+    catalog: &dyn crate::IndexCatalog,
+) -> bool {
+    if !matches!(edge.access, ScanAccess::Linear) {
+        return false;
+    }
+    let Some(label) = single_label(&edge.label_predicate) else {
+        return false;
+    };
+    rewrite_access(
+        &mut edge.access,
+        &mut edge.property_predicates,
+        bindings,
+        catalog,
+        IndexTarget::Edge,
+        label,
+    )
+}
+
+fn rewrite_access(
+    access: &mut ScanAccess,
+    predicates: &mut Vec<crate::FilterPredicate>,
+    bindings: &[BindingDef],
+    catalog: &dyn crate::IndexCatalog,
+    target: IndexTarget,
+    label: selene_core::DbString,
+) -> bool {
+    for index in 0..predicates.len() {
+        let pred = &predicates[index];
         let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
             continue;
         };
-        if !binding_is_node(bindings, matched.binding) {
+        if !binding_is_target(bindings, matched.binding, target) {
             continue;
         }
-        let Some(lookup) =
-            catalog.typed_index(crate::IndexTarget::Node, label.clone(), matched.key.clone())
-        else {
+        let Some(lookup) = catalog.typed_index(target, label.clone(), matched.key.clone()) else {
             continue;
         };
         let property = matched.key;
@@ -95,8 +139,8 @@ fn rewrite_scan(
             let Some(key) = compatible_list_parameter(list_expr, lookup.kind) else {
                 continue;
             };
-            scan.property_predicates.remove(index);
-            scan.access = ScanAccess::BitmapUnion {
+            predicates.remove(index);
+            *access = ScanAccess::BitmapUnion {
                 handle: lookup.handle,
                 property,
                 kind: lookup.kind,
@@ -139,20 +183,14 @@ fn rewrite_scan(
         // same rows the residual `IN`-list filter would, so results are
         // identical regardless of path.
         if let (Some(index_cost), Some(baseline)) = (
-            cost::in_list_cost(
-                catalog,
-                IndexTarget::Node,
-                label.clone(),
-                property.clone(),
-                &keys,
-            ),
-            cost::linear_baseline(catalog, IndexTarget::Node, label.clone()),
+            cost::in_list_cost(catalog, target, label.clone(), property.clone(), &keys),
+            cost::linear_baseline(catalog, target, label.clone()),
         ) && cost::should_decline_index(index_cost, baseline)
         {
             continue;
         }
-        scan.property_predicates.remove(index);
-        scan.access = ScanAccess::BitmapUnion {
+        predicates.remove(index);
+        *access = ScanAccess::BitmapUnion {
             handle: lookup.handle,
             property,
             kind: lookup.kind,
@@ -163,8 +201,23 @@ fn rewrite_scan(
     false
 }
 
-fn binding_is_node(bindings: &[BindingDef], binding_id: crate::BindingId) -> bool {
-    bindings.iter().any(|binding| {
-        binding.binding == binding_id && binding.element == crate::BindingElement::Node
-    })
+fn target_for_scan_kind(kind: ScanKind) -> IndexTarget {
+    match kind {
+        ScanKind::Node => IndexTarget::Node,
+        ScanKind::Edge => IndexTarget::Edge,
+    }
+}
+
+fn binding_is_target(
+    bindings: &[BindingDef],
+    binding_id: crate::BindingId,
+    target: IndexTarget,
+) -> bool {
+    let element = match target {
+        IndexTarget::Node => BindingElement::Node,
+        IndexTarget::Edge => BindingElement::Edge,
+    };
+    bindings
+        .iter()
+        .any(|binding| binding.binding == binding_id && binding.element == element)
 }

@@ -21,12 +21,26 @@ pub(super) struct TextIndexBuilder {
 
 impl TextIndexBuilder {
     pub(super) fn empty(label: DbString, property: DbString) -> Self {
+        Self::with_document_capacity(label, property, 0)
+    }
+
+    pub(super) fn with_document_capacity(
+        label: DbString,
+        property: DbString,
+        document_capacity: usize,
+    ) -> Self {
         Self {
             label,
             property,
             rows: RoaringBitmap::new(),
-            document_lengths: FxHashMap::default(),
-            document_terms: FxHashMap::default(),
+            document_lengths: FxHashMap::with_capacity_and_hasher(
+                document_capacity,
+                Default::default(),
+            ),
+            document_terms: FxHashMap::with_capacity_and_hasher(
+                document_capacity,
+                Default::default(),
+            ),
             postings: FxHashMap::default(),
             total_document_len: 0,
             posting_count: 0,
@@ -65,6 +79,8 @@ impl TextIndexBuilder {
         for postings in self.postings.values_mut() {
             postings.sort_by_key(|posting| posting.node_id);
         }
+        self.document_lengths.shrink_to_fit();
+        self.document_terms.shrink_to_fit();
         TextIndex {
             label: self.label,
             property: self.property,

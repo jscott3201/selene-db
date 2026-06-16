@@ -87,14 +87,14 @@ pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
         Literal::Integer(_, _) | Literal::RadixInteger(_, _, _) => Some(IndexKind::Integer),
         Literal::Decimal(_, _, _) => Some(IndexKind::Decimal),
         Literal::Float(_, _, _) => Some(IndexKind::Float),
-        Literal::String(_, _) => Some(IndexKind::String),
-        Literal::Date(_, _) => Some(IndexKind::Date),
-        Literal::LocalDateTime(_, _) => Some(IndexKind::LocalDateTime),
-        Literal::ZonedDateTime(_, _) => Some(IndexKind::ZonedDateTime),
-        Literal::LocalTime(_, _) => Some(IndexKind::LocalTime),
-        Literal::ZonedTime(_, _) => Some(IndexKind::ZonedTime),
-        Literal::Duration(_, _) => Some(IndexKind::Duration),
-        Literal::Uuid(_, _) => Some(IndexKind::Uuid),
+        Literal::String(_, _, _) => Some(IndexKind::String),
+        Literal::Date(_, _, _) => Some(IndexKind::Date),
+        Literal::LocalDateTime(_, _, _) => Some(IndexKind::LocalDateTime),
+        Literal::ZonedDateTime(_, _, _) => Some(IndexKind::ZonedDateTime),
+        Literal::LocalTime(_, _, _) => Some(IndexKind::LocalTime),
+        Literal::ZonedTime(_, _, _) => Some(IndexKind::ZonedTime),
+        Literal::Duration(_, _, _) => Some(IndexKind::Duration),
+        Literal::Uuid(_, _, _) => Some(IndexKind::Uuid),
         Literal::Bytes(_, _) | Literal::Null(_) => None,
     }
 }
@@ -138,8 +138,13 @@ pub(super) fn compatible_value(value: &ValueExpr, kind: IndexKind) -> Option<Ind
 pub(super) fn compatible_list_parameter(value: &ValueExpr, kind: IndexKind) -> Option<IndexKey> {
     let param = binding_refs::parameter(value)?;
     let declared = param.declared_type?;
-    let GqlType::List(inner) = declared else {
-        return None;
+    let inner = match declared {
+        GqlType::List(inner)
+        | GqlType::BoundedList {
+            element_type: inner,
+            ..
+        } => inner,
+        _ => return None,
     };
     if !gql_type_compatible_with_index_kind(inner, kind) {
         return None;

@@ -134,6 +134,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     rows: graph.edge_store.len() as u64,
                     max_rows: u32::MAX as u64,
                 })?;
+            crate::property_index::apply_edge_create(
+                &mut graph.edge_property_index,
+                &label,
+                &props,
+                row,
+            )?;
             graph.edge_store.label.push(label.clone());
             graph.edge_store.source.push(source);
             graph.edge_store.target.push(target);
@@ -281,7 +287,15 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         let row = self.require_live_edge(id)?;
         reject_immutable_edge_update(self.txn.read(), id, &props_diff)?;
         assignment::coerce_edge_property_diff(self.txn.read(), id, &mut props_diff)?;
-        let mut props = self
+        let label = self
+            .txn
+            .read()
+            .edge_store
+            .label
+            .get(row)
+            .cloned()
+            .ok_or(GraphError::EdgeNotFound { id })?;
+        let old_props = self
             .txn
             .read()
             .edge_store
@@ -289,8 +303,19 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .get(row)
             .cloned()
             .unwrap_or_default();
+        let mut props = old_props.clone();
         apply_property_diff(&mut props, &props_diff)?;
-        self.txn.guard_mut().edge_store.properties.set(row, props);
+        {
+            let graph = self.txn.guard_mut();
+            graph.edge_store.properties.set(row, props.clone());
+            crate::property_index::apply_edge_update(
+                &mut graph.edge_property_index,
+                &label,
+                &old_props,
+                &props,
+                row as u32,
+            )?;
+        }
         self.txn.changes.push(Change::EdgeUpdated {
             id,
             properties_diff: props_diff,

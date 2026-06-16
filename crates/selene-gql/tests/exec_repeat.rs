@@ -229,7 +229,7 @@ fn repeat_checks_cancellation_during_traversal() {
         graph.index_providers(),
     )
     .with_plan_metadata(&plan.expr_ids, &plan.subqueries)
-    .with_resource_limits(Some(&token), None, None);
+    .with_resource_limits(Some(&token), None, None, None);
 
     let err = selene_gql::execute_pattern(pattern, &ctx).expect_err("repeat observes token");
 
@@ -264,7 +264,7 @@ fn repeat_checks_cancellation_between_source_rows_without_adjacent_edges() {
         graph.index_providers(),
     )
     .with_plan_metadata(&plan.expr_ids, &plan.subqueries)
-    .with_resource_limits(Some(&token), None, None);
+    .with_resource_limits(Some(&token), None, None, None);
 
     let err = selene_gql::execute_pattern(pattern, &ctx).expect_err("repeat observes token");
 

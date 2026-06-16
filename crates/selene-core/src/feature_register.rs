@@ -44,8 +44,8 @@ macro_rules! feature_ids {
 }
 
 feature_ids! {
-    G002 = "G002" => "Different edges match mode";
-    G003 = "G003" => "Repeatable elements match mode";
+    G002 = "G002" => "Different-edges match mode";
+    G003 = "G003" => "Explicit REPEATABLE ELEMENTS keyword";
     G010 = "G010" => "Explicit WALK keyword";
     G011 = "G011" => "Advanced path modes: TRAIL";
     G012 = "G012" => "Advanced path modes: SIMPLE";
@@ -57,10 +57,10 @@ feature_ids! {
     G018 = "G018" => "Any shortest path search";
     G019 = "G019" => "Counted shortest path search";
     G020 = "G020" => "Counted shortest group search";
-    G036 = "G036" => "Quantified edge pattern";
-    G037 = "G037" => "Questioned path primary";
-    G060 = "G060" => "Bounded quantified path primary";
-    G061 = "G061" => "Unbounded quantified path primary";
+    G036 = "G036" => "Quantified edges";
+    G037 = "G037" => "Questioned paths";
+    G060 = "G060" => "Bounded graph pattern quantifiers";
+    G061 = "G061" => "Unbounded graph pattern quantifiers";
     G100 = "G100" => "ELEMENT_ID function";
     G110 = "G110" => "IS DIRECTED predicate";
     G111 = "G111" => "IS LABELED predicate";
@@ -75,10 +75,10 @@ feature_ids! {
     GC04 = "GC04" => "Graph management";
     GC05 = "GC05" => "Graph management: IF [ NOT ] EXISTS";
     GD01 = "GD01" => "Updatable graphs";
-    GE04 = "GE04" => "Parameters";
-    GE05 = "GE05" => "Named parameters";
+    GE04 = "GE04" => "Graph parameters";
+    GE05 = "GE05" => "Binding table parameters";
     GE06 = "GE06" => "Path value construction";
-    GE07 = "GE07" => "XOR operator";
+    GE07 = "GE07" => "Boolean XOR";
     // ISO/IEC 39075:2024 Annex D Table D.1 row 77 / subclause 17.7: GE08 is
     // "Reference parameters", NOT a CAST feature. selene-db does not implement
     // reference parameters, so GE08 is referenced-but-not-supported (see
@@ -104,6 +104,7 @@ feature_ids! {
     GF11 = "GF11" => "Advanced aggregate functions: binary set functions";
     GF12 = "GF12" => "CARDINALITY function";
     GF13 = "GF13" => "SIZE function";
+    GF20 = "GF20" => "Aggregate functions in sort keys";
     GL01 = "GL01" => "Hexadecimal literals";
     GL02 = "GL02" => "Octal literals";
     GL03 = "GL03" => "Binary literals";
@@ -114,6 +115,7 @@ feature_ids! {
     GL08 = "GL08" => "Approximate number in scientific notation with suffix";
     GL09 = "GL09" => "Optional float number suffix";
     GL10 = "GL10" => "Optional double number suffix";
+    GL11 = "GL11" => "Opt-out character escaping";
     IM_UUID = "IM_UUID" => "selene-db UUID extension";
     IM_JSON = "IM_JSON" => "selene-db JSON extension";
     IM_VECTOR = "IM_VECTOR" => "selene-db VECTOR extension";
@@ -122,41 +124,46 @@ feature_ids! {
     IM_TYPED_PARAMS = "IM_TYPED_PARAMS" => "selene-db inline typed parameter declaration extension";
     IM_TRUNCATE = "IM_TRUNCATE" => "selene-db bulk truncate extension";
     IM_DROP_CASCADE = "IM_DROP_CASCADE" => "selene-db cascading DROP TYPE extension";
-    IM_LIST_SUBSCRIPT = "IM_LIST_SUBSCRIPT" => "selene-db 1-based list element subscript extension";
     IM_DROP_GRAPH = "IM_DROP_GRAPH" => "selene-db DROP GRAPH factory-reset extension";
     GH02 = "GH02" => "Undirected edge patterns";
     GG01 = "GG01" => "Graph with an open graph type";
     GG02 = "GG02" => "Graph with a closed graph type";
     GG20 = "GG20" => "Explicit element type names";
     GG21 = "GG21" => "Explicit element type key label sets";
-    GP01 = "GP01" => "Inline procedures";
-    GP02 = "GP02" => "Inline procedures: simple";
-    GP03 = "GP03" => "Inline procedures: nested";
+    GP01 = "GP01" => "Inline procedure";
+    GP02 = "GP02" => "Inline procedure with implicit nested variable scope";
+    GP03 = "GP03" => "Inline procedure with explicit nested variable scope";
     GP04 = "GP04" => "Named procedure calls";
     GP05 = "GP05" => "Procedure-local value variable definitions";
-    GP06 = "GP06" => "Procedure-local value variables based on simple expressions";
-    GP07 = "GP07" => "Procedure-local value variable based on subqueries";
+    GP06 = "GP06" => "Procedure-local value variable definitions: value variables based on simple expressions";
+    GP07 = "GP07" => "Procedure-local value variable definitions: value variable based on subqueries";
     GP08 = "GP08" => "Procedure-local binding table variable definitions";
-    GP09 = "GP09" => "Procedure-local binding table variables based on simple expressions";
-    GP10 = "GP10" => "Procedure-local binding table variables based on query expressions";
+    GP09 = "GP09" => "Procedure-local binding table variable definitions: binding table variables based on simple expressions or references";
+    GP10 = "GP10" => "Procedure-local binding table variable definitions: binding table variables based on subqueries";
     GP11 = "GP11" => "Procedure-local graph variable definitions";
-    GP12 = "GP12" => "Procedure-local graph variables based on simple graph expressions";
-    GP13 = "GP13" => "Procedure-local graph variables based on subqueries";
+    GP12 = "GP12" => "Procedure-local graph variable definitions: graph variables based on simple expressions or references";
+    GP13 = "GP13" => "Procedure-local graph variable definitions: graph variables based on subqueries";
     GP14 = "GP14" => "Binding tables as procedure arguments";
     GP15 = "GP15" => "Graphs as procedure arguments";
-    GP18 = "GP18" => "Mixed catalog/data transaction feature";
+    GP18 = "GP18" => "Catalog and data statement mixing";
+    GQ02 = "GQ02" => "Composite query: OTHERWISE";
     GQ03 = "GQ03" => "Composite query: UNION";
     GQ04 = "GQ04" => "Composite query: EXCEPT DISTINCT";
     GQ05 = "GQ05" => "Composite query: EXCEPT ALL";
     GQ06 = "GQ06" => "Composite query: INTERSECT DISTINCT";
     GQ07 = "GQ07" => "Composite query: INTERSECT ALL";
     GQ08 = "GQ08" => "FILTER statement";
-    GQ09 = "GQ09" => "Composite query: OTHERWISE";
-    GQ12 = "GQ12" => "OFFSET clause";
-    GQ13 = "GQ13" => "LIMIT clause";
+    GQ09 = "GQ09" => "LET statement";
+    GQ10 = "GQ10" => "FOR statement: list value support";
+    GQ11 = "GQ11" => "FOR statement: WITH ORDINALITY";
+    GQ12 = "GQ12" => "ORDER BY and page statement: OFFSET clause";
+    GQ13 = "GQ13" => "ORDER BY and page statement: LIMIT clause";
+    GQ14 = "GQ14" => "Complex expressions in sort keys";
     GQ15 = "GQ15" => "GROUP BY clause";
-    GQ18 = "GQ18" => "Scalar value query expression";
-    GQ20 = "GQ20" => "Linear query composition";
+    GQ16 = "GQ16" => "Pre-projection aliases in sort keys";
+    GQ18 = "GQ18" => "Scalar subqueries";
+    GQ20 = "GQ20" => "Advanced linear composition with NEXT";
+    GQ24 = "GQ24" => "FOR statement: WITH OFFSET";
     GS01 = "GS01" => "SESSION SET command: session-local graph parameters";
     GS02 = "GS02" => "SESSION SET command: session-local binding table parameters";
     GS03 = "GS03" => "SESSION SET command: session-local value parameters";
@@ -165,15 +172,15 @@ feature_ids! {
     GS06 = "GS06" => "SESSION RESET command: reset session graph";
     GS07 = "GS07" => "SESSION RESET command: reset time zone displacement";
     GS08 = "GS08" => "SESSION RESET command: reset all session parameters";
-    GS10 = "GS10" => "Session-local binding table parameters based on subqueries";
-    GS11 = "GS11" => "Session-local value parameters based on subqueries";
-    GS12 = "GS12" => "Session-local graph parameters based on simple graph expressions or references";
-    GS13 = "GS13" => "Session-local binding table parameters based on simple expressions or references";
-    GS14 = "GS14" => "Session-local value parameters based on simple expressions";
+    GS10 = "GS10" => "SESSION SET command: session-local binding table parameters based on subqueries";
+    GS11 = "GS11" => "SESSION SET command: session-local value parameters based on subqueries";
+    GS12 = "GS12" => "SESSION SET command: session-local graph parameters based on simple expressions or references";
+    GS13 = "GS13" => "SESSION SET command: session-local binding table parameters based on simple expressions or references";
+    GS14 = "GS14" => "SESSION SET command: session-local value parameters based on simple expressions";
     GS15 = "GS15" => "SESSION SET command: set time zone displacement";
     GS16 = "GS16" => "SESSION RESET command: reset individual session parameters";
     GT01 = "GT01" => "Explicit transaction commands";
-    GT03 = "GT03" => "Multi-graph transactions";
+    GT03 = "GT03" => "Use of multiple graphs in a transaction";
     GV01 = "GV01" => "8 bit unsigned integer numbers";
     GV02 = "GV02" => "8 bit signed integer numbers";
     GV03 = "GV03" => "16 bit unsigned integer numbers";
@@ -218,6 +225,9 @@ feature_ids! {
     GV55 = "GV55" => "Path value types";
     GV60 = "GV60" => "Graph reference value types";
     GV61 = "GV61" => "Binding table reference value types";
+    GV66 = "GV66" => "Open dynamic union types";
+    GV67 = "GV67" => "Closed dynamic union types";
+    GV68 = "GV68" => "Dynamic property value types";
     GV90 = "GV90" => "Explicit value type nullability";
 }
 
@@ -276,6 +286,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GF11,
     FeatureId::GF12,
     FeatureId::GF13,
+    FeatureId::GF20,
     FeatureId::GL01,
     FeatureId::GL02,
     FeatureId::GL03,
@@ -286,6 +297,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GL08,
     FeatureId::GL09,
     FeatureId::GL10,
+    FeatureId::GL11,
     FeatureId::IM_UUID,
     FeatureId::IM_JSON,
     FeatureId::IM_VECTOR,
@@ -294,7 +306,6 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::IM_TYPED_PARAMS,
     FeatureId::IM_TRUNCATE,
     FeatureId::IM_DROP_CASCADE,
-    FeatureId::IM_LIST_SUBSCRIPT,
     FeatureId::IM_DROP_GRAPH,
     FeatureId::GH02,
     FeatureId::GG01,
@@ -314,6 +325,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GP02,
     FeatureId::GP03,
     FeatureId::GP04,
+    FeatureId::GQ02,
     FeatureId::GQ03,
     FeatureId::GQ04,
     FeatureId::GQ05,
@@ -321,11 +333,16 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GQ07,
     FeatureId::GQ08,
     FeatureId::GQ09,
+    FeatureId::GQ10,
+    FeatureId::GQ11,
     FeatureId::GQ12,
     FeatureId::GQ13,
+    FeatureId::GQ14,
     FeatureId::GQ15,
+    FeatureId::GQ16,
     FeatureId::GQ18,
     FeatureId::GQ20,
+    FeatureId::GQ24,
     FeatureId::GS03,
     FeatureId::GS04,
     FeatureId::GS07,
@@ -370,6 +387,9 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV48,
     FeatureId::GV50,
     FeatureId::GV55,
+    FeatureId::GV66,
+    FeatureId::GV67,
+    FeatureId::GV68,
     FeatureId::GV90,
 ];
 
@@ -452,7 +472,7 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GS01,
-        "SESSION SET <name> GRAPH binds a session-local graph parameter; D1 single-graph embeddable has one graph and no <graph expression>/CURRENT_GRAPH (GV60) or catalog to bind",
+        "SESSION SET <name> GRAPH binds a session-local graph parameter; D1 single-graph embeddable has one graph and no graph-parameter catalog/value slot to bind",
     ),
     (
         FeatureId::GS02,
@@ -503,11 +523,11 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (FeatureId::GV26, "FLOAT256 is deferred"),
     (
         FeatureId::GV60,
-        "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
+        "GRAPH reference type spellings parse to the Flagger, but graph reference value semantics and closed graph constraints remain deferred",
     ),
     (
         FeatureId::GV61,
-        "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
+        "binding table reference types require TABLE field-type descriptors and binding-table value semantics before claiming",
     ),
 ];
 
@@ -542,180 +562,4 @@ pub fn non_supported_rationale(id: FeatureId) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::*;
-
-    #[test]
-    fn supported_features_has_no_duplicates() {
-        // CORE-15: a duplicated feature in SUPPORTED would silently inflate the
-        // conformance claim count and is otherwise invisible.
-        let mut seen = HashSet::new();
-        for feature in SUPPORTED_FEATURES {
-            assert!(
-                seen.insert(*feature),
-                "{feature} appears more than once in SUPPORTED_FEATURES"
-            );
-        }
-    }
-
-    #[test]
-    fn not_supported_rationale_has_no_duplicates() {
-        let mut seen = HashSet::new();
-        for (feature, _) in NOT_SUPPORTED_RATIONALE {
-            assert!(
-                seen.insert(*feature),
-                "{feature} appears more than once in NOT_SUPPORTED_RATIONALE"
-            );
-        }
-    }
-
-    #[test]
-    fn supported_and_not_supported_are_disjoint() {
-        // CORE-15: SUPPORTED ∩ NOT_SUPPORTED = ∅ — a feature cannot be both
-        // claimed and rationalized-as-unclaimed.
-        let supported: HashSet<FeatureId> = SUPPORTED_FEATURES.iter().copied().collect();
-        for (feature, _) in NOT_SUPPORTED_RATIONALE {
-            assert!(
-                !supported.contains(feature),
-                "{feature} is in BOTH SUPPORTED_FEATURES and NOT_SUPPORTED_RATIONALE"
-            );
-        }
-    }
-
-    #[test]
-    fn ge08_is_reference_parameters_referenced_only() {
-        // CONFORMANCE-00: GE08 is ISO Annex D Table D.1 row 77 / §17.7
-        // "Reference parameters" — NOT a CAST feature. It must carry the correct
-        // ISO name, must NOT be claimed (reference parameters are unimplemented),
-        // and — having no syntactic surface to reject — must NOT be in
-        // NOT_SUPPORTED_RATIONALE (which is reserved for parser-rejected
-        // features). It surfaces as the "referenced" status instead.
-        assert_eq!(name_of(FeatureId::GE08), Some("Reference parameters"));
-        assert!(
-            !is_supported(FeatureId::GE08),
-            "GE08 (Reference parameters) is not implemented and must not be claimed"
-        );
-        assert!(
-            non_supported_rationale(FeatureId::GE08).is_none(),
-            "GE08 has no parser surface to reject; it is referenced-only, not rationalized"
-        );
-    }
-
-    #[test]
-    fn ga05_cast_specification_is_supported() {
-        // CONFORMANCE-00 (Codex review follow-up): GA05 "Cast specification"
-        // (Annex D row 53 / §20.8) is the real ISO feature for CAST. Per ISO
-        // Annex A item 52, without GA05 "conforming GQL language shall not
-        // contain a <cast specification>" — CAST is gated behind GA05, not
-        // baseline. selene-db implements the cast construct, so it CLAIMS GA05
-        // (and so GA05 carries no non-supported rationale).
-        assert_eq!(name_of(FeatureId::GA05), Some("Cast specification"));
-        assert!(
-            is_supported(FeatureId::GA05),
-            "GA05 is claimed: selene-db implements <cast specification>"
-        );
-        assert!(
-            non_supported_rationale(FeatureId::GA05).is_none(),
-            "GA05 is supported, so it has no non-supported rationale"
-        );
-    }
-
-    #[test]
-    fn ga06_value_type_predicate_is_supported() {
-        // CONFORMANCE-00 follow-up: GA06 "Value type predicate" (Annex A item 53 /
-        // ISO §19.6) is the construct-level feature for `IS [NOT] TYPED <value
-        // type>`. selene-db implements the typed predicate, so it CLAIMS GA06 and
-        // carries no non-supported rationale.
-        assert_eq!(name_of(FeatureId::GA06), Some("Value type predicate"));
-        assert!(
-            is_supported(FeatureId::GA06),
-            "GA06 is claimed: selene-db implements <value type predicate>"
-        );
-        assert!(
-            non_supported_rationale(FeatureId::GA06).is_none(),
-            "GA06 is supported, so it has no non-supported rationale"
-        );
-    }
-
-    #[test]
-    fn gg21_explicit_key_label_sets_is_claimed() {
-        // 813: GG21 "Explicit element type key label sets" is now CLAIMED. The
-        // type-DDL grammar parses the explicit `<...type key label set>` (the
-        // `=>` <implies> marker, ISO §18.2/18.3) and the flagger stamps it. A
-        // claimed feature carries no non-supported rationale.
-        assert_eq!(
-            name_of(FeatureId::GG21),
-            Some("Explicit element type key label sets")
-        );
-        assert!(
-            is_supported(FeatureId::GG21),
-            "GG21 is claimed: the explicit key-label-set `=>` syntax is parsed and flagged"
-        );
-        assert!(
-            non_supported_rationale(FeatureId::GG21).is_none(),
-            "GG21 is supported, so it has no non-supported rationale"
-        );
-        // §24.7 implied-feature-relationships: GG21 implies GG02 ("Graph with a
-        // closed graph type"). The implication is satisfied — GG02 is claimed —
-        // so claiming GG21 is implication-consistent and not a phantom claim.
-        assert!(
-            is_supported(FeatureId::GG02) && is_supported(FeatureId::GG20),
-            "GG21 implies GG02 (closed graph type); GG02 + GG20 stay claimed"
-        );
-    }
-
-    #[test]
-    fn at_least_one_graph_type_feature_is_claimed() {
-        // CORE-15: ISO §4 requires at least one of GG01 (open graph) or GG02
-        // (closed graph). selene-db claims both, but the floor is the OR.
-        assert!(
-            is_supported(FeatureId::GG01) || is_supported(FeatureId::GG02),
-            "neither GG01 (open graph) nor GG02 (closed graph) is claimed"
-        );
-    }
-
-    #[test]
-    fn every_referenced_feature_resolves_by_string() {
-        // Round-trips the stable string ABI both ways.
-        for (feature, _) in REFERENCED_FEATURES {
-            assert_eq!(feature_id_from_str(feature.as_str()), Some(*feature));
-            assert!(name_of(*feature).is_some(), "{feature} has no display name");
-        }
-    }
-
-    #[test]
-    fn annex_b_register_carries_no_pack_or_spec_05_residue() {
-        // CORE-01: post-#196 the procedure-pack model is gone. No Annex B entry
-        // may still name "pack" or point at the deleted spec 05 / spec 15.
-        for (id, choice) in ANNEX_B_REGISTER {
-            let haystacks = [choice.choice, choice.settled_in];
-            for text in haystacks {
-                let lower = text.to_ascii_lowercase();
-                assert!(
-                    !lower.contains("pack"),
-                    "Annex B {} still references a 'pack': {text:?}",
-                    id.as_str()
-                );
-                assert!(
-                    !lower.contains("spec 05") && !lower.contains("spec 15"),
-                    "Annex B {} still points at a deleted spec: {text:?}",
-                    id.as_str()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn annex_b_register_has_no_duplicate_ids() {
-        let mut seen = HashSet::new();
-        for (id, _) in ANNEX_B_REGISTER {
-            assert!(
-                seen.insert(*id),
-                "{} appears more than once in ANNEX_B_REGISTER",
-                id.as_str()
-            );
-        }
-    }
-}
+mod tests;

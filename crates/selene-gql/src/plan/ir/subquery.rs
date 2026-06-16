@@ -13,9 +13,7 @@ use super::{BindingTableColumn, ExecutionPlan, PatternPlan};
 
 /// Planned subquery referenced by an expression ID in a containing plan.
 ///
-/// `Exists` follows ISO/IEC 39075:2024 section 19.4. `CountSubquery` is a
-/// selene-db dialect extension over a single `MATCH` pattern; it counts every
-/// row produced by that pattern, including duplicates from join shapes.
+/// `Exists` follows ISO/IEC 39075:2024 section 19.4.
 #[derive(Clone, Debug)]
 pub struct PlannedSubquery {
     /// Subquery expression kind.
@@ -45,8 +43,6 @@ pub enum SubqueryKind {
         /// Whether the source was `NOT EXISTS`.
         negated: bool,
     },
-    /// selene-db `COUNT { MATCH ... }` dialect extension.
-    Count,
     /// ISO GQL `VALUE { ... }` scalar value query expression.
     Value,
 }
@@ -54,7 +50,7 @@ pub enum SubqueryKind {
 /// Lowered expression-subquery body.
 #[derive(Clone, Debug)]
 pub enum SubqueryBody {
-    /// Existing single-MATCH pattern body used by EXISTS/COUNT.
+    /// Existing single-MATCH pattern body used by EXISTS.
     Pattern(Box<PatternPlan>),
     /// Full query pipeline body used by VALUE.
     Plan(Box<ExecutionPlan>),
@@ -63,6 +59,8 @@ pub enum SubqueryBody {
 /// Planned inline `CALL { ... }` table subquery.
 #[derive(Clone, Debug)]
 pub struct PlannedTableSubquery {
+    /// Whether an empty body result preserves the input row with null yields.
+    pub optional: bool,
     /// Full query body executed once per input row.
     pub body: Box<ExecutionPlan>,
     /// Outer-scope bindings referenced by the body, sorted and deduped.
@@ -130,7 +128,7 @@ mod tests {
 
     fn planned_subquery() -> PlannedSubquery {
         PlannedSubquery {
-            kind: SubqueryKind::Count,
+            kind: SubqueryKind::Exists { negated: false },
             body: SubqueryBody::Pattern(Box::new(PatternPlan {
                 bindings: Vec::new(),
                 join_tree: JoinTree::WorstCaseOptimal {
@@ -156,7 +154,7 @@ mod tests {
         assert!(!registry.is_empty());
         assert!(matches!(
             registry.get(expr_id).map(|subquery| subquery.kind),
-            Some(SubqueryKind::Count)
+            Some(SubqueryKind::Exists { negated: false })
         ));
         assert!(registry.get(ExprId::new(8)).is_none());
     }

@@ -126,9 +126,9 @@ fn create_sensor_type(graph: &SharedGraph) {
         graph,
         "CREATE NODE TYPE :Sensor \
          (ts :: INT64, reading_count :: UINT64, location :: STRING, value :: STRING, \
-          active :: BOOLEAN, signed :: INT128, unsigned :: UINT128, amount :: DECIMAL, \
+          active :: BOOLEAN, \"signed\" :: INT128, \"unsigned\" :: UINT128, amount :: DECIMAL, \
           score :: FLOAT32, observed_at :: ZONED DATETIME, observed_local :: LOCAL TIME, \
-          observed_zone_time :: ZONED TIME, observed_duration :: DURATION, \
+          observed_zone_time :: ZONED TIME, observed_duration :: DURATION (DAY TO SECOND), \
           tags :: LIST<STRING>)",
     )
     .unwrap();

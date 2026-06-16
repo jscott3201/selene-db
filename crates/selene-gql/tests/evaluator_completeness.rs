@@ -11,6 +11,7 @@ use selene_core::{EdgeId, LabelSet, NodeId, Value};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
     GqlType, IsCheckKind, LabelExpr, Literal, NonEmpty, NormalForm, SourceSpan, ValueExpr,
+    ast::CharacterStringLiteralKind,
 };
 
 fn span() -> SourceSpan {
@@ -26,7 +27,11 @@ fn int_lit(value: i64) -> ValueExpr {
 }
 
 fn string_lit(value: &str) -> ValueExpr {
-    lit(Literal::String(db_string(value), span()))
+    lit(Literal::String(
+        db_string(value),
+        span(),
+        CharacterStringLiteralKind::Escaped,
+    ))
 }
 
 fn null_lit() -> ValueExpr {
@@ -100,21 +105,6 @@ fn function_call(name: &str, args: Vec<ValueExpr>) -> ValueExpr {
         args,
         star: false,
         distinct: false,
-        span: span(),
-    }
-}
-
-fn list_lit(items: Vec<ValueExpr>) -> ValueExpr {
-    ValueExpr::ListLiteral {
-        items,
-        span: span(),
-    }
-}
-
-fn list_access(target: ValueExpr, index: ValueExpr) -> ValueExpr {
-    ValueExpr::ListAccess {
-        target: Box::new(target),
-        index: Box::new(index),
         span: span(),
     }
 }
@@ -441,6 +431,7 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
     let property_exists = ValueExpr::PropertyExists {
         target: Box::new(var(node.clone())),
         key: fixture.name.clone(),
+        key_source_kind: CharacterStringLiteralKind::Escaped,
         span: span(),
     };
     assert_eq!(
@@ -500,6 +491,7 @@ fn property_exists_target_null_propagates_but_property_null_is_false() {
     let property_exists = ValueExpr::PropertyExists {
         target: Box::new(var(node.clone())),
         key: fixture.name.clone(),
+        key_source_kind: CharacterStringLiteralKind::Escaped,
         span: span(),
     };
 
@@ -604,7 +596,7 @@ fn null_is_typed_matrix_is_two_valued() {
 }
 
 #[test]
-fn case_list_access_and_record_literal_evaluate() {
+fn case_list_and_record_literal_evaluate() {
     assert_eq!(
         single_value(
             "RETURN CASE WHEN false THEN 1 WHEN true THEN 2 ELSE 3 END AS value",
@@ -612,93 +604,13 @@ fn case_list_access_and_record_literal_evaluate() {
         ),
         Value::Int(2)
     );
-    // 1-based ordinal subscript (ISO §14.8): list[1] is the first element.
     assert_eq!(
-        single_value("RETURN [10, 20, 30][1] AS value", "value"),
-        Value::Int(10)
+        single_value(
+            "RETURN CASE 2 WHEN 1, 2 THEN 'hit' WHEN 3 THEN 'three' ELSE 'miss' END AS value",
+            "value",
+        ),
+        Value::String(db_string("hit"))
     );
-    assert_eq!(
-        single_value("RETURN [10, 20, 30][2] AS value", "value"),
-        Value::Int(20)
-    );
-    assert_eq!(
-        single_value("RETURN [10, 20, 30][3] AS value", "value"),
-        Value::Int(30)
-    );
-    // Ordinal 0 and beyond-cardinality fall outside 1..=cardinality -> NULL.
-    assert_eq!(
-        single_value("RETURN [10, 20, 30][0] AS value", "value"),
-        Value::Null
-    );
-    assert_eq!(
-        single_value("RETURN [10, 20, 30][4] AS value", "value"),
-        Value::Null
-    );
-    assert_eq!(
-        single_value("RETURN [10][-1] AS value", "value"),
-        Value::Null
-    );
-
-    assert_eq!(
-        eval(&list_access(null_lit(), int_lit(0))).unwrap(),
-        Value::Null
-    );
-    assert_eq!(
-        eval(&list_access(
-            list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
-            null_lit()
-        ))
-        .unwrap(),
-        Value::Null
-    );
-    assert_eq!(
-        eval(&list_access(null_lit(), null_lit())).unwrap(),
-        Value::Null
-    );
-    let index = db_string("index");
-    assert_eq!(
-        eval_with_binding(
-            &list_access(
-                list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
-                var(index.clone()),
-            ),
-            Binding::new([Value::Uint(1)]),
-            vec![index.clone()],
-        )
-        .unwrap(),
-        Value::Int(1)
-    );
-    assert_eq!(
-        eval_with_binding(
-            &list_access(
-                list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
-                var(index.clone()),
-            ),
-            Binding::new([Value::Uint(0)]),
-            vec![index],
-        )
-        .unwrap(),
-        Value::Null
-    );
-    assert_eq!(
-        eval(&list_access(
-            list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
-            int_lit(-1),
-        ))
-        .unwrap(),
-        Value::Null
-    );
-
-    let err = eval(&list_access(string_lit("string"), int_lit(0)))
-        .expect_err("non-list target still errors");
-    assert_data_exception_contains(err, "list access target is not a list");
-    let err = eval(&list_access(
-        list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
-        string_lit("x"),
-    ))
-    .expect_err("non-integer index still errors");
-    assert_data_exception_contains(err, "list access index is not an integer");
-
     let record = ValueExpr::RecordLiteral {
         fields: vec![
             (db_string("a"), int_lit(1)),

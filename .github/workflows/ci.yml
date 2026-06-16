@@ -11,7 +11,8 @@
 #
 # Kept here (all near-instant — no toolchain build except a fast rustfmt pass):
 #   - cargo fmt --all --check
-#   - file-size cap (700 LOC), no-secret scan, bench-invocation lint
+#   - file-size cap (700 LOC), no-secret scan, repository-home metadata,
+#     bench-invocation lint
 #   - cargo-deny + THIRDPARTY.md currency  (deps-changed only)
 #
 # Security: no `${{ github.event.* }}` in any `run:` (confined to if:/concurrency:/with:).
@@ -88,6 +89,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-no-secrets.sh
+
+  repository-home:
+    name: repository-home metadata
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-repository-home.sh .
 
   rowid-arith-gate:
     name: id<->row arithmetic gate (BRIEF-Item-4a / D22)

@@ -5,7 +5,7 @@
 //! inverted lists. Search probes nearest centroids, exact-reranks candidates in
 //! those lists, and skips stale row versions left by updates/deletes.
 
-use std::{borrow::Cow, mem::size_of};
+use std::mem::size_of;
 
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
@@ -18,6 +18,15 @@ use super::config::MAX_IVF_TARGET_CENTROIDS;
 
 #[path = "ivf/batch.rs"]
 mod batch;
+#[path = "ivf/filter.rs"]
+mod filter;
+#[path = "ivf/support.rs"]
+mod support;
+
+use support::{
+    IvfEntry, average_list_len_basis_points, remove_entry_id, target_centroid_count,
+    training_entry_ids, vector_hits,
+};
 
 const MAX_CENTROIDS: usize = MAX_IVF_TARGET_CENTROIDS as usize;
 // Training is sampled above this point, but final list assignment is exhaustive.
@@ -655,83 +664,8 @@ impl IvfVectorIndex {
     }
 }
 
-#[derive(Clone, Debug)]
-struct IvfEntry {
-    row: u32,
-    vector: VectorValue,
-    deleted: bool,
-    pending_retrain: bool,
-}
-
-fn target_centroid_count(live_len: usize) -> usize {
-    ceil_sqrt(live_len).clamp(1, MAX_CENTROIDS)
-}
-
-fn training_entry_ids(live_entries: &[u32]) -> Cow<'_, [u32]> {
-    if live_entries.len() <= TRAINING_SAMPLE_MAX_ENTRIES {
-        return Cow::Borrowed(live_entries);
-    }
-    Cow::Owned(evenly_spaced_entry_ids(
-        live_entries,
-        TRAINING_SAMPLE_MAX_ENTRIES,
-    ))
-}
-
-fn evenly_spaced_entry_ids(live_entries: &[u32], sample_len: usize) -> Vec<u32> {
-    if sample_len == 0 || live_entries.is_empty() {
-        return Vec::new();
-    }
-    if sample_len == 1 {
-        return vec![live_entries[0]];
-    }
-    let last = live_entries.len() - 1;
-    (0..sample_len)
-        .map(|slot| {
-            let source = slot.saturating_mul(last) / (sample_len - 1);
-            live_entries[source]
-        })
-        .collect()
-}
-
 fn should_parallelize_assignments(live_len: usize, centroid_count: usize) -> bool {
     live_len >= PARALLEL_ASSIGNMENT_MIN_ENTRIES && centroid_count > 1
-}
-
-fn ceil_sqrt(value: usize) -> usize {
-    let mut root = (value as f64).sqrt() as usize;
-    while root.saturating_mul(root) < value {
-        root += 1;
-    }
-    while root > 1 && (root - 1).saturating_mul(root - 1) >= value {
-        root -= 1;
-    }
-    root
-}
-
-fn average_list_len_basis_points(assigned_entries: usize, list_count: usize) -> usize {
-    assigned_entries
-        .saturating_mul(10_000)
-        .checked_div(list_count)
-        .unwrap_or_default()
-}
-
-fn remove_entry_id(list: &mut Vec<u32>, entry_id: u32) -> bool {
-    let Some(offset) = list.iter().position(|id| *id == entry_id) else {
-        return false;
-    };
-    list.swap_remove(offset);
-    true
-}
-
-fn vector_hits(top_k: VectorTopK<u32>) -> Vec<IvfVectorHit> {
-    top_k
-        .into_hits()
-        .into_iter()
-        .map(|hit| IvfVectorHit {
-            row: hit.key,
-            distance: hit.distance,
-        })
-        .collect()
 }
 
 #[cfg(test)]

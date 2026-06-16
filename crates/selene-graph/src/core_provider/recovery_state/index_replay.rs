@@ -13,6 +13,7 @@ use selene_core::{
 };
 use smallvec::SmallVec;
 
+use crate::core_provider::sections::SchemaEntityKind;
 use crate::graph::{
     CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, TextIndexEntry, VectorIndexEntry,
 };
@@ -25,6 +26,8 @@ use crate::vector_index::{VectorIndex, VectorIndexKind};
 pub(super) enum PendingIndex {
     /// Register an index for `(label, property)` of the declared `kind`.
     Create {
+        /// Entity family the index applies to.
+        entity: SchemaEntityKind,
         /// Indexed node label.
         label: DbString,
         /// Indexed property key.
@@ -36,6 +39,8 @@ pub(super) enum PendingIndex {
     },
     /// Drop the index registration for `(label, property)`.
     Drop {
+        /// Entity family the index applies to.
+        entity: SchemaEntityKind,
         /// Indexed node label.
         label: DbString,
         /// Indexed property key.
@@ -125,6 +130,7 @@ pub(super) fn pending_property_index_change(change: &SchemaChange) -> Option<Pen
             property,
             kind,
         } => Some(PendingIndex::Create {
+            entity: SchemaEntityKind::Node,
             label: label.clone(),
             property: property.clone(),
             kind: typed_kind_from(*kind),
@@ -136,12 +142,31 @@ pub(super) fn pending_property_index_change(change: &SchemaChange) -> Option<Pen
             kind,
             name,
         } => Some(PendingIndex::Create {
+            entity: SchemaEntityKind::Node,
             label: label.clone(),
             property: property.clone(),
             kind: typed_kind_from(*kind),
             name: name.clone(),
         }),
         SchemaChange::PropertyIndexDropped { label, property } => Some(PendingIndex::Drop {
+            entity: SchemaEntityKind::Node,
+            label: label.clone(),
+            property: property.clone(),
+        }),
+        SchemaChange::EdgePropertyIndexCreated {
+            label,
+            property,
+            kind,
+            name,
+        } => Some(PendingIndex::Create {
+            entity: SchemaEntityKind::Edge,
+            label: label.clone(),
+            property: property.clone(),
+            kind: typed_kind_from(*kind),
+            name: name.clone(),
+        }),
+        SchemaChange::EdgePropertyIndexDropped { label, property } => Some(PendingIndex::Drop {
+            entity: SchemaEntityKind::Edge,
             label: label.clone(),
             property: property.clone(),
         }),
@@ -163,20 +188,31 @@ pub(super) fn replay_property_index_changes(
     for change in changes {
         match change {
             PendingIndex::Create {
+                entity,
                 label,
                 property,
                 kind,
                 name,
             } => {
-                graph.property_index.insert(
+                let target = match entity {
+                    SchemaEntityKind::Node => &mut graph.property_index,
+                    SchemaEntityKind::Edge => &mut graph.edge_property_index,
+                };
+                target.insert(
                     (label.clone(), property.clone()),
                     PropertyIndexEntry::new(TypedIndex::new(*kind), name.clone()),
                 );
             }
-            PendingIndex::Drop { label, property } => {
-                graph
-                    .property_index
-                    .remove(&(label.clone(), property.clone()));
+            PendingIndex::Drop {
+                entity,
+                label,
+                property,
+            } => {
+                let target = match entity {
+                    SchemaEntityKind::Node => &mut graph.property_index,
+                    SchemaEntityKind::Edge => &mut graph.edge_property_index,
+                };
+                target.remove(&(label.clone(), property.clone()));
             }
         }
     }

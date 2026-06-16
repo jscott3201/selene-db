@@ -154,6 +154,43 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// ISO 14.11 requires every grouped non-aggregate projection item to be
+    /// one of the grouping keys.
+    #[error("grouped projection item must be a grouping key or aggregate expression")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    GroupedProjectionItemNotGrouped {
+        /// Source span of the invalid projection item.
+        #[label("not a grouping key or aggregate expression")]
+        span: SourceSpan,
+    },
+
+    /// ISO 14.11 forbids `RETURN *` over a unit incoming binding table.
+    #[error("RETURN * requires a non-unit incoming binding table")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    ReturnStarRequiresInput {
+        /// Source span of the invalid `RETURN *`.
+        #[label("no incoming bindings to expand")]
+        span: SourceSpan,
+    },
+
+    /// ISO 14.10 forbids nested query specifications inside sort keys.
+    #[error("ORDER BY sort key cannot contain a nested query specification")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    SortKeyContainsNestedQuery {
+        /// Source span of the invalid sort key.
+        #[label("nested query specification is not allowed in a sort key")]
+        span: SourceSpan,
+    },
+
+    /// ISO 14.10 restricts aggregate functions in post-`RETURN` sort keys.
+    #[error("ORDER BY sort key cannot contain an aggregate function in this RETURN context")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    SortKeyContainsAggregate {
+        /// Source span of the invalid sort key.
+        #[label("aggregate function is not allowed in this sort key")]
+        span: SourceSpan,
+    },
+
     /// A reference is syntactically resolved but not valid in this expression context.
     #[error("invalid reference: {message}")]
     #[diagnostic(code(SLENE_GQL_42002))]
@@ -472,6 +509,10 @@ impl AnalysisError {
             Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::AggregateNestingViolation { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::GroupedProjectionItemNotGrouped { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::ReturnStarRequiresInput { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::SortKeyContainsNestedQuery { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::SortKeyContainsAggregate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {

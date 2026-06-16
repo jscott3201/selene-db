@@ -179,6 +179,22 @@ fn cast_list_integer_to_string_element_wise() {
 }
 
 #[test]
+fn cast_bounded_list_enforces_max_cardinality_before_element_cast() {
+    let value = execute_first_value("RETURN CAST([1, 2] AS LIST<STRING>[2]) AS v");
+    let Value::List(items) = value else {
+        panic!("expected list, got {value:?}");
+    };
+    assert_eq!(items.len(), 2);
+    assert_eq!(as_string(items[0].clone()), "1");
+    assert_eq!(as_string(items[1].clone()), "2");
+
+    assert_eq!(
+        execute_first_status("RETURN CAST([1, 2, 3] AS LIST<INTEGER>[2]) AS v"),
+        "22G03"
+    );
+}
+
+#[test]
 fn cast_list_list_integer_to_list_list_string() {
     // Nested LIST recursion exercises the stacker-grown path in cast.rs.
     let value = execute_first_value("RETURN CAST([[1, 2], [3, 4]] AS LIST<LIST<STRING>>) AS v");

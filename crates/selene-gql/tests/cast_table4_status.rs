@@ -66,7 +66,7 @@ fn scalar_source_to_temporal_target_returns_22g03() {
     for source in [
         "RETURN CAST(1 AS DATE) AS value",
         "RETURN CAST(true AS LOCAL TIME) AS value",
-        "RETURN CAST(1.5 AS DURATION) AS value",
+        "RETURN CAST(1.5 AS DURATION (DAY TO SECOND)) AS value",
     ] {
         assert_eq!(first_status(source), "22G03", "{source}");
     }

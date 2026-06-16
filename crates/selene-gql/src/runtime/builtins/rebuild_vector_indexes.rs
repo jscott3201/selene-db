@@ -236,6 +236,9 @@ where
         .map_err(|cause| match cause {
             CancellationCause::Cancelled => ProcedureError::Cancelled,
             CancellationCause::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
+            CancellationCause::NodeScanBudgetExceeded { limit, scanned } => {
+                ProcedureError::NodeScanBudgetExceeded { limit, scanned }
+            }
         })?;
     let report = rebuild(ctx).map_err(|source| ProcedureError::Internal {
         detail: format!("{proc_name} failed: {source}"),

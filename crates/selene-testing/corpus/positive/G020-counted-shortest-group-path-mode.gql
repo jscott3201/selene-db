@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: G020
+// also-covers: G011, G014
+// expects: parse-ok
+MATCH SHORTEST 2 TRAIL PATHS GROUPS (a:Person)-[:KNOWS]->(b:Person) RETURN b

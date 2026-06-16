@@ -3,11 +3,11 @@
 use selene_core::{DbString, feature_register::FeatureId};
 
 use crate::{
-    NonEmpty, ValueExpr,
+    ExistsBody, NonEmpty, ValueExpr,
     ast::{
         expr::{
-            BinaryOp, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, IsCheckKind,
-            Literal,
+            BinaryOp, CharacterStringLiteralKind, DecimalLiteralKind, FloatLiteralKind,
+            IntegerLiteralKind, IsCheckKind, Literal,
         },
         types::{GqlType, RecordType},
     },
@@ -57,8 +57,11 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             is_check(kind, *span, uses);
             return;
         }
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-            query::match_clause(pattern, uses);
+        ValueExpr::Exists { body, .. } => {
+            match body {
+                ExistsBody::Match(pattern) => query::match_clause(pattern, uses),
+                ExistsBody::Query(pipeline) => query::query_pipeline(pipeline, uses),
+            }
             return;
         }
         ValueExpr::ValueSubquery { body, span } => {
@@ -67,12 +70,9 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             return;
         }
         // Variants whose own feature surface is recorded before their direct
-        // `ValueExpr` children. The feature is emitted here; child recursion is
+        // `ValueExpr` children. Feature emission stays here; child recursion is
         // delegated to `for_each_child` below so the per-variant traversal
         // shape lives in exactly one place (`ast/walk.rs`).
-        ValueExpr::ListAccess { span, .. } => {
-            record_feature(uses, FeatureId::IM_LIST_SUBSCRIPT, *span);
-        }
         ValueExpr::ListLiteral { span, .. } => record_feature(uses, FeatureId::GV50, *span),
         ValueExpr::RecordLiteral { span, .. } => record_feature(uses, FeatureId::GV45, *span),
         ValueExpr::PathConstructor { span, .. } => {
@@ -126,7 +126,14 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
         }
         ValueExpr::AllDifferent { span, .. } => record_feature(uses, FeatureId::G113, *span),
         ValueExpr::Same { span, .. } => record_feature(uses, FeatureId::G114, *span),
-        ValueExpr::PropertyExists { span, .. } => record_feature(uses, FeatureId::G115, *span),
+        ValueExpr::PropertyExists {
+            key_source_kind,
+            span,
+            ..
+        } => {
+            record_feature(uses, FeatureId::G115, *span);
+            character_string_literal(*key_source_kind, *span, uses);
+        }
         ValueExpr::Cast {
             target_type, span, ..
         } => {
@@ -266,18 +273,33 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::GV17, *span);
             decimal_literal(*kind, *span, uses);
         }
-        Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
-        Literal::Duration(_, span) => record_feature(uses, FeatureId::GV41, *span),
-        Literal::String(_, _)
-        | Literal::Bytes(_, _)
-        | Literal::Bool(_, _)
-        | Literal::Integer(_, _)
-        | Literal::ZonedDateTime(_, _)
-        | Literal::LocalDateTime(_, _)
-        | Literal::Date(_, _)
-        | Literal::ZonedTime(_, _)
-        | Literal::LocalTime(_, _)
-        | Literal::Null(_) => {}
+        Literal::String(_, span, kind) => character_string_literal(*kind, *span, uses),
+        Literal::Uuid(_, span, kind) => {
+            record_feature(uses, FeatureId::IM_UUID, *span);
+            character_string_literal(*kind, *span, uses);
+        }
+        Literal::Duration(_, span, kind) => {
+            record_feature(uses, FeatureId::GV41, *span);
+            character_string_literal(*kind, *span, uses);
+        }
+        Literal::ZonedDateTime(_, span, kind)
+        | Literal::LocalDateTime(_, span, kind)
+        | Literal::Date(_, span, kind)
+        | Literal::ZonedTime(_, span, kind)
+        | Literal::LocalTime(_, span, kind) => {
+            character_string_literal(*kind, *span, uses);
+        }
+        Literal::Bytes(_, _) | Literal::Bool(_, _) | Literal::Integer(_, _) | Literal::Null(_) => {}
+    }
+}
+
+pub(super) fn character_string_literal(
+    kind: CharacterStringLiteralKind,
+    span: crate::SourceSpan,
+    uses: &mut Vec<FeatureUse>,
+) {
+    if kind == CharacterStringLiteralKind::NoEscape {
+        record_feature(uses, FeatureId::GL11, span);
     }
 }
 
@@ -346,6 +368,14 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
         GqlType::Uuid => record_feature(uses, FeatureId::IM_UUID, span),
         GqlType::Json => record_feature(uses, FeatureId::IM_JSON, span),
         GqlType::Vector => record_feature(uses, FeatureId::IM_VECTOR, span),
+        GqlType::Any => record_feature(uses, FeatureId::GV66, span),
+        GqlType::AnyProperty => record_feature(uses, FeatureId::GV68, span),
+        GqlType::ClosedDynamicUnion(components) => {
+            record_feature(uses, FeatureId::GV67, span);
+            for component in components {
+                gql_type(component, span, uses);
+            }
+        }
         GqlType::String | GqlType::Boolean | GqlType::Integer | GqlType::Float => {}
         GqlType::CharacterString(character_type) => match character_type.form {
             crate::ast::CharacterStringTypeForm::StringMax
@@ -467,13 +497,24 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
                 }
             }
         }
-        GqlType::List(inner) => {
+        GqlType::List(inner)
+        | GqlType::BoundedList {
+            element_type: inner,
+            ..
+        } => {
             record_feature(uses, FeatureId::GV50, span);
             gql_type(inner, span, uses);
         }
         GqlType::Path => record_feature(uses, FeatureId::GV55, span),
         GqlType::GraphRef => record_feature(uses, FeatureId::GV60, span),
-        GqlType::TableRef => record_feature(uses, FeatureId::GV61, span),
+        GqlType::TableRef(table) => {
+            record_feature(uses, FeatureId::GV61, span);
+            if let crate::BindingTableType::Closed(fields) = table {
+                for (_, ty) in fields {
+                    gql_type(ty, span, uses);
+                }
+            }
+        }
         GqlType::NodeRef | GqlType::EdgeRef | GqlType::Null | GqlType::Nothing => {}
     }
 }
@@ -482,8 +523,8 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
 mod tests {
     use selene_core::feature_register::FeatureId;
 
-    use crate::ast::ValueExpr;
     use crate::ast::expr::{BinaryOp, IsCheckKind, Literal};
+    use crate::ast::{CharacterStringLiteralKind, ValueExpr};
     use crate::ast::{expr::FloatLiteralKind, span::SourceSpan};
 
     use super::{FeatureUse, value};
@@ -508,6 +549,7 @@ mod tests {
         ValueExpr::Literal(Literal::Duration(
             Box::new(value.parse().expect("duration literal parses")),
             span(offset),
+            CharacterStringLiteralKind::Escaped,
         ))
     }
 
@@ -521,28 +563,22 @@ mod tests {
 
     #[test]
     fn nested_child_features_record_transitively() {
-        // `list[1 + 2]`: the parent `ListAccess` owns `IM_LIST_SUBSCRIPT`; the
-        // `BinaryOp::Add` index child owns `GA01`. Both must surface, proving
-        // the `for_each_child` delegation recurses into children.
-        let expr = ValueExpr::ListAccess {
-            target: ValueExpr::Variable {
-                name: selene_core::db_string("list").expect("string fits DB string cap"),
-                span: span(0),
-            }
-            .into(),
-            index: ValueExpr::BinaryOp {
+        // `[1 + 2]`: the parent `ListLiteral` owns `GV50`; the nested
+        // `BinaryOp::Add` child owns `GA01`. Both must surface, proving the
+        // `for_each_child` delegation recurses into children.
+        let expr = ValueExpr::ListLiteral {
+            items: vec![ValueExpr::BinaryOp {
                 op: BinaryOp::Add,
                 lhs: int(1, 5).into(),
                 rhs: int(2, 7).into(),
                 span: span(5),
-            }
-            .into(),
+            }],
             span: span(0),
         };
         let observed = ids(&expr);
         assert!(
-            observed.contains(&FeatureId::IM_LIST_SUBSCRIPT),
-            "parent ListAccess feature missing: {observed:?}"
+            observed.contains(&FeatureId::GV50),
+            "parent ListLiteral feature missing: {observed:?}"
         );
         assert!(
             observed.contains(&FeatureId::GA01),

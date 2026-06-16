@@ -1,9 +1,9 @@
 //! Preflight validation for read-side AST formatting.
 
 use crate::ast::{
-    EdgePattern, GqlType, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause, NodePattern,
-    PatternElement, ProcedureCall, QueryPipeline, RecordType, ReturnClause, Statement, ValueExpr,
-    WithClause,
+    EdgePattern, ExistsBody, GqlType, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause,
+    NodePattern, PatternElement, ProcedureCall, QueryPipeline, RecordType, ReturnClause, Statement,
+    ValueExpr, WithClause,
 };
 
 use super::FormatError;
@@ -39,6 +39,7 @@ pub(crate) fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> 
         | Statement::Rollback { .. }
         | Statement::SessionSetValue { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => Ok(()),
     }
@@ -54,7 +55,7 @@ fn validate_pipeline(pipeline: &QueryPipeline) -> Result<(), FormatError> {
                     validate_expr(&value.value)?;
                 }
             }
-            crate::PipelineStatement::Unwind(value) => validate_expr(&value.source)?,
+            crate::PipelineStatement::For(value) => validate_expr(&value.source)?,
             crate::PipelineStatement::Sorting(values) => {
                 for value in values {
                     validate_expr(&value.expr)?;
@@ -111,6 +112,11 @@ fn validate_edge_pattern(edge: &EdgePattern) -> Result<(), FormatError> {
 }
 
 fn validate_return(clause: &ReturnClause) -> Result<(), FormatError> {
+    if clause.star && clause.group_by.is_some() {
+        return Err(FormatError::Invalid {
+            reason: "RETURN * cannot specify GROUP BY",
+        });
+    }
     for item in &clause.items {
         validate_expr(&item.expr)?;
     }
@@ -147,9 +153,6 @@ pub(super) fn validate_procedure_call(call: &ProcedureCall) -> Result<(), Format
     for arg in &call.args {
         validate_expr(arg)?;
     }
-    if let Some(filter) = &call.yield_filter {
-        validate_expr(filter)?;
-    }
     Ok(())
 }
 
@@ -167,10 +170,6 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             Ok(())
         }
         ValueExpr::PropertyAccess { target, .. } => validate_expr(target),
-        ValueExpr::ListAccess { target, index, .. } => {
-            validate_expr(target)?;
-            validate_expr(index)
-        }
         ValueExpr::ListLiteral { items, .. } => validate_exprs(items),
         ValueExpr::PathConstructor { elements, .. } => validate_exprs(elements),
         ValueExpr::RecordLiteral { fields, .. } => {
@@ -228,9 +227,10 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             }
             Ok(())
         }
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-            validate_match(pattern)
-        }
+        ValueExpr::Exists { body, .. } => match body {
+            ExistsBody::Match(pattern) => validate_match(pattern),
+            ExistsBody::Query(pipeline) => validate_pipeline(pipeline),
+        },
         ValueExpr::ValueSubquery { body, .. } => validate_pipeline(body),
         ValueExpr::Cast {
             value, target_type, ..
@@ -265,7 +265,11 @@ fn validate_type(ty: &GqlType) -> Result<(), FormatError> {
         return Err(FormatError::Unsupported { variant });
     }
     match ty {
-        GqlType::List(inner) => validate_type(inner)?,
+        GqlType::List(inner)
+        | GqlType::BoundedList {
+            element_type: inner,
+            ..
+        } => validate_type(inner)?,
         GqlType::NotNull(inner) => validate_type(inner)?,
         // Closed record types render their field structure, so each field's
         // value type must also be formattable (a nested reference type would
@@ -284,9 +288,7 @@ fn ast_only_type_variant(ty: &GqlType) -> Option<&'static str> {
     match ty {
         GqlType::NotNull(inner) => ast_only_type_variant(inner),
         GqlType::GraphRef => Some("GraphRef"),
-        GqlType::NodeRef => Some("NodeRef"),
-        GqlType::EdgeRef => Some("EdgeRef"),
-        GqlType::TableRef => Some("TableRef"),
+        GqlType::TableRef(_) => Some("TableRef"),
         _ => None,
     }
 }
@@ -320,19 +322,31 @@ mod tests {
             GqlType::Vector,
         ))))
         .expect("list of vector type is formattable");
+        validate_formattable(&statement_with_type(GqlType::BoundedList {
+            element_type: Box::new(GqlType::Vector),
+            max_len: 3,
+        }))
+        .expect("bounded list of vector type is formattable");
         validate_formattable(&parameter_statement_with_type(GqlType::Vector))
             .expect("typed vector parameter is formattable");
     }
 
     #[test]
-    fn preflight_rejects_reference_type_inside_closed_record_field() {
-        // A reference type nested in a closed-record field is still AST-only and
-        // must be caught by the recursive field walk.
+    fn preflight_accepts_graph_element_reference_types() {
+        validate_formattable(&statement_with_type(GqlType::NodeRef))
+            .expect("NODE reference type is formattable");
+        validate_formattable(&statement_with_type(GqlType::EdgeRef))
+            .expect("EDGE reference type is formattable");
+    }
+
+    #[test]
+    fn preflight_accepts_graph_element_reference_type_inside_closed_record_field() {
         let closed = GqlType::Record(RecordType::Closed(vec![(
             selene_core::db_string("ref").expect("db_string ref"),
             GqlType::NodeRef,
         )]));
-        assert_unsupported(closed, "NodeRef");
+        validate_formattable(&statement_with_type(closed))
+            .expect("closed record with NODE reference field is formattable");
     }
 
     #[test]
@@ -341,25 +355,42 @@ mod tests {
     }
 
     #[test]
-    fn preflight_rejects_node_ref_type() {
-        assert_unsupported(GqlType::NodeRef, "NodeRef");
-    }
-
-    #[test]
-    fn preflight_rejects_edge_ref_type() {
-        assert_unsupported(GqlType::EdgeRef, "EdgeRef");
-    }
-
-    #[test]
     fn preflight_rejects_table_ref_type() {
-        assert_unsupported(GqlType::TableRef, "TableRef");
+        assert_unsupported(GqlType::TableRef(crate::BindingTableType::Any), "TableRef");
+    }
+
+    #[test]
+    fn preflight_rejects_return_star_group_by() {
+        let span = SourceSpan::default();
+        let err = validate_formattable(&Statement::Query(QueryPipeline {
+            statements: vec![PipelineStatement::Return(ReturnClause {
+                distinct: false,
+                star: true,
+                items: Vec::new(),
+                group_by: Some(vec![ValueExpr::Literal(Literal::Integer(1, span))]),
+                having: None,
+                span,
+            })],
+            span,
+        }))
+        .expect_err("RETURN * GROUP BY is invalid");
+        match err {
+            FormatError::Invalid { reason } => {
+                assert_eq!(reason, "RETURN * cannot specify GROUP BY");
+            }
+            FormatError::Unsupported { .. } | FormatError::Fmt(_) => {
+                panic!("expected invalid AST")
+            }
+        }
     }
 
     fn assert_unsupported(ty: GqlType, expected: &'static str) {
         let err = validate_formattable(&statement_with_type(ty)).expect_err("type is unsupported");
         match err {
             FormatError::Unsupported { variant } => assert_eq!(variant, expected),
-            FormatError::Fmt(_) => panic!("expected unsupported variant"),
+            FormatError::Invalid { .. } | FormatError::Fmt(_) => {
+                panic!("expected unsupported variant")
+            }
         }
     }
 

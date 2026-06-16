@@ -12,12 +12,47 @@ use selene_testing::corpus::{CorpusKind, Expectation, load_default_corpus};
 fn representative_read_shapes_round_trip() {
     for source in [
         "MATCH (n:Person {name: 'Ada'}) RETURN n.name AS name",
+        "FOR x IN [1, 2, 3] RETURN x",
+        "FOR x IN [1, 2, 3] WITH ORDINALITY ord RETURN x, ord",
+        "FOR x IN [1, 2, 3] WITH OFFSET off RETURN x, off",
         "RETURN (1 + 2) * 3 AS n",
         "RETURN count(*) AS c",
+        "RETURN count(*) AS c GROUP BY ()",
         "RETURN CASE WHEN n.age > 10 THEN 'old' ELSE 'new' END AS bucket",
     ] {
         assert_round_trip(source);
     }
+}
+
+#[test]
+fn explicit_all_set_quantifier_formats_to_implicit_default() {
+    for source in ["RETURN ALL 1 AS n", "SELECT ALL 1 AS n"] {
+        let parsed = parse(source).expect("explicit ALL parses");
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert_eq!(formatted, "RETURN 1 AS n", "{source}");
+        let reparsed = parse(&formatted).expect("formatted source reparses");
+        assert!(structurally_eq(&parsed, &reparsed), "{source}");
+    }
+}
+
+#[test]
+fn empty_grouping_set_formats_with_parentheses() {
+    let source = "RETURN count(*) AS c GROUP BY ()";
+    let parsed = parse(source).expect("empty grouping set parses");
+    let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+    assert_eq!(formatted, source);
+    let reparsed = parse(&formatted).expect("formatted source reparses");
+    assert!(structurally_eq(&parsed, &reparsed));
+}
+
+#[test]
+fn typed_let_value_definition_formats_canonically() {
+    let parsed =
+        parse("LET VALUE x TYPED INT8 = 1 RETURN x").expect("typed LET value definition parses");
+    let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+    assert_eq!(formatted, "LET VALUE x :: INT8 = 1\nRETURN x");
+    let reparsed = parse(&formatted).expect("formatted source reparses");
+    assert!(structurally_eq(&parsed, &reparsed));
 }
 
 #[test]
@@ -46,6 +81,42 @@ fn typed_list_predicate_preserves_element_type() {
 }
 
 #[test]
+fn temporal_type_synonyms_format_to_canonical_types() {
+    for (source, expected) in [
+        (
+            "RETURN $x IS TYPED TIMESTAMP WITH TIME ZONE AS ok",
+            "RETURN $x IS TYPED ZONED DATETIME AS ok",
+        ),
+        (
+            "RETURN $x IS TYPED TIMESTAMP WITHOUT TIME ZONE AS ok",
+            "RETURN $x IS TYPED LOCAL DATETIME AS ok",
+        ),
+        (
+            "RETURN $x IS TYPED TIMESTAMP AS ok",
+            "RETURN $x IS TYPED LOCAL DATETIME AS ok",
+        ),
+        (
+            "RETURN $x IS TYPED TIME WITH TIME ZONE AS ok",
+            "RETURN $x IS TYPED ZONED TIME AS ok",
+        ),
+        (
+            "RETURN $x IS TYPED TIME WITHOUT TIME ZONE AS ok",
+            "RETURN $x IS TYPED LOCAL TIME AS ok",
+        ),
+    ] {
+        let parsed = parse(source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert_eq!(formatted, expected, "{source}");
+        let reparsed =
+            parse(&formatted).unwrap_or_else(|error| panic!("{formatted} reparses: {error:?}"));
+        assert!(
+            structurally_eq(&parsed, &reparsed),
+            "{source} should round-trip through {formatted}"
+        );
+    }
+}
+
+#[test]
 fn reserved_word_aliases_are_quoted_in_formatted_output() {
     // Regression for Codex P2 on PR #24: the formatter's KEYWORDS list
     // was much smaller than the grammar's reserved-word set, so
@@ -61,6 +132,7 @@ fn reserved_word_aliases_are_quoted_in_formatted_output() {
         "RETURN 1 AS \"COUNT\"",
         "RETURN 1 AS \"NULL\"",
         "RETURN 1 AS \"AND\"",
+        "RETURN 1 AS \"WITHOUT\"",
     ] {
         assert_round_trip(source);
     }
@@ -75,7 +147,6 @@ fn contextual_keyword_aliases_are_quoted_in_formatted_output() {
         "EXPLAIN",
         "INDEXES",
         "PROCEDURES",
-        "TRANSACTIONS",
         "VALUE",
         "NORMALIZE",
         "PERCENTILE_CONT",
@@ -159,6 +230,7 @@ fn read_side_formatting_is_byte_idempotent() {
         "RETURN DISTINCT 1 AS \"WITH\"",
         "MATCH (a)-[:KNOWS*1..3]-(b) RETURN b",
         "RETURN n IS TYPED LIST<INT8>",
+        "RETURN count(*) AS c GROUP BY ()",
         "RETURN 1 UNION ALL RETURN 2",
         "MATCH (n) RETURN n NEXT MATCH (m) RETURN m",
     ] {
@@ -169,6 +241,33 @@ fn read_side_formatting_is_byte_idempotent() {
         assert_eq!(
             first, second,
             "formatter is not byte-idempotent for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn expression_identifiers_format_without_double_quotes() {
+    for source in [
+        "FOR value IN [1, 2, 3] RETURN stddev_pop(value) AS pop",
+        "WITH 1 AS \"WITH\" RETURN `WITH` AS result",
+        "WITH 1 AS `a``b` RETURN `a``b` AS result",
+        "RETURN uuid('018f1b6d-7b89-7cc0-9f40-2c6f8d4df101') AS parsed",
+    ] {
+        let parsed = parse(source).unwrap_or_else(|error| panic!("{source} parses: {error:?}"));
+        let formatted = format_read_statement(&parsed).expect("read-side AST formats");
+        assert!(
+            !formatted.contains("\"WITH\" AS result"),
+            "expression variable used double quotes: {formatted}"
+        );
+        assert!(
+            !formatted.contains("\"uuid\"("),
+            "function head used double quotes: {formatted}"
+        );
+        let reparsed =
+            parse(&formatted).unwrap_or_else(|error| panic!("{formatted} reparses: {error:?}"));
+        assert!(
+            structurally_eq(&parsed, &reparsed),
+            "{source} should round-trip through {formatted}"
         );
     }
 }
@@ -211,6 +310,18 @@ fn string_literal_escapes_round_trip() {
             structurally_eq(&parsed, &reparsed),
             "string literal {body:?} did not round-trip; formatted as {formatted:?}"
         );
+    }
+}
+
+#[test]
+fn double_quoted_string_literals_round_trip_to_canonical_single_quotes() {
+    for source in [
+        r#"RETURN "plain" AS s"#,
+        r#"RETURN "double "" quote" AS s"#,
+        r#"RETURN "escaped \" quote" AS s"#,
+        r#"RETURN "\u00E9\n" AS s"#,
+    ] {
+        assert_round_trip(source);
     }
 }
 

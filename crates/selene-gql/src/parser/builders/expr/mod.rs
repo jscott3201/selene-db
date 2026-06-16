@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    Rule, build_typed_param_ref, db_string_pair, db_string_param, first_child, not_implemented,
-    span, unexpected_pair,
+    Rule, build_typed_param_ref, db_string_pair, db_string_param, first_child, span,
+    unexpected_pair,
 };
 
 pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
@@ -57,6 +57,8 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
         Rule::elements_function => call::build_elements_function(pair),
         Rule::current_datetime_function => call::build_current_datetime_function(pair),
         Rule::duration_between_expr => call::build_duration_between_expr(pair),
+        Rule::duration_lit => literal::build_literal_child_expr(pair),
+        Rule::scalar_keyword_function_call => call::build_scalar_keyword_function_call(pair),
         Rule::normalize_expr => call::build_normalize_expr(pair),
         Rule::aggregate_expr => call::build_aggregate_expr(first_child(pair)?),
         Rule::paren_expr => build_value_expr(first_child(pair)?),
@@ -66,7 +68,6 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
         Rule::same_expr => call::build_expr_list_predicate(pair, call::PredicateKind::Same),
         Rule::property_exists_expr => call::build_property_exists(pair),
         Rule::exists_expr => call::build_exists(pair),
-        Rule::count_subquery_expr => call::build_count_subquery(pair),
         Rule::value_subquery_expr => call::build_value_subquery(pair),
         Rule::case_expr => call::build_case_expr(first_child(pair)?),
         Rule::simple_case | Rule::searched_case => call::build_case_expr(pair),
@@ -74,12 +75,6 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
         Rule::labels_expr => call::build_labels_function(pair),
         Rule::path_constructor => call::build_path_constructor(pair),
         Rule::trim_expr => call::build_trim_expr(pair),
-        Rule::list_iter_expr | Rule::list_comprehension | Rule::list_quant | Rule::list_reduce => {
-            Err(not_implemented(
-                &pair,
-                "list-iteration expressions are not yet supported",
-            ))
-        }
         _ => Err(unexpected_pair(pair, "expected value expression")),
     }
 }
@@ -113,9 +108,11 @@ fn build_cast_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     })
 }
 
-/// Decode a `string_lit` pair into raw text (unquoted, escapes resolved).
-pub(super) fn decode_string_text(pair: &Pair<'_, Rule>) -> Result<String, ParserError> {
-    literal::decode_string_text(pair)
+/// Decode a `string_lit` pair into raw text plus its source spelling class.
+pub(super) fn decode_string_text_with_kind(
+    pair: &Pair<'_, Rule>,
+) -> Result<(String, crate::ast::CharacterStringLiteralKind), ParserError> {
+    literal::decode_string_text_with_kind(pair)
 }
 
 fn build_left_assoc(
@@ -318,15 +315,6 @@ fn build_postfix(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
                 value = ValueExpr::PropertyAccess {
                     target: Box::new(value),
                     key: db_string_pair(prop)?,
-                    span: SourceSpan::merge(previous_span, op_span),
-                };
-            }
-            Rule::list_access_op => {
-                let index_pair = first_child(op_child)?;
-                let previous_span = value.span();
-                value = ValueExpr::ListAccess {
-                    target: Box::new(value),
-                    index: Box::new(build_value_expr(index_pair)?),
                     span: SourceSpan::merge(previous_span, op_span),
                 };
             }

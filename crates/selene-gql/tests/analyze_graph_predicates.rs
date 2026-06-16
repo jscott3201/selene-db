@@ -92,7 +92,7 @@ fn property_exists_accepts_singleton_node_edge_aliases() {
     for source in [
         "MATCH (n) WITH n AS x RETURN PROPERTY_EXISTS(x, 'name') AS ok",
         "MATCH (n) LET x = n RETURN PROPERTY_EXISTS(x, 'name') AS ok",
-        "MATCH (n) UNWIND [n] AS x RETURN PROPERTY_EXISTS(x, 'name') AS ok",
+        "MATCH (n) FOR x IN [n] RETURN PROPERTY_EXISTS(x, 'name') AS ok",
         "MATCH ()-[e:K]->() WITH e AS x RETURN PROPERTY_EXISTS(x, 'weight') AS ok",
     ] {
         let analyzed = analyze_one(source).expect("node/edge alias target analyzes");
@@ -139,7 +139,7 @@ fn property_exists_rejects_non_element_variable_references() {
 #[test]
 fn graph_identity_predicates_accept_singleton_element_variables() {
     let nodes =
-        analyze_one("MATCH (a), (b) RETURN ALL_DIFFERENT(a, b) AS diff, SAME(a, b) AS same")
+        analyze_one("MATCH (a), (b) RETURN ALL_DIFFERENT(a, b) AS diff, SAME(a, b) AS \"same\"")
             .expect("node variable arguments analyze");
     assert_eq!(
         projection_type(&nodes, "diff"),
@@ -227,11 +227,42 @@ fn source_destination_predicates_accept_node_edge_variables() {
 }
 
 #[test]
+fn source_destination_predicates_accept_comment_boundaries() {
+    let analyzed = analyze_one(
+        "MATCH (a)-[e]->(b) RETURN a IS SOURCE /* c */ OF e AS source, \
+         b IS DESTINATION /* c */ OF e AS destination",
+    )
+    .expect("endpoint predicates accept comments between phrase keywords");
+    assert_eq!(
+        projection_type(&analyzed, "source"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+    assert_eq!(
+        projection_type(&analyzed, "destination"),
+        AnalyzedType::Resolved(GqlType::Boolean)
+    );
+}
+
+#[test]
+fn source_destination_predicate_keywords_require_boundaries() {
+    for source in [
+        "MATCH (a)-[e]->() RETURN a IS SOURCEOF e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS SOURCEx OF e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS SOURCE OFx e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS DESTINATIONOF e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS DESTINATIONx OF e AS ok",
+        "MATCH (a)-[e]->() RETURN a IS DESTINATION OFx e AS ok",
+    ] {
+        assert!(parse(source).is_err(), "{source} should parse-reject");
+    }
+}
+
+#[test]
 fn source_destination_predicates_accept_node_edge_aliases() {
     for source in [
         "MATCH (a)-[e]->() WITH a AS x, e AS y RETURN x IS SOURCE OF y AS ok",
         "MATCH (a)-[e]->() LET x = a LET y = e RETURN x IS SOURCE OF y AS ok",
-        "MATCH (a)-[e]->() UNWIND [a] AS x UNWIND [e] AS y RETURN x IS SOURCE OF y AS ok",
+        "MATCH (a)-[e]->() FOR x IN [a] FOR y IN [e] RETURN x IS SOURCE OF y AS ok",
     ] {
         let analyzed = analyze_one(source).expect("node/edge alias endpoint operands analyze");
         assert_eq!(
@@ -286,7 +317,7 @@ fn source_destination_predicates_reject_non_node_edge_references() {
 fn directed_labeled_predicates_accept_singleton_element_variables() {
     let analyzed = analyze_one(
         "MATCH (n:Person)-[e:KNOWS]->() \
-         RETURN e IS DIRECTED AS directed, n IS LABELED :Person AS node_label, \
+         RETURN e IS DIRECTED AS \"directed\", n IS LABELED :Person AS node_label, \
          e IS LABELED :KNOWS AS edge_label",
     )
     .expect("directed/labeled predicates analyze");
@@ -309,7 +340,7 @@ fn directed_labeled_predicates_accept_node_edge_aliases() {
     for source in [
         "MATCH (n:Person) WITH n AS x RETURN x IS LABELED :Person AS ok",
         "MATCH (n:Person) LET x = n RETURN x IS LABELED :Person AS ok",
-        "MATCH (n:Person) UNWIND [n] AS x RETURN x IS LABELED :Person AS ok",
+        "MATCH (n:Person) FOR x IN [n] RETURN x IS LABELED :Person AS ok",
         "MATCH ()-[e:KNOWS]->() WITH e AS x RETURN x IS DIRECTED AS ok",
         "MATCH ()-[e:KNOWS]->() LET x = e RETURN x IS LABELED :KNOWS AS ok",
     ] {
@@ -326,7 +357,7 @@ fn directed_labeled_predicates_accept_procedure_yielded_graph_references() {
     let registry = graph_ref_registry();
     let analyzed = analyze_with(
         "CALL pkg.refs() YIELD node, edge \
-         RETURN node IS LABELED :Fact AS node_label, edge IS DIRECTED AS directed",
+         RETURN node IS LABELED :Fact AS node_label, edge IS DIRECTED AS \"directed\"",
         &registry,
     )
     .expect("procedure-yielded directed/labeled operands analyze");

@@ -1,8 +1,8 @@
 //! Expression and subquery depth guards for the bind pass.
 
 use crate::{
-    IsCheckKind, MatchClause, PipelineStatement, QueryPipeline, ReturnClause, ValueExpr,
-    analyze::error::AnalysisError,
+    ExistsBody, IsCheckKind, MatchClause, PipelineStatement, QueryPipeline, ReturnClause,
+    ValueExpr, analyze::error::AnalysisError,
 };
 
 use super::ANALYZER_MAX_DEPTH;
@@ -16,10 +16,6 @@ pub(super) fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
         let next = depth.saturating_add(1);
         match expr {
             ValueExpr::PropertyAccess { target, .. } => stack.push((target, next)),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push((index, next));
-                stack.push((target, next));
-            }
             ValueExpr::ListLiteral { items, .. } => {
                 stack.extend(items.iter().rev().map(|item| (item, next)));
             }
@@ -95,7 +91,6 @@ pub(super) fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
             | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. }
             | ValueExpr::ValueSubquery { .. } => {}
         }
     }
@@ -124,7 +119,9 @@ pub(crate) fn check_query_subquery_depth(
                     check_expr_subquery_depth(&binding.value, depth)?;
                 }
             }
-            PipelineStatement::Unwind(unwind) => check_expr_subquery_depth(&unwind.source, depth)?,
+            PipelineStatement::For(statement) => {
+                check_expr_subquery_depth(&statement.source, depth)?
+            }
             PipelineStatement::Sorting(terms) => {
                 for term in terms {
                     check_expr_subquery_depth(&term.expr, depth)?;
@@ -150,9 +147,6 @@ pub(crate) fn check_query_subquery_depth(
             PipelineStatement::Call(call) => {
                 for arg in &call.args {
                     check_expr_subquery_depth(arg, depth)?;
-                }
-                if let Some(filter) = &call.yield_filter {
-                    check_expr_subquery_depth(filter, depth)?;
                 }
             }
             PipelineStatement::CallSubquery(call) => {
@@ -216,10 +210,6 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
     while let Some((expr, depth)) = stack.pop() {
         match expr {
             ValueExpr::PropertyAccess { target, .. } => stack.push((target, depth)),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push((index, depth));
-                stack.push((target, depth));
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..
@@ -283,9 +273,14 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
             ValueExpr::ValueSubquery { body, .. } => {
                 check_query_subquery_depth(body, depth.saturating_add(1))?;
             }
-            ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-                check_match_clause_subquery_depth(pattern, depth.saturating_add(1))?;
-            }
+            ValueExpr::Exists { body, .. } => match body {
+                ExistsBody::Match(pattern) => {
+                    check_match_clause_subquery_depth(pattern, depth.saturating_add(1))?;
+                }
+                ExistsBody::Query(pipeline) => {
+                    check_query_subquery_depth(pipeline, depth.saturating_add(1))?;
+                }
+            },
             ValueExpr::Cast { value, .. } => stack.push((value, depth)),
             ValueExpr::Normalize { source, .. } => stack.push((source, depth)),
             ValueExpr::Trim {

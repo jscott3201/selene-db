@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    GqlType, InlineProcedureCall, LetBinding, LimitValue, OrderTerm, PipelineStatement,
-    ProcedureMutability, QueryPipeline, ReturnClause, ReturnItem, SourceSpan, UnwindStatement,
+    ForStatement, GqlType, InlineProcedureCall, LetBinding, LimitValue, OrderTerm,
+    PipelineStatement, ProcedureMutability, QueryPipeline, ReturnClause, ReturnItem, SourceSpan,
     ValueExpr, WithClause, YieldColumn,
     analyze::{
         BindingDeclKind, BindingId, ScopeId,
@@ -22,8 +22,22 @@ pub(crate) fn bind_query_pipeline(
     pipeline: &mut QueryPipeline,
 ) -> Result<(), AnalysisError> {
     super::parameters::validate_parameter_declarations(pipeline)?;
+    let mut return_sort_context = None;
     for statement in &mut pipeline.statements {
-        bind_pipeline_statement(ctx, statement)?;
+        match statement {
+            PipelineStatement::Return(clause) => {
+                bind_return_clause(ctx, clause)?;
+                return_sort_context = Some(ReturnSortContext::from_return_clause(clause));
+            }
+            PipelineStatement::Sorting(terms) => {
+                bind_sorting(ctx, terms, return_sort_context.as_ref())?;
+                return_sort_context = None;
+            }
+            _ => {
+                bind_pipeline_statement(ctx, statement)?;
+                return_sort_context = None;
+            }
+        }
     }
     Ok(())
 }
@@ -39,8 +53,8 @@ pub(crate) fn bind_pipeline_statement(
             Ok(())
         }
         PipelineStatement::Let(bindings) => bind_let(ctx, bindings),
-        PipelineStatement::Unwind(unwind) => bind_unwind(ctx, unwind),
-        PipelineStatement::Sorting(terms) => bind_sorting(ctx, terms),
+        PipelineStatement::For(statement) => bind_for(ctx, statement),
+        PipelineStatement::Sorting(terms) => bind_sorting(ctx, terms, None),
         PipelineStatement::Limit(value) | PipelineStatement::Offset(value) => {
             bind_limit_value(value)
         }
@@ -69,13 +83,6 @@ fn bind_inline_call(
     ctx: &mut BindContext,
     call: &mut InlineProcedureCall,
 ) -> Result<(), AnalysisError> {
-    if call.in_transactions {
-        return Err(AnalysisError::NotImplemented {
-            message: "CALL { ... } IN TRANSACTIONS is not yet supported".into(),
-            span: call.span,
-            hint: None,
-        });
-    }
     expr_depth::check_query_subquery_depth(&call.body, 1)?;
     let bind_result = match &call.variable_scope {
         // GP03 (ISO §15.2): explicit variable scope — the body sees ONLY the
@@ -163,7 +170,7 @@ fn declare_inline_call_yields(
                         BindingDeclKind::YieldColumn,
                         output.name.clone(),
                         item.span,
-                        output.ty.clone(),
+                        call::nullable_call_yield_type(output.ty.clone(), call.optional),
                     )?;
                 }
             }
@@ -179,7 +186,7 @@ fn declare_inline_call_yields(
                     BindingDeclKind::YieldColumn,
                     item.alias.clone().unwrap_or_else(|| column.clone()),
                     output.span,
-                    output.ty.clone(),
+                    call::nullable_call_yield_type(output.ty.clone(), call.optional),
                 )?;
             }
         }
@@ -201,6 +208,9 @@ pub(crate) fn bind_return_clause(
     ctx: &mut BindContext,
     clause: &ReturnClause,
 ) -> Result<(), AnalysisError> {
+    if clause.star && !ctx.current_scope_has_visible_bindings() {
+        return Err(AnalysisError::ReturnStarRequiresInput { span: clause.span });
+    }
     bind_return_inputs(
         ctx,
         &clause.items,
@@ -250,6 +260,7 @@ fn bind_return_inputs(
         expr::bind_condition(ctx, value, ConditionClause::Having)?;
     }
     aggregate_rules::validate_aggregate_nesting(items, having)?;
+    aggregate_rules::validate_grouped_projection_items(items, group_by)?;
     validate_percentile_independent_refs(ctx, row_scope, items, group_by, having)?;
     Ok(())
 }
@@ -322,10 +333,6 @@ fn validate_percentile_independent_refs_in_expr(
             | ValueExpr::PropertyExists { target, .. }
             | ValueExpr::Cast { value: target, .. }
             | ValueExpr::Normalize { source: target, .. } => stack.push(target),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push(index);
-                stack.push(target);
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..
@@ -392,7 +399,6 @@ fn validate_percentile_independent_refs_in_expr(
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
             | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. }
             | ValueExpr::ValueSubquery { .. } => {}
         }
     }
@@ -505,7 +511,10 @@ fn declare_projection_items(
 fn bind_let(ctx: &mut BindContext, bindings: &[LetBinding]) -> Result<(), AnalysisError> {
     for binding in bindings {
         let id = expr::bind_value_expr(ctx, &binding.value)?;
-        let ty = ctx.expr_type(id).clone();
+        let ty = binding.declared_type.as_ref().map_or_else(
+            || ctx.expr_type(id).clone(),
+            |declared_type| AnalyzedType::Resolved(declared_type.clone()),
+        );
         ctx.declare_strict_typed(
             BindingDeclKind::LetAlias,
             binding.alias.clone(),
@@ -516,28 +525,86 @@ fn bind_let(ctx: &mut BindContext, bindings: &[LetBinding]) -> Result<(), Analys
     Ok(())
 }
 
-fn bind_unwind(ctx: &mut BindContext, unwind: &UnwindStatement) -> Result<(), AnalysisError> {
-    let id = expr::bind_value_expr(ctx, &unwind.source)?;
+fn bind_for(ctx: &mut BindContext, statement: &ForStatement) -> Result<(), AnalysisError> {
+    let id = expr::bind_value_expr(ctx, &statement.source)?;
     let ty = match ctx.expr_type(id) {
-        AnalyzedType::Resolved(crate::GqlType::List(inner)) => {
-            AnalyzedType::Resolved((**inner).clone())
-        }
+        AnalyzedType::Resolved(crate::GqlType::List(inner))
+        | AnalyzedType::Resolved(crate::GqlType::BoundedList {
+            element_type: inner,
+            ..
+        }) => AnalyzedType::Resolved((**inner).clone()),
         _ => AnalyzedType::Dynamic,
     };
     ctx.declare_strict_typed(
-        BindingDeclKind::UnwindAlias,
-        unwind.alias.clone(),
-        unwind.span,
+        BindingDeclKind::ForAlias,
+        statement.alias.clone(),
+        statement.span,
         ty,
     )?;
+    if let Some(position) = &statement.position {
+        ctx.declare_strict_typed(
+            BindingDeclKind::ForAlias,
+            position.alias.clone(),
+            statement.span,
+            AnalyzedType::Resolved(crate::GqlType::Integer),
+        )?;
+    }
     Ok(())
 }
 
-fn bind_sorting(ctx: &mut BindContext, terms: &[OrderTerm]) -> Result<(), AnalysisError> {
+#[derive(Clone, Copy, Debug)]
+struct ReturnSortContext {
+    allows_aggregate_sort_key: bool,
+}
+
+impl ReturnSortContext {
+    fn from_return_clause(clause: &ReturnClause) -> Self {
+        Self {
+            allows_aggregate_sort_key: clause.group_by.is_some()
+                && clause
+                    .items
+                    .iter()
+                    .any(|item| aggregate_rules::contains_aggregate_function(&item.expr)),
+        }
+    }
+}
+
+fn bind_sorting(
+    ctx: &mut BindContext,
+    terms: &[OrderTerm],
+    return_context: Option<&ReturnSortContext>,
+) -> Result<(), AnalysisError> {
     for term in terms {
+        if sort_key_contains_nested_query(&term.expr) {
+            return Err(AnalysisError::SortKeyContainsNestedQuery {
+                span: term.expr.span(),
+            });
+        }
+        if return_context.is_some_and(|context| !context.allows_aggregate_sort_key)
+            && aggregate_rules::contains_aggregate_function(&term.expr)
+        {
+            return Err(AnalysisError::SortKeyContainsAggregate {
+                span: term.expr.span(),
+            });
+        }
         expr::bind_value_expr(ctx, &term.expr)?;
     }
     Ok(())
+}
+
+fn sort_key_contains_nested_query(expr: &ValueExpr) -> bool {
+    let mut pending = vec![expr];
+    while let Some(expr) = pending.pop() {
+        if matches!(expr, ValueExpr::ValueSubquery { .. }) {
+            return true;
+        }
+        push_value_expr_children(expr, &mut pending);
+    }
+    false
+}
+
+fn push_value_expr_children<'a>(expr: &'a ValueExpr, pending: &mut Vec<&'a ValueExpr>) {
+    expr.for_each_child(&mut |child| pending.push(child));
 }
 
 fn bind_limit_value(value: &LimitValue) -> Result<(), AnalysisError> {

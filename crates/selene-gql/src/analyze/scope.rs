@@ -35,7 +35,7 @@ pub enum ScopeKind {
     Statement,
     /// Isolated projection boundary created by `RETURN` or `WITH`.
     Projection,
-    /// Nested subquery scope created by `EXISTS` or `COUNT { ... }`.
+    /// Nested subquery scope created by `EXISTS` or `VALUE { ... }`.
     Subquery,
     /// Diagnostic scope for a `CASE` branch.
     CaseBranch,
@@ -123,6 +123,23 @@ impl BindingScopeTree {
     #[must_use]
     pub fn scope(&self, id: ScopeId) -> Option<&BindingScope> {
         self.scopes.get(id.get() as usize)
+    }
+
+    pub(crate) fn has_visible_bindings(&self, scope: ScopeId) -> bool {
+        let mut cursor = Some(scope);
+        while let Some(scope_id) = cursor {
+            let Some(scope) = self.scope(scope_id) else {
+                return false;
+            };
+            if !scope.locals.is_empty() || !scope.imports.is_empty() {
+                return true;
+            }
+            if scope.boundary {
+                return false;
+            }
+            cursor = scope.parent;
+        }
+        false
     }
 
     pub(crate) fn push_scope(
@@ -354,7 +371,7 @@ const fn is_alias_decl_kind(kind: BindingDeclKind) -> bool {
     matches!(
         kind,
         BindingDeclKind::LetAlias
-            | BindingDeclKind::UnwindAlias
+            | BindingDeclKind::ForAlias
             | BindingDeclKind::ProjectionAlias
             | BindingDeclKind::YieldColumn
     )

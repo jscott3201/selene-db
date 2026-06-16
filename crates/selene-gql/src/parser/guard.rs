@@ -22,18 +22,14 @@ use crate::{SourceSpan, error::ParserError};
 /// catch it. See `tests/parser_expr_depth.rs::nested_subqueries_with_deep_folds_do_not_crash`.
 pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 
-/// Maximum simultaneously-open `[` (list / index / comprehension) nesting
-/// depth admitted in a single statement.
+/// Maximum simultaneously-open `[` list nesting depth admitted in a single
+/// statement.
 ///
-/// pest is not packrat-memoized, so a `[` opener is re-explored by each of the
-/// three `[`-prefixed expression rules (`list_access_op`, `list_comprehension`,
-/// `list_lit`; see `grammar.pest`) before the parser can commit. A run of
-/// *unclosed* `[` therefore nests those ambiguous sub-parses, and the failed
-/// branches are recomputed at every level — super-linear backtracking that
-/// reaches seconds-to-minutes parse time for sub-kilobyte hostile inputs (the
-/// fuzz corpus blows up around 57 nested `[`), well under [`MAX_NESTING_DEPTH`].
-/// Parsing precedes execution, so an execution deadline cannot interrupt it;
-/// the only safe place to stop the blow-up is before recursive descent begins.
+/// pest is not packrat-memoized, so a run of unclosed list-literal openers can
+/// still drive expensive nested expression attempts before the parser can
+/// reject the input. Parsing precedes execution, so an execution deadline cannot
+/// interrupt the blow-up; the only safe place to stop it is before recursive
+/// descent begins.
 ///
 /// This caps the *depth* of simultaneously-open `[`, **not** a total opener
 /// count, because depth is the actual blow-up driver. A balanced, promptly
@@ -153,6 +149,8 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     // skip past the real closing quote to EOF, hiding a hostile `[` run that
     // pest still closes the string before and parses — a parser-time DoS bypass.
     let last_single_quote = bytes.iter().rposition(|byte| *byte == b'\'');
+    let last_double_quote = bytes.iter().rposition(|byte| *byte == b'"');
+    let last_backtick = bytes.iter().rposition(|byte| *byte == b'`');
     let mut index = 0;
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
@@ -187,9 +185,31 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
 
     while index < bytes.len() {
         match bytes[index] {
-            // String / backtick literals are primaries: they reset the unary
-            // and `NOT` runs (a primary terminates a leading-sign / `NOT` chain),
-            // then the scan resumes after the closing quote.
+            // Quoted string/identifier spans are primaries for guard purposes:
+            // they reset the unary and `NOT` runs (a primary terminates a
+            // leading-sign / `NOT` chain), then the scan resumes after the
+            // closing quote.
+            b'@' if next_is(bytes, index, b'\'') => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(b'\'');
+                index = skip_no_escape_quoted(bytes, index + 2, b'\'');
+            }
+            b'@' if next_is(bytes, index, b'"') => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(b'"');
+                index = skip_no_escape_quoted(bytes, index + 2, b'"');
+            }
+            b'@' if next_is(bytes, index, b'`') => {
+                sign_run = 0;
+                not_run = 0;
+                prev_word = PrevWord::Other;
+                prev_sig_byte = Some(b'`');
+                index = skip_no_escape_quoted(bytes, index + 2, b'`');
+            }
             b'\'' => {
                 sign_run = 0;
                 not_run = 0;
@@ -202,14 +222,14 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 not_run = 0;
                 prev_word = PrevWord::Other;
                 prev_sig_byte = Some(b'"');
-                index = skip_double_quoted(bytes, index + 1);
+                index = skip_double_quoted(bytes, index + 1, last_double_quote);
             }
             b'`' => {
                 sign_run = 0;
                 not_run = 0;
                 prev_word = PrevWord::Other;
                 prev_sig_byte = Some(b'`');
-                index = skip_backtick_quoted(bytes, index + 1);
+                index = skip_backtick_quoted(bytes, index + 1, last_backtick);
             }
             // Comments are whitespace to pest, so they do NOT reset any run or
             // the `prev_*` lookbehind: `- // c\n -` is still a 2-deep unary chain,
@@ -567,9 +587,13 @@ fn skip_single_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>)
     bytes.len()
 }
 
-fn skip_double_quoted(bytes: &[u8], mut index: usize) -> usize {
+fn skip_double_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
     while index < bytes.len() {
         match bytes[index] {
+            b'\\' if bytes.get(index + 1) == Some(&b'"') && Some(index + 1) == last_quote => {
+                return index + 1;
+            }
+            b'\\' => index += 2,
             b'"' if next_is(bytes, index, b'"') => index += 2,
             b'"' => return index,
             _ => index += 1,
@@ -578,12 +602,27 @@ fn skip_double_quoted(bytes: &[u8], mut index: usize) -> usize {
     bytes.len()
 }
 
-fn skip_backtick_quoted(bytes: &[u8], mut index: usize) -> usize {
+fn skip_no_escape_quoted(bytes: &[u8], mut index: usize, delimiter: u8) -> usize {
     while index < bytes.len() {
-        if bytes[index] == b'`' {
+        if bytes[index] == delimiter {
             return index;
         }
         index += 1;
+    }
+    bytes.len()
+}
+
+fn skip_backtick_quoted(bytes: &[u8], mut index: usize, last_backtick: Option<usize>) -> usize {
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if bytes.get(index + 1) == Some(&b'`') && Some(index + 1) == last_backtick => {
+                return index + 1;
+            }
+            b'\\' => index += 2,
+            b'`' if next_is(bytes, index, b'`') => index += 2,
+            b'`' => return index,
+            _ => index += 1,
+        }
     }
     bytes.len()
 }

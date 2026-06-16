@@ -4,7 +4,11 @@ mod exec_common;
 
 use exec_common::{ExecFixture, column_values, execute_plan as execute_planned_pipeline, planned};
 use selene_core::Value;
-use selene_gql::{EmptyProcedureRegistry, ExecutorError, Session, StatementOutput};
+use selene_gql::{
+    EmptyProcedureRegistry, ExecutorError, GqlStatus, Session, StatementOutput,
+    ast::{format_read_statement, structurally_eq},
+    parse,
+};
 
 fn execute(source: &str) -> selene_gql::BindingTable {
     execute_result(source).expect("query executes")
@@ -73,8 +77,55 @@ fn exists_non_empty_returns_true() {
 }
 
 #[test]
+fn exists_accepts_direct_graph_pattern_body() {
+    let table = execute("RETURN EXISTS { (:Person) } AS braced, EXISTS ((:Person)) AS paren");
+
+    assert_eq!(bool_values(&table, "braced"), vec![true]);
+    assert_eq!(bool_values(&table, "paren"), vec![true]);
+}
+
+#[test]
+fn exists_accepts_parenthesized_match_body() {
+    let table = execute("RETURN EXISTS (MATCH (:Person)) AS e");
+
+    assert_eq!(bool_values(&table, "e"), vec![true]);
+}
+
+#[test]
+fn exists_accepts_match_body_with_return_tail() {
+    let table = execute(
+        "MATCH (p:Person)
+         WHERE EXISTS { MATCH (p)-[:KNOWS]->(:Sensor) RETURN p }
+         RETURN p.name AS name",
+    );
+
+    assert_eq!(string_values(&table, "name"), vec!["Bob".to_owned()]);
+}
+
+#[test]
+fn exists_query_body_formats_and_reparses() {
+    let parsed = parse(
+        "MATCH (p:Person)
+         WHERE EXISTS { MATCH (p)-[:KNOWS]->(:Sensor) RETURN p }
+         RETURN p.name AS name",
+    )
+    .expect("EXISTS query body parses");
+    let formatted = format_read_statement(&parsed).expect("read statement formats");
+    let reparsed = parse(&formatted).expect("formatted EXISTS query body parses");
+
+    assert!(structurally_eq(&parsed, &reparsed));
+}
+
+#[test]
 fn not_exists_returns_negation() {
     let table = execute("RETURN NOT EXISTS { MATCH (:Nope) } AS e");
+
+    assert_eq!(bool_values(&table, "e"), vec![true]);
+}
+
+#[test]
+fn not_exists_accepts_parenthesized_direct_graph_pattern_body() {
+    let table = execute("RETURN NOT EXISTS ((:Nope)) AS e");
 
     assert_eq!(bool_values(&table, "e"), vec![true]);
 }
@@ -92,6 +143,30 @@ fn exists_correlated_with_outer_binding() {
         vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
     );
     assert_eq!(bool_values(&table, "has_sensor"), [false, true, false]);
+}
+
+#[test]
+fn direct_exists_graph_pattern_correlates_with_outer_binding() {
+    let table = execute(
+        "MATCH (a:Person)
+         RETURN a.name AS name, EXISTS { (a)-[:KNOWS]->(:Sensor) } AS has_sensor
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(bool_values(&table, "has_sensor"), [false, true, false]);
+}
+
+#[test]
+fn direct_exists_graph_pattern_formats_as_canonical_match_body() {
+    let parsed = parse("RETURN EXISTS { (:Person) } AS e").expect("direct EXISTS parses");
+    let formatted = format_read_statement(&parsed).expect("read statement formats");
+    assert_eq!(formatted, "RETURN EXISTS { MATCH (:Person) } AS e");
+    let reparsed = parse(&formatted).expect("formatted EXISTS parses");
+    assert!(structurally_eq(&parsed, &reparsed));
 }
 
 /// GQLRT-05 regression: two distinct correlated subqueries in one statement must
@@ -241,32 +316,10 @@ fn public_pipeline_execution_uses_attached_plan_subquery_metadata() {
 }
 
 #[test]
-fn count_subquery_empty_returns_zero() {
-    let table = execute("RETURN COUNT { MATCH (:Nope) } AS c");
-
-    assert_eq!(int_values(&table, "c"), vec![0]);
-}
-
-#[test]
-fn count_subquery_returns_row_count() {
-    let table = execute("RETURN COUNT { MATCH (:Person) } AS c");
-
-    assert_eq!(int_values(&table, "c"), vec![3]);
-}
-
-#[test]
-fn count_subquery_correlates_with_outer_binding() {
-    let table = execute(
-        "MATCH (a:Person)
-         RETURN a.name AS name, COUNT { MATCH (a)-[:KNOWS]->() } AS outgoing
-         ORDER BY name",
-    );
-
-    assert_eq!(
-        string_values(&table, "name"),
-        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
-    );
-    assert_eq!(int_values(&table, "outgoing"), [1, 1, 0]);
+fn count_subquery_syntax_is_rejected() {
+    let err = parse("RETURN COUNT { MATCH (:Person) } AS c")
+        .expect_err("COUNT { MATCH ... } is not ISO GQL syntax");
+    assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
 }
 
 #[test]
@@ -344,7 +397,7 @@ fn value_subquery_rejects_non_aggregate_without_limit_one() {
 #[test]
 fn value_subquery_limit_one_must_bound_final_result() {
     assert_status(
-        "RETURN VALUE { RETURN 1 LIMIT 1 UNWIND [1, 2] AS n RETURN n } AS v",
+        "RETURN VALUE { RETURN 1 LIMIT 1 FOR n IN [1, 2] RETURN n } AS v",
         "42001",
     );
 }

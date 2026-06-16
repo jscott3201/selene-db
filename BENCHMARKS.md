@@ -135,10 +135,12 @@ oversized variants (`Path` 120 B — the real former ceiling, not the time
 variants — plus `Duration`/`ZonedDateTime`/`ZonedTime`), down from 128 B.
 `DbString` now stores `Arc<str>`, so string values, labels, and property keys
 clone by sharing storage rather than copying string bytes.
-The same bin also covers the wide-map construction path so `from_pairs` stays
-linearithmic rather than repeated-insert quadratic for schema- or record-shaped
-maps with many properties. The `core_vector_value/*` rows are the first native
-vector baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
+The same bin also covers open and compact property-map construction paths so
+`from_pairs` stays linearithmic rather than repeated-insert quadratic for
+schema- or record-shaped maps with many properties, plus common one-property
+compact-map construction, compact-map encoding, and mutation diff constructors.
+The `core_vector_value/*` rows are the first native vector
+baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
 round-trip cost at common embedding dimensions. The `core_vector_distance/*`
 and `core_vector_exact_top_k/*` rows are exact-search oracle baselines for the
 future ANN layer; current kernels use safe `wide::f64x4` accumulation over the
@@ -169,7 +171,11 @@ production accelerator API.
 |---|---:|---|
 | `core_value_clone/vec_mixed_1024` | 4.41 µs | Clone a 1024-element mixed-variant `Vec<Value>`. Quick local A/B after `DbString` moved to shared storage: 4.63 µs → 4.41 µs. |
 | `core_value_clone/property_map_5` | 45.5 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). Quick local A/B after `DbString` moved to shared storage: 55.2 ns → 45.5 ns. |
-| `core_value_clone/property_map_from_pairs_256_reverse` | 2.68 µs (quick) | Build a 256-property map from reverse-sorted pairs. Quick local A/B after `DbString` moved to shared storage: 3.45 µs → 2.68 µs. |
+| `core_value_clone/property_map_from_pairs_1` | 8.509 ns (quick) | Build a one-property standard `PropertyMap`. PR-local singleton fast path A/B: 20.617 ns → 8.509 ns by returning len 0/1 maps before sort/dedup work. |
+| `core_value_clone/property_map_compact_1` | 22.327 ns (quick) | Build a one-key compact `PropertyMap`. PR-local singleton fast path A/B: 50.580 ns → 22.327 ns by collecting keys/values inline and returning len 0/1 maps before sort/dedup work. |
+| `core_value_clone/property_map_compact_postcard_encode_1` | 35.470 ns (quick) | Encode a canonical one-key compact `PropertyMap` with postcard. PR-local canonical fast path A/B: 60.158 ns → 35.470 ns by reusing length-aligned sorted compact key/value storage instead of rebuilding sorted pairs. |
+| `core_value_clone/property_map_from_pairs_256_reverse` | 2.68 µs (quick) | Build a 256-property map from reverse-sorted pairs. Quick local A/B after `DbString` moved to shared storage: 3.45 µs → 2.68 µs. Singleton fast-path sanity after the change: 2.6669 µs. |
+| `core_change_diff/property_diff_set_1` | 9.0227 ns (quick) | Build a `PropertyDiff` with one set property and no removals. PR-local A/B: 23.291 ns → 9.0227 ns (-61.3%) by collecting directly into inline `SmallVec` storage and skipping sort/dedup for len 0/1 set inputs. |
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
 | `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
 | `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |
@@ -293,6 +299,12 @@ node properties before maintained JSON/path indexes exist. Global JSON scans use
 threshold-gated Rayon when the label row set has at least 16,384 rows, including
 deadline-bearing checked calls; candidate-scoped JSON scans remain sequential
 because they sort/dedup and can stop once `k` matches are found.
+`graph_edge_property_scan/*`, `graph_edge_property_index_lookup/*`, and
+`graph_point_connected_traversal/*` are edge-index sprint rows over an
+open-control-shaped `CdlBlock`/`Point` fixture: the first scans `CONNECTED_TO`
+edge-label rows and filters edge properties, the second uses the built-in
+edge-property typed index, and the third walks `Point` nodes through labeled
+adjacency before checking target metadata.
 `graph_snapshot_read_loops/*` amortizes thread setup over many
 `SharedGraph::read()` calls so the ArcSwap snapshot hot path is visible; the
 older `graph_concurrent_reads` row remains a legacy spawn/join smoke row.
@@ -541,6 +553,21 @@ and
 | `graph_bfs` (depth=10) | 11.34 µs | 12.09 µs | 12.18 µs | Mostly traversal cost. |
 | `graph_bfs` (depth=50) | 101.1 µs | 111.1 µs | 113.1 µs | Saturates ~110 µs. |
 
+PR-local edge-index sprint baseline:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_edge_property_scan`
+and
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_edge_property_index_lookup`
+and
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_point_connected_traversal`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `graph_edge_property_scan/1000` | 22.410 µs | Exact scan path: `CONNECTED_TO` edge-label bitmap scan, row-to-`EdgeId` mapping, and `from_port = 'out_0'` property check over 1,000 connected edges. |
+| `graph_edge_property_index_lookup/1000` | 11.887 ns | Built-in edge-property typed index lookup for the same `(CONNECTED_TO, from_port = 'out_0')` predicate. Fixture build/index creation is excluded from the timed body. |
+| `graph_point_connected_traversal/1000` | 26.569 µs | Open-control-shaped Point-node path: label scan over 1,000 `Point` nodes, filter output points, traverse outgoing `CONNECTED_TO`, and validate input-point metadata. |
+
 PR-local quick text baseline:
 
 | Bench | 1k | Notes |
@@ -588,6 +615,42 @@ and
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 34.665 µs | 36.696 µs | +5.9% | Small maintained-read tax from one extra shared-vector dereference. Keep watching this guard because BM25/current-state is a preferred read path. |
 | `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 456.56 µs | 533.05 µs | +16.8% | Build/recovery/regeneration pays to convert bulk-built vectors into shared snapshot state. This is accepted for the update win but keeps text-index rebuild/recovery cost as a follow-up benchmark area. |
 
+PR-local BM25 term-count inline storage A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 248.85 µs | 248.66 µs | neutral | Exact scan stayed noise-flat because tokenization and row scanning dominate. |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 36.016 µs | 33.988 µs | -5.55% | Candidate `DocumentStats` now stores the common four-term query counts inline rather than allocating a per-candidate `Vec<u32>`; p=0.00. Full-profile sanity medians after the change: 10k 342.47 µs, 50k 1.7921 ms, 100k 3.6531 ms. |
+
+PR-local indexed BM25 candidate-map preallocation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed`;
+`scripts/run-benches.sh --profile full --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 34.069 µs | 27.897 µs | -18.10% | Indexed search now gathers query postings once, keeps short-query posting metadata inline, and reserves the per-query candidate map from the capped postings upper bound; p=0.00. Registered-index sanity after the change is 28.054 µs, transient build/query is 476.87 µs, and full-profile indexed-read medians are 10k 282.10 µs, 50k 1.5770 ms, 100k 3.3224 ms. |
+
+PR-local candidate-scoped BM25 query metadata A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_vector_hybrid/graph_topic_bm25_current_scoped`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_vector_hybrid/vector_bm25_current`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_vector_hybrid/ann_bm25_current`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_vector_hybrid/graph_topic_bm25_current_scoped/...q8_c64` | 42.487 µs | 36.467 µs | -13.91% | Candidate-scoped BM25 now uses the same inline query-posting metadata and reserves its indexed-candidate dedup set from the input width; p=0.00. |
+| `graph_text_bm25_vector_hybrid/graph_topic_bm25_current_scoped_vector_rerank/...q8_c64` | 61.235 µs | 55.042 µs | -10.76% | The downstream vector rerank row keeps the BM25 candidate win while preserving the same selected-candidate shape; p=0.00. Sanity after the change: vector-BM25 current filter 210.98 µs, ANN-BM25 current filter 54.834 µs, and indexed prebuilt topic query 28.446 µs. |
+
 Rejected variants: sharing postings while leaving per-document term lists as
 plain `Vec<String>` kept transient build lower at 523.57 µs but lost the update
 win (`write_registered_update_w40/n1000` returned to 5.0114 ms). Wrapping
@@ -614,6 +677,17 @@ Commands:
 | `graph_text_bm25_rebuild/compact_registered_after_delete/n100000_del10000` | 78.225 ms | 69.793 ms | -10.8% | 100k compaction/rebuild remains a maintenance scheduling concern, but the builder change takes about 8.4 ms off this row. |
 | `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 533.05 µs | 487.80 µs | -8.5% | Recovers part of the snapshot-sharing build tax; still above the pre-sharing 456.56 µs row, so rebuild/recovery stays visible. |
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 36.696 µs | 36.528 µs | noise | Query path is unchanged by the bulk-builder append path. |
+
+PR-local text-index builder document-map preallocation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_rebuild`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_rebuild/create_registered_index/n1000` | 447.00 µs | 437.54 µs | -2.12% | Bulk text-index builds now reserve document-length and document-term maps from the label-row cardinality, then shrink at finish so sparse labels do not keep over-reserved document-map capacity. |
+| `graph_text_bm25_rebuild/compact_registered_after_delete/n1000_del100` | 528.47 µs | 521.75 µs | -1.27% | The same builder path trims a small amount from compaction's text-index rebuild stage without changing postings order or scoring. Full-profile sanity after the change: create 10k 4.3152 ms, 50k 23.728 ms, 100k 48.806 ms; compact 10k 5.8408 ms, 50k 33.185 ms, 100k 69.183 ms. Indexed sanity: transient build/query 470.42 µs, prebuilt query 28.289 µs, registered query 28.183 µs. |
 
 PR-local quick JSON baseline:
 
@@ -1707,6 +1781,16 @@ The first four are scale-independent (single-query CPU).
 | `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
 
+PR-local quick procedure-call row-extension A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter 'procedure_call_repeat/(no_cache|shared_cache)'`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_call_repeat/no_cache` | 3.1136 ms | 2.4171 ms | CALL yield row extension now stays in `Binding` inline storage; median -21.8%. |
+| `procedure_call_repeat/shared_cache` | 26.384 µs | 26.360 µs | Warm shared CALL-plan cache guard stayed neutral (`p = 0.74`). |
+
 PR-local quick JSON expression baseline. These rows bind `Value::Json` payloads
 as runtime parameters, so the timed body measures expression execution and
 JSON scalar work, not JSON text parsing during `json(...)`.
@@ -1735,6 +1819,26 @@ PR-local quick Reciprocal Rank Fusion procedure baseline:
 | `procedure_reciprocal_rank_fusion/shared_cache_rankings8x64_k10` | 17.99 µs (quick) | Cached RRF over eight ranked node lists of width 64. |
 | `procedure_reciprocal_rank_fusion/shared_cache_rankings8x256_k10` | 81.46 µs (quick) | Cached RRF over eight ranked node lists of width 256. |
 | `procedure_reciprocal_rank_fusion/shared_cache_rankings8x1024_k10` | 473.3 µs (quick) | Cached RRF over eight ranked node lists of width 1,024. |
+
+PR-local quick RRF accumulation/top-k A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench procedure_call_repeat --filter procedure_reciprocal_rank_fusion --save-baseline rrf_btree`,
+then the same command with `--baseline rrf_btree` after replacing tree-backed
+RRF score/dedup accumulation with engine-id `FxHashMap` / `FxHashSet` and
+partial top-k selection before the final deterministic output sort.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x64_k10` | 5.0839 µs | 3.2698 µs | −35.69%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x256_k10` | 18.750 µs | 10.049 µs | −46.52%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings2x1024_k10` | 83.477 µs | 36.573 µs | −56.23%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x64_k10` | 10.159 µs | 5.5026 µs | −43.06%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x256_k10` | 38.327 µs | 19.407 µs | −49.73%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings4x1024_k10` | 207.16 µs | 70.854 µs | −66.40%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x64_k10` | 17.994 µs | 10.396 µs | −42.49%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x256_k10` | 81.288 µs | 38.434 µs | −52.88%, p=0.00. |
+| `procedure_reciprocal_rank_fusion/shared_cache_rankings8x1024_k10` | 508.41 µs | 141.27 µs | −72.22%, p=0.00. |
 
 PR-local quick vector procedure baseline:
 
@@ -2011,15 +2115,29 @@ PR-local quick B2 shared source-plan cache row
 | `write_e2e/gql_insert_single_node_shared_cache/1000` | 53.509 µs (quick) | Fresh `Session` per request reusing shared non-CALL source-plan cache. |
 | `write_e2e/gql_insert_single_node_cached_with_schema_churn/1000` | 61.537 µs (quick) | Session-local cache under periodic schema-version invalidation. |
 
+PR-local quick mutation row-extension guard
+(`scripts/run-benches.sh --profile quick --bench write_e2e --filter 'gql_insert_single_node_cached|gql_insert_node_with_edge_preplanned|gql_multi_statement_txn_preplanned'`):
+
+| Bench | Development baseline | Inline Binding row extension | Notes |
+|---|---:|---:|---|
+| `write_e2e/gql_insert_single_node_cached/1000` | 52.698 µs | 52.297 µs | No statistically significant change. |
+| `write_e2e/gql_insert_single_node_cached_with_schema_churn/1000` | 61.294 µs | 61.207 µs | No statistically significant change. |
+| `write_e2e/gql_insert_node_with_edge_preplanned/1000` | 164.49 µs | 161.12 µs | −3.8% median; p < 0.01. |
+| `write_e2e/gql_multi_statement_txn_preplanned/1000` | 71.661 µs | 70.956 µs | −1.5% median; within noise threshold. |
+
 ### §5c `read_pipeline` — read-query pipeline execution
 
 Read-execution coverage for the declared 60%-read workload: label scan +
 indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
-GROUP BY, DISTINCT dedup, and bare `LIMIT 10`. Six warm-plan-cache rows over
+GROUP BY, DISTINCT dedup, indexed `IN` bitmap union, inline `CALL {}`
+table-subquery row extension, post-RETURN bare `LIMIT 10`, pre-RETURN bare
+`LIMIT 10`, and maintained composite-index equality lookup. Warm-plan-cache
+rows run over
 `BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
-pure execution + index access — not parse/plan/optimize, not durability. One
-`/cold` companion on the cheapest row re-plans per iteration with an uncached
-session. The join targets `Person→Sensor→Device` deliberately: every fixture
+pure execution + index access — not parse/plan/optimize, not durability. Cold
+and shared-cache companions on the cheapest row rebuild a fresh session per
+iteration to isolate short-lived-session cache strategy. The join targets
+`Person→Sensor→Device` deliberately: every fixture
 `KNOWS` offset is ≡1 mod 3, so a `Person→Person` join would be empty.
 
 _Measured 2026-06-11 on the B3 feature branch (profile `full`, mimalloc), so
@@ -2029,7 +2147,7 @@ same-session development guard stayed within noise for ordinary read rows; the
 significant change), and the seeded-scan branch does not show a persistent
 no-seed scan tax._
 
-Two baseline signals worth reading directly from the table: warm
+Historical baseline signals worth reading directly from the table: warm
 `match_limit10` is **scale-linear** (784 µs → 13.39 ms for ten output rows) —
 the scan does not short-circuit on LIMIT, which is the B19 baseline this row
 exists to expose; and `match_limit10/cold` ≈ warm at these scales because the
@@ -2045,6 +2163,91 @@ cold vs 81 µs warm) amortizes under the linear scan.
 | `read_pipeline/distinct_dedup` | 877 µs | 5.93 ms | 13.61 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
 | `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
 | `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
+
+PR-local quick inline `CALL {}` row-extension guard
+(`scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`):
+
+| Bench | Baseline | Inline Binding append | Notes |
+|---|---:|---:|---|
+| `read_pipeline/call_subquery_yield/1000` | 155.18 µs | 151.19 µs | −2.6% median; p < 0.05. |
+| `read_pipeline/optional_call_subquery_null_yield/1000` | 241.50 µs | 240.79 µs | No statistically significant change. |
+
+PR-local composite lookup guard:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_composite_lookup`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/match_composite_lookup/1000` | 461.85 ns | Warm cached `CompositeLookup` for `Person(age, name)` equality over a maintained composite property index. A follow-up inline scratch-storage experiment measured 465.29 ns and stayed within Criterion's noise threshold, so no runtime change was kept. |
+
+PR-local short-lived-session source-plan cache A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_limit10`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/match_limit10/1000` | 67.839 µs | Warm same-session cache-hit baseline. |
+| `read_pipeline/match_limit10/cold/1000` | 132.41 µs | Fresh uncached `Session` per iter: parse/analyze/plan/optimize/execute. |
+| `read_pipeline/match_limit10/shared_cache/1000` | 66.491 µs | Fresh `Session` per iter over a warmed caller-owned `SharedPlanCache`; cache hit bypasses parse/analyze/plan/optimize and measures session churn + cached execute. Median is −49.8% vs uncached fresh sessions and within noise of the same-session warm row. |
+
+PR-local B19 pre-RETURN LIMIT cap A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter limit10`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/match_limit10/1000` | 65.732 µs | Post-RETURN `MATCH (n:Person) RETURN n.name AS name LIMIT 10`; projection precedes LIMIT, so pattern materialization stays uncapped. |
+| `read_pipeline/match_prereturn_limit10/1000` | 29.948 µs | Pre-RETURN `MATCH (n:Person) LIMIT 10 RETURN n.name AS name`; leading literal LIMIT caps accepted pattern rows before projection. Median is −54.4% vs the post-RETURN baseline. |
+| `read_pipeline/match_limit10/cold/1000` | 111.59 µs | Fresh uncached session companion from the same run. |
+| `read_pipeline/match_limit10/shared_cache/1000` | 62.931 µs | Fresh session over warmed shared source-plan cache companion from the same run. |
+
+PR-local passive post-RETURN LIMIT cap A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_limit10`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/match_limit10/1000` | 30.062 µs | Post-RETURN `MATCH (n:Person) RETURN n.name AS name LIMIT 10`; direct pattern-property projection plus literal LIMIT now caps accepted pattern rows before projection. Median is -54.3% vs the prior post-RETURN quick row (`65.732 µs`) and matches the pre-RETURN cap envelope. |
+| `read_pipeline/match_limit10/cold/1000` | 74.914 µs | Fresh uncached session companion; parse/analyze/plan/optimize cost is still visible, but execution no longer scans the full 1k fixture. |
+| `read_pipeline/match_limit10/shared_cache/1000` | 30.388 µs | Fresh session over warmed shared source-plan cache; session churn plus capped cached execute stays within noise of the same-session warm row. |
+
+PR-local edge-index sprint A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter edge_property_filter`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/edge_property_filter_no_index/1000` | 476.73 µs | Warm unanchored edge-property query over `CONNECTED_TO` edges with no edge-property index; scans expand adjacency and evaluates `e.from_port = 'port_17'` as a residual predicate. |
+| `read_pipeline/edge_property_filter_indexed/1000` | 115.87 µs | Same query with a built-in `CONNECTED_TO(from_port)` edge-property index; optimizer emits edge `TypedIndexRange` and expand drives from the selective indexed edge-row set. Median is −75.7% vs no-index. |
+
+PR-local bitmap-union row-filter A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_name_in`
+and
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter edge_property_filter`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_name_in/1000` | 7.3209 µs | 6.8430 µs | 16-key `Person.name IN [...]` bitmap-union row over the maintained `Person(name)` index. Direct roaring bitmap union is −7.84% median, p=0.00. |
+| `read_pipeline/edge_property_filter_indexed/1000` | 115.83 µs | 117.14 µs | Existing indexed edge-property guard stayed neutral after edge-row filters moved from `BTreeSet` membership to roaring bitmap membership (p=0.20). |
+
+PR-local DISTINCT/GROUP BY hash-table reserve A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter distinct_dedup`
+and
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter group_by_highcard`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/distinct_dedup/1000` | 80.366 µs | 77.178 µs | DISTINCT now reserves its runtime equality-key set from the input row count. Median is -4.0%. |
+| `read_pipeline/group_by_highcard/1000` | 128.66 µs | 119.63 µs | GROUP BY now reserves its group vector and runtime equality-key index from the input row count capped by the configured group-key limit. Median is -7.0%; the initial A/B showed p=0.00, and the trimmed-patch rerun median is shown here. Full-profile sanity medians: 10k 889.49 µs, 50k 4.5333 ms, 100k 9.6804 ms. |
 
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:
@@ -3208,6 +3411,16 @@ cycle on writes:
 | `graph_vector_active_set_maintenance_pressure/dynamic_edge_checks_r60w40/...covbp10000_curbp10000_precbp10000` | 9.622 ms (`c31`) | 58.35 ms (`c32`) | Baseline 60/40 cycle using dynamic contradiction-edge checks for unresolved-current reads. |
 | `graph_vector_active_set_maintenance_pressure/materialized_set_r60w40/...covbp10000_curbp10000_precbp10000` | 6.904 ms (`c31`) | 26.41 ms (`c32`) | Maintained active set keeps full quality and remains faster even after 40 balanced set updates per cycle. |
 | `graph_vector_active_set_maintenance_pressure/materialized_set_maintenance_w40/...` | 454.1 ns (`active248`) | 396.8 ns (`active512`) | Isolated 40-update HashSet maintenance is negligible next to exact vector rerank cost on this fixture. |
+
+## Retrieval scoping guards
+
+Focused local P0 row, measured 2026-06-15:
+
+Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_ann_property_filter --vector-scales 1000`
+
+| Bench | 1k quick median | Notes |
+|---|---:|---|
+| `graph_ann_property_filter/hnsw_cosine_namespace_sparse_d128_k10_ef64_rows4_...` | 6.0873 µs | High-cardinality `namespace` string index admits 4 of 1,000 rows before HNSW result admission; traversal stays bounded by the ANN search width instead of scanning the sparse property bucket. |
 
 ## Cluster-B regression targets
 

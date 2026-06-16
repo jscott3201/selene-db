@@ -44,7 +44,7 @@ pub mod vector;
 pub mod vector_index;
 
 pub use byte_string_type::{ByteStringType, MAX_BYTE_STRING_TYPE_LENGTH, byte_string_fits_type};
-pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken};
+pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken, NodeScanBudget};
 pub use change_kind::ChangeKind;
 pub use changeset::{
     Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,

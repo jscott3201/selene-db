@@ -99,7 +99,16 @@ fn parse_finish_terminator() {
 fn parse_graph_ddl() {
     // CREATE GRAPH stays parse-rejected under D1 single-graph (GC04 unsupported
     // — cannot create a second graph).
-    for source in ["CREATE GRAPH foo", "CREATE GRAPH IF NOT EXISTS foo"] {
+    for source in [
+        "CREATE GRAPH foo",
+        "CREATE GRAPH IF NOT EXISTS foo",
+        "CREATE GRAPH foo ANY",
+        "CREATE GRAPH foo TYPED fooType",
+        "CREATE GRAPH foo ::fooType",
+        "CREATE GRAPH /foo LIKE /bar",
+        "CREATE GRAPH foo ANY AS COPY OF bar",
+        "CREATE GRAPH foo {(Person :Person {name STRING})}",
+    ] {
         let error = parse(source).expect_err(source);
         assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
@@ -309,14 +318,12 @@ fn parse_top_level_call_variants() {
     );
     assert_eq!(call.args.len(), 2);
     assert_eq!(call.yield_items.len(), 1);
-    assert!(call.yield_filter.is_none());
 
     let Statement::Call(call) = parse("CALL pkg.cleanup()").expect("CALL without YIELD parses")
     else {
         panic!("expected top-level CALL");
     };
     assert!(call.yield_items.is_empty());
-    assert!(call.yield_filter.is_none());
 }
 
 #[test]
@@ -335,22 +342,10 @@ fn parse_call_yield_star_alias_and_quoted_segment() {
 }
 
 #[test]
-fn parse_call_yield_where_filter() {
-    let Statement::Call(call) =
-        parse("CALL pkg.rank() YIELD score AS s WHERE s >= 0").expect("CALL parses")
-    else {
-        panic!("expected top-level CALL");
-    };
-
-    assert_eq!(call.yield_items.len(), 1);
-    assert!(call.yield_filter.is_some());
-}
-
-#[test]
-fn call_yield_filter_synonym_is_not_iso_syntax() {
+fn call_yield_where_is_not_iso_syntax() {
     for source in [
-        "CALL pkg.rank() YIELD score FILTER score >= 0",
-        "CALL pkg.rank() YIELD score FILTER WHERE score >= 0",
+        "CALL pkg.rank() YIELD score WHERE score >= 0",
+        "CALL pkg.rank() YIELD score AS s WHERE s >= 0",
     ] {
         let error = parse(source).expect_err(source);
         assert!(
@@ -388,9 +383,9 @@ fn parse_transaction_control() {
 
 #[test]
 fn deferred_surfaces_return_not_implemented() {
-    // These remain ISO-legal but are deferred in v1.0, so they parse and the
+    // These remain ISO-legal but are deferred under D1, so they parse and the
     // builder rejects them with FEATURE_NOT_SUPPORTED (42N01).
-    for source in ["MERGE (n:Person {name: 'X'})", "FOR x IN [1,2,3] RETURN x"] {
+    for source in ["MERGE (n:Person {name: 'X'})", "SELECT * FROM g"] {
         let error = parse(source).expect_err(source);
         assert_eq!(
             error.gqlstatus(),
@@ -404,7 +399,7 @@ fn deferred_surfaces_return_not_implemented() {
 fn removed_non_iso_grammar_is_syntax_error() {
     // Triggers, materialized views, procedure DDL, and auth (users/roles/grants)
     // are out of spec entirely (auth = embedder concern D1; procedures are native
-    // built-ins; triggers/views are not in the v1.0 claim list). They have no
+    // built-ins; triggers/views are not in the D1 claim list). They have no
     // ISO equivalent and were removed from the grammar, so they now fail to
     // parse with SYNTAX_ERROR (42601) rather than FEATURE_NOT_SUPPORTED.
     for source in [

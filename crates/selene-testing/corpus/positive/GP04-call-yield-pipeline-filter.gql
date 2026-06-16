@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GP04
+// also-covers: GQ08
+// expects: parse-ok
+CALL selene.labels() YIELD label FILTER label = 'Person'

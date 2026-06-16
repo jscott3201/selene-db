@@ -73,7 +73,7 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
 }
 
 #[test]
-fn show_procedures_lists_all_sixty_five_procedures() {
+fn show_procedures_lists_all_sixty_seven_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -83,8 +83,8 @@ fn show_procedures_lists_all_sixty_five_procedures() {
 
     assert_eq!(
         table.row_count(),
-        65,
-        "19 algo procedures + 46 platform built-ins"
+        67,
+        "19 algo procedures + 48 platform built-ins"
     );
     for expected in [
         "selene.health",
@@ -131,6 +131,8 @@ fn show_procedures_lists_all_sixty_five_procedures() {
         "selene.text_search_nodes",
         "selene.text_score_nodes",
         "selene.text_score_nodes_batch",
+        "selene.text_score_candidate_state",
+        "selene.text_score_candidate_state_nodes",
         "selene.text_score_candidate_state_expanded_batch",
         "selene.reciprocal_rank_fusion",
         "algo.pagerank",
@@ -180,6 +182,7 @@ fn feature_status_reports_supported_rows() {
     );
     let feature_ids = string_column(&table, "feature_id");
     let statuses = string_column(&table, "status");
+    let rationales = string_column(&table, "rationale");
 
     assert!(!feature_ids.is_empty());
     let gp04 = feature_ids
@@ -187,6 +190,20 @@ fn feature_status_reports_supported_rows() {
         .position(|value| value == "GP04")
         .expect("GP04 row exists");
     assert_eq!(statuses[gp04], "supported");
+
+    for (feature_id, expected_name) in [
+        ("GQ12", "ORDER BY and page statement: OFFSET clause"),
+        ("GQ13", "ORDER BY and page statement: LIMIT clause"),
+        ("GQ18", "Scalar subqueries"),
+        ("GQ20", "Advanced linear composition with NEXT"),
+    ] {
+        let index = feature_ids
+            .iter()
+            .position(|value| value == feature_id)
+            .unwrap_or_else(|| panic!("{feature_id} row exists"));
+        assert_eq!(statuses[index], "supported");
+        assert_eq!(rationales[index], expected_name);
+    }
 }
 
 #[test]

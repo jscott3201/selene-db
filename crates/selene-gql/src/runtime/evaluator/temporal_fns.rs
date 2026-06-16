@@ -17,7 +17,7 @@ use crate::{
     temporal_parse,
 };
 
-/// `current_timestamp()`: the current zoned datetime in the session time zone
+/// `CURRENT_TIMESTAMP`: the current zoned datetime in the session time zone
 /// (ISO section 20.27).
 pub(super) fn eval_current_timestamp(
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -31,7 +31,7 @@ pub(super) fn eval_localtimestamp(ctx: &EvalCtx<'_, '_, '_, '_>) -> Result<Value
     Ok(Value::LocalDateTime(now_zoned(ctx).datetime()))
 }
 
-/// `current_date()`: the current date in the session time zone (ISO section 20.27).
+/// `CURRENT_DATE`: the current date in the session time zone (ISO section 20.27).
 pub(super) fn eval_current_date(ctx: &EvalCtx<'_, '_, '_, '_>) -> Result<Value, ExecutorError> {
     Ok(Value::Date(now_zoned(ctx).date()))
 }
@@ -53,7 +53,7 @@ pub(super) fn eval_date_constructor(
     }
 }
 
-/// `current_time()`: the current zoned time in the session time zone
+/// `CURRENT_TIME`: the current zoned time in the session time zone
 /// (ISO section 20.27).
 ///
 /// `jiff` 0.2 has no dedicated zoned-time type, so selene-core models a zoned

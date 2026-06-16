@@ -78,7 +78,8 @@ fn push_to_node_scan_inner(
                 .push(pending.take().expect("pending predicate exists"));
             true
         }
-        JoinTree::Scan(_)
+        JoinTree::Unit
+        | JoinTree::Scan(_)
         | JoinTree::PathSearch { .. }
         | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }

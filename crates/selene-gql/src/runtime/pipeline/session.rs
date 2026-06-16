@@ -5,13 +5,14 @@
 //! side against an empty binding row (the value is restricted to a
 //! `<value specification>`, so GS14 is not claimed) and binds the result as a
 //! session-local parameter. `SESSION SET TIME ZONE` parses the time-zone
-//! string with `jiff`. The RESET forms clear parameters / reset the time zone,
-//! and `SESSION CLOSE` raises the termination flag.
+//! string with `jiff`. `SESSION SET [PROPERTY] GRAPH <current graph>` is a
+//! no-op in the D1 single-graph engine. The RESET forms clear parameters /
+//! reset the time zone, and `SESSION CLOSE` raises the termination flag.
 
 use selene_core::Value;
 
 use crate::{
-    ImplDefinedCaps, ProcedureRegistry, SessionOp, SourceSpan, ValueExpr,
+    GqlType, ImplDefinedCaps, ProcedureRegistry, SessionOp, SourceSpan, ValueExpr,
     plan::SubqueryRegistry,
     runtime::{
         Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError, Session,
@@ -28,6 +29,7 @@ pub(crate) fn execute(
     match op {
         SessionOp::SetValue {
             param,
+            declared_type,
             value,
             if_not_exists,
             span,
@@ -35,11 +37,17 @@ pub(crate) fn execute(
             session,
             registry,
             param.clone(),
+            declared_type.as_ref(),
             value,
             *if_not_exists,
             *span,
         ),
         SessionOp::SetTimeZone { zone, span } => set_time_zone(session, zone, *span),
+        SessionOp::SetGraph { .. } => {
+            // D1 has exactly one graph; both current-graph expressions resolve
+            // to the session's embedded graph and leave state unchanged.
+            Ok(StatementOutput::Empty)
+        }
         SessionOp::ResetAllCharacteristics { .. } => {
             session.reset_characteristics();
             Ok(StatementOutput::Empty)
@@ -67,15 +75,24 @@ fn set_value(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
     param: selene_core::DbString,
+    declared_type: Option<&GqlType>,
     value: &ValueExpr,
     if_not_exists: bool,
-    _span: SourceSpan,
+    span: SourceSpan,
 ) -> Result<StatementOutput, ExecutorError> {
     // IF NOT EXISTS (ISO section 7.4): leave an existing binding untouched.
     if if_not_exists && session.has_parameter(&param) {
         return Ok(StatementOutput::Empty);
     }
     let evaluated = evaluate_constant(session, registry, value)?;
+    if let Some(declared_type) = declared_type {
+        crate::runtime::parameter_type::validate_declared_type(
+            param.clone(),
+            &evaluated,
+            declared_type,
+            span,
+        )?;
+    }
     session.bind_parameter(param, evaluated);
     Ok(StatementOutput::Empty)
 }

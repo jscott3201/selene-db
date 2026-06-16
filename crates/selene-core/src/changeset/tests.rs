@@ -1,7 +1,7 @@
 use smallvec::smallvec;
 
 use super::*;
-use crate::GraphTypeId;
+use crate::{CoreError, GraphTypeId, Value};
 
 fn dbs(name: &str) -> DbString {
     crate::db_string(name).unwrap()
@@ -89,6 +89,14 @@ fn label_diff_added_and_removed_independent() {
     let diff = LabelDiff::new([added.clone()], [removed.clone()]).unwrap();
     assert_eq!(diff.added.as_slice(), &[added]);
     assert_eq!(diff.removed.as_slice(), &[removed]);
+}
+
+#[test]
+fn property_diff_accepts_singleton_set_input() {
+    let property = dbs("change.property.single.set");
+    let single_property = PropertyDiff::new([(property.clone(), Value::Int(7))], []).unwrap();
+    assert_eq!(single_property.set.as_slice(), &[(property, Value::Int(7))]);
+    assert!(single_property.removed.is_empty());
 }
 
 #[test]
@@ -328,12 +336,12 @@ fn empty_diffs_are_valid() {
 fn schema_change_variants_construct() {
     let variants: Vec<_> = SchemaChange::ALL.iter().map(|factory| factory()).collect();
     assert_eq!(variants.len(), SchemaChange::VARIANT_COUNT);
-    assert_eq!(SchemaChange::VARIANT_COUNT, 20);
+    assert_eq!(SchemaChange::VARIANT_COUNT, 22);
 }
 
 #[test]
 fn schema_change_all_covers_every_variant() {
-    assert_eq!(SchemaChange::VARIANT_COUNT, 20);
+    assert_eq!(SchemaChange::VARIANT_COUNT, 22);
     let mut discriminants = std::collections::HashSet::new();
     let mut names = std::collections::HashSet::new();
     for factory in SchemaChange::ALL {

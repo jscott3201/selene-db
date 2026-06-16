@@ -9,7 +9,8 @@ use selene_core::DbString;
 use crate::{
     GqlStatus,
     ast::{
-        DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind, Literal, SourceSpan, ValueExpr,
+        CharacterStringLiteralKind, DecimalLiteralKind, FloatLiteralKind, IntegerLiteralKind,
+        Literal, SourceSpan, ValueExpr,
     },
     error::ParserError,
     temporal_parse::{self, ParsedDateTime, ParsedTime},
@@ -24,6 +25,10 @@ pub(super) fn build_literal_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pars
     if child.as_rule() == Rule::list_lit {
         return build_list_lit(child);
     }
+    build_literal_child_expr(child)
+}
+
+pub(super) fn build_literal_child_expr(child: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     build_literal_child(child).map(ValueExpr::Literal)
 }
 
@@ -42,11 +47,13 @@ pub(super) fn build_list_items(pair: Pair<'_, Rule>) -> Result<Vec<ValueExpr>, P
         .collect()
 }
 
-pub(super) fn parse_string_pair(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
-    let Literal::String(value, _) = parse_string(pair.as_str(), span(&pair))? else {
-        unreachable!("parse_string returns a string literal");
-    };
-    Ok(value)
+pub(super) fn parse_string_pair_with_kind(
+    pair: Pair<'_, Rule>,
+) -> Result<(DbString, CharacterStringLiteralKind), ParserError> {
+    let string_span = span(&pair);
+    let parsed = parse_character_string(pair.as_str(), string_span)?;
+    let db_string_value = db_string_from_owned(parsed.value, string_span, "string literal")?;
+    Ok((db_string_value, parsed.kind))
 }
 
 /// Decode a `string_lit` pair into its raw (unquoted, unescaped) text.
@@ -54,8 +61,11 @@ pub(super) fn parse_string_pair(pair: Pair<'_, Rule>) -> Result<DbString, Parser
 /// Used by surfaces that need the decoded string value rather than a `DbString`
 /// literal — for example the `SESSION SET TIME ZONE '<region>'` time-zone
 /// string (ISO/IEC 39075:2024 section 7.1).
-pub(super) fn decode_string_text(pair: &Pair<'_, Rule>) -> Result<String, ParserError> {
-    parse_string_text(pair.as_str(), span(pair))
+pub(super) fn decode_string_text_with_kind(
+    pair: &Pair<'_, Rule>,
+) -> Result<(String, CharacterStringLiteralKind), ParserError> {
+    let parsed = parse_character_string(pair.as_str(), span(pair))?;
+    Ok((parsed.value, parsed.kind))
 }
 
 pub(super) fn with_numeric_span(value: ValueExpr, source_span: SourceSpan) -> ValueExpr {
@@ -112,18 +122,18 @@ fn build_literal_child(child: Pair<'_, Rule>) -> Result<Literal, ParserError> {
 
 fn parse_uuid_lit(pair: Pair<'_, Rule>, source_span: SourceSpan) -> Result<Literal, ParserError> {
     let string_pair = first_child(pair)?;
-    let value = parse_string_text(string_pair.as_str(), span(&string_pair))?;
-    uuid::Uuid::parse_str(&value)
-        .map(|uuid| Literal::Uuid(uuid, source_span))
+    let parsed = parse_character_string(string_pair.as_str(), span(&string_pair))?;
+    uuid::Uuid::parse_str(&parsed.value)
+        .map(|uuid| Literal::Uuid(uuid, source_span, parsed.kind))
         .map_err(|error| {
             ParserError::syntax(format!("invalid UUID literal: {error}"), source_span, None)
         })
 }
 
 fn parse_date_lit(pair: Pair<'_, Rule>, source_span: SourceSpan) -> Result<Literal, ParserError> {
-    let value = temporal_text(pair)?;
-    temporal_parse::parse_date(&value)
-        .map(|date| Literal::Date(date, source_span))
+    let parsed = temporal_text(pair)?;
+    temporal_parse::parse_date(&parsed.value)
+        .map(|date| Literal::Date(date, source_span, parsed.kind))
         .map_err(|error| temporal_message(error, source_span))
 }
 
@@ -131,9 +141,9 @@ fn parse_local_datetime_lit(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<Literal, ParserError> {
-    let value = temporal_text(pair)?;
-    temporal_parse::parse_local_datetime(&value)
-        .map(|datetime| Literal::LocalDateTime(datetime, source_span))
+    let parsed = temporal_text(pair)?;
+    temporal_parse::parse_local_datetime(&parsed.value)
+        .map(|datetime| Literal::LocalDateTime(datetime, source_span, parsed.kind))
         .map_err(|error| temporal_message(error, source_span))
 }
 
@@ -141,9 +151,9 @@ fn parse_zoned_datetime_lit(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<Literal, ParserError> {
-    let value = temporal_text(pair)?;
-    temporal_parse::parse_zoned_datetime(&value)
-        .map(|zoned| Literal::ZonedDateTime(Box::new(zoned), source_span))
+    let parsed = temporal_text(pair)?;
+    temporal_parse::parse_zoned_datetime(&parsed.value)
+        .map(|zoned| Literal::ZonedDateTime(Box::new(zoned), source_span, parsed.kind))
         .map_err(|error| temporal_message(error, source_span))
 }
 
@@ -151,11 +161,15 @@ fn parse_datetime_lit(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<Literal, ParserError> {
-    let value = temporal_text(pair)?;
-    temporal_parse::parse_datetime(&value)
-        .map(|parsed| match parsed {
-            ParsedDateTime::Zoned(zoned) => Literal::ZonedDateTime(Box::new(zoned), source_span),
-            ParsedDateTime::Local(datetime) => Literal::LocalDateTime(datetime, source_span),
+    let parsed = temporal_text(pair)?;
+    temporal_parse::parse_datetime(&parsed.value)
+        .map(|datetime| match datetime {
+            ParsedDateTime::Zoned(zoned) => {
+                Literal::ZonedDateTime(Box::new(zoned), source_span, parsed.kind)
+            }
+            ParsedDateTime::Local(datetime) => {
+                Literal::LocalDateTime(datetime, source_span, parsed.kind)
+            }
         })
         .map_err(|error| temporal_message(error, source_span))
 }
@@ -164,9 +178,9 @@ fn parse_local_time_lit(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<Literal, ParserError> {
-    let value = temporal_text(pair)?;
-    temporal_parse::parse_local_time(&value)
-        .map(|time| Literal::LocalTime(time, source_span))
+    let parsed = temporal_text(pair)?;
+    temporal_parse::parse_local_time(&parsed.value)
+        .map(|time| Literal::LocalTime(time, source_span, parsed.kind))
         .map_err(|error| temporal_message(error, source_span))
 }
 
@@ -174,18 +188,20 @@ fn parse_zoned_time_lit(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<Literal, ParserError> {
-    let value = temporal_text(pair)?;
-    temporal_parse::parse_zoned_time(&value)
-        .map(|zoned| Literal::ZonedTime(Box::new(zoned), source_span))
+    let parsed = temporal_text(pair)?;
+    temporal_parse::parse_zoned_time(&parsed.value)
+        .map(|zoned| Literal::ZonedTime(Box::new(zoned), source_span, parsed.kind))
         .map_err(|error| temporal_message(error, source_span))
 }
 
 fn parse_time_lit(pair: Pair<'_, Rule>, source_span: SourceSpan) -> Result<Literal, ParserError> {
-    let value = temporal_text(pair)?;
-    temporal_parse::parse_time(&value)
-        .map(|parsed| match parsed {
-            ParsedTime::Zoned(zoned) => Literal::ZonedTime(Box::new(zoned), source_span),
-            ParsedTime::Local(time) => Literal::LocalTime(time, source_span),
+    let parsed = temporal_text(pair)?;
+    temporal_parse::parse_time(&parsed.value)
+        .map(|time| match time {
+            ParsedTime::Zoned(zoned) => {
+                Literal::ZonedTime(Box::new(zoned), source_span, parsed.kind)
+            }
+            ParsedTime::Local(time) => Literal::LocalTime(time, source_span, parsed.kind),
         })
         .map_err(|error| temporal_message(error, source_span))
 }
@@ -194,9 +210,9 @@ fn parse_duration_lit(
     pair: Pair<'_, Rule>,
     source_span: SourceSpan,
 ) -> Result<Literal, ParserError> {
-    let value = temporal_text(pair)?;
-    temporal_parse::parse_duration(&value)
-        .map(|span| Literal::Duration(Box::new(span), source_span))
+    let parsed = temporal_text(pair)?;
+    temporal_parse::parse_duration(&parsed.value)
+        .map(|span| Literal::Duration(Box::new(span), source_span, parsed.kind))
         .map_err(|error| duration_message(error, source_span))
 }
 
@@ -468,36 +484,75 @@ fn validate_underscores(text: &str, span: SourceSpan) -> Result<(), ParserError>
 }
 
 fn parse_string(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
-    let value = parse_string_text(text, span)?;
-    let db_string_value = db_string_from_owned(value, span, "string literal")?;
-    Ok(Literal::String(db_string_value, span))
+    let parsed = parse_character_string(text, span)?;
+    let db_string_value = db_string_from_owned(parsed.value, span, "string literal")?;
+    Ok(Literal::String(db_string_value, span, parsed.kind))
 }
 
-fn temporal_text(pair: Pair<'_, Rule>) -> Result<String, ParserError> {
-    let string_pair = first_child(pair)?;
-    parse_string_text(string_pair.as_str(), span(&string_pair))
+fn temporal_text(pair: Pair<'_, Rule>) -> Result<ParsedCharacterString, ParserError> {
+    let source_span = span(&pair);
+    let string_pair = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::string_lit)
+        .ok_or_else(|| {
+            ParserError::syntax("temporal literal is missing string", source_span, None)
+        })?;
+    parse_character_string(string_pair.as_str(), span(&string_pair))
 }
 
-fn parse_string_text(text: &str, span: SourceSpan) -> Result<String, ParserError> {
-    let inner = text
-        .strip_prefix('\'')
-        .and_then(|value| value.strip_suffix('\''))
-        .ok_or_else(|| ParserError::syntax("string literal is missing quotes", span, None))?;
-    decode_single_quoted(inner, span)
+struct ParsedCharacterString {
+    value: String,
+    kind: CharacterStringLiteralKind,
 }
 
-fn decode_single_quoted(inner: &str, span: SourceSpan) -> Result<String, ParserError> {
+fn parse_character_string(
+    text: &str,
+    span: SourceSpan,
+) -> Result<ParsedCharacterString, ParserError> {
+    if let Some(quoted) = text.strip_prefix('@') {
+        for delimiter in ['\'', '"', '`'] {
+            if let Some(inner) = quoted
+                .strip_prefix(delimiter)
+                .and_then(|value| value.strip_suffix(delimiter))
+            {
+                return Ok(ParsedCharacterString {
+                    value: inner.to_owned(),
+                    kind: CharacterStringLiteralKind::NoEscape,
+                });
+            }
+        }
+    }
+    for delimiter in ['\'', '"', '`'] {
+        if let Some(inner) = text
+            .strip_prefix(delimiter)
+            .and_then(|value| value.strip_suffix(delimiter))
+        {
+            return Ok(ParsedCharacterString {
+                value: decode_quoted(inner, delimiter, span)?,
+                kind: CharacterStringLiteralKind::Escaped,
+            });
+        }
+    }
+    Err(ParserError::syntax(
+        "string literal is missing quotes",
+        span,
+        None,
+    ))
+}
+
+fn decode_quoted(inner: &str, delimiter: char, span: SourceSpan) -> Result<String, ParserError> {
     let mut out = String::with_capacity(inner.len());
     let mut chars = inner.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        match ch {
-            '\'' if chars.peek() == Some(&'\'') => {
-                chars.next();
-                out.push('\'');
+        if ch == delimiter && chars.peek() == Some(&delimiter) {
+            chars.next();
+            out.push(delimiter);
+        } else {
+            match ch {
+                '\\' => out.push(decode_escape(&mut chars, span)?),
+                _ => out.push(ch),
             }
-            '\\' => out.push(decode_escape(&mut chars, span)?),
-            _ => out.push(ch),
         }
     }
 

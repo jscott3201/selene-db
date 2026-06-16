@@ -120,9 +120,9 @@ fn real_case_expressions_parse() {
 }
 
 #[test]
-fn case_and_end_as_identifiers_parse() {
+fn case_and_end_identifier_slots_observe_keyword_boundaries() {
     // `CASE`/`END` as `prop_ident` identifiers in every position the guard must
-    // recognize and NOT count — none may be falsely rejected.
+    // recognize and NOT count -- none may be falsely rejected.
     // Property access (after `.`).
     parse("MATCH (n) RETURN n.END").expect("n.END property parses");
     parse("MATCH (n) RETURN n.CASE").expect("n.CASE property parses");
@@ -131,9 +131,11 @@ fn case_and_end_as_identifiers_parse() {
     parse("RETURN {CASE: 1}").expect("{CASE: 1} record key parses");
     // Node-pattern property key.
     parse("MATCH (n {END: 1}) RETURN n").expect("node property key END parses");
-    // Aliases (after AS).
-    parse("RETURN 1 AS END").expect("AS END alias parses");
-    parse("RETURN 1 AS CASE").expect("AS CASE alias parses");
+    // Aliases are strict identifier slots; reserved words must be delimited.
+    assert!(parse("RETURN 1 AS END").is_err());
+    assert!(parse("RETURN 1 AS CASE").is_err());
+    parse("RETURN 1 AS \"END\"").expect("delimited END alias parses");
+    parse("RETURN 1 AS \"CASE\"").expect("delimited CASE alias parses");
     // Parameters (after `$`).
     parse("RETURN $CASE").expect("$CASE parameter parses");
     parse("RETURN $END").expect("$END parameter parses");

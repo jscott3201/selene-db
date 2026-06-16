@@ -235,10 +235,93 @@ fn return_projection_is_permeable_for_ga07_order_by() {
 }
 
 #[test]
+fn order_by_rejects_value_subquery_sort_key() {
+    let err = analyze_one("RETURN 1 AS n ORDER BY VALUE { RETURN 1 LIMIT 1 }")
+        .expect_err("sort key cannot contain a nested query specification");
+    assert!(matches!(
+        err,
+        AnalysisError::SortKeyContainsNestedQuery { .. }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "42001");
+
+    let err = analyze_one("RETURN 1 AS n ORDER BY 1 + VALUE { RETURN 1 LIMIT 1 }")
+        .expect_err("nested value query is rejected inside a larger sort expression");
+    assert!(matches!(
+        err,
+        AnalysisError::SortKeyContainsNestedQuery { .. }
+    ));
+
+    analyze_one("RETURN TRUE AS ok ORDER BY EXISTS { MATCH (n) }")
+        .expect("EXISTS predicate is not a nested query specification");
+}
+
+#[test]
+fn order_by_rejects_aggregate_sort_key_without_grouped_aggregate_return() {
+    for source in [
+        "RETURN 1 AS n ORDER BY count(*)",
+        "FOR x IN [1, 2] RETURN sum(x) AS s ORDER BY count(*)",
+        "FOR x IN [1, 2] RETURN x AS x GROUP BY x ORDER BY count(*)",
+    ] {
+        let err = analyze_one(source)
+            .expect_err("aggregate sort key requires grouped aggregate RETURN context");
+        assert!(
+            matches!(err, AnalysisError::SortKeyContainsAggregate { .. }),
+            "{source} should reject with SortKeyContainsAggregate, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+#[test]
+fn order_by_allows_aggregate_sort_key_with_grouped_aggregate_return() {
+    analyze_one("FOR x IN [1, 2] RETURN x AS x, count(*) AS c GROUP BY x ORDER BY count(*)")
+        .expect("grouped aggregate RETURN context may sort by aggregate function");
+}
+
+#[test]
+fn group_by_rejects_ungrouped_nonaggregate_return_items() {
+    for source in [
+        "FOR x IN [1, 2] RETURN x AS x, x + 1 AS y GROUP BY x",
+        "FOR x IN [1, 2] RETURN 1 AS one, count(*) AS c GROUP BY ()",
+        "FOR x IN [1, 2] WITH x AS x, x + 1 AS y GROUP BY x RETURN x",
+    ] {
+        let err =
+            analyze_one(source).expect_err("non-aggregate projection item must be a GROUP BY key");
+        assert!(
+            matches!(err, AnalysisError::GroupedProjectionItemNotGrouped { .. }),
+            "{source} should reject with GroupedProjectionItemNotGrouped, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+#[test]
+fn group_by_allows_grouped_and_aggregate_return_items() {
+    analyze_one("FOR x IN [1, 2] RETURN x AS x GROUP BY x")
+        .expect("grouping key projection is legal without aggregate");
+    analyze_one("FOR x IN [1, 2] RETURN x + 1 AS y, count(*) AS c GROUP BY x + 1")
+        .expect("projected expression may match the grouping key");
+    analyze_one(
+        "FOR x IN ['aa', 'bbb'] RETURN char_length(x) AS l, count(*) AS c GROUP BY char_length(x)",
+    )
+    .expect("span-insensitive grouped expression matching keeps scalar grouping legal");
+}
+
+#[test]
 fn return_star_preserves_input_bindings_for_post_return_clauses() {
     // RETURN * does not redeclare aliases; pre-RETURN bindings must stay
     // visible for ORDER BY / LIMIT / OFFSET. Codex P1 on PR #25.
     analyze_one("MATCH (n) RETURN * ORDER BY n.name").expect("RETURN * keeps n visible");
+}
+
+#[test]
+fn return_star_rejects_unit_input() {
+    let err = analyze_one("RETURN *").expect_err("unit input has no bindings to expand");
+    assert!(matches!(err, AnalysisError::ReturnStarRequiresInput { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "42001");
+
+    analyze_one("MATCH (n) RETURN *").expect("RETURN * expands MATCH binding");
+    analyze_one("MATCH (n) WITH n AS x RETURN *").expect("RETURN * expands WITH binding");
 }
 
 #[test]

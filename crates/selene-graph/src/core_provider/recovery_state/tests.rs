@@ -321,6 +321,64 @@ fn wal_replay_restores_property_index_created_after_node_state() {
 }
 
 #[test]
+fn wal_replay_restores_edge_property_index_created_after_edge_state() {
+    let provider = CoreProvider::new_for_recovery();
+    let edge_label = db_string("RecoveredEdge").unwrap();
+    let property = db_string("port").unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::new(),
+            properties: PropertyMap::new(),
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::NodeCreated {
+            id: NodeId::new(2),
+            labels: LabelSet::new(),
+            properties: PropertyMap::new(),
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::EdgeCreated {
+            id: EdgeId::new(1),
+            label: edge_label.clone(),
+            source: NodeId::new(1),
+            target: NodeId::new(2),
+            properties: props([(property.clone(), Value::Int(42))]),
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::SchemaChanged {
+            graph: GraphId::new(1),
+            change: SchemaChange::EdgePropertyIndexCreated {
+                label: edge_label.clone(),
+                property: property.clone(),
+                kind: SchemaPropertyIndexKind::I64,
+                name: None,
+            },
+        },
+    )
+    .unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    assert_eq!(recovered.edge_property_index_count(), 1);
+    let shared = SharedGraph::try_from_graph(recovered).unwrap();
+    let read = shared.read();
+    let rows = read
+        .edges_with_property_eq(&edge_label, &property, &Value::Int(42))
+        .unwrap();
+    assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
+}
+
+#[test]
 fn wal_replay_delete_clears_dead_node_payload() {
     let provider = CoreProvider::new_for_recovery();
     let id = NodeId::new(1);

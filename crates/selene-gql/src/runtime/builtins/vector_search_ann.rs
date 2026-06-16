@@ -6,7 +6,7 @@
 //! and approximate recall is an explicit caller choice.
 
 use selene_core::Value;
-use selene_graph::ApproximateVectorSearchOptions;
+use selene_graph::{ApproximateVectorSearchOptions, SeleneGraph};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use super::vector_common::{
@@ -47,11 +47,30 @@ static VECTOR_SEARCH_ANN_OUTPUTS: [StaticOutputColumn; 2] = [
 ];
 
 pub(super) fn signature() -> Vec<ProcedureParameter> {
-    VECTOR_SEARCH_ANN_PARAMS
+    let mut params: Vec<_> = VECTOR_SEARCH_ANN_PARAMS
         .iter()
         .cloned()
         .map(StaticParameter::into_parameter)
-        .collect()
+        .collect();
+    params.push(
+        StaticParameter::new("filter_property", GqlType::String, true)
+            .with_description("Indexed scalar property used to admit matching nodes.")
+            .with_default_doc("NULL (no property filter)")
+            .with_default(ProcedureDefaultValue::Null)
+            .into_parameter(),
+    );
+    params.push(
+        StaticParameter::new(
+            "filter_values",
+            GqlType::List(Box::new(GqlType::AnyProperty)),
+            true,
+        )
+        .with_description("Indexed scalar values admitted by filter_property.")
+        .with_default_doc("NULL (no property filter)")
+        .with_default(ProcedureDefaultValue::Null)
+        .into_parameter(),
+    );
+    params
 }
 
 pub(super) fn output_columns() -> Vec<ProcedureOutputColumn> {
@@ -66,8 +85,10 @@ pub(super) fn execute(
     ctx: &GraphContext<'_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    if !(4..=6).contains(&args.len()) {
-        return Err(invalid_arg(format!("{PROC_NAME} expects 4 to 6 arguments")));
+    if !(4..=8).contains(&args.len()) || args.len() == 7 {
+        return Err(invalid_arg(format!(
+            "{PROC_NAME} expects 4 to 6 arguments, or 8 with a property filter"
+        )));
     }
 
     let label = string_arg(PROC_NAME, &args[0], "label")?;
@@ -88,28 +109,73 @@ pub(super) fn execute(
         .unwrap_or_else(|| {
             default_search_width(ctx.snapshot(), &label, &property, query.dimension(), metric)
         });
+    let filter_rows = if args.len() == 8 {
+        optional_filter_rows(PROC_NAME, ctx.snapshot(), &label, &args[6], &args[7])?
+    } else {
+        None
+    };
 
-    let hits = ctx
-        .snapshot()
-        .approximate_vector_search_nodes_checked(
+    let options = ApproximateVectorSearchOptions::new(metric, k, ef_search);
+    let hits = if let Some(rows) = &filter_rows {
+        ctx.snapshot()
+            .approximate_vector_search_nodes_in_rows_checked(
+                &label,
+                &property,
+                &query,
+                rows,
+                options,
+                ctx.cancellation_checker(),
+            )
+    } else {
+        ctx.snapshot().approximate_vector_search_nodes_checked(
             &label,
             &property,
             &query,
-            ApproximateVectorSearchOptions::new(metric, k, ef_search),
+            options,
             ctx.cancellation_checker(),
         )
-        .map_err(|error| {
-            approximate_vector_search_error(
-                PROC_NAME,
-                error,
-                "approximate vector search",
-                BatchMismatch::Internal("ANN vector search received batched-only error"),
-            )
-        })?;
+    }
+    .map_err(|error| {
+        approximate_vector_search_error(
+            PROC_NAME,
+            error,
+            "approximate vector search",
+            BatchMismatch::Internal("ANN vector search received batched-only error"),
+        )
+    })?;
     Ok(ProcedureResult {
         rows: hits
             .into_iter()
             .map(|hit| vec![Value::NodeRef(hit.node_id), Value::Float(hit.distance)])
             .collect(),
     })
+}
+
+fn optional_filter_rows(
+    proc_name: &'static str,
+    snapshot: &SeleneGraph,
+    label: &selene_core::DbString,
+    property: &Value,
+    values: &Value,
+) -> Result<Option<roaring::RoaringBitmap>, ProcedureError> {
+    match (property, values) {
+        (Value::Null, Value::Null) => Ok(None),
+        (Value::Null, _) | (_, Value::Null) => Err(invalid_arg(format!(
+            "{proc_name} filter_property and filter_values must both be NULL or both be supplied"
+        ))),
+        (_, Value::List(values)) => {
+            let property = string_arg(proc_name, property, "filter_property")?;
+            snapshot
+                .nodes_with_property_any(label, &property, values)
+                .map(Some)
+                .ok_or_else(|| {
+                    invalid_arg(format!(
+                        "{proc_name} filter_property must name an indexed scalar node property and filter_values must match that index kind"
+                    ))
+                })
+        }
+        (_, _) => Err(invalid_arg(format!(
+            "{proc_name} filter_values must be a LIST<VALUE> or NULL"
+        ))),
+    }
 }

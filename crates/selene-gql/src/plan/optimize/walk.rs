@@ -1,7 +1,7 @@
 //! Shared optimizer walkers.
 
 use crate::{
-    PatternElement, StatementCategory, ValueExpr,
+    ExistsBody, PatternElement, StatementCategory, ValueExpr,
     plan::{
         BindingDef, BindingTableSchema, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate,
         FilterPredicateKind, JoinTree, MutationOp, OrderKey, PipelineOp,
@@ -111,7 +111,9 @@ pub(crate) fn recurse_subplans(
     }
     for op in &mut plan.pipeline {
         match op {
-            PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+            PipelineOp::Union { rhs, .. }
+            | PipelineOp::Chain(rhs)
+            | PipelineOp::CorrelatedChain(rhs) => {
                 changed |= recurse_plan_box(rhs, visit);
             }
             PipelineOp::CallSubquery(subquery) => {
@@ -172,7 +174,8 @@ pub(crate) fn walk_expand_nodes(
     visit: &mut impl FnMut(&mut EdgeMatch) -> bool,
 ) -> bool {
     match tree {
-        JoinTree::Scan(_)
+        JoinTree::Unit
+        | JoinTree::Scan(_)
         | JoinTree::Repeat { .. }
         | JoinTree::Questioned { .. }
         | JoinTree::PathSearch { .. }
@@ -202,7 +205,7 @@ fn recurse_join_tree_subplans(
     visit: &mut impl FnMut(ExecutionPlan) -> Transformed<ExecutionPlan>,
 ) -> bool {
     match tree {
-        JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } => false,
+        JoinTree::Unit | JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } => false,
         JoinTree::Expand { child, .. }
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
@@ -250,6 +253,7 @@ fn walk_join_tree_exprs(
     visit: &mut impl FnMut(&mut ValueExpr) -> bool,
 ) -> bool {
     match tree {
+        JoinTree::Unit => false,
         JoinTree::Scan(scan) => walk_predicates(&mut scan.property_predicates, bindings, visit),
         JoinTree::Expand { child, edge, .. } => {
             let changed_child = walk_join_tree_exprs(child, bindings, visit);
@@ -342,6 +346,7 @@ fn walk_pipeline_op_exprs(
         | PipelineOp::Distinct
         | PipelineOp::Union { .. }
         | PipelineOp::Chain(_)
+        | PipelineOp::CorrelatedChain(_)
         | PipelineOp::CallSubquery(_)
         | PipelineOp::ExplainPlan { .. }
         | PipelineOp::Tx(_)
@@ -464,14 +469,18 @@ fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> boo
     // any descendant was rewritten. `for_each_child_mut` yields the `IS
     // [SOURCE|DESTINATION] OF` operand as a child, so the edge-binding walk that
     // the optimizer relies on is preserved. Subquery bodies are not `ValueExpr`
-    // children: `Exists`/`CountSubquery` descend into their `MatchClause`
-    // explicitly, and `ValueSubquery` is intentionally not descended (matching
-    // the prior `=> false` arm) — its body is optimized as its own plan.
+    // children: match-bodied `Exists` descends into its `MatchClause`
+    // explicitly, while query-bodied `Exists` and `ValueSubquery` are optimized
+    // as their own planned subqueries.
     let mut changed_children = false;
     expr.for_each_child_mut(&mut |child| {
         changed_children |= walk_expr(child, visit);
     });
-    if let ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } = expr {
+    if let ValueExpr::Exists {
+        body: ExistsBody::Match(pattern),
+        ..
+    } = expr
+    {
         changed_children |= walk_match_clause(pattern, visit);
     }
     visit(expr) | changed_children
@@ -582,6 +591,7 @@ mod tests {
             expr,
             expr_id: ExprId::new(0),
             ty: AnalyzedType::DYNAMIC,
+            declared_type: None,
             alias: None,
             binding_refs: refs,
             span: span(),

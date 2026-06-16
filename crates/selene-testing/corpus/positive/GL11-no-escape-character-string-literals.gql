@@ -1,0 +1,9 @@
+// corpus: positive
+// feature: GL11
+// also-covers: GV41, IM_UUID
+// expects: parse-ok
+RETURN
+  @'a\nb' AS raw_string,
+  DATE @'2026-05-07' AS raw_date,
+  DURATION @'PT1S' AS raw_duration,
+  UUID @'550e8400-e29b-41d4-a716-446655440000' AS raw_uuid

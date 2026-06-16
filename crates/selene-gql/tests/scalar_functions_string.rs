@@ -73,6 +73,18 @@ fn assert_feature_recorded(source: &str, expected: FeatureId) {
     );
 }
 
+fn assert_feature_absent(source: &str, expected: FeatureId) {
+    let statement = parse(source).expect(source);
+    let observed = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+    assert!(
+        !observed.contains(&expected),
+        "{source} should not record {expected:?}, observed {observed:?}"
+    );
+}
+
 #[test]
 fn character_string_concatenation_truncates_only_whitespace_overflow() {
     let caps = ImplDefinedCaps::default().with_max_string_length(3);
@@ -234,13 +246,10 @@ fn left_and_right_propagate_nulls_and_reject_bad_lengths() {
 
 #[test]
 fn substring_function_is_not_in_the_iso_scalar_set() {
-    let err = execute_read_result("RETURN substring('abcdef', 2, 3) AS value")
-        .expect_err("substring is not in the closed scalar-function set");
-    assert!(matches!(
-        &err,
-        ExecutorError::UnknownFunction { name, .. } if name == "substring"
-    ));
-    assert_eq!(err.gqlstatus().as_str(), "22G03");
+    let err = parse("RETURN substring('abcdef', 2, 3) AS value")
+        .expect_err("SUBSTRING is reserved but not implemented as a scalar function");
+    assert!(matches!(&err, selene_gql::ParserError::SyntaxError { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "42001");
 }
 
 #[test]
@@ -352,12 +361,19 @@ fn multi_character_trim_family_records_gf05() {
 fn ordinary_trim_defaults_to_space_character_only() {
     let cases = [
         ("RETURN trim('  hello  ') AS value", "hello"),
+        ("RETURN TRIM('  hello  ') AS value", "hello"),
         (r"RETURN trim(' \thello\t ') AS value", "\thello\t"),
         (r"RETURN trim(' \nhello\n ') AS value", "\nhello\n"),
     ];
     for (source, expected) in cases {
         assert_eq!(string_value(single_value(source, "value")), expected);
     }
+}
+
+#[test]
+fn source_only_trim_does_not_record_explicit_trim_feature() {
+    assert_feature_absent("RETURN trim(' x ') AS value", FeatureId::GF06);
+    assert_feature_absent("RETURN TRIM(' x ') AS value", FeatureId::GF06);
 }
 
 #[test]

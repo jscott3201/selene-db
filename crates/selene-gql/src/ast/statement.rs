@@ -5,7 +5,7 @@ use selene_core::DbString;
 use crate::ast::{
     call::{InlineProcedureCall, ProcedureCall},
     ddl::DdlStatement,
-    expr::ValueExpr,
+    expr::{CharacterStringLiteralKind, ValueExpr},
     mutation::MutationPipeline,
     pattern::MatchClause,
     span::SourceSpan,
@@ -67,7 +67,7 @@ pub enum Statement {
         /// Source span.
         span: SourceSpan,
     },
-    /// `SESSION SET VALUE <param> = <value expression>` (ISO feature GS03).
+    /// `SESSION SET VALUE <param> [<type>] = <value expression>` (ISO feature GS03).
     ///
     /// Binds a session-local value parameter. The `if_not_exists` flag carries
     /// the `IF NOT EXISTS` qualifier from `<session set parameter name>`
@@ -76,6 +76,8 @@ pub enum Statement {
     SessionSetValue {
         /// Database-string parameter name without the leading `$`.
         param: DbString,
+        /// Optional declared type for the target session parameter.
+        declared_type: Option<GqlType>,
         /// Value expression bound to the parameter.
         value: Box<ValueExpr>,
         /// `IF NOT EXISTS` was present on the parameter specification.
@@ -87,6 +89,15 @@ pub enum Statement {
     SessionSetTimeZone {
         /// Decoded IANA region name or fixed-offset string.
         zone: String,
+        /// Source spelling class for the time-zone character string literal.
+        zone_source_kind: CharacterStringLiteralKind,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION SET [PROPERTY] GRAPH <current graph>` (ISO/IEC 39075:2024 section 7.1).
+    SessionSetGraph {
+        /// Current-graph expression selected by the command.
+        target: SessionSetGraphTarget,
         /// Source span.
         span: SourceSpan,
     },
@@ -105,6 +116,15 @@ pub enum Statement {
         /// Source span.
         span: SourceSpan,
     },
+}
+
+/// Current graph expression selected by `SESSION SET [PROPERTY] GRAPH`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum SessionSetGraphTarget {
+    /// `CURRENT_GRAPH`.
+    CurrentGraph,
+    /// `CURRENT_PROPERTY_GRAPH`.
+    CurrentPropertyGraph,
 }
 
 /// Target selected by `<session reset arguments>` (ISO/IEC 39075:2024 section 7.2).
@@ -141,6 +161,7 @@ impl Statement {
             }
             Self::SessionSetValue { span, .. }
             | Self::SessionSetTimeZone { span, .. }
+            | Self::SessionSetGraph { span, .. }
             | Self::SessionReset { span, .. }
             | Self::SessionClose { span } => *span,
         }
@@ -185,8 +206,8 @@ pub enum PipelineStatement {
     Filter(ValueExpr),
     /// `LET`.
     Let(Vec<LetBinding>),
-    /// `UNWIND`.
-    Unwind(UnwindStatement),
+    /// Row expansion (`FOR`).
+    For(ForStatement),
     /// `ORDER BY`.
     Sorting(Vec<OrderTerm>),
     /// `LIMIT`.
@@ -211,7 +232,7 @@ impl PipelineStatement {
             Self::Match(value) => value.span,
             Self::Filter(value) => value.span(),
             Self::Let(values) => span_from_iter(values.iter().map(|value| value.span)),
-            Self::Unwind(value) => value.span,
+            Self::For(value) => value.span,
             Self::Sorting(values) => span_from_iter(values.iter().map(|value| value.span)),
             Self::Limit(value) | Self::Offset(value) => value.span(),
             Self::Return(value) => value.span,
@@ -227,21 +248,43 @@ impl PipelineStatement {
 pub struct LetBinding {
     /// Database-string alias.
     pub alias: DbString,
+    /// Optional declared type for the value variable.
+    pub declared_type: Option<GqlType>,
     /// Bound value expression.
     pub value: ValueExpr,
     /// Source span.
     pub span: SourceSpan,
 }
 
-/// `UNWIND` statement.
+/// Row-expansion statement.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct UnwindStatement {
+pub struct ForStatement {
     /// Source expression.
     pub source: ValueExpr,
     /// Database-string alias.
     pub alias: DbString,
+    /// Optional ISO position output (`WITH ORDINALITY` / `WITH OFFSET`).
+    pub position: Option<RowExpansionPosition>,
     /// Source span.
     pub span: SourceSpan,
+}
+
+/// Optional position output for ISO `FOR`.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct RowExpansionPosition {
+    /// Position value form.
+    pub kind: RowExpansionPositionKind,
+    /// Database-string alias.
+    pub alias: DbString,
+}
+
+/// ISO `FOR` position output kind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum RowExpansionPositionKind {
+    /// `WITH ORDINALITY`, producing one-based positions.
+    Ordinality,
+    /// `WITH OFFSET`, producing zero-based offsets.
+    Offset,
 }
 
 /// `ORDER BY` term.

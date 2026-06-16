@@ -20,8 +20,8 @@
 //! - `label_propagation`: `Vec<(NodeId, u64)>` sorted **ASC by NodeId** —
 //!   community IDs are categorical (smallest stable label per Raghavan).
 //! - `louvain`: `Vec<(NodeId, u64, u32)>` sorted **ASC by NodeId** — the `u32`
-//!   is `level`, reserved at `0` in v1.0 for forward-compat with hierarchical
-//!   Louvain (v1.x).
+//!   is `level`, currently reserved at `0` for forward-compat with
+//!   hierarchical Louvain.
 //! - `triangle_count`: `Vec<(NodeId, usize)>` sorted **DESC by count** with
 //!   **NodeId ASC** tie-break.
 //!

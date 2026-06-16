@@ -469,7 +469,7 @@ pub struct ValueType {
     pub record: Option<RecordTypeRef>,
     /// Whether null is forbidden at this level.
     pub not_null: bool,
-    /// Minimal v1.0 scalar cardinality.
+    /// Currently supported scalar cardinality.
     pub cardinality: ValueTypeCardinality,
 }
 
@@ -507,7 +507,7 @@ impl ValueType {
     }
 }
 
-/// Predefined value types claimed by the v1.0 surface.
+/// Predefined value types claimed by the D1 surface.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PredefinedValueType {
     /// Boolean.
@@ -584,7 +584,7 @@ pub enum PredefinedValueType {
     Json,
 }
 
-/// Minimal v1.0 value cardinality.
+/// Currently supported value cardinality.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum ValueTypeCardinality {
     /// Exactly one value.
@@ -613,8 +613,8 @@ pub struct RecordTypeDef {
 /// singleton key label sets (one label per type — see
 /// `selene-gql`'s `create_node_type` lowering), so no two key label sets can
 /// stand in an overlap/containment relationship. The variants reserve the two
-/// ISO postures that become meaningful once multi-label key label sets are
-/// supported (a v1.2+ feature; see the deep-review deferred-briefs catalog).
+/// ISO postures that become meaningful once future multi-label key label set
+/// support lands.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum KeyLabelSetPolicy {
     /// Reserved: key label sets must be pairwise disjoint.

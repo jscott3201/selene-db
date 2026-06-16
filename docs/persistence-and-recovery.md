@@ -166,7 +166,7 @@ header (32 bytes) carries:
 
 - 4-byte magic `SLSN`.
 - 2-byte major version (currently `1`), 2-byte minor version (currently `0`).
-- 2-byte flags (per-section compression toggle in v1.0).
+- 2-byte flags (currently the per-section compression toggle).
 - 2-byte section count.
 - 4 reserved bytes (must be zero).
 - 16-byte blake3-128 hash of the section table plus payload bytes.

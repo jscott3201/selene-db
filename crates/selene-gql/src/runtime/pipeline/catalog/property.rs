@@ -17,7 +17,7 @@ use selene_graph::{
 
 use crate::{
     ExecutorError, GqlType, PlannedTypePropertyConstraint, PlannedTypePropertyDef, RecordType,
-    parser::MAX_NESTING_DEPTH,
+    ast::format_ident::fmt_ident, parser::MAX_NESTING_DEPTH,
 };
 
 pub(super) fn property_defs(
@@ -326,9 +326,15 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::GraphRef => PropertyValueType::GraphRef,
         GqlType::NodeRef => PropertyValueType::NodeRef,
         GqlType::EdgeRef => PropertyValueType::EdgeRef,
-        GqlType::TableRef => PropertyValueType::TableRef,
+        GqlType::TableRef(_) => PropertyValueType::TableRef,
         GqlType::Null => PropertyValueType::Null,
-        GqlType::Record(_) | GqlType::List(_) | GqlType::Nothing => {
+        GqlType::Any
+        | GqlType::AnyProperty
+        | GqlType::ClosedDynamicUnion(_)
+        | GqlType::Record(_)
+        | GqlType::List(_)
+        | GqlType::BoundedList { .. }
+        | GqlType::Nothing => {
             return Err(ExecutorError::ImplementationDefined {
                 detail: "type property GQL type not supported as property value type (Phase A)",
             });
@@ -397,6 +403,9 @@ pub(super) fn render_property_value_type(
 }
 
 fn render_record_field_types(fields: &RecordFieldTypes) -> String {
+    if fields.0.is_empty() {
+        return "RECORD {}".to_owned();
+    }
     let rendered = fields
         .0
         .iter()
@@ -404,7 +413,7 @@ fn render_record_field_types(fields: &RecordFieldTypes) -> String {
             let nullability = if field.required { " NOT NULL" } else { "" };
             format!(
                 "{} :: {}{}",
-                field.name,
+                fmt_ident(field.name.clone()),
                 render_record_field_type(&field.field_type),
                 nullability
             )

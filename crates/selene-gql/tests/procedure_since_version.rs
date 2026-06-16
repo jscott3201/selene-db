@@ -7,8 +7,9 @@
 //!
 //! - `git ls-tree v1.1.0 --name-only -r crates/selene-gql/src/runtime/builtins/`
 //!   shows only `health`, `feature_status`, `verify`, `create_index`, and
-//!   `drop_index` existed at the v1.1.0 tag; the remaining 41 `selene.*`
-//!   built-ins ship first in v1.2.0.
+//!   `drop_index` existed at the v1.1.0 tag; the next 41 `selene.*`
+//!   built-ins ship first in v1.2.0, and the P1 BM25 candidate-state
+//!   procedures ship first in v1.3.0.
 //! - `git show v1.0.0:crates/selene-algorithms-pack/src/registry.rs`
 //!   registered all 19 `algo.*` procedures, so that surface has been
 //!   available since v1.0.0 (native in-tree since v1.1.0).
@@ -59,6 +60,7 @@ fn expected_since_version(rendered: &str) -> &'static str {
         name if name.starts_with("algo.") => "1.0.0",
         "selene.health" | "selene.create_index" | "selene.drop_index" => "1.0.0",
         "selene.feature_status" | "selene.verify" => "1.1.0",
+        "selene.text_score_candidate_state" | "selene.text_score_candidate_state_nodes" => "1.3.0",
         _ => "1.2.0",
     }
 }
@@ -66,8 +68,8 @@ fn expected_since_version(rendered: &str) -> &'static str {
 #[test]
 fn registry_since_version_matches_release_history() {
     let registry = BuiltinProcedureRegistry::new();
-    // Buckets index the pinned release partition: ["1.0.0", "1.1.0", "1.2.0"].
-    let mut buckets = [0_usize; 3];
+    // Buckets index the pinned release partition: ["1.0.0", "1.1.0", "1.2.0", "1.3.0"].
+    let mut buckets = [0_usize; 4];
     let mut algo = 0_usize;
     let mut selene = 0_usize;
 
@@ -90,17 +92,20 @@ fn registry_since_version_matches_release_history() {
         match expected {
             "1.0.0" => buckets[0] += 1,
             "1.1.0" => buckets[1] += 1,
-            _ => buckets[2] += 1,
+            "1.2.0" => buckets[2] += 1,
+            "1.3.0" => buckets[3] += 1,
+            other => panic!("unexpected since_version bucket {other}"),
         }
     }
 
     // 19 `algo.*` plus `health`/`create_index`/`drop_index` shipped in
-    // v1.0.0; `feature_status`/`verify` shipped in v1.1.0; the remaining 41
-    // built-ins ship first in v1.2.0. A new or re-versioned procedure must
-    // extend this partition explicitly.
+    // v1.0.0; `feature_status`/`verify` shipped in v1.1.0; 41 built-ins ship
+    // first in v1.2.0; and the two BM25 candidate-state procedures ship first
+    // in v1.3.0. A new or re-versioned procedure must extend this partition
+    // explicitly.
     assert_eq!(algo, 19);
-    assert_eq!(selene, 46);
-    assert_eq!(buckets, [22, 2, 41]);
+    assert_eq!(selene, 48);
+    assert_eq!(buckets, [22, 2, 41, 2]);
 }
 
 #[test]
@@ -113,7 +118,7 @@ fn show_procedures_since_version_column_matches_release_history() {
             .execute_source("SHOW PROCEDURES", &registry)
             .expect("SHOW PROCEDURES executes"),
     );
-    assert_eq!(table.row_count(), 65);
+    assert_eq!(table.row_count(), 67);
 
     // The planner-rendered column must agree with the registry claim per
     // row; divergence here means the SHOW plumbing dropped or rewrote the

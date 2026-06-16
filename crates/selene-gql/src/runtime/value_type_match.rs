@@ -10,7 +10,8 @@
 //! [`crate::runtime::evaluator::cast`].)
 
 use selene_core::{
-    DurationTypeQualifier, Record, Value, character_string_fits_type, decimal_fits_type,
+    DurationTypeQualifier, PropertyValueType, Record, Value, character_string_fits_type,
+    decimal_fits_type,
 };
 
 use crate::{GqlType, RecordType};
@@ -25,7 +26,15 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
             !matches!(value, Value::Null) && value_matches_gql_type(value, inner)
         }
         GqlType::Nothing => false,
+        GqlType::ClosedDynamicUnion(components) if matches!(value, Value::Null) => components
+            .iter()
+            .any(|component| value_matches_gql_type(value, component)),
         _ if matches!(value, Value::Null) => true,
+        GqlType::Any => true,
+        GqlType::AnyProperty => PropertyValueType::of(value).is_some(),
+        GqlType::ClosedDynamicUnion(components) => components
+            .iter()
+            .any(|component| value_matches_gql_type(value, component)),
         GqlType::String => matches!(value, Value::String(_)),
         GqlType::CharacterString(character_type) => {
             matches!(value, Value::String(value) if character_string_fits_type(
@@ -89,11 +98,23 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
                 .all(|value| value_matches_gql_type(value, inner)),
             _ => false,
         },
+        GqlType::BoundedList {
+            element_type,
+            max_len,
+        } => match value {
+            Value::List(values) => {
+                u64::try_from(values.len()).is_ok_and(|len| len <= *max_len)
+                    && values
+                        .iter()
+                        .all(|value| value_matches_gql_type(value, element_type))
+            }
+            _ => false,
+        },
         GqlType::Path => matches!(value, Value::Path(_)),
         GqlType::GraphRef => matches!(value, Value::GraphRef(_)),
         GqlType::NodeRef => matches!(value, Value::NodeRef(_)),
         GqlType::EdgeRef => matches!(value, Value::EdgeRef(_)),
-        GqlType::TableRef => matches!(value, Value::TableRef(_)),
+        GqlType::TableRef(_) => matches!(value, Value::TableRef(_)),
         GqlType::Null => matches!(value, Value::Null),
     }
 }
@@ -134,7 +155,8 @@ fn value_matches_record_type(value: &Value, record: &RecordType) -> bool {
 mod tests {
     use super::value_matches_gql_type;
     use crate::{GqlType, RecordType};
-    use selene_core::{RecordTypeId, RecordTyped, Value};
+    use selene_core::{ExtensionTypeId, RecordTypeId, RecordTyped, Value};
+    use std::sync::Arc;
 
     fn sample_recordtyped() -> Value {
         Value::RecordTyped(Box::new(RecordTyped {
@@ -157,5 +179,15 @@ mod tests {
         // The open record type needs no field names, so any record value conforms.
         let ty = GqlType::Record(RecordType::Open);
         assert!(value_matches_gql_type(&sample_recordtyped(), &ty));
+    }
+
+    #[test]
+    fn property_value_type_rejects_extension_owned_values() {
+        let value = Value::Extended {
+            type_id: ExtensionTypeId::FIRST_PARTY_MIN,
+            payload: Arc::from([1_u8]),
+        };
+        assert!(value_matches_gql_type(&value, &GqlType::Any));
+        assert!(!value_matches_gql_type(&value, &GqlType::AnyProperty));
     }
 }

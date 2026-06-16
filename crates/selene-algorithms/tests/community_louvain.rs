@@ -60,7 +60,7 @@ fn louvain_single_node_own_community_level_zero() {
     let result = louvain(&proj, 50);
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].0, nodes[0]);
-    assert_eq!(result[0].2, 0, "v1.0 always emits level=0 (§E27)");
+    assert_eq!(result[0].2, 0, "single-pass Louvain emits level=0 (§E27)");
 }
 
 #[test]
@@ -138,9 +138,9 @@ fn louvain_result_sorted_asc_by_node_id() {
 }
 
 #[test]
-fn louvain_level_field_always_zero_in_v1_0() {
-    // §E27: v1.0 single-pass Louvain reserves `level=0`; hierarchical v1.x
-    // will populate higher levels.
+fn louvain_level_field_always_zero_for_current_single_pass() {
+    // §E27: current single-pass Louvain reserves `level=0`; future
+    // hierarchical extensions will populate higher levels.
     let (shared, _) = build_graph(4, &[(0, 1), (1, 2), (2, 3), (3, 0)]);
     let proj = build_proj(&shared);
     let result = louvain(&proj, 50);

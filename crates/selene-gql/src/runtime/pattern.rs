@@ -49,6 +49,16 @@ pub(crate) fn execute_pattern_with_seed_and_schema(
     schema: BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    execute_pattern_with_seed_schema_and_limit(pattern, seed, schema, ctx, None)
+}
+
+pub(crate) fn execute_pattern_with_seed_schema_and_limit(
+    pattern: &PatternPlan,
+    seed: Option<&Binding>,
+    schema: BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+    row_limit: Option<usize>,
+) -> Result<BindingTable, ExecutorError> {
     let env = WalkContext {
         pattern,
         schema: &schema,
@@ -56,11 +66,17 @@ pub(crate) fn execute_pattern_with_seed_and_schema(
         ctx,
     };
     let mut rows = Vec::new();
+    if row_limit == Some(0) {
+        return Ok(BindingTable::new(schema, rows));
+    }
     let mut rows_since_check = 0;
     for row in walk_join_tree(&pattern.join_tree, env)? {
         ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
         if pattern_filters_pass(pattern, &row, &schema, ctx)? {
             rows.push(row);
+            if row_limit.is_some_and(|limit| rows.len() >= limit) {
+                break;
+            }
         }
     }
     Ok(BindingTable::new(schema, rows))
@@ -79,6 +95,10 @@ pub(crate) fn walk_join_tree(
     env: WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     match tree {
+        JoinTree::Unit => Ok(vec![Binding::new(vec![
+            Value::Null;
+            env.schema.columns.len()
+        ])]),
         JoinTree::Scan(scan_node) => {
             scan::scan_pattern(scan_node, env.pattern, env.schema, env.seed, env.ctx)
         }
@@ -239,6 +259,7 @@ pub(crate) fn schema_for_pattern(pattern: &PatternPlan) -> BindingTableSchema {
 
 fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, AnalyzedType>) {
     match tree {
+        JoinTree::Unit => {}
         JoinTree::Scan(scan) => {
             insert_hidden(slots, scan.hidden_binding, scan.kind);
         }

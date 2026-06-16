@@ -1,4 +1,0 @@
-// corpus: negative
-// feature: GP04
-// expects: parse-rejected(syntax)
-CALL pkg.rank() YIELD score FILTER score >= 0

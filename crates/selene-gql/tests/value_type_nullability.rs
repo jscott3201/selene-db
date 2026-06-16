@@ -288,7 +288,7 @@ fn catalog_persists_nested_property_nullability_descriptors() {
     };
     assert_eq!(
         definition.as_str(),
-        "CREATE NODE TYPE :Thing (nullable_xs :: LIST<INTEGER>, strict_xs :: LIST<INTEGER NOT NULL>, payload :: RECORD { nullable :: INTEGER, strict :: INTEGER NOT NULL, labels :: LIST<STRING NOT NULL> })"
+        "CREATE NODE TYPE :Thing (nullable_xs :: LIST<INTEGER>, strict_xs :: LIST<INTEGER NOT NULL>, payload :: RECORD { nullable :: INTEGER, \"strict\" :: INTEGER NOT NULL, \"labels\" :: LIST<STRING NOT NULL> })"
     );
     parse(definition.as_str()).expect("SHOW definition round-trips through parser");
 }

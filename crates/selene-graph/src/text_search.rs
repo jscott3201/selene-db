@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use roaring::RoaringBitmap;
 use selene_core::{CancellationCause, CancellationChecker, DbString, NodeId, Value};
+use smallvec::SmallVec;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
@@ -32,6 +33,8 @@ const TEXT_SEARCH_PARALLEL_MIN_ROWS: u64 = 16_384;
 const TEXT_SEARCH_PARALLEL_MIN_ROWS: u64 = 8;
 const BM25_K1: f64 = 1.2;
 const BM25_B: f64 = 0.75;
+
+type TermCounts = SmallVec<[u32; 4]>;
 
 /// One BM25-ranked node hit.
 #[derive(Clone, Debug, PartialEq)]
@@ -57,15 +60,25 @@ pub enum TextSearchError {
         /// Wall-clock duration since the deadline elapsed.
         elapsed: Duration,
     },
+    /// Deterministic node-scan budget was exceeded.
+    #[error("text search node scan budget exceeded ({scanned} > {limit})")]
+    NodeScanBudgetExceeded {
+        /// Maximum allowed scanned nodes.
+        limit: usize,
+        /// Observed scanned nodes after the batch that crossed the limit.
+        scanned: usize,
+    },
 }
 
 impl TextSearchError {
     fn into_graph_error(self) -> GraphError {
         match self {
             Self::Graph(error) => error,
-            Self::Cancelled | Self::Timeout { .. } => GraphError::Inconsistent {
-                reason: format!("disabled text-search checker returned {self}"),
-            },
+            Self::Cancelled | Self::Timeout { .. } | Self::NodeScanBudgetExceeded { .. } => {
+                GraphError::Inconsistent {
+                    reason: format!("disabled text-search checker returned {self}"),
+                }
+            }
         }
     }
 }
@@ -75,6 +88,9 @@ impl From<CancellationCause> for TextSearchError {
         match cause {
             CancellationCause::Cancelled => Self::Cancelled,
             CancellationCause::Timeout { elapsed } => Self::Timeout { elapsed },
+            CancellationCause::NodeScanBudgetExceeded { limit, scanned } => {
+                Self::NodeScanBudgetExceeded { limit, scanned }
+            }
         }
     }
 }
@@ -113,6 +129,45 @@ impl SeleneGraph {
         k: usize,
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<TextSearchHit>, TextSearchError> {
+        self.exact_text_search_nodes_filtered_checked(label, property, query, k, None, checker)
+    }
+
+    /// Exhaustively rank text documents while admitting only `allowed_rows`.
+    ///
+    /// BM25 corpus statistics are still computed over every string document for
+    /// `(label, property)`, so scores and ordering match an unfiltered search
+    /// whose full ranking is filtered by this row set before `k` truncation.
+    pub fn exact_text_search_nodes_in_rows_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        query: &str,
+        k: usize,
+        allowed_rows: &RoaringBitmap,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<TextSearchHit>, TextSearchError> {
+        if allowed_rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.exact_text_search_nodes_filtered_checked(
+            label,
+            property,
+            query,
+            k,
+            Some(allowed_rows),
+            checker,
+        )
+    }
+
+    fn exact_text_search_nodes_filtered_checked(
+        &self,
+        label: &DbString,
+        property: &DbString,
+        query: &str,
+        k: usize,
+        allowed_rows: Option<&RoaringBitmap>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<TextSearchHit>, TextSearchError> {
         checker.check()?;
         if k == 0 {
             return Ok(Vec::new());
@@ -125,7 +180,7 @@ impl SeleneGraph {
             return Ok(Vec::new());
         };
 
-        let scan = TextScan::new(self, label, property, &query_terms);
+        let scan = TextScan::new(self, label, property, &query_terms, allowed_rows);
         let chunk = if should_parallelize_text_scan(label_rows, k) {
             exact_text_scan_parallel(scan, label_rows, checker)?
         } else {
@@ -168,6 +223,7 @@ struct TextScan<'a> {
     label: &'a DbString,
     property: &'a DbString,
     query_terms: &'a [String],
+    allowed_rows: Option<&'a RoaringBitmap>,
 }
 
 impl<'a> TextScan<'a> {
@@ -176,12 +232,14 @@ impl<'a> TextScan<'a> {
         label: &'a DbString,
         property: &'a DbString,
         query_terms: &'a [String],
+        allowed_rows: Option<&'a RoaringBitmap>,
     ) -> Self {
         Self {
             graph,
             label,
             property,
             query_terms,
+            allowed_rows,
         }
     }
 
@@ -213,7 +271,13 @@ impl<'a> TextScan<'a> {
         let Some(Value::String(text)) = properties.get(self.property) else {
             return Ok(None);
         };
-        Ok(document_stats(node_id, text.as_str(), self.query_terms))
+        Ok(document_stats(
+            node_id,
+            text.as_str(),
+            self.query_terms,
+            self.allowed_rows
+                .is_none_or(|allowed_rows| allowed_rows.contains(raw_row)),
+        ))
     }
 }
 
@@ -273,12 +337,15 @@ fn exact_text_scan_serial(
     for raw_row in rows.iter() {
         rows_since_check += 1;
         if rows_since_check >= TEXT_SEARCH_CANCEL_STRIDE {
-            checker.check()?;
+            checker.note_nodes_scanned(rows_since_check)?;
             rows_since_check = 0;
         }
         if let Some(doc) = scan.document_for_row(raw_row)? {
             chunk.push(doc);
         }
+    }
+    if rows_since_check > 0 {
+        checker.note_nodes_scanned(rows_since_check)?;
     }
     Ok(chunk)
 }
@@ -322,6 +389,9 @@ fn rank_text_docs(chunk: TextScanChunk, k: usize) -> Vec<TextSearchHit> {
     let average_document_len = chunk.total_document_len as f64 / corpus_len;
     let mut top_k = TextTopK::new(k);
     for doc in chunk.docs {
+        if !doc.admitted {
+            continue;
+        }
         let score = bm25_score(
             &doc,
             &chunk.document_frequencies,
@@ -339,7 +409,8 @@ fn rank_text_docs(chunk: TextScanChunk, k: usize) -> Vec<TextSearchHit> {
 pub(crate) struct DocumentStats {
     pub(crate) node_id: NodeId,
     len: u32,
-    pub(crate) term_counts: Vec<u32>,
+    pub(crate) term_counts: TermCounts,
+    admitted: bool,
 }
 
 impl DocumentStats {
@@ -347,7 +418,8 @@ impl DocumentStats {
         Self {
             node_id,
             len,
-            term_counts: vec![0; query_term_count],
+            term_counts: TermCounts::from_elem(0, query_term_count),
+            admitted: true,
         }
     }
 }
@@ -357,8 +429,13 @@ pub(crate) fn unique_query_terms(query: &str) -> Vec<String> {
     terms.into_iter().collect()
 }
 
-fn document_stats(node_id: NodeId, text: &str, query_terms: &[String]) -> Option<DocumentStats> {
-    let mut term_counts = vec![0_u32; query_terms.len()];
+fn document_stats(
+    node_id: NodeId,
+    text: &str,
+    query_terms: &[String],
+    admitted: bool,
+) -> Option<DocumentStats> {
+    let mut term_counts = TermCounts::from_elem(0, query_terms.len());
     let mut len = 0_u32;
     for token in tokenize_borrowed(text) {
         len = len.saturating_add(1);
@@ -370,6 +447,7 @@ fn document_stats(node_id: NodeId, text: &str, query_terms: &[String]) -> Option
         node_id,
         len,
         term_counts,
+        admitted,
     })
 }
 

@@ -183,7 +183,7 @@ impl Default for ProcedureSignature {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ProcedureParameter {
-    /// Parameter name. Diagnostic-only; arguments are positional in v1.0.
+    /// Parameter name. Diagnostic-only; arguments are currently positional.
     pub name: DbString,
     /// Expected static type for the corresponding positional argument.
     pub ty: GqlType,
@@ -389,6 +389,14 @@ pub enum ProcedureError {
         /// Duration since the deadline elapsed.
         elapsed: Duration,
     },
+    /// Procedure observed that the deterministic node-scan budget was exceeded.
+    #[error("procedure node scan budget exceeded ({scanned} > {limit})")]
+    NodeScanBudgetExceeded {
+        /// Maximum allowed scanned nodes.
+        limit: usize,
+        /// Observed scanned nodes after the batch that crossed the limit.
+        scanned: usize,
+    },
 }
 
 impl ProcedureError {
@@ -403,6 +411,7 @@ impl ProcedureError {
             }
             Self::Cancelled => GqlStatus::OPERATION_CANCELLED,
             Self::Timeout { .. } => GqlStatus::DEADLINE_EXCEEDED,
+            Self::NodeScanBudgetExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
         }
     }
 }

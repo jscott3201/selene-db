@@ -6,22 +6,23 @@
 // Rule names follow snake_case mirrors of ISO/IEC 39075:2024 grammar names,
 // aligned with opengql/grammar v1.9.0 where the donor name diverged.
 //
-// FEATURE comments tag rules whose surface area belongs to a v1.0 claimed
-// feature ID. The Flagger rejects unsupported surfaces before execution.
+// FEATURE comments tag rules whose surface area belongs to a D1 claimed feature
+// ID. The Flagger rejects unsupported surfaces before execution.
 // -------------------------------------------------------------------
 // PEG grammar (pest). Case-insensitive keywords via ^"keyword".
 // All whitespace and comments handled implicitly by WHITESPACE/COMMENT.
 //
-// Spec alignment: double-quote = delimited identifier (not string),
-// single-quote = string literal, Unicode identifiers, prop_ident
-// for keyword-safe property access.
+// Spec alignment: single-, double-, and accent-quoted character string
+// literals, Unicode identifiers, double/accent-quoted delimited identifiers,
+// and prop_ident for keyword-safe property access.
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (explain_stmt | create_schema_command | ddl_statement | transaction_control | session_command | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
 
-explain_stmt = { ^"EXPLAIN" ~ explainable_statement }
+explain_stmt = { explain_kw ~ explainable_statement }
 explainable_statement = { ddl_statement | call_query_pipeline | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
+explain_kw = @{ ^"EXPLAIN" ~ !(LETTER | NUMBER | "_") }
 
 // -- DDL statements -----------------------------------------------
 
@@ -30,15 +31,19 @@ ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_
               | show_indexes | show_procedures
               | create_graph | drop_graph | create_index | drop_index }
 
+create_schema_command = { create_schema ~ (next_kw ~ create_schema)* }
+create_schema = { ddl_create_kw ~ ddl_schema_kw ~ if_not_exists? ~ schema_name }
+schema_name = { ("/" ~ ident)+ | ident }
+
 create_node_type = {
-    ^"CREATE" ~ or_replace? ~ ^"NODE" ~ ^"TYPE" ~ if_not_exists? ~
-    node_type_descriptor ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    ddl_create_kw ~ or_replace? ~ ddl_node_kw ~ ddl_type_kw ~ if_not_exists? ~
+    node_type_descriptor ~ (ddl_extends_kw ~ ":" ~ ident)? ~
     "(" ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
 create_edge_type = {
-    ^"CREATE" ~ or_replace? ~ ^"EDGE" ~ ^"TYPE" ~ if_not_exists? ~
-    edge_type_descriptor ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    ddl_create_kw ~ or_replace? ~ ddl_edge_kw ~ ddl_type_kw ~ if_not_exists? ~
+    edge_type_descriptor ~ (ddl_extends_kw ~ ":" ~ ident)? ~
     "(" ~ edge_endpoint_clause? ~ ","? ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
@@ -52,11 +57,9 @@ edge_type_descriptor = { edge_type_key_label_set | (":" ~ ident) }
 // `<node/edge type key label set> ::= [ <label set phrase> ] <implies>` (§18.2/
 // §18.3 Format). The optional `<label set phrase>` is an ampersand-joined label
 // set specification (§18.4); the `<implies>` token is `<right double arrow> |
-// IMPLIES` (§21.3) — selene-db accepts BOTH spellings. `IMPLIES` is matched only
-// here (a contextual token after the label phrase, word-boundary-guarded), NOT
-// added to the global `keyword` exclusion set, so `implies` stays usable as an
-// identifier and no global reserved-keyword growth occurs (see memory
-// project_parser_parse_time_dos). The trailing
+// IMPLIES` (§21.3) — selene-db accepts BOTH spellings. `IMPLIES` is an ISO
+// reserved word, so it is also excluded from bare identifier slots by the global
+// `keyword` rule. The trailing
 // `key_label_implied_labels` accepts the separate-implied-`<label set>` shape
 // (`:Person => :Employee`) at the grammar level only so the builder can raise an
 // honest NotImplemented reject (the containment-identification case is deferred
@@ -66,109 +69,208 @@ edge_type_key_label_set = { key_label_set_phrase? ~ implies ~ key_label_implied_
 key_label_set_phrase     = { ":" ~ ident ~ ("&" ~ ":" ~ ident)* }
 key_label_implied_labels = { ":" ~ ident ~ ("&" ~ ":" ~ ident)* }
 implies                  = { "=>" | (^"IMPLIES" ~ !(LETTER | NUMBER | "_")) }
-validation_mode_clause = { ^"STRICT" | ^"WARN" }
-or_replace = { ^"OR" ~ ^"REPLACE" }
-drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
-drop_edge_type   = { ^"DROP" ~ ^"EDGE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
-drop_behavior    = { ^"RESTRICT" | ^"CASCADE" }
-truncate_node_type = { ^"TRUNCATE" ~ ^"NODE" ~ ^"TYPE" ~ ":" ~ ident }
-truncate_edge_type = { ^"TRUNCATE" ~ ^"EDGE" ~ ^"TYPE" ~ ":" ~ ident }
-show_node_types  = { ^"SHOW" ~ ^"NODE" ~ ^"TYPES" }
-show_edge_types  = { ^"SHOW" ~ ^"EDGE" ~ ^"TYPES" }
-show_indexes     = { ^"SHOW" ~ ^"INDEXES" }
-show_procedures  = { ^"SHOW" ~ ^"PROCEDURES" }
+validation_mode_clause = { ddl_strict_kw | ddl_warn_kw }
+or_replace = { ddl_or_kw ~ ddl_replace_kw }
+drop_node_type   = { ddl_drop_kw ~ ddl_node_kw ~ ddl_type_kw ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
+drop_edge_type   = { ddl_drop_kw ~ ddl_edge_kw ~ ddl_type_kw ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
+drop_behavior    = { ddl_restrict_kw | ddl_cascade_kw }
+truncate_node_type = { ddl_truncate_kw ~ ddl_node_kw ~ ddl_type_kw ~ ":" ~ ident }
+truncate_edge_type = { ddl_truncate_kw ~ ddl_edge_kw ~ ddl_type_kw ~ ":" ~ ident }
+show_node_types  = { ddl_show_kw ~ ddl_node_kw ~ ddl_types_kw }
+show_edge_types  = { ddl_show_kw ~ ddl_edge_kw ~ ddl_types_kw }
+show_indexes     = { ddl_show_kw ~ ddl_indexes_kw }
+show_procedures  = { ddl_show_kw ~ ddl_procedures_kw }
 
 type_prop_def_list = { type_prop_def ~ ("," ~ type_prop_def)* }
-type_prop_def      = { ident ~ "::" ~ type_name ~ type_prop_constraint* }
-type_prop_constraint = { ^"NOT" ~ ^"NULL" | ^"DEFAULT" ~ default_value | ^"IMMUTABLE" | ^"UNIQUE" | ^"INDEXED" ~ (^"AS" ~ ident)? }
+type_prop_def      = { ident ~ ((typed_marker ~ type_name) | type_name) ~ type_prop_constraint* }
+type_prop_constraint = { not_kw ~ null_kw | ddl_default_kw ~ default_value | ddl_immutable_kw | ddl_unique_kw | ddl_indexed_kw ~ (as_kw ~ ident)? }
 default_value = _{ record_constructor | literal }
-edge_endpoint_clause = { ^"FROM" ~ label_list ~ ^"TO" ~ label_list }
+edge_endpoint_clause = { from_kw ~ label_list ~ ddl_to_kw ~ label_list }
 label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
 
-create_graph = { ^"CREATE" ~ or_replace? ~ ^"GRAPH" ~ if_not_exists? ~ ident }
-drop_graph   = { ^"DROP" ~ ^"GRAPH" ~ if_exists? ~ ident }
-create_index = { ^"CREATE" ~ ^"INDEX" ~ if_not_exists? ~ ident ~ ^"ON" ~ ":" ~ ident ~ "(" ~ ident ~ ("," ~ ident)* ~ ")" }
-drop_index   = { ^"DROP" ~ ^"INDEX" ~ if_exists? ~ ident }
+create_graph = {
+    ddl_create_kw ~ or_replace? ~ ddl_graph_kw ~ if_not_exists? ~
+    create_graph_name ~ create_graph_source? ~ create_graph_copy?
+}
+create_graph_name = { ("/" ~ ident)+ | ident }
+create_graph_source = {
+    ddl_any_kw
+  | ddl_like_kw ~ create_graph_name
+  | create_graph_type_ref
+}
+create_graph_type_ref = { typed_marker? ~ (create_graph_type_literal | ident) }
+create_graph_type_literal = { "{" ~ create_graph_type_element ~ ("," ~ create_graph_type_element)* ~ "}" }
+create_graph_type_element = { "(" ~ ident ~ (":" ~ ident)? ~ create_graph_type_props? ~ ")" }
+create_graph_type_props = { "{" ~ type_prop_def_list? ~ "}" }
+create_graph_copy = { as_kw ~ ddl_copy_kw ~ ddl_of_kw ~ create_graph_name }
+drop_graph   = { ddl_drop_kw ~ ddl_graph_kw ~ if_exists? ~ ident }
+create_index = { ddl_create_kw ~ ddl_index_kw ~ if_not_exists? ~ ident ~ ddl_on_kw ~ ":" ~ ident ~ "(" ~ prop_ident ~ ("," ~ prop_ident)* ~ ")" }
+drop_index   = { ddl_drop_kw ~ ddl_index_kw ~ if_exists? ~ ident }
 
-if_not_exists = { ^"IF" ~ ^"NOT" ~ ^"EXISTS" }
-if_exists     = { ^"IF" ~ ^"EXISTS" }
+ddl_create_kw = @{ ^"CREATE" ~ !(LETTER | NUMBER | "_") }
+ddl_drop_kw = @{ ^"DROP" ~ !(LETTER | NUMBER | "_") }
+ddl_truncate_kw = @{ ^"TRUNCATE" ~ !(LETTER | NUMBER | "_") }
+ddl_show_kw = @{ ^"SHOW" ~ !(LETTER | NUMBER | "_") }
+ddl_schema_kw = @{ ^"SCHEMA" ~ !(LETTER | NUMBER | "_") }
+ddl_node_kw = @{ ^"NODE" ~ !(LETTER | NUMBER | "_") }
+ddl_edge_kw = @{ ^"EDGE" ~ !(LETTER | NUMBER | "_") }
+ddl_type_kw = @{ ^"TYPE" ~ !(LETTER | NUMBER | "_") }
+ddl_types_kw = @{ ^"TYPES" ~ !(LETTER | NUMBER | "_") }
+ddl_graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
+ddl_index_kw = @{ ^"INDEX" ~ !(LETTER | NUMBER | "_") }
+ddl_indexes_kw = @{ ^"INDEXES" ~ !(LETTER | NUMBER | "_") }
+ddl_procedures_kw = @{ ^"PROCEDURES" ~ !(LETTER | NUMBER | "_") }
+ddl_extends_kw = @{ ^"EXTENDS" ~ !(LETTER | NUMBER | "_") }
+ddl_strict_kw = @{ ^"STRICT" ~ !(LETTER | NUMBER | "_") }
+ddl_warn_kw = @{ ^"WARN" ~ !(LETTER | NUMBER | "_") }
+ddl_or_kw = @{ ^"OR" ~ !(LETTER | NUMBER | "_") }
+ddl_replace_kw = @{ ^"REPLACE" ~ !(LETTER | NUMBER | "_") }
+ddl_restrict_kw = @{ ^"RESTRICT" ~ !(LETTER | NUMBER | "_") }
+ddl_cascade_kw = @{ ^"CASCADE" ~ !(LETTER | NUMBER | "_") }
+ddl_default_kw = @{ ^"DEFAULT" ~ !(LETTER | NUMBER | "_") }
+ddl_immutable_kw = @{ ^"IMMUTABLE" ~ !(LETTER | NUMBER | "_") }
+ddl_unique_kw = @{ ^"UNIQUE" ~ !(LETTER | NUMBER | "_") }
+ddl_indexed_kw = @{ ^"INDEXED" ~ !(LETTER | NUMBER | "_") }
+ddl_to_kw = @{ ^"TO" ~ !(LETTER | NUMBER | "_") }
+ddl_any_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
+ddl_like_kw = @{ ^"LIKE" ~ !(LETTER | NUMBER | "_") }
+ddl_copy_kw = @{ ^"COPY" ~ !(LETTER | NUMBER | "_") }
+ddl_of_kw = @{ ^"OF" ~ !(LETTER | NUMBER | "_") }
+ddl_on_kw = @{ ^"ON" ~ !(LETTER | NUMBER | "_") }
 
-chained_query = { query_pipeline ~ (^"NEXT" ~ query_pipeline)+ }
+if_not_exists = { if_kw ~ not_kw ~ exists_kw }
+if_exists     = { if_kw ~ exists_kw }
+if_kw = @{ ^"IF" ~ !(LETTER | NUMBER | "_") }
+exists_kw = @{ ^"EXISTS" ~ !(LETTER | NUMBER | "_") }
+
+chained_query = { query_pipeline ~ (next_kw ~ query_pipeline)+ }
 
 composite_query = { query_pipeline ~ (set_op ~ query_pipeline)+ }
 set_op          = { union_op | intersect_op | except_op | otherwise_op }
-union_op        = { ^"UNION" ~ (^"ALL" | ^"DISTINCT")? }
-intersect_op    = { ^"INTERSECT" ~ (^"ALL" | ^"DISTINCT")? }
-except_op       = { ^"EXCEPT" ~ (^"ALL" | ^"DISTINCT")? }
-otherwise_op    = { ^"OTHERWISE" }
+union_op        = { union_kw ~ (all_kw | distinct_kw)? }
+intersect_op    = { intersect_kw ~ (all_kw | distinct_kw)? }
+except_op       = { except_kw ~ (all_kw | distinct_kw)? }
+otherwise_op    = { otherwise_kw }
+next_kw = @{ ^"NEXT" ~ !(LETTER | NUMBER | "_") }
+union_kw = @{ ^"UNION" ~ !(LETTER | NUMBER | "_") }
+intersect_kw = @{ ^"INTERSECT" ~ !(LETTER | NUMBER | "_") }
+except_kw = @{ ^"EXCEPT" ~ !(LETTER | NUMBER | "_") }
+otherwise_kw = @{ ^"OTHERWISE" ~ !(LETTER | NUMBER | "_") }
 
 // -- Transaction control --------------------------------------------
 
-transaction_control = { start_transaction | commit | rollback }
-start_transaction   = { ^"START" ~ ^"TRANSACTION" }
-commit              = { ^"COMMIT" }
-rollback            = { ^"ROLLBACK" }
+transaction_control = { start_transaction_mixed | start_transaction_on_graph | start_transaction | commit | rollback }
+start_transaction_mixed = { start_kw ~ transaction_kw ~ ddl_statement }
+start_transaction_on_graph = { start_kw ~ transaction_kw ~ on_kw ~ transaction_graph_kw ~ ident }
+start_transaction   = { start_kw ~ transaction_kw }
+commit              = { commit_kw }
+rollback            = { rollback_kw }
+start_kw = @{ ^"START" ~ !(LETTER | NUMBER | "_") }
+transaction_kw = @{ ^"TRANSACTION" ~ !(LETTER | NUMBER | "_") }
+commit_kw = @{ ^"COMMIT" ~ !(LETTER | NUMBER | "_") }
+rollback_kw = @{ ^"ROLLBACK" ~ !(LETTER | NUMBER | "_") }
+transaction_graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
 
 // -- Session control ------------------------------------------------
 //
 // ISO/IEC 39075:2024 section 7 session management. The implemented subset is
-// the D1-meaningful surface: SET VALUE (GS03), SET TIME ZONE (GS15), RESET
-// targets (GS04/GS07/GS08/GS16), and CLOSE (section 7.3, no feature code).
-// The D1-blocked forms (SET GRAPH/SCHEMA/BINDING TABLE = GS01/GS02, RESET
-// SCHEMA/GRAPH = GS05/GS06) are intentionally omitted; they parse-fail
-// cleanly and carry NOT_SUPPORTED_RATIONALE entries.
+// the D1-meaningful surface: SET [PROPERTY] GRAPH to the current graph, SET
+// VALUE (GS03), SET TIME ZONE (GS15), RESET targets (GS04/GS07/GS08/GS16), and
+// CLOSE (section 7.3, no feature code). D1-blocked RESET SCHEMA/GRAPH forms are
+// parsed to structured GS05/GS06 UnsupportedFeature errors. D1-blocked SET
+// graph-parameter, binding-table, and value expression/subquery forms are
+// likewise parsed to structured GS01/GS12, GS02/GS10/GS13, and GS11/GS14
+// rejections. The remaining D1-blocked SET schema forms are intentionally
+// omitted; they parse-fail cleanly and carry NOT_SUPPORTED_RATIONALE entries.
 
 session_command = { session_set | session_reset | session_close }
 
 // section 7.3 <session close command>
-session_close = { ^"SESSION" ~ ^"CLOSE" }
+session_close = { session_kw ~ close_kw }
 
 // section 7.1 <session set command> implemented branches.
-session_set            = { ^"SESSION" ~ ^"SET" ~ (session_set_time_zone | session_set_value) }
-session_set_time_zone  = { ^"TIME" ~ ^"ZONE" ~ string_lit }
-// <session set value parameter clause> ::= VALUE [ IF NOT EXISTS ]
-//   <general parameter reference> <opt typed value initializer>.
-// <session parameter specification> ::= <general parameter reference> = param_ref.
+session_set            = { session_kw ~ set_kw ~ (session_set_binding_table_parameter | session_set_graph_parameter | session_set_graph | session_set_time_zone | session_set_value) }
+session_set_binding_table_parameter = { param_ref ~ binding_kw ~ table_kw ~ (value_subquery_expr | param_ref | ident) }
+session_set_graph_parameter = { param_ref ~ property_kw? ~ graph_kw ~ (session_current_graph | param_ref) }
+session_set_graph      = { property_kw? ~ graph_kw ~ session_current_graph }
+session_current_graph  = { current_property_graph_kw | current_graph_kw }
+session_set_time_zone  = { time_kw ~ zone_kw ~ string_lit }
+// <session set value parameter clause> ::= VALUE <session set parameter name>
+//   <opt typed value initializer>.
+// <session set parameter name> ::= [ IF NOT EXISTS ] <session parameter specification>.
+// <session parameter specification> ::= <general parameter reference>.
+// <opt typed value initializer> ::= [ [ <typed> ] <value type> ] "=" <value expression>.
 //
 // The RHS is restricted to a <value specification> (literal or general value
 // parameter reference) per ISO section 7.1 Conformance Rule: without Feature
 // GS14, the initializer shall conform to <value specification>. selene-db does
 // NOT claim GS14, so simple-expression / subquery RHS forms are rejected.
-session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ "=" ~ session_value_spec }
+session_set_value      = { session_value_kw ~ if_not_exists? ~ param_ref ~ session_value_declared_type? ~ "=" ~ (session_value_subquery_expr | session_value_simple_expr | session_value_spec) }
+session_value_declared_type = { (typed_marker ~ type_name) | type_name }
+session_value_subquery_expr = { &(value_subquery_expr ~ EOI) ~ value_subquery_expr }
+session_value_simple_expr = { !session_value_spec_to_eoi ~ expr }
+session_value_spec_to_eoi = _{ session_value_spec ~ EOI }
 session_value_spec     = { literal | typed_param_ref }
 
 // section 7.2 <session reset command>. Bare SESSION RESET = ALL CHARACTERISTICS
 // (Syntax Rule 2b); bare {PARAMETERS|CHARACTERISTICS} = ALL form (Rule 2a-i).
-session_reset             = { ^"SESSION" ~ ^"RESET" ~ session_reset_args? }
-session_reset_args        = { session_reset_time_zone | session_reset_all | session_reset_parameter }
-session_reset_time_zone   = { ^"TIME" ~ ^"ZONE" }
-session_reset_all         = { ^"ALL"? ~ (^"PARAMETERS" | ^"CHARACTERISTICS") }
-session_reset_parameter   = { ^"PARAMETER"? ~ param_ref }
+session_reset             = { session_kw ~ reset_kw ~ session_reset_args? }
+session_reset_args        = { session_reset_schema | session_reset_graph | session_reset_time_zone | session_reset_all | session_reset_parameter }
+session_reset_schema      = { schema_kw }
+session_reset_graph       = { property_kw? ~ graph_kw }
+session_reset_time_zone   = { time_kw ~ zone_kw }
+session_reset_all         = { all_kw? ~ (parameters_kw | characteristics_kw) }
+session_reset_parameter   = { parameter_kw? ~ param_ref }
+session_kw = @{ ^"SESSION" ~ !(LETTER | NUMBER | "_") }
+close_kw = @{ ^"CLOSE" ~ !(LETTER | NUMBER | "_") }
+reset_kw = @{ ^"RESET" ~ !(LETTER | NUMBER | "_") }
+binding_kw = @{ ^"BINDING" ~ !(LETTER | NUMBER | "_") }
+table_kw = @{ ^"TABLE" ~ !(LETTER | NUMBER | "_") }
+property_kw = @{ ^"PROPERTY" ~ !(LETTER | NUMBER | "_") }
+graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
+current_property_graph_kw = @{ ^"CURRENT_PROPERTY_GRAPH" ~ !(LETTER | NUMBER | "_") }
+current_graph_kw = @{ ^"CURRENT_GRAPH" ~ !(LETTER | NUMBER | "_") }
+time_kw = @{ ^"TIME" ~ !(LETTER | NUMBER | "_") }
+zone_kw = @{ ^"ZONE" ~ !(LETTER | NUMBER | "_") }
+session_value_kw = @{ ^"VALUE" ~ !(LETTER | NUMBER | "_") }
+schema_kw = @{ ^"SCHEMA" ~ !(LETTER | NUMBER | "_") }
+parameters_kw = @{ ^"PARAMETERS" ~ !(LETTER | NUMBER | "_") }
+characteristics_kw = @{ ^"CHARACTERISTICS" ~ !(LETTER | NUMBER | "_") }
+parameter_kw = @{ ^"PARAMETER" ~ !(LETTER | NUMBER | "_") }
 
 // -- SELECT (desugars to MATCH + RETURN at AST level) ------------
 
+select_kw = @{ ^"SELECT" ~ !(LETTER | NUMBER | "_") }
 select_stmt = {
-    ^"SELECT" ~ distinct_kw? ~ (return_star | projection_list)
+    select_kw ~ (distinct_kw | all_kw)? ~ (return_star | projection_list)
     ~ select_from? ~ where_clause?
     ~ group_by_clause? ~ having_clause?
     ~ sorting_stmt? ~ offset_stmt? ~ limit_stmt?
 }
-select_from = { ^"FROM" ~ (match_stmt | ident) }
+select_from = { from_kw ~ (match_stmt | ident) }
 
 // -- Query pipeline -------------------------------------------------
 
 query_pipeline     = { pipeline_statement+ }
 call_query_pipeline = { call_stmt ~ post_call_pipeline_statement ~ pipeline_statement* }
-pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
-post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
+pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
+post_call_pipeline_statement = { match_stmt | let_stmt | for_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 
-for_stmt    = { ^"FOR" ~ ident ~ ^"IN" ~ expr }
-unwind_stmt = { ^"UNWIND" ~ expr ~ ^"AS" ~ ident }
-with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ having_clause? ~ where_clause? }
+let_kw = @{ ^"LET" ~ !(LETTER | NUMBER | "_") }
+for_kw = @{ ^"FOR" ~ !(LETTER | NUMBER | "_") }
+with_kw = @{ ^"WITH" ~ !(LETTER | NUMBER | "_") }
+without_kw = @{ ^"WITHOUT" ~ !(LETTER | NUMBER | "_") }
+
+for_stmt    = { for_kw ~ ident ~ in_kw ~ expr ~ for_position? }
+for_position = { with_kw ~ (for_position_ordinality | for_position_offset) ~ ident }
+for_position_ordinality = @{ ^"ORDINALITY" ~ !(LETTER | NUMBER | "_") }
+for_position_offset = @{ ^"OFFSET" ~ !(LETTER | NUMBER | "_") }
+with_stmt   = { with_kw ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ having_clause? ~ where_clause? }
 
 // -- MATCH ----------------------------------------------------------
 
-match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ graph_pattern_list ~ where_clause? }
+match_stmt        = { optional_modifier? ~ match_kw ~ path_selector? ~ match_mode? ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ graph_pattern_list ~ where_clause? }
+match_kw          = @{ ^"MATCH" ~ !(LETTER | NUMBER | "_") }
 // ISO/IEC 39075:2024 §16.4 <match mode>. Verbatim BNF:
 //   <match mode> ::= <repeatable elements match mode> | <different edges match mode>
 //   <repeatable elements match mode> ::= REPEATABLE <element bindings or elements>
@@ -252,21 +354,24 @@ match_mode_bindings = @{ ^"BINDINGS" ~ !(LETTER | NUMBER | "_") }
 // tokenize as two adjacent tokens (pest's `~` separator is zero-or-more
 // whitespace). Mirrors the match-mode keyword treatment.
 path_selector     = {
-    any_kw ~ shortest_kw?
+    any_kw ~ (shortest_kw | any_path_count)?
   | all_kw ~ shortest_kw?
   | shortest_kw ~ counted_shortest_tail
 }
 any_kw      = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
 all_kw      = @{ ^"ALL" ~ !(LETTER | NUMBER | "_") }
 shortest_kw = @{ ^"SHORTEST" ~ !(LETTER | NUMBER | "_") }
-// ISO §16.6: counted shortest path (G019) = SHORTEST <n> [<path or paths>] ;
-// counted shortest group (G020) = SHORTEST [<n>] [<path or paths>] {GROUP|GROUPS}.
-// The optional <path or paths> (Feature G014) is parsed HERE, in its ISO position:
-// for the counted-PATH form it trails the count; for the counted-GROUP form it sits
-// BEFORE the GROUP/GROUPS discriminator (so `SHORTEST 2 PATHS GROUPS` — not
-// `... GROUPS PATHS` — is the conforming spelling). The non-counted forms
-// (ALL / ANY [SHORTEST], <path mode prefix>) instead use the separate trailing
-// `path_or_paths?` slot in match_stmt, where <path or paths> is the final token.
+any_path_count = { uint }
+// ISO §16.6: counted shortest path (G019) =
+//   SHORTEST <n> [<path mode>] [<path or paths>]
+// counted shortest group (G020) =
+//   SHORTEST [<n>] [<path mode>] [<path or paths>] {GROUP|GROUPS}.
+// The optional <path mode> and <path or paths> are parsed HERE, in their ISO
+// position for counted forms: before the GROUP/GROUPS discriminator. This makes
+// `SHORTEST 2 TRAIL PATHS GROUPS` conforming and leaves `... GROUPS TRAIL` /
+// `... GROUPS PATHS` to be rejected by the builder as wrong-order flattened
+// residue. Non-counted forms (ALL / ANY [SHORTEST], <path mode prefix>) use the
+// separate trailing `path_modifier? ~ path_or_paths?` slots in match_stmt.
 // The `!("=")` guard releases a path variable literally named `path`/`paths`
 // (path_var_binding = ident ~ "=") rather than stealing it. build_match_clause sets
 // MatchClause.path_or_paths from whichever site matched.
@@ -278,11 +383,12 @@ shortest_kw = @{ ^"SHORTEST" ~ !(LETTER | NUMBER | "_") }
 // §22.4 GR7 (dynamic non-positive count -> 22G0F at runtime) is not applicable;
 // add a parameter alternative here if a future brief claims the dynamic form.
 counted_shortest_tail = {
-    uint ~ (path_or_paths ~ !("="))? ~ counted_group_kw?   // SHORTEST n [PATHS] [GROUP[S]]
-  | (path_or_paths ~ !("="))? ~ counted_group_kw           // SHORTEST [PATHS] GROUP[S], n=1
+    uint ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ counted_group_kw?
+  | path_modifier? ~ (path_or_paths ~ !("="))? ~ counted_group_kw
 }
 counted_group_kw = { (^"GROUPS" | ^"GROUP") ~ !(LETTER | NUMBER | "_") }
-optional_modifier = { ^"OPTIONAL" }
+optional_modifier = { optional_kw }
+optional_kw = @{ ^"OPTIONAL" ~ !(LETTER | NUMBER | "_") }
 // Atomic + trailing word boundary so "WALKPATHS" cannot tokenize as WALK + PATHS
 // (and likewise the mode keyword cannot run into a following identifier).
 path_modifier     = @{ (^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL") ~ !(LETTER | NUMBER | "_") }
@@ -319,14 +425,9 @@ path_modifier     = @{ (^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL") ~ !(LETTER 
 // `!(LETTER | NUMBER | "_")` (mirroring counted_group_kw / match_mode), so
 // "PATHS" can never parse as "PATH" + a dangling "S".
 //
-// Deliberate no-keyword-growth decision: PATH / PATHS are NOT added to the
-// global `keyword` rule. They are recognised purely contextually in this
-// trailing match-prefix position, so they remain usable as ordinary
-// identifiers (e.g. `RETURN n.path`, `MATCH (path) RETURN path`). This is a
-// DIFFERENT grammar position than the `PATH` value-type keyword in `type_name`
-// (:629), so there is no conflict. PATH was not previously reserved; keeping it
-// contextual preserves identifier usability and the parser-DoS
-// no-new-reserved-word posture, following the §16.4 / IMPLIES (813) precedent.
+// PATH / PATHS are ISO reserved words (§21.3), so they are also excluded from
+// bare identifier slots by the global `keyword` rule. Quoted identifiers still
+// work where a user needs a variable or alias literally named "path".
 path_or_paths     = @{ (^"PATHS" | ^"PATH") ~ !(LETTER | NUMBER | "_") }
 graph_pattern_list = { graph_pattern ~ ("," ~ graph_pattern)* }
 
@@ -382,71 +483,110 @@ property_pair = { prop_ident ~ ":" ~ expr }
 
 // -- WHERE clause ---------------------------------------------------
 
-where_clause = { ^"WHERE" ~ expr }
-inline_where = { ^"WHERE" ~ expr }
+where_kw = @{ ^"WHERE" ~ !(LETTER | NUMBER | "_") }
+where_clause = { where_kw ~ expr }
+inline_where = { where_kw ~ expr }
 
 // -- LET ------------------------------------------------------------
 
-let_stmt    = { ^"LET" ~ let_binding ~ ("," ~ let_binding)* }
-let_binding = { ident ~ "=" ~ expr }
+let_stmt    = { let_kw ~ let_binding ~ ("," ~ let_binding)* }
+let_binding = { let_value_binding | let_shorthand_binding }
+// ISO/IEC 39075:2024 §14.7:
+// <let variable definition> ::= <value variable definition>
+//   | <binding variable> "=" <value expression>
+// <value variable definition> ::= VALUE <binding variable> <opt typed value initializer>.
+let_value_binding = { value_type_kw ~ ident ~ let_value_declared_type? ~ "=" ~ expr }
+let_value_declared_type = { (typed_marker ~ type_name) | type_name }
+let_shorthand_binding = { ident ~ "=" ~ expr }
 
 // -- FILTER ---------------------------------------------------------
 
-filter_stmt = { ^"FILTER" ~ ^"WHERE"? ~ expr }
+filter_kw = @{ ^"FILTER" ~ !(LETTER | NUMBER | "_") }
+filter_stmt = { filter_kw ~ where_kw? ~ expr }
 
 // -- ORDER BY -------------------------------------------------------
 
-sorting_stmt = { ^"ORDER" ~ ^"BY" ~ order_term ~ ("," ~ order_term)* }
+order_kw = @{ ^"ORDER" ~ !(LETTER | NUMBER | "_") }
+by_kw = @{ ^"BY" ~ !(LETTER | NUMBER | "_") }
+sorting_stmt = { order_kw ~ by_kw ~ order_term ~ ("," ~ order_term)* }
 order_term    = { expr ~ sort_dir? ~ nulls_order? }
-sort_dir      = { ^"ASC" | ^"DESC" }
-nulls_order   = { ^"NULLS" ~ (^"FIRST" | ^"LAST") }
+sort_dir      = { asc_kw | desc_kw }
+asc_kw = @{ ^"ASC" ~ !(LETTER | NUMBER | "_") }
+desc_kw = @{ ^"DESC" ~ !(LETTER | NUMBER | "_") }
+nulls_order   = { nulls_kw ~ (first_kw | last_kw) }
+nulls_kw = @{ ^"NULLS" ~ !(LETTER | NUMBER | "_") }
+first_kw = @{ ^"FIRST" ~ !(LETTER | NUMBER | "_") }
+last_kw = @{ ^"LAST" ~ !(LETTER | NUMBER | "_") }
 
 // -- OFFSET / LIMIT -------------------------------------------------
 
-offset_stmt   = { (^"OFFSET" | ^"SKIP") ~ limit_value }
-limit_stmt    = { ^"LIMIT" ~ limit_value }
+offset_kw = @{ ^"OFFSET" ~ !(LETTER | NUMBER | "_") }
+skip_kw = @{ ^"SKIP" ~ !(LETTER | NUMBER | "_") }
+limit_kw = @{ ^"LIMIT" ~ !(LETTER | NUMBER | "_") }
+offset_stmt   = { (offset_kw | skip_kw) ~ limit_value }
+limit_stmt    = { limit_kw ~ limit_value }
 limit_value   = { typed_param_ref | uint }
 
 // -- RETURN ---------------------------------------------------------
 
-return_stmt = { ^"RETURN" ~ (no_bindings | distinct_kw? ~ (return_star | projection_list) ~ group_by_clause? ~ having_clause?) }
-no_bindings = { ^"NO" ~ ^"BINDINGS" }
+return_kw = @{ ^"RETURN" ~ !(LETTER | NUMBER | "_") }
+return_stmt = {
+    return_kw ~ (
+        no_bindings
+      | (distinct_kw | all_kw)? ~ (return_star | projection_list) ~ group_by_clause? ~ having_clause?
+    )
+}
+no_kw = @{ ^"NO" ~ !(LETTER | NUMBER | "_") }
+bindings_kw = @{ ^"BINDINGS" ~ !(LETTER | NUMBER | "_") }
+no_bindings = { no_kw ~ bindings_kw }
 return_star = { "*" }
-having_clause = { ^"HAVING" ~ expr }
+having_kw = @{ ^"HAVING" ~ !(LETTER | NUMBER | "_") }
+having_clause = { having_kw ~ expr }
 // Note: ORDER BY, OFFSET, LIMIT after RETURN are parsed as separate pipeline
 // statements. The GQL spec distinguishes RETURN-level ORDER BY from pipeline
 // ORDER BY for visibility semantics - but syntactically they're the same and
 // the planner handles the distinction based on position relative to RETURN.
-distinct_kw = { ^"DISTINCT" }
+distinct_kw = @{ ^"DISTINCT" ~ !(LETTER | NUMBER | "_") }
 
 projection_list = { projection ~ ("," ~ projection)* }
 projection      = { expr ~ alias? }
-alias           = { ^"AS" ~ prop_ident }
+as_kw = @{ ^"AS" ~ !(LETTER | NUMBER | "_") }
+alias           = { as_kw ~ ident }
 
-group_by_clause = { group_by_kw ~ group_by_item ~ ("," ~ group_by_item)* }
-group_by_kw     = { ^"GROUP" ~ ^"BY" }
-group_by_item   = { expr }
+group_by_clause    = {
+    group_by_kw ~ (empty_grouping_set | group_by_item ~ ("," ~ group_by_item)*)
+}
+group_kw = @{ ^"GROUP" ~ !(LETTER | NUMBER | "_") }
+group_by_kw        = { group_kw ~ by_kw }
+empty_grouping_set = { "(" ~ ")" }
+group_by_item      = { expr }
 
 // return_order_by, return_offset, return_limit removed - parsed as separate
 // pipeline statements after RETURN. Planner handles positional semantics.
 
 // -- CALL -----------------------------------------------------------
 
-call_stmt      = { ^"CALL" ~ (call_subquery | call_procedure) }
-call_subquery  = { variable_scope_clause? ~ "{" ~ query_pipeline ~ "}" ~ yield_clause? ~ call_transactions_clause? }
+call_stmt      = { optional_modifier? ~ call_kw ~ (call_subquery | call_procedure) }
+call_kw = @{ ^"CALL" ~ !(LETTER | NUMBER | "_") }
+call_subquery  = { variable_scope_clause? ~ "{" ~ query_pipeline ~ "}" ~ yield_clause? }
 variable_scope_clause = { "(" ~ (ident ~ ("," ~ ident)*)? ~ ")" }
-call_transactions_clause = { ^"IN" ~ ^"TRANSACTIONS" }
-call_procedure = { qualified_name ~ "(" ~ arg_list? ~ ")" ~ (yield_clause ~ yield_filter?)? }
+call_procedure = { qualified_name ~ "(" ~ procedure_arg_list? ~ ")" ~ yield_clause? }
 qualified_name = { ident ~ ("." ~ prop_ident)* }
+procedure_arg_list = { procedure_arg ~ ("," ~ procedure_arg)* }
+procedure_arg = _{ procedure_binding_table_arg | procedure_graph_arg | expr }
+procedure_binding_table_arg = { binding_table_type_table_kw ~ ident }
+procedure_graph_arg = { procedure_graph_kw ~ ident }
+procedure_graph_kw = @{ ^"GRAPH" ~ !(LETTER | NUMBER | "_") }
 arg_list       = { expr ~ ("," ~ expr)* }
-yield_clause   = { ^"YIELD" ~ yield_item ~ ("," ~ yield_item)* }
+yield_clause   = { yield_kw ~ yield_item ~ ("," ~ yield_item)* }
+yield_kw = @{ ^"YIELD" ~ !(LETTER | NUMBER | "_") }
 yield_item     = { ("*" | prop_ident) ~ alias? }
-yield_filter   = { ^"WHERE" ~ expr }
 
 // -- Mutations ------------------------------------------------------
 
 mutation_pipeline = { (match_stmt | filter_stmt)* ~ mutation_op+ ~ (return_stmt | finish_stmt)? }
-finish_stmt       = { ^"FINISH" }
+finish_stmt       = { finish_kw }
+finish_kw         = @{ ^"FINISH" ~ !(LETTER | NUMBER | "_") }
 mutation_op       = { insert_op | merge_op | set_stmt | remove_stmt | detach_delete_op | delete_op }
 
 // MERGE accepts ON CREATE and ON MATCH in either order, with at most one
@@ -454,14 +594,18 @@ mutation_op       = { insert_op | merge_op | set_stmt | remove_stmt | detach_del
 // (e.g. `ON CREATE ... ON CREATE ...`) that a naive
 // `(a | b)? ~ (a | b)?` would let through. Builder routes each clause
 // by rule name.
-merge_op = { ^"MERGE" ~ node_pattern ~ ((on_create_clause ~ on_match_clause?) | (on_match_clause ~ on_create_clause?))? }
-on_create_clause = { ^"ON" ~ ^"CREATE" ~ ^"SET" ~ set_pair ~ ("," ~ set_pair)* }
-on_match_clause  = { ^"ON" ~ ^"MATCH" ~ ^"SET" ~ set_pair ~ ("," ~ set_pair)* }
+merge_op = { merge_kw ~ node_pattern ~ ((on_create_clause ~ on_match_clause?) | (on_match_clause ~ on_create_clause?))? }
+merge_kw = @{ ^"MERGE" ~ !(LETTER | NUMBER | "_") }
+on_create_clause = { on_kw ~ create_kw ~ set_kw ~ set_pair ~ ("," ~ set_pair)* }
+on_match_clause  = { on_kw ~ match_kw ~ set_kw ~ set_pair ~ ("," ~ set_pair)* }
+on_kw = @{ ^"ON" ~ !(LETTER | NUMBER | "_") }
+create_kw = @{ ^"CREATE" ~ !(LETTER | NUMBER | "_") }
 set_pair         = { ident ~ "." ~ prop_ident ~ "=" ~ expr }
 
 // INSERT: path-based form per spec section13.2
 // Example: INSERT (a:P {name: 'Alice'})-[:K]->(b:P {name: 'Bob'})
-insert_op = { ^"INSERT" ~ insert_graph_pattern }
+insert_op = { insert_kw ~ insert_graph_pattern }
+insert_kw = @{ ^"INSERT" ~ !(LETTER | NUMBER | "_") }
 insert_graph_pattern = { insert_path_pattern ~ ("," ~ insert_path_pattern)* }
 insert_path_pattern = { insert_node_pattern ~ (insert_edge_pattern ~ insert_node_pattern)* }
 insert_node_pattern = { "(" ~ ident? ~ insert_label_set? ~ property_map? ~ ")" }
@@ -472,22 +616,26 @@ insert_edge_right = { "-" ~ "[" ~ edge_var? ~ label_expr? ~ property_map? ~ "]" 
 insert_edge_left  = { "<-" ~ "[" ~ edge_var? ~ label_expr? ~ property_map? ~ "]" ~ "-" }
 
 // Multi-item SET (spec section13.3): SET a.x = 1, b.y = 2, n = {x: 1}, n IS Label
-set_stmt = { ^"SET" ~ set_item ~ ("," ~ set_item)* }
+set_stmt = { set_kw ~ set_item ~ ("," ~ set_item)* }
+set_kw = @{ ^"SET" ~ !(LETTER | NUMBER | "_") }
 set_item = { set_property_item | set_all_properties_item | set_label_item }
 set_property_item = { ident ~ "." ~ prop_ident ~ "=" ~ expr }
 set_all_properties_item = { ident ~ "=" ~ property_map }
-set_label_item = { ident ~ (^"IS" | ":") ~ ident }
+set_label_item = { ident ~ (is_kw | ":") ~ ident }
 
 // Multi-item REMOVE (spec section13.4): REMOVE a.x, b.y, n IS Label
-remove_stmt = { ^"REMOVE" ~ remove_item ~ ("," ~ remove_item)* }
+remove_stmt = { remove_kw ~ remove_item ~ ("," ~ remove_item)* }
+remove_kw = @{ ^"REMOVE" ~ !(LETTER | NUMBER | "_") }
 remove_item = { remove_property_item | remove_label_item }
 remove_property_item = { ident ~ "." ~ prop_ident }
-remove_label_item = { ident ~ (^"IS" | ":") ~ ident }
+remove_label_item = { ident ~ (is_kw | ":") ~ ident }
 
 // Multi-target DELETE (spec section13.5): DELETE a, b or DETACH DELETE a, b
-detach_delete_op = { ^"DETACH" ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
-delete_op   = { nodetach_kw? ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
-nodetach_kw = { ^"NODETACH" }
+detach_delete_op = { detach_kw ~ delete_kw ~ ident ~ ("," ~ ident)* }
+detach_kw = @{ ^"DETACH" ~ !(LETTER | NUMBER | "_") }
+delete_op   = { nodetach_kw? ~ delete_kw ~ ident ~ ("," ~ ident)* }
+delete_kw = @{ ^"DELETE" ~ !(LETTER | NUMBER | "_") }
+nodetach_kw = @{ ^"NODETACH" ~ !(LETTER | NUMBER | "_") }
 
 // -------------------------------------------------------------------
 // Expressions (precedence via recursive descent)
@@ -541,11 +689,18 @@ labeled_kw        = @{ ^"LABELED" ~ !(LETTER | NUMBER | "_") }
 directed_kw       = @{ ^"DIRECTED" ~ !(LETTER | NUMBER | "_") }
 normalized_kw     = @{ ^"NORMALIZED" ~ !(LETTER | NUMBER | "_") }
 typed_kw          = @{ ^"TYPED" ~ !(LETTER | NUMBER | "_") }
-source_of_kw      = ${ ^"SOURCE" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
-destination_of_kw = ${ ^"DESTINATION" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
-truth_value = { ^"TRUE" | ^"FALSE" | ^"UNKNOWN" }
-normal_form = { ^"NFC" | ^"NFD" | ^"NFKC" | ^"NFKD" }
-string_match_op = { ^"STARTS" ~ ^"WITH" | ^"ENDS" ~ ^"WITH" | ^"CONTAINS" }
+typed_marker      = @{ "::" | ^"TYPED" ~ !(LETTER | NUMBER | "_") }
+source_of_kw      = { source_kw ~ of_kw }
+destination_of_kw = { destination_kw ~ of_kw }
+source_kw         = @{ ^"SOURCE" ~ !(LETTER | NUMBER | "_") }
+destination_kw    = @{ ^"DESTINATION" ~ !(LETTER | NUMBER | "_") }
+of_kw             = @{ ^"OF" ~ !(LETTER | NUMBER | "_") }
+truth_value = @{ (^"TRUE" | ^"FALSE" | ^"UNKNOWN") ~ !(LETTER | NUMBER | "_") }
+normal_form = @{ (^"NFC" | ^"NFD" | ^"NFKC" | ^"NFKD") ~ !(LETTER | NUMBER | "_") }
+string_match_op = { starts_kw ~ with_kw | ends_kw ~ with_kw | contains_kw }
+starts_kw = @{ ^"STARTS" ~ !(LETTER | NUMBER | "_") }
+ends_kw = @{ ^"ENDS" ~ !(LETTER | NUMBER | "_") }
+contains_kw = @{ ^"CONTAINS" ~ !(LETTER | NUMBER | "_") }
 
 comparison = { concat ~ (comp_op ~ concat)? }
 comp_op    = { "<>" | "<=" | ">=" | "<" | ">" | "=" }
@@ -563,17 +718,14 @@ unary    = { sign_op ~ unary | postfix }
 sign_op  = { "+" | "-" }
 
 postfix = { primary ~ postfix_op* }
-postfix_op = { prop_access | list_access_op }
+postfix_op = { prop_access }
 prop_access    = { "." ~ prop_ident }
-list_access_op = { "[" ~ expr ~ "]" }
 
 // -- Primary expressions (no left-recursion) ------------------------
 
 primary = {
     value_subquery_expr
-  | count_subquery_expr
   | exists_expr
-  | list_iter_expr
   | all_different_expr
   | same_expr
   | property_exists_expr
@@ -586,39 +738,30 @@ primary = {
   | trim_expr
   | elements_function
   | aggregate_expr
-  | literal
   | current_datetime_function
   | duration_between_expr
+  | duration_lit
+  | scalar_keyword_function_call
   | function_call
+  | literal
   | paren_expr
   | typed_param_ref
   | var_ref
 }
 
-// -- List iteration expressions (spec section20.10-11) -------------------
-// List comprehension:  [ x IN list WHERE pred | projection ]
-// Quantifier predicates: any|all|none|single ( x IN list WHERE pred )
-// Reduce:               reduce ( acc = init, x IN list | step )
-//
-// PEG ordering: tried before `function_call` so `any(x IN list WHERE p)`
-// avoids greedy matching as a user function. A plain call like `any(x)`
-// (no `IN`) fails the rule and backtracks to `function_call`. Likewise,
-// a list literal `[1, 2, 3]` fails at the missing `IN` after the first
-// element and backtracks to `list_lit`. Iteration-variable names are
-// not reserved keywords - only the rule head tokens (ANY/ALL/NONE/SINGLE
-// as list_quant_op; REDUCE as list_reduce) are matched by the rule.
-list_iter_expr     = { list_comprehension | list_quant | list_reduce }
-// Note: use `in_kw` (atomic, word-bounded) not bare ^"IN". Non-atomic `~`
-// skips whitespace BEFORE checking the boundary, so `^"IN" ~ !(LETTER|...)`
-// fails on legitimate expressions like `IN null` or `IN my_var`.
-list_comprehension = { "[" ~ ident ~ in_kw ~ expr ~ list_iter_where? ~ "|" ~ expr ~ "]" }
-list_quant         = { list_quant_op ~ "(" ~ ident ~ in_kw ~ expr ~ list_iter_where ~ ")" }
-list_quant_op      = { ^"ALL" | ^"ANY" | ^"NONE" | ^"SINGLE" }
-list_reduce        = { ^"REDUCE" ~ "(" ~ ident ~ "=" ~ expr ~ "," ~ ident ~ in_kw ~ expr ~ "|" ~ expr ~ ")" }
-list_iter_where    = { ^"WHERE" ~ expr }
-
-count_subquery_expr  = { ^"COUNT" ~ "{" ~ match_stmt ~ "}" }
-exists_expr          = { not_kw? ~ ^"EXISTS" ~ "{" ~ match_stmt ~ "}" }
+// ISO/IEC 39075:2024 §19.4 <exists predicate> admits either a direct
+// <graph pattern> or a <match statement block>, delimited by braces or
+// parentheses. selene keeps the single-MATCH fast path for match-only bodies
+// and accepts MATCH plus non-MATCH pipeline tail statements (for example
+// RETURN); direct graph patterns are lowered by the builder to an equivalent
+// MATCH clause.
+exists_expr          = { not_kw? ~ ^"EXISTS" ~ exists_body }
+exists_body          = {
+    "{" ~ (exists_match_body | graph_pattern_list) ~ "}"
+  | "(" ~ (exists_match_body | graph_pattern_list) ~ ")"
+}
+exists_match_body    = { match_stmt ~ exists_query_tail* }
+exists_query_tail    = { let_stmt | for_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 value_subquery_expr  = { ^"VALUE" ~ "{" ~ query_pipeline ~ "}" }
 all_different_expr   = { ^"ALL_DIFFERENT" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
 same_expr            = { ^"SAME" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
@@ -627,26 +770,48 @@ property_exists_expr = { ^"PROPERTY_EXISTS" ~ "(" ~ expr ~ "," ~ string_lit ~ ")
 param_ref = @{ "$" ~ (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
 typed_param_ref = { param_ref ~ ("::" ~ type_name)? }
 
-// Simple CASE: CASE expr WHEN val THEN result ... END
+// Simple CASE: CASE expr WHEN val [, val ...] THEN result ... END
 // Searched CASE: CASE WHEN condition THEN result ... END
 // PEG: try simple_case first (CASE expr WHEN), falls back to searched_case (CASE WHEN)
 case_expr    = { simple_case | searched_case }
 case_kw      = @{ ^"CASE" ~ !(LETTER | NUMBER | "_") }
-simple_case  = { case_kw ~ expr ~ simple_when+ ~ else_clause? ~ ^"END" }
-simple_when  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
-searched_case = { case_kw ~ when_clause+ ~ else_clause? ~ ^"END" }
-when_clause  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
-else_clause  = { ^"ELSE" ~ expr }
+simple_case  = { case_kw ~ expr ~ simple_when+ ~ else_clause? ~ end_kw }
+simple_when  = { when_kw ~ expr ~ ("," ~ expr)* ~ then_kw ~ expr }
+searched_case = { case_kw ~ when_clause+ ~ else_clause? ~ end_kw }
+when_clause  = { when_kw ~ expr ~ then_kw ~ expr }
+else_clause  = { else_kw ~ expr }
+when_kw = @{ ^"WHEN" ~ !(LETTER | NUMBER | "_") }
+then_kw = @{ ^"THEN" ~ !(LETTER | NUMBER | "_") }
+else_kw = @{ ^"ELSE" ~ !(LETTER | NUMBER | "_") }
+end_kw = @{ ^"END" ~ !(LETTER | NUMBER | "_") }
 
-cast_expr     = { ^"CAST" ~ "(" ~ expr ~ ^"AS" ~ type_name ~ ")" }
+cast_kw = @{ ^"CAST" ~ !(LETTER | NUMBER | "_") }
+cast_expr     = { cast_kw ~ "(" ~ expr ~ as_kw ~ type_name ~ ")" }
 labels_expr   = { ^"LABELS" ~ "(" ~ expr ~ ")" }
 path_constructor = { ^"PATH" ~ "[" ~ expr ~ ("," ~ expr ~ "," ~ expr)* ~ "]" }
 
 normalize_expr = { ^"NORMALIZE" ~ "(" ~ expr ~ ("," ~ normal_form)? ~ ")" }
 
-// TRIM (spec section20.24): TRIM([LEADING|TRAILING|BOTH] [char] FROM source)
-trim_expr = { ^"TRIM" ~ "(" ~ trim_spec? ~ trim_char? ~ ^"FROM" ~ expr ~ ")" }
-trim_spec = { ^"LEADING" | ^"TRAILING" | ^"BOTH" }
+// TRIM (ISO/IEC 39075:2024 §20.24): TRIM([ [spec] [char] FROM ] source)
+// plus the list trim form from §20.16. The operand grammar is deliberately
+// factored by the first token after `TRIM(` instead of using
+// `trim_spec? ~ trim_char? ~ FROM`: the optional cascade made malformed nested
+// TRIM false-starts reparse the same expression multiple times. `TRIM` is a
+// reserved keyword here (see `keyword`), so the source-only/list-count forms are
+// lowered explicitly by the builder instead of falling through to
+// `function_call`.
+trim_expr = { trim_kw ~ "(" ~ (trim_spec_operands | trim_value_operands) ~ ")" }
+trim_spec_operands = { trim_spec ~ (trim_char ~ from_kw ~ expr | from_kw ~ expr) }
+trim_value_operands = { expr ~ trim_value_tail? }
+trim_value_tail = { trim_list_tail | trim_from_tail }
+trim_list_tail = { "," ~ expr }
+trim_from_tail = { from_kw ~ expr }
+trim_kw = @{ ^"TRIM" ~ !(LETTER | NUMBER | "_") }
+from_kw = @{ ^"FROM" ~ !(LETTER | NUMBER | "_") }
+trim_spec = { leading_kw | trailing_kw | both_kw }
+leading_kw = @{ ^"LEADING" ~ !(LETTER | NUMBER | "_") }
+trailing_kw = @{ ^"TRAILING" ~ !(LETTER | NUMBER | "_") }
+both_kw = @{ ^"BOTH" ~ !(LETTER | NUMBER | "_") }
 trim_char = { expr }
 
 // Record constructor (spec section20.18): RECORD {name: expr, ...}
@@ -654,9 +819,9 @@ trim_char = { expr }
 record_constructor = { ^"RECORD"? ~ "{" ~ record_field ~ ("," ~ record_field)* ~ "}" }
 record_field = { prop_ident ~ ":" ~ expr }
 
-// Record TYPE field (spec section18.10 <field type>): `name :: <value type>`.
+// Record TYPE field (spec section18.10 <field type>): `name [ <typed> ] <value type>`.
 // Distinct from `record_field` above (the value form, which binds with a single `:`).
-record_field_type = { prop_ident ~ "::" ~ type_name }
+record_field_type = { prop_ident ~ ((typed_marker ~ type_name) | type_name) }
 
 // Aggregates with optional set quantifier (spec section20.9)
 aggregate_expr         = { binary_aggregate_expr | general_aggregate_expr }
@@ -668,8 +833,8 @@ binary_aggregate_op = { ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC" }
 star            = { "*" }
 
 // ISO/IEC 39075:2024 section 20.27 current-datetime value functions.
-// The `!("(")` guards keep existing ordinary niladic function calls such as
-// `current_date()` on the function_call path while admitting keyword syntax.
+// The `!("(")` guards keep the niladic keyword forms from accepting
+// non-standard parenthesized spellings such as `CURRENT_DATE()`.
 current_datetime_function = {
     current_date_function
   | current_time_function
@@ -696,11 +861,41 @@ duration_between_expr = {
     duration_between_kw ~ "(" ~ expr ~ "," ~ expr ~ ")" ~ temporal_duration_qualifier?
 }
 temporal_duration_qualifier = { year_to_month_qualifier | day_to_second_qualifier }
-year_to_month_qualifier = { ^"YEAR" ~ ^"TO" ~ ^"MONTH" }
-day_to_second_qualifier = { ^"DAY" ~ ^"TO" ~ ^"SECOND" }
+year_to_month_qualifier = { year_kw ~ to_kw ~ month_kw }
+day_to_second_qualifier = { day_kw ~ to_kw ~ second_kw }
+year_kw = @{ ^"YEAR" ~ !(LETTER | NUMBER | "_") }
+to_kw = @{ ^"TO" ~ !(LETTER | NUMBER | "_") }
+month_kw = @{ ^"MONTH" ~ !(LETTER | NUMBER | "_") }
+day_kw = @{ ^"DAY" ~ !(LETTER | NUMBER | "_") }
+second_kw = @{ ^"SECOND" ~ !(LETTER | NUMBER | "_") }
 duration_between_kw = @{ ^"DURATION_BETWEEN" ~ !(LETTER | NUMBER | "_") }
 
-function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }
+// ISO scalar function heads are reserved words, so they cannot travel through
+// `qualified_name` once the identifier guard is spec-aligned. Keep the ordinary
+// AST shape by lowering these keyword calls to `FunctionCall`.
+scalar_keyword_function_call = { scalar_keyword_function_name ~ "(" ~ arg_list? ~ ")" }
+scalar_keyword_function_name = @{
+    ^"CHARACTER_LENGTH" | ^"CHAR_LENGTH"
+  | ^"BYTE_LENGTH" | ^"OCTET_LENGTH"
+  | ^"PATH_LENGTH" | ^"CARDINALITY" | ^"SIZE"
+  | ^"ELEMENT_ID"
+  | ^"ABS" | ^"MOD"
+  | ^"SINH" | ^"COSH" | ^"TANH"
+  | ^"SIN" | ^"COS" | ^"TAN" | ^"COT"
+  | ^"ASIN" | ^"ACOS" | ^"ATAN"
+  | ^"DEGREES" | ^"RADIANS"
+  | ^"LOG10" | ^"LOG" | ^"LN" | ^"EXP"
+  | ^"POWER" | ^"SQRT" | ^"FLOOR" | ^"CEILING" | ^"CEIL"
+  | ^"LEFT" | ^"RIGHT" | ^"UPPER" | ^"LOWER"
+  | ^"BTRIM" | ^"LTRIM" | ^"RTRIM"
+  | ^"COALESCE" | ^"NULLIF"
+  | ^"LOCAL_DATETIME" | ^"LOCAL_TIME"
+  | ^"ZONED_DATETIME" | ^"ZONED_TIME"
+  | ^"DATETIME" | ^"DATE" | ^"TIME"
+  | ^"DURATION"
+}
+
+function_call     = { qualified_name ~ "(" ~ arg_list? ~ ")" }
 elements_function = { elements_synonym ~ "(" ~ arg_list? ~ ")" }
 paren_expr      = { "(" ~ expr ~ ")" }
 var_ref         = { ident }
@@ -708,79 +903,190 @@ var_ref         = { ident }
 // -- Type names (for CAST) ------------------------------------------
 // PEG ordering: longer alternatives BEFORE shorter to prevent prefix matching.
 
-type_name = { type_name_base ~ type_not_null? }
-type_not_null = { ^"NOT" ~ ^"NULL" }
+type_name = { prefixed_closed_dynamic_union_type | infix_type_name }
+infix_type_name = { type_name_primary ~ ("|" ~ type_name_primary)* }
+type_name_primary = { type_name_base ~ postfix_list_suffix* ~ type_not_null? }
+type_not_null = { not_kw ~ null_kw }
 
 type_name_base = {
-    ^"BOOLEAN" | ^"BOOL"
+    boolean_kw | bool_kw
   | signed_integer_precision_type
   | unsigned_integer_precision_type
-  | ^"SIGNED" ~ ^"SMALL" ~ ^"INTEGER"
-  | ^"SIGNED" ~ ^"BIG" ~ ^"INTEGER"
-  | ^"SIGNED" ~ ^"INTEGER256" | ^"SIGNED" ~ ^"INTEGER128"
-  | ^"SIGNED" ~ ^"INTEGER64" | ^"SIGNED" ~ ^"INTEGER32"
-  | ^"SIGNED" ~ ^"INTEGER16" | ^"SIGNED" ~ ^"INTEGER8"
-  | ^"SIGNED" ~ ^"INTEGER"
-  | ^"UNSIGNED" ~ ^"SMALL" ~ ^"INTEGER"
-  | ^"UNSIGNED" ~ ^"BIG" ~ ^"INTEGER"
-  | ^"UNSIGNED" ~ ^"INTEGER256" | ^"UNSIGNED" ~ ^"INTEGER128"
-  | ^"UNSIGNED" ~ ^"INTEGER64" | ^"UNSIGNED" ~ ^"INTEGER32"
-  | ^"UNSIGNED" ~ ^"INTEGER16" | ^"UNSIGNED" ~ ^"INTEGER8"
-  | ^"UNSIGNED" ~ ^"INTEGER"
-  | ^"INT256" | ^"INT128" | ^"INT64" | ^"INT32" | ^"INT16" | ^"INT8"
-  | ^"INTEGER256" | ^"INTEGER128" | ^"INTEGER64" | ^"INTEGER32" | ^"INTEGER16" | ^"INTEGER8"
-  | ^"BIG" ~ ^"INTEGER" | ^"SMALL" ~ ^"INTEGER"
-  | ^"INTEGER" | ^"BIGINT" | ^"SMALLINT" | ^"INT"
-  | ^"UINT256" | ^"UINT128" | ^"UINT64" | ^"UINT32" | ^"UINT16" | ^"UINT8"
-  | ^"USMALLINT" | ^"UBIGINT" | ^"UINT"
-  | ^"DOUBLE" ~ (^"PRECISION")?
+  | signed_kw ~ small_kw ~ integer_kw
+  | signed_kw ~ big_kw ~ integer_kw
+  | signed_kw ~ integer_256_kw | signed_kw ~ integer_128_kw
+  | signed_kw ~ integer_64_kw | signed_kw ~ integer_32_kw
+  | signed_kw ~ integer_16_kw | signed_kw ~ integer_8_kw
+  | signed_kw ~ integer_kw
+  | unsigned_kw ~ small_kw ~ integer_kw
+  | unsigned_kw ~ big_kw ~ integer_kw
+  | unsigned_kw ~ integer_256_kw | unsigned_kw ~ integer_128_kw
+  | unsigned_kw ~ integer_64_kw | unsigned_kw ~ integer_32_kw
+  | unsigned_kw ~ integer_16_kw | unsigned_kw ~ integer_8_kw
+  | unsigned_kw ~ integer_kw
+  | int_256_kw | int_128_kw | int_64_kw | int_32_kw | int_16_kw | int_8_kw
+  | integer_256_kw | integer_128_kw | integer_64_kw | integer_32_kw | integer_16_kw | integer_8_kw
+  | big_kw ~ integer_kw | small_kw ~ integer_kw
+  | integer_kw | bigint_kw | smallint_kw | int_kw
+  | uint_256_kw | uint_128_kw | uint_64_kw | uint_32_kw | uint_16_kw | uint_8_kw
+  | usmallint_kw | ubigint_kw | uint_kw
+  | double_kw ~ precision_kw?
   | float_precision_type
-  | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
-  | ^"FLOAT" | ^"REAL"
+  | float_256_kw | float_128_kw | float_64_kw | float_32_kw | float_16_kw
+  | float_kw | real_kw
   | decimal_precision_type
-  | ^"DECIMAL" | ^"DEC"
+  | decimal_kw | dec_kw
   | character_string_type
-  | ^"UUID"
-  | ^"JSON"
-  | ^"VECTOR"
-  | byte_string_type | ^"BYTEA"
-  | ^"ZONED" ~ ^"DATETIME" | ^"LOCAL" ~ ^"DATETIME"
-  | ^"ZONED" ~ ^"TIME" | ^"LOCAL" ~ ^"TIME"
-  | ^"DATE"
+  | uuid_kw
+  | json_kw
+  | vector_kw
+  | byte_string_type | bytea_kw
+  | timestamp_kw ~ with_kw ~ time_kw ~ zone_kw
+  | timestamp_kw ~ without_kw ~ time_kw ~ zone_kw
+  | timestamp_kw
+  | time_kw ~ with_kw ~ time_kw ~ zone_kw
+  | time_kw ~ without_kw ~ time_kw ~ zone_kw
+  | zoned_kw ~ datetime_kw | local_kw ~ datetime_kw
+  | zoned_kw ~ time_kw | local_kw ~ time_kw
+  | date_kw
   | duration_type
-  | ^"PATH"
-  | ^"LIST" ~ "<" ~ type_name ~ ">"
-  // Record types (spec section18.9 <record type>): closed `RECORD { a :: INT }` longest
-  // first, then the open/bare `RECORD`. Field syntax uses `::` (record_field_type).
-  | ^"RECORD" ~ "{" ~ record_field_type ~ ("," ~ record_field_type)* ~ "}"
-  | ^"RECORD"
-  | ^"NOTHING" | ^"NULL"
+  | binding_table_type
+  | open_reference_value_type
+  | path_type_kw
+  | angle_list_type
+  | bare_list_type
+  | record_type
+  | dynamic_union_type
+  | nothing_kw | null_kw
 }
+angle_list_type = { list_value_type_name_synonym ~ "<" ~ type_name ~ ">" ~ list_max_cardinality? }
+bare_list_type = { list_value_type_name_synonym ~ list_max_cardinality? }
+postfix_list_suffix = { type_not_null? ~ list_value_type_name_synonym ~ list_max_cardinality? }
+list_max_cardinality = { "[" ~ unsigned_integer ~ "]" }
+list_value_type_name_synonym = @{ (^"LIST" | ^"ARRAY") ~ !(LETTER | NUMBER | "_") }
+boolean_kw = @{ ^"BOOLEAN" ~ !(LETTER | NUMBER | "_") }
+bool_kw = @{ ^"BOOL" ~ !(LETTER | NUMBER | "_") }
+signed_kw = @{ ^"SIGNED" ~ !(LETTER | NUMBER | "_") }
+unsigned_kw = @{ ^"UNSIGNED" ~ !(LETTER | NUMBER | "_") }
+small_kw = @{ ^"SMALL" ~ !(LETTER | NUMBER | "_") }
+big_kw = @{ ^"BIG" ~ !(LETTER | NUMBER | "_") }
+integer_kw = @{ ^"INTEGER" ~ !(LETTER | NUMBER | "_") }
+integer_8_kw = @{ ^"INTEGER8" ~ !(LETTER | NUMBER | "_") }
+integer_16_kw = @{ ^"INTEGER16" ~ !(LETTER | NUMBER | "_") }
+integer_32_kw = @{ ^"INTEGER32" ~ !(LETTER | NUMBER | "_") }
+integer_64_kw = @{ ^"INTEGER64" ~ !(LETTER | NUMBER | "_") }
+integer_128_kw = @{ ^"INTEGER128" ~ !(LETTER | NUMBER | "_") }
+integer_256_kw = @{ ^"INTEGER256" ~ !(LETTER | NUMBER | "_") }
+int_kw = @{ ^"INT" ~ !(LETTER | NUMBER | "_") }
+int_8_kw = @{ ^"INT8" ~ !(LETTER | NUMBER | "_") }
+int_16_kw = @{ ^"INT16" ~ !(LETTER | NUMBER | "_") }
+int_32_kw = @{ ^"INT32" ~ !(LETTER | NUMBER | "_") }
+int_64_kw = @{ ^"INT64" ~ !(LETTER | NUMBER | "_") }
+int_128_kw = @{ ^"INT128" ~ !(LETTER | NUMBER | "_") }
+int_256_kw = @{ ^"INT256" ~ !(LETTER | NUMBER | "_") }
+uint_kw = @{ ^"UINT" ~ !(LETTER | NUMBER | "_") }
+uint_8_kw = @{ ^"UINT8" ~ !(LETTER | NUMBER | "_") }
+uint_16_kw = @{ ^"UINT16" ~ !(LETTER | NUMBER | "_") }
+uint_32_kw = @{ ^"UINT32" ~ !(LETTER | NUMBER | "_") }
+uint_64_kw = @{ ^"UINT64" ~ !(LETTER | NUMBER | "_") }
+uint_128_kw = @{ ^"UINT128" ~ !(LETTER | NUMBER | "_") }
+uint_256_kw = @{ ^"UINT256" ~ !(LETTER | NUMBER | "_") }
+smallint_kw = @{ ^"SMALLINT" ~ !(LETTER | NUMBER | "_") }
+bigint_kw = @{ ^"BIGINT" ~ !(LETTER | NUMBER | "_") }
+usmallint_kw = @{ ^"USMALLINT" ~ !(LETTER | NUMBER | "_") }
+ubigint_kw = @{ ^"UBIGINT" ~ !(LETTER | NUMBER | "_") }
+double_kw = @{ ^"DOUBLE" ~ !(LETTER | NUMBER | "_") }
+precision_kw = @{ ^"PRECISION" ~ !(LETTER | NUMBER | "_") }
+float_kw = @{ ^"FLOAT" ~ !(LETTER | NUMBER | "_") }
+float_16_kw = @{ ^"FLOAT16" ~ !(LETTER | NUMBER | "_") }
+float_32_kw = @{ ^"FLOAT32" ~ !(LETTER | NUMBER | "_") }
+float_64_kw = @{ ^"FLOAT64" ~ !(LETTER | NUMBER | "_") }
+float_128_kw = @{ ^"FLOAT128" ~ !(LETTER | NUMBER | "_") }
+float_256_kw = @{ ^"FLOAT256" ~ !(LETTER | NUMBER | "_") }
+real_kw = @{ ^"REAL" ~ !(LETTER | NUMBER | "_") }
+decimal_kw = @{ ^"DECIMAL" ~ !(LETTER | NUMBER | "_") }
+dec_kw = @{ ^"DEC" ~ !(LETTER | NUMBER | "_") }
+uuid_kw = @{ ^"UUID" ~ !(LETTER | NUMBER | "_") }
+json_kw = @{ ^"JSON" ~ !(LETTER | NUMBER | "_") }
+vector_kw = @{ ^"VECTOR" ~ !(LETTER | NUMBER | "_") }
+bytea_kw = @{ ^"BYTEA" ~ !(LETTER | NUMBER | "_") }
+path_type_kw = @{ ^"PATH" ~ !(LETTER | NUMBER | "_") }
+nothing_kw = @{ ^"NOTHING" ~ !(LETTER | NUMBER | "_") }
 signed_integer_precision_type = {
-    (^"SIGNED" ~ ^"INTEGER" | ^"INTEGER" | ^"INT") ~ "(" ~ numeric_type_precision ~ ")"
+    (signed_kw ~ integer_kw | integer_kw | int_kw) ~ "(" ~ numeric_type_precision ~ ")"
 }
 unsigned_integer_precision_type = {
-    (^"UNSIGNED" ~ ^"INTEGER" | ^"UINT") ~ "(" ~ numeric_type_precision ~ ")"
+    (unsigned_kw ~ integer_kw | uint_kw) ~ "(" ~ numeric_type_precision ~ ")"
 }
-float_precision_type = { ^"FLOAT" ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
-decimal_precision_type = { (^"DECIMAL" | ^"DEC") ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
+float_precision_type = { float_kw ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
+decimal_precision_type = { (decimal_kw | dec_kw) ~ "(" ~ numeric_type_precision ~ ("," ~ numeric_type_scale)? ~ ")" }
 numeric_type_precision = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
 numeric_type_scale = @{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
-duration_type = { ^"DURATION" ~ ("(" ~ temporal_duration_qualifier ~ ")")? }
+duration_type = { duration_kw ~ "(" ~ temporal_duration_qualifier ~ ")" }
+binding_table_type = { binding_table_type_binding_kw? ~ binding_table_type_table_kw ~ field_types_specification }
+binding_table_type_binding_kw = @{ ^"BINDING" ~ !(LETTER | NUMBER | "_") }
+binding_table_type_table_kw = @{ ^"TABLE" ~ !(LETTER | NUMBER | "_") }
+
+// ISO/IEC 39075:2024 §18.9 open reference value types. Closed graph/node/edge
+// reference value types carry graph-object type specifications and remain
+// outside this open-reference parser slice.
+open_reference_value_type = {
+    (any_value_type_kw ~ property_type_kw ~ graph_kw)
+  | (property_type_kw ~ graph_kw)
+  | (any_value_type_kw ~ graph_kw)
+  | graph_kw
+  | (any_value_type_kw ~ node_synonym)
+  | node_synonym
+  | (any_value_type_kw ~ edge_synonym)
+  | edge_synonym
+}
+node_synonym = @{ (^"NODE" | ^"VERTEX") ~ !(LETTER | NUMBER | "_") }
+
+dynamic_union_type = { dynamic_property_value_type | open_dynamic_union_type }
+open_dynamic_union_type = { any_value_type_kw ~ value_type_kw? }
+dynamic_property_value_type = { any_value_type_kw? ~ property_type_kw ~ value_type_kw }
+prefixed_closed_dynamic_union_type = {
+    any_value_type_kw ~ value_type_kw? ~ "<" ~ component_type_list ~ ">"
+}
+component_type_list = { type_name_primary ~ ("|" ~ type_name_primary)* }
+any_value_type_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
+property_type_kw = @{ ^"PROPERTY" ~ !(LETTER | NUMBER | "_") }
+value_type_kw = @{ ^"VALUE" ~ !(LETTER | NUMBER | "_") }
+
+// ISO/IEC 39075:2024 §18.9 <record type>:
+//   [ ANY ] RECORD | [ RECORD ] <field types specification>
+// GROUP-like specification-only devices do not apply here; ANY RECORD is the
+// open record type, while `{}` / `RECORD {}` are the closed unit record type.
+record_type = {
+    record_type_any_kw ~ record_type_record_kw
+  | record_type_record_kw ~ field_types_specification
+  | field_types_specification
+  | record_type_record_kw
+}
+record_type_any_kw = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
+record_type_record_kw = @{ ^"RECORD" ~ !(LETTER | NUMBER | "_") }
+field_types_specification = { "{" ~ (record_field_type ~ ("," ~ record_field_type)*)? ~ "}" }
 
 character_string_type = {
-    ^"STRING" ~ ("(" ~ character_string_length ~ ("," ~ character_string_length)? ~ ")")?
-  | ^"CHAR" ~ ("(" ~ character_string_length ~ ")")?
-  | ^"VARCHAR" ~ ("(" ~ character_string_length ~ ")")?
+    character_string_type_string_kw ~ ("(" ~ character_string_length ~ ("," ~ character_string_length)? ~ ")")?
+  | character_string_type_char_kw ~ ("(" ~ character_string_length ~ ")")?
+  | character_string_type_varchar_kw ~ ("(" ~ character_string_length ~ ")")?
 }
-character_string_length = @{ ASCII_DIGIT+ }
+character_string_type_string_kw = @{ ^"STRING" ~ !(LETTER | NUMBER | "_") }
+character_string_type_char_kw = @{ ^"CHAR" ~ !(LETTER | NUMBER | "_") }
+character_string_type_varchar_kw = @{ ^"VARCHAR" ~ !(LETTER | NUMBER | "_") }
+character_string_length = @{ unsigned_integer }
 
 byte_string_type = {
-    ^"BYTES" ~ ("(" ~ byte_string_length ~ ("," ~ byte_string_length)? ~ ")")?
-  | ^"BINARY" ~ ("(" ~ byte_string_length ~ ")")?
-  | ^"VARBINARY" ~ ("(" ~ byte_string_length ~ ")")?
+    byte_string_type_bytes_kw ~ ("(" ~ byte_string_length ~ ("," ~ byte_string_length)? ~ ")")?
+  | byte_string_type_binary_kw ~ ("(" ~ byte_string_length ~ ")")?
+  | byte_string_type_varbinary_kw ~ ("(" ~ byte_string_length ~ ")")?
 }
-byte_string_length = @{ ASCII_DIGIT+ }
+byte_string_type_bytes_kw = @{ ^"BYTES" ~ !(LETTER | NUMBER | "_") }
+byte_string_type_binary_kw = @{ ^"BINARY" ~ !(LETTER | NUMBER | "_") }
+byte_string_type_varbinary_kw = @{ ^"VARBINARY" ~ !(LETTER | NUMBER | "_") }
+byte_string_length = @{ unsigned_integer }
+unsigned_integer = { hex_int_lit | oct_int_lit | bin_int_lit | dec_int_lit }
 
 // -------------------------------------------------------------------
 // Literals
@@ -807,9 +1113,9 @@ literal = {
   | list_lit
 }
 
-null_lit    = { ^"NULL" }
-unknown_lit = { ^"UNKNOWN" }
-bool_lit    = { ^"TRUE" | ^"FALSE" }
+null_lit    = { null_kw }
+unknown_lit = @{ ^"UNKNOWN" ~ !(LETTER | NUMBER | "_") }
+bool_lit    = @{ (^"TRUE" | ^"FALSE") ~ !(LETTER | NUMBER | "_") }
 uuid_lit    = { ^"UUID" ~ string_lit }
 
 // Integer: optional sign + decimal, hexadecimal, octal, or binary digits.
@@ -846,17 +1152,38 @@ approximate_number_suffix = { "F" | "f" | "D" | "d" }
 numeric_suffix = { exact_number_suffix | approximate_number_suffix }
 numeric_continuation = { numeric_suffix | "e" | "E" }
 
-// Strings: SINGLE-QUOTE ONLY (spec-aligned)
-// Double-quotes are delimited identifiers (see ident rule).
-// Supports '' escape (two single-quotes = literal single-quote) and backslash escapes.
-// Escape validation is intentionally left to the AST builder so malformed
-// escapes produce the precise decode_escape diagnostic instead of a generic
-// tokenization failure.
-string_lit        = ${ "'" ~ single_inner ~ "'" }
-single_inner      = @{ (escaped_quote | dangling_escape | escape_seq | "''" | !("'" | "\\") ~ ANY)* }
-escaped_quote     = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
-dangling_escape   = @{ "\\" ~ &"'" }
-escape_seq        = @{ "\\" ~ ANY }
+// Strings: ISO/IEC 39075:2024 §21.2 single-, double-, or accent-quoted
+// character sequences. In expression/literal slots, quoted sequences are string
+// literals; in identifier slots, double/accent-quoted sequences remain
+// delimited identifiers through the `ident`/`prop_ident` rules below.
+// Standard strings support doubled delimiter escapes ('' / "" / ``) and
+// backslash escapes. `@` is ISO `<no escape>` (Feature GL11): it must be
+// adjacent to the quoted sequence and disables both backslash and
+// doubled-delimiter character representations, so the active delimiter cannot
+// occur inside the body.
+// Escape validation for standard strings is intentionally left to the AST
+// builder so malformed escapes produce the precise decode_escape diagnostic
+// instead of a generic tokenization failure.
+string_lit                  = ${ no_escape_single_string_lit | no_escape_double_string_lit | no_escape_accent_string_lit | single_string_lit | double_string_lit | accent_string_lit }
+no_escape_single_string_lit = { "@" ~ "'" ~ no_escape_single_inner ~ "'" }
+no_escape_double_string_lit = { "@" ~ "\"" ~ no_escape_double_inner ~ "\"" }
+no_escape_accent_string_lit = { "@" ~ "`" ~ no_escape_accent_inner ~ "`" }
+single_string_lit           = { "'" ~ single_inner ~ "'" }
+double_string_lit           = { "\"" ~ double_inner ~ "\"" }
+accent_string_lit           = { "`" ~ accent_inner ~ "`" }
+no_escape_single_inner      = @{ (!"'" ~ ANY)* }
+no_escape_double_inner      = @{ (!"\"" ~ ANY)* }
+no_escape_accent_inner      = @{ (!"`" ~ ANY)* }
+single_inner                = @{ (escaped_single_quote | dangling_single_escape | escape_seq | "''" | !("'" | "\\") ~ ANY)* }
+double_inner                = @{ (escaped_double_quote | dangling_double_escape | escape_seq | "\"\"" | !("\"" | "\\") ~ ANY)* }
+accent_inner                = @{ (escaped_accent_quote | dangling_accent_escape | escape_seq | "``" | !("`" | "\\") ~ ANY)* }
+escaped_single_quote        = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
+escaped_double_quote        = @{ "\\" ~ "\"" ~ &((!"\"" ~ ANY)* ~ "\"") }
+escaped_accent_quote        = @{ "\\" ~ "`" ~ &((!"`" ~ ANY)* ~ "`") }
+dangling_single_escape      = @{ "\\" ~ &"'" }
+dangling_double_escape      = @{ "\\" ~ &"\"" }
+dangling_accent_escape      = @{ "\\" ~ &"`" }
+escape_seq                  = @{ "\\" ~ ANY }
 
 // Byte strings: ISO-style X'...' hex octets. Spaces inside each quoted chunk
 // are ignored; adjacent chunks require a separator containing at least one
@@ -870,34 +1197,40 @@ byte_string_separator = @{ (" " | "\t")* ~ ("\r\n" | "\n" | "\r") ~ (" " | "\t" 
 list_lit = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
 
 // Temporal keyword literals (ISO GQL spec section21.2)
-zoned_datetime_lit = { ^"ZONED" ~ ^"DATETIME" ~ string_lit }
-local_datetime_lit = { ^"LOCAL" ~ ^"DATETIME" ~ string_lit }
-date_lit           = { ^"DATE" ~ string_lit }
-zoned_time_lit     = { ^"ZONED" ~ ^"TIME" ~ string_lit }
-local_time_lit     = { ^"LOCAL" ~ ^"TIME" ~ string_lit }
-time_lit           = { ^"TIME" ~ string_lit }
+zoned_datetime_lit = { zoned_kw ~ datetime_kw ~ string_lit }
+local_datetime_lit = { local_kw ~ datetime_kw ~ string_lit }
+date_lit           = { date_kw ~ string_lit }
+zoned_time_lit     = { zoned_kw ~ time_kw ~ string_lit }
+local_time_lit     = { local_kw ~ time_kw ~ string_lit }
+time_lit           = { time_kw ~ string_lit }
 
 // Bare DATETIME/TIMESTAMP keyword literal (ISO section21.2): infers zoned vs local from content
-datetime_bare_lit = { (^"DATETIME" | ^"TIMESTAMP") ~ string_lit }
+datetime_bare_lit = { (datetime_kw | timestamp_kw) ~ string_lit }
 
 // Duration literal: DURATION('1h30m') or DURATION 'P1DT2H'
 duration_lit = {
-    ^"DURATION" ~ string_lit
-  | ^"DURATION" ~ "(" ~ string_lit ~ ")"
+    duration_kw ~ string_lit
+  | duration_kw ~ "(" ~ string_lit ~ ")"
 }
+zoned_kw     = @{ ^"ZONED" ~ !(LETTER | NUMBER | "_") }
+local_kw     = @{ ^"LOCAL" ~ !(LETTER | NUMBER | "_") }
+datetime_kw  = @{ ^"DATETIME" ~ !(LETTER | NUMBER | "_") }
+date_kw      = @{ ^"DATE" ~ !(LETTER | NUMBER | "_") }
+timestamp_kw = @{ ^"TIMESTAMP" ~ !(LETTER | NUMBER | "_") }
+duration_kw  = @{ ^"DURATION" ~ !(LETTER | NUMBER | "_") }
 
 // -------------------------------------------------------------------
 // Identifiers
 // -------------------------------------------------------------------
 
 // Identifiers: Unicode letters or underscore start, followed by letters/digits/underscore.
-// Double-quote delimited identifiers (spec section21.3): "my id", ""escaped""
-// Backtick delimited identifiers (Selene extension): `my id`
+// Double-quote and accent-quote delimited identifiers (ISO §21.3): "my id" and
+// `my id`; doubled delimiters escape embedded delimiters ("" / ``).
 // Keywords are excluded via negative lookahead - an identifier cannot be a
 // reserved word (unless delimited).
 ident = @{
     "\"" ~ (!"\"" ~ ANY | "\"\"")+ ~ "\""
-  | "`" ~ (!"`" ~ ANY)+ ~ "`"
+  | "`" ~ ("``" | !"`" ~ ANY)+ ~ "`"
   | !keyword ~ (LETTER | "_") ~ (LETTER | NUMBER | "_")*
 }
 
@@ -906,33 +1239,77 @@ ident = @{
 // No keyword guard - "date", "time", "type" etc. are valid property names.
 prop_ident = @{
     "\"" ~ (!"\"" ~ ANY | "\"\"")+ ~ "\""
-  | "`" ~ (!"`" ~ ANY)+ ~ "`"
+  | "`" ~ ("``" | !"`" ~ ANY)+ ~ "`"
   | (LETTER | "_") ~ (LETTER | NUMBER | "_")*
 }
 
-// Keywords that begin clauses/statements and cause parsing ambiguity
-// when used as identifiers in expression context.
+// ISO reserved/pre-reserved words plus grammar-reserved implementation tokens.
+// These are excluded from bare identifier slots; delimited identifiers remain
+// available where a user needs a binding or alias with the same spelling.
 // Unicode-aware word boundary: !(LETTER | NUMBER | "_")
 keyword = @{
     ( ^"MATCH" | ^"RETURN" | ^"FILTER" | ^"WHERE" | ^"ORDER"
     | ^"LIMIT" | ^"OFFSET" | ^"GROUP" | ^"LET" | ^"SET" | ^"DELETE"
-    | ^"INSERT" | ^"REMOVE" | ^"MERGE" | ^"CALL" | ^"YIELD" | ^"AS" | ^"FINISH" | ^"DETACH" | ^"FOR"
-    | ^"AND" | ^"OR" | ^"NOT" | ^"XOR" | ^"IN" | ^"IS" | ^"EXISTS"
-    | ^"NULL" | ^"TRUE" | ^"FALSE" | ^"UNKNOWN"
-    | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"ASC" | ^"DESC"
-    | ^"START" | ^"COMMIT" | ^"ROLLBACK" | ^"UNION" | ^"INTERSECT" | ^"EXCEPT" | ^"OTHERWISE" | ^"NEXT"
+    | ^"INSERT" | ^"REMOVE" | ^"MERGE" | ^"CALL" | ^"YIELD" | ^"ASCENDING" | ^"ASC" | ^"ASIN" | ^"AS" | ^"FINISH" | ^"DETACH" | ^"FOR"
+    | ^"AND" | ^"OR" | ^"NOTHING" | ^"NOT" | ^"XOR"
+    | ^"INTERSECT" | ^"INTEGER256" | ^"INTEGER128" | ^"INTEGER64"
+    | ^"INTEGER32" | ^"INTEGER16" | ^"INTEGER8" | ^"INTEGER"
+    | ^"INTERVAL" | ^"INT256" | ^"INT128" | ^"INT64" | ^"INT32"
+    | ^"INT16" | ^"INT8" | ^"INFINITY" | ^"INSTANT" | ^"INDEXED"
+    | ^"INDEX" | ^"INT" | ^"IN" | ^"IS" | ^"EXISTS"
+    | ^"NULLIF" | ^"NULLS" | ^"NULL" | ^"TRUE" | ^"FALSE" | ^"UNKNOWN"
+    | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"DESCENDING" | ^"DESC"
+    | ^"START" | ^"COMMIT" | ^"ROLLBACK" | ^"UNION" | ^"EXCEPT" | ^"OTHERWISE" | ^"NEXT"
     | ^"CAST" | ^"CASE" | ^"WHEN" | ^"THEN" | ^"ELSE" | ^"END"
     | ^"COUNT" | ^"SUM" | ^"AVG"
     | ^"STDDEV_SAMP" | ^"STDDEV_POP"
     | ^"COLLECT_LIST"
-    | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"NULLS"
+    | ^"CHARACTER_LENGTH" | ^"CHAR_LENGTH" | ^"BYTE_LENGTH" | ^"OCTET_LENGTH" | ^"PATH_LENGTH" | ^"CARDINALITY" | ^"SIZE"
+    | ^"ELEMENT_ID" | ^"COALESCE"
+    | ^"ABS" | ^"MOD"
+    | ^"SINH" | ^"COSH" | ^"TANH" | ^"SIN" | ^"COS" | ^"TAN" | ^"COT" | ^"ACOS" | ^"ATAN"
+    | ^"DEGREES" | ^"RADIANS" | ^"LOG10" | ^"LOG" | ^"LN" | ^"EXP" | ^"POWER" | ^"SQRT" | ^"FLOOR" | ^"CEILING" | ^"CEIL"
+    | ^"LEFT" | ^"RIGHT" | ^"UPPER" | ^"LOWER" | ^"BTRIM" | ^"LTRIM" | ^"RTRIM"
+    | ^"CURRENT_TIMESTAMP" | ^"CURRENT_TIME" | ^"CURRENT_DATE"
+    | ^"DATETIME" | ^"DATE" | ^"DURATION_BETWEEN" | ^"DURATION"
+    | ^"LOCAL_DATETIME" | ^"LOCAL_TIMESTAMP" | ^"LOCAL_TIME" | ^"LOCAL"
+    | ^"TIMESTAMP" | ^"TIME" | ^"ZONED_DATETIME" | ^"ZONED_TIME" | ^"ZONED"
+    | ^"ALL_DIFFERENT" | ^"SAME" | ^"PROPERTY_EXISTS" | ^"LABELS" | ^"ELEMENTS" | ^"NORMALIZED" | ^"NORMALIZE"
+    | ^"WITHOUT" | ^"WITH" | ^"HAVING" | ^"ORDINALITY"
     | ^"CREATE" | ^"DROP"
-    | ^"SELECT" | ^"FROM"
-    | ^"DIRECTED" | ^"LABELED" | ^"RECORD" | ^"NORMALIZED"
+    | ^"SELECT" | ^"FROM" | ^"TRIM"
+    | ^"DIRECTED" | ^"LABELED" | ^"RECORD"
     | ^"DAY" | ^"HOUR" | ^"MINUTE" | ^"SECOND" | ^"MONTH" | ^"YEAR"
     | ^"ARRAY"
     | ^"BINDING" | ^"CONNECTING" | ^"DIFFERENT" | ^"KEEP" | ^"ONLY"
     | ^"STRICT" | ^"WARN"
+    | ^"CURRENT_PROPERTY_GRAPH" | ^"CURRENT_GRAPH" | ^"CURRENT_SCHEMA"
+    | ^"CURRENT_ROLE" | ^"CURRENT_USER" | ^"HOME_PROPERTY_GRAPH"
+    | ^"HOME_GRAPH" | ^"HOME_SCHEMA" | ^"SESSION_USER"
+    | ^"CHARACTERISTICS" | ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC"
+    | ^"UINT256" | ^"UINT128"
+    | ^"UINT64" | ^"UINT32" | ^"UINT16" | ^"UINT8"
+    | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
+    | ^"ABSTRACT" | ^"AGGREGATE" | ^"AGGREGATES" | ^"ALTER"
+    | ^"AT" | ^"BIGINT" | ^"BIG" | ^"BINARY" | ^"BOOL" | ^"BOOLEAN"
+    | ^"BOTH" | ^"BYTEA" | ^"BYTES" | ^"CATALOG" | ^"CHAR"
+    | ^"CLEAR" | ^"CLONE" | ^"CLOSE" | ^"CONSTRAINT" | ^"COPY"
+    | ^"DATA" | ^"DECIMAL" | ^"DEC" | ^"DIRECTORY" | ^"DOUBLE"
+    | ^"DRYRUN" | ^"EXACT"
+    | ^"EXISTING" | ^"FLOAT" | ^"FUNCTION" | ^"GQLSTATUS" | ^"GRANT"
+    | ^"IF" | ^"IMPLIES"
+    | ^"LEADING" | ^"LIKE" | ^"LIST" | ^"MAX" | ^"MIN" | ^"NODETACH"
+    | ^"NUMBER" | ^"NUMERIC" | ^"OF" | ^"ON" | ^"OPEN"
+    | ^"PARAMETERS" | ^"PARAMETER" | ^"PARTITION" | ^"PATHS" | ^"PATH"
+    | ^"PRECISION" | ^"PROCEDURE" | ^"PRODUCT" | ^"PROJECT" | ^"QUERY"
+    | ^"REAL" | ^"RECORDS" | ^"REFERENCE" | ^"RENAME" | ^"REPLACE"
+    | ^"RESET" | ^"REVOKE"
+    | ^"SCHEMA" | ^"SESSION" | ^"SIGNED" | ^"SKIP" | ^"SMALLINT"
+    | ^"SMALL" | ^"STRING" | ^"SUBSTRING" | ^"SYSTEM_USER"
+    | ^"TEMPORAL" | ^"TRAILING" | ^"TYPED" | ^"UBIGINT"
+    | ^"UINT" | ^"UNIQUE" | ^"UNIT" | ^"UNSIGNED" | ^"USE"
+    | ^"USMALLINT" | ^"VALUES" | ^"VARBINARY" | ^"VARCHAR" | ^"VARIABLE"
+    | ^"WHITESPACE"
     ) ~ !(LETTER | NUMBER | "_")
 }
 

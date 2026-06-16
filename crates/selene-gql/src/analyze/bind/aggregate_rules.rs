@@ -1,8 +1,22 @@
 //! Aggregate-specific analyzer rules.
 
-use crate::{ReturnItem, ValueExpr, analyze::error::AnalysisError};
+use crate::{ReturnItem, ValueExpr, analyze::error::AnalysisError, ast::eq::value_structurally_eq};
 
 use super::expr;
+
+pub(crate) fn contains_aggregate_function(value: &ValueExpr) -> bool {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        if matches!(
+            value,
+            ValueExpr::FunctionCall { name, .. } if expr::is_aggregate_name(name.first())
+        ) {
+            return true;
+        }
+        value.for_each_child(&mut |child| stack.push(child));
+    }
+    false
+}
 
 /// Validate ISO 20.9 aggregate syntax rules that need AST context after
 /// expression binding.
@@ -16,6 +30,29 @@ pub(crate) fn validate_aggregate_nesting(
     if let Some(having) = having {
         validate_aggregate_nesting_in_expr(having)?;
     }
+    Ok(())
+}
+
+/// Validate ISO 14.11 grouped projection item rules.
+pub(crate) fn validate_grouped_projection_items(
+    items: &[ReturnItem],
+    group_by: Option<&[ValueExpr]>,
+) -> Result<(), AnalysisError> {
+    let Some(group_by) = group_by else {
+        return Ok(());
+    };
+
+    for item in items {
+        if contains_aggregate_function(&item.expr)
+            || group_by
+                .iter()
+                .any(|key| value_structurally_eq(key, &item.expr))
+        {
+            continue;
+        }
+        return Err(AnalysisError::GroupedProjectionItemNotGrouped { span: item.span });
+    }
+
     Ok(())
 }
 
@@ -40,10 +77,6 @@ fn validate_aggregate_nesting_in_expr(value: &ValueExpr) -> Result<(), AnalysisE
             | ValueExpr::PropertyExists { target, .. }
             | ValueExpr::Cast { value: target, .. }
             | ValueExpr::Normalize { source: target, .. } => stack.push((target, inside_aggregate)),
-            ValueExpr::ListAccess { target, index, .. } => {
-                stack.push((index, inside_aggregate));
-                stack.push((target, inside_aggregate));
-            }
             ValueExpr::ListLiteral { items, .. }
             | ValueExpr::PathConstructor {
                 elements: items, ..
@@ -112,7 +145,6 @@ fn validate_aggregate_nesting_in_expr(value: &ValueExpr) -> Result<(), AnalysisE
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
             | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. }
             | ValueExpr::ValueSubquery { .. } => {}
         }
     }

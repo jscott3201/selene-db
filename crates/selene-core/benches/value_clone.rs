@@ -1,14 +1,12 @@
 #![allow(missing_docs)]
-//! CORE-06 gating bench: `Value` clone cost (dominated by the enum size) plus
-//! native vector-value construction and serde baselines.
+//! `Value` clone cost, `PropertyMap`/diff construction, plus native
+//! vector-value construction and serde baselines.
 //!
-//! `Value` currently inlines `jiff::Span` (`Duration`) and two `jiff::Zoned`
-//! variants (`ZonedDateTime`/`ZonedTime`), so `size_of::<Value>` is large and
-//! EVERY `Value` / `PropertyMap` clone memcpys that many bytes regardless of the
-//! active variant. This bench measures the clone cost; the companion
-//! compile-time `size_of::<Value>` ceiling in `value.rs` is the zero-cost
-//! re-bloat tripwire. Boxing the large time variants (CORE-06) should shrink the
-//! size and speed these rows — lower the ceiling when it lands.
+//! `Value` boxes the formerly oversized variants, so the companion compile-time
+//! `size_of::<Value>` ceiling in `value.rs` is the zero-cost re-bloat tripwire.
+//! This bench keeps the clone rows visible and also covers common one-property
+//! and wide `PropertyMap::from_pairs` construction shapes plus small mutation
+//! diff constructors.
 
 #[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
@@ -18,8 +16,8 @@ use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string, exact_vector_top_k,
-    vector_squared_norm,
+    PropertyDiff, PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string,
+    exact_vector_top_k, vector_squared_norm,
 };
 use wide::f64x4;
 
@@ -119,6 +117,25 @@ fn mixed_property_map() -> PropertyMap {
     .expect("property map fits core caps")
 }
 
+fn single_property_pair() -> (selene_core::DbString, Value) {
+    (
+        db_string("score").expect("key fits DB string cap"),
+        Value::Int(42),
+    )
+}
+
+fn single_compact_key_value() -> (selene_core::DbString, Option<Value>) {
+    (
+        db_string("score").expect("key fits DB string cap"),
+        Some(Value::Int(42)),
+    )
+}
+
+fn single_compact_property_map() -> PropertyMap {
+    let (key, value) = single_compact_key_value();
+    PropertyMap::compact([key], [value]).expect("compact property map fits core caps")
+}
+
 fn wide_property_pairs(width: usize) -> Vec<(selene_core::DbString, Value)> {
     (0..width)
         .rev()
@@ -152,12 +169,57 @@ fn bench_value_clone(c: &mut Criterion) {
         b.iter(|| black_box(black_box(&map).clone()));
     });
 
+    let single_pair = single_property_pair();
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("property_map_from_pairs_1", |b| {
+        b.iter(|| {
+            PropertyMap::from_pairs(std::iter::once(black_box(single_pair.clone())))
+                .expect("property map fits core caps")
+        });
+    });
+
+    let (compact_key, compact_value) = single_compact_key_value();
+    group.bench_function("property_map_compact_1", |b| {
+        b.iter(|| {
+            PropertyMap::compact(
+                std::iter::once(black_box(compact_key.clone())),
+                std::iter::once(black_box(compact_value.clone())),
+            )
+            .expect("compact property map fits core caps")
+        });
+    });
+
+    let compact_map = single_compact_property_map();
+    group.bench_function("property_map_compact_postcard_encode_1", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&compact_map)).expect("compact property map serializes")
+        });
+    });
+
     let pairs = wide_property_pairs(256);
     group.throughput(Throughput::Elements(pairs.len() as u64));
     group.bench_function("property_map_from_pairs_256_reverse", |b| {
         b.iter(|| {
             PropertyMap::from_pairs(black_box(pairs.iter().cloned()))
                 .expect("property map fits core caps")
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_change_diff(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core_change_diff");
+
+    let single_pair = single_property_pair();
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("property_diff_set_1", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                std::iter::once(black_box(single_pair.clone())),
+                std::iter::empty::<selene_core::DbString>(),
+            )
+            .expect("one-property diff is valid")
         });
     });
 
@@ -594,6 +656,6 @@ fn f64x4_from_f32(chunk: &[f32]) -> f64x4 {
 criterion_group! {
     name = value_clone;
     config = bench_config();
-    targets = bench_value_clone, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k, bench_vector_gpu_baseline
+    targets = bench_value_clone, bench_change_diff, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k, bench_vector_gpu_baseline
 }
 criterion_main!(value_clone);

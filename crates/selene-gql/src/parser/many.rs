@@ -2,7 +2,7 @@
 
 use crate::{
     ast::{
-        DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, MatchClause,
+        DdlStatement, EdgePattern, ExistsBody, GraphPattern, InlineProcedureCall, MatchClause,
         MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
         ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
         TypePropertyConstraint, TypePropertyDef, ValueExpr, WithClause,
@@ -57,6 +57,9 @@ enum ScanState {
     Normal,
     SingleQuote,
     DoubleQuote,
+    NoEscapeSingleQuote,
+    NoEscapeDoubleQuote,
+    NoEscapeBacktick,
     Backtick,
     LineComment,
     BlockComment,
@@ -64,6 +67,9 @@ enum ScanState {
 
 fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
     let bytes = source.as_bytes();
+    let last_single_quote = bytes.iter().rposition(|byte| *byte == b'\'');
+    let last_double_quote = bytes.iter().rposition(|byte| *byte == b'"');
+    let last_backtick = bytes.iter().rposition(|byte| *byte == b'`');
     let mut segments = Vec::new();
     let mut start = 0;
     let mut index = 0;
@@ -75,6 +81,18 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                     segments.push((start, &source[start..index]));
                     index += 1;
                     start = index;
+                }
+                b'@' if bytes.get(index + 1) == Some(&b'\'') => {
+                    state = ScanState::NoEscapeSingleQuote;
+                    index += 2;
+                }
+                b'@' if bytes.get(index + 1) == Some(&b'"') => {
+                    state = ScanState::NoEscapeDoubleQuote;
+                    index += 2;
+                }
+                b'@' if bytes.get(index + 1) == Some(&b'`') => {
+                    state = ScanState::NoEscapeBacktick;
+                    index += 2;
                 }
                 b'\'' => {
                     state = ScanState::SingleQuote;
@@ -102,7 +120,35 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 }
                 _ => index += 1,
             },
+            ScanState::NoEscapeSingleQuote => match bytes[index] {
+                b'\'' => {
+                    state = ScanState::Normal;
+                    index += 1;
+                }
+                _ => index += 1,
+            },
+            ScanState::NoEscapeDoubleQuote => match bytes[index] {
+                b'"' => {
+                    state = ScanState::Normal;
+                    index += 1;
+                }
+                _ => index += 1,
+            },
+            ScanState::NoEscapeBacktick => match bytes[index] {
+                b'`' => {
+                    state = ScanState::Normal;
+                    index += 1;
+                }
+                _ => index += 1,
+            },
             ScanState::SingleQuote => match bytes[index] {
+                b'\\'
+                    if bytes.get(index + 1) == Some(&b'\'')
+                        && Some(index + 1) == last_single_quote =>
+                {
+                    state = ScanState::Normal;
+                    index += 2;
+                }
                 b'\\' => index = (index + 2).min(bytes.len()),
                 b'\'' if bytes.get(index + 1) == Some(&b'\'') => index += 2,
                 b'\'' => {
@@ -112,6 +158,14 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 _ => index += 1,
             },
             ScanState::DoubleQuote => match bytes[index] {
+                b'\\'
+                    if bytes.get(index + 1) == Some(&b'"')
+                        && Some(index + 1) == last_double_quote =>
+                {
+                    state = ScanState::Normal;
+                    index += 2;
+                }
+                b'\\' => index = (index + 2).min(bytes.len()),
                 b'"' if bytes.get(index + 1) == Some(&b'"') => index += 2,
                 b'"' => {
                     state = ScanState::Normal;
@@ -119,12 +173,21 @@ fn scan_statement_boundaries(source: &str) -> Vec<(usize, &str)> {
                 }
                 _ => index += 1,
             },
-            ScanState::Backtick => {
-                if bytes[index] == b'`' {
+            ScanState::Backtick => match bytes[index] {
+                b'\\'
+                    if bytes.get(index + 1) == Some(&b'`') && Some(index + 1) == last_backtick =>
+                {
                     state = ScanState::Normal;
+                    index += 2;
                 }
-                index += 1;
-            }
+                b'\\' => index = (index + 2).min(bytes.len()),
+                b'`' if bytes.get(index + 1) == Some(&b'`') => index += 2,
+                b'`' => {
+                    state = ScanState::Normal;
+                    index += 1;
+                }
+                _ => index += 1,
+            },
             ScanState::LineComment => {
                 if bytes[index] == b'\n' {
                     state = ScanState::Normal;
@@ -186,6 +249,7 @@ fn rebase_statement_spans(statement: &mut Statement, offset: usize) {
             rebase_value(value, offset);
         }
         Statement::SessionSetTimeZone { span, .. }
+        | Statement::SessionSetGraph { span, .. }
         | Statement::SessionReset { span, .. }
         | Statement::SessionClose { span } => rebase_span(span, offset),
     }
@@ -203,7 +267,7 @@ fn rebase_query_pipeline(pipeline: &mut QueryPipeline, offset: usize) {
                     rebase_value(&mut value.value, offset);
                 }
             }
-            crate::PipelineStatement::Unwind(value) => {
+            crate::PipelineStatement::For(value) => {
                 rebase_span(&mut value.span, offset);
                 rebase_value(&mut value.source, offset);
             }
@@ -318,9 +382,10 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
     value.for_each_span_mut(&mut |span| rebase_span(span, offset));
     value.for_each_child_mut(&mut |child| rebase_value(child, offset));
     match value {
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-            rebase_match(pattern, offset);
-        }
+        ValueExpr::Exists { body, .. } => match body {
+            ExistsBody::Match(pattern) => rebase_match(pattern, offset),
+            ExistsBody::Query(pipeline) => rebase_query_pipeline(pipeline, offset),
+        },
         ValueExpr::ValueSubquery { body, .. } => rebase_query_pipeline(body, offset),
         _ => {}
     }
@@ -442,9 +507,6 @@ fn rebase_call(call: &mut ProcedureCall, offset: usize) {
     }
     for item in &mut call.yield_items {
         rebase_span(&mut item.span, offset);
-    }
-    if let Some(filter) = &mut call.yield_filter {
-        rebase_value(filter, offset);
     }
 }
 

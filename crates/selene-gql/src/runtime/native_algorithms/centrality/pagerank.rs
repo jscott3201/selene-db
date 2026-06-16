@@ -1,5 +1,7 @@
 //! Runtime binding for `algo.pagerank`.
 
+use std::collections::BTreeSet;
+
 use selene_algorithms::{
     GraphProjection, PageRankConfig, PageRankOrientation, pagerank_with_checker,
 };
@@ -49,6 +51,13 @@ pub(in crate::runtime::native_algorithms) fn pagerank_signature() -> Vec<Procedu
         parameter("limit", GqlType::Integer, true)
             .with_default_doc("NULL (all matching nodes)")
             .with_default(ProcedureDefaultValue::Null),
+        parameter(
+            "result_nodes",
+            GqlType::List(Box::new(GqlType::NodeRef)),
+            true,
+        )
+        .with_default_doc("NULL (all matching nodes)")
+        .with_default(ProcedureDefaultValue::Null),
     ]
 }
 
@@ -83,12 +92,13 @@ struct ParsedPageRankArgs {
 struct PageRankResultOptions {
     result_label: Option<DbString>,
     limit: Option<usize>,
+    result_nodes: Option<BTreeSet<NodeId>>,
 }
 
 fn parse_pagerank_args(args: &[Value]) -> Result<ParsedPageRankArgs, ProcedureError> {
-    if !(5..=9).contains(&args.len()) {
+    if !(5..=10).contains(&args.len()) {
         return Err(invalid_argument(format!(
-            "{PAGERANK_PROC} expected 5 to 9 arguments, got {}",
+            "{PAGERANK_PROC} expected 5 to 10 arguments, got {}",
             args.len()
         )));
     }
@@ -123,6 +133,11 @@ fn parse_pagerank_args(args: &[Value]) -> Result<ParsedPageRankArgs, ProcedureEr
     } else {
         None
     };
+    let result_nodes = if args.len() >= 10 {
+        nullable_result_nodes(&args[9])?
+    } else {
+        None
+    };
     validate_config(damping, tolerance)?;
     Ok(ParsedPageRankArgs {
         projection_name,
@@ -137,6 +152,7 @@ fn parse_pagerank_args(args: &[Value]) -> Result<ParsedPageRankArgs, ProcedureEr
         result_options: PageRankResultOptions {
             result_label,
             limit,
+            result_nodes,
         },
     })
 }
@@ -152,6 +168,9 @@ fn pagerank_rows(
                 .node_labels(*node)
                 .is_some_and(|labels| labels.contains(label))
         });
+    }
+    if let Some(result_nodes) = &options.result_nodes {
+        scores.retain(|(node, _)| result_nodes.contains(node));
     }
     if let Some(limit) = options.limit {
         scores.truncate(limit);
@@ -233,6 +252,27 @@ fn nullable_personalization(value: &Value) -> Result<Option<Vec<(NodeId, f64)>>,
         )));
     }
     Ok(Some(seeds))
+}
+
+fn nullable_result_nodes(value: &Value) -> Result<Option<BTreeSet<NodeId>>, ProcedureError> {
+    let Value::List(values) = value else {
+        return match value {
+            Value::Null => Ok(None),
+            other => Err(invalid_argument(format!(
+                "{PAGERANK_PROC} result_nodes must be LIST<NODE> or NULL, got {other:?}"
+            ))),
+        };
+    };
+    let mut nodes = BTreeSet::new();
+    for (index, value) in values.iter().enumerate() {
+        let Value::NodeRef(node) = value else {
+            return Err(invalid_argument(format!(
+                "{PAGERANK_PROC} result_nodes[{index}] must be a NODE, got {value:?}"
+            )));
+        };
+        nodes.insert(*node);
+    }
+    Ok(Some(nodes))
 }
 
 fn personalization_entry(value: &Value, index: usize) -> Result<(NodeId, f64), ProcedureError> {

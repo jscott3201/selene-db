@@ -287,6 +287,7 @@ fn op_contains_call(op: &PipelineOp) -> bool {
         PipelineOp::CallSubquery(subquery) => contains_call(&subquery.body),
         PipelineOp::Union { rhs, .. }
         | PipelineOp::Chain(rhs)
+        | PipelineOp::CorrelatedChain(rhs)
         | PipelineOp::ExplainPlan { inner: rhs, .. } => contains_call(rhs),
         PipelineOp::Match(_) | PipelineOp::OptionalMatch(_) => false,
         _ => false,
@@ -358,6 +359,7 @@ mod tests {
             category: StatementCategory::ReadOnly,
             pattern_plan: None,
             pipeline: vec![PipelineOp::Call(PlannedCall {
+                optional: false,
                 procedure: Box::from([admitted("cache"), admitted("call")]),
                 handle: ProcedureHandle::new(1),
                 args: Vec::new(),

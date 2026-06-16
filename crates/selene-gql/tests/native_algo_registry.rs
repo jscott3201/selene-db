@@ -174,12 +174,12 @@ fn show_procedures_lists_all_nineteen_algo_procedures() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = string_column(&table, "name");
 
-    // The registry also carries the 46 `selene.*` platform built-ins, so SHOW
-    // PROCEDURES lists 65; all 19 algo names must still be present.
+    // The registry also carries the 48 `selene.*` platform built-ins, so SHOW
+    // PROCEDURES lists 67; all 19 algo names must still be present.
     assert_eq!(
         table.row_count(),
-        65,
-        "expected 19 algo procedures + 46 platform built-ins"
+        67,
+        "expected 19 algo procedures + 48 platform built-ins"
     );
     for expected in [
         "algo.projection_build",
@@ -318,6 +318,43 @@ fn pagerank_filters_results_by_label_and_limit() {
         &registry,
     );
     assert_eq!(zero.row_count(), 0);
+}
+
+#[test]
+fn pagerank_result_nodes_intersects_before_limit() {
+    let graph = graph(220_012);
+    let nodes = seed_labeled_pagerank_graph(&graph);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+    session.bind_parameter(
+        db_string("result_nodes"),
+        Value::List(vec![Value::NodeRef(nodes[2])]),
+    );
+
+    let restricted = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', NULL, NULL, 1, $result_nodes) \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(node_column(&restricted, "node_id"), vec![nodes[2]]);
+    assert!(float_column(&restricted, "score")[0] > 0.0);
+
+    session.bind_parameter(db_string("result_nodes"), Value::List(Vec::new()));
+    let empty = execute_rows(
+        &mut session,
+        "CALL algo.pagerank('p', 0.85D, 10, 0.0D, NULL, 'NATURAL', NULL, NULL, 1, $result_nodes) \
+         YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(empty.row_count(), 0);
 }
 
 #[test]

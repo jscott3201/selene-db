@@ -12,8 +12,8 @@ use std::{
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{
-    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, DbString, Value,
-    metrics,
+    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, DbString,
+    NodeScanBudget, Value, metrics,
 };
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, SharedGraph, WriteTxn};
 
@@ -28,13 +28,13 @@ use crate::{
     },
 };
 
+mod construction;
+
 /// Adaptive re-optimization hook reserved for future executor phases.
 pub trait AdaptiveOptimizer: Send + Sync {
     /// Observe output cardinality for one pipeline operation.
     fn observe_cardinality(&self, _op: PipelineOpId, _rows: u64) {}
 }
-
-static EMPTY_PARAMETERS: BTreeMap<DbString, Value> = BTreeMap::new();
 
 /// Row cadence for cooperative cancellation checkpoints.
 pub(crate) const CANCEL_CHECK_STRIDE: usize = 1024;
@@ -58,6 +58,7 @@ pub struct TxContext<'a, 'g> {
     plan_subqueries: Option<&'a SubqueryRegistry>,
     cancellation: Option<&'a CancellationToken>,
     deadline: Option<Instant>,
+    node_scan_budget: Option<&'a NodeScanBudget>,
     row_cap: Option<usize>,
     warning_sink: Option<&'a RefCell<Box<dyn WarningSink>>>,
     emitted_warnings: RefCell<FxHashSet<(GqlStatus, SourceSpan)>>,
@@ -114,264 +115,18 @@ impl<'a, 'ctx, 'g, 'plan> EvalCtx<'a, 'ctx, 'g, 'plan> {
 }
 
 impl<'a, 'g> TxContext<'a, 'g> {
-    /// Construct a read-only context over an immutable graph snapshot.
-    #[must_use]
-    pub fn read_only(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        providers: &'a [Arc<dyn IndexProvider>],
-    ) -> Self {
-        Self::read_only_with_parameters(
-            snapshot,
-            impl_defined_caps,
-            registry,
-            providers,
-            &EMPTY_PARAMETERS,
-        )
-    }
-
-    pub(crate) fn read_only_with_parameters(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        providers: &'a [Arc<dyn IndexProvider>],
-        parameters: &'a BTreeMap<DbString, Value>,
-    ) -> Self {
-        Self {
-            snapshot,
-            impl_defined_caps,
-            registry,
-            providers,
-            parameters: Cow::Borrowed(parameters),
-            binding_tables: Rc::new(BindingTableRegistry::new()),
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: None,
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
-    }
-
-    /// Construct a read-only context carrying a future adaptive optimizer hook.
-    #[must_use]
-    pub fn read_only_with_reopt(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        providers: &'a [Arc<dyn IndexProvider>],
-        reopt_hook: &'a dyn AdaptiveOptimizer,
-    ) -> Self {
-        Self::read_only_with_parameters_and_reopt(
-            snapshot,
-            impl_defined_caps,
-            registry,
-            providers,
-            reopt_hook,
-            &EMPTY_PARAMETERS,
-        )
-    }
-
-    pub(crate) fn read_only_with_parameters_and_reopt(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        providers: &'a [Arc<dyn IndexProvider>],
-        reopt_hook: &'a dyn AdaptiveOptimizer,
-        parameters: &'a BTreeMap<DbString, Value>,
-    ) -> Self {
-        Self {
-            snapshot,
-            impl_defined_caps,
-            registry,
-            providers,
-            parameters: Cow::Borrowed(parameters),
-            binding_tables: Rc::new(BindingTableRegistry::new()),
-            reopt_hook: Some(reopt_hook),
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: None,
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
-    }
-
-    /// Construct a write-capable context over a graph write transaction.
-    #[must_use]
-    pub fn write(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        txn: &'a mut WriteTxn<'g>,
-        providers: &'a [Arc<dyn IndexProvider>],
-    ) -> Self {
-        Self::write_with_parameters(
-            snapshot,
-            impl_defined_caps,
-            registry,
-            txn,
-            providers,
-            &EMPTY_PARAMETERS,
-        )
-    }
-
-    pub(crate) fn write_with_parameters(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        txn: &'a mut WriteTxn<'g>,
-        providers: &'a [Arc<dyn IndexProvider>],
-        parameters: &'a BTreeMap<DbString, Value>,
-    ) -> Self {
-        Self {
-            snapshot,
-            impl_defined_caps,
-            registry,
-            providers,
-            parameters: Cow::Borrowed(parameters),
-            binding_tables: Rc::new(BindingTableRegistry::new()),
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: Some(txn),
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
-    }
-
-    pub(crate) fn read_only_with_owned_parameters_and_registry(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        providers: &'a [Arc<dyn IndexProvider>],
-        parameters: Cow<'a, BTreeMap<DbString, Value>>,
-        binding_tables: Rc<BindingTableRegistry>,
-    ) -> Self {
-        Self {
-            snapshot,
-            impl_defined_caps,
-            registry,
-            providers,
-            parameters,
-            binding_tables,
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: None,
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
-    }
-
-    pub(crate) fn write_with_owned_parameters_and_registry(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        txn: &'a mut WriteTxn<'g>,
-        providers: &'a [Arc<dyn IndexProvider>],
-        parameters: Cow<'a, BTreeMap<DbString, Value>>,
-        binding_tables: Rc<BindingTableRegistry>,
-    ) -> Self {
-        Self {
-            snapshot,
-            impl_defined_caps,
-            registry,
-            providers,
-            parameters,
-            binding_tables,
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: Some(txn),
-            maintenance_graph: None,
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
-    }
-
-    pub(crate) fn maintenance_with_owned_parameters_and_registry(
-        snapshot: Arc<SeleneGraph>,
-        impl_defined_caps: &'a ImplDefinedCaps,
-        registry: &'a dyn ProcedureRegistry,
-        graph: &'g SharedGraph,
-        providers: &'a [Arc<dyn IndexProvider>],
-        parameters: Cow<'a, BTreeMap<DbString, Value>>,
-        binding_tables: Rc<BindingTableRegistry>,
-    ) -> Self {
-        Self {
-            snapshot,
-            impl_defined_caps,
-            registry,
-            providers,
-            parameters,
-            binding_tables,
-            reopt_hook: None,
-            plan_expr_ids: None,
-            plan_subqueries: None,
-            cancellation: None,
-            deadline: None,
-            row_cap: None,
-            warning_sink: None,
-            emitted_warnings: RefCell::new(FxHashSet::default()),
-            result_rows_emitted: Cell::new(0),
-            write_txn: None,
-            maintenance_graph: Some(graph),
-            session_time_zone: jiff::tz::TimeZone::UTC,
-            request_timestamp: jiff::Timestamp::now(),
-            subquery_target_schema: RefCell::new(FxHashMap::default()),
-        }
-    }
-
-    /// Attach per-statement cooperative cancellation and output row-cap limits.
+    /// Attach per-statement cooperative cancellation, scan-budget, and output row-cap limits.
     #[must_use]
     pub fn with_resource_limits(
         mut self,
         cancellation: Option<&'a CancellationToken>,
         deadline: Option<Instant>,
         row_cap: Option<usize>,
+        node_scan_budget: Option<&'a NodeScanBudget>,
     ) -> Self {
         self.cancellation = cancellation;
         self.deadline = deadline;
+        self.node_scan_budget = node_scan_budget;
         self.row_cap = row_cap;
         self
     }
@@ -501,7 +256,11 @@ impl<'a, 'g> TxContext<'a, 'g> {
     /// built-in procedures.
     #[must_use]
     pub(crate) const fn cancellation_checker(&self) -> CancellationChecker<'a> {
-        CancellationChecker::new(self.cancellation, self.deadline)
+        CancellationChecker::new_with_node_scan_budget(
+            self.cancellation,
+            self.deadline,
+            self.node_scan_budget,
+        )
     }
 
     /// Return the configured absolute deadline for this statement, if any.
@@ -525,6 +284,12 @@ impl<'a, 'g> TxContext<'a, 'g> {
                 ExecutorError::Timeout {
                     deadline: self.deadline.unwrap_or_else(Instant::now),
                     elapsed,
+                    span,
+                }
+            }
+            CancellationCause::NodeScanBudgetExceeded { .. } => {
+                ExecutorError::ProgramLimitExceeded {
+                    detail: "node scan budget exceeded",
                     span,
                 }
             }
@@ -691,6 +456,7 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("plan_subqueries", &self.plan_subqueries.is_some())
             .field("cancellation", &self.cancellation.is_some())
             .field("deadline", &self.deadline.is_some())
+            .field("node_scan_budget", &self.node_scan_budget.is_some())
             .field("row_cap", &self.row_cap)
             .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
@@ -740,8 +506,12 @@ mod tests {
         let registry = EmptyProcedureRegistry;
         let token = CancellationToken::new();
         token.cancel();
-        let ctx =
-            read_only_ctx(&graph, &caps, &registry).with_resource_limits(Some(&token), None, None);
+        let ctx = read_only_ctx(&graph, &caps, &registry).with_resource_limits(
+            Some(&token),
+            None,
+            None,
+            None,
+        );
 
         let mut rows_since_check = 0usize;
         // Accumulate one short of the stride: no boundary crossed, no check.

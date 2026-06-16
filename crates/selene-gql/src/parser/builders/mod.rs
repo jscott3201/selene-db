@@ -4,22 +4,23 @@ pub(super) mod call;
 pub(super) mod ddl;
 pub(super) mod explain;
 pub(super) mod expr;
+pub(super) mod let_stmt;
 pub(super) mod mutation;
 pub(super) mod pattern;
+pub(super) mod query;
 pub(super) mod session;
 pub(super) mod transaction;
 
 use std::borrow::Cow;
 
 use pest::iterators::Pair;
-use selene_core::DbString;
+use selene_core::{
+    DbString,
+    feature_register::{FeatureId, name_of, non_supported_rationale},
+};
 
 use crate::{
-    ast::{
-        GqlType, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-        QueryPipeline, ReturnClause, ReturnItem, SetOp, SourceSpan, Statement, UnwindStatement,
-        WithClause, util::NonEmpty,
-    },
+    ast::{GqlType, QueryPipeline, SetOp, SourceSpan, Statement, util::NonEmpty},
     error::ParserError,
 };
 
@@ -31,28 +32,48 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
             let child = first_non_eoi(program_pair)?;
             build_statement(child)
         }
-        Rule::query_pipeline => build_query_pipeline(program_pair).map(Statement::Query),
-        Rule::call_query_pipeline => build_call_query_pipeline(program_pair).map(Statement::Query),
+        Rule::query_pipeline => query::build_query_pipeline(program_pair).map(Statement::Query),
+        Rule::call_query_pipeline => {
+            query::build_call_query_pipeline(program_pair).map(Statement::Query)
+        }
         Rule::composite_query => build_composite(program_pair),
         Rule::chained_query => build_chained(program_pair),
         Rule::pipeline_statement => {
             let span = span(&program_pair);
-            let statement = build_pipeline_statement(program_pair)?;
+            let statement = query::build_pipeline_statement(program_pair)?;
             Ok(Statement::Query(QueryPipeline {
                 statements: vec![statement],
                 span,
             }))
         }
-        Rule::select_stmt => build_select_pipeline(program_pair).map(Statement::Query),
+        Rule::select_stmt => query::build_select_pipeline(program_pair).map(Statement::Query),
         Rule::mutation_pipeline => {
             mutation::build_mutation_pipeline(program_pair).map(Statement::Mutate)
         }
         Rule::ddl_statement => ddl::build_ddl_statement(program_pair).map(Statement::Ddl),
+        Rule::create_schema_command => Err(unsupported_feature(
+            &program_pair,
+            FeatureId::GC02,
+            "CREATE SCHEMA is outside the current catalog claim",
+        )),
         Rule::call_stmt => call::build_top_level_call(program_pair),
         Rule::explain_stmt => explain::build_explain_statement(program_pair),
         Rule::transaction_control => transaction::build_transaction_control(program_pair),
         Rule::session_command => session::build_session_command(program_pair),
         _ => Err(unexpected_pair(program_pair, "expected a GQL program")),
+    }
+}
+
+fn unsupported_feature(
+    pair: &Pair<'_, Rule>,
+    feature_id: FeatureId,
+    fallback_hint: &'static str,
+) -> ParserError {
+    ParserError::UnsupportedFeature {
+        feature_id,
+        display_name: name_of(feature_id).unwrap_or("unnamed feature"),
+        span: span(pair),
+        hint: non_supported_rationale(feature_id).unwrap_or(fallback_hint),
     }
 }
 
@@ -62,7 +83,7 @@ fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let first = children
         .next()
         .ok_or_else(ParserError::empty_program)
-        .and_then(|pair| build_query_pipeline(pair))?;
+        .and_then(|pair| query::build_query_pipeline(pair))?;
     let mut rest = Vec::new();
 
     while let Some(op_pair) = children.next() {
@@ -70,7 +91,7 @@ fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
         let pipeline = children
             .next()
             .ok_or_else(ParserError::empty_program)
-            .and_then(|pair| build_query_pipeline(pair))?;
+            .and_then(|pair| query::build_query_pipeline(pair))?;
         rest.push((op, pipeline));
     }
 
@@ -87,7 +108,7 @@ fn build_chained(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let blocks = pair
         .into_inner()
         .filter(|child| child.as_rule() == Rule::query_pipeline)
-        .map(|child| build_query_pipeline(child))
+        .map(query::build_query_pipeline)
         .collect::<Result<Vec<_>, _>>()?;
     if blocks.is_empty() {
         return Err(ParserError::empty_program());
@@ -128,359 +149,9 @@ fn contains_word(text: &str, word: &str) -> bool {
         .any(|part| part == word)
 }
 
-pub(super) fn build_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
-    debug_assert_eq!(pair.as_rule(), Rule::query_pipeline);
-    build_pipeline_from_children(pair)
-}
-
-fn build_call_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
-    debug_assert_eq!(pair.as_rule(), Rule::call_query_pipeline);
-    build_pipeline_from_children(pair)
-}
-
-fn build_pipeline_from_children(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
-    let source_span = span(&pair);
-    let statements = pair
-        .into_inner()
-        .map(|child| build_pipeline_statement(child))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(QueryPipeline {
-        statements,
-        span: source_span,
-    })
-}
-
-fn build_pipeline_statement(pair: Pair<'_, Rule>) -> Result<PipelineStatement, ParserError> {
-    if matches!(
-        pair.as_rule(),
-        Rule::pipeline_statement | Rule::post_call_pipeline_statement
-    ) {
-        return build_pipeline_statement(first_child(pair)?);
-    }
-
-    match pair.as_rule() {
-        Rule::match_stmt => pattern::build_match_clause(pair).map(PipelineStatement::Match),
-        Rule::filter_stmt => build_filter(pair).map(PipelineStatement::Filter),
-        Rule::let_stmt => build_let(pair).map(PipelineStatement::Let),
-        Rule::unwind_stmt => build_unwind(pair).map(PipelineStatement::Unwind),
-        Rule::sorting_stmt => build_sorting(pair).map(PipelineStatement::Sorting),
-        Rule::offset_stmt => build_limit_or_offset(pair).map(PipelineStatement::Offset),
-        Rule::limit_stmt => build_limit_or_offset(pair).map(PipelineStatement::Limit),
-        Rule::return_stmt => build_return_clause(pair).map(PipelineStatement::Return),
-        Rule::with_stmt => build_with_clause(pair).map(PipelineStatement::With),
-        Rule::for_stmt => Err(not_implemented(&pair, "FOR is not yet supported")),
-        Rule::call_stmt => call::build_pipeline_call(pair),
-        _ => Err(unexpected_pair(pair, "expected pipeline statement")),
-    }
-}
-
-fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
-    debug_assert_eq!(pair.as_rule(), Rule::select_stmt);
-    let source_span = span(&pair);
-    let mut return_clause = ReturnClause {
-        distinct: false,
-        star: false,
-        items: Vec::new(),
-        group_by: None,
-        having: None,
-        span: source_span,
-    };
-    // SELECT desugars to a query pipeline whose statements are emitted in
-    // semantic order: pre-projection (MATCH, WHERE/FILTER), then RETURN, then
-    // post-projection (ORDER BY, OFFSET, LIMIT). Routing WHERE through the
-    // post-RETURN slot would filter on projected rows instead of source rows
-    // and silently change query semantics whenever projection introduces
-    // aliases or aggregation.
-    let mut pre_return = Vec::new();
-    let mut post_return = Vec::new();
-
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::distinct_kw => return_clause.distinct = true,
-            Rule::return_star => return_clause.star = true,
-            Rule::projection_list => return_clause.items = build_projection_list(child)?,
-            Rule::select_from => {
-                let from_child = first_child(child)?;
-                if from_child.as_rule() == Rule::match_stmt {
-                    pre_return.push(PipelineStatement::Match(pattern::build_match_clause(
-                        from_child,
-                    )?));
-                } else {
-                    return Err(not_implemented(
-                        &from_child,
-                        "SELECT FROM graph-name resolution is not yet supported",
-                    ));
-                }
-            }
-            Rule::where_clause => {
-                pre_return.push(PipelineStatement::Filter(build_where(child)?));
-            }
-            Rule::group_by_clause => return_clause.group_by = Some(build_group_by(child)?),
-            Rule::having_clause => return_clause.having = Some(build_having(child)?),
-            Rule::sorting_stmt => {
-                post_return.push(PipelineStatement::Sorting(build_sorting(child)?));
-            }
-            Rule::offset_stmt => {
-                post_return.push(PipelineStatement::Offset(build_limit_or_offset(child)?));
-            }
-            Rule::limit_stmt => {
-                post_return.push(PipelineStatement::Limit(build_limit_or_offset(child)?));
-            }
-            _ => return Err(unexpected_pair(child, "unexpected SELECT child")),
-        }
-    }
-
-    let mut statements = pre_return;
-    statements.push(PipelineStatement::Return(return_clause));
-    statements.extend(post_return);
-    Ok(QueryPipeline {
-        statements,
-        span: source_span,
-    })
-}
-
-pub(super) fn build_filter(pair: Pair<'_, Rule>) -> Result<crate::ast::ValueExpr, ParserError> {
-    expr_from_first(pair, "FILTER is missing expression")
-}
-
-fn build_where(pair: Pair<'_, Rule>) -> Result<crate::ast::ValueExpr, ParserError> {
-    expr_from_first(pair, "WHERE is missing expression")
-}
-
-fn build_having(pair: Pair<'_, Rule>) -> Result<crate::ast::ValueExpr, ParserError> {
-    expr_from_first(pair, "HAVING is missing expression")
-}
-
-fn expr_from_first(
-    pair: Pair<'_, Rule>,
-    missing: &'static str,
-) -> Result<crate::ast::ValueExpr, ParserError> {
-    let pair_span = span(&pair);
-    let expr_pair = pair
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::expr)
-        .ok_or_else(|| ParserError::syntax(missing, pair_span, None))?;
-    expr::build_value_expr(expr_pair)
-}
-
-fn build_let(pair: Pair<'_, Rule>) -> Result<Vec<LetBinding>, ParserError> {
-    pair.into_inner()
-        .filter(|child| child.as_rule() == Rule::let_binding)
-        .map(|binding| {
-            let binding_span = span(&binding);
-            let mut children = binding.into_inner();
-            let alias_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("LET binding is missing alias", binding_span, None)
-            })?;
-            let value_pair = children.next().ok_or_else(|| {
-                ParserError::syntax("LET binding is missing expression", binding_span, None)
-            })?;
-            Ok(LetBinding {
-                alias: db_string_pair(alias_pair)?,
-                value: expr::build_value_expr(value_pair)?,
-                span: binding_span,
-            })
-        })
-        .collect()
-}
-
-fn build_unwind(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
-    let source_span = span(&pair);
-    let mut children = pair.into_inner();
-    let source = children
-        .next()
-        .ok_or_else(|| {
-            ParserError::syntax("UNWIND is missing source expression", source_span, None)
-        })
-        .and_then(|pair| expr::build_value_expr(pair))?;
-    let alias = children
-        .next()
-        .ok_or_else(|| ParserError::syntax("UNWIND is missing alias", source_span, None))
-        .and_then(|pair| db_string_pair(pair))?;
-    Ok(UnwindStatement {
-        source,
-        alias,
-        span: source_span,
-    })
-}
-
-fn build_sorting(pair: Pair<'_, Rule>) -> Result<Vec<OrderTerm>, ParserError> {
-    pair.into_inner()
-        .filter(|child| child.as_rule() == Rule::order_term)
-        .map(|child| build_order_term(child))
-        .collect()
-}
-
-fn build_order_term(pair: Pair<'_, Rule>) -> Result<OrderTerm, ParserError> {
-    let source_span = span(&pair);
-    let mut expr_value = None;
-    let mut direction = OrderDirection::Asc;
-    let mut nulls = None;
-
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::expr => expr_value = Some(expr::build_value_expr(child)?),
-            Rule::sort_dir if child.as_str().eq_ignore_ascii_case("DESC") => {
-                direction = OrderDirection::Desc;
-            }
-            Rule::sort_dir => direction = OrderDirection::Asc,
-            Rule::nulls_order if child.as_str().to_ascii_uppercase().contains("FIRST") => {
-                nulls = Some(NullsPolicy::NullsFirst);
-            }
-            Rule::nulls_order => nulls = Some(NullsPolicy::NullsLast),
-            _ => return Err(unexpected_pair(child, "unexpected ORDER BY child")),
-        }
-    }
-
-    Ok(OrderTerm {
-        expr: expr_value.ok_or_else(|| {
-            ParserError::syntax("ORDER BY term is missing expression", source_span, None)
-        })?,
-        direction,
-        nulls,
-        span: source_span,
-    })
-}
-
-fn build_limit_or_offset(pair: Pair<'_, Rule>) -> Result<LimitValue, ParserError> {
-    let source_span = span(&pair);
-    let child = pair
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::limit_value)
-        .ok_or_else(|| ParserError::syntax("LIMIT/OFFSET is missing value", source_span, None))?;
-    let inner = first_child(child)?;
-    match inner.as_rule() {
-        Rule::uint => inner
-            .as_str()
-            .parse::<u64>()
-            .map(|value| LimitValue::Count(value, span(&inner)))
-            .map_err(|error| {
-                ParserError::syntax(format!("invalid LIMIT/OFFSET: {error}"), span(&inner), None)
-            }),
-        Rule::typed_param_ref => {
-            let (name, declared_type, span) = build_typed_param_ref(inner)?;
-            Ok(LimitValue::Parameter {
-                name,
-                declared_type,
-                span,
-            })
-        }
-        _ => Err(unexpected_pair(inner, "expected LIMIT/OFFSET value")),
-    }
-}
-
-pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, ParserError> {
-    let source_span = span(&pair);
-    let mut clause = ReturnClause {
-        distinct: false,
-        star: false,
-        items: Vec::new(),
-        group_by: None,
-        having: None,
-        span: source_span,
-    };
-
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::distinct_kw => clause.distinct = true,
-            Rule::return_star => clause.star = true,
-            Rule::projection_list => clause.items = build_projection_list(child)?,
-            Rule::group_by_clause => clause.group_by = Some(build_group_by(child)?),
-            Rule::having_clause => clause.having = Some(build_having(child)?),
-            Rule::no_bindings => {
-                return Err(ParserError::not_implemented(
-                    "RETURN NO BINDINGS is an ISO specification device, not user GQL syntax",
-                    span(&child),
-                    Some("use FINISH for write pipelines that intentionally omit a result"),
-                ));
-            }
-            _ => return Err(unexpected_pair(child, "unexpected RETURN child")),
-        }
-    }
-
-    if !clause.star && clause.items.is_empty() {
-        return Err(ParserError::syntax(
-            "RETURN requires at least one projection item",
-            source_span,
-            None,
-        ));
-    }
-    Ok(clause)
-}
-
-fn build_with_clause(pair: Pair<'_, Rule>) -> Result<WithClause, ParserError> {
-    let source_span = span(&pair);
-    let mut clause = WithClause {
-        distinct: false,
-        items: Vec::new(),
-        group_by: None,
-        having: None,
-        where_clause: None,
-        span: source_span,
-    };
-
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::distinct_kw => clause.distinct = true,
-            Rule::projection_list => clause.items = build_projection_list(child)?,
-            Rule::group_by_clause => clause.group_by = Some(build_group_by(child)?),
-            Rule::having_clause => clause.having = Some(build_having(child)?),
-            Rule::where_clause => clause.where_clause = Some(build_where(child)?),
-            _ => return Err(unexpected_pair(child, "unexpected WITH child")),
-        }
-    }
-    Ok(clause)
-}
-
-fn build_projection_list(pair: Pair<'_, Rule>) -> Result<Vec<ReturnItem>, ParserError> {
-    pair.into_inner()
-        .filter(|child| child.as_rule() == Rule::projection)
-        .map(|child| build_return_item(child))
-        .collect()
-}
-
-fn build_return_item(pair: Pair<'_, Rule>) -> Result<ReturnItem, ParserError> {
-    let source_span = span(&pair);
-    let mut value = None;
-    let mut alias = None;
-
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::expr => value = Some(expr::build_value_expr(child)?),
-            Rule::alias => alias = Some(build_alias(child)?),
-            _ => {
-                return Err(unexpected_pair(
-                    child,
-                    "expected RETURN expression or alias",
-                ));
-            }
-        }
-    }
-
-    Ok(ReturnItem {
-        expr: value.ok_or_else(|| {
-            ParserError::syntax("RETURN item is missing expression", source_span, None)
-        })?,
-        alias,
-        span: source_span,
-    })
-}
-
-fn build_alias(pair: Pair<'_, Rule>) -> Result<DbString, ParserError> {
-    let source_span = span(&pair);
-    let ident = pair
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::prop_ident)
-        .ok_or_else(|| ParserError::syntax("AS alias is missing identifier", source_span, None))?;
-    db_string_pair(ident)
-}
-
-fn build_group_by(pair: Pair<'_, Rule>) -> Result<Vec<crate::ast::ValueExpr>, ParserError> {
-    pair.into_inner()
-        .filter(|child| child.as_rule() == Rule::group_by_item)
-        .map(|item| expr_from_first(item, "GROUP BY item is missing expression"))
-        .collect()
-}
+use query::{
+    build_exists_match_body_pipeline, build_filter, build_query_pipeline, build_return_clause,
+};
 
 pub(super) fn first_child(pair: Pair<'_, Rule>) -> Result<Pair<'_, Rule>, ParserError> {
     let pair_span = span(&pair);
@@ -620,13 +291,13 @@ pub(super) fn build_typed_param_ref(
 ///
 /// Bare (unquoted) identifiers — the common case — are returned borrowed
 /// (`Cow::Borrowed`) with zero allocation; only delimited identifiers that
-/// must strip delimiters or unescape `""` allocate. Callers preserve that
+/// must strip delimiters or unescape doubled delimiters allocate. Callers preserve that
 /// borrowed/owned shape when constructing the validated database string.
 pub(super) fn decode_ident_like(text: &str) -> Cow<'_, str> {
     if let Some(inner) = text.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         Cow::Owned(inner.replace("\"\"", "\""))
     } else if let Some(inner) = text.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
-        Cow::Borrowed(inner)
+        Cow::Owned(inner.replace("``", "`"))
     } else {
         Cow::Borrowed(text)
     }

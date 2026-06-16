@@ -37,11 +37,15 @@ fn assert_pattern_kind_mismatch(
 }
 
 #[test]
-fn unwind_alias_same_name_does_not_collide_with_node_pattern() {
-    assert_alias_reused_as_node(
-        "UNWIND [1] AS x MATCH (x) RETURN x",
-        BindingDeclKind::UnwindAlias,
-    );
+fn for_alias_same_name_does_not_collide_with_node_pattern() {
+    assert_alias_reused_as_node("FOR x IN [1] MATCH (x) RETURN x", BindingDeclKind::ForAlias);
+}
+
+#[test]
+fn for_position_alias_must_not_shadow_element_alias() {
+    let err = analyze_one("FOR x IN [1] WITH ORDINALITY x RETURN x")
+        .expect_err("position alias shadows element alias");
+    assert!(matches!(err, AnalysisError::Shadow { .. }));
 }
 
 #[test]

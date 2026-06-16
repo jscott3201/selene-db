@@ -74,6 +74,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// The mutation is a no-op when `property` is absent.
     pub fn remove_edge_property(&mut self, id: EdgeId, property: DbString) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
+        let label = self
+            .txn
+            .read()
+            .edge_store
+            .label
+            .get(row)
+            .cloned()
+            .ok_or(crate::GraphError::EdgeNotFound { id })?;
         let old_props = self
             .txn
             .read()
@@ -88,13 +96,19 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
         let diff = PropertyDiff::new([], [property.clone()])?;
         reject_immutable_edge_update(self.txn.read(), id, &diff)?;
-        let mut new_props = old_props;
+        let mut new_props = old_props.clone();
         new_props.remove(&property);
-        self.txn
-            .guard_mut()
-            .edge_store
-            .properties
-            .set(row, new_props);
+        {
+            let graph = self.txn.guard_mut();
+            graph.edge_store.properties.set(row, new_props.clone());
+            crate::property_index::apply_edge_update(
+                &mut graph.edge_property_index,
+                &label,
+                &old_props,
+                &new_props,
+                row as u32,
+            )?;
+        }
         self.txn
             .changes
             .push(Change::EdgePropertyRemoved { id, property });

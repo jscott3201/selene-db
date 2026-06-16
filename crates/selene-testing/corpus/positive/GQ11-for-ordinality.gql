@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GQ11
+// also-covers: GQ10
+// expects: parse-ok
+FOR x IN [1, 2, 3] WITH ORDINALITY ord RETURN x, ord

@@ -1,0 +1,9 @@
+// corpus: positive
+// feature: none
+// also-covers: GL11, GV41
+// expects: parse-ok
+RETURN
+  `a``b` AS accent_string,
+  @`a\nb` AS raw_accent_string,
+  DATE `2026-05-07` AS accent_date,
+  DURATION `PT1S` AS accent_duration

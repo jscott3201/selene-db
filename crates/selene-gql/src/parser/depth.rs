@@ -35,7 +35,7 @@ use crate::{
     ast::{
         call::{InlineProcedureCall, ProcedureCall},
         ddl::{DdlStatement, TypePropertyConstraint},
-        expr::{IsCheckKind, ValueExpr},
+        expr::{ExistsBody, IsCheckKind, ValueExpr},
         mutation::{MutationPipeline, MutationStatement, MutationTerminator, SetItem},
         pattern::{GraphPattern, MatchClause, PatternElement},
         statement::{PipelineStatement, QueryPipeline, ReturnClause, Statement, WithClause},
@@ -124,10 +124,6 @@ fn push_expr<'a>(
         ValueExpr::PropertyAccess { target, .. } | ValueExpr::PropertyExists { target, .. } => {
             work.push(Node::Expr(target, next));
         }
-        ValueExpr::ListAccess { target, index, .. } => {
-            work.push(Node::Expr(target, next));
-            work.push(Node::Expr(index, next));
-        }
         ValueExpr::ListLiteral { items, .. }
         | ValueExpr::PathConstructor {
             elements: items, ..
@@ -208,9 +204,10 @@ fn push_expr<'a>(
         // Subquery bodies are `MatchClause` / `QueryPipeline`, not direct
         // `ValueExpr` children — descend into them (a fresh expression context,
         // so depth resets to 1 in the structural push helpers).
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-            work.push(Node::MatchClause(pattern));
-        }
+        ValueExpr::Exists { body, .. } => match body {
+            ExistsBody::Match(pattern) => work.push(Node::MatchClause(pattern)),
+            ExistsBody::Query(pipeline) => work.push(Node::Pipeline(pipeline)),
+        },
         ValueExpr::ValueSubquery { body, .. } => work.push(Node::Pipeline(body)),
     }
     Ok(())
@@ -239,6 +236,7 @@ fn push_statement<'a>(statement: &'a Statement, work: &mut Vec<Node<'a>>) {
         | Statement::Commit { .. }
         | Statement::Rollback { .. }
         | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionSetGraph { .. }
         | Statement::SessionReset { .. }
         | Statement::SessionClose { .. } => {}
     }
@@ -254,7 +252,7 @@ fn push_pipeline<'a>(pipeline: &'a QueryPipeline, work: &mut Vec<Node<'a>>) {
                     work.push(Node::Expr(&binding.value, 1));
                 }
             }
-            PipelineStatement::Unwind(unwind) => work.push(Node::Expr(&unwind.source, 1)),
+            PipelineStatement::For(statement) => work.push(Node::Expr(&statement.source, 1)),
             PipelineStatement::Sorting(terms) => {
                 for term in terms {
                     work.push(Node::Expr(&term.expr, 1));
@@ -366,9 +364,6 @@ fn push_with<'a>(clause: &'a WithClause, work: &mut Vec<Node<'a>>) {
 fn push_call<'a>(call: &'a ProcedureCall, work: &mut Vec<Node<'a>>) {
     for arg in &call.args {
         work.push(Node::Expr(arg, 1));
-    }
-    if let Some(filter) = &call.yield_filter {
-        work.push(Node::Expr(filter, 1));
     }
 }
 

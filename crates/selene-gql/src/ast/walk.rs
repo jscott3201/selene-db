@@ -11,8 +11,7 @@
 //!   **direct** child `ValueExpr` of a node, in source order. They are *shallow*:
 //!   the callback receives each immediate child once, and the caller drives
 //!   recursion by re-invoking itself inside the callback. Subquery nodes
-//!   ([`ValueExpr::Exists`], [`ValueExpr::CountSubquery`],
-//!   [`ValueExpr::ValueSubquery`]) carry no direct `ValueExpr` children — their
+//!   ([`ValueExpr::Exists`], [`ValueExpr::ValueSubquery`]) carry no direct `ValueExpr` children — their
 //!   bodies are [`MatchClause`](crate::MatchClause) /
 //!   [`QueryPipeline`](crate::QueryPipeline) — so they yield nothing and the
 //!   caller handles any subquery descent explicitly.
@@ -36,14 +35,10 @@ impl ValueExpr {
     /// [`IsCheckKind::SourceOf`]/[`IsCheckKind::DestinationOf`] operand counts as
     /// a child of the enclosing [`ValueExpr::IsCheck`] and is yielded after the
     /// checked `operand`. Subquery variants yield no children.
-    pub fn for_each_child(&self, f: &mut impl FnMut(&ValueExpr)) {
+    pub fn for_each_child<'a>(&'a self, f: &mut impl FnMut(&'a ValueExpr)) {
         match self {
             Self::Literal(_) | Self::Variable { .. } | Self::Parameter { .. } => {}
             Self::PropertyAccess { target, .. } | Self::PropertyExists { target, .. } => f(target),
-            Self::ListAccess { target, index, .. } => {
-                f(target);
-                f(index);
-            }
             Self::ListLiteral { items, .. }
             | Self::PathConstructor {
                 elements: items, ..
@@ -114,7 +109,7 @@ impl ValueExpr {
             Self::Cast { value, .. } => f(value),
             // Subquery bodies are `MatchClause` / `QueryPipeline`, not
             // `ValueExpr`; they carry no direct `ValueExpr` children.
-            Self::Exists { .. } | Self::CountSubquery { .. } | Self::ValueSubquery { .. } => {}
+            Self::Exists { .. } | Self::ValueSubquery { .. } => {}
         }
     }
 
@@ -127,10 +122,6 @@ impl ValueExpr {
         match self {
             Self::Literal(_) | Self::Variable { .. } | Self::Parameter { .. } => {}
             Self::PropertyAccess { target, .. } | Self::PropertyExists { target, .. } => f(target),
-            Self::ListAccess { target, index, .. } => {
-                f(target);
-                f(index);
-            }
             Self::ListLiteral { items, .. }
             | Self::PathConstructor {
                 elements: items, ..
@@ -201,7 +192,7 @@ impl ValueExpr {
             Self::Cast { value, .. } => f(value),
             // Subquery bodies are `MatchClause` / `QueryPipeline`, not
             // `ValueExpr`; they carry no direct `ValueExpr` children.
-            Self::Exists { .. } | Self::CountSubquery { .. } | Self::ValueSubquery { .. } => {}
+            Self::Exists { .. } | Self::ValueSubquery { .. } => {}
         }
     }
 
@@ -219,7 +210,6 @@ impl ValueExpr {
             Self::Variable { span, .. }
             | Self::Parameter { span, .. }
             | Self::PropertyAccess { span, .. }
-            | Self::ListAccess { span, .. }
             | Self::ListLiteral { span, .. }
             | Self::RecordLiteral { span, .. }
             | Self::PathConstructor { span, .. }
@@ -235,7 +225,6 @@ impl ValueExpr {
             | Self::PropertyExists { span, .. }
             | Self::Case { span, .. }
             | Self::Exists { span, .. }
-            | Self::CountSubquery { span, .. }
             | Self::ValueSubquery { span, .. }
             | Self::Normalize { span, .. }
             | Self::Trim { span, .. }
