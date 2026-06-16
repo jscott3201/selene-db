@@ -49,12 +49,7 @@ pub(super) fn execute(
         for output_row in result.rows {
             ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
             let projected = project::project_yield_row(call, output_row)?;
-            let mut values = row.values().to_vec();
-            values.extend(projected);
-            output.push(Binding::with_insert_sites(
-                values,
-                row.insert_sites().iter().copied().collect(),
-            ));
+            output.push(row.with_appended_values(projected));
         }
     }
 
@@ -99,12 +94,7 @@ pub(super) fn execute_read_only(
         for output_row in result.rows {
             ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
             let projected = project::project_yield_row(call, output_row)?;
-            let mut values = row.values().to_vec();
-            values.extend(projected);
-            output.push(Binding::with_insert_sites(
-                values,
-                row.insert_sites().iter().copied().collect(),
-            ));
+            output.push(row.with_appended_values(projected));
         }
     }
 
@@ -129,7 +119,5 @@ fn output_schema(input: &BindingTableSchema, call: &PlannedCall) -> BindingTable
 }
 
 fn optional_output_row(call: &PlannedCall, input: &Binding) -> Binding {
-    let mut values = input.values().to_vec();
-    values.extend(std::iter::repeat_n(Value::Null, call.yield_schema.len()));
-    Binding::with_insert_sites(values, input.insert_sites().iter().copied().collect())
+    input.with_appended_values(std::iter::repeat_n(Value::Null, call.yield_schema.len()))
 }
