@@ -2110,7 +2110,8 @@ PR-local quick B2 shared source-plan cache row
 Read-execution coverage for the declared 60%-read workload: label scan +
 indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
 GROUP BY, DISTINCT dedup, indexed `IN` bitmap union, post-RETURN bare
-`LIMIT 10`, and pre-RETURN bare `LIMIT 10`. Warm-plan-cache rows run over
+`LIMIT 10`, pre-RETURN bare `LIMIT 10`, and maintained composite-index
+equality lookup. Warm-plan-cache rows run over
 `BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
 pure execution + index access — not parse/plan/optimize, not durability. Cold
 and shared-cache companions on the cheapest row rebuild a fresh session per
@@ -2141,6 +2142,15 @@ cold vs 81 µs warm) amortizes under the linear scan.
 | `read_pipeline/distinct_dedup` | 877 µs | 5.93 ms | 13.61 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
 | `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
 | `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
+
+PR-local composite lookup guard:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_composite_lookup`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `read_pipeline/match_composite_lookup/1000` | 461.85 ns | Warm cached `CompositeLookup` for `Person(age, name)` equality over a maintained composite property index. A follow-up inline scratch-storage experiment measured 465.29 ns and stayed within Criterion's noise threshold, so no runtime change was kept. |
 
 PR-local short-lived-session source-plan cache A/B:
 
