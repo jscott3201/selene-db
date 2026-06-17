@@ -16,8 +16,8 @@ use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    LabelSet, PropertyDiff, PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string,
-    exact_vector_top_k, vector_squared_norm,
+    LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, VectorMetric, VectorTopK, VectorValue,
+    db_string, exact_vector_top_k, vector_squared_norm,
 };
 use wide::f64x4;
 
@@ -184,17 +184,14 @@ fn wide_compact_key_values_sorted(
         .unzip()
 }
 
-fn wide_labels(width: usize) -> Vec<selene_core::DbString> {
-    (0..width)
-        .rev()
+fn wide_labels(width: usize, reverse: bool) -> Vec<selene_core::DbString> {
+    let mut labels: Vec<_> = (0..width)
         .map(|idx| db_string(&format!("wide_label_{idx:04}")).expect("label fits DB string cap"))
-        .collect()
-}
-
-fn wide_labels_sorted(width: usize) -> Vec<selene_core::DbString> {
-    (0..width)
-        .map(|idx| db_string(&format!("wide_label_{idx:04}")).expect("label fits DB string cap"))
-        .collect()
+        .collect();
+    if reverse {
+        labels.reverse();
+    }
+    labels
 }
 
 // `print_stderr` deny is locally relaxed to surface the current `Value` size
@@ -286,12 +283,12 @@ fn bench_value_clone(c: &mut Criterion) {
 
 fn bench_label_set(c: &mut Criterion) {
     let mut group = c.benchmark_group("core_label_set");
-    let labels = wide_labels(100);
+    let labels = wide_labels(100, true);
     group.throughput(Throughput::Elements(labels.len() as u64));
     group.bench_function("from_iter_100_reverse", |b| {
         b.iter(|| LabelSet::from_iter(black_box(labels.iter().cloned())));
     });
-    let sorted_labels = wide_labels_sorted(100);
+    let sorted_labels = wide_labels(100, false);
     group.bench_function("from_iter_100_sorted", |b| {
         b.iter(|| LabelSet::from_iter(black_box(sorted_labels.iter().cloned())));
     });
@@ -334,6 +331,20 @@ fn bench_change_diff(c: &mut Criterion) {
             .expect("wide property diff is valid")
         });
     });
+
+    group.throughput(Throughput::Elements(100));
+    for (name, reverse) in [
+        ("label_diff_added_100_reverse", true),
+        ("label_diff_added_100_sorted", false),
+    ] {
+        let labels = wide_labels(100, reverse);
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                LabelDiff::new(black_box(labels.iter().cloned()), [])
+                    .expect("wide label diff is valid")
+            });
+        });
+    }
 
     group.finish();
 }
