@@ -286,6 +286,28 @@ fn bench_change_diff(c: &mut Criterion) {
         });
     });
 
+    let pairs = wide_property_pairs(256);
+    group.throughput(Throughput::Elements(pairs.len() as u64));
+    group.bench_function("property_diff_set_256_reverse", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                black_box(pairs.iter().cloned()),
+                std::iter::empty::<selene_core::DbString>(),
+            )
+            .expect("wide property diff is valid")
+        });
+    });
+    let sorted_pairs = wide_property_pairs_sorted(256);
+    group.bench_function("property_diff_set_256_sorted", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                black_box(sorted_pairs.iter().cloned()),
+                std::iter::empty::<selene_core::DbString>(),
+            )
+            .expect("wide property diff is valid")
+        });
+    });
+
     group.finish();
 }
 
