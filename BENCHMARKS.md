@@ -2541,6 +2541,16 @@ Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'alg
 | `algo/louvain/50k` | 9.294 ms | 9.0146 ms | Same deterministic single-level Louvain semantics. |
 | `algo/louvain/100k` | 19.31 ms | 18.569 ms | Modest improvement; Louvain remains sequential-only. |
 
+PR-local Louvain inline community-weight A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter louvain --save-baseline louvain-inline-weights-before`;
+rerun with `--baseline louvain-inline-weights-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/louvain/1k` | 153.99 µs | 106.78 µs | Neighbor community weights now aggregate in an inline `SmallVec` for low-cardinality neighborhoods and spill to the existing `FxHashMap` only past the inline cap. The planted-community quick row improves 30.49% (`p=0.00`). |
+
 PR-local full component dense-state A/B:
 
 Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'wcc|scc'`
