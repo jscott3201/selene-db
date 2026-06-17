@@ -2511,6 +2511,16 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
 
+PR-local sequential PageRank natural-CSR borrow A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter 'pagerank/sequential' --save-baseline pagerank-natural-borrow-before`;
+rerun with `--baseline pagerank-natural-borrow-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/pagerank/sequential/1k` | 10.293 µs | 2.8465 µs | Natural-orientation sequential PageRank now borrows projection CSR out-neighbor slices instead of cloning dense neighbor IDs into an owned adjacency. Reverse and undirected orientations keep the existing owned-adjacency path. The quick sparse row improves 73.19% (`p=0.00`). |
+
 PR-local SCC count-only materialization A/B:
 
 Command:

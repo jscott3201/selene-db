@@ -115,7 +115,12 @@ fn pagerank_sequential(
     let mut scores: Vec<f64> = personalization.clone();
     let mut new_scores: Vec<f64> = vec![0.0; n_usize];
 
-    let out_neighbors_dense = build_oriented_out_neighbors(proj, config.orientation, checker)?;
+    let out_neighbors_dense = match config.orientation {
+        PageRankOrientation::Natural => None,
+        PageRankOrientation::Reverse | PageRankOrientation::Undirected => Some(
+            build_oriented_out_neighbors(proj, config.orientation, checker)?,
+        ),
+    };
 
     for _ in 0..config.max_iter {
         check_algorithm(checker)?;
@@ -138,14 +143,28 @@ fn pagerank_sequential(
         // mathematically equivalent (sums commute) and runs in O(N + E)
         // regardless of D.
         let mut dangling_mass = 0.0;
-        for u in 0..n_usize {
-            let neighbors = &out_neighbors_dense[u];
-            if neighbors.is_empty() {
-                dangling_mass += scores[u];
-            } else {
-                let contribution = config.damping * scores[u] / neighbors.len() as f64;
-                for &v in neighbors {
-                    new_scores[v as usize] += contribution;
+        if let Some(out_neighbors_dense) = &out_neighbors_dense {
+            for u in 0..n_usize {
+                let neighbors = &out_neighbors_dense[u];
+                if neighbors.is_empty() {
+                    dangling_mass += scores[u];
+                } else {
+                    let contribution = config.damping * scores[u] / neighbors.len() as f64;
+                    for &v in neighbors {
+                        new_scores[v as usize] += contribution;
+                    }
+                }
+            }
+        } else {
+            for (u, &score) in scores.iter().enumerate() {
+                let neighbors = proj.out_neighbors_dense(u as u32);
+                if neighbors.is_empty() {
+                    dangling_mass += score;
+                } else {
+                    let contribution = config.damping * score / neighbors.len() as f64;
+                    for nb in neighbors {
+                        new_scores[nb.dense as usize] += contribution;
+                    }
                 }
             }
         }
