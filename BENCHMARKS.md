@@ -509,6 +509,18 @@ Post-change guard medians:
 | `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 387.61 µs |
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 27.896 µs |
 
+PR-local quick BM25 full-cover candidate A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query_candidates`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 34.770 µs | 30.221 µs | Full-cover sorted candidate lists now delegate to the regular indexed scorer after verifying that the candidates cover every indexed document; Criterion reported -13.185% (`p=0.00`). |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 38.948 µs | 31.249 µs | Full-cover unsorted lists dedupe to the indexed corpus and then use the same regular indexed scorer; Criterion reported -21.787% (`p=0.00`). |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.044 µs | 28.399 µs | Guard row for the delegated scorer; Criterion kept the change within the noise threshold. |
+
 PR-local quick vector candidate-set scoring Rayon A/B:
 
 Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set`

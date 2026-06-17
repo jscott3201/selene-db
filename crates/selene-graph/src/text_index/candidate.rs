@@ -65,13 +65,23 @@ impl TextIndex {
             average_document_len,
             k,
         };
-        if node_ids_strictly_ascending(candidates) {
+        let candidates_are_strictly_ascending = node_ids_strictly_ascending(candidates);
+        if checker.is_disabled()
+            && candidates_are_strictly_ascending
+            && self.ascending_candidates_cover_index(candidates)
+        {
+            return Ok(self.search(query, k));
+        }
+        if candidates_are_strictly_ascending {
             return self.score_indexed_candidates(candidates.iter().copied(), scoring, checker);
         }
 
         let candidate_set = self.indexed_candidate_set(candidates, checker)?;
         if candidate_set.is_empty() {
             return Ok(Vec::new());
+        }
+        if checker.is_disabled() && candidate_set.len() == self.document_lengths.len() {
+            return Ok(self.search(query, k));
         }
         self.score_indexed_candidates(candidate_set, scoring, checker)
     }
@@ -134,6 +144,13 @@ impl TextIndex {
             checker.note_nodes_scanned(candidates_since_check)?;
         }
         Ok(set)
+    }
+
+    fn ascending_candidates_cover_index(&self, candidates: &[NodeId]) -> bool {
+        candidates.len() == self.document_lengths.len()
+            && candidates
+                .iter()
+                .all(|candidate| self.document_lengths.contains_key(candidate))
     }
 
     fn query_postings<'a>(

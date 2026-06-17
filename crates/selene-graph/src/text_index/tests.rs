@@ -460,6 +460,58 @@ fn text_index_candidate_search_matches_global_filter() {
 }
 
 #[test]
+fn text_index_candidate_search_full_cover_matches_global() {
+    let graph = SharedGraph::new(GraphId::new(433_017));
+    let doc = db_string("TextCandidateFullCoverDoc");
+    let body = db_string("body");
+    let node_a;
+    let node_b;
+    let node_c;
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        node_a = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("graph memory graph"))),
+            )
+            .unwrap();
+        node_b = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("graph retrieval"))),
+            )
+            .unwrap();
+        node_c = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("memory retrieval graph"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    let index = graph.build_text_index(&doc, &body).unwrap();
+    let global = index.search("graph memory", 10);
+
+    assert_eq!(
+        index.search_candidates("graph memory", &[node_a, node_b, node_c], 10),
+        global
+    );
+    assert_eq!(
+        index.search_candidates("graph memory", &[node_c, node_b, node_a], 10),
+        global
+    );
+    assert_eq!(
+        index.search_candidates(
+            "graph memory",
+            &[node_c, node_b, node_a, node_a, NodeId::new(999_999)],
+            10,
+        ),
+        global
+    );
+}
+
+#[test]
 fn text_index_candidate_search_dedups_and_ignores_unindexed_nodes() {
     let graph = SharedGraph::new(GraphId::new(433_007));
     let doc = db_string("TextCandidateDedupDoc");
