@@ -2584,6 +2584,16 @@ rerun with `--baseline b13_pre` after the implementation.
 | `algo/projection_build/50k` | 11.057 ms | 4.5021 ms | Larger projections benefit most from removing the second count/fill pass and per-edge membership probes; this row improves 59.1%. |
 | `algo/projection_build/100k` | 29.202 ms | 14.412 ms | 100k projection build improves 50.6% while preserving the out/in CSR transpose invariant. |
 
+PR-local projection sorted-bucket guard:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench projection --filter projection_build --save-baseline csr-skip-sorted-before`;
+rerun with `--baseline csr-skip-sorted-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/projection_build/1k` | 50.804 µs | 48.671 µs | CSR bucket ordering now checks whether each bucket is already sorted by neighbor `NodeId` and keeps the stable sort only for unsorted buckets. The common one-label projection row improves 4.16% (`p=0.00`). |
+
 ### §6c Graph-Augmented Vector Retrieval Research
 
 Quick rows below are local research fixtures, not production API claims. The
