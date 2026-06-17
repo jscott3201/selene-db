@@ -211,7 +211,7 @@ impl FromIterator<DbString> for LabelSet {
         if labels.len() <= 1 || labels.windows(2).all(|pair| pair[0] < pair[1]) {
             return Self(labels);
         }
-        labels.sort();
+        labels.sort_unstable();
         labels.dedup();
         Self(labels)
     }
