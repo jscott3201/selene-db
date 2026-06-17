@@ -280,6 +280,36 @@ fn text_index_interns_document_terms_with_posting_keys() {
 }
 
 #[test]
+fn text_index_counts_terms_after_inline_accumulator_spill() {
+    let graph = SharedGraph::new(GraphId::new(433_903));
+    let doc = db_string("TextSpilledTermsDoc");
+    let body = db_string("body");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(
+                    &body,
+                    Value::String(db_string(
+                        "alpha beta gamma delta epsilon zeta eta theta iota kappa alpha kappa",
+                    )),
+                ),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let index = graph.build_text_index(&doc, &body).unwrap();
+
+    assert_eq!(index.term_count(), 10);
+    assert_eq!(index.posting_count(), 10);
+    assert_eq!(index.stats().total_document_len, 12);
+    assert_eq!(index.postings["alpha"][0].term_count, 2);
+    assert_eq!(index.postings["kappa"][0].term_count, 2);
+}
+
+#[test]
 fn text_index_sparse_label_build_does_not_keep_label_row_capacity() {
     let graph = SharedGraph::new(GraphId::new(433_901));
     let doc = db_string("TextSparseDoc");
