@@ -243,6 +243,43 @@ fn text_index_reports_stats_and_memory() {
 }
 
 #[test]
+fn text_index_interns_document_terms_with_posting_keys() {
+    let graph = SharedGraph::new(GraphId::new(433_902));
+    let doc = db_string("TextInternedTermsDoc");
+    let body = db_string("body");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent graph graph"))),
+            )
+            .unwrap();
+        mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent graph retrieval"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let index = graph.build_text_index(&doc, &body).unwrap();
+
+    assert_eq!(index.term_count(), 3);
+    for terms in index.document_terms.values() {
+        for term in terms.iter() {
+            let (posting_term, _) = index
+                .postings
+                .get_key_value(term.as_ref())
+                .expect("document term has postings key");
+            assert!(std::sync::Arc::ptr_eq(term, posting_term));
+        }
+    }
+}
+
+#[test]
 fn text_index_sparse_label_build_does_not_keep_label_row_capacity() {
     let graph = SharedGraph::new(GraphId::new(433_901));
     let doc = db_string("TextSparseDoc");
