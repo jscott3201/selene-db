@@ -195,9 +195,7 @@ pub(crate) fn build_csr_out(
     for d in 0..dense_n {
         let start = offsets[d] as usize;
         let end = offsets[d + 1] as usize;
-        if end > start {
-            neighbors[start..end].sort_by_key(|n| n.node_id);
-        }
+        sort_neighbors_by_node_id(&mut neighbors[start..end]);
     }
 
     ProjCsr { offsets, neighbors }
@@ -258,12 +256,20 @@ pub(crate) fn transpose_csr_in(out_csr: &ProjCsr, row_index: &RowIndex) -> ProjC
     for d in 0..dense_n {
         let start = offsets[d] as usize;
         let end = offsets[d + 1] as usize;
-        if end > start {
-            neighbors[start..end].sort_by_key(|n| n.node_id);
-        }
+        sort_neighbors_by_node_id(&mut neighbors[start..end]);
     }
 
     ProjCsr { offsets, neighbors }
+}
+
+fn sort_neighbors_by_node_id(neighbors: &mut [ProjNeighbor]) {
+    if neighbors
+        .windows(2)
+        .all(|pair| pair[0].node_id <= pair[1].node_id)
+    {
+        return;
+    }
+    neighbors.sort_by_key(|n| n.node_id);
 }
 
 /// Extract the edge weight per spec 16 §E04 (permissive: missing / non-numeric
