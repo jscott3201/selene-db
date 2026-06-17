@@ -2521,6 +2521,16 @@ Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'top
 | `algo/topological_sort/50k` | 1.5615 ms | 455.41 µs | The projection CSR already stores only projected neighbors and caches each neighbor's dense index. |
 | `algo/topological_sort/100k` | 3.5344 ms | 913.05 µs | Preserves ASC-by-NodeId tie-breaking via `RowIndex` dense order. |
 
+PR-local topological-sort ready-buffer reuse A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter topological_sort --save-baseline topo-reuse-ready-before`;
+rerun with `--baseline topo-reuse-ready-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/topological_sort/1k` | 9.8913 µs | 6.3636 µs | Kahn's algorithm now reuses the next-batch scratch vector across levels and swaps it with the drained ready buffer after sorting. The quick DAG row improves 37.73% (`p=0.00`) while preserving per-batch dense-order tie-breaks. |
+
 PR-local full label-propagation dense-count A/B:
 
 Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'algo/label_propagation'`
