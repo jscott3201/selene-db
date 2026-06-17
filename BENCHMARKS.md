@@ -785,6 +785,16 @@ Commands:
 | `graph_text_bm25_rebuild/compact_registered_after_delete/n1000_del100` | 440.78 µs | 427.36 µs | noise | Compaction's text-index rebuild consumer remains statistically flat (`p=0.31`) while sharing the same builder path. |
 | `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 387.59 µs | 378.70 µs | -2.1557% | The one-off transient build/query row also benefits from the builder-finalization shortcut; Criterion reports p=0.00. |
 
+PR-local BM25 top-k replacement A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10 --save-baseline text_topk_peek_mut_pre`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10 --baseline text_topk_peek_mut_pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.424 µs | 27.752 µs | -2.0122% | `TextTopK` now replaces the retained worst hit through `BinaryHeap::peek_mut()` instead of `pop()` plus `push()` when a candidate beats the current worst; Criterion reports p=0.00. |
+
 PR-local quick JSON baseline:
 
 | Bench | 1k | Notes |
