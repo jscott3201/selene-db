@@ -105,6 +105,12 @@ impl PropertyMap {
                 values,
             });
         }
+        if keys.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Ok(Self::Compact {
+                keys: Arc::from(keys.into_vec()),
+                values,
+            });
+        }
 
         let mut slots: SmallVec<[(DbString, Option<Value>); 6]> =
             keys.into_iter().zip(values).collect();

@@ -101,6 +101,17 @@ fn compact_accepts_empty_and_singleton_maps() {
 }
 
 #[test]
+fn compact_accepts_already_canonical_keys() {
+    let a = key("pm.compact.canonical.a");
+    let b = key("pm.compact.canonical.b");
+    let map = PropertyMap::compact([a.clone(), b.clone()], [Some(int(1)), None]).unwrap();
+
+    assert_eq!(map.get(&a), Some(&int(1)));
+    assert_eq!(map.get(&b), None);
+    assert!(map.sorted_invariant_holds());
+}
+
+#[test]
 fn compact_widens_on_unknown_key_insert() {
     let a = key("pm.widen.a");
     let b = key("pm.widen.b");
