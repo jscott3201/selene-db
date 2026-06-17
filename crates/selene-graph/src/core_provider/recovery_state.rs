@@ -45,15 +45,13 @@ pub(crate) struct RecoveryState {
     pending_composite_property_index_changes: Vec<PendingCompositeIndex>,
     pending_vector_index_changes: Vec<PendingVectorIndex>,
     pending_text_index_changes: Vec<PendingTextIndex>,
+    /// Recovered node rows keyed by external id. Snapshot rows carry their
+    /// decoded section position; WAL-created rows carry no position and append
+    /// at the dense end during materialization.
     nodes: BTreeMap<NodeId, RecoveredNodeRow>,
+    /// Recovered edge rows keyed by external id; see `nodes` for the positional
+    /// recovery contract.
     edges: BTreeMap<EdgeId, RecoveredEdgeRow>,
-    /// BRIEF-Item-4a STEP 9: the snapshot row (= section position) each
-    /// committed id was decoded at, so `into_graph` materializes snapshot rows
-    /// **positionally** rather than by deriving the row from the id. Aborted-tx
-    /// hole rows (`*Id::TOMBSTONE`) are not recorded — they are re-materialized as
-    /// the pad slots between the real rows the column places. WAL-created ids
-    /// absent here append at the dense end (BRIEF-Item-4c; 4e revisits this for
-    /// WAL events that cross a 4b compaction epoch).
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     vector_schemas: Vec<(VectorSchemaKey, VectorSchemaEntry)>,
@@ -75,6 +73,9 @@ const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
 
 pub(super) struct RecoveredNodeRow {
     pub(super) row: NodeRow,
+    /// BRIEF-Item-4a STEP 9: snapshot rows materialize at decoded section
+    /// position. WAL-created ids absent from the snapshot append at the dense
+    /// end (BRIEF-Item-4c).
     snapshot_position: Option<u32>,
 }
 
@@ -96,6 +97,7 @@ impl RecoveredNodeRow {
 
 pub(super) struct RecoveredEdgeRow {
     pub(super) row: EdgeRow,
+    /// Decoded snapshot section position, or `None` for post-snapshot WAL rows.
     snapshot_position: Option<u32>,
 }
 
