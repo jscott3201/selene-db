@@ -145,6 +145,9 @@ the non-canonical path. Compact-map 256-key rows mirror that guard for closed
 schema-shaped maps.
 The `core_change_diff/*` rows cover canonical WAL diff constructors so mutation
 payload construction stays cheap when callers already have sorted property keys.
+The `core_label_set/*` rows cover high-cardinality label-set construction; most
+runtime rows stay at one to three labels, but schema and test fixtures can build
+larger sets and should not pay repeated insertion shifts.
 The `core_vector_value/*` rows are the first native vector
 baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
 round-trip cost at common embedding dimensions. The `core_vector_distance/*`
@@ -187,6 +190,8 @@ production accelerator API.
 | `core_change_diff/property_diff_set_1` | 9.0227 ns (quick) | Build a `PropertyDiff` with one set property and no removals. PR-local A/B: 23.291 ns → 9.0227 ns (-61.3%) by collecting directly into inline `SmallVec` storage and skipping sort/dedup for len 0/1 set inputs. |
 | `core_change_diff/property_diff_set_256_reverse` | 2.6632 µs (quick) | Build a 256-property `PropertyDiff` from reverse-sorted set entries. PR-local canonical-set guard: 2.6779 µs → 2.6632 µs, preserving the existing stable sort/dedup path for non-canonical input. |
 | `core_change_diff/property_diff_set_256_sorted` | 1.6691 µs (quick) | Build a 256-property `PropertyDiff` from already-canonical set entries. PR-local canonical-set fast path A/B: 2.5985 µs → 1.6691 µs by skipping redundant sort/dedup work. |
+| `core_label_set/from_iter_100_reverse` | 605.67 ns (quick) | Build a 100-label `LabelSet` from reverse-sorted labels. PR-local collect/sort A/B: 3.8124 µs → 605.67 ns by avoiding repeated front insertion shifts. |
+| `core_label_set/from_iter_100_sorted` | 395.12 ns (quick) | Build a 100-label `LabelSet` from already-canonical labels. PR-local canonical fast path A/B: 2.6632 µs → 395.12 ns by reusing the collected sorted labels directly. |
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
 | `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
 | `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |

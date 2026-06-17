@@ -16,7 +16,7 @@ use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    PropertyDiff, PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string,
+    LabelSet, PropertyDiff, PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, db_string,
     exact_vector_top_k, vector_squared_norm,
 };
 use wide::f64x4;
@@ -184,6 +184,19 @@ fn wide_compact_key_values_sorted(
         .unzip()
 }
 
+fn wide_labels(width: usize) -> Vec<selene_core::DbString> {
+    (0..width)
+        .rev()
+        .map(|idx| db_string(&format!("wide_label_{idx:04}")).expect("label fits DB string cap"))
+        .collect()
+}
+
+fn wide_labels_sorted(width: usize) -> Vec<selene_core::DbString> {
+    (0..width)
+        .map(|idx| db_string(&format!("wide_label_{idx:04}")).expect("label fits DB string cap"))
+        .collect()
+}
+
 // `print_stderr` deny is locally relaxed to surface the current `Value` size
 // in bench output (so the CORE-06 shrink is visible run-to-run).
 #[allow(clippy::print_stderr)]
@@ -268,6 +281,20 @@ fn bench_value_clone(c: &mut Criterion) {
         });
     });
 
+    group.finish();
+}
+
+fn bench_label_set(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core_label_set");
+    let labels = wide_labels(100);
+    group.throughput(Throughput::Elements(labels.len() as u64));
+    group.bench_function("from_iter_100_reverse", |b| {
+        b.iter(|| LabelSet::from_iter(black_box(labels.iter().cloned())));
+    });
+    let sorted_labels = wide_labels_sorted(100);
+    group.bench_function("from_iter_100_sorted", |b| {
+        b.iter(|| LabelSet::from_iter(black_box(sorted_labels.iter().cloned())));
+    });
     group.finish();
 }
 
@@ -741,6 +768,6 @@ fn f64x4_from_f32(chunk: &[f32]) -> f64x4 {
 criterion_group! {
     name = value_clone;
     config = bench_config();
-    targets = bench_value_clone, bench_change_diff, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k, bench_vector_gpu_baseline
+    targets = bench_value_clone, bench_label_set, bench_change_diff, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k, bench_vector_gpu_baseline
 }
 criterion_main!(value_clone);
