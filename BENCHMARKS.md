@@ -2511,6 +2511,18 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
 
+PR-local SSSP dense-neighbor APSP A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter 'apsp/sequential' --save-baseline sssp-dense-neighbor-before`;
+rerun with `--baseline sssp-dense-neighbor-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/apsp/sequential/200` | 1.0434 ms | 553.24 µs | SSSP now relaxes projection CSR out-neighbor slices by dense row and materializes the source `NodeId` only on invalid-weight error paths. The quick sparse row improves 32.65% (`p=0.00`). |
+| `algo/apsp/sequential/500` | 8.1596 ms | 3.7973 ms | Same SSSP hot-loop change; improves 57.03% (`p=0.00`). |
+| `algo/apsp/sequential/1k` | 17.457 ms | 15.311 ms | Same SSSP hot-loop change; improves 8.88% (`p=0.00`). |
+
 PR-local label-propagation dense-neighbor A/B:
 
 Command:

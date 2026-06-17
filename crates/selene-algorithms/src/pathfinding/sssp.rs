@@ -91,16 +91,17 @@ pub fn sssp_with_checker(
             continue;
         }
 
-        let source_node = idx.node_id_of(dense);
-        for nb in proj.out_neighbors(source_node) {
+        for nb in proj.out_neighbors_dense(dense) {
             let next_dense = nb.dense;
             if nb.weight.is_nan() {
+                let source_node = idx.node_id_of(dense);
                 return Err(PathfindingError::NaNWeight {
                     source_node,
                     target_node: nb.node_id,
                 });
             }
             if nb.weight < 0.0 {
+                let source_node = idx.node_id_of(dense);
                 return Err(PathfindingError::NegativeWeight {
                     source_node,
                     target_node: nb.node_id,
