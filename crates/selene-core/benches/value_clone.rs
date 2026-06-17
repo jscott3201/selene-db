@@ -148,6 +148,17 @@ fn wide_property_pairs(width: usize) -> Vec<(selene_core::DbString, Value)> {
         .collect()
 }
 
+fn wide_property_pairs_sorted(width: usize) -> Vec<(selene_core::DbString, Value)> {
+    (0..width)
+        .map(|idx| {
+            (
+                db_string(&format!("wide_property_{idx:04}")).expect("key fits DB string cap"),
+                Value::Int(idx as i64),
+            )
+        })
+        .collect()
+}
+
 // `print_stderr` deny is locally relaxed to surface the current `Value` size
 // in bench output (so the CORE-06 shrink is visible run-to-run).
 #[allow(clippy::print_stderr)]
@@ -201,6 +212,13 @@ fn bench_value_clone(c: &mut Criterion) {
     group.bench_function("property_map_from_pairs_256_reverse", |b| {
         b.iter(|| {
             PropertyMap::from_pairs(black_box(pairs.iter().cloned()))
+                .expect("property map fits core caps")
+        });
+    });
+    let sorted_pairs = wide_property_pairs_sorted(256);
+    group.bench_function("property_map_from_pairs_256_sorted", |b| {
+        b.iter(|| {
+            PropertyMap::from_pairs(black_box(sorted_pairs.iter().cloned()))
                 .expect("property map fits core caps")
         });
     });

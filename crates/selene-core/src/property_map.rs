@@ -55,6 +55,10 @@ impl PropertyMap {
         if entries.len() <= 1 {
             return Ok(Self::Standard(entries));
         }
+        if entries.windows(2).all(|pair| pair[0].0 < pair[1].0) {
+            ensure_within_cap(entries.len())?;
+            return Ok(Self::Standard(entries));
+        }
         // `sort_by` is stable: equal keys keep source order, so the collapse
         // loop below preserves the documented "later duplicate wins" contract.
         entries.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
