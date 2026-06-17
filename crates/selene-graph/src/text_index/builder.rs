@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 use selene_core::{DbString, NodeId};
 
-use super::{TextIndex, TextPosting};
+use super::{TextIndex, TextPosting, TextTerm};
 use crate::text_search::tokenize_borrowed;
 
 pub(super) struct TextIndexBuilder {
@@ -13,8 +13,9 @@ pub(super) struct TextIndexBuilder {
     property: DbString,
     rows: RoaringBitmap,
     document_lengths: FxHashMap<NodeId, u32>,
-    document_terms: FxHashMap<NodeId, Vec<String>>,
-    postings: FxHashMap<String, Vec<TextPosting>>,
+    document_terms: FxHashMap<NodeId, Vec<TextTerm>>,
+    postings: FxHashMap<TextTerm, Vec<TextPosting>>,
+    interned_terms: FxHashMap<TextTerm, TextTerm>,
     total_document_len: u64,
     posting_count: usize,
 }
@@ -42,17 +43,19 @@ impl TextIndexBuilder {
                 Default::default(),
             ),
             postings: FxHashMap::default(),
+            interned_terms: FxHashMap::default(),
             total_document_len: 0,
             posting_count: 0,
         }
     }
 
     pub(super) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
-        let mut counts: FxHashMap<String, u32> = FxHashMap::default();
+        let mut counts: FxHashMap<TextTerm, u32> = FxHashMap::default();
         let mut len = 0_u32;
         for token in tokenize_borrowed(text) {
             len = len.saturating_add(1);
-            let count = counts.entry(token.into_owned()).or_insert(0);
+            let term = self.intern_term(token.as_ref());
+            let count = counts.entry(term).or_insert(0);
             *count = count.saturating_add(1);
         }
         if len == 0 {
@@ -64,7 +67,7 @@ impl TextIndexBuilder {
         self.total_document_len = self.total_document_len.saturating_add(u64::from(len));
         let mut terms = Vec::with_capacity(counts.len());
         for (term, term_count) in counts {
-            let postings = self.postings.entry(term.clone()).or_default();
+            let postings = self.postings.entry(Arc::clone(&term)).or_default();
             postings.push(TextPosting {
                 node_id,
                 term_count,
@@ -99,5 +102,15 @@ impl TextIndexBuilder {
             total_document_len: self.total_document_len,
             posting_count: self.posting_count,
         }
+    }
+
+    fn intern_term(&mut self, token: &str) -> TextTerm {
+        if let Some(term) = self.interned_terms.get(token) {
+            return Arc::clone(term);
+        }
+        let term = TextTerm::from(token);
+        self.interned_terms
+            .insert(Arc::clone(&term), Arc::clone(&term));
+        term
     }
 }

@@ -447,6 +447,30 @@ row, which has no saved pre-change baseline.
 | `graph_text_bm25_exact/topic_query/n50000_k10` | 15.844 ms | 3.5758 ms | 3.3681 ms | Exact BM25 scan now uses the shared cancellation-aware Rayon chunk reducer; corpus document-frequency merge remains element-wise. |
 | `graph_text_bm25_exact/topic_query/n100000_k10` | 33.959 ms | 6.6143 ms | 6.5797 ms | Large exact BM25 scans keep the parallel path under a deadline checker instead of falling back to serial session behavior. |
 
+PR-local quick TextIndex term-interning A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_rebuild/create_registered_index`
+before and after interning BM25 terms as shared `Arc<str>` storage across
+postings keys and per-document maintenance term lists.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `graph_text_bm25_rebuild/create_registered_index/n1000` | 440.68 µs | 419.93 µs | Criterion reported −4.7623% (`p=0.00`); repeated term bytes are no longer duplicated into every document-term list. |
+
+Guard commands after the change:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed`
+and
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed`.
+
+| Guard row | Post-change median |
+|---|---:|
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 27.815 µs |
+| `graph_text_bm25_indexed/registered_topic_query/n1000_k10` | 27.785 µs |
+| `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 447.44 µs |
+| `graph_text_bm25_mixed/registered_query_update_r60w40/n1000_k10` | 3.4034 ms |
+| `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.7031 ms |
+
 PR-local quick vector candidate-set scoring Rayon A/B:
 
 Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set`

@@ -125,7 +125,7 @@ impl TextIndex {
         let mut document_frequencies = QueryDocumentFrequencies::with_capacity(query_terms.len());
         let mut postings_by_term = QueryPostings::with_capacity(query_terms.len());
         for term in query_terms {
-            match self.postings.get(term) {
+            match self.postings.get(term.as_str()) {
                 Some(postings) => {
                     document_frequencies.push(u32::try_from(postings.len()).unwrap_or(u32::MAX));
                     postings_by_term.push(Some(postings.as_slice()));
