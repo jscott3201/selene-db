@@ -1890,6 +1890,15 @@ rebuild). Self-validating: asserts node/edge counts survive the roundtrip once
 | `graph_snapshot_roundtrip/decode` | 20.1 ms | 106.3 ms | 216.4 ms | Positional recovery + `finish_recovery` — dominates. |
 | `graph_snapshot_roundtrip/roundtrip` | 26.2 ms | 141.2 ms | 289.9 ms | End-to-end (≈ encode + decode). |
 
+PR-local snapshot row-position carrier A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/decode/1000` | 1.1709 ms | 1.0824 ms | -7.7946% | Recovery now carries the decoded snapshot row position beside each recovered node/edge row instead of maintaining separate `id -> position` BTreeMaps and looking them up during materialization. Criterion reports p=0.00. |
+
 ## §5 selene-gql — parse / plan / execute
 
 Bench bins: `parse`, `analyze`, `plan_optimize`, `expression_eval`,
