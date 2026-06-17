@@ -1582,6 +1582,21 @@ and
 | `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40` | 10k / 50k / 100k | 2.976 / 4.333 / 9.922 ms | Same provider write cycle, but the 60 reads fetch generation-checked candidate-state metadata rather than materializing the full `current` set. The widening delta against the full-set row isolates set materialization cost. |
 | `graph_mixed_workload/point_read_update_r60w40_wal` | 10k / 50k / 100k | 139.11 / 130.07 / 134.45 ms | Same scalar 60/40 cycle backed by a real per-iteration WAL tempdir with committer batching off. Setup/teardown excluded; the near scale-flat cost shows per-commit durability barriers dominate this sequential 40-write shape. |
 
+PR-local candidate-state member-cache A/B:
+
+Commands:
+`scripts/run-benches.sh --profile full --bench graph_mixed_workload --filter candidate_state --save-baseline candidate_state_members_vec_full_pre`;
+`scripts/run-benches.sh --profile full --bench graph_mixed_workload --filter candidate_state --baseline candidate_state_members_vec_full_pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_mixed_workload/candidate_state_edge_update_r60w40/10000` | 2.1069 ms | 1.9920 ms | -5.4552% | Maintained candidate-state members keep the `BTreeSet` update path and add a lazy sorted `Vec<NodeId>` cache, so repeated full-set reads clone contiguous canonical members instead of collecting from the tree; Criterion reports p=0.00. |
+| `graph_mixed_workload/candidate_state_edge_update_r60w40/50000` | 5.1335 ms | 4.5895 ms | -10.596% | Larger maintained sets benefit more from amortizing full-set materialization across reads between writes; p=0.00. |
+| `graph_mixed_workload/candidate_state_edge_update_r60w40/100000` | 11.814 ms | 10.768 ms | -8.8567% | The 100k full-set row keeps the same membership semantics while avoiding repeated tree collection; p=0.00. |
+| `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40/10000` | 1.9197 ms | 1.8751 ms | noise | Metadata reads do not materialize the full set and stayed statistically flat (`p=0.35`). |
+| `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40/50000` | 4.0672 ms | 4.0636 ms | noise | Keeping `BTreeSet` as the authoritative update structure avoids the plain-`Vec` write-regression shape; p=0.91. |
+| `graph_mixed_workload/candidate_state_metadata_edge_update_r60w40/100000` | 9.8377 ms | 9.7083 ms | noise | Metadata/write-side guard remains flat at the largest full-profile scale (`p=0.27`). |
+
 ### §3b `graph_hub_delete` — high-degree hub deletion (GRAPH-05 ✓ shipped)
 
 Deleting a node cascades over every incident edge. GRAPH-05 made adjacency

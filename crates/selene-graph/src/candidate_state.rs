@@ -6,8 +6,6 @@
 //! That is enough to model active/current/unresolved memory subsets without
 //! hard-coding those application labels into the engine.
 
-use std::collections::BTreeSet;
-
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -205,10 +203,11 @@ impl MaintainedCandidateStateProvider {
     /// Return the current candidate set for `name`.
     #[must_use]
     pub fn candidate_set(&self, name: &DbString) -> Option<VectorCandidateSet> {
-        let state = self.state.lock();
-        state.members.get(name).map(|members| {
-            VectorCandidateSet::from_canonical_nodes(members.iter().copied().collect())
-        })
+        let mut state = self.state.lock();
+        state
+            .members
+            .get_mut(name)
+            .map(|members| VectorCandidateSet::from_canonical_nodes(members.candidate_nodes()))
     }
 
     /// Return the provider generation watermark.
@@ -228,16 +227,17 @@ impl MaintainedCandidateStateProvider {
         name: &DbString,
         generation: u64,
     ) -> Result<Option<VectorCandidateSet>, ProviderError> {
-        let state = self.state.lock();
+        let mut state = self.state.lock();
         if state.generation != generation {
             return Err(inconsistent(format!(
                 "candidate-state generation {} does not match graph generation {generation}",
                 state.generation
             )));
         }
-        Ok(state.members.get(name).map(|members| {
-            VectorCandidateSet::from_canonical_nodes(members.iter().copied().collect())
-        }))
+        Ok(state
+            .members
+            .get_mut(name)
+            .map(|members| VectorCandidateSet::from_canonical_nodes(members.candidate_nodes())))
     }
 
     /// Return generation-checked metadata for every configured candidate set.
@@ -263,7 +263,10 @@ impl MaintainedCandidateStateProvider {
             .map(|spec| VectorCandidateStateInfo {
                 name: spec.name.clone(),
                 generation,
-                candidate_count: state.members.get(&spec.name).map_or(0, BTreeSet::len),
+                candidate_count: state
+                    .members
+                    .get(&spec.name)
+                    .map_or(0, |members| members.len()),
                 required_label: spec.required_label.clone(),
                 require_outgoing: spec.require_outgoing.clone(),
                 require_incoming: spec.require_incoming.clone(),
@@ -280,7 +283,7 @@ impl MaintainedCandidateStateProvider {
             .lock()
             .members
             .get(name)
-            .is_some_and(|members| members.contains(&node))
+            .is_some_and(|members| members.contains(node))
     }
 }
 
