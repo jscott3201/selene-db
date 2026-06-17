@@ -10,6 +10,24 @@ pub(crate) fn compress_zstd(bytes: &[u8], level: i32) -> PersistResult<Vec<u8>> 
         .map_err(|error| PersistError::Compression(error.to_string()))
 }
 
+pub(crate) struct ZstdCompressor {
+    inner: zstd::bulk::Compressor<'static>,
+}
+
+impl ZstdCompressor {
+    pub(crate) fn new(level: i32) -> PersistResult<Self> {
+        let inner = zstd::bulk::Compressor::new(level)
+            .map_err(|error| PersistError::Compression(error.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    pub(crate) fn compress(&mut self, bytes: &[u8]) -> PersistResult<Vec<u8>> {
+        self.inner
+            .compress(bytes)
+            .map_err(|error| PersistError::Compression(error.to_string()))
+    }
+}
+
 /// Stream-decompress a zstd frame while bounding the decompressed output.
 ///
 /// The `too_large` callback maps an overflowing frame into the caller's

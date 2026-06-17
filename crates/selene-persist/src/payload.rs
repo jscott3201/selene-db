@@ -2,7 +2,7 @@
 
 use selene_core::Change;
 
-use crate::compression::{compress_zstd, decompress_zstd_bounded};
+use crate::compression::{ZstdCompressor, compress_zstd, decompress_zstd_bounded};
 use crate::entry_header::{
     COMPRESS_THRESHOLD, FLAG_PAYLOAD_COMPRESSED, MAX_WAL_ENTRY_BYTES, ensure_payload_len,
 };
@@ -62,14 +62,34 @@ pub(crate) fn encode_changes(changes: &[Change]) -> PersistResult<EncodedPayload
     encode_changes_with_compression(changes, WalCompression::default())
 }
 
+#[cfg(test)]
 pub(crate) fn encode_changes_with_compression(
     changes: &[Change],
     compression: WalCompression,
 ) -> PersistResult<EncodedPayload> {
+    encode_changes_with_compressor(changes, compression, None)
+}
+
+pub(crate) fn encode_changes_with_compressor(
+    changes: &[Change],
+    compression: WalCompression,
+    compressor: Option<&mut Option<ZstdCompressor>>,
+) -> PersistResult<EncodedPayload> {
     let raw = postcard::to_stdvec(changes)
         .map_err(|error| PersistError::PayloadCodec(error.to_string()))?;
     let (bytes, flags) = if compression.should_compress(raw.len()) {
-        (compress_zstd(raw.as_slice(), 1)?, FLAG_PAYLOAD_COMPRESSED)
+        let bytes = match compressor {
+            Some(slot) => {
+                if slot.is_none() {
+                    *slot = Some(ZstdCompressor::new(1)?);
+                }
+                slot.as_mut()
+                    .expect("compressor slot was initialized")
+                    .compress(raw.as_slice())?
+            }
+            None => compress_zstd(raw.as_slice(), 1)?,
+        };
+        (bytes, FLAG_PAYLOAD_COMPRESSED)
     } else {
         (raw, 0)
     };
@@ -319,6 +339,23 @@ mod tests {
         let encoded = encode_changes(&changes).unwrap();
         assert_eq!(encoded.flags, FLAG_PAYLOAD_COMPRESSED);
         assert_eq!(decode_changes(&encoded.bytes, true).unwrap(), changes);
+    }
+
+    #[test]
+    fn reusable_compressor_round_trips_multiple_payloads() {
+        let mut compressor = None;
+        for fill in [7_u8, 8] {
+            let changes = vec![change(vec![fill; COMPRESS_THRESHOLD * 4])];
+            let encoded = encode_changes_with_compressor(
+                &changes,
+                WalCompression::default(),
+                Some(&mut compressor),
+            )
+            .unwrap();
+            assert_eq!(encoded.flags, FLAG_PAYLOAD_COMPRESSED);
+            assert_eq!(decode_changes(&encoded.bytes, true).unwrap(), changes);
+        }
+        assert!(compressor.is_some());
     }
 
     #[test]
