@@ -2511,6 +2511,16 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
 
+PR-local SCC count-only materialization A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter scc_count --save-baseline scc-count-skip-components-before`;
+rerun with `--baseline scc-count-skip-components-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/scc_count/1k` | 13.908 µs | 12.956 µs | Count-only Tarjan now skips completed-component `Vec` materialization while keeping the same traversal and stack cleanup. The quick planted-community row improves 6.40% (`p=0.00`). |
+
 PR-local full topological-sort dense in-degree A/B:
 
 Command: `scripts/run-benches.sh --profile full --bench algo_bench --filter 'topological_sort'`
