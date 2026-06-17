@@ -324,6 +324,26 @@ fn bench_candidate_set_algebra(
         },
     );
     group.bench_function(
+        BenchmarkId::new(fixture.bench_id("from_nodes_reverse"), fixture.set_width()),
+        |b| {
+            b.iter(|| {
+                let candidates =
+                    VectorCandidateSet::from_nodes(fixture.left().as_nodes().iter().rev().copied());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.bench_function(
+        BenchmarkId::new(fixture.bench_id("from_nodes_sorted"), fixture.set_width()),
+        |b| {
+            b.iter(|| {
+                let candidates =
+                    VectorCandidateSet::from_nodes(fixture.left().as_nodes().iter().copied());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
+    group.bench_function(
         BenchmarkId::new(fixture.bench_id("from_search_hits"), fixture.set_width()),
         |b| {
             b.iter(|| {
