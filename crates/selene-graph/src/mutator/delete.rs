@@ -26,14 +26,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// This is the change-free removal core shared by [`Self::delete_node`] and
     /// [`Self::truncate_node_type`]; callers own the changeset accounting (one
     /// `NodeDeleted` for DETACH DELETE, one declarative truncate change plus
-    /// staged per-row tombstones for TRUNCATE). The returned incident set spans
+    /// staged per-row tombstones for TRUNCATE). The returned incident ids span
     /// edges of **every** edge type touching the node (derived from both
-    /// adjacency directions) so no dangling edge can survive.
-    pub(super) fn remove_node_row(
-        &mut self,
-        id: NodeId,
-        row: usize,
-    ) -> GraphResult<BTreeSet<EdgeId>> {
+    /// adjacency directions) in ascending order, so no dangling edge can
+    /// survive.
+    pub(super) fn remove_node_row(&mut self, id: NodeId, row: usize) -> GraphResult<Vec<EdgeId>> {
         let graph = self.txn.read();
         let labels = graph
             .node_store
@@ -47,12 +44,18 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .get(row)
             .cloned()
             .unwrap_or_default();
-        let mut incident = BTreeSet::new();
+        let incident_capacity = graph.adjacency_out.get(&id).map_or(0, AdjacencyEntry::len)
+            + graph.adjacency_in.get(&id).map_or(0, AdjacencyEntry::len);
+        let mut incident = Vec::with_capacity(incident_capacity);
         if let Some(outgoing) = graph.adjacency_out.get(&id) {
             incident.extend(outgoing.iter().map(|edge| edge.edge_id));
         }
         if let Some(incoming) = graph.adjacency_in.get(&id) {
             incident.extend(incoming.iter().map(|edge| edge.edge_id));
+        }
+        if incident.len() > 1 {
+            incident.sort_unstable();
+            incident.dedup();
         }
         {
             let graph = self.txn.guard_mut();
@@ -152,7 +155,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             let Some(id) = self.txn.read().node_id_for_row(RowIndex::new(row)) else {
                 continue;
             };
-            incident_edges.append(&mut self.remove_node_row(id, row as usize)?);
+            incident_edges.extend(self.remove_node_row(id, row as usize)?);
             node_tombstones.push(Change::NodeDeleted { id });
         }
         if node_tombstones.is_empty() {
