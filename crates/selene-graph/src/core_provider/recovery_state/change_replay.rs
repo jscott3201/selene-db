@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::{
-    RecoveryState,
+    RecoveredEdgeRow, RecoveredNodeRow, RecoveryState,
     index_replay::{
         pending_composite_property_index_change, pending_property_index_change,
         pending_text_index_change, pending_vector_index_change,
@@ -45,11 +45,11 @@ impl RecoveryState {
                 }
                 self.nodes.insert(
                     *id,
-                    NodeRow {
+                    RecoveredNodeRow::from_wal(NodeRow {
                         labels: labels.clone(),
                         properties: properties.clone(),
                         alive: true,
-                    },
+                    }),
                 );
             }
             Change::NodeUpdated {
@@ -87,13 +87,13 @@ impl RecoveryState {
                 }
                 self.edges.insert(
                     *id,
-                    EdgeRow {
+                    RecoveredEdgeRow::from_wal(EdgeRow {
                         label: label.clone(),
                         source: *source,
                         target: *target,
                         properties: properties.clone(),
                         alive: true,
-                    },
+                    }),
                 );
             }
             Change::EdgeUpdated {
@@ -125,25 +125,25 @@ impl RecoveryState {
                 // to such a node (any edge type). This reconstructs the exact
                 // post-`delete_node`-cascade state without persisting any ids.
                 let mut truncated_nodes = BTreeSet::new();
-                for (id, row) in self.nodes.iter_mut() {
-                    if row.alive && row.labels.contains(label) {
+                for (id, recovered) in self.nodes.iter_mut() {
+                    if recovered.row.alive && recovered.row.labels.contains(label) {
                         truncated_nodes.insert(*id);
-                        clear_node_row(row);
+                        clear_node_row(&mut recovered.row);
                     }
                 }
-                for row in self.edges.values_mut() {
-                    if row.alive
-                        && (truncated_nodes.contains(&row.source)
-                            || truncated_nodes.contains(&row.target))
+                for recovered in self.edges.values_mut() {
+                    if recovered.row.alive
+                        && (truncated_nodes.contains(&recovered.row.source)
+                            || truncated_nodes.contains(&recovered.row.target))
                     {
-                        clear_edge_row(row);
+                        clear_edge_row(&mut recovered.row);
                     }
                 }
             }
             Change::EdgesOfTypeTruncated { label } => {
-                for row in self.edges.values_mut() {
-                    if row.alive && row.label == *label {
-                        clear_edge_row(row);
+                for recovered in self.edges.values_mut() {
+                    if recovered.row.alive && recovered.row.label == *label {
+                        clear_edge_row(&mut recovered.row);
                     }
                 }
             }
@@ -152,8 +152,12 @@ impl RecoveryState {
                 // position and mark it dead - identical to the runtime mutator,
                 // which carries no ids in the declarative change ("replay walks
                 // the store"). Wipes ALL nodes/edges incl untyped ones.
-                self.nodes.values_mut().for_each(clear_node_row);
-                self.edges.values_mut().for_each(clear_edge_row);
+                self.nodes
+                    .values_mut()
+                    .for_each(|recovered| clear_node_row(&mut recovered.row));
+                self.edges
+                    .values_mut()
+                    .for_each(|recovered| clear_edge_row(&mut recovered.row));
                 // A reset moots every prior schema/index intent in the WAL up to
                 // this point, and forces the recovered graph open.
                 self.schema_reset_to_open = true;
@@ -212,28 +216,28 @@ impl RecoveryState {
 }
 
 fn require_live_node(
-    nodes: &mut BTreeMap<NodeId, NodeRow>,
+    nodes: &mut BTreeMap<NodeId, RecoveredNodeRow>,
     id: NodeId,
 ) -> Result<&mut NodeRow, ProviderError> {
-    let row = nodes
+    let recovered = nodes
         .get_mut(&id)
         .ok_or_else(|| inconsistent(format!("WAL replay referenced missing node {id}")))?;
-    if !row.alive {
+    if !recovered.row.alive {
         return Err(inconsistent(format!(
             "WAL replay referenced deleted node {id}"
         )));
     }
-    Ok(row)
+    Ok(&mut recovered.row)
 }
 
 fn require_live_node_ref(
-    nodes: &BTreeMap<NodeId, NodeRow>,
+    nodes: &BTreeMap<NodeId, RecoveredNodeRow>,
     id: NodeId,
 ) -> Result<(), ProviderError> {
-    let row = nodes
+    let recovered = nodes
         .get(&id)
         .ok_or_else(|| inconsistent(format!("WAL replay referenced missing node {id}")))?;
-    if !row.alive {
+    if !recovered.row.alive {
         return Err(inconsistent(format!(
             "WAL replay referenced deleted node {id}"
         )));
@@ -242,18 +246,18 @@ fn require_live_node_ref(
 }
 
 fn require_live_edge(
-    edges: &mut BTreeMap<EdgeId, EdgeRow>,
+    edges: &mut BTreeMap<EdgeId, RecoveredEdgeRow>,
     id: EdgeId,
 ) -> Result<&mut EdgeRow, ProviderError> {
-    let row = edges
+    let recovered = edges
         .get_mut(&id)
         .ok_or_else(|| inconsistent(format!("WAL replay referenced missing edge {id}")))?;
-    if !row.alive {
+    if !recovered.row.alive {
         return Err(inconsistent(format!(
             "WAL replay referenced deleted edge {id}"
         )));
     }
-    Ok(row)
+    Ok(&mut recovered.row)
 }
 
 fn clear_node_row(row: &mut NodeRow) {

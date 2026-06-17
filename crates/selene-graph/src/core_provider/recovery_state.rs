@@ -45,17 +45,13 @@ pub(crate) struct RecoveryState {
     pending_composite_property_index_changes: Vec<PendingCompositeIndex>,
     pending_vector_index_changes: Vec<PendingVectorIndex>,
     pending_text_index_changes: Vec<PendingTextIndex>,
-    nodes: BTreeMap<NodeId, NodeRow>,
-    edges: BTreeMap<EdgeId, EdgeRow>,
-    /// BRIEF-Item-4a STEP 9: the snapshot row (= section position) each
-    /// committed id was decoded at, so `into_graph` materializes snapshot rows
-    /// **positionally** rather than by deriving the row from the id. Aborted-tx
-    /// hole rows (`*Id::TOMBSTONE`) are not recorded — they are re-materialized as
-    /// the pad slots between the real rows the column places. WAL-created ids
-    /// absent here append at the dense end (BRIEF-Item-4c; 4e revisits this for
-    /// WAL events that cross a 4b compaction epoch).
-    node_snapshot_rows: BTreeMap<NodeId, u32>,
-    edge_snapshot_rows: BTreeMap<EdgeId, u32>,
+    /// Recovered node rows keyed by external id. Snapshot rows carry their
+    /// decoded section position; WAL-created rows carry no position and append
+    /// at the dense end during materialization.
+    nodes: BTreeMap<NodeId, RecoveredNodeRow>,
+    /// Recovered edge rows keyed by external id; see `nodes` for the positional
+    /// recovery contract.
+    edges: BTreeMap<EdgeId, RecoveredEdgeRow>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     vector_schemas: Vec<(VectorSchemaKey, VectorSchemaEntry)>,
@@ -74,6 +70,52 @@ pub(crate) struct RecoveryState {
 }
 
 const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
+
+pub(super) struct RecoveredNodeRow {
+    pub(super) row: NodeRow,
+    /// BRIEF-Item-4a STEP 9: snapshot rows materialize at decoded section
+    /// position. WAL-created ids absent from the snapshot append at the dense
+    /// end (BRIEF-Item-4c).
+    snapshot_position: Option<u32>,
+}
+
+impl RecoveredNodeRow {
+    fn from_snapshot(row: NodeRow, position: u32) -> Self {
+        Self {
+            row,
+            snapshot_position: Some(position),
+        }
+    }
+
+    pub(super) fn from_wal(row: NodeRow) -> Self {
+        Self {
+            row,
+            snapshot_position: None,
+        }
+    }
+}
+
+pub(super) struct RecoveredEdgeRow {
+    pub(super) row: EdgeRow,
+    /// Decoded snapshot section position, or `None` for post-snapshot WAL rows.
+    snapshot_position: Option<u32>,
+}
+
+impl RecoveredEdgeRow {
+    fn from_snapshot(row: EdgeRow, position: u32) -> Self {
+        Self {
+            row,
+            snapshot_position: Some(position),
+        }
+    }
+
+    pub(super) fn from_wal(row: EdgeRow) -> Self {
+        Self {
+            row,
+            snapshot_position: None,
+        }
+    }
+}
 
 impl RecoveryState {
     /// Construct an empty recovery accumulator.
@@ -116,8 +158,8 @@ impl RecoveryState {
                     let position = u32::try_from(position).map_err(|_| {
                         invalid_payload("CORE/NODE row position exceeds u32::MAX".to_string())
                     })?;
-                    self.node_snapshot_rows.insert(id, position);
-                    self.nodes.insert(id, row);
+                    self.nodes
+                        .insert(id, RecoveredNodeRow::from_snapshot(row, position));
                 }
             }
             CORE_EDGE_SUB => {
@@ -128,8 +170,8 @@ impl RecoveryState {
                     let position = u32::try_from(position).map_err(|_| {
                         invalid_payload("CORE/EDGE row position exceeds u32::MAX".to_string())
                     })?;
-                    self.edge_snapshot_rows.insert(id, position);
-                    self.edges.insert(id, row);
+                    self.edges
+                        .insert(id, RecoveredEdgeRow::from_snapshot(row, position));
                 }
             }
             CORE_SCMA_SUB => {
@@ -268,7 +310,7 @@ impl RecoveryState {
 
         // BRIEF-Item-4a STEP 9 / BRIEF-Item-4c: materialize each row at its true
         // row index. Snapshot rows use their decoded position
-        // (`node_snapshot_rows`); a WAL-created id absent from the snapshot
+        // (`RecoveredNodeRow::snapshot_position`); a WAL-created id absent from the snapshot
         // appends at the dense end (the live-append slot). Iteration is
         // id-ascending (BTreeMap), and `insert_node_row` pads-then-sets, so a
         // snapshot whose rows are not in id order (a compacted snapshot) still
@@ -276,7 +318,7 @@ impl RecoveryState {
         // recorded positions are padded with `NodeId::TOMBSTONE` and stay out of
         // the id->row map.
         let mut next_node_id = graph.meta.next_node_id.max(1);
-        for (id, row) in self.nodes {
+        for (id, recovered) in self.nodes {
             next_node_id = next_node_id.max(id.get().saturating_add(1));
             // BRIEF-Item-4c: WAL-created ids (absent from the snapshot) APPEND at
             // the dense end, not `id - 1`. After a compacted snapshot loads (dense
@@ -286,8 +328,8 @@ impl RecoveryState {
             // id-ascending, so by the time one is reached every snapshot row is
             // placed and `len()` is the next dense slot — matching the live
             // append create path.
-            let row_index = match self.node_snapshot_rows.get(&id) {
-                Some(&position) => position as usize,
+            let row_index = match recovered.snapshot_position {
+                Some(position) => position as usize,
                 None => {
                     let len = graph.node_store.len();
                     // u32::MAX is reserved as RowIndex::TOMBSTONE; the last real
@@ -300,17 +342,17 @@ impl RecoveryState {
                     len
                 }
             };
-            insert_node_row(&mut graph, id, row, row_index)?;
+            insert_node_row(&mut graph, id, recovered.row, row_index)?;
         }
         graph.meta.next_node_id = next_node_id;
 
         let mut next_edge_id = graph.meta.next_edge_id.max(1);
-        for (id, row) in self.edges {
+        for (id, recovered) in self.edges {
             next_edge_id = next_edge_id.max(id.get().saturating_add(1));
             // BRIEF-Item-4c: WAL-created edge ids APPEND at the dense end (see the
             // node arm above).
-            let row_index = match self.edge_snapshot_rows.get(&id) {
-                Some(&position) => position as usize,
+            let row_index = match recovered.snapshot_position {
+                Some(position) => position as usize,
                 None => {
                     let len = graph.edge_store.len();
                     // u32::MAX is reserved as RowIndex::TOMBSTONE (see the node arm).
@@ -322,7 +364,7 @@ impl RecoveryState {
                     len
                 }
             };
-            insert_edge_row(&mut graph, id, row, row_index)?;
+            insert_edge_row(&mut graph, id, recovered.row, row_index)?;
         }
         graph.meta.next_edge_id = next_edge_id;
 
