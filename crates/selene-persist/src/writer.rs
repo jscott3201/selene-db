@@ -7,12 +7,13 @@ use std::sync::Arc;
 
 use selene_core::{Change, HlcTimestamp, Origin, metrics};
 
+use crate::compression::ZstdCompressor;
 use crate::entry_header::{
     encode_entry_header, ensure_payload_len, read_entry_header, validate_principal,
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::Manifest;
-use crate::payload::{WalCompression, encode_changes_with_compression, verify_checksum};
+use crate::payload::{WalCompression, encode_changes_with_compressor, verify_checksum};
 use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
 use crate::writer_rotation::{RotationInputs, WalRotationOutcome, rotate_with_manifest};
@@ -124,6 +125,7 @@ pub struct WalWriter {
     snapshot_seq: u64,
     sync_policy: SyncPolicy,
     compression: WalCompression,
+    compressor: Option<ZstdCompressor>,
     entries_since_fsync: u32,
     /// File offset of the last fully-committed entry's end. On any
     /// append-time error, the file is truncated and re-seeked to this
@@ -215,6 +217,7 @@ impl WalWriter {
             snapshot_seq: header_snapshot_seq,
             sync_policy,
             compression,
+            compressor: None,
             entries_since_fsync: 0,
             committed_offset: scan.truncate_to,
         })
@@ -241,7 +244,8 @@ impl WalWriter {
         changes: &[Change],
     ) -> PersistResult<u64> {
         validate_principal(principal.as_deref())?;
-        let payload = encode_changes_with_compression(changes, self.compression)?;
+        let payload =
+            encode_changes_with_compressor(changes, self.compression, Some(&mut self.compressor))?;
         let sequence = self.last_sequence + 1;
         let header = WalEntryHeader::new(
             payload.bytes.len(),

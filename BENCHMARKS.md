@@ -1816,6 +1816,21 @@ Flush-inclusive companion rows, with bytes-on-disk from the row IDs:
 | vector768 / b1 | 1,962,016 B | 3,154,016 B | 3,154,016 B | 14.98 ms | 9.03 ms | 8.56 ms | Current128 saves bytes but strongly hurts single large vectors. |
 | vector768 / b100 | 63,296 B | 63,296 B | 3,121,346 B | 6.41 ms | 6.94 ms | 7.36 ms | Compression gives a ~49x size win and remains competitive. |
 
+PR-local WAL zstd compressor-reuse A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench wal --filter 'compression_policy_no_fsync/vector768/b1_threshold128|compression_policy_no_fsync/json_metadata/b1_threshold128|compression_policy_no_fsync/vector128/b1_threshold128'`;
+`scripts/run-benches.sh --profile quick --bench wal --filter 'compression_policy_no_fsync/vector768/b100_default4096|compression_policy_no_fsync/json_metadata/b100_default4096|compression_policy_no_fsync/vector128/b100_default4096'`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `persist_wal_payload_compression_policy_no_fsync/json_metadata/b1_threshold128` | 6.1906 ms | 5.1691 ms | Writer-owned zstd context avoids per-entry compressor setup for repeated compressed records; Criterion reported -17.542%, p=0.00. |
+| `persist_wal_payload_compression_policy_no_fsync/vector128/b1_threshold128` | 7.2361 ms | 5.9544 ms | Same repeated-compression path; Criterion reported -17.593%, p=0.00. |
+| `persist_wal_payload_compression_policy_no_fsync/vector768/b1_threshold128` | 11.197 ms | 9.8407 ms | Same repeated-compression path; Criterion reported -13.444%, p=0.00. |
+| `persist_wal_payload_compression_policy_no_fsync/json_metadata/b100_default4096` | 845.34 us | 783.59 us | Production default threshold sanity row; no statistically significant change detected. |
+| `persist_wal_payload_compression_policy_no_fsync/vector128/b100_default4096` | 592.36 us | 567.23 us | Production default threshold sanity row; no statistically significant change detected. |
+| `persist_wal_payload_compression_policy_no_fsync/vector768/b100_default4096` | 1.0910 ms | 991.21 us | Production default threshold row; Criterion reported -8.6144%, p=0.02. |
+
 Decision signal: the follow-up production policy raises the default threshold
 from 128 bytes to 4096 bytes. Disabling compression entirely is still not a
 clear global win because larger JSON/vector batches save substantial bytes with
