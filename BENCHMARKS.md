@@ -795,6 +795,19 @@ Commands:
 |---|---:|---:|---:|---|
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.424 µs | 27.752 µs | -2.0122% | `TextTopK` now replaces the retained worst hit through `BinaryHeap::peek_mut()` instead of `pop()` plus `push()` when a candidate beats the current worst; Criterion reports p=0.00. |
 
+PR-local text-index update-maintenance candidate-key A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed --save-baseline text_index_update_maint_pre`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed --baseline text_index_update_maint_pre`;
+read-path sanity:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_mixed/registered_query_update_r60w40/n1000_k10` | 3.5261 ms | 3.3854 ms | -3.7434% | Text-index update maintenance now collects touched labels/properties in inline borrowed storage and mutates the matched entry directly instead of materializing a `BTreeSet` of owned candidate keys and re-looking up each key. Criterion reports p=0.00. |
+| `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.6797 ms | 1.6825 ms | noise | The write-only companion stayed statistically neutral (`p=0.66`), so the accepted win is the mixed read/write cycle's maintenance overhead reduction. Indexed-read sanity after the change: `prebuilt_topic_query/n1000_k10` 29.815 µs. |
+
 PR-local quick JSON baseline:
 
 | Bench | 1k | Notes |

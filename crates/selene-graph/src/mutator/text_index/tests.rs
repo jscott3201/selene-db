@@ -108,6 +108,58 @@ fn text_index_tracks_create_update_and_delete_documents() {
 }
 
 #[test]
+fn text_index_update_preserves_unrelated_registered_property() {
+    let shared = SharedGraph::new(GraphId::new(9104));
+    let label = db_string("text.index.multi.property");
+    let body = db_string("body");
+    let summary = db_string("summary");
+    let doc = {
+        let mut txn = shared.begin_write();
+        let doc = txn
+            .mutator()
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([
+                    (body.clone(), Value::String(db_string("alpha body"))),
+                    (summary.clone(), Value::String(db_string("stable summary"))),
+                ]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+        doc
+    };
+
+    shared
+        .create_text_index(label.clone(), body.clone())
+        .unwrap();
+    shared
+        .create_text_index(label.clone(), summary.clone())
+        .unwrap();
+    assert_eq!(hit_ids(&shared, &label, &body, "alpha"), vec![doc]);
+    assert_eq!(hit_ids(&shared, &label, &summary, "stable"), vec![doc]);
+
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .update_node(
+                doc,
+                LabelDiff::new([], []).unwrap(),
+                PropertyDiff::new([(body.clone(), Value::String(db_string("beta body")))], [])
+                    .unwrap(),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    assert_eq!(hit_ids(&shared, &label, &body, "beta"), vec![doc]);
+    assert_eq!(
+        hit_ids(&shared, &label, &body, "alpha"),
+        Vec::<NodeId>::new()
+    );
+    assert_eq!(hit_ids(&shared, &label, &summary, "stable"), vec![doc]);
+}
+
+#[test]
 fn create_text_index_rejects_duplicate_and_drop_is_idempotent() {
     let shared = SharedGraph::new(GraphId::new(9102));
     let label = db_string("text.index.duplicate");
