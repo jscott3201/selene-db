@@ -2511,6 +2511,16 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
 
+PR-local label-propagation dense-neighbor A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter label_propagation --save-baseline label-propagation-dense-neighbors-before`;
+rerun with `--baseline label-propagation-dense-neighbors-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/label_propagation/1k` | 51.168 µs | 26.706 µs | Label propagation now stays in dense projection row space for both out- and in-neighbor scans, avoiding a dense-row-to-`NodeId` lookup followed by a `NodeId`-to-dense lookup in the hot loop. The quick planted-community row improves 42.06% (`p=0.00`). |
+
 PR-local sequential PageRank natural-CSR borrow A/B:
 
 Command:

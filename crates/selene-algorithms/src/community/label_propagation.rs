@@ -62,19 +62,18 @@ pub fn label_propagation_with_checker(
 
         for d in 0..n as u32 {
             check_algorithm_stride(checker, &mut rows_since_check)?;
-            let node = idx.node_id_of(d);
             touched_labels.clear();
 
             // Multiplicity-faithful: count each directed half-edge separately
             // per §E25. Parallel edges therefore contribute multiple times.
-            for nb in proj.out_neighbors(node) {
+            for nb in proj.out_neighbors_dense(d) {
                 bump_label_count(
                     labels[nb.dense as usize],
                     &mut label_counts,
                     &mut touched_labels,
                 );
             }
-            for nb in proj.in_neighbors(node) {
+            for nb in proj.in_neighbors_dense(d) {
                 bump_label_count(
                     labels[nb.dense as usize],
                     &mut label_counts,
