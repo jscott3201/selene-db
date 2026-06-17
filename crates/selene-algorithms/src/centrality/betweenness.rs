@@ -153,8 +153,11 @@ impl<'a> DenseAdjacency<'a> {
         let n = idx.len();
         let mut out_neighbors_dense: Vec<Vec<u32>> = Vec::with_capacity(n);
         for d in 0..n as u32 {
-            let node = idx.node_id_of(d);
-            let neighbors: Vec<u32> = proj.out_neighbors(node).iter().map(|nb| nb.dense).collect();
+            let neighbors: Vec<u32> = proj
+                .out_neighbors_dense(d)
+                .iter()
+                .map(|nb| nb.dense)
+                .collect();
             out_neighbors_dense.push(neighbors);
         }
         Self {
