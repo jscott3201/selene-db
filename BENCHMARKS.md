@@ -1666,7 +1666,7 @@ properties immediately while retaining dead rows for stable id mapping;
 | Bench | quick 1k | Notes |
 |---|---:|---|
 | `graph_delete_reclamation/vector_payload_delete/n1k_del100_dim768_payload300k` | 105.98 µs | Deletes 100 vector-bearing nodes and clears ~300 KiB of vector payload from the per-iteration graph; fixture clone/setup excluded. |
-| `graph_delete_reclamation/compact_after_vector_delete/n1k_del100_dim768_payload300k` | 146.40 µs | Compacts the post-delete graph and asserts 100 dead node rows are reclaimed; delete setup excluded from the timed body. |
+| `graph_delete_reclamation/compact_after_vector_delete/n1k_del100_dim768_payload300k` | 106.98 µs | Compacts the post-delete graph and asserts 100 dead node rows are reclaimed; delete setup excluded from the timed body. PR-local A/B replaced the temporary live-node endpoint-validation set hasher: 113.84 µs -> 106.98 µs (-6.45%, p=0.00). |
 
 ### §3d `graph_read_under_write` — lock-free reads under contention (D10)
 
