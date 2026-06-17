@@ -2511,6 +2511,16 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
 
+PR-local betweenness dense-adjacency build A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter 'betweenness/sequential' --save-baseline betweenness-dense-adjacency-before`;
+rerun with `--baseline betweenness-dense-adjacency-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/betweenness/sequential/1k` | 2.3808 ms | 2.3430 ms | Betweenness dense adjacency build now reads projection CSR out-neighbor slices by dense row instead of converting dense row to `NodeId` and resolving back to dense. The quick sparse row improves 3.04% (`p=0.00`). |
+
 PR-local SSSP dense-neighbor APSP A/B:
 
 Command:
