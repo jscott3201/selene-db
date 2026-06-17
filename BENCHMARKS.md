@@ -773,6 +773,18 @@ Commands:
 | `graph_text_bm25_rebuild/create_registered_index/n1000` | 447.00 µs | 437.54 µs | -2.12% | Bulk text-index builds now reserve document-length and document-term maps from the label-row cardinality, then shrink at finish so sparse labels do not keep over-reserved document-map capacity. |
 | `graph_text_bm25_rebuild/compact_registered_after_delete/n1000_del100` | 528.47 µs | 521.75 µs | -1.27% | The same builder path trims a small amount from compaction's text-index rebuild stage without changing postings order or scoring. Full-profile sanity after the change: create 10k 4.3152 ms, 50k 23.728 ms, 100k 48.806 ms; compact 10k 5.8408 ms, 50k 33.185 ms, 100k 69.183 ms. Indexed sanity: transient build/query 470.42 µs, prebuilt query 28.289 µs, registered query 28.183 µs. |
 
+PR-local text-index builder finalization A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_rebuild`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/transient_build_query`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_rebuild/create_registered_index/n1000` | 361.14 µs | 348.10 µs | -3.7945% | Bulk builds now intern new terms against the postings table and store final `Arc<[TextTerm]>` document-term lists during insertion, removing the temporary intern table and the finish-time document-term map rebuild. Criterion reports p=0.00. |
+| `graph_text_bm25_rebuild/compact_registered_after_delete/n1000_del100` | 440.78 µs | 427.36 µs | noise | Compaction's text-index rebuild consumer remains statistically flat (`p=0.31`) while sharing the same builder path. |
+| `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 387.59 µs | 378.70 µs | -2.1557% | The one-off transient build/query row also benefits from the builder-finalization shortcut; Criterion reports p=0.00. |
+
 PR-local quick JSON baseline:
 
 | Bench | 1k | Notes |
