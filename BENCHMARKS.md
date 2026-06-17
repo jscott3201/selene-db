@@ -1937,6 +1937,15 @@ Command:
 |---|---:|---:|---:|---|
 | `graph_snapshot_roundtrip/decode/1000` | 1.1709 ms | 1.0824 ms | -7.7946% | Recovery now carries the decoded snapshot row position beside each recovered node/edge row instead of maintaining separate `id -> position` BTreeMaps and looking them up during materialization. Criterion reports p=0.00. |
 
+PR-local recovery row scratch-map A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/decode/1000` | 1.0696 ms | 956.20 µs | -10.732% | Recovery stores decoded snapshot rows in hash maps and carries separate positional order vectors, avoiding per-row `BTreeMap` inserts while preserving compacted-snapshot row placement and WAL-created dense append order. Criterion reports p=0.00. |
+
 ## §5 selene-gql — parse / plan / execute
 
 Bench bins: `parse`, `analyze`, `plan_optimize`, `expression_eval`,
