@@ -233,8 +233,8 @@ pub fn scc_count_with_checker(
 ) -> Result<usize, AlgorithmAborted> {
     check_algorithm(checker)?;
     let idx = proj.row_index();
-    let state = run_tarjan(proj, idx, checker)?;
-    Ok(state.components.len())
+    let state = run_tarjan_count_only(proj, idx, checker)?;
+    Ok(state.component_count)
 }
 
 struct TarjanState {
@@ -251,10 +251,14 @@ struct TarjanState {
     lowlinks: Vec<u32>,
     /// Completed components, one `Vec<u32>` (dense indices) per SCC.
     components: Vec<Vec<u32>>,
+    /// Number of completed components. Kept separately so `scc_count` can skip
+    /// component-vector materialization.
+    component_count: usize,
+    materialize_components: bool,
 }
 
 impl TarjanState {
-    fn with_capacity(size: usize) -> Self {
+    fn with_capacity(size: usize, materialize_components: bool) -> Self {
         Self {
             index: 0,
             stack: Vec::new(),
@@ -262,6 +266,8 @@ impl TarjanState {
             indices: vec![SENTINEL; size],
             lowlinks: vec![SENTINEL; size],
             components: Vec::new(),
+            component_count: 0,
+            materialize_components,
         }
     }
 }
@@ -271,7 +277,24 @@ fn run_tarjan(
     idx: &RowIndex,
     checker: CancellationChecker<'_>,
 ) -> Result<TarjanState, AlgorithmAborted> {
-    let mut state = TarjanState::with_capacity(idx.len());
+    run_tarjan_inner(proj, idx, checker, true)
+}
+
+fn run_tarjan_count_only(
+    proj: &GraphProjection,
+    idx: &RowIndex,
+    checker: CancellationChecker<'_>,
+) -> Result<TarjanState, AlgorithmAborted> {
+    run_tarjan_inner(proj, idx, checker, false)
+}
+
+fn run_tarjan_inner(
+    proj: &GraphProjection,
+    idx: &RowIndex,
+    checker: CancellationChecker<'_>,
+    materialize_components: bool,
+) -> Result<TarjanState, AlgorithmAborted> {
+    let mut state = TarjanState::with_capacity(idx.len(), materialize_components);
     let mut rows_since_check = 0usize;
     for d in 0..idx.len() as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
@@ -335,15 +358,25 @@ fn tarjan_strongconnect(
             if state.lowlinks[fi] == state.indices[fi] {
                 // `finished` is the root of an SCC; pop the stack until we
                 // hit it.
-                let mut component = Vec::new();
-                while let Some(w) = state.stack.pop() {
-                    state.on_stack[w as usize] = false;
-                    component.push(w);
-                    if w == finished {
-                        break;
+                state.component_count += 1;
+                if state.materialize_components {
+                    let mut component = Vec::new();
+                    while let Some(w) = state.stack.pop() {
+                        state.on_stack[w as usize] = false;
+                        component.push(w);
+                        if w == finished {
+                            break;
+                        }
+                    }
+                    state.components.push(component);
+                } else {
+                    while let Some(w) = state.stack.pop() {
+                        state.on_stack[w as usize] = false;
+                        if w == finished {
+                            break;
+                        }
                     }
                 }
-                state.components.push(component);
             }
         }
     }
