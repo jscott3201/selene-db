@@ -1,7 +1,8 @@
 //! WAL change replay for core-provider recovery state.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
+use rustc_hash::FxHashMap;
 use selene_core::{
     Change, DbString, EdgeId, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange, db_string,
 };
@@ -51,6 +52,7 @@ impl RecoveryState {
                         alive: true,
                     }),
                 );
+                self.wal_node_order.push(*id);
             }
             Change::NodeUpdated {
                 id,
@@ -95,6 +97,7 @@ impl RecoveryState {
                         alive: true,
                     }),
                 );
+                self.wal_edge_order.push(*id);
             }
             Change::EdgeUpdated {
                 id,
@@ -216,7 +219,7 @@ impl RecoveryState {
 }
 
 fn require_live_node(
-    nodes: &mut BTreeMap<NodeId, RecoveredNodeRow>,
+    nodes: &mut FxHashMap<NodeId, RecoveredNodeRow>,
     id: NodeId,
 ) -> Result<&mut NodeRow, ProviderError> {
     let recovered = nodes
@@ -231,7 +234,7 @@ fn require_live_node(
 }
 
 fn require_live_node_ref(
-    nodes: &BTreeMap<NodeId, RecoveredNodeRow>,
+    nodes: &FxHashMap<NodeId, RecoveredNodeRow>,
     id: NodeId,
 ) -> Result<(), ProviderError> {
     let recovered = nodes
@@ -246,7 +249,7 @@ fn require_live_node_ref(
 }
 
 fn require_live_edge(
-    edges: &mut BTreeMap<EdgeId, RecoveredEdgeRow>,
+    edges: &mut FxHashMap<EdgeId, RecoveredEdgeRow>,
     id: EdgeId,
 ) -> Result<&mut EdgeRow, ProviderError> {
     let recovered = edges
