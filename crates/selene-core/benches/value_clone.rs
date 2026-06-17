@@ -159,6 +159,31 @@ fn wide_property_pairs_sorted(width: usize) -> Vec<(selene_core::DbString, Value
         .collect()
 }
 
+fn wide_compact_key_values(width: usize) -> (Vec<selene_core::DbString>, Vec<Option<Value>>) {
+    (0..width)
+        .rev()
+        .map(|idx| {
+            (
+                db_string(&format!("compact_property_{idx:04}")).expect("key fits DB string cap"),
+                Some(Value::Int(idx as i64)),
+            )
+        })
+        .unzip()
+}
+
+fn wide_compact_key_values_sorted(
+    width: usize,
+) -> (Vec<selene_core::DbString>, Vec<Option<Value>>) {
+    (0..width)
+        .map(|idx| {
+            (
+                db_string(&format!("compact_property_{idx:04}")).expect("key fits DB string cap"),
+                Some(Value::Int(idx as i64)),
+            )
+        })
+        .unzip()
+}
+
 // `print_stderr` deny is locally relaxed to surface the current `Value` size
 // in bench output (so the CORE-06 shrink is visible run-to-run).
 #[allow(clippy::print_stderr)]
@@ -220,6 +245,26 @@ fn bench_value_clone(c: &mut Criterion) {
         b.iter(|| {
             PropertyMap::from_pairs(black_box(sorted_pairs.iter().cloned()))
                 .expect("property map fits core caps")
+        });
+    });
+    let (compact_keys, compact_values) = wide_compact_key_values(256);
+    group.bench_function("property_map_compact_256_reverse", |b| {
+        b.iter(|| {
+            PropertyMap::compact(
+                black_box(compact_keys.iter().cloned()),
+                black_box(compact_values.iter().cloned()),
+            )
+            .expect("compact property map fits core caps")
+        });
+    });
+    let (compact_keys_sorted, compact_values_sorted) = wide_compact_key_values_sorted(256);
+    group.bench_function("property_map_compact_256_sorted", |b| {
+        b.iter(|| {
+            PropertyMap::compact(
+                black_box(compact_keys_sorted.iter().cloned()),
+                black_box(compact_values_sorted.iter().cloned()),
+            )
+            .expect("compact property map fits core caps")
         });
     });
 
