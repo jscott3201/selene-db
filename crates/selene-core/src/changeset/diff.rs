@@ -102,7 +102,7 @@ impl PropertyDiff {
         removed: impl IntoIterator<Item = DbString>,
     ) -> CoreResult<Self> {
         let mut set: SmallVec<[(DbString, Value); 4]> = set.into_iter().collect();
-        if set.len() > 1 {
+        if set.len() > 1 && !set.windows(2).all(|pair| pair[0].0 < pair[1].0) {
             set.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
             let mut deduped = SmallVec::new();
             for (key, value) in set {

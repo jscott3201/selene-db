@@ -100,6 +100,26 @@ fn property_diff_accepts_singleton_set_input() {
 }
 
 #[test]
+fn property_diff_accepts_canonical_set_input() {
+    let first = dbs("change.property.canonical.a");
+    let second = dbs("change.property.canonical.b");
+    let diff = PropertyDiff::new(
+        [
+            (first.clone(), Value::Int(1)),
+            (second.clone(), Value::Int(2)),
+        ],
+        [],
+    )
+    .unwrap();
+
+    assert_eq!(
+        diff.set.as_slice(),
+        &[(first, Value::Int(1)), (second, Value::Int(2))]
+    );
+    assert!(diff.removed.is_empty());
+}
+
+#[test]
 fn property_diff_set_includes_null_value() {
     let property = dbs("change.null");
     let diff = PropertyDiff::new([(property.clone(), Value::Null)], []).unwrap();
