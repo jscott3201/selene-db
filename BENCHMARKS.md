@@ -1641,6 +1641,18 @@ and
 | `write_txn_lifecycle/delete_only/n50000/100` | 381.39 µs | 342.29 µs | Mid-scale delete-only rows are historically noisy; this branch is modestly faster, not regressed. |
 | `write_txn_lifecycle/delete_only/n100000/1000` | 3.5656 ms | 3.4152 ms | Large batch delete-only guard improves about 4.2% in this run. |
 
+PR-local incident-edge collector A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench graph_hub_delete --save-baseline hub-delete-btreeset-before`
+and
+`scripts/run-benches.sh --profile quick --bench graph_hub_delete --baseline hub-delete-btreeset-before`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `graph_hub_delete/100` | 41.796 µs | 39.536 µs | Incident edge ids are collected into a contiguous `Vec`, sorted/deduped once, then cascaded in ascending id order; p=0.00. |
+| `graph_hub_delete/1000` | 307.60 µs | 283.05 µs | Avoids per-edge `BTreeSet` node allocation while preserving deterministic cascade order; p=0.00. |
+
 ### §3c `graph_delete_reclamation` — delete payload clearing and compaction
 
 `graph_delete_reclamation/*` isolates the storage side of deletes from vector
