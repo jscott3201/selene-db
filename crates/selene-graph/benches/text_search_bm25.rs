@@ -99,6 +99,40 @@ fn bench_indexed_bm25(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new(
+                "prebuilt_topic_query_candidates_sorted",
+                format!("n{scale}_k10"),
+            ),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture.index.search_candidates(
+                        &fixture.query,
+                        fixture.sorted_candidates(),
+                        10,
+                    );
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "prebuilt_topic_query_candidates_reverse",
+                format!("n{scale}_k10"),
+            ),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture.index.search_candidates(
+                        &fixture.query,
+                        fixture.reverse_candidates(),
+                        10,
+                    );
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("registered_topic_query", format!("n{scale}_k10")),
             &fixture,
             |b, fixture| {
@@ -233,6 +267,8 @@ struct TextFixture {
     label: DbString,
     property: DbString,
     query: String,
+    sorted_candidates: Vec<NodeId>,
+    reverse_candidates: Vec<NodeId>,
     index: TextIndex,
     registered_index: Arc<TextIndex>,
 }
@@ -245,6 +281,7 @@ impl TextFixture {
         {
             let mut txn = shared.begin_write();
             let mut mutator = txn.mutator();
+            let mut sorted_candidates = Vec::with_capacity(scale);
             for row in 0..scale {
                 let topic = TOPICS[row % TOPICS.len()];
                 let neighbor = TOPICS[(row + 3) % TOPICS.len()];
@@ -252,7 +289,7 @@ impl TextFixture {
                 let text = format!(
                     "{topic} {state} agent memory fact supports {neighbor} retrieval evidence"
                 );
-                mutator
+                let node = mutator
                     .create_node(
                         LabelSet::single(label.clone()),
                         props(
@@ -261,9 +298,28 @@ impl TextFixture {
                         ),
                     )
                     .expect("bench node inserts");
+                sorted_candidates.push(node);
             }
             txn.commit().expect("bench fixture commits");
+            let mut reverse_candidates = sorted_candidates.clone();
+            reverse_candidates.reverse();
+            Self::finish(
+                shared,
+                label,
+                property,
+                sorted_candidates,
+                reverse_candidates,
+            )
         }
+    }
+
+    fn finish(
+        shared: SharedGraph,
+        label: DbString,
+        property: DbString,
+        sorted_candidates: Vec<NodeId>,
+        reverse_candidates: Vec<NodeId>,
+    ) -> Self {
         shared
             .create_text_index(label.clone(), property.clone())
             .expect("bench text index registers");
@@ -279,9 +335,19 @@ impl TextFixture {
             label,
             property,
             query: "gql current retrieval evidence".to_owned(),
+            sorted_candidates,
+            reverse_candidates,
             index,
             registered_index,
         }
+    }
+
+    fn sorted_candidates(&self) -> &[NodeId] {
+        &self.sorted_candidates
+    }
+
+    fn reverse_candidates(&self) -> &[NodeId] {
+        &self.reverse_candidates
     }
 }
 

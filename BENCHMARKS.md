@@ -713,6 +713,16 @@ Commands:
 | `graph_text_bm25_vector_hybrid/graph_topic_bm25_current_scoped/...q8_c64` | 42.487 µs | 36.467 µs | -13.91% | Candidate-scoped BM25 now uses the same inline query-posting metadata and reserves its indexed-candidate dedup set from the input width; p=0.00. |
 | `graph_text_bm25_vector_hybrid/graph_topic_bm25_current_scoped_vector_rerank/...q8_c64` | 61.235 µs | 55.042 µs | -10.76% | The downstream vector rerank row keeps the BM25 candidate win while preserving the same selected-candidate shape; p=0.00. Sanity after the change: vector-BM25 current filter 210.98 µs, ANN-BM25 current filter 54.834 µs, and indexed prebuilt topic query 28.446 µs. |
 
+PR-local candidate-scoped BM25 canonical-input A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query_candidates`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 41.831 µs | 34.770 µs | -16.9% | Candidate-scoped indexed BM25 over already-canonical node ids now skips the `FxHashSet` dedup allocation and scores the ascending slice directly; p=0.00. Full-profile post-change sanity: 10k 547.46 µs, 50k 3.5299 ms, 100k 7.3916 ms. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 41.024 µs | 38.948 µs | -7.0% | Reverse candidate input stays on the existing hash-dedup path; the shared scoring loop trims a smaller but significant amount of overhead while preserving duplicate handling; p=0.00. Full-profile post-change sanity: 10k 638.60 µs, 50k 4.6077 ms, 100k 10.978 ms. |
+
 Rejected variants: sharing postings while leaving per-document term lists as
 plain `Vec<String>` kept transient build lower at 523.57 µs but lost the update
 win (`write_registered_update_w40/n1000` returned to 5.0114 ms). Wrapping
