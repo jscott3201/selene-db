@@ -12,9 +12,8 @@ pub(super) struct TextIndexBuilder {
     property: DbString,
     rows: RoaringBitmap,
     document_lengths: FxHashMap<NodeId, u32>,
-    document_terms: FxHashMap<NodeId, Vec<TextTerm>>,
+    document_terms: FxHashMap<NodeId, Arc<[TextTerm]>>,
     postings: FxHashMap<TextTerm, Vec<TextPosting>>,
-    interned_terms: FxHashMap<TextTerm, TextTerm>,
     total_document_len: u64,
     posting_count: usize,
 }
@@ -42,14 +41,15 @@ impl TextIndexBuilder {
                 Default::default(),
             ),
             postings: FxHashMap::default(),
-            interned_terms: FxHashMap::default(),
             total_document_len: 0,
             posting_count: 0,
         }
     }
 
     pub(super) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
-        let (counts, len) = count_document_terms(text, |token| self.intern_term(token));
+        let (counts, len) = count_document_terms(text, |token| {
+            intern_existing_builder_term(&self.postings, token)
+        });
         if len == 0 {
             return;
         }
@@ -67,7 +67,7 @@ impl TextIndexBuilder {
             self.posting_count = self.posting_count.saturating_add(1);
             terms.push(term);
         });
-        self.document_terms.insert(node_id, terms);
+        self.document_terms.insert(node_id, Arc::from(terms));
     }
 
     pub(super) fn finish(mut self) -> TextIndex {
@@ -81,11 +81,7 @@ impl TextIndexBuilder {
             property: self.property,
             rows: self.rows,
             document_lengths: self.document_lengths,
-            document_terms: self
-                .document_terms
-                .into_iter()
-                .map(|(node_id, terms)| (node_id, Arc::from(terms)))
-                .collect(),
+            document_terms: self.document_terms,
             postings: self
                 .postings
                 .into_iter()
@@ -95,14 +91,14 @@ impl TextIndexBuilder {
             posting_count: self.posting_count,
         }
     }
+}
 
-    fn intern_term(&mut self, token: &str) -> TextTerm {
-        if let Some(term) = self.interned_terms.get(token) {
-            return Arc::clone(term);
-        }
-        let term = TextTerm::from(token);
-        self.interned_terms
-            .insert(Arc::clone(&term), Arc::clone(&term));
-        term
-    }
+fn intern_existing_builder_term(
+    postings: &FxHashMap<TextTerm, Vec<TextPosting>>,
+    token: &str,
+) -> TextTerm {
+    postings
+        .get_key_value(token)
+        .map(|(term, _)| Arc::clone(term))
+        .unwrap_or_else(|| TextTerm::from(token))
 }
