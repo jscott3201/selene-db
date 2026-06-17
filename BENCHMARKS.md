@@ -1697,6 +1697,18 @@ the contiguous `Vec` + `write_all` path remains the baseline.
 |---|---:|---:|---:|---:|---|
 | `persist_wal_body_size_no_fsync` | 12.5 ms | 8.42 ms | 7.22 ms | 13.1 ms | Equal total work; U-shaped in packing; vectored write rejected. |
 
+PR-local quick WAL record-buffer reuse A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_append_single_no_fsync`;
+`scripts/run-benches.sh --profile quick --bench wal --filter persist_wal_body_size_no_fsync`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `persist_wal_append_single_no_fsync/1000` | 3.1835 ms | 1.8447 ms | Writer-owned record buffer keeps the contiguous `write_all` record shape while avoiding per-append `Vec` allocation; median is ~42% below the local pre-change baseline. |
+| `persist_wal_body_size_no_fsync/100` | 2.9168 ms | 1.9143 ms | Same allocation reuse on the 100-change packing; the 4 MiB retention cap keeps ordinary hot buffers reusable without pinning pathological max-entry allocations. |
+| `persist_wal_body_size_no_fsync/1000` | 2.4978 ms | 1.4411 ms | Same allocation reuse on the 1000-change packing; median is ~42% below the local pre-change baseline while preserving the contiguous `write_all` path. |
+
 #### `persist_wal_payload_shape_*` — scalar / JSON / vector payloads
 
 These rows keep the WAL format unchanged and isolate payload shape for the
