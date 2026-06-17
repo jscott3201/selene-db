@@ -36,8 +36,7 @@
 //! reclaimed-id delete" alternative was rejected because it would mask a truly
 //! inconsistent WAL. The MANIFEST `compaction_epoch` field stays reserved (`0`).
 
-use std::collections::HashSet;
-
+use rustc_hash::FxHashSet;
 use selene_core::NodeId;
 
 use crate::error::{GraphError, GraphResult};
@@ -173,8 +172,10 @@ pub struct CompactedCore {
 /// id↔row mapping) or if the rebuilt graph fails its consistency check.
 pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     let mut nodes = NodeStore::new();
-    let mut live_nodes: HashSet<NodeId> =
-        HashSet::with_capacity(graph.node_store.alive.len() as usize);
+    let mut live_nodes: FxHashSet<NodeId> = FxHashSet::with_capacity_and_hasher(
+        graph.node_store.alive.len() as usize,
+        Default::default(),
+    );
     for old_row in graph.node_store.alive.iter() {
         let r = old_row as usize;
         let id = graph
