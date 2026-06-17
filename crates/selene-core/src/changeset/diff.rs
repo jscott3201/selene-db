@@ -190,8 +190,10 @@ impl<'de> Deserialize<'de> for PropertyDiff {
 
 fn sorted_deduped(values: impl IntoIterator<Item = DbString>) -> SmallVec<[DbString; 2]> {
     let mut values: SmallVec<[DbString; 2]> = values.into_iter().collect();
-    values.sort();
-    values.dedup();
+    if values.len() > 1 && !values.windows(2).all(|pair| pair[0] < pair[1]) {
+        values.sort();
+        values.dedup();
+    }
     values
 }
 
