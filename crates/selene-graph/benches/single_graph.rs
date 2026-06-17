@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    CancellationChecker, DbString, GraphId, JsonPathSelector, JsonValue, LabelSet, PropertyMap,
-    Value, VectorMetric, VectorValue, db_string,
+    CancellationChecker, DbString, GraphId, JsonPathSelector, JsonValue, LabelSet, NodeId,
+    PropertyMap, Value, VectorMetric, VectorValue, db_string,
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, TypedIndexKind, VectorIndexKind,

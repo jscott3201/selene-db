@@ -93,6 +93,44 @@ pub(super) fn bench_exact_json_path_exists_scan(c: &mut Criterion) {
                 });
             },
         );
+        group.bench_with_input(
+            BenchmarkId::new("nested_score_path_candidates_sorted_k10", fixture.scale()),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_path_exists_candidate_nodes(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.path(),
+                            fixture.sorted_candidates(),
+                            10,
+                        )
+                        .expect("JSON path-existence candidate scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("nested_score_path_candidates_reverse_k10", fixture.scale()),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture
+                        .graph()
+                        .exact_json_path_exists_candidate_nodes(
+                            fixture.label(),
+                            fixture.payload_key(),
+                            fixture.path(),
+                            fixture.reverse_candidates(),
+                            10,
+                        )
+                        .expect("JSON path-existence candidate scan succeeds");
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
     }
     group.finish();
 }
@@ -209,6 +247,8 @@ struct JsonFixture {
     path: Vec<JsonPathSelector>,
     contains_path: Vec<JsonPathSelector>,
     path_candidate: JsonValue,
+    sorted_candidates: Vec<NodeId>,
+    reverse_candidates: Vec<NodeId>,
 }
 
 impl JsonFixture {
@@ -229,6 +269,7 @@ impl JsonFixture {
         let path_candidate = JsonValue::new(serde_json::json!({"kind": "episodic"}))
             .expect("bench JSON path candidate is valid");
         let shared = SharedGraph::new(GraphId::new(9_500 + scale as u64));
+        let mut sorted_candidates = Vec::with_capacity(scale);
         {
             let mut txn = shared.begin_write();
             let mut mutator = txn.mutator();
@@ -251,12 +292,15 @@ impl JsonFixture {
                 };
                 let props = PropertyMap::from_pairs([(payload_key.clone(), value)])
                     .expect("bench JSON properties are valid");
-                mutator
+                let node = mutator
                     .create_node(LabelSet::single(label.clone()), props)
                     .expect("bench JSON node insert succeeds");
+                sorted_candidates.push(node);
             }
             txn.commit().expect("bench JSON fixture commit succeeds");
         }
+        let mut reverse_candidates = sorted_candidates.clone();
+        reverse_candidates.reverse();
         Self {
             scale,
             graph: shared.read().as_ref().clone(),
@@ -266,6 +310,8 @@ impl JsonFixture {
             path,
             contains_path,
             path_candidate,
+            sorted_candidates,
+            reverse_candidates,
         }
     }
 
@@ -299,6 +345,14 @@ impl JsonFixture {
 
     const fn path_candidate(&self) -> &JsonValue {
         &self.path_candidate
+    }
+
+    fn sorted_candidates(&self) -> &[NodeId] {
+        &self.sorted_candidates
+    }
+
+    fn reverse_candidates(&self) -> &[NodeId] {
+        &self.reverse_candidates
     }
 }
 

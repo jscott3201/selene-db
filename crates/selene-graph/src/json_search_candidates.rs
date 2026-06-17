@@ -382,7 +382,20 @@ impl SharedGraph {
 
 fn sorted_unique_candidates(candidates: &[NodeId]) -> Vec<NodeId> {
     let mut candidates = candidates.to_vec();
-    candidates.sort_unstable();
-    candidates.dedup();
+    if candidates.len() > 1 && !node_ids_strictly_ascending(&candidates) {
+        candidates.sort_unstable();
+        candidates.dedup();
+    }
     candidates
+}
+
+fn node_ids_strictly_ascending(nodes: &[NodeId]) -> bool {
+    let mut previous = nodes[0];
+    for &node in &nodes[1..] {
+        if previous >= node {
+            return false;
+        }
+        previous = node;
+    }
+    true
 }
