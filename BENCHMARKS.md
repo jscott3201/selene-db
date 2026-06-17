@@ -471,6 +471,26 @@ and
 | `graph_text_bm25_mixed/registered_query_update_r60w40/n1000_k10` | 3.4034 ms |
 | `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.7031 ms |
 
+PR-local BM25 document-term count accumulator A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_rebuild/create_registered_index`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_mixed/write_registered_update_w40`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/transient_build_query`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `graph_text_bm25_rebuild/create_registered_index/n1000` | 422.11 µs | 348.86 µs | Criterion reported -17.423% (`p=0.00`); short BM25 documents now count terms in inline storage before spilling to a hash map for high-cardinality documents. |
+| `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.7121 ms | 1.6922 ms | Neutral (`p=0.26`); update maintenance keeps the same durable postings representation. |
+
+Post-change guard medians:
+
+| Guard row | Post-change median |
+|---|---:|
+| `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 387.61 µs |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 27.896 µs |
+
 PR-local quick vector candidate-set scoring Rayon A/B:
 
 Command: `scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set`

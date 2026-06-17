@@ -35,7 +35,10 @@ use builder::TextIndexBuilder;
 
 type QueryDocumentFrequencies = SmallVec<[u32; 4]>;
 type QueryPostings<'a> = SmallVec<[Option<&'a [TextPosting]>; 4]>;
+type InlineDocumentTermCounts = SmallVec<[(TextTerm, u32); 8]>;
 type TextTerm = Arc<str>;
+
+const INLINE_DOCUMENT_TERM_COUNT_CAPACITY: usize = 8;
 
 pub(crate) use maintenance::{
     apply_node_create, apply_node_delete, apply_node_update, rebuild_text_indexes,
@@ -330,14 +333,9 @@ impl TextIndex {
 
     pub(crate) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
         self.remove_document(row, node_id);
-        let mut counts: FxHashMap<TextTerm, u32> = FxHashMap::default();
-        let mut len = 0_u32;
-        for token in tokenize_borrowed(text) {
-            len = len.saturating_add(1);
-            let term = intern_existing_posting_term(&self.postings, token.as_ref());
-            let count = counts.entry(term).or_insert(0);
-            *count = count.saturating_add(1);
-        }
+        let (counts, len) = count_document_terms(text, |token| {
+            intern_existing_posting_term(&self.postings, token)
+        });
         if len == 0 {
             return;
         }
@@ -346,7 +344,7 @@ impl TextIndex {
         self.document_lengths.insert(node_id, len);
         self.total_document_len = self.total_document_len.saturating_add(u64::from(len));
         let mut terms = Vec::with_capacity(counts.len());
-        for (term, term_count) in counts {
+        counts.for_each(|term, term_count| {
             let postings = self
                 .postings
                 .entry(Arc::clone(&term))
@@ -368,7 +366,7 @@ impl TextIndex {
                 }
             }
             terms.push(term);
-        }
+        });
         self.document_terms.insert(node_id, Arc::from(terms));
     }
 
@@ -530,6 +528,82 @@ impl SharedGraph {
 struct TextPosting {
     node_id: NodeId,
     term_count: u32,
+}
+
+enum DocumentTermCounts {
+    Inline(InlineDocumentTermCounts),
+    Map(FxHashMap<TextTerm, u32>),
+}
+
+impl DocumentTermCounts {
+    fn new() -> Self {
+        Self::Inline(InlineDocumentTermCounts::new())
+    }
+
+    fn increment(&mut self, term: TextTerm) {
+        match self {
+            Self::Inline(counts) => {
+                if let Some((_, count)) = counts
+                    .iter_mut()
+                    .find(|(existing, _)| existing.as_ref() == term.as_ref())
+                {
+                    *count = count.saturating_add(1);
+                    return;
+                }
+                if counts.len() < INLINE_DOCUMENT_TERM_COUNT_CAPACITY {
+                    counts.push((term, 1));
+                    return;
+                }
+
+                let mut map =
+                    FxHashMap::with_capacity_and_hasher(counts.len() + 1, Default::default());
+                for (term, count) in counts.drain(..) {
+                    map.insert(term, count);
+                }
+                map.insert(term, 1);
+                *self = Self::Map(map);
+            }
+            Self::Map(counts) => {
+                let count = counts.entry(term).or_insert(0);
+                *count = count.saturating_add(1);
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Inline(counts) => counts.len(),
+            Self::Map(counts) => counts.len(),
+        }
+    }
+
+    fn for_each(self, mut visit: impl FnMut(TextTerm, u32)) {
+        match self {
+            Self::Inline(counts) => {
+                for (term, count) in counts {
+                    visit(term, count);
+                }
+            }
+            Self::Map(counts) => {
+                for (term, count) in counts {
+                    visit(term, count);
+                }
+            }
+        }
+    }
+}
+
+fn count_document_terms(
+    text: &str,
+    mut intern: impl FnMut(&str) -> TextTerm,
+) -> (DocumentTermCounts, u32) {
+    let mut counts = DocumentTermCounts::new();
+    let mut len = 0_u32;
+    for token in tokenize_borrowed(text) {
+        len = len.saturating_add(1);
+        counts.increment(intern(token.as_ref()));
+    }
+    (counts, len)
 }
 
 fn intern_existing_posting_term(

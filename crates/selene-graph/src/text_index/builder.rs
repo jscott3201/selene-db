@@ -5,8 +5,7 @@ use rustc_hash::FxHashMap;
 
 use selene_core::{DbString, NodeId};
 
-use super::{TextIndex, TextPosting, TextTerm};
-use crate::text_search::tokenize_borrowed;
+use super::{TextIndex, TextPosting, TextTerm, count_document_terms};
 
 pub(super) struct TextIndexBuilder {
     label: DbString,
@@ -50,14 +49,7 @@ impl TextIndexBuilder {
     }
 
     pub(super) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
-        let mut counts: FxHashMap<TextTerm, u32> = FxHashMap::default();
-        let mut len = 0_u32;
-        for token in tokenize_borrowed(text) {
-            len = len.saturating_add(1);
-            let term = self.intern_term(token.as_ref());
-            let count = counts.entry(term).or_insert(0);
-            *count = count.saturating_add(1);
-        }
+        let (counts, len) = count_document_terms(text, |token| self.intern_term(token));
         if len == 0 {
             return;
         }
@@ -66,7 +58,7 @@ impl TextIndexBuilder {
         self.document_lengths.insert(node_id, len);
         self.total_document_len = self.total_document_len.saturating_add(u64::from(len));
         let mut terms = Vec::with_capacity(counts.len());
-        for (term, term_count) in counts {
+        counts.for_each(|term, term_count| {
             let postings = self.postings.entry(Arc::clone(&term)).or_default();
             postings.push(TextPosting {
                 node_id,
@@ -74,7 +66,7 @@ impl TextIndexBuilder {
             });
             self.posting_count = self.posting_count.saturating_add(1);
             terms.push(term);
-        }
+        });
         self.document_terms.insert(node_id, terms);
     }
 
