@@ -95,13 +95,13 @@ pub(super) fn candidate_rows(
             kind,
             bounds,
             ..
-        } => typed_index_rows(scan, property.clone(), *kind, bounds, ctx),
+        } => typed_index_rows(scan, property, *kind, bounds, ctx),
         ScanAccess::BitmapUnion {
             property,
             kind,
             keys,
             ..
-        } => bitmap_union_rows(scan, property.clone(), *kind, keys, ctx),
+        } => bitmap_union_rows(scan, property, *kind, keys, ctx),
         ScanAccess::CompositeLookup {
             properties, keys, ..
         } => composite_lookup_rows(scan, properties, keys, ctx),
@@ -123,13 +123,13 @@ fn label_index_rows(scan: &NodeOrEdgeScan, ctx: &EvalCtx<'_, '_, '_, '_>) -> Vec
         ScanKind::Node => ctx
             .tx
             .snapshot()
-            .nodes_with_label(&label)
+            .nodes_with_label(label)
             .map(|rows| rows.iter().collect())
             .unwrap_or_default(),
         ScanKind::Edge => ctx
             .tx
             .snapshot()
-            .edges_with_label(&label)
+            .edges_with_label(label)
             .map(|rows| rows.iter().collect())
             .unwrap_or_default(),
     }
@@ -137,7 +137,7 @@ fn label_index_rows(scan: &NodeOrEdgeScan, ctx: &EvalCtx<'_, '_, '_, '_>) -> Vec
 
 fn typed_index_rows(
     scan: &NodeOrEdgeScan,
-    property: DbString,
+    property: &DbString,
     kind: IndexKind,
     bounds: &TypedIndexBounds,
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -165,34 +165,34 @@ fn typed_index_rows(
     };
     let indexed_rows = match &resolved {
         ResolvedBounds::Equality(value) => {
-            property_eq_row_vec(ctx.tx.snapshot(), scan.kind, &label, &property, value)
+            property_eq_row_vec(ctx.tx.snapshot(), scan.kind, label, property, value)
         }
         ResolvedBounds::GreaterThan(value) => property_range_row_vec(
             ctx.tx.snapshot(),
             scan.kind,
-            &label,
-            &property,
+            label,
+            property,
             (Excluded(value.clone()), Unbounded),
         ),
         ResolvedBounds::GreaterEqual(value) => property_range_row_vec(
             ctx.tx.snapshot(),
             scan.kind,
-            &label,
-            &property,
+            label,
+            property,
             (Included(value.clone()), Unbounded),
         ),
         ResolvedBounds::LessThan(value) => property_range_row_vec(
             ctx.tx.snapshot(),
             scan.kind,
-            &label,
-            &property,
+            label,
+            property,
             (Unbounded, Excluded(value.clone())),
         ),
         ResolvedBounds::LessEqual(value) => property_range_row_vec(
             ctx.tx.snapshot(),
             scan.kind,
-            &label,
-            &property,
+            label,
+            property,
             (Unbounded, Included(value.clone())),
         ),
         ResolvedBounds::Range {
@@ -214,8 +214,8 @@ fn typed_index_rows(
             property_range_row_vec(
                 ctx.tx.snapshot(),
                 scan.kind,
-                &label,
-                &property,
+                label,
+                property,
                 (lo_bound, hi_bound),
             )
         }
@@ -226,7 +226,7 @@ fn typed_index_rows(
 
 fn bitmap_union_rows(
     scan: &NodeOrEdgeScan,
-    property: DbString,
+    property: &DbString,
     kind: IndexKind,
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -248,24 +248,22 @@ fn bitmap_union_rows(
         return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
+                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
             })
             .collect());
     };
     if let Some(rows) = property_any_row_bitmap(
         ctx.tx.snapshot(),
         scan.kind,
-        &label,
-        &property,
+        label,
+        property,
         &resolved_keys,
     ) {
         return Ok(rows.iter().collect());
     }
     Ok(linear_rows(scan.kind, ctx)
         .into_iter()
-        .filter(|row| {
-            property_matches_any_resolved(scan.kind, *row, &property, &resolved_keys, ctx)
-        })
+        .filter(|row| property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx))
         .collect())
 }
 
@@ -348,7 +346,7 @@ fn composite_lookup_rows(
     if let Some(index) = ctx
         .tx
         .snapshot()
-        .composite_property_index_for(&label, &property_keys)
+        .composite_property_index_for(label, &property_keys)
     {
         let refs = resolved_values.iter().collect::<Vec<_>>();
         // Single-coercion key build; a kind/arity mismatch (`Err`) declines the
@@ -425,13 +423,13 @@ pub(super) fn row_matches_resolved_composite(
 
 fn linear_rows_filtered_by_resolved_bounds(
     scan: &NodeOrEdgeScan,
-    property: DbString,
+    property: &DbString,
     resolved: &ResolvedBounds,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
-        .filter(|row| row_matches_resolved_bounds(scan.kind, *row, &property, resolved, ctx))
+        .filter(|row| row_matches_resolved_bounds(scan.kind, *row, property, resolved, ctx))
         .collect()
 }
 
@@ -576,9 +574,9 @@ pub(crate) fn label_matches_edge(expr: &LabelExpr, label: &DbString) -> bool {
     }
 }
 
-fn single_label(label: &Option<LabelExpr>) -> Option<DbString> {
+fn single_label(label: &Option<LabelExpr>) -> Option<&DbString> {
     match label {
-        Some(LabelExpr::Single(label)) => Some(label.clone()),
+        Some(LabelExpr::Single(label)) => Some(label),
         _ => None,
     }
 }
