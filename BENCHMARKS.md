@@ -2523,6 +2523,19 @@ and
 | `read_pipeline/distinct_dedup/1000` | 80.366 µs | 77.178 µs | DISTINCT now reserves its runtime equality-key set from the input row count. Median is -4.0%. |
 | `read_pipeline/group_by_highcard/1000` | 128.66 µs | 119.63 µs | GROUP BY now reserves its group vector and runtime equality-key index from the input row count capped by the configured group-key limit. Median is -7.0%; the initial A/B showed p=0.00, and the trimmed-patch rerun median is shown here. Full-profile sanity medians: 10k 889.49 µs, 50k 4.5333 ms, 100k 9.6804 ms. |
 
+PR-local GROUP BY finalization inline-row A/B:
+
+Commands: `scripts/run-benches.sh --profile quick --bench read_pipeline --filter group_by_highcard`;
+then temporarily rerun the old finalization path and rerun after the change with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter group_by_highcard`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/group_by_highcard/1000` | 122.33 µs | 117.85 µs | GROUP BY finalization now pushes aggregate results into `Binding` inline storage instead of allocating a representative-row `Vec` and one-value aggregate `Vec` per group. Criterion reports -3.8239%, p=0.00; a same-patch rerun measured 115.39 µs. |
+| `read_pipeline/group_by_highcard/10000` | 864.60 µs | 872.37 µs | Larger-scale guard stayed neutral (p=0.28), so the win is scoped to small-group/finalization-sensitive rows. |
+| `read_pipeline/group_by_highcard/50000` | 4.4961 ms | 4.5041 ms | Full-profile row stayed neutral (p=0.31). |
+| `read_pipeline/group_by_highcard/100000` | 9.7185 ms | 9.6600 ms | Full-profile row stayed neutral (p=0.33). |
+
 PR-local expansion inline-row A/B:
 
 Commands:
