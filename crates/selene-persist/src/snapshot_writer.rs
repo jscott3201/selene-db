@@ -21,6 +21,8 @@ use crate::snapshot_file_header::{
 use crate::snapshot_path::{snapshot_path, snapshot_tmp_path};
 use crate::{PersistError, PersistResult};
 
+// Local snapshot-write benches put the serial/parallel compression crossover
+// between the 640 KiB and 3.2 MiB synthetic snapshot rows.
 const PARALLEL_SNAPSHOT_COMPRESSION_MIN_BYTES: usize = 1024 * 1024;
 
 /// Snapshot section compression mode.
@@ -236,7 +238,8 @@ fn prepare_sections(
     compression: SectionCompression,
 ) -> PersistResult<Vec<PreparedSection>> {
     let count = sections.len();
-    let use_parallel_compression = should_prepare_compressed_sections_parallel(&sections);
+    let use_parallel_compression = matches!(compression, SectionCompression::PerSection { .. })
+        && should_prepare_compressed_sections_parallel(&sections);
     let mut prepared = match compression {
         SectionCompression::None => sections
             .into_iter()
