@@ -1034,7 +1034,9 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_set/set_intersection_l256_r256_o0` | 1.3378 ns (quick) | Equal-width disjoint canonical ranges return an empty candidate set before allocation or merge scanning. PR-local A/B: 135.45 ns → 1.3378 ns. |
 | `graph_vector_candidate_set/set_intersection_l8_r1024_o8` | 31.10 ns (quick) | Intersects a tiny dependency-style set with a much larger maintained active set using the binary-search probe path. |
 | `graph_vector_candidate_set/set_union_l256_r256_o128` | 170.6 ns (quick) | Unions two canonical 256-node sets into a 384-node canonical candidate set. |
+| `graph_vector_candidate_set/set_union_l256_r256_o0` | 166.60 ns (quick) | Unions two disjoint canonical 256-node ranges into a 512-node candidate set; this keeps disjoint append opportunities visible beside the overlap row. |
 | `graph_vector_candidate_set/set_difference_l256_r256_o128` | 178.5 ns (quick) | Computes the graph-side exclusion path for two canonical 256-node sets with 128 overlapping ids. |
+| `graph_vector_candidate_set/set_difference_l256_r256_o0` | 149.79 ns (quick) | Computes graph-side exclusion when the right-hand canonical 256-node range is fully above the left-hand range. |
 | `graph_vector_candidate_set/from_nodes_reverse_l256_r256_o128` | 186.33 ns (quick) | Builds a canonical candidate set from 256 reverse-sorted node ids. PR-local canonical-input guard A/B: 199.68 ns → 186.33 ns by using an early-exit ascending check before the existing sort/dedup path. |
 | `graph_vector_candidate_set/from_nodes_sorted_l256_r256_o128` | 108.15 ns (quick) | Builds a canonical candidate set from 256 already-canonical node ids. PR-local canonical-input fast path A/B: 190.68 ns → 108.15 ns by skipping redundant sort/dedup work. |
 | `graph_vector_candidate_set/from_search_hits_l256_r256_o128` | 179.8 ns (quick) | Builds a canonical candidate set from 256 vector-search hits, covering ANN/search-output composition. |
