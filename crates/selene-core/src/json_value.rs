@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, fmt, sync::Arc};
+use std::{fmt, sync::Arc};
 
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
@@ -365,10 +365,9 @@ impl<'de> Visitor<'de> for StrictJsonValueVisitor {
     where
         A: MapAccess<'de>,
     {
-        let mut seen = BTreeSet::new();
         let mut values = SerdeJsonMap::new();
         while let Some(key) = map.next_key::<String>()? {
-            if !seen.insert(key.clone()) {
+            if values.contains_key(&key) {
                 return Err(A::Error::custom(format!(
                     "duplicate JSON object key '{key}'"
                 )));
