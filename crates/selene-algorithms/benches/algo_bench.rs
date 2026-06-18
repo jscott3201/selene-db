@@ -12,8 +12,8 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
     ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, PageRankOrientation,
-    Parallelism, TriangleCountConfig, apsp, betweenness, label_propagation, louvain, pagerank, scc,
-    scc_count, topological_sort, triangle_count, wcc, wcc_count,
+    Parallelism, TriangleCountConfig, apsp, betweenness, dijkstra, label_propagation, louvain,
+    pagerank, scc, scc_count, topological_sort, triangle_count, wcc, wcc_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -107,6 +107,33 @@ fn bench_apsp(c: &mut Criterion) {
                 b.iter(|| black_box(apsp(&state.projection, config).expect("apsp bench succeeds")));
             });
         }
+    }
+    group.finish();
+}
+
+fn bench_dijkstra(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/dijkstra");
+    for &scale in profile_scales() {
+        let state = BenchState::from_dag(scale, 82_238 + scale as u64);
+        let source = state
+            .projection
+            .iter_nodes()
+            .next()
+            .expect("bench DAG contains nodes");
+        let target = state
+            .projection
+            .iter_nodes()
+            .last()
+            .expect("bench DAG contains nodes");
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| {
+                black_box(
+                    dijkstra(&state.projection, source, target)
+                        .expect("dijkstra bench succeeds")
+                        .expect("bench DAG has a source-to-target path"),
+                )
+            });
+        });
     }
     group.finish();
 }
@@ -332,6 +359,7 @@ criterion_group! {
         bench_betweenness,
         bench_triangle_count,
         bench_apsp,
+        bench_dijkstra,
         bench_topological_sort,
         bench_wcc,
         bench_wcc_count,
