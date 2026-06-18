@@ -182,8 +182,8 @@ production accelerator API.
 |---|---:|---|
 | `core_value_clone/vec_mixed_1024` | 4.41 µs | Clone a 1024-element mixed-variant `Vec<Value>`. Quick local A/B after `DbString` moved to shared storage: 4.63 µs → 4.41 µs. |
 | `core_value_clone/property_map_5` | 45.5 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). Quick local A/B after `DbString` moved to shared storage: 55.2 ns → 45.5 ns. |
-| `core_value_clone/json_canonical_string_metadata` | 386.24 ns (quick) | Render a nested agent-memory JSON metadata document to canonical compact JSON. PR-local A/B: 419.17 ns → 386.24 ns by iterating serde_json's default BTreeMap-backed object storage directly instead of allocating and sorting object entries again. |
-| `core_value_clone/json_canonical_string_object64` | 5.8432 µs (quick) | Render a 64-field JSON object with nested scalar metadata values. PR-local A/B: 6.2762 µs → 5.8432 µs with the same canonical object ordering guard. |
+| `core_value_clone/json_canonical_string_metadata` | 184.98 ns (quick) | Render a nested agent-memory JSON metadata document to canonical compact JSON. Latest whole-value serde_json render A/B: 336.64 ns → 184.98 ns by delegating compact rendering to serde_json over the already-sorted object map. Earlier object-order guard: 419.17 ns → 386.24 ns. |
+| `core_value_clone/json_canonical_string_object64` | 3.0605 µs (quick) | Render a 64-field JSON object with nested scalar metadata values. Latest whole-value serde_json render A/B: 5.0618 µs → 3.0605 µs with the same canonical map-order invariant. Earlier object-order guard: 6.2762 µs → 5.8432 µs. |
 | `core_value_clone/property_map_from_pairs_1` | 8.509 ns (quick) | Build a one-property standard `PropertyMap`. PR-local singleton fast path A/B: 20.617 ns → 8.509 ns by returning len 0/1 maps before sort/dedup work. |
 | `core_value_clone/property_map_compact_1` | 22.327 ns (quick) | Build a one-key compact `PropertyMap`. PR-local singleton fast path A/B: 50.580 ns → 22.327 ns by collecting keys/values inline and returning len 0/1 maps before sort/dedup work. |
 | `core_value_clone/property_map_compact_postcard_encode_1` | 22.413 ns (quick) | Encode a canonical one-key compact `PropertyMap` with postcard. Latest PR-local borrowed-serde A/B: 35.921 ns → 22.413 ns by serializing canonical key/value storage by reference instead of cloning it before encode. Earlier canonical fast path: 60.158 ns → 35.470 ns by reusing length-aligned sorted compact storage. |
@@ -216,16 +216,17 @@ production accelerator API.
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x2560_k10` | 29.6 µs / 116.6 µs / 465.1 µs / 1.856 ms (quick) | Product-shaped cosine rerank envelope for the 2560-dim local embedding model. |
 | `core_vector_exact_top_k/cosine_omlx_{64/256/1024/4096}x4096_k10` | 47.0 µs / 185.5 µs / 739.3 µs / 2.959 ms (quick) | Product-shaped cosine rerank envelope for the 4096-dim local embedding model. |
 
-PR-local JSON canonical-render A/B:
+PR-local JSON whole-render A/B:
 
-`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench value_clone --filter json_canonical --save-baseline json-canonical-sort-pre`,
-then the same command with `--baseline json-canonical-sort-pre` after removing
-the redundant object-entry sort.
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench value_clone --filter json_canonical --save-baseline json-whole-render-before`,
+then the same command with `--baseline json-whole-render-before` after
+delegating `JsonValue::to_canonical_string` to serde_json's compact whole-value
+renderer.
 
 | Bench | Before | After | Delta |
 |---|---:|---:|---:|
-| `core_value_clone/json_canonical_string_metadata` | 419.17 ns | 386.24 ns | -7.6559% (`p=0.00`) |
-| `core_value_clone/json_canonical_string_object64` | 6.2762 µs | 5.8432 µs | -7.5500% (`p=0.00`) |
+| `core_value_clone/json_canonical_string_metadata` | 336.64 ns | 184.98 ns | -45.382% (`p=0.00`) |
+| `core_value_clone/json_canonical_string_object64` | 5.0618 µs | 3.0605 µs | -39.717% (`p=0.00`) |
 
 | `core_vector_gpu_baseline/cpu_cosine_rerank_q1x4096x1024_k10` | 750.67 µs (quick) | CPU/SIMD exact rerank over one 1024-dim query and 4,096 candidates; first GPU break-even row. |
 | `core_vector_gpu_baseline/host_pack_f32_q1x4096x1024_k10` | 336.43 µs (quick) | Lower-bound host packing copy for the same q1/c4096/d1024 input window, before real GPU transfer/setup. |

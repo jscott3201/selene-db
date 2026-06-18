@@ -95,9 +95,10 @@ impl JsonValue {
     /// Return a stable compact JSON rendering with object keys sorted.
     #[must_use]
     pub fn to_canonical_string(&self) -> String {
-        let mut output = String::new();
-        write_json_canonical(self.as_serde(), &mut output);
-        output
+        // serde_json::Map is BTreeMap-backed in this workspace (no
+        // `preserve_order` feature), so compact whole-value serialization
+        // preserves the canonical key order established at parse/construction.
+        serde_json::to_string(self.as_serde()).expect("validated JSON rendering succeeds")
     }
 
     /// Return the JSON data-model type name.
@@ -462,39 +463,6 @@ fn merge_patch_value(target: &mut SerdeJsonValue, patch: &SerdeJsonValue) {
         } else {
             let entry = target.entry(key.clone()).or_insert(SerdeJsonValue::Null);
             merge_patch_value(entry, value);
-        }
-    }
-}
-
-fn write_json_canonical(value: &SerdeJsonValue, output: &mut String) {
-    match value {
-        SerdeJsonValue::Null => output.push_str("null"),
-        SerdeJsonValue::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-        SerdeJsonValue::Number(value) => output.push_str(&value.to_string()),
-        SerdeJsonValue::String(value) => {
-            output.push_str(&serde_json::to_string(value).expect("JSON string rendering succeeds"));
-        }
-        SerdeJsonValue::Array(values) => {
-            output.push('[');
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                write_json_canonical(value, output);
-            }
-            output.push(']');
-        }
-        SerdeJsonValue::Object(values) => {
-            output.push('{');
-            for (index, (key, value)) in values.iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                output.push_str(&serde_json::to_string(key).expect("JSON key rendering succeeds"));
-                output.push(':');
-                write_json_canonical(value, output);
-            }
-            output.push('}');
         }
     }
 }
