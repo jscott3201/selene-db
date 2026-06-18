@@ -2600,6 +2600,21 @@ Quick short-query guard:
 | `read_pipeline/match_filter_project/50000` | 3.3006 ms | 3.2575 ms | Larger row trends lower but remains within Criterion's noise threshold (p=0.73). |
 | `read_pipeline/match_filter_project/100000` | 7.7260 ms | 7.6296 ms | Largest row trends lower but remains within Criterion's noise threshold (p=0.10). Quick `match_limit10` guards stayed at the prior absolute envelope: ~30.24 µs warm, ~63.56 µs cold, ~30.07 µs shared-cache. |
 
+PR-local single-item `LET` inline-row A/B:
+
+Commands: add the `read_pipeline/let_single_extend` row, then compare the old
+executor path and the single-item fast path with
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter let_single_extend`;
+repeat with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter let_single_extend`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/let_single_extend/1000` | 94.344 µs | 87.460 µs | Single-binding `LET` now evaluates against the input row directly and emits inline `Binding` storage, avoiding the temporary prefix row and prefix schema vector; the old-path quick rerun reported +7.8612% slower than the patched sample, p=0.00. |
+| `read_pipeline/let_single_extend/10000` | 934.46 µs | 863.22 µs | Full-profile row improves -7.6837%, p=0.00. |
+| `read_pipeline/let_single_extend/50000` | 5.4078 ms | 5.1450 ms | Full-profile row improves -5.2620%, p=0.00. |
+| `read_pipeline/let_single_extend/100000` | 11.860 ms | 11.346 ms | Full-profile row improves -4.3361%, p=0.00. |
+
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:
 
