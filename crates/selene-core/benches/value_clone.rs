@@ -225,6 +225,14 @@ fn bench_value_clone(c: &mut Criterion) {
                 .expect("property map fits core caps")
         });
     });
+    let standard_map_256 =
+        PropertyMap::from_pairs(sorted_pairs.iter().cloned()).expect("property map fits core caps");
+    group.bench_function("property_map_standard_postcard_encode_256", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&standard_map_256))
+                .expect("standard property map serializes")
+        });
+    });
     let (compact_keys, compact_values) = wide_compact_key_values(256);
     group.bench_function("property_map_compact_256_reverse", |b| {
         b.iter(|| {
@@ -243,6 +251,17 @@ fn bench_value_clone(c: &mut Criterion) {
                 black_box(compact_values_sorted.iter().cloned()),
             )
             .expect("compact property map fits core caps")
+        });
+    });
+    let compact_map_256 = PropertyMap::compact(
+        compact_keys_sorted.iter().cloned(),
+        compact_values_sorted.iter().cloned(),
+    )
+    .expect("compact property map fits core caps");
+    group.bench_function("property_map_compact_postcard_encode_256", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&compact_map_256))
+                .expect("compact property map serializes")
         });
     });
 
@@ -299,6 +318,13 @@ fn bench_change_diff(c: &mut Criterion) {
             .expect("wide property diff is valid")
         });
     });
+    let property_diff_256 =
+        PropertyDiff::new(sorted_pairs.iter().cloned(), []).expect("wide property diff is valid");
+    group.bench_function("property_diff_postcard_encode_256_sorted", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&property_diff_256)).expect("property diff serializes")
+        });
+    });
 
     group.throughput(Throughput::Elements(100));
     for (name, reverse) in [
@@ -313,6 +339,14 @@ fn bench_change_diff(c: &mut Criterion) {
             });
         });
     }
+    let sorted_labels = wide_labels(100, false);
+    let label_diff_100 =
+        LabelDiff::new(sorted_labels.iter().cloned(), []).expect("wide label diff is valid");
+    group.bench_function("label_diff_postcard_encode_100_sorted", |b| {
+        b.iter(|| {
+            postcard::to_allocvec(black_box(&label_diff_100)).expect("label diff serializes")
+        });
+    });
 
     group.finish();
 }

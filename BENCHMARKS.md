@@ -142,9 +142,11 @@ compact-map construction, compact-map encoding, and mutation diff constructors.
 Already-canonical `from_pairs` inputs are tracked separately from reverse-sorted
 inputs so the constructor can skip redundant sort/dedup work without regressing
 the non-canonical path. Compact-map 256-key rows mirror that guard for closed
-schema-shaped maps.
+schema-shaped maps. Standard/compact property-map postcard encode rows pin the
+canonical WAL/snapshot serialization path separately from construction cost.
 The `core_change_diff/*` rows cover canonical WAL diff constructors so mutation
-payload construction stays cheap when callers already have sorted property keys.
+payload construction and postcard serialization stay cheap when callers already
+have sorted property keys.
 The `core_label_set/*` rows cover high-cardinality label-set construction; most
 runtime rows stay at one to three labels, but schema and test fixtures can build
 larger sets and should not pay repeated insertion shifts.
@@ -184,16 +186,20 @@ production accelerator API.
 | `core_value_clone/json_canonical_string_object64` | 5.8432 µs (quick) | Render a 64-field JSON object with nested scalar metadata values. PR-local A/B: 6.2762 µs → 5.8432 µs with the same canonical object ordering guard. |
 | `core_value_clone/property_map_from_pairs_1` | 8.509 ns (quick) | Build a one-property standard `PropertyMap`. PR-local singleton fast path A/B: 20.617 ns → 8.509 ns by returning len 0/1 maps before sort/dedup work. |
 | `core_value_clone/property_map_compact_1` | 22.327 ns (quick) | Build a one-key compact `PropertyMap`. PR-local singleton fast path A/B: 50.580 ns → 22.327 ns by collecting keys/values inline and returning len 0/1 maps before sort/dedup work. |
-| `core_value_clone/property_map_compact_postcard_encode_1` | 35.470 ns (quick) | Encode a canonical one-key compact `PropertyMap` with postcard. PR-local canonical fast path A/B: 60.158 ns → 35.470 ns by reusing length-aligned sorted compact key/value storage instead of rebuilding sorted pairs. |
+| `core_value_clone/property_map_compact_postcard_encode_1` | 22.413 ns (quick) | Encode a canonical one-key compact `PropertyMap` with postcard. Latest PR-local borrowed-serde A/B: 35.921 ns → 22.413 ns by serializing canonical key/value storage by reference instead of cloning it before encode. Earlier canonical fast path: 60.158 ns → 35.470 ns by reusing length-aligned sorted compact storage. |
 | `core_value_clone/property_map_from_pairs_256_reverse` | 2.6387 µs (quick) | Build a 256-property map from reverse-sorted pairs. Quick local A/B after `DbString` moved to shared storage: 3.45 µs → 2.68 µs. Canonical-scan guard after the sorted-input fast path: 2.6488 µs → 2.6387 µs. |
 | `core_value_clone/property_map_from_pairs_256_sorted` | 1.6249 µs (quick) | Build a 256-property map from already-canonical pairs. PR-local canonical fast path A/B: 2.5746 µs → 1.6249 µs by reusing the collected sorted entries directly. |
+| `core_value_clone/property_map_standard_postcard_encode_256` | 2.2996 µs (quick) | Encode a canonical 256-entry standard `PropertyMap` with postcard. PR-local borrowed-serde A/B: 3.5841 µs → 2.2996 µs by avoiding clone/sort on already-canonical entries while preserving the non-canonical public-construction fallback. |
 | `core_value_clone/property_map_compact_256_reverse` | 4.7462 µs (quick) | Build a 256-key compact map from reverse-sorted schema keys. PR-local canonical-key guard: 4.7589 µs → 4.7462 µs, preserving the existing sort/dedup path for non-canonical input. |
 | `core_value_clone/property_map_compact_256_sorted` | 1.7334 µs (quick) | Build a 256-key compact map from already-canonical schema keys. PR-local canonical-key fast path A/B: 4.6719 µs → 1.7334 µs by reusing aligned keys/values directly. |
+| `core_value_clone/property_map_compact_postcard_encode_256` | 2.5201 µs (quick) | Encode a canonical 256-key compact `PropertyMap` with postcard. PR-local borrowed-serde A/B: 3.5046 µs → 2.5201 µs by borrowing aligned compact key/value slices instead of cloning them before encode. |
 | `core_change_diff/property_diff_set_1` | 9.0227 ns (quick) | Build a `PropertyDiff` with one set property and no removals. PR-local A/B: 23.291 ns → 9.0227 ns (-61.3%) by collecting directly into inline `SmallVec` storage and skipping sort/dedup for len 0/1 set inputs. |
 | `core_change_diff/property_diff_set_256_reverse` | 2.6632 µs (quick) | Build a 256-property `PropertyDiff` from reverse-sorted set entries. PR-local canonical-set guard: 2.6779 µs → 2.6632 µs, preserving the existing stable sort/dedup path for non-canonical input. |
 | `core_change_diff/property_diff_set_256_sorted` | 1.6691 µs (quick) | Build a 256-property `PropertyDiff` from already-canonical set entries. PR-local canonical-set fast path A/B: 2.5985 µs → 1.6691 µs by skipping redundant sort/dedup work. |
+| `core_change_diff/property_diff_postcard_encode_256_sorted` | 2.0383 µs (quick) | Encode a canonical 256-property `PropertyDiff` with postcard. PR-local borrowed-serde A/B: 3.4432 µs → 2.0383 µs by serializing canonical set/removal slices by reference while preserving the public-field sort fallback. |
 | `core_change_diff/label_diff_added_100_reverse` | 636.81 ns (quick) | Build a 100-label `LabelDiff` from reverse-sorted added labels. PR-local canonical-label guard: 636.46 ns → 636.81 ns, preserving the existing sort/dedup path for non-canonical input. |
 | `core_change_diff/label_diff_added_100_sorted` | 411.80 ns (quick) | Build a 100-label `LabelDiff` from already-canonical added labels. PR-local canonical-label fast path A/B: 625.95 ns → 411.80 ns by skipping redundant sort/dedup work. |
+| `core_change_diff/label_diff_postcard_encode_100_sorted` | 716.51 ns (quick) | Encode a canonical 100-label `LabelDiff` with postcard. PR-local borrowed-serde A/B: 877.40 ns → 716.51 ns by borrowing canonical added/removed slices instead of cloning before encode. |
 | `core_label_set/from_iter_100_reverse` | 595.93 ns (quick) | Build a 100-label `LabelSet` from reverse-sorted labels. PR-local collect/sort A/B: 3.8124 µs → 605.67 ns by avoiding repeated front insertion shifts. PR-local unstable-sort A/B: 623.36 ns → 595.93 ns (-4.2099%, p=0.00). |
 | `core_label_set/from_iter_100_sorted` | 395.12 ns (quick) | Build a 100-label `LabelSet` from already-canonical labels. PR-local canonical fast path A/B: 2.6632 µs → 395.12 ns by reusing the collected sorted labels directly. |
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |

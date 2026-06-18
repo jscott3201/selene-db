@@ -45,6 +45,12 @@ struct LabelDiffWire {
     removed: SmallVec<[DbString; 2]>,
 }
 
+#[derive(Serialize)]
+struct LabelDiffWireRef<'a> {
+    added: &'a [DbString],
+    removed: &'a [DbString],
+}
+
 impl Serialize for LabelDiff {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -53,6 +59,14 @@ impl Serialize for LabelDiff {
         // Canonicalize on serialize. `LabelDiff::new` already sorts, so this is
         // a no-op (byte-identical) for constructed diffs. The fields are public,
         // so direct construction still emits canonical wire.
+        if db_strings_are_canonical(&self.added) && db_strings_are_canonical(&self.removed) {
+            return LabelDiffWireRef {
+                added: self.added.as_slice(),
+                removed: self.removed.as_slice(),
+            }
+            .serialize(serializer);
+        }
+
         let mut added = self.added.clone();
         let mut removed = self.removed.clone();
         added.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
@@ -141,6 +155,12 @@ struct PropertyDiffWire {
     removed: SmallVec<[DbString; 2]>,
 }
 
+#[derive(Serialize)]
+struct PropertyDiffWireRef<'a> {
+    set: &'a [(DbString, Value)],
+    removed: &'a [DbString],
+}
+
 impl Serialize for PropertyDiff {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -149,6 +169,14 @@ impl Serialize for PropertyDiff {
         // Canonicalize on serialize. `PropertyDiff::new` already sorts, so this
         // is a no-op (byte-identical) for constructed diffs. The fields are
         // public, so direct construction still emits canonical wire.
+        if property_set_is_canonical(&self.set) && db_strings_are_canonical(&self.removed) {
+            return PropertyDiffWireRef {
+                set: self.set.as_slice(),
+                removed: self.removed.as_slice(),
+            }
+            .serialize(serializer);
+        }
+
         let mut set = self.set.clone();
         let mut removed = self.removed.clone();
         set.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
@@ -190,11 +218,19 @@ impl<'de> Deserialize<'de> for PropertyDiff {
 
 fn sorted_deduped(values: impl IntoIterator<Item = DbString>) -> SmallVec<[DbString; 2]> {
     let mut values: SmallVec<[DbString; 2]> = values.into_iter().collect();
-    if values.len() > 1 && !values.windows(2).all(|pair| pair[0] < pair[1]) {
+    if values.len() > 1 && !db_strings_are_canonical(&values) {
         values.sort();
         values.dedup();
     }
     values
+}
+
+fn db_strings_are_canonical(values: &[DbString]) -> bool {
+    values.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+fn property_set_is_canonical(set: &[(DbString, Value)]) -> bool {
+    set.windows(2).all(|pair| pair[0].0 < pair[1].0)
 }
 
 fn ensure_disjoint(

@@ -328,6 +328,15 @@ enum PropertyMapWire {
     },
 }
 
+#[derive(Serialize)]
+enum PropertyMapWireRef<'a> {
+    Standard(&'a [(DbString, Value)]),
+    Compact {
+        keys: &'a [DbString],
+        values: &'a [Option<Value>],
+    },
+}
+
 impl Serialize for PropertyMap {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -343,15 +352,19 @@ impl Serialize for PropertyMap {
         // non-canonical payload rather than silently re-sorting it.
         match self {
             Self::Standard(entries) => {
+                if standard_entries_are_canonical(entries) {
+                    return PropertyMapWireRef::Standard(entries.as_slice()).serialize(serializer);
+                }
+
                 let mut entries = entries.clone();
                 entries.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
                 PropertyMapWire::Standard(entries).serialize(serializer)
             }
             Self::Compact { keys, values } => {
                 if keys.len() == values.len() && compact_keys_are_canonical(keys) {
-                    return PropertyMapWire::Compact {
-                        keys: Arc::clone(keys),
-                        values: values.clone(),
+                    return PropertyMapWireRef::Compact {
+                        keys,
+                        values: values.as_slice(),
                     }
                     .serialize(serializer);
                 }
@@ -368,6 +381,10 @@ impl Serialize for PropertyMap {
             }
         }
     }
+}
+
+fn standard_entries_are_canonical(entries: &[(DbString, Value)]) -> bool {
+    entries.windows(2).all(|pair| pair[0].0 < pair[1].0)
 }
 
 fn compact_keys_are_canonical(keys: &[DbString]) -> bool {
