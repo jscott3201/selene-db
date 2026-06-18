@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 use selene_core::{EdgeId, GraphId, NodeId, SchemaChange};
 use smallvec::SmallVec;
@@ -334,6 +335,7 @@ impl RecoveryState {
         // recorded positions are padded with `NodeId::TOMBSTONE` and stay out
         // of the id->row map.
         let mut nodes = self.nodes;
+        let mut node_alive = RoaringBitmap::new();
         let mut next_node_id = graph.meta.next_node_id.max(1);
         for id in self.snapshot_node_order {
             let Some(recovered) = nodes.remove(&id) else {
@@ -356,6 +358,9 @@ impl RecoveryState {
                     len
                 }
             };
+            if recovered.row.alive {
+                node_alive.insert(row_index as u32);
+            }
             insert_node_row(&mut graph, id, recovered.row, row_index)?;
         }
         let mut wal_node_order = self.wal_node_order;
@@ -382,6 +387,9 @@ impl RecoveryState {
                     "WAL-created node id {id} exceeds the u32 row space"
                 ))));
             }
+            if recovered.row.alive {
+                node_alive.insert(len as u32);
+            }
             insert_node_row(&mut graph, id, recovered.row, len)?;
         }
         if !nodes.is_empty() {
@@ -390,9 +398,11 @@ impl RecoveryState {
                 nodes.len()
             ))));
         }
+        graph.node_store.alive = Arc::new(node_alive);
         graph.meta.next_node_id = next_node_id;
 
         let mut edges = self.edges;
+        let mut edge_alive = RoaringBitmap::new();
         let mut next_edge_id = graph.meta.next_edge_id.max(1);
         for id in self.snapshot_edge_order {
             let Some(recovered) = edges.remove(&id) else {
@@ -416,6 +426,9 @@ impl RecoveryState {
                     len
                 }
             };
+            if recovered.row.alive {
+                edge_alive.insert(row_index as u32);
+            }
             insert_edge_row(&mut graph, id, recovered.row, row_index)?;
         }
         let mut wal_edge_order = self.wal_edge_order;
@@ -436,6 +449,9 @@ impl RecoveryState {
                     "WAL-created edge id {id} exceeds the u32 row space"
                 ))));
             }
+            if recovered.row.alive {
+                edge_alive.insert(len as u32);
+            }
             insert_edge_row(&mut graph, id, recovered.row, len)?;
         }
         if !edges.is_empty() {
@@ -444,6 +460,7 @@ impl RecoveryState {
                 edges.len()
             ))));
         }
+        graph.edge_store.alive = Arc::new(edge_alive);
         graph.meta.next_edge_id = next_edge_id;
 
         // Re-register property indexes from SCMA. The empty TypedIndex placeholders

@@ -10,11 +10,10 @@
 
 use std::sync::OnceLock;
 
-use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
-
 use crate::core_provider::sections::{EdgeRow, NodeRow};
 use crate::graph::SeleneGraph;
 use crate::store::RowIndex;
+use selene_core::{DbString, EdgeId, LabelSet, NodeId, PropertyMap};
 
 pub(super) fn insert_node_row(
     graph: &mut SeleneGraph,
@@ -50,7 +49,6 @@ pub(super) fn insert_node_row(
     graph
         .node_id_to_row
         .insert(id, RowIndex::new(row_index as u32));
-    set_alive(&mut graph.node_store.alive, row_index, row.alive);
     Ok(())
 }
 
@@ -86,20 +84,7 @@ pub(super) fn insert_edge_row(
     graph
         .edge_id_to_row
         .insert(id, RowIndex::new(row_index as u32));
-    set_alive(&mut graph.edge_store.alive, row_index, row.alive);
     Ok(())
-}
-
-fn set_alive(bitmap: &mut std::sync::Arc<roaring::RoaringBitmap>, row_index: usize, alive: bool) {
-    let row = u32::try_from(row_index).expect("row index was validated before liveness update");
-    // B1 COW: recovery materialization owns a freshly built graph, so the Arc
-    // is unique and `make_mut` never clones here.
-    let bitmap = std::sync::Arc::make_mut(bitmap);
-    if alive {
-        bitmap.insert(row);
-    } else {
-        bitmap.remove(row);
-    }
 }
 
 fn edge_hole_label() -> Result<DbString, crate::GraphError> {
