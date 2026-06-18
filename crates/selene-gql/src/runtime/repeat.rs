@@ -360,7 +360,7 @@ fn edge_label_matches(
     ctx.tx
         .snapshot()
         .edge_label(edge_id)
-        .is_some_and(|label| scan::label_matches_edge(label_expr, label.clone()))
+        .is_some_and(|label| scan::label_matches_edge(label_expr, label))
 }
 
 fn final_node_label_matches(
