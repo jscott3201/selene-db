@@ -215,7 +215,7 @@ fn maybe_emit(
         return Ok(());
     }
 
-    let mut values = row.values().to_vec();
+    let mut values = row.cloned_values();
     values.resize(state.schema.columns.len(), Value::Null);
     if !state.edge_slot.set(&mut values, Value::EdgeRef(edge_id)) {
         return Ok(());
@@ -238,7 +238,7 @@ fn maybe_emit(
     {
         return Ok(());
     }
-    let candidate = Binding::new(values);
+    let candidate = Binding::from_parts(values, row.cloned_insert_sites());
     if !predicates_pass(
         &state.edge.property_predicates,
         state.pattern_plan,

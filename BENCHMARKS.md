@@ -2523,6 +2523,21 @@ and
 | `read_pipeline/distinct_dedup/1000` | 80.366 µs | 77.178 µs | DISTINCT now reserves its runtime equality-key set from the input row count. Median is -4.0%. |
 | `read_pipeline/group_by_highcard/1000` | 128.66 µs | 119.63 µs | GROUP BY now reserves its group vector and runtime equality-key index from the input row count capped by the configured group-key limit. Median is -7.0%; the initial A/B showed p=0.00, and the trimmed-patch rerun median is shown here. Full-profile sanity medians: 10k 889.49 µs, 50k 4.5333 ms, 100k 9.6804 ms. |
 
+PR-local expansion inline-row A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match --save-baseline gql-expand-inline-row-fresh-pre`;
+same command with `--baseline gql-expand-inline-row-fresh-pre` after the
+change; then
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter match_expand_hashjoin --save-baseline gql-expand-inline-row-full-pre`
+and the same command with `--baseline gql-expand-inline-row-full-pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_expand_hashjoin/10000` | 12.187 ms | 11.786 ms | Expansion and hash-join merge rows now reuse `Binding` inline storage instead of round-tripping through a temporary heap `Vec`; Criterion reports -3.2915%, p=0.00. |
+| `read_pipeline/match_expand_hashjoin/50000` | 84.071 ms | 82.471 ms | Larger join row trends lower (-1.9034%, p=0.02) but remains within Criterion's noise threshold. |
+| `read_pipeline/match_expand_hashjoin/100000` | 173.35 ms | 169.23 ms | Largest full-profile row improves -2.3757%, p=0.00. Fresh quick guards over `match_filter_project`, `match_name_in`, `match_limit10`, `match_limit10/cold`, `match_limit10/shared_cache`, and `match_composite_lookup` reported no performance change. |
+
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:
 

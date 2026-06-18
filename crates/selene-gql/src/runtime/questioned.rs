@@ -96,7 +96,7 @@ fn maybe_emit_skipped(
     if !right_node_matches(state.edge, source, state.ctx) {
         return Ok(());
     }
-    let mut values = row.values().to_vec();
+    let mut values = row.cloned_values();
     values.resize(state.schema.columns.len(), Value::Null);
     if !state.edge_slot.set(&mut values, Value::Null) {
         return Ok(());
@@ -113,7 +113,7 @@ fn maybe_emit_skipped(
     {
         return Ok(());
     }
-    let candidate = Binding::new(values);
+    let candidate = Binding::from_parts(values, row.cloned_insert_sites());
     if !predicates_pass(
         &state.edge.right_property_predicates,
         state.pattern_plan,
@@ -185,7 +185,7 @@ fn maybe_emit_taken(
         return Ok(());
     }
 
-    let mut values = row.values().to_vec();
+    let mut values = row.cloned_values();
     values.resize(state.schema.columns.len(), Value::Null);
     if !state.edge_slot.set(&mut values, Value::EdgeRef(edge_id)) {
         return Ok(());
@@ -208,7 +208,7 @@ fn maybe_emit_taken(
     {
         return Ok(());
     }
-    let candidate = Binding::new(values);
+    let candidate = Binding::from_parts(values, row.cloned_insert_sites());
     if !predicates_pass(
         &state.edge.property_predicates,
         state.pattern_plan,
