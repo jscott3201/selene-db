@@ -2143,9 +2143,9 @@ rebuild). Self-validating: asserts node/edge counts survive the roundtrip once
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `graph_snapshot_roundtrip/encode` | 3.06 ms | 17.45 ms | 37.21 ms | rkyv encode of all `CORE/*` sections. |
-| `graph_snapshot_roundtrip/decode` | 16.41 ms | 90.45 ms | 183.53 ms | Positional recovery + `finish_recovery` — dominates. |
-| `graph_snapshot_roundtrip/roundtrip` | 19.75 ms | 109.39 ms | 223.17 ms | End-to-end (≈ encode + decode). |
+| `graph_snapshot_roundtrip/encode` | 2.13 ms | 15.05 ms | 31.64 ms | rkyv encode of all `CORE/*` sections. |
+| `graph_snapshot_roundtrip/decode` | 15.81 ms | 90.97 ms | 183.20 ms | Positional recovery + `finish_recovery` — dominates. |
+| `graph_snapshot_roundtrip/roundtrip` | 18.66 ms | 104.85 ms | 219.89 ms | End-to-end (≈ encode + decode). |
 
 Full rows above were refreshed with
 `scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip`.
@@ -2178,6 +2178,17 @@ Commands:
 | Bench | Before | After | Delta | Notes |
 |---|---:|---:|---:|---|
 | `graph_snapshot_roundtrip/decode/1000` | 982.93 µs | 952.37 µs | -3.1446% | Recovery now builds node/edge liveness bitmaps locally and installs each `Arc<RoaringBitmap>` once after materialization instead of calling `Arc::make_mut` per recovered row. Criterion reports p=0.00. |
+
+PR-local direct archive-row encode A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/encode --save-baseline snapshot-encode-direct-pre`
+- `scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 3 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/encode --baseline snapshot-encode-direct-pre`
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/encode/1000` | 336.17 µs | 270.58 µs | -19.184% | CORE/NODE and CORE/EDGE archive rows now encode borrowed row `PropertyMap`s directly instead of cloning them into temporary runtime rows before postcard serialization. Criterion reports p=0.00. |
 
 ## §5 selene-gql — parse / plan / execute
 
@@ -4215,7 +4226,7 @@ confirm the win and guard the surrounding rows against regression.
 | B5 ✓ | Use `FxBuildHasher` for immutable maps keyed only by engine-assigned ids | `graph_node_fetch` + `gql_correlated_subquery/{exists,count}` + `bulk_mutation` guard | **graph_node_fetch −22.7% @1k quick; post-B3 correlated residual −11.8..15.3%**; update-batch writes remain noisy/no claimed win |
 | B18/B20 ✓ | Hoist runtime column resolution and borrow aggregate descriptors | `read_pipeline` + `gql_correlated_subquery/{exists,count}` + `write_e2e` guard | **read_pipeline −3.8..11.7% on significant rows; correlated residual −4.7..5.9%**; mixed write guards neutral, isolated WAL spike not reproduced |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
-| D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 37 ms / dec 184 ms @100k |
+| D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 32 ms / dec 183 ms @100k |
 
 ## Update protocol
 
