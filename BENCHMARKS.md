@@ -841,6 +841,17 @@ Commands:
 | `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 31.103 µs | 29.155 µs | -5.1952% | Candidate-scoped indexed BM25 reuses the same query tokenizer path, and the sorted full-cover row improves without changing scoring order. Criterion reports p=0.00. |
 | `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 32.414 µs | 30.362 µs | -5.6244% | Reverse candidate input stays on the existing dedup path while benefiting from the cheaper ASCII query tokenization. Criterion reports p=0.00. |
 
+PR-local exact BM25 query-term matching A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query --save-baseline bm25-query-match-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query --baseline bm25-query-match-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 174.24 µs | 128.71 µs | -27.776% | Exact scan now matches each document token against the short deduplicated query-term list directly instead of binary-searching four terms per token, while longer query-term lists keep the binary-search path. Criterion reports p=0.00. |
+| `graph_text_bm25_exact/topic_query_checked_with_deadline/n1000_k10` | 180.55 µs | 131.33 µs | -26.222% | The checked exact oracle sees the same per-token matching win while preserving cancellation checks around the scan. Criterion reports p=0.00. |
+
 PR-local quick JSON baseline:
 
 | Bench | 1k | Notes |
