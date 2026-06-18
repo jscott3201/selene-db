@@ -2538,6 +2538,20 @@ and the same command with `--baseline gql-expand-inline-row-full-pre`.
 | `read_pipeline/match_expand_hashjoin/50000` | 84.071 ms | 82.471 ms | Larger join row trends lower (-1.9034%, p=0.02) but remains within Criterion's noise threshold. |
 | `read_pipeline/match_expand_hashjoin/100000` | 173.35 ms | 169.23 ms | Largest full-profile row improves -2.3757%, p=0.00. Fresh quick guards over `match_filter_project`, `match_name_in`, `match_limit10`, `match_limit10/cold`, `match_limit10/shared_cache`, and `match_composite_lookup` reported no performance change. |
 
+PR-local projection inline-row A/B:
+
+Commands: temporarily rerun the old projection path, then rerun after the
+change with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter match_filter_project`.
+Quick short-query guard:
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_limit10`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_filter_project/10000` | 572.55 µs | 553.02 µs | Projection now collects directly into `Binding` inline storage instead of allocating a temporary heap `Vec`; Criterion reports -3.8132%, p=0.00. |
+| `read_pipeline/match_filter_project/50000` | 3.3006 ms | 3.2575 ms | Larger row trends lower but remains within Criterion's noise threshold (p=0.73). |
+| `read_pipeline/match_filter_project/100000` | 7.7260 ms | 7.6296 ms | Largest row trends lower but remains within Criterion's noise threshold (p=0.10). Quick `match_limit10` guards stayed at the prior absolute envelope: ~30.24 µs warm, ~63.56 µs cold, ~30.07 µs shared-cache. |
+
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:
 
