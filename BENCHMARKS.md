@@ -2442,9 +2442,9 @@ PR-local quick mutation row-extension guard
 Read-execution coverage for the declared 60%-read workload: label scan +
 indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
 GROUP BY, DISTINCT dedup, indexed `IN` bitmap union, inline `CALL {}`
-table-subquery row extension, post-RETURN bare `LIMIT 10`, pre-RETURN bare
-`LIMIT 10`, and maintained composite-index equality lookup. Warm-plan-cache
-rows run over
+table-subquery row extension, non-leading `OPTIONAL MATCH` null-extension,
+post-RETURN bare `LIMIT 10`, pre-RETURN bare `LIMIT 10`, and maintained
+composite-index equality lookup. Warm-plan-cache rows run over
 `BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
 pure execution + index access — not parse/plan/optimize, not durability. Cold
 and shared-cache companions on the cheapest row rebuild a fresh session per
@@ -2475,6 +2475,13 @@ cold vs 81 µs warm) amortizes under the linear scan.
 | `read_pipeline/distinct_dedup` | 877 µs | 5.93 ms | 13.61 ms | `RETURN DISTINCT n.name` over 256 distinct values; distinct hash-set. |
 | `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
 | `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
+
+PR-local non-leading `OPTIONAL MATCH` coverage row
+(`scripts/run-benches.sh --profile quick --bench read_pipeline --filter optional_match_null_extend`):
+
+| Bench | Quick | Notes |
+|---|---:|---|
+| `read_pipeline/optional_match_null_extend/1000` | 150.39 µs | `MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(missing:Nope) RETURN missing`; preserves every Person row with a null binding. A trial output `Vec` preallocation measured 150.45 µs (`p = 0.16`), so no runtime change was kept. |
 
 PR-local quick inline `CALL {}` row-extension guard
 (`scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`):
