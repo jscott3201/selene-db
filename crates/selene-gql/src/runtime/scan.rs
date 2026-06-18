@@ -25,19 +25,16 @@ pub(crate) fn scan_pattern(
     seed: Option<&Binding>,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
-    Ok(scan_entities(scan, pattern, schema, seed, ctx)?
-        .into_iter()
-        .map(|(_, binding)| binding)
-        .collect())
+    scan_bindings(scan, pattern, schema, seed, ctx)
 }
 
-pub(crate) fn scan_entities(
+fn scan_bindings(
     scan: &NodeOrEdgeScan,
     pattern: &PatternPlan,
     schema: &BindingTableSchema,
     seed: Option<&Binding>,
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+) -> Result<Vec<Binding>, ExecutorError> {
     let slots = scan_bind::ScanSlots::resolve(scan, pattern, schema)?;
     match seed {
         Some(seed) => scan_entities_with_seed(scan, pattern, schema, seed, slots, ctx),
@@ -52,7 +49,7 @@ fn scan_entities_with_seed(
     seed: &Binding,
     slots: scan_bind::ScanSlots,
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+) -> Result<Vec<Binding>, ExecutorError> {
     if let Some(rows) = scan_seed::try_seeded_scan(scan, pattern, schema, seed, slots, ctx)? {
         return Ok(rows);
     }
@@ -66,7 +63,7 @@ fn collect_scan_entities(
     seed: Option<&Binding>,
     slots: scan_bind::ScanSlots,
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+) -> Result<Vec<Binding>, ExecutorError> {
     let mut rows = Vec::new();
     for row in candidate_rows(scan, ctx)? {
         if !label_matches_scan(scan, row, ctx) {
@@ -79,7 +76,7 @@ fn collect_scan_entities(
             continue;
         };
         if predicates_pass(scan, pattern, &binding, schema, &entity, ctx)? {
-            rows.push((entity, binding));
+            rows.push(binding);
         }
     }
     Ok(rows)

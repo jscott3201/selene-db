@@ -2476,6 +2476,14 @@ cold vs 81 µs warm) amortizes under the linear scan.
 | `read_pipeline/match_limit10` | 784 µs | 5.93 ms | 13.39 ms | Warm bare `LIMIT 10` — scale-linear: no scan short-circuit (B19 baseline). |
 | `read_pipeline/match_limit10/cold` | 815 µs | 5.95 ms | 13.54 ms | Same query, fresh uncached session per iter: full parse/analyze/plan/optimize/execute. |
 
+PR-local scan direct-binding output A/B
+(`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_filter_project --save-baseline gql_scan_direct_bindings_pre`;
+rerun with `--baseline gql_scan_direct_bindings_pre` after the implementation):
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_filter_project/1000` | 50.738 µs | 46.297 µs | Scan execution now returns `Binding` rows directly instead of collecting transient `(entity, binding)` pairs that `scan_pattern` immediately discarded. The quick indexed-range row improves 8.8043% (`p=0.00`). |
+
 PR-local non-leading `OPTIONAL MATCH` coverage row
 (`scripts/run-benches.sh --profile quick --bench read_pipeline --filter optional_match_null_extend`):
 
