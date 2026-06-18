@@ -2101,12 +2101,19 @@ selene-db code, and balloon to tens of seconds at 100k — they are **capped at
 ### §4b Snapshot
 
 `persist_snapshot_*` measure the SLSN **container** (framing + per-section zstd +
-body hash) over synthetic byte payloads. `scale` drives section bytes.
+body hash) over synthetic byte payloads. The uncompressed companion rows isolate
+raw framing/body-hash cost with `SectionCompression::None`. `scale` drives section
+bytes.
+
+Read/write rows below were refreshed/added with
+`scripts/run-benches.sh --profile full --bench snapshot --filter 'persist_snapshot_(write|read|uncompressed_write|uncompressed_read)'`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `persist_snapshot_write` | 341.9 µs | 444.5 µs | 572.0 µs | Five independently-compressed sections. |
-| `persist_snapshot_read` | 278.9 µs | 425.5 µs | 605.0 µs | Snapshot read-and-apply. |
+| `persist_snapshot_write` | 379.1 µs | 524.4 µs | 717.5 µs | Five independently-compressed sections over highly-compressible synthetic bytes. |
+| `persist_snapshot_read` | 301.8 µs | 481.0 µs | 665.3 µs | Snapshot read-and-apply for compressed sections. |
+| `persist_snapshot_uncompressed_write` | 683.1 µs | 1.91 ms | 3.67 ms | Five uncompressed sections; exposes raw envelope write, body hash, and payload I/O cost. |
+| `persist_snapshot_uncompressed_read` | 561.4 µs | 2.47 ms | 4.67 ms | Snapshot read-and-apply for uncompressed sections. |
 | `persist_full_recovery` | 3.01 ms | 11.28 ms | 20.75 ms | Snapshot reconcile + WAL replay. |
 
 PR-local snapshot compression scheduling A/B:
