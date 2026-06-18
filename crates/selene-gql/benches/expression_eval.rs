@@ -119,8 +119,8 @@ const CASES: &[ExpressionCase] = &[
     },
     ExpressionCase {
         group: "collection",
-        name: "list_access",
-        source: "RETURN [10, 20, 30][1] AS v",
+        name: "trim_tail",
+        source: "RETURN trim([10, 20, 30], 1) AS v",
         parameters: ParameterSet::None,
     },
     ExpressionCase {
