@@ -2481,6 +2481,25 @@ change with
 | `read_pipeline/call_subquery_yield/100000` | 16.978 ms | 16.483 ms | Full-profile yielded row improves -2.9145%, p=0.00. |
 | `read_pipeline/optional_call_subquery_null_yield/100000` | 34.631 ms | 33.133 ms | Full-profile optional row improves -4.3268%, p=0.00. |
 
+PR-local inline `CALL {}` output-reserve A/B:
+
+Commands: temporarily rerun the old empty output-vector path, then rerun after
+the change with
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`;
+repeat with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter call_subquery`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/call_subquery_yield/1000` | 140.37 µs | 138.17 µs | `CALL {}` now reserves output row capacity from the outer input row count; old-path quick rerun reported +1.6926% slower than the patched sample, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/1000` | 223.04 µs | 218.22 µs | Quick optional row stayed within Criterion's noise threshold (p=0.09). |
+| `read_pipeline/call_subquery_yield/10000` | 1.4203 ms | 1.4018 ms | Full-profile yielded row stayed within Criterion's noise threshold. |
+| `read_pipeline/optional_call_subquery_null_yield/10000` | 2.1750 ms | 2.1620 ms | Full-profile optional row stayed within Criterion's noise threshold. |
+| `read_pipeline/call_subquery_yield/50000` | 7.9749 ms | 7.8265 ms | Full-profile yielded row improves -1.8607%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/50000` | 14.773 ms | 14.342 ms | Full-profile optional row improves -2.9148%, p=0.00. |
+| `read_pipeline/call_subquery_yield/100000` | 16.947 ms | 16.639 ms | Full-profile yielded row improves -1.8188%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/100000` | 34.471 ms | 34.234 ms | Largest optional row stayed neutral (p=0.13). |
+
 PR-local composite lookup guard:
 
 Command:
