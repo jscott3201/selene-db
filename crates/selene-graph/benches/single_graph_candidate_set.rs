@@ -285,6 +285,23 @@ fn bench_candidate_set_algebra(
             });
         },
     );
+    let disjoint_fixture =
+        VectorCandidateAlgebraFixture::build_disjoint(VECTOR_CANDIDATE_ALGEBRA_SET);
+    group.throughput(Throughput::Elements(disjoint_fixture.set_width() as u64));
+    group.bench_function(
+        BenchmarkId::new(
+            disjoint_fixture.bench_id("set_intersection"),
+            disjoint_fixture.overlap_width(),
+        ),
+        |b| {
+            b.iter(|| {
+                let candidates = disjoint_fixture
+                    .left()
+                    .intersection(disjoint_fixture.right());
+                std::hint::black_box(candidates.len());
+            });
+        },
+    );
     let asymmetric_fixture = VectorCandidateAlgebraFixture::build_asymmetric(
         VECTOR_CANDIDATE_ASYM_SMALL_SET,
         VECTOR_CANDIDATE_ASYM_LARGE_SET,
@@ -569,6 +586,23 @@ impl VectorCandidateAlgebraFixture {
             left_width,
             right_width,
             overlap_width,
+        }
+    }
+
+    fn build_disjoint(set_width: usize) -> Self {
+        let left_nodes = (1..=set_width)
+            .map(|id| NodeId::new(id as u64))
+            .collect::<Vec<_>>();
+        let right_nodes = (set_width + 1..=set_width.saturating_mul(2))
+            .map(|id| NodeId::new(id as u64))
+            .collect::<Vec<_>>();
+        Self {
+            left: VectorCandidateSet::from_nodes(left_nodes),
+            right: VectorCandidateSet::from_nodes(right_nodes),
+            hits: Vec::new(),
+            left_width: set_width,
+            right_width: set_width,
+            overlap_width: 0,
         }
     }
 

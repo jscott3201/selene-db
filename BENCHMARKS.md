@@ -997,6 +997,18 @@ Rejected variant: applying the same separate candidate-norm pass to
 c64/c256/c1024 rows by +31.84%/+38.48%/+28.38% (`p=0.00`), with c4096 neutral,
 so the candidate-set scorer keeps the existing fused per-query cosine pass.
 
+PR-local vector candidate-set disjoint intersection A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set/set_intersection --save-baseline vector-disjoint-intersection-pre`;
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_vector_candidate_set/set_intersection --baseline vector-disjoint-intersection-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_vector_candidate_set/set_intersection_l256_r256_o0/0` | 135.45 ns | 1.3378 ns | -99.015% | Equal-width sorted ranges that cannot overlap now return an empty candidate set before allocation or merge scanning. |
+| `graph_vector_candidate_set/set_intersection_l256_r256_o128/128` | 160.05 ns | 145.66 ns | -9.2900% | Balanced overlap stayed faster in the accepted rerun, but the optimization targets the disjoint row. |
+| `graph_vector_candidate_set/set_intersection_l8_r1024_o8/8` | 29.285 ns | 28.730 ns | neutral | The tiny-vs-large probe path stays on the existing binary-search branch; Criterion reported no change (`p=0.58`). |
+
 PR-local quick vector baseline:
 
 | Bench | 1k | Notes |
@@ -1019,6 +1031,7 @@ PR-local quick vector baseline:
 | `graph_vector_candidate_state/maintained_active_c512_total1024` | 343.9 ns (quick) | Materializes a provider-maintained 512-node current set from a 1,024-node fixture with stale nodes disqualified by `SUPERSEDED_BY`. |
 | `graph_vector_candidate_state/dynamic_active_scan_c512_total1024` | 12.79 µs (quick) | Benchmark-local query-time baseline: scans all 1,024 document nodes and checks outgoing `SUPERSEDED_BY`, showing maintained state is ~37x faster for this currentness slice. |
 | `graph_vector_candidate_set/set_intersection_l256_r256_o128` | 153.2 ns (quick) | Intersects two canonical 256-node sets with 128 overlapping ids using the merge path; this is the balanced graph/ANN/active-set composition primitive. |
+| `graph_vector_candidate_set/set_intersection_l256_r256_o0` | 1.3378 ns (quick) | Equal-width disjoint canonical ranges return an empty candidate set before allocation or merge scanning. PR-local A/B: 135.45 ns → 1.3378 ns. |
 | `graph_vector_candidate_set/set_intersection_l8_r1024_o8` | 31.10 ns (quick) | Intersects a tiny dependency-style set with a much larger maintained active set using the binary-search probe path. |
 | `graph_vector_candidate_set/set_union_l256_r256_o128` | 170.6 ns (quick) | Unions two canonical 256-node sets into a 384-node canonical candidate set. |
 | `graph_vector_candidate_set/set_difference_l256_r256_o128` | 178.5 ns (quick) | Computes the graph-side exclusion path for two canonical 256-node sets with 128 overlapping ids. |

@@ -93,6 +93,12 @@ impl VectorCandidateSet {
         if self.is_empty() || other.is_empty() {
             return Self::default();
         }
+        if self.len() == other.len()
+            && (self.nodes[self.nodes.len() - 1] < other.nodes[0]
+                || other.nodes[other.nodes.len() - 1] < self.nodes[0])
+        {
+            return Self::default();
+        }
         let (small, large) = if self.len() <= other.len() {
             (&self.nodes, &other.nodes)
         } else {
