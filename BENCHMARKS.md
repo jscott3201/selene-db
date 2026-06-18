@@ -2615,6 +2615,21 @@ repeat with
 | `read_pipeline/let_single_extend/50000` | 5.4078 ms | 5.1450 ms | Full-profile row improves -5.2620%, p=0.00. |
 | `read_pipeline/let_single_extend/100000` | 11.860 ms | 11.346 ms | Full-profile row improves -4.3361%, p=0.00. |
 
+PR-local `FOR` row-expansion inline-row A/B:
+
+Commands: add the `read_pipeline/for_expand_triple` row, then compare the old
+executor path and the inline-storage row-expansion path with
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter for_expand_triple`;
+repeat with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter for_expand_triple`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/for_expand_triple/1000` | 158.42 µs | 151.87 µs | `FOR` row expansion now clones into `Binding` inline storage and reserves the expanded-row output for each source list; the old-path quick rerun reported +4.3854% slower than the patched sample, p=0.00. |
+| `read_pipeline/for_expand_triple/10000` | 1.6296 ms | 1.5397 ms | Full-profile row improves -5.7265%, p=0.00. |
+| `read_pipeline/for_expand_triple/50000` | 9.5314 ms | 9.0549 ms | Full-profile row improves -4.9989%, p=0.00. |
+| `read_pipeline/for_expand_triple/100000` | 20.399 ms | 19.526 ms | Full-profile row improves -4.2810%, p=0.00. |
+
 PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 --bench read_pipeline`) against development post-#707:
 
