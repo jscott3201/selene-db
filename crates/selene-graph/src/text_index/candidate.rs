@@ -1,6 +1,7 @@
 //! Candidate-scoped BM25 scoring for maintained text indexes.
 
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 use selene_core::{CancellationChecker, NodeId};
 
@@ -73,7 +74,7 @@ impl TextIndex {
             return Ok(self.search(query, k));
         }
         if candidates_are_strictly_ascending {
-            return self.score_indexed_candidates(candidates.iter().copied(), scoring, checker);
+            return self.score_sorted_indexed_candidates(candidates, scoring, checker);
         }
 
         let candidate_set = self.indexed_candidate_set(candidates, checker)?;
@@ -84,6 +85,49 @@ impl TextIndex {
             return Ok(self.search(query, k));
         }
         self.score_indexed_candidates(candidate_set, scoring, checker)
+    }
+
+    fn score_sorted_indexed_candidates(
+        &self,
+        candidates: &[NodeId],
+        scoring: CandidateScoreInputs<'_>,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<TextSearchHit>, TextSearchError> {
+        let mut top_k = TextTopK::new(scoring.k);
+        let mut postings_cursors =
+            SmallVec::<[usize; 4]>::from_elem(0, scoring.postings_by_term.len());
+        let mut candidates_since_check = 0usize;
+        for &node_id in candidates {
+            candidates_since_check += 1;
+            if candidates_since_check >= TEXT_SEARCH_CANCEL_STRIDE {
+                checker.note_nodes_scanned(candidates_since_check)?;
+                candidates_since_check = 0;
+            }
+            let Some(&len) = self.document_lengths.get(&node_id) else {
+                continue;
+            };
+            let Some(doc) = sorted_candidate_document_stats(
+                node_id,
+                len,
+                scoring.postings_by_term,
+                &mut postings_cursors,
+            ) else {
+                continue;
+            };
+            let score = bm25_score(
+                &doc,
+                scoring.document_frequencies,
+                scoring.corpus_len,
+                scoring.average_document_len,
+            );
+            if score > 0.0 {
+                top_k.push(node_id, score);
+            }
+        }
+        if candidates_since_check > 0 {
+            checker.note_nodes_scanned(candidates_since_check)?;
+        }
+        Ok(top_k.into_hits())
     }
 
     fn score_indexed_candidates(
@@ -211,6 +255,30 @@ fn candidate_document_stats(
         };
         if let Ok(index) = postings.binary_search_by_key(&node_id, |posting| posting.node_id) {
             doc.term_counts[term_index] = postings[index].term_count;
+            matched = true;
+        }
+    }
+    matched.then_some(doc)
+}
+
+fn sorted_candidate_document_stats(
+    node_id: NodeId,
+    len: u32,
+    postings_by_term: &[Option<&[TextPosting]>],
+    postings_cursors: &mut [usize],
+) -> Option<DocumentStats> {
+    let mut doc = DocumentStats::zero(node_id, len, postings_by_term.len());
+    let mut matched = false;
+    for (term_index, postings) in postings_by_term.iter().enumerate() {
+        let Some(postings) = postings else {
+            continue;
+        };
+        let cursor = &mut postings_cursors[term_index];
+        while *cursor < postings.len() && postings[*cursor].node_id < node_id {
+            *cursor += 1;
+        }
+        if *cursor < postings.len() && postings[*cursor].node_id == node_id {
+            doc.term_counts[term_index] = postings[*cursor].term_count;
             matched = true;
         }
     }

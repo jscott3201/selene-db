@@ -133,6 +133,40 @@ fn bench_indexed_bm25(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
+            BenchmarkId::new(
+                "prebuilt_topic_query_candidates_partial_sorted",
+                format!("n{scale}_k10"),
+            ),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture.index.search_candidates(
+                        &fixture.query,
+                        fixture.partial_sorted_candidates(),
+                        10,
+                    );
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "prebuilt_topic_query_candidates_partial_reverse",
+                format!("n{scale}_k10"),
+            ),
+            &fixture,
+            |b, fixture| {
+                b.iter(|| {
+                    let hits = fixture.index.search_candidates(
+                        &fixture.query,
+                        fixture.partial_reverse_candidates(),
+                        10,
+                    );
+                    std::hint::black_box(hits.len());
+                });
+            },
+        );
+        group.bench_with_input(
             BenchmarkId::new("registered_topic_query", format!("n{scale}_k10")),
             &fixture,
             |b, fixture| {
@@ -269,6 +303,8 @@ struct TextFixture {
     query: String,
     sorted_candidates: Vec<NodeId>,
     reverse_candidates: Vec<NodeId>,
+    partial_sorted_candidates: Vec<NodeId>,
+    partial_reverse_candidates: Vec<NodeId>,
     index: TextIndex,
     registered_index: Arc<TextIndex>,
 }
@@ -303,12 +339,21 @@ impl TextFixture {
             txn.commit().expect("bench fixture commits");
             let mut reverse_candidates = sorted_candidates.clone();
             reverse_candidates.reverse();
+            let partial_sorted_candidates = sorted_candidates
+                .iter()
+                .step_by(4)
+                .copied()
+                .collect::<Vec<_>>();
+            let mut partial_reverse_candidates = partial_sorted_candidates.clone();
+            partial_reverse_candidates.reverse();
             Self::finish(
                 shared,
                 label,
                 property,
                 sorted_candidates,
                 reverse_candidates,
+                partial_sorted_candidates,
+                partial_reverse_candidates,
             )
         }
     }
@@ -319,6 +364,8 @@ impl TextFixture {
         property: DbString,
         sorted_candidates: Vec<NodeId>,
         reverse_candidates: Vec<NodeId>,
+        partial_sorted_candidates: Vec<NodeId>,
+        partial_reverse_candidates: Vec<NodeId>,
     ) -> Self {
         shared
             .create_text_index(label.clone(), property.clone())
@@ -337,6 +384,8 @@ impl TextFixture {
             query: "gql current retrieval evidence".to_owned(),
             sorted_candidates,
             reverse_candidates,
+            partial_sorted_candidates,
+            partial_reverse_candidates,
             index,
             registered_index,
         }
@@ -348,6 +397,14 @@ impl TextFixture {
 
     fn reverse_candidates(&self) -> &[NodeId] {
         &self.reverse_candidates
+    }
+
+    fn partial_sorted_candidates(&self) -> &[NodeId] {
+        &self.partial_sorted_candidates
+    }
+
+    fn partial_reverse_candidates(&self) -> &[NodeId] {
+        &self.partial_reverse_candidates
     }
 }
 
