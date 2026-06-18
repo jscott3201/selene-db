@@ -2721,6 +2721,20 @@ Commands:
 | `read_pipeline/edge_property_filter_no_index/1000` | 463.21 µs | 451.77 µs | Edge-label predicate matching now borrows the graph-owned `DbString` through recursive label-expression evaluation instead of cloning it at call sites and for compound predicates. Criterion reports -2.4228%, p=0.00. |
 | `read_pipeline/edge_property_filter_indexed/1000` | 89.251 µs | 89.179 µs | Indexed edge-property guard stayed neutral (p=0.56). |
 
+PR-local scan-key borrow A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter 'read_pipeline/(match_filter_project|match_name_in|match_composite_lookup|edge_property_filter)' --save-baseline gql-scan-label-borrow-before`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter 'read_pipeline/(match_filter_project|match_name_in|match_composite_lookup|edge_property_filter)' --baseline gql-scan-label-borrow-before`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_filter_project/1000` | 44.718 µs | 44.203 µs | Indexed scan setup now borrows single label/property keys when selecting label, typed-range, bitmap-union, and composite lookup candidate rows. Criterion reports -1.4356%, p=0.00. |
+| `read_pipeline/match_name_in/1000` | 6.0401 µs | 6.0229 µs | Bitmap-union row stayed within Criterion's noise threshold. |
+| `read_pipeline/match_composite_lookup/1000` | 446.32 ns | 437.56 ns | Composite lookup row improves -1.7612%, p=0.00. |
+| `read_pipeline/edge_property_filter_no_index/1000` | 450.63 µs | 447.86 µs | Edge-property no-index guard stayed within Criterion's noise threshold. |
+| `read_pipeline/edge_property_filter_indexed/1000` | 88.110 µs | 88.218 µs | Indexed edge-property guard stayed neutral (p=0.75). |
+
 PR-local bitmap-union row-filter A/B:
 
 Commands:
