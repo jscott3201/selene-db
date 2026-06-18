@@ -1,10 +1,10 @@
 #![allow(missing_docs)]
-//! GQLRT-05 gating bench: correlated `EXISTS` / `COUNT` subquery execution.
+//! GQLRT-05 gating bench: correlated `EXISTS` / aggregate `VALUE` subquery execution.
 //!
 //! A correlated subquery is re-evaluated for every outer row, and the schema
 //! for its pattern is rebuilt per outer row (`schema_for_pattern`). This is the
 //! only read-query EXECUTION bench in the suite — `expression_eval` is
-//! scalar-only and `write_e2e` is write-only — and no `EXISTS`/`COUNT`
+//! scalar-only and `write_e2e` is write-only — and no `EXISTS`/aggregate `VALUE`
 //! subquery exists in any other corpus, so a memoization win (GQLRT-05) would
 //! otherwise be invisible. Runs on an IN-MEMORY graph (no WAL) so the per-row
 //! schema rebuild dominates the sample, not durability.
@@ -22,9 +22,8 @@ use selene_testing::{BenchFixture, BenchProfile};
 
 /// Correlated existential subquery: re-evaluated per outer `Person` row.
 const EXISTS_Q: &str = "MATCH (p:Person) FILTER EXISTS { MATCH (p)-[:KNOWS]->(:Person) } RETURN p";
-/// Correlated counting subquery in the projection: also per outer row.
-const COUNT_Q: &str =
-    "MATCH (p:Person) RETURN p, COUNT { MATCH (p)-[:KNOWS]->(:Person) } AS knows_people";
+/// Correlated aggregate value subquery in the projection: also per outer row.
+const COUNT_Q: &str = "MATCH (p:Person) RETURN p, VALUE { MATCH (p)-[:KNOWS]->(:Person) RETURN count(*) } AS knows_people";
 
 /// A *small* scale envelope, independent of the shared node-scale profile.
 /// Correlated re-evaluation is O(outer-rows × subquery), so the per-row schema
