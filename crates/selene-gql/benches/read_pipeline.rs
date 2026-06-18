@@ -7,11 +7,12 @@
 //! body is pure execution + index access — not parse/plan/optimize and not
 //! durability: label scan + indexed range filter, two-leg hash join, ORDER BY
 //! top-K, high-cardinality GROUP BY, DISTINCT dedup, indexed `IN` bitmap union,
-//! inline `CALL {}` table-subquery extension, single-item `LET`, small `FOR`
-//! expansion, composite equality lookup, post-RETURN `LIMIT 10` (the B19
-//! baseline), and pre-RETURN `LIMIT 10` (the safe pattern cap row). Cold and
-//! shared-cache companions on the cheapest row rebuild a fresh session per
-//! iteration to isolate short-lived-session cache strategy.
+//! inline `CALL {}` table-subquery extension, non-leading `OPTIONAL MATCH`
+//! null-extension, single-item `LET`, small `FOR` expansion, composite equality
+//! lookup, post-RETURN `LIMIT 10` (the B19 baseline), and pre-RETURN `LIMIT 10`
+//! (the safe pattern cap row). Cold and shared-cache companions on the cheapest
+//! row rebuild a fresh session per iteration to isolate short-lived-session
+//! cache strategy.
 //!
 //! Fixture topology note: every `KNOWS` offset in `BenchFixture` is ≡1 mod 3,
 //! so Person edges land on Sensor and Sensor edges land on Device —
@@ -68,6 +69,9 @@ const CALL_SUBQUERY_YIELD_Q: &str = "MATCH (a:Person) \
 const OPTIONAL_CALL_SUBQUERY_NULL_YIELD_Q: &str = "MATCH (a:Person) \
     OPTIONAL CALL (a) { MATCH (a)-[:KNOWS]->(:Nope) RETURN 1 AS none } \
     YIELD none RETURN none";
+/// Non-leading `OPTIONAL MATCH` that preserves every Person row with a null binding.
+const OPTIONAL_MATCH_NULL_EXTEND_Q: &str =
+    "MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(missing:Nope) RETURN missing";
 /// Single-binding LET extension over the Person scan.
 const LET_SINGLE_EXTEND_Q: &str = "MATCH (n:Person) LET doubled = n.age + n.age RETURN doubled";
 /// Three-element row expansion over each Person row.
@@ -77,7 +81,7 @@ const FOR_EXPAND_TRIPLE_Q: &str =
 const EDGE_PROPERTY_FILTER_Q: &str =
     "MATCH ()-[e:CONNECTED_TO]->() WHERE e.from_port = 'port_17' RETURN e";
 
-const WARM_ROWS: [(&str, &str); 12] = [
+const WARM_ROWS: [(&str, &str); 13] = [
     ("match_filter_project", FILTER_PROJECT_Q),
     ("match_expand_hashjoin", EXPAND_HASHJOIN_Q),
     ("order_by_topk", ORDER_BY_TOPK_Q),
@@ -89,6 +93,7 @@ const WARM_ROWS: [(&str, &str); 12] = [
         "optional_call_subquery_null_yield",
         OPTIONAL_CALL_SUBQUERY_NULL_YIELD_Q,
     ),
+    ("optional_match_null_extend", OPTIONAL_MATCH_NULL_EXTEND_Q),
     ("let_single_extend", LET_SINGLE_EXTEND_Q),
     ("for_expand_triple", FOR_EXPAND_TRIPLE_Q),
     ("match_limit10", MATCH_LIMIT10_Q),
@@ -125,6 +130,7 @@ fn bench_read_pipeline(c: &mut Criterion) {
                     | "match_name_in"
                     | "call_subquery_yield"
                     | "optional_call_subquery_null_yield"
+                    | "optional_match_null_extend"
                     | "let_single_extend"
                     | "for_expand_triple"
             ) {
