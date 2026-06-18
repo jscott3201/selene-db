@@ -486,9 +486,7 @@ fn write_json_canonical(value: &SerdeJsonValue, output: &mut String) {
         }
         SerdeJsonValue::Object(values) => {
             output.push('{');
-            let mut entries = values.iter().collect::<Vec<_>>();
-            entries.sort_unstable_by(|lhs, rhs| lhs.0.cmp(rhs.0));
-            for (index, (key, value)) in entries.into_iter().enumerate() {
+            for (index, (key, value)) in values.iter().enumerate() {
                 if index > 0 {
                     output.push(',');
                 }

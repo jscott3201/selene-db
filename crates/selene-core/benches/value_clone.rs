@@ -1,16 +1,18 @@
 #![allow(missing_docs)]
 //! `Value` clone cost, `PropertyMap`/diff construction, plus native
-//! vector-value construction and serde baselines.
+//! vector-value construction, JSON rendering, and serde baselines.
 //!
 //! `Value` boxes the formerly oversized variants, so the companion compile-time
 //! `size_of::<Value>` ceiling in `value.rs` is the zero-cost re-bloat tripwire.
-//! This bench keeps the clone rows visible and also covers common one-property
-//! and wide `PropertyMap::from_pairs` construction shapes plus small mutation
-//! diff constructors.
+//! Clone, construction, and mutation rows stay visible as shape-specific
+//! throughput guards.
 
 #[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[path = "value_clone/json.rs"]
+mod json;
 
 use std::hint::black_box;
 
@@ -214,6 +216,8 @@ fn bench_value_clone(c: &mut Criterion) {
     group.bench_function("property_map_5", |b| {
         b.iter(|| black_box(black_box(&map).clone()));
     });
+
+    json::bench_json_canonical(&mut group);
 
     let single_pair = single_property_pair();
     group.throughput(Throughput::Elements(1));
@@ -736,8 +740,7 @@ fn flatten_vectors(vectors: &[VectorValue]) -> Vec<f32> {
 }
 
 fn vector_window(slab: &[f32], index: usize, dimension: usize) -> &[f32] {
-    let start = index * dimension;
-    &slab[start..start + dimension]
+    &slab[index * dimension..index * dimension + dimension]
 }
 
 fn cosine_distance_with_norms(
