@@ -2511,6 +2511,16 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
 
+PR-local Louvain dense-neighbor scan A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter louvain --save-baseline louvain-dense-neighbors-before`;
+rerun with `--baseline louvain-dense-neighbors-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/louvain/1k` | 132.70 µs | 107.10 µs | Louvain now scans projection CSR out- and in-neighbor slices by dense row in total-weight, weighted-degree, and community-neighbor loops instead of resolving dense row through `NodeId`. The quick planted-community row improves 19.65% (`p=0.00`). |
+
 PR-local betweenness dense-adjacency build A/B:
 
 Command:
