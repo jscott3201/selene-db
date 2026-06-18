@@ -131,13 +131,11 @@ impl PropertyDiff {
             set = deduped;
         }
         let removed = sorted_deduped(removed);
-        for (key, _) in set.iter() {
-            if removed.binary_search(key).is_ok() {
-                return Err(CoreError::OverlappingDiff {
-                    kind: "property",
-                    key: key.clone(),
-                });
-            }
+        if let Some(key) = first_property_overlap(&set, &removed) {
+            return Err(CoreError::OverlappingDiff {
+                kind: "property",
+                key: key.clone(),
+            });
         }
         Ok(Self { set, removed })
     }
@@ -202,12 +200,10 @@ impl<'de> Deserialize<'de> for PropertyDiff {
             }
         }
         validate_sorted_unique(&wire.removed, "PropertyDiff.removed")?;
-        for (key, _) in wire.set.iter() {
-            if wire.removed.binary_search(key).is_ok() {
-                return Err(serde::de::Error::custom(format!(
-                    "PropertyDiff: key {key} appears in both set and removed",
-                )));
-            }
+        if let Some(key) = first_property_overlap(&wire.set, &wire.removed) {
+            return Err(serde::de::Error::custom(format!(
+                "PropertyDiff: key {key} appears in both set and removed",
+            )));
         }
         Ok(Self {
             set: wire.set,
@@ -238,15 +234,43 @@ fn ensure_disjoint(
     added: &SmallVec<[DbString; 2]>,
     removed: &SmallVec<[DbString; 2]>,
 ) -> CoreResult<()> {
-    for label in added.iter() {
-        if removed.binary_search(label).is_ok() {
-            return Err(CoreError::OverlappingDiff {
-                kind,
-                key: label.clone(),
-            });
-        }
+    if let Some(label) = first_overlap(added, removed) {
+        return Err(CoreError::OverlappingDiff {
+            kind,
+            key: label.clone(),
+        });
     }
     Ok(())
+}
+
+fn first_overlap<'a>(left: &'a [DbString], right: &[DbString]) -> Option<&'a DbString> {
+    let mut left_index = 0;
+    let mut right_index = 0;
+    while left_index < left.len() && right_index < right.len() {
+        match left[left_index].cmp(&right[right_index]) {
+            std::cmp::Ordering::Less => left_index += 1,
+            std::cmp::Ordering::Greater => right_index += 1,
+            std::cmp::Ordering::Equal => return Some(&left[left_index]),
+        }
+    }
+    None
+}
+
+fn first_property_overlap<'a>(
+    set: &'a [(DbString, Value)],
+    removed: &[DbString],
+) -> Option<&'a DbString> {
+    let mut set_index = 0;
+    let mut removed_index = 0;
+    while set_index < set.len() && removed_index < removed.len() {
+        let key = &set[set_index].0;
+        match key.cmp(&removed[removed_index]) {
+            std::cmp::Ordering::Less => set_index += 1,
+            std::cmp::Ordering::Greater => removed_index += 1,
+            std::cmp::Ordering::Equal => return Some(key),
+        }
+    }
+    None
 }
 
 fn validate_sorted_unique<E: serde::de::Error>(
@@ -268,12 +292,10 @@ fn validate_disjoint<E: serde::de::Error>(
     removed: &SmallVec<[DbString; 2]>,
     kind: &'static str,
 ) -> Result<(), E> {
-    for label in added.iter() {
-        if removed.binary_search(label).is_ok() {
-            return Err(E::custom(format!(
-                "overlapping {kind} diff: {label} appears in both add/set and remove",
-            )));
-        }
+    if let Some(label) = first_overlap(added, removed) {
+        return Err(E::custom(format!(
+            "overlapping {kind} diff: {label} appears in both add/set and remove",
+        )));
     }
     Ok(())
 }

@@ -150,6 +150,36 @@ fn property_diff_rejects_overlapping_key() {
 }
 
 #[test]
+fn diffs_report_lowest_sorted_overlap() {
+    let beta = dbs("change.overlap.beta");
+    let delta = dbs("change.overlap.delta");
+    let gamma = dbs("change.overlap.gamma");
+
+    let label_err = LabelDiff::new(
+        [gamma.clone(), beta.clone()],
+        [delta.clone(), beta.clone(), gamma.clone()],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        label_err,
+        CoreError::OverlappingDiff { key, .. } if key == beta
+    ));
+
+    let property_err = PropertyDiff::new(
+        [
+            (gamma.clone(), Value::Int(3)),
+            (beta.clone(), Value::Int(2)),
+        ],
+        [delta, beta.clone(), gamma],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        property_err,
+        CoreError::OverlappingDiff { key, .. } if key == beta
+    ));
+}
+
+#[test]
 fn label_diff_deserialize_round_trip() {
     let added = dbs("change.deser.add");
     let removed = dbs("change.deser.remove");
