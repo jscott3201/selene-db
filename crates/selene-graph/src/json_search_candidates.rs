@@ -232,6 +232,7 @@ impl SeleneGraph {
         }
         let candidates = sorted_unique_candidates(candidates);
         let mut hits = Vec::new();
+        let hit_capacity = k.min(candidates.len());
         let mut candidates_since_check = 0usize;
         for &node_id in candidates.iter() {
             candidates_since_check += 1;
@@ -243,6 +244,9 @@ impl SeleneGraph {
                 continue;
             };
             if let Some(selected) = predicate(value) {
+                if hits.is_empty() {
+                    hits.reserve(hit_capacity);
+                }
                 hits.push((node_id, selected));
                 if hits.len() == k {
                     break;
