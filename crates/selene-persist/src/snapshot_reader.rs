@@ -14,6 +14,8 @@ use crate::section::{
 use crate::snapshot_file_header::SNAPSHOT_FILE_HEADER_LEN;
 use crate::{PersistError, PersistResult, SnapshotFileHeader};
 
+const BODY_HASH_READ_BUFFER_BYTES: usize = 64 * 1024;
+
 /// Reader for one snapshot file.
 pub struct SnapshotReader {
     file: File,
@@ -146,7 +148,7 @@ impl SnapshotReader {
         let table = section_table_bytes(&self.sections)?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(&table);
-        let mut buf = [0_u8; 8 * 1024];
+        let mut buf = [0_u8; BODY_HASH_READ_BUFFER_BYTES];
         // Cheap Arc pointer-bump (not a deep Vec clone) sidesteps the `&self`
         // borrow conflict between `self.sections` and the `&mut self.file` reads.
         let entries = Arc::clone(&self.sections);
