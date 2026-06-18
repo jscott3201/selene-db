@@ -2484,6 +2484,14 @@ rerun with `--baseline gql_scan_direct_bindings_pre` after the implementation):
 |---|---:|---:|---|
 | `read_pipeline/match_filter_project/1000` | 50.738 µs | 46.297 µs | Scan execution now returns `Binding` rows directly instead of collecting transient `(entity, binding)` pairs that `scan_pattern` immediately discarded. The quick indexed-range row improves 8.8043% (`p=0.00`). |
 
+PR-local scan output capacity reserve A/B
+(`scripts/run-benches.sh --profile quick --bench read_pipeline --filter match_filter_project --save-baseline gql_scan_output_reserve_pre`;
+rerun with `--baseline gql_scan_output_reserve_pre` after the implementation):
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/match_filter_project/1000` | 45.691 µs | 44.279 µs | Scan execution now reserves accepted `Binding` row capacity from the already-materialized candidate-row count. The quick indexed-range row improves 3.1557% (`p=0.00`). |
+
 PR-local non-leading `OPTIONAL MATCH` coverage row
 (`scripts/run-benches.sh --profile quick --bench read_pipeline --filter optional_match_null_extend`):
 

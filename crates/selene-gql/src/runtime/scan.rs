@@ -64,8 +64,9 @@ fn collect_scan_entities(
     slots: scan_bind::ScanSlots,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
-    let mut rows = Vec::new();
-    for row in candidate_rows(scan, ctx)? {
+    let candidates = candidate_rows(scan, ctx)?;
+    let mut rows = Vec::with_capacity(candidates.len());
+    for row in candidates {
         if !label_matches_scan(scan, row, ctx) {
             continue;
         }
