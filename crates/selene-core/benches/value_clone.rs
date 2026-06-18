@@ -125,6 +125,14 @@ fn wide_property_pairs_sorted(width: usize) -> Vec<(selene_core::DbString, Value
         .collect()
 }
 
+fn wide_property_keys(prefix: &str, width: usize) -> Vec<selene_core::DbString> {
+    (0..width)
+        .map(|idx| {
+            db_string(&format!("{prefix}_{idx:04}")).expect("property key fits DB string cap")
+        })
+        .collect()
+}
+
 fn wide_compact_key_values(width: usize) -> (Vec<selene_core::DbString>, Vec<Option<Value>>) {
     (0..width)
         .rev()
@@ -151,8 +159,16 @@ fn wide_compact_key_values_sorted(
 }
 
 fn wide_labels(width: usize, reverse: bool) -> Vec<selene_core::DbString> {
+    wide_labels_with_prefix("wide_label", width, reverse)
+}
+
+fn wide_labels_with_prefix(
+    prefix: &str,
+    width: usize,
+    reverse: bool,
+) -> Vec<selene_core::DbString> {
     let mut labels: Vec<_> = (0..width)
-        .map(|idx| db_string(&format!("wide_label_{idx:04}")).expect("label fits DB string cap"))
+        .map(|idx| db_string(&format!("{prefix}_{idx:04}")).expect("label fits DB string cap"))
         .collect();
     if reverse {
         labels.reverse();
@@ -318,6 +334,27 @@ fn bench_change_diff(c: &mut Criterion) {
             .expect("wide property diff is valid")
         });
     });
+    let removed_properties = wide_property_keys("removed_property", 256);
+    group.bench_function("property_diff_removed_256_sorted", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                std::iter::empty::<(selene_core::DbString, Value)>(),
+                black_box(removed_properties.iter().cloned()),
+            )
+            .expect("wide property removal diff is valid")
+        });
+    });
+    let disjoint_set_pairs = wide_property_pairs_sorted(128);
+    let disjoint_removed_properties = wide_property_keys("disjoint_removed_property", 128);
+    group.bench_function("property_diff_set_removed_128_each_sorted", |b| {
+        b.iter(|| {
+            PropertyDiff::new(
+                black_box(disjoint_set_pairs.iter().cloned()),
+                black_box(disjoint_removed_properties.iter().cloned()),
+            )
+            .expect("wide disjoint property diff is valid")
+        });
+    });
     let property_diff_256 =
         PropertyDiff::new(sorted_pairs.iter().cloned(), []).expect("wide property diff is valid");
     group.bench_function("property_diff_postcard_encode_256_sorted", |b| {
@@ -339,6 +376,24 @@ fn bench_change_diff(c: &mut Criterion) {
             });
         });
     }
+    let removed_labels = wide_labels_with_prefix("removed_label", 100, false);
+    group.bench_function("label_diff_removed_100_sorted", |b| {
+        b.iter(|| {
+            LabelDiff::new([], black_box(removed_labels.iter().cloned()))
+                .expect("wide removed label diff is valid")
+        });
+    });
+    let add_labels = wide_labels_with_prefix("added_label", 50, false);
+    let remove_labels = wide_labels_with_prefix("removed_label", 50, false);
+    group.bench_function("label_diff_added_removed_50_each_sorted", |b| {
+        b.iter(|| {
+            LabelDiff::new(
+                black_box(add_labels.iter().cloned()),
+                black_box(remove_labels.iter().cloned()),
+            )
+            .expect("wide disjoint label diff is valid")
+        });
+    });
     let sorted_labels = wide_labels(100, false);
     let label_diff_100 =
         LabelDiff::new(sorted_labels.iter().cloned(), []).expect("wide label diff is valid");
