@@ -624,7 +624,7 @@ impl TextTopK {
     pub(crate) fn new(k: usize) -> Self {
         Self {
             k,
-            heap: BinaryHeap::new(),
+            heap: BinaryHeap::with_capacity(k),
         }
     }
 

@@ -814,6 +814,23 @@ Commands:
 |---|---:|---:|---:|---|
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.424 µs | 27.752 µs | -2.0122% | `TextTopK` now replaces the retained worst hit through `BinaryHeap::peek_mut()` instead of `pop()` plus `push()` when a candidate beats the current worst; Criterion reports p=0.00. |
 
+PR-local BM25 top-k heap preallocation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter topic_query --save-baseline bm25_query_terms_pre`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter topic_query --baseline bm25_query_terms_pre`;
+focused checked-row rerun:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter topic_query_checked_with_deadline --baseline bm25_query_terms_pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 132.28 µs | 130.13 µs | -1.6820% | `TextTopK` now reserves the known `k` slots up front with `BinaryHeap::with_capacity(k)`; Criterion reports p=0.00. |
+| `graph_text_bm25_exact/topic_query_checked_with_deadline/n1000_k10` | 131.48 µs | 130.35 µs | -2.7186% | Focused rerun after a noisy broad-run sample; same checked scan path, Criterion reports p=0.00. |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.887 µs | 28.687 µs | neutral | Maintained read path stayed statistically flat. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 30.646 µs | 30.465 µs | neutral | Full-cover sorted candidate guard stayed statistically flat. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 31.805 µs | 30.648 µs | -5.9149% | Reverse candidate input benefits from avoiding heap growth in the delegated scorer; Criterion reports p=0.05. |
+| `graph_text_bm25_indexed/registered_topic_query/n1000_k10` | 29.520 µs | 28.835 µs | neutral | Registered-index read path stayed statistically flat. |
+
 PR-local text-index update-maintenance candidate-key A/B:
 
 Commands:
