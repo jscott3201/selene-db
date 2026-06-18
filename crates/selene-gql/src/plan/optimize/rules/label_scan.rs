@@ -116,9 +116,9 @@ fn rewrite_scan(scan: &mut crate::NodeOrEdgeScan, catalog: &dyn crate::IndexCata
     // alternative here is a *full* scan, so the baseline is the total row count,
     // not the label-scoped residual baseline. When stats are absent (either
     // estimator returns None) keep the structural decision (promote) so the plan
-    // is byte-identical to pre-OPT-5 HEAD. Because the label predicate stays in
-    // place as a residual post-filter, the row multiset is identical whether we
-    // promote or stay Linear.
+    // is byte-identical to pre-OPT-5 HEAD. The label predicate stays on the IR
+    // for transparency; at execution time the LabelIndex candidate source is
+    // already label-filtered, so scan collection can avoid the duplicate check.
     if let (Some(index_cost), Some(baseline)) = (
         cost::label_scan_cost(catalog, target, label),
         catalog.total_rows(target),
