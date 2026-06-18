@@ -551,7 +551,7 @@ pub(super) fn label_matches_scan(
             };
             snapshot
                 .edge_label(id)
-                .is_some_and(|label| label_matches_edge(label_expr, label.clone()))
+                .is_some_and(|label| label_matches_edge(label_expr, label))
         }
     }
 }
@@ -566,15 +566,11 @@ pub(crate) fn label_matches_node(expr: &LabelExpr, labels: &LabelSet) -> bool {
     }
 }
 
-pub(crate) fn label_matches_edge(expr: &LabelExpr, label: DbString) -> bool {
+pub(crate) fn label_matches_edge(expr: &LabelExpr, label: &DbString) -> bool {
     match expr {
-        LabelExpr::Single(expected) => *expected == label,
-        LabelExpr::Conjunction(parts) => parts
-            .iter()
-            .all(|part| label_matches_edge(part, label.clone())),
-        LabelExpr::Disjunction(parts) => parts
-            .iter()
-            .any(|part| label_matches_edge(part, label.clone())),
+        LabelExpr::Single(expected) => expected == label,
+        LabelExpr::Conjunction(parts) => parts.iter().all(|part| label_matches_edge(part, label)),
+        LabelExpr::Disjunction(parts) => parts.iter().any(|part| label_matches_edge(part, label)),
         LabelExpr::Negation(part) => !label_matches_edge(part, label),
         LabelExpr::Wildcard => true,
     }

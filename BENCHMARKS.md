@@ -2710,6 +2710,17 @@ Command:
 | `read_pipeline/edge_property_filter_no_index/1000` | 476.73 µs | Warm unanchored edge-property query over `CONNECTED_TO` edges with no edge-property index; scans expand adjacency and evaluates `e.from_port = 'port_17'` as a residual predicate. |
 | `read_pipeline/edge_property_filter_indexed/1000` | 115.87 µs | Same query with a built-in `CONNECTED_TO(from_port)` edge-property index; optimizer emits edge `TypedIndexRange` and expand drives from the selective indexed edge-row set. Median is −75.7% vs no-index. |
 
+PR-local edge-label borrow A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter edge_property_filter --save-baseline gql-edge-label-borrow-before`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter edge_property_filter --baseline gql-edge-label-borrow-before`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/edge_property_filter_no_index/1000` | 463.21 µs | 451.77 µs | Edge-label predicate matching now borrows the graph-owned `DbString` through recursive label-expression evaluation instead of cloning it at call sites and for compound predicates. Criterion reports -2.4228%, p=0.00. |
+| `read_pipeline/edge_property_filter_indexed/1000` | 89.251 µs | 89.179 µs | Indexed edge-property guard stayed neutral (p=0.56). |
+
 PR-local bitmap-union row-filter A/B:
 
 Commands:
