@@ -2,6 +2,8 @@ use crate::{
     BindingTableColumn, BindingTableSchema, ProjectExpr,
     runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator},
 };
+use selene_core::Value;
+use smallvec::SmallVec;
 
 pub(super) fn execute(
     items: &[ProjectExpr],
@@ -14,11 +16,11 @@ pub(super) fn execute(
     let mut rows_since_check = 0;
     for row in input_rows {
         ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
-        let values = items
-            .iter()
-            .map(|item| project_value(item, &row, &input_schema, ctx))
-            .collect::<Result<Vec<_>, _>>()?;
-        rows.push(Binding::new(values));
+        let mut values = SmallVec::<[Value; 8]>::with_capacity(items.len());
+        for item in items {
+            values.push(project_value(item, &row, &input_schema, ctx)?);
+        }
+        rows.push(Binding::from_parts(values, SmallVec::new()));
     }
     Ok(BindingTable::new(output_schema, rows))
 }
@@ -28,7 +30,7 @@ fn project_value(
     row: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<selene_core::Value, ExecutorError> {
+) -> Result<Value, ExecutorError> {
     evaluator::evaluate(&item.expr, row, schema, ctx)
 }
 
