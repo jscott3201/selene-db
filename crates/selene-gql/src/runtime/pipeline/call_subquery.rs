@@ -1,6 +1,7 @@
 //! Inline `CALL { ... }` table-subquery pipeline operator.
 
 use selene_core::Value;
+use smallvec::SmallVec;
 
 use crate::{
     BindingTableColumn, BindingTableSchema, ExecutionPlan, PatternPlan, PipelineOp,
@@ -107,7 +108,8 @@ fn seed_binding(
     source_schema: &BindingTableSchema,
     target_schema: &BindingTableSchema,
 ) -> Result<Binding, ExecutorError> {
-    let mut values = vec![Value::Null; target_schema.columns.len()];
+    let mut values = SmallVec::<[Value; 8]>::new();
+    values.resize(target_schema.columns.len(), Value::Null);
     for outer in &call.outer_binding_refs {
         let source_index = source_index(source_schema, outer.name.clone())?;
         let value = row.get(source_index).cloned().unwrap_or(Value::Null);
@@ -118,7 +120,7 @@ fn seed_binding(
         )?;
         values[target_index] = value;
     }
-    Ok(Binding::new(values))
+    Ok(Binding::from_parts(values, SmallVec::new()))
 }
 
 fn null_outer_binding_is_plan_pattern_binding(
