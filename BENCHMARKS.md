@@ -936,6 +936,17 @@ focused path-exists rerun:
 | `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.960 µs | 20.605 µs | neutral | Path-containment row stayed statistically flat. |
 | `graph_json_path_value_scan/nested_score_path_k10/1000` | 17.859 µs | 18.801 µs | neutral | Path-value row stayed statistically flat. |
 
+PR-local JSON candidate borrowed-slice A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_candidates --save-baseline json-candidate-borrow-pre`;
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_candidates --baseline json-candidate-borrow-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 726.11 ns | 650.17 ns | -10.271% | Candidate-scoped JSON search now borrows already-canonical candidate slices instead of cloning them into a temporary `Vec`; Criterion reports p=0.00. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0641 µs | 1.0960 µs | neutral | Unsorted inputs still take the owned sort/dedup path and stayed within noise (`p=0.20`). |
+
 PR-local B24 batch exact-vector scan Rayon A/B:
 
 Commands:

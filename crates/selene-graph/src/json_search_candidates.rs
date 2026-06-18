@@ -1,5 +1,7 @@
 //! Candidate-scoped exact JSON search over graph node properties.
 
+use std::borrow::Cow;
+
 use selene_core::{CancellationChecker, DbString, JsonPathSelector, JsonValue, NodeId, Value};
 
 use crate::error::GraphResult;
@@ -231,7 +233,7 @@ impl SeleneGraph {
         let candidates = sorted_unique_candidates(candidates);
         let mut hits = Vec::new();
         let mut candidates_since_check = 0usize;
-        for node_id in candidates {
+        for &node_id in candidates.iter() {
             candidates_since_check += 1;
             if candidates_since_check >= JSON_SEARCH_CANCEL_STRIDE {
                 checker.note_nodes_scanned(candidates_since_check)?;
@@ -380,13 +382,14 @@ impl SharedGraph {
     }
 }
 
-fn sorted_unique_candidates(candidates: &[NodeId]) -> Vec<NodeId> {
-    let mut candidates = candidates.to_vec();
-    if candidates.len() > 1 && !node_ids_strictly_ascending(&candidates) {
-        candidates.sort_unstable();
-        candidates.dedup();
+fn sorted_unique_candidates(candidates: &[NodeId]) -> Cow<'_, [NodeId]> {
+    if candidates.len() <= 1 || node_ids_strictly_ascending(candidates) {
+        return Cow::Borrowed(candidates);
     }
-    candidates
+    let mut candidates = candidates.to_vec();
+    candidates.sort_unstable();
+    candidates.dedup();
+    Cow::Owned(candidates)
 }
 
 fn node_ids_strictly_ascending(nodes: &[NodeId]) -> bool {
