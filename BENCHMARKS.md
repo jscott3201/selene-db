@@ -2140,6 +2140,7 @@ The first four are scale-independent (single-query CPU).
 | `gql_expression_eval/*` (17 cases) | 180–245 ns, plus JSON rows below | Scalar eval: predicates, scalar fns, CASE, list access, binary ops, and runtime-parameter JSON scalar functions. |
 | `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
+| `procedure_call_pipeline/match_call_repeat/1000` | 254.62 µs (quick) | Warm plan-cache `MATCH` over 1k input nodes feeding regular `CALL bench.repeat()`; covers direct procedure-call row growth beyond one-row source calls. |
 
 PR-local quick procedure-call row-extension A/B:
 
