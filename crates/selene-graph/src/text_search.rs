@@ -453,19 +453,65 @@ fn document_stats(
 
 /// Iterate lowercase alphanumeric tokens, borrowing when lowercase is unchanged.
 pub(crate) fn tokenize_borrowed(text: &str) -> Tokenizer<'_> {
-    Tokenizer { text, offset: 0 }
+    Tokenizer {
+        text,
+        offset: 0,
+        ascii: text.is_ascii(),
+    }
 }
 
 /// Borrowing tokenizer for BM25 query/document processing.
 pub(crate) struct Tokenizer<'a> {
     text: &'a str,
     offset: usize,
+    ascii: bool,
 }
 
-impl<'a> Iterator for Tokenizer<'a> {
-    type Item = Cow<'a, str>;
+impl<'a> Tokenizer<'a> {
+    fn next_ascii(&mut self) -> Option<Cow<'a, str>> {
+        let mut start = None;
+        let mut end = self.text.len();
+        let mut owned = None::<String>;
 
-    fn next(&mut self) -> Option<Self::Item> {
+        let bytes = self.text.as_bytes();
+        let mut index = self.offset;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            if !byte.is_ascii_alphanumeric() {
+                if start.is_some() {
+                    end = index;
+                    self.offset = index + 1;
+                    break;
+                }
+                self.offset = index + 1;
+                index += 1;
+                continue;
+            }
+
+            let start_index = *start.get_or_insert(index);
+            let lowered = byte.to_ascii_lowercase();
+            if let Some(buffer) = owned.as_mut() {
+                buffer.push(char::from(lowered));
+            } else if lowered != byte {
+                let mut buffer = self.text[start_index..index].to_owned();
+                buffer.push(char::from(lowered));
+                owned = Some(buffer);
+            }
+            index += 1;
+        }
+
+        let start = start?;
+        if self.offset <= start {
+            self.offset = self.text.len();
+        }
+
+        Some(match owned {
+            Some(token) => Cow::Owned(token),
+            None => Cow::Borrowed(&self.text[start..end]),
+        })
+    }
+
+    fn next_unicode(&mut self) -> Option<Cow<'a, str>> {
         let mut start = None;
         let mut end = self.text.len();
         let mut owned = None::<String>;
@@ -520,6 +566,18 @@ impl<'a> Iterator for Tokenizer<'a> {
             Some(token) => Cow::Owned(token),
             None => Cow::Borrowed(&self.text[start..end]),
         })
+    }
+}
+
+impl<'a> Iterator for Tokenizer<'a> {
+    type Item = Cow<'a, str>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ascii {
+            self.next_ascii()
+        } else {
+            self.next_unicode()
+        }
     }
 }
 

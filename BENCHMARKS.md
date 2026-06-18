@@ -825,6 +825,22 @@ read-path sanity:
 | `graph_text_bm25_mixed/registered_query_update_r60w40/n1000_k10` | 3.5261 ms | 3.3854 ms | -3.7434% | Text-index update maintenance now collects touched labels/properties in inline borrowed storage and mutates the matched entry directly instead of materializing a `BTreeSet` of owned candidate keys and re-looking up each key. Criterion reports p=0.00. |
 | `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.6797 ms | 1.6825 ms | noise | The write-only companion stayed statistically neutral (`p=0.66`), so the accepted win is the mixed read/write cycle's maintenance overhead reduction. Indexed-read sanity after the change: `prebuilt_topic_query/n1000_k10` 29.815 µs. |
 
+PR-local BM25 ASCII tokenizer A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query --save-baseline bm25-tokenizer-ascii-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query --save-baseline bm25-tokenizer-ascii-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_exact/topic_query --baseline bm25-tokenizer-ascii-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query --baseline bm25-tokenizer-ascii-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_exact/topic_query/n1000_k10` | 252.62 µs | 177.61 µs | -29.433% | All-ASCII documents now take a byte-scanning tokenizer path while preserving the original Unicode lowercase path for mixed input. Criterion reports p=0.00. |
+| `graph_text_bm25_exact/topic_query_checked_with_deadline/n1000_k10` | 252.06 µs | 178.23 µs | -29.765% | The cancellation-aware exact oracle keeps the same improvement because tokenization dominates the 1k ASCII fixture scan. Criterion reports p=0.00. |
+| `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 28.116 µs | 27.967 µs | noise | Guard row for the maintained read path; Criterion reported -0.5120%, inside the noise threshold. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_sorted/n1000_k10` | 31.103 µs | 29.155 µs | -5.1952% | Candidate-scoped indexed BM25 reuses the same query tokenizer path, and the sorted full-cover row improves without changing scoring order. Criterion reports p=0.00. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 32.414 µs | 30.362 µs | -5.6244% | Reverse candidate input stays on the existing dedup path while benefiting from the cheaper ASCII query tokenization. Criterion reports p=0.00. |
+
 PR-local quick JSON baseline:
 
 | Bench | 1k | Notes |
