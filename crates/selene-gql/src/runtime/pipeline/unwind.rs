@@ -1,4 +1,5 @@
 use selene_core::{DbString, Value};
+use smallvec::SmallVec;
 
 use crate::{
     AnalyzedType, BindingTableColumn, GqlType, ProjectExpr, RowExpansionPosition,
@@ -35,14 +36,15 @@ pub(super) fn execute(
         ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
         match evaluator::evaluate(&source.expr, &row, &input_schema, ctx)? {
             Value::List(values) => {
+                rows.reserve(values.len());
                 for (index, value) in values.into_iter().enumerate() {
                     ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
-                    let mut output = row.values().to_vec();
+                    let mut output = row.cloned_values();
                     output.push(value);
                     if let Some(position) = &position {
                         output.push(position_value(position.kind, index, span)?);
                     }
-                    rows.push(Binding::new(output));
+                    rows.push(Binding::from_parts(output, SmallVec::new()));
                 }
             }
             Value::Null => {}
