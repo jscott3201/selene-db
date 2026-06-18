@@ -39,6 +39,10 @@ const PARALLELISM_BENCH_MODES: &[(&str, Parallelism)] = &[
     ("sequential", Parallelism::Sequential),
     ("auto", Parallelism::Auto),
 ];
+const PAGERANK_ORIENTATION_BENCHES: &[(&str, PageRankOrientation)] = &[
+    ("reverse", PageRankOrientation::Reverse),
+    ("undirected", PageRankOrientation::Undirected),
+];
 
 fn bench_pagerank(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/pagerank");
@@ -56,6 +60,30 @@ fn bench_pagerank(c: &mut Criterion) {
             group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {
                 b.iter(|| black_box(pagerank(&state.projection, config.clone())));
             });
+        }
+    }
+    group.finish();
+}
+
+fn bench_pagerank_orientation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/pagerank_orientation");
+    for &scale in profile_scales() {
+        let state = BenchState::from_dag(scale, 82_205 + scale as u64);
+        for &(orientation_name, orientation) in PAGERANK_ORIENTATION_BENCHES {
+            let config = PageRankConfig {
+                damping: 0.85,
+                max_iter: 100,
+                tolerance: 1e-6,
+                parallelism: Parallelism::Sequential,
+                orientation,
+                personalization: None,
+            };
+            group.bench_function(
+                BenchmarkId::new(orientation_name, scale_label(scale)),
+                |b| {
+                    b.iter(|| black_box(pagerank(&state.projection, config.clone())));
+                },
+            );
         }
     }
     group.finish();
@@ -368,6 +396,7 @@ criterion_group! {
     name = benches;
     config = criterion_config();
     targets = bench_pagerank,
+        bench_pagerank_orientation,
         bench_betweenness,
         bench_triangle_count,
         bench_apsp,
