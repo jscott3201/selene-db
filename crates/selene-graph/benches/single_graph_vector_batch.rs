@@ -48,6 +48,29 @@ pub(crate) fn bench_exact_vector_batch_scan(c: &mut Criterion) {
             );
             group.bench_with_input(
                 BenchmarkId::new(
+                    format!("{index_name}_cosine_q8_dim128_k10"),
+                    fixture.scale(),
+                ),
+                &fixture,
+                |b, fixture| {
+                    b.iter(|| {
+                        let hits = fixture
+                            .graph()
+                            .exact_vector_search_nodes_batch_checked(
+                                fixture.label(),
+                                fixture.embedding_key(),
+                                fixture.queries(),
+                                VectorMetric::Cosine,
+                                VECTOR_K,
+                                CancellationChecker::disabled(),
+                            )
+                            .expect("fixture vectors have matching dimensions");
+                        std::hint::black_box(hits.iter().map(Vec::len).sum::<usize>());
+                    });
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new(
                     format!("{index_name}_squared_euclidean_q8_dim128_k10_checked_with_deadline"),
                     fixture.scale(),
                 ),
