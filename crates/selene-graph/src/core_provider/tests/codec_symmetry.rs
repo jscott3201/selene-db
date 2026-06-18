@@ -1,14 +1,14 @@
 //! Cross-decoder symmetry coverage (GRAPH-20, GRAPH-21).
 //!
-//! The positional `CORE/NODE` and `CORE/EDGE` decoders both call
-//! `validate_ids_unique` after the rkyv bytecheck; the `validate_sorted_unique`
-//! and bytecheck guards repeat across `CORE/META` and `CORE/GTYP`. The
-//! `validate_ids_unique` helper is unit-tested in `sections::codec`, but the
-//! *wiring* — that `decode_nodes`/`decode_edges` actually invoke it — and the
-//! bytecheck rejection across the structurally identical edge/meta/gtyp decoders
-//! were only covered for `decode_nodes`. A dropped `validate_ids_unique` call,
-//! or a decoder that skipped bytecheck, would corrupt recovery silently; these
-//! make every decoder's guard observable.
+//! The positional `CORE/NODE` and `CORE/EDGE` decoders both validate duplicate
+//! real ids after the rkyv bytecheck; the `validate_sorted_unique` and bytecheck
+//! guards repeat across `CORE/META` and `CORE/GTYP`. The per-id helper is
+//! unit-tested in `sections::codec`, but the *wiring* — that
+//! `decode_nodes`/`decode_edges` actually invoke it — and the bytecheck
+//! rejection across the structurally identical edge/meta/gtyp decoders were only
+//! covered for `decode_nodes`. A decoder that skipped duplicate-id validation or
+//! bytecheck would corrupt recovery silently; these make every decoder's guard
+//! observable.
 
 use selene_core::PropertyValueType;
 
@@ -27,8 +27,8 @@ fn decode_nodes_rejects_duplicate_committed_id() {
     // serialize: two alive rows whose `row_to_id` column carries the SAME external
     // id (5). This is constructible only by a raw column build (the funnel never
     // reuses an id), and the rkyv bytecheck passes (5 is a valid NodeId), so ONLY
-    // the `validate_ids_unique` call WIRED into `decode_nodes` can reject it. A
-    // dropped call would silently accept the section and collide two rows onto one
+    // the duplicate-id guard WIRED into `decode_nodes` can reject it. A dropped
+    // guard would silently accept the section and collide two rows onto one
     // id during recovery. Going through the real encode + decode (not byte
     // surgery) keeps the test robust against rkyv layout changes.
     let mut graph = SeleneGraph::new(GraphId::new(2_000));
@@ -41,11 +41,10 @@ fn decode_nodes_rejects_duplicate_committed_id() {
     graph.node_store.alive_mut().insert(1);
 
     let bytes = encode_nodes(&graph).unwrap();
-    let err = decode_nodes(&bytes)
-        .expect_err("decode_nodes must reject a duplicate committed id via validate_ids_unique");
+    let err = decode_nodes(&bytes).expect_err("decode_nodes must reject a duplicate committed id");
     assert!(
         matches!(&err, ProviderError::InvalidPayload { reason } if reason.contains("unique non-tombstone")),
-        "expected validate_ids_unique rejection, got {err:?}",
+        "expected duplicate-id rejection, got {err:?}",
     );
 }
 
@@ -53,7 +52,7 @@ fn decode_nodes_rejects_duplicate_committed_id() {
 fn decode_edges_rejects_duplicate_committed_id() {
     // Edge-side sibling: two alive edge rows whose `row_to_id` column shares one
     // EdgeId (5). Faithfully encoded by `encode_edges`, bytecheck-valid, so only
-    // the `validate_ids_unique` call wired into `decode_edges` rejects it.
+    // the duplicate-id guard wired into `decode_edges` rejects it.
     let mut graph = SeleneGraph::new(GraphId::new(2_001));
     let label = db_string("dup.edge").unwrap();
     for _ in 0..2 {
@@ -67,11 +66,10 @@ fn decode_edges_rejects_duplicate_committed_id() {
     graph.edge_store.alive_mut().insert(1);
 
     let bytes = encode_edges(&graph).unwrap();
-    let err = decode_edges(&bytes)
-        .expect_err("decode_edges must reject a duplicate committed id via validate_ids_unique");
+    let err = decode_edges(&bytes).expect_err("decode_edges must reject a duplicate committed id");
     assert!(
         matches!(&err, ProviderError::InvalidPayload { reason } if reason.contains("unique non-tombstone")),
-        "expected validate_ids_unique rejection, got {err:?}",
+        "expected duplicate-id rejection, got {err:?}",
     );
 }
 

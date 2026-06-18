@@ -1,5 +1,6 @@
 //! Metadata, node, and edge snapshot sections for the core graph provider.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use rkyv::{
@@ -18,7 +19,7 @@ use crate::{
 };
 
 use super::codec::{
-    decode_properties_blob, decode_rkyv, encode_properties_blob, encode_rkyv, validate_ids_unique,
+    decode_properties_blob, decode_rkyv, encode_properties_blob, encode_rkyv, validate_id_unique,
 };
 
 struct ArcBytes;
@@ -253,10 +254,13 @@ pub(in crate::core_provider) fn decode_nodes(
     // (a 4b-compacted snapshot may store ids in any row order) and multiple
     // aborted-tx hole rows legitimately share `NodeId::TOMBSTONE`. Validate that
     // every *real* (non-tombstone) id is unique; row order is positional.
-    validate_ids_unique(&rows, NodeId::TOMBSTONE, "CORE/NODE")?;
-    rows.into_iter()
-        .map(|(id, row)| row.into_runtime("CORE/NODE").map(|row| (id, row)))
-        .collect()
+    let mut seen = HashSet::new();
+    let mut runtime_rows = Vec::with_capacity(rows.len());
+    for (id, row) in rows {
+        validate_id_unique(&mut seen, id, NodeId::TOMBSTONE, "CORE/NODE")?;
+        runtime_rows.push((id, row.into_runtime("CORE/NODE")?));
+    }
+    Ok(runtime_rows)
 }
 
 pub(in crate::core_provider) fn encode_edges(
@@ -314,8 +318,11 @@ pub(in crate::core_provider) fn decode_edges(
     bytes: &[u8],
 ) -> Result<Vec<(EdgeId, EdgeRow)>, crate::ProviderError> {
     let rows: Vec<(EdgeId, EdgeArchiveRow)> = decode_rkyv(bytes, "CORE/EDGE")?;
-    validate_ids_unique(&rows, EdgeId::TOMBSTONE, "CORE/EDGE")?;
-    rows.into_iter()
-        .map(|(id, row)| row.into_runtime("CORE/EDGE").map(|row| (id, row)))
-        .collect()
+    let mut seen = HashSet::new();
+    let mut runtime_rows = Vec::with_capacity(rows.len());
+    for (id, row) in rows {
+        validate_id_unique(&mut seen, id, EdgeId::TOMBSTONE, "CORE/EDGE")?;
+        runtime_rows.push((id, row.into_runtime("CORE/EDGE")?));
+    }
+    Ok(runtime_rows)
 }
