@@ -842,6 +842,17 @@ focused checked-row rerun:
 | `graph_text_bm25_indexed/prebuilt_topic_query_candidates_reverse/n1000_k10` | 31.805 µs | 30.648 µs | -5.9149% | Reverse candidate input benefits from avoiding heap growth in the delegated scorer; Criterion reports p=0.05. |
 | `graph_text_bm25_indexed/registered_topic_query/n1000_k10` | 29.520 µs | 28.835 µs | neutral | Registered-index read path stayed statistically flat. |
 
+PR-local partial BM25 candidate cursor A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query_candidates_partial --save-baseline bm25-partial-candidates-pre`;
+`scripts/run-benches.sh --profile quick --bench text_search_bm25 --filter graph_text_bm25_indexed/prebuilt_topic_query_candidates_partial --baseline bm25-partial-candidates-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_partial_sorted/n1000_k10` | 7.6817 µs | 5.7940 µs | -25.063% | Partial sorted candidates now advance monotonic cursors through each query-term postings list instead of binary-searching every postings list per candidate; Criterion reports p=0.00. |
+| `graph_text_bm25_indexed/prebuilt_topic_query_candidates_partial_reverse/n1000_k10` | 9.7642 µs | 9.9943 µs | neutral | Reverse partial candidates stay on the hash-dedup path and were not the target; the clean rerun stayed within Criterion's noise threshold. |
+
 PR-local text-index update-maintenance candidate-key A/B:
 
 Commands:

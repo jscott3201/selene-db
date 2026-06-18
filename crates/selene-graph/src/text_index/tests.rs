@@ -596,6 +596,12 @@ fn text_index_candidate_search_dedups_and_ignores_unindexed_nodes() {
 
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].node_id, indexed);
+
+    let sorted_hits =
+        index.search_candidates("needle", &[indexed, non_string, NodeId::new(999_999)], 10);
+
+    assert_eq!(sorted_hits.len(), 1);
+    assert_eq!(sorted_hits[0].node_id, indexed);
 }
 
 #[test]
