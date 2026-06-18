@@ -25,7 +25,7 @@ pub(super) fn execute_read_only(
     let (input_schema, input_rows) = table.into_parts();
     let output_schema = output_schema(&input_schema, call);
     let target_schema = target_schema(call, &input_schema)?;
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(input_rows.len());
     let mut rows_since_check = 0;
 
     for row in input_rows {
