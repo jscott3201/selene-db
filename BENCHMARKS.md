@@ -919,8 +919,8 @@ PR-local quick JSON baseline:
 |---|---:|---|
 | `graph_json_contains_scan/nested_metadata_k10/1000` | 21.731 µs (quick) | Exact scan over 1,000 JSON metadata payloads with one-quarter matching nested current episodic facts, skipping non-JSON properties. This is the oracle for future maintained JSON/path indexes and JSON/vector/text candidate composition. |
 | `graph_json_path_exists_scan/nested_score_path_k10/1000` | 17.559 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory","score"]`, skipping non-JSON properties. This is the oracle for path-existence candidate production before maintained JSON/path indexes. |
-| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.1287 µs (quick) | Candidate-scoped path-existence over 1,000 reverse-sorted node ids. PR-local canonical-candidate guard: 1.1235 µs → 1.1287 µs, preserving the existing sort/dedup path for non-canonical candidates. |
-| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 727.37 ns (quick) | Candidate-scoped path-existence over 1,000 already-canonical node ids. PR-local canonical-candidate fast path A/B: 972.19 ns → 727.37 ns by skipping redundant sort/dedup work. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0303 µs (quick) | Candidate-scoped path-existence over 1,000 reverse-sorted node ids. Latest PR-local lazy hit-reserve A/B: 1.0426 µs → 1.0303 µs, within noise but not regressing the sort/dedup path. Earlier canonical-candidate guard: 1.1235 µs → 1.1287 µs. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 638.84 ns (quick) | Candidate-scoped path-existence over 1,000 already-canonical node ids. Latest PR-local lazy hit-reserve A/B: 649.16 ns → 638.84 ns by reserving result storage on the first actual hit. Earlier canonical-candidate fast path: 972.19 ns → 727.37 ns by skipping redundant sort/dedup work. |
 | `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.263 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory"]`, applying recursive containment to the selected subvalue. This is the oracle for path-scoped JSON containment before maintained JSON/path indexes. |
 | `graph_json_path_value_scan/nested_score_path_k10/1000` | 22.855 µs (quick) | Exact scan over 1,000 JSON metadata payloads for selector path `["memory","score"]`, returning node ids plus selected JSON values. This measures the candidate-plus-value path before maintained JSON/path indexes. |
 
@@ -977,6 +977,17 @@ Commands:
 |---|---:|---:|---:|---|
 | `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 726.11 ns | 650.17 ns | -10.271% | Candidate-scoped JSON search now borrows already-canonical candidate slices instead of cloning them into a temporary `Vec`; Criterion reports p=0.00. |
 | `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0641 µs | 1.0960 µs | neutral | Unsorted inputs still take the owned sort/dedup path and stayed within noise (`p=0.20`). |
+
+PR-local JSON candidate hit-reserve A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_candidates --save-baseline json-candidate-hit-prealloc-before`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_candidates --baseline json-candidate-hit-prealloc-before`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 649.16 ns | 638.84 ns | -1.7684% | Candidate-scoped JSON filtering now reserves bounded result storage on the first actual hit, avoiding eager allocation for zero-hit queries while removing repeated growth for common top-k hits. Criterion reports p=0.00. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0426 µs | 1.0303 µs | neutral | Reverse candidates still take the owned sort/dedup path; Criterion reports the median lower but within the noise threshold. |
 
 PR-local B24 batch exact-vector scan Rayon A/B:
 
