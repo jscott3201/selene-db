@@ -31,7 +31,10 @@ mod builder;
 mod candidate;
 #[path = "text_index/maintenance.rs"]
 mod maintenance;
+#[path = "text_index/postings.rs"]
+mod postings;
 use builder::TextIndexBuilder;
+use postings::{remove_posting, upsert_posting};
 
 type QueryDocumentFrequencies = SmallVec<[u32; 4]>;
 type QueryPostings<'a> = SmallVec<[Option<&'a [TextPosting]>; 4]>;
@@ -332,14 +335,27 @@ impl TextIndex {
     }
 
     pub(crate) fn insert_document(&mut self, row: u32, node_id: NodeId, text: &str) {
-        self.remove_document(row, node_id);
         let (counts, len) = count_document_terms(text, |token| {
             intern_existing_posting_term(&self.postings, token)
         });
         if len == 0 {
+            self.remove_document(row, node_id);
             return;
         }
+        if self.document_lengths.contains_key(&node_id) {
+            self.replace_counted_document(row, node_id, counts, len);
+        } else {
+            self.insert_counted_document(row, node_id, counts, len);
+        }
+    }
 
+    fn insert_counted_document(
+        &mut self,
+        row: u32,
+        node_id: NodeId,
+        counts: DocumentTermCounts,
+        len: u32,
+    ) {
         self.rows.insert(row);
         self.document_lengths.insert(node_id, len);
         self.total_document_len = self.total_document_len.saturating_add(u64::from(len));
@@ -370,6 +386,51 @@ impl TextIndex {
         self.document_terms.insert(node_id, Arc::from(terms));
     }
 
+    fn replace_counted_document(
+        &mut self,
+        row: u32,
+        node_id: NodeId,
+        counts: DocumentTermCounts,
+        len: u32,
+    ) {
+        let Some(old_terms) = self.document_terms.remove(&node_id) else {
+            self.remove_document(row, node_id);
+            self.insert_counted_document(row, node_id, counts, len);
+            return;
+        };
+
+        self.rows.insert(row);
+        let old_len = self.document_lengths.insert(node_id, len).unwrap_or(0);
+        self.total_document_len = self
+            .total_document_len
+            .saturating_sub(u64::from(old_len))
+            .saturating_add(u64::from(len));
+
+        let mut terms = Vec::with_capacity(counts.len());
+        counts.for_each(|term, term_count| {
+            upsert_posting(
+                &mut self.postings,
+                &mut self.posting_count,
+                &term,
+                node_id,
+                term_count,
+            );
+            terms.push(term);
+        });
+        for old_term in old_terms.iter() {
+            if terms.iter().any(|term| term.as_ref() == old_term.as_ref()) {
+                continue;
+            }
+            remove_posting(
+                &mut self.postings,
+                &mut self.posting_count,
+                old_term,
+                node_id,
+            );
+        }
+        self.document_terms.insert(node_id, Arc::from(terms));
+    }
+
     pub(crate) fn remove_document(&mut self, row: u32, node_id: NodeId) {
         self.rows.remove(row);
         let Some(length) = self.document_lengths.remove(&node_id) else {
@@ -380,21 +441,7 @@ impl TextIndex {
             return;
         };
         for term in terms.iter() {
-            let remove_term = if let Some(postings) = self.postings.get_mut(term.as_ref()) {
-                let postings = Arc::make_mut(postings);
-                if let Ok(index) =
-                    postings.binary_search_by_key(&node_id, |posting| posting.node_id)
-                {
-                    postings.remove(index);
-                    self.posting_count = self.posting_count.saturating_sub(1);
-                }
-                postings.is_empty()
-            } else {
-                false
-            };
-            if remove_term {
-                self.postings.remove(term.as_ref());
-            }
+            remove_posting(&mut self.postings, &mut self.posting_count, term, node_id);
         }
     }
 

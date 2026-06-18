@@ -528,6 +528,17 @@ Post-change guard medians:
 | `graph_text_bm25_indexed/transient_build_query/n1000_k10` | 387.61 µs |
 | `graph_text_bm25_indexed/prebuilt_topic_query/n1000_k10` | 27.896 µs |
 
+PR-local BM25 differential document replacement A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench text_search_bm25 --filter graph_text_bm25_mixed/write_registered_update_w40 --save-baseline text_index_replace_s30_pre`
+and
+`scripts/run-benches.sh --profile quick --sample-size 30 --measurement-time 2 --bench text_search_bm25 --filter graph_text_bm25_mixed/write_registered_update_w40 --baseline text_index_replace_s30_pre`.
+
+| Bench | Before | After | Signal |
+|---|---:|---:|---|
+| `graph_text_bm25_mixed/write_registered_update_w40/n1000` | 1.6767 ms | 1.6251 ms | Maintained `TextIndex` document replacement now keeps postings for terms that survive an update instead of removing and reinserting the full document term set. Criterion reported -2.9066% (`p=0.00`). |
+
 PR-local quick BM25 full-cover candidate A/B:
 
 Commands:

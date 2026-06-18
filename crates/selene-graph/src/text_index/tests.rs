@@ -280,6 +280,60 @@ fn text_index_interns_document_terms_with_posting_keys() {
 }
 
 #[test]
+fn text_index_replacement_updates_shared_terms_in_place() {
+    let graph = SharedGraph::new(GraphId::new(433_904));
+    let doc = db_string("TextReplacementDoc");
+    let body = db_string("body");
+    let target;
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        target = mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent graph graph stale"))),
+            )
+            .unwrap();
+        mutator
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&body, Value::String(db_string("agent memory current"))),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let snapshot = graph.read();
+    let row = snapshot
+        .row_for_node_id(target)
+        .expect("target row remains live")
+        .get();
+    let mut index = snapshot.build_text_index(&doc, &body).unwrap();
+    index.insert_document(row, target, "agent graph current current");
+
+    assert_eq!(index.document_count(), 2);
+    assert_eq!(index.stats().total_document_len, 7);
+    assert_eq!(index.search("stale", 10), Vec::new());
+    assert_eq!(
+        index
+            .search("graph", 10)
+            .iter()
+            .map(|hit| hit.node_id)
+            .collect::<Vec<_>>(),
+        vec![target]
+    );
+    let current_postings = index
+        .postings
+        .get("current")
+        .expect("current postings exist");
+    let target_posting = current_postings
+        .iter()
+        .find(|posting| posting.node_id == target)
+        .expect("target has current posting");
+    assert_eq!(target_posting.term_count, 2);
+}
+
+#[test]
 fn text_index_counts_terms_after_inline_accumulator_spill() {
     let graph = SharedGraph::new(GraphId::new(433_903));
     let doc = db_string("TextSpilledTermsDoc");
