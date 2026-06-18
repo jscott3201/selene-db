@@ -2499,7 +2499,7 @@ topic precision as `precbp{basis points}`.
 | `algo/scc_count` | 10k | 138.18 µs | n/a | Sequential-only; count-only path shares the dense Tarjan traversal state. |
 | `algo/scc_count` | 50k | 730.4 µs | n/a | |
 | `algo/scc_count` | 100k | 1.468 ms | n/a | |
-| `algo/articulation_points` | 1k | 59.87 µs | n/a | Sequential-only; shared lowlink pass now builds undirected neighbor caches from dense projection rows. |
+| `algo/articulation_points` | 1k | 43.99 µs | n/a | Sequential-only; shared lowlink pass now builds undirected neighbor caches from dense projection rows and indexes the cache by dense row. |
 | `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
@@ -2513,6 +2513,16 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 10k | 1.652 ms | n/a | Sequential-only; community degree sums now use dense vector storage. |
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
+
+PR-local lowlink dense-indexed cache A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter articulation_points --save-baseline lowlink-cache-vector-before`;
+rerun with `--baseline lowlink-cache-vector-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/articulation_points/1k` | 56.921 µs | 43.990 µs | The shared articulation/bridges lowlink pass now stores per-DFS neighbor caches in a dense `Vec<Option<Vec<u32>>>` instead of an integer hash map. The quick planted-community row improves 22.79% (`p=0.00`). |
 
 PR-local lowlink dense-neighbor cache A/B:
 
