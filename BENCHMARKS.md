@@ -906,6 +906,25 @@ Command: `scripts/run-benches.sh --profile full --bench single_graph --filter gr
 | `graph_json_path_value_scan/nested_score_path_k10/100000` | 2.2521 ms | 1.9638 ms | -12.5% | 100k unchecked row still improves, though less dramatically than 50k on this run. |
 | `graph_json_path_value_scan/nested_score_path_k10_checked_with_deadline/100000` | 2.5734 ms | 1.9746 ms | -29.3% | 100k deadline row drops back near the unchecked row once selected-value clones move behind top-k admission. |
 
+PR-local JSON top-k heap preallocation A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json --save-baseline json_topk_prealloc_pre`;
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json --baseline json_topk_prealloc_pre`;
+focused path-exists rerun:
+`scripts/run-benches.sh --profile quick --bench single_graph --filter graph_json_path_exists_scan/nested_score_path_k10/1000 --baseline json_topk_prealloc_pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_json_contains_scan/nested_metadata_k10/1000` | 21.434 µs | 21.136 µs | -3.2938% | JSON top-k helpers now reserve the known `k` slots up front with `BinaryHeap::with_capacity(k)`; Criterion reports p=0.00. |
+| `graph_json_contains_scan/nested_metadata_k10_checked_with_deadline/1000` | 23.200 µs | 22.541 µs | -3.2981% | Deadline-bearing containment row sees the same allocation shape; Criterion reports p=0.01. |
+| `graph_json_path_exists_scan/nested_score_path_k10/1000` | 18.090 µs | 17.557 µs | -4.7722% | Focused rerun after a noisy broad-run sample; Criterion reports p=0.00. |
+| `graph_json_path_exists_scan/nested_score_path_k10_checked_with_deadline/1000` | 18.799 µs | 18.245 µs | neutral | Checked path-exists row stayed statistically flat in the broad run. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 755.19 ns | 779.27 ns | neutral | Candidate-scoped sorted guard stayed statistically flat. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0706 µs | 1.1128 µs | neutral | Candidate-scoped reverse guard stayed statistically flat. |
+| `graph_json_path_contains_scan/nested_memory_path_k10/1000` | 19.960 µs | 20.605 µs | neutral | Path-containment row stayed statistically flat. |
+| `graph_json_path_value_scan/nested_score_path_k10/1000` | 17.859 µs | 18.801 µs | neutral | Path-value row stayed statistically flat. |
+
 PR-local B24 batch exact-vector scan Rayon A/B:
 
 Commands:

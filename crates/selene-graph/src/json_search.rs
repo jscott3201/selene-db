@@ -558,7 +558,7 @@ impl JsonContainmentTopK {
     fn new(k: usize) -> Self {
         Self {
             k,
-            nodes: BinaryHeap::new(),
+            nodes: BinaryHeap::with_capacity(k),
         }
     }
 
@@ -637,7 +637,7 @@ impl JsonPathValueTopK {
     fn new(k: usize) -> Self {
         Self {
             k,
-            nodes: BinaryHeap::new(),
+            nodes: BinaryHeap::with_capacity(k),
         }
     }
 
