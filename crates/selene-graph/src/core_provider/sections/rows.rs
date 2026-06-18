@@ -115,11 +115,16 @@ struct NodeArchiveRow {
 }
 
 impl NodeArchiveRow {
-    fn from_runtime(row: NodeRow, section: &'static str) -> Result<Self, crate::ProviderError> {
+    fn from_parts(
+        labels: LabelSet,
+        properties: &PropertyMap,
+        alive: bool,
+        section: &'static str,
+    ) -> Result<Self, crate::ProviderError> {
         Ok(Self {
-            labels: row.labels,
-            properties_blob: encode_properties_blob(&row.properties, section)?,
-            alive: row.alive,
+            labels,
+            properties_blob: encode_properties_blob(properties, section)?,
+            alive,
         })
     }
 
@@ -143,13 +148,20 @@ struct EdgeArchiveRow {
 }
 
 impl EdgeArchiveRow {
-    fn from_runtime(row: EdgeRow, section: &'static str) -> Result<Self, crate::ProviderError> {
+    fn from_parts(
+        label: DbString,
+        source: NodeId,
+        target: NodeId,
+        properties: &PropertyMap,
+        alive: bool,
+        section: &'static str,
+    ) -> Result<Self, crate::ProviderError> {
         Ok(Self {
-            label: row.label,
-            source: row.source,
-            target: row.target,
-            properties_blob: encode_properties_blob(&row.properties, section)?,
-            alive: row.alive,
+            label,
+            source,
+            target,
+            properties_blob: encode_properties_blob(properties, section)?,
+            alive,
         })
     }
 
@@ -204,11 +216,6 @@ pub(in crate::core_provider) fn encode_nodes(
         let properties = graph.node_store.properties.get(row_index).ok_or_else(|| {
             inconsistent(format!("node properties column missing row {row_index}"))
         })?;
-        let runtime = NodeRow {
-            labels: labels.clone(),
-            properties: properties.clone(),
-            alive: graph.node_store.is_alive(row),
-        };
         // BRIEF-Item-4a STEP 9: persist the EXPLICIT external id from the
         // row_to_id column rather than synthesizing `row + 1`. Committed rows
         // (alive or deleted-but-kept under Option B) carry their real `NodeId`;
@@ -225,7 +232,15 @@ pub(in crate::core_provider) fn encode_nodes(
             .ok_or_else(|| {
                 inconsistent(format!("node row_to_id column missing row {row_index}"))
             })?;
-        rows.push((id, NodeArchiveRow::from_runtime(runtime, "CORE/NODE")?));
+        rows.push((
+            id,
+            NodeArchiveRow::from_parts(
+                labels.clone(),
+                properties,
+                graph.node_store.is_alive(row),
+                "CORE/NODE",
+            )?,
+        ));
     }
     encode_rkyv(&rows, "CORE/NODE")
 }
@@ -269,13 +284,6 @@ pub(in crate::core_provider) fn encode_edges(
         let properties = graph.edge_store.properties.get(row_index).ok_or_else(|| {
             inconsistent(format!("edge properties column missing row {row_index}"))
         })?;
-        let runtime = EdgeRow {
-            label: label.clone(),
-            source: *source,
-            target: *target,
-            properties: properties.clone(),
-            alive: graph.edge_store.is_alive(row),
-        };
         // BRIEF-Item-4a STEP 9: persist the explicit external id from the
         // row_to_id column (real `EdgeId`, or `EdgeId::TOMBSTONE` for a
         // never-committed hole row). See `encode_nodes` for the rationale.
@@ -287,7 +295,17 @@ pub(in crate::core_provider) fn encode_edges(
             .ok_or_else(|| {
                 inconsistent(format!("edge row_to_id column missing row {row_index}"))
             })?;
-        rows.push((id, EdgeArchiveRow::from_runtime(runtime, "CORE/EDGE")?));
+        rows.push((
+            id,
+            EdgeArchiveRow::from_parts(
+                label.clone(),
+                *source,
+                *target,
+                properties,
+                graph.edge_store.is_alive(row),
+                "CORE/EDGE",
+            )?,
+        ));
     }
     encode_rkyv(&rows, "CORE/EDGE")
 }
