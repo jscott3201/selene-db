@@ -136,7 +136,7 @@ impl SnapshotReader {
 
     /// Recompute and validate the snapshot body hash.
     ///
-    /// Streams payload bytes through the hasher in 8 KiB chunks rather than
+    /// Streams payload bytes through the hasher in 64 KiB chunks rather than
     /// materializing every section in memory, so peak memory stays bounded
     /// regardless of total snapshot size.
     ///
