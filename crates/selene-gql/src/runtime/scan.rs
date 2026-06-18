@@ -65,9 +65,10 @@ fn collect_scan_entities(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     let candidates = candidate_rows(scan, ctx)?;
+    let label_prechecked = label_matched_by_access(scan);
     let mut rows = Vec::with_capacity(candidates.len());
     for row in candidates {
-        if !label_matches_scan(scan, row, ctx) {
+        if !label_prechecked && !label_matches_scan(scan, row, ctx) {
             continue;
         }
         let Some(entity) = entity_value(scan.kind, row, ctx) else {
@@ -81,6 +82,11 @@ fn collect_scan_entities(
         }
     }
     Ok(rows)
+}
+
+fn label_matched_by_access(scan: &NodeOrEdgeScan) -> bool {
+    matches!(scan.access, ScanAccess::LabelIndex { .. })
+        && single_label(&scan.label_predicate).is_some()
 }
 
 pub(super) fn candidate_rows(
