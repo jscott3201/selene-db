@@ -32,7 +32,7 @@ use selene_core::{CancellationChecker, NodeId};
 
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
-use crate::structural::{RowIndex, SENTINEL};
+use crate::structural::SENTINEL;
 
 type LowlinkOutput = (Vec<NodeId>, Vec<(NodeId, NodeId)>);
 
@@ -97,7 +97,7 @@ fn lowlink_pass_with_checker(
     for d in 0..idx.len() as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
         if state.disc[d as usize] == SENTINEL {
-            biconn_dfs(&mut state, d, proj, idx, checker)?;
+            biconn_dfs(&mut state, d, proj, checker)?;
         }
     }
 
@@ -152,7 +152,6 @@ fn biconn_dfs(
     state: &mut BiconnState,
     start: u32,
     proj: &GraphProjection,
-    idx: &RowIndex,
     checker: CancellationChecker<'_>,
 ) -> Result<(), AlgorithmAborted> {
     let mut call_stack: Vec<(u32, usize, u32, bool)> = Vec::new();
@@ -175,14 +174,11 @@ fn biconn_dfs(
             // Build the undirected neighbor view: out + in, preserving
             // multiplicity, then sorted ASC by dense index for E03/E12
             // determinism. Neighbors outside the projection scope are dropped.
-            let nid = idx.node_id_of(u);
-            let mut v: Vec<u32> = Vec::new();
-            for nb in proj.out_neighbors(nid) {
-                v.push(nb.dense);
-            }
-            for nb in proj.in_neighbors(nid) {
-                v.push(nb.dense);
-            }
+            let out_neighbors = proj.out_neighbors_dense(u);
+            let in_neighbors = proj.in_neighbors_dense(u);
+            let mut v: Vec<u32> = Vec::with_capacity(out_neighbors.len() + in_neighbors.len());
+            v.extend(out_neighbors.iter().map(|nb| nb.dense));
+            v.extend(in_neighbors.iter().map(|nb| nb.dense));
             v.sort_unstable();
             v
         });

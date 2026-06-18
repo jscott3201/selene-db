@@ -12,8 +12,9 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
     ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, PageRankOrientation,
-    Parallelism, TriangleCountConfig, apsp, betweenness, dijkstra, label_propagation, louvain,
-    pagerank, scc, scc_count, topological_sort, triangle_count, wcc, wcc_count,
+    Parallelism, TriangleCountConfig, apsp, articulation_points, betweenness, dijkstra,
+    label_propagation, louvain, pagerank, scc, scc_count, topological_sort, triangle_count, wcc,
+    wcc_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -195,6 +196,17 @@ fn bench_scc_count(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_articulation_points(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/articulation_points");
+    for &scale in profile_scales() {
+        let state = BenchState::from_planted_community(scale, 82_249 + scale as u64);
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(articulation_points(&state.projection)));
+        });
+    }
+    group.finish();
+}
+
 fn bench_label_propagation(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/label_propagation");
     for &scale in profile_scales() {
@@ -365,6 +377,7 @@ criterion_group! {
         bench_wcc_count,
         bench_scc,
         bench_scc_count,
+        bench_articulation_points,
         bench_label_propagation,
         bench_louvain
 }

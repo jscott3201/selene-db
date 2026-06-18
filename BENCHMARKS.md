@@ -2463,8 +2463,9 @@ PR-local B18/B20 same-session A/B (`scripts/run-benches.sh --profile full
 Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
 `BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp and
 projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
-triangle_count, WCC/SCC, label_propagation, and louvain; `dag_graph(N)` (≈3N
-edges) for dijkstra and topological_sort. `vector_graph_retrieval` is the
+triangle_count, WCC/SCC, articulation_points, label_propagation, and louvain;
+`dag_graph(N)` (≈3N edges) for dijkstra and topological_sort.
+`vector_graph_retrieval` is the
 first native graph+vector agent-memory research fixture: it stores topic-summary
 vectors plus support, temporal-validity, and supersession edges to evidence
 nodes, then compares vector-only ANN against PageRank rerank, graph expansion,
@@ -2498,6 +2499,7 @@ topic precision as `precbp{basis points}`.
 | `algo/scc_count` | 10k | 138.18 µs | n/a | Sequential-only; count-only path shares the dense Tarjan traversal state. |
 | `algo/scc_count` | 50k | 730.4 µs | n/a | |
 | `algo/scc_count` | 100k | 1.468 ms | n/a | |
+| `algo/articulation_points` | 1k | 59.87 µs | n/a | Sequential-only; shared lowlink pass now builds undirected neighbor caches from dense projection rows. |
 | `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
@@ -2511,6 +2513,16 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 10k | 1.652 ms | n/a | Sequential-only; community degree sums now use dense vector storage. |
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
+
+PR-local lowlink dense-neighbor cache A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter articulation_points --save-baseline lowlink-dense-neighbors-before`;
+rerun with `--baseline lowlink-dense-neighbors-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/articulation_points/1k` | 77.922 µs | 59.865 µs | The shared articulation/bridges lowlink pass now builds sorted-with-multiplicity undirected neighbor caches from dense out/in CSR rows instead of resolving dense row through `NodeId`. The quick planted-community row improves 24.28% (`p=0.00`). |
 
 PR-local Dijkstra dense-neighbor relaxation A/B:
 
