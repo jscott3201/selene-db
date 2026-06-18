@@ -232,7 +232,7 @@ impl SeleneGraph {
         }
         let candidates = sorted_unique_candidates(candidates);
         let mut hits = Vec::new();
-        let hit_capacity = k.min(candidates.len());
+        let hit_capacity = k.min(candidates.len()).min(JSON_SEARCH_CANCEL_STRIDE);
         let mut candidates_since_check = 0usize;
         for &node_id in candidates.iter() {
             candidates_since_check += 1;

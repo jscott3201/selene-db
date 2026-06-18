@@ -986,7 +986,7 @@ Commands:
 
 | Bench | Before | After | Delta | Notes |
 |---|---:|---:|---:|---|
-| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 649.16 ns | 638.84 ns | -1.7684% | Candidate-scoped JSON filtering now reserves up to `min(k, candidates.len())` result slots on the first actual hit, avoiding eager allocation for zero-hit queries while removing repeated growth for common top-k hits. Criterion reports p=0.00. |
+| `graph_json_path_exists_scan/nested_score_path_candidates_sorted_k10/1000` | 649.16 ns | 638.84 ns | -1.7684% | Candidate-scoped JSON filtering now reserves bounded result storage on the first actual hit, avoiding eager allocation for zero-hit queries while removing repeated growth for common top-k hits. Criterion reports p=0.00. |
 | `graph_json_path_exists_scan/nested_score_path_candidates_reverse_k10/1000` | 1.0426 µs | 1.0303 µs | neutral | Reverse candidates still take the owned sort/dedup path; Criterion reports the median lower but within the noise threshold. |
 
 PR-local B24 batch exact-vector scan Rayon A/B:
