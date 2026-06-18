@@ -2490,9 +2490,9 @@ PR-local quick mutation row-extension guard
 Read-execution coverage for the declared 60%-read workload: label scan +
 indexed range filter, two-leg hash join, ORDER BY top-K, high-cardinality
 GROUP BY, DISTINCT dedup, indexed `IN` bitmap union, inline `CALL {}`
-table-subquery row extension, non-leading `OPTIONAL MATCH` null-extension,
-post-RETURN bare `LIMIT 10`, pre-RETURN bare `LIMIT 10`, and maintained
-composite-index equality lookup. Warm-plan-cache rows run over
+table-subquery row extension, correlated `NEXT` row expansion, non-leading
+`OPTIONAL MATCH` null-extension, post-RETURN bare `LIMIT 10`, pre-RETURN bare
+`LIMIT 10`, and maintained composite-index equality lookup. Warm-plan-cache rows run over
 `BenchFixture` on an in-memory `SharedGraph` (no WAL), so the timed body is
 pure execution + index access — not parse/plan/optimize, not durability. Cold
 and shared-cache companions on the cheapest row rebuild a fresh session per
@@ -2608,6 +2608,22 @@ repeat with
 | `read_pipeline/optional_call_subquery_null_yield/50000` | 14.773 ms | 14.342 ms | Full-profile optional row improves -2.9148%, p=0.00. |
 | `read_pipeline/call_subquery_yield/100000` | 16.947 ms | 16.639 ms | Full-profile yielded row improves -1.8188%, p=0.00. |
 | `read_pipeline/optional_call_subquery_null_yield/100000` | 34.471 ms | 34.234 ms | Largest optional row stayed neutral (p=0.13). |
+
+PR-local correlated `NEXT` output-reserve A/B:
+
+Commands: add the `read_pipeline/correlated_next_expand` row, save the quick
+baseline with
+`scripts/run-benches.sh --profile quick --bench read_pipeline --filter 'read_pipeline/(correlated_next_expand|call_subquery_yield|optional_match_null_extend|for_expand_triple)' --save-baseline gql-correlated-next-pre`,
+then rerun with `--baseline gql-correlated-next-pre`; repeat the target row at
+full scale with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter correlated_next_expand`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/correlated_next_expand/1000` | 169.70 µs | 168.40 µs | `CorrelatedChain` now reserves output capacity from the outer input row count. Quick row trends lower but stays within Criterion's noise threshold. |
+| `read_pipeline/correlated_next_expand/10000` | 1.8139 ms | 1.7496 ms | Full-profile 10k row improves -2.3967%, p=0.00. |
+| `read_pipeline/correlated_next_expand/50000` | 10.647 ms | 10.471 ms | Full-profile 50k row trends lower but stays within Criterion's noise threshold. |
+| `read_pipeline/correlated_next_expand/100000` | 22.237 ms | 22.346 ms | Full-profile 100k row stayed neutral. |
 
 PR-local composite lookup guard:
 

@@ -24,7 +24,7 @@ pub(super) fn execute_correlated(
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let (schema, rows) = input.into_parts();
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(rows.len());
     let mut rows_since_check = 0;
     for row in rows {
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
@@ -44,7 +44,7 @@ pub(super) fn execute_correlated_read_only(
     ctx: &TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let (schema, rows) = input.into_parts();
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(rows.len());
     let mut rows_since_check = 0;
     for row in rows {
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
