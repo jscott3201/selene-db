@@ -2446,6 +2446,23 @@ PR-local quick inline `CALL {}` row-extension guard
 | `read_pipeline/call_subquery_yield/1000` | 155.18 µs | 151.19 µs | −2.6% median; p < 0.05. |
 | `read_pipeline/optional_call_subquery_null_yield/1000` | 241.50 µs | 240.79 µs | No statistically significant change. |
 
+PR-local inline `CALL {}` seed-row A/B:
+
+Commands: `scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`;
+then temporarily rerun the old seed-row path and rerun after the change with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter call_subquery`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/call_subquery_yield/1000` | 149.93 µs | 142.39 µs | Table-subquery seed rows now build directly in `Binding` inline storage instead of allocating a `Vec<Null>` per outer row; Criterion reports -7.6108%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/1000` | 246.78 µs | 229.23 µs | Optional null-yield row improves -3.6571%, p=0.01. |
+| `read_pipeline/call_subquery_yield/10000` | 1.4961 ms | 1.4547 ms | Full-profile yielded row improves -2.4932%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/10000` | 2.3365 ms | 2.2512 ms | Full-profile optional row improves -3.2234%, p=0.00. |
+| `read_pipeline/call_subquery_yield/50000` | 8.3335 ms | 8.2273 ms | Larger yielded row trends lower but stays within Criterion's noise threshold. |
+| `read_pipeline/optional_call_subquery_null_yield/50000` | 15.263 ms | 14.866 ms | Optional row improves -2.5990%, p=0.00. |
+| `read_pipeline/call_subquery_yield/100000` | 17.326 ms | 17.233 ms | Largest yielded row stays neutral (p=0.30). |
+| `read_pipeline/optional_call_subquery_null_yield/100000` | 35.482 ms | 34.021 ms | Largest optional row improves -4.1173%, p=0.00. |
+
 PR-local composite lookup guard:
 
 Command:
