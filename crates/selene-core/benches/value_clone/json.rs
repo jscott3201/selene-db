@@ -16,6 +16,7 @@ pub(super) fn bench_json_canonical(group: &mut criterion::BenchmarkGroup<'_, Wal
     });
 
     let json_metadata_text = json_metadata_text();
+    group.throughput(Throughput::Elements(1));
     group.bench_function("json_parse_metadata", |b| {
         b.iter(|| {
             black_box(
@@ -25,6 +26,7 @@ pub(super) fn bench_json_canonical(group: &mut criterion::BenchmarkGroup<'_, Wal
     });
 
     let json_wide_text = json_wide.to_canonical_string();
+    group.throughput(Throughput::Elements(64));
     group.bench_function("json_parse_object64", |b| {
         b.iter(|| {
             black_box(
