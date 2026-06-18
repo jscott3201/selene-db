@@ -2751,6 +2751,22 @@ Commands:
 | `read_pipeline/edge_property_filter_no_index/1000` | 450.63 µs | 447.86 µs | Edge-property no-index guard stayed within Criterion's noise threshold. |
 | `read_pipeline/edge_property_filter_indexed/1000` | 88.110 µs | 88.218 µs | Indexed edge-property guard stayed neutral (p=0.75). |
 
+PR-local label-index residual label skip A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter 'read_pipeline/(match_limit10|match_prereturn_limit10|distinct_dedup|group_by_highcard|order_by_topk)' --save-baseline gql-label-index-skip-pre`;
+`scripts/run-benches.sh --profile quick --sample-size 50 --measurement-time 4 --bench read_pipeline --filter 'read_pipeline/(match_limit10|match_prereturn_limit10|distinct_dedup|group_by_highcard|order_by_topk)' --baseline gql-label-index-skip-pre`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/order_by_topk/1000` | 104.18 µs | 98.397 µs | `LabelIndex` candidate rows already satisfy the single-label predicate, so scan collection now skips the redundant per-row label lookup. Criterion reports -5.4958%, p=0.00. |
+| `read_pipeline/group_by_highcard/1000` | 107.11 µs | 101.20 µs | Same label-scan source feeding hash aggregate; Criterion reports -5.6090%, p=0.00. |
+| `read_pipeline/distinct_dedup/1000` | 64.669 µs | 58.599 µs | DISTINCT over label-indexed Person rows improves -9.4288%, p=0.00. |
+| `read_pipeline/match_limit10/1000` | 22.883 µs | 17.063 µs | Warm cached post-RETURN LIMIT row improves -25.544%, p=0.00. |
+| `read_pipeline/match_prereturn_limit10/1000` | 22.883 µs | 17.091 µs | Pre-RETURN LIMIT row improves -25.397%, p=0.00. |
+| `read_pipeline/match_limit10/cold/1000` | 66.048 µs | 59.763 µs | Fresh uncached session companion improves -9.5230%, p=0.00. |
+| `read_pipeline/match_limit10/shared_cache/1000` | 22.980 µs | 17.096 µs | Fresh session over warmed shared source-plan cache improves -25.651%, p=0.00. |
+
 PR-local bitmap-union row-filter A/B:
 
 Commands:
