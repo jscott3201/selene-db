@@ -2464,7 +2464,7 @@ Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
 `BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp and
 projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
 triangle_count, WCC/SCC, label_propagation, and louvain; `dag_graph(N)` (≈3N
-edges) for topological_sort. `vector_graph_retrieval` is the
+edges) for dijkstra and topological_sort. `vector_graph_retrieval` is the
 first native graph+vector agent-memory research fixture: it stores topic-summary
 vectors plus support, temporal-validity, and supersession edges to evidence
 nodes, then compares vector-only ANN against PageRank rerank, graph expansion,
@@ -2501,6 +2501,7 @@ topic precision as `precbp{basis points}`.
 | `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
+| `algo/dijkstra` | 1k | 6.923 µs | n/a | Sequential-only; DAG first-node to last-node shortest path now relaxes dense projection neighbor rows. |
 | `algo/topological_sort` | 10k | 89.09 µs | n/a | Sequential-only; in-degree accounting uses dense projection rows. |
 | `algo/topological_sort` | 50k | 455.4 µs | n/a | |
 | `algo/topological_sort` | 100k | 913.1 µs | n/a | |
@@ -2510,6 +2511,16 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 10k | 1.652 ms | n/a | Sequential-only; community degree sums now use dense vector storage. |
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
+
+PR-local Dijkstra dense-neighbor relaxation A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter dijkstra --save-baseline dijkstra-dense-relax-before`;
+rerun with `--baseline dijkstra-dense-relax-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/dijkstra/1k` | 9.6963 µs | 6.9229 µs | Dijkstra now relaxes projection CSR out-neighbor slices by dense row and materializes the source `NodeId` only on invalid-weight error paths. The quick DAG first-to-last row improves 28.56% (`p=0.00`). |
 
 PR-local Louvain dense-neighbor scan A/B:
 
