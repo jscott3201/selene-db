@@ -1988,6 +1988,22 @@ body hash) over synthetic byte payloads. `scale` drives section bytes.
 | `persist_snapshot_read` | 278.9 µs | 425.5 µs | 605.0 µs | Snapshot read-and-apply. |
 | `persist_full_recovery` | 3.01 ms | 11.28 ms | 20.75 ms | Snapshot reconcile + WAL replay. |
 
+PR-local snapshot compression scheduling A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile quick --bench snapshot --filter persist_snapshot_write --save-baseline snapshot-compression-scheduling-pre`
+- `scripts/run-benches.sh --profile quick --bench snapshot --filter persist_snapshot_write --baseline snapshot-compression-scheduling-pre`
+- `scripts/run-benches.sh --profile full --bench snapshot --filter persist_snapshot_write --sample-size 10 --measurement-time 1 --save-baseline snapshot-compression-scheduling-parallel-full`
+- `scripts/run-benches.sh --profile full --bench snapshot --filter persist_snapshot_write --sample-size 10 --measurement-time 1 --baseline snapshot-compression-scheduling-parallel-full`
+
+| Bench | Before | After | Change | Notes |
+|---|---:|---:|---:|---|
+| `persist_snapshot_write/1000` | 400.73 µs | 328.08 µs | -17.491%, p=0.00 | 64 KiB synthetic snapshot stays serial below the 1 MiB parallel-compression floor. |
+| `persist_snapshot_write/10000` | 402.28 µs | 358.67 µs | -10.946%, p=0.00 | 640 KiB synthetic snapshot also avoids Rayon setup. |
+| `persist_snapshot_write/50000` | 517.88 µs | 525.57 µs | no change, p=0.13 | 3.2 MiB synthetic snapshot keeps the existing parallel path. |
+| `persist_snapshot_write/100000` | 653.13 µs | 658.25 µs | within Criterion noise threshold | 6.4 MiB synthetic snapshot keeps the existing parallel path. |
+
 ### §4c `graph_snapshot_roundtrip` — real rkyv graph encode/decode (D14)
 
 Unlike the synthetic-bytes snapshot bench above, this drives the **real**

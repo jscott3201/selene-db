@@ -21,6 +21,8 @@ use crate::snapshot_file_header::{
 use crate::snapshot_path::{snapshot_path, snapshot_tmp_path};
 use crate::{PersistError, PersistResult};
 
+const PARALLEL_SNAPSHOT_COMPRESSION_MIN_BYTES: usize = 1024 * 1024;
+
 /// Snapshot section compression mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SectionCompression {
@@ -234,18 +236,33 @@ fn prepare_sections(
     compression: SectionCompression,
 ) -> PersistResult<Vec<PreparedSection>> {
     let count = sections.len();
+    let use_parallel_compression = should_prepare_compressed_sections_parallel(&sections);
     let mut prepared = match compression {
         SectionCompression::None => sections
             .into_iter()
             .map(prepare_uncompressed_section)
             .collect::<PersistResult<Vec<_>>>()?,
-        SectionCompression::PerSection { level } => sections
+        SectionCompression::PerSection { level } if use_parallel_compression => sections
             .into_par_iter()
+            .map(|section| prepare_compressed_section(section, level))
+            .collect::<PersistResult<Vec<_>>>()?,
+        SectionCompression::PerSection { level } => sections
+            .into_iter()
             .map(|section| prepare_compressed_section(section, level))
             .collect::<PersistResult<Vec<_>>>()?,
     };
     assign_section_offsets(&mut prepared, count);
     Ok(prepared)
+}
+
+fn should_prepare_compressed_sections_parallel(sections: &[RawSection]) -> bool {
+    if sections.len() < 2 {
+        return false;
+    }
+    let total_bytes = sections.iter().fold(0_usize, |sum, section| {
+        sum.saturating_add(section.payload.len())
+    });
+    total_bytes >= PARALLEL_SNAPSHOT_COMPRESSION_MIN_BYTES
 }
 
 fn prepare_uncompressed_section(section: RawSection) -> PersistResult<PreparedSection> {
@@ -407,6 +424,44 @@ mod tests {
     }
 
     #[test]
+    fn compressed_sections_parallel_gate_uses_payload_floor() {
+        let single_large = [RawSection {
+            provider: *b"CORE",
+            sub: *b"DATA",
+            payload: vec![0_u8; PARALLEL_SNAPSHOT_COMPRESSION_MIN_BYTES],
+        }];
+        assert!(!should_prepare_compressed_sections_parallel(&single_large));
+
+        let below_floor = [
+            RawSection {
+                provider: *b"CORE",
+                sub: *b"DATA",
+                payload: vec![0_u8; PARALLEL_SNAPSHOT_COMPRESSION_MIN_BYTES - 1],
+            },
+            RawSection {
+                provider: *b"CORE",
+                sub: *b"IDX0",
+                payload: Vec::new(),
+            },
+        ];
+        assert!(!should_prepare_compressed_sections_parallel(&below_floor));
+
+        let at_floor = [
+            RawSection {
+                provider: *b"CORE",
+                sub: *b"DATA",
+                payload: vec![0_u8; PARALLEL_SNAPSHOT_COMPRESSION_MIN_BYTES],
+            },
+            RawSection {
+                provider: *b"CORE",
+                sub: *b"IDX0",
+                payload: Vec::new(),
+            },
+        ];
+        assert!(should_prepare_compressed_sections_parallel(&at_floor));
+    }
+
+    #[test]
     fn stale_tmp_prevents_write_and_leaves_no_final() {
         let dir = temp_dir("stale-tmp");
         fs::write(snapshot_tmp_path(&dir, 5), b"partial").unwrap();
@@ -514,11 +569,11 @@ mod tests {
     fn snapshot_par_iter_roundtrip() {
         let dir = temp_dir("par-iter");
         let sections = [
-            (*b"CORE", *b"META", vec![1_u8; 257]),
-            (*b"CORE", *b"NODE", vec![2_u8; 1_024]),
-            (*b"CORE", *b"EDGE", vec![3_u8; 2_049]),
-            (*b"DEMO", *b"SUBT", vec![4_u8; 4_096]),
-            (*b"AUX1", *b"LIST", vec![5_u8; 8_193]),
+            (*b"CORE", *b"META", vec![1_u8; 257 * 1024]),
+            (*b"CORE", *b"NODE", vec![2_u8; 256 * 1024]),
+            (*b"CORE", *b"EDGE", vec![3_u8; 256 * 1024]),
+            (*b"DEMO", *b"SUBT", vec![4_u8; 256 * 1024]),
+            (*b"AUX1", *b"LIST", vec![5_u8; 64 * 1024]),
         ];
         let mut builder = SnapshotBuilder::new(config(
             dir.clone(),
