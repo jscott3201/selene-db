@@ -2105,15 +2105,17 @@ body hash) over synthetic byte payloads. The uncompressed companion rows isolate
 raw framing/body-hash cost with `SectionCompression::None`. `scale` drives section
 bytes.
 
-Read/write rows below were refreshed/added with
+Write rows below were refreshed/added with
 `scripts/run-benches.sh --profile full --bench snapshot --filter 'persist_snapshot_(write|read|uncompressed_write|uncompressed_read)'`.
+Read rows were refreshed with
+`scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)'`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
 | `persist_snapshot_write` | 379.1 µs | 524.4 µs | 717.5 µs | Five independently-compressed sections over highly-compressible synthetic bytes. |
-| `persist_snapshot_read` | 301.8 µs | 481.0 µs | 665.3 µs | Snapshot read-and-apply for compressed sections. |
+| `persist_snapshot_read` | 295.3 µs | 462.3 µs | 654.9 µs | Snapshot read-and-apply for compressed sections. |
 | `persist_snapshot_uncompressed_write` | 683.1 µs | 1.91 ms | 3.67 ms | Five uncompressed sections; exposes raw envelope write, body hash, and payload I/O cost. |
-| `persist_snapshot_uncompressed_read` | 561.4 µs | 2.47 ms | 4.67 ms | Snapshot read-and-apply for uncompressed sections. |
+| `persist_snapshot_uncompressed_read` | 412.4 µs | 1.72 ms | 3.41 ms | Snapshot read-and-apply for uncompressed sections. |
 | `persist_full_recovery` | 3.01 ms | 11.28 ms | 20.75 ms | Snapshot reconcile + WAL replay. |
 
 PR-local snapshot compression scheduling A/B:
@@ -2131,6 +2133,22 @@ Commands:
 | `persist_snapshot_write/10000` | 402.28 µs | 358.67 µs | -10.946%, p=0.00 | 640 KiB synthetic snapshot also avoids Rayon setup. |
 | `persist_snapshot_write/50000` | 517.88 µs | 525.57 µs | no change, p=0.13 | 3.2 MiB synthetic snapshot keeps the existing parallel path. |
 | `persist_snapshot_write/100000` | 653.13 µs | 658.25 µs | within Criterion noise threshold | 6.4 MiB synthetic snapshot keeps the existing parallel path. |
+
+PR-local snapshot body-hash buffer A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)' --save-baseline snapshot-read-nozero-full-pre`
+- `scripts/run-benches.sh --profile full --sample-size 20 --measurement-time 2 --bench snapshot --filter 'persist_snapshot_(read|uncompressed_read)' --baseline snapshot-read-nozero-full-pre`
+
+| Bench | Before | After | Change | Notes |
+|---|---:|---:|---:|---|
+| `persist_snapshot_read/10000` | 291.80 µs | 295.27 µs | within Criterion noise threshold | Compressed sections are small after zstd, so the larger verification buffer does not materially move this row. |
+| `persist_snapshot_read/50000` | 473.47 µs | 462.28 µs | within Criterion noise threshold | Same compressed-read guard row. |
+| `persist_snapshot_read/100000` | 669.08 µs | 654.88 µs | within Criterion noise threshold | Same compressed-read guard row. |
+| `persist_snapshot_uncompressed_read/10000` | 574.66 µs | 412.43 µs | -27.114%, p=0.00 | Body-hash verification now streams payloads with a 64 KiB buffer instead of 8 KiB, reducing read calls over raw sections. |
+| `persist_snapshot_uncompressed_read/50000` | 2.4329 ms | 1.7219 ms | -28.537%, p=0.00 | Same large raw-section verification path. |
+| `persist_snapshot_uncompressed_read/100000` | 4.7570 ms | 3.4118 ms | -29.538%, p=0.00 | Same large raw-section verification path. |
 
 ### §4c `graph_snapshot_roundtrip` — real rkyv graph encode/decode (D14)
 
