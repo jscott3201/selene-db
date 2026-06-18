@@ -2397,14 +2397,16 @@ and the new benchmark-only RRF composition row.
 | `project_source_chunk_memory` `shared_cache_query_root_current_state_intersection_batch/...q16_k4_r2_c6...basecurbp9687_curbp10000_hitbp10000` | 309.41 µs | Maintained current-state vector scoring restores full current precision. |
 | `project_source_chunk_memory` `shared_cache_query_root_current_state_text_vector_rrf_batch/...q16_k4_r2_c6...precbp10000_curbp10000_hitbp10000` | 487.45 µs | RRF again reaches full quality but is slower than using the best single maintained-state primitive for the needed quality target. No default fused policy is justified by these rows; keep RRF as a compositional A/B tool. Two outliers, including one high severe. |
 
-### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05/B3)
+### §5a `gql_correlated_subquery` — correlated EXISTS / aggregate VALUE execution (GQLRT-05/B3)
 
 The only read-query **execution** bench in the suite (`expression_eval` is
 scalar-only; `write_e2e` is write-only). A correlated subquery is re-evaluated
 per outer row and its pattern schema is rebuilt per row (`schema_for_pattern`); a
-memoization win (GQLRT-05) would otherwise be invisible. In-memory graph (no WAL)
-so the timed body is read execution, not durability. Uses a **small scale
-envelope** (2.5k/5k/10k fixture rows, ~scale/3 `Person` rows) — correlated
+memoization win (GQLRT-05) would otherwise be invisible. The `count` arm uses a
+correlated `VALUE { ... RETURN count(*) }` aggregate because `COUNT { MATCH ... }`
+is intentionally rejected by the current parser. In-memory graph (no WAL) so the
+timed body is read execution, not durability. Uses a **small scale envelope**
+(2.5k/5k/10k fixture rows, ~scale/3 `Person` rows) — correlated
 re-evaluation is O(rows × subquery), so the cost grows super-linearly when the
 inner scan cannot reuse the already-bound outer entity.
 
@@ -2416,12 +2418,22 @@ reapplying liveness, labels, value constraints, binding equality, and residual
 predicates. Development baselines were: exists 58.951 ms / 237.45 ms / 932.70 ms
 and count 59.387 ms / 235.91 ms / 933.92 ms at 2.5k / 5k / 10k. The B3 medians
 below are ~90x / 190x / 339x faster for EXISTS and ~85x / 179x / 349x faster for
-COUNT._
+the aggregate count arm._
 
 | Bench | 2.5k | 5k | 10k | Notes |
 |---|---:|---:|---:|---|
 | `gql_correlated_subquery/exists` | 654 µs | 1.251 ms | 2.752 ms | `FILTER EXISTS { (p)-[:KNOWS]->(:Person) }`; B3 seeded inner scan. |
-| `gql_correlated_subquery/count` | 698 µs | 1.318 ms | 2.676 ms | `COUNT { (p)-[:KNOWS]->(:Person) }`; B3 seeded inner scan. |
+| `gql_correlated_subquery/count` | 698 µs | 1.318 ms | 2.676 ms | `VALUE { MATCH (p)-[:KNOWS]->(:Person) RETURN count(*) }`; B3 seeded inner scan. |
+
+PR-local aggregate value syntax repair:
+
+Command:
+`scripts/run-benches.sh --profile quick --bench correlated_subquery`.
+
+| Bench | 1k quick | Notes |
+|---|---:|---|
+| `gql_correlated_subquery/exists/1000` | 190.27 µs | Existing correlated `EXISTS` guard still runs. |
+| `gql_correlated_subquery/count/1000` | 284.74 µs | The aggregate count guard now uses supported `VALUE { MATCH ... RETURN count(*) }` syntax instead of rejected `COUNT { MATCH ... }` syntax. |
 
 _Refreshed again 2026-06-11 for B5 (development post-#706 vs the feature
 branch on this M5, profile `full`, mimalloc). Moving the four immutable maps
