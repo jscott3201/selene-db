@@ -2464,7 +2464,8 @@ Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
 `BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp and
 projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
 triangle_count, WCC/SCC, articulation_points, label_propagation, and louvain;
-`dag_graph(N)` (≈3N edges) for dijkstra and topological_sort.
+`dag_graph(N)` (≈3N edges) for pagerank_orientation, dijkstra, and
+topological_sort.
 `vector_graph_retrieval` is the
 first native graph+vector agent-memory research fixture: it stores topic-summary
 vectors plus support, temporal-validity, and supersession edges to evidence
@@ -2481,6 +2482,8 @@ topic precision as `precbp{basis points}`.
 | `algo/pagerank` | 10k | 89.01 µs | 88.99 µs | Auto now uses the sequential PageRank kernel after Rayon overhead lost at every measured scale. |
 | `algo/pagerank` | 50k | 499.88 µs | 499.36 µs | Explicit `Threads(n)` still opts into the parallel kernel for caller-forced experiments. |
 | `algo/pagerank` | 100k | 1.058 ms | 1.050 ms | Auto tracks the fastest measured policy on this sparse fixture. |
+| `algo/pagerank_orientation/reverse` | 1k | 67.23 µs | n/a | Sequential-only quick DAG control row for non-natural orientation setup. |
+| `algo/pagerank_orientation/undirected` | 1k | 48.03 µs | n/a | Sequential-only quick DAG row; undirected orientation setup now builds the out+in union from dense projection rows. |
 | `algo/betweenness` | 10k | 25.52 ms | 7.73 ms | **3.3× Auto** — endpoint-aware sampling. |
 | `algo/betweenness` | 50k | 135.3 ms | 44.95 ms | **3.0× Auto** — per-source SSSP parallelizes. |
 | `algo/betweenness` | 100k | 266.1 ms | 101.7 ms | **2.6× Auto** — headline rayon win. |
@@ -2513,6 +2516,17 @@ topic precision as `precbp{basis points}`.
 | `algo/louvain` | 10k | 1.652 ms | n/a | Sequential-only; community degree sums now use dense vector storage. |
 | `algo/louvain` | 50k | 9.015 ms | n/a | |
 | `algo/louvain` | 100k | 18.57 ms | n/a | |
+
+PR-local PageRank undirected dense-orientation A/B:
+
+Command:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench algo_bench --filter pagerank_orientation --save-baseline pagerank-orientation-dense-before`;
+rerun with `--baseline pagerank-orientation-dense-before` after the implementation.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `algo/pagerank_orientation/reverse/1k` | 74.453 µs | 67.231 µs | Control row: reverse keeps the existing public-neighbor path after the broader dense rewrite regressed this row, so this measured improvement is not attributed to the production change. |
+| `algo/pagerank_orientation/undirected/1k` | 54.732 µs | 48.034 µs | Undirected orientation setup now reads dense out/in CSR rows directly before sort/dedup. The quick DAG row improves 13.47% (`p=0.00`). |
 
 PR-local lowlink dense-indexed cache A/B:
 
