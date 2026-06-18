@@ -20,6 +20,15 @@ fn parse_str_rejects_duplicate_object_keys() {
 }
 
 #[test]
+fn parse_str_rejects_duplicate_key_before_duplicate_value() {
+    let err = JsonValue::parse_str(r#"{"a":1,"a":]"#)
+        .expect_err("duplicate JSON object key rejected before value parsing");
+
+    assert_eq!(err.gqlstatus(), "22018");
+    assert!(err.to_string().contains("duplicate JSON object key 'a'"));
+}
+
+#[test]
 fn human_readable_serde_rejects_duplicate_object_keys() {
     let err = serde_json::from_str::<JsonValue>(r#"{"a":1,"a":2}"#)
         .expect_err("duplicate JSON object key rejected");
