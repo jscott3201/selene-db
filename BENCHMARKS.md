@@ -286,6 +286,9 @@ for both unindexed label rows and flat-index row sets; cancellation/deadline
 aware calls check once per chunk and keep the same parallel path. Large
 `graph_vector_candidate_set/*` reranks use the same chunked cancellation-aware
 Rayon primitive once a single set reaches the 4,096-candidate threshold.
+Exact batch cosine scans reuse one candidate squared norm across the query
+batch; candidate-set batch reranking intentionally keeps the fused per-query
+cosine kernel because a separate candidate-norm pass regressed q64/d1024 rows.
 Canonical candidate-set batch scoring uses query-level Rayon once the batch has
 at least 4,096 total candidates spread across multiple sets, keeping each
 per-query scan serial inside that branch so many-query batches do not nest
@@ -864,12 +867,31 @@ on the B24-par branch.
 | `graph_exact_vector_batch_scan/flat_index_squared_euclidean_q8_dim128_k10/100000` | 41.284 ms | 3.7879 ms | Broad flat-index batch scan improves about 10.9x on this branch run. |
 | `graph_exact_vector_batch_scan/flat_index_squared_euclidean_q8_dim128_k10_checked_with_deadline/100000` | 38.925 ms | 3.7937 ms | Deadline flat-index row remains on the parallel path. |
 
+PR-local quick exact batch cosine candidate-norm A/B:
+
+Commands:
+`scripts/run-benches.sh --profile quick --sample-size 20 --measurement-time 2 --bench single_graph --filter cosine_q8_dim128_k10 --vector-scales 10000,50000 --save-baseline vector-batch-cosine-norm-pre`,
+then the same command with `--baseline vector-batch-cosine-norm-pre`.
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_exact_vector_batch_scan/unindexed_cosine_q8_dim128_k10/10000` | 2.1250 ms | 1.7721 ms | -16.36% | Reuses one candidate squared norm across the eight bound cosine queries. |
+| `graph_exact_vector_batch_scan/flat_index_cosine_q8_dim128_k10/10000` | 2.1286 ms | 1.7774 ms | -18.03% | Flat-index row-set scan keeps the same metric shortcut. |
+| `graph_exact_vector_batch_scan/unindexed_cosine_q8_dim128_k10/50000` | 2.3514 ms | 2.1747 ms | -6.72% | Above the parallel threshold, chunked row scans still benefit from the per-candidate norm reuse. |
+| `graph_exact_vector_batch_scan/flat_index_cosine_q8_dim128_k10/50000` | 2.3971 ms | 2.2063 ms | -8.39% | Broad flat-index q8 cosine scan stays statistically faster (`p=0.00`). |
+
+Rejected variant: applying the same separate candidate-norm pass to
+`graph_vector_candidate_set/score_candidate_sets_batch_cosine_q64` regressed
+c64/c256/c1024 rows by +31.84%/+38.48%/+28.38% (`p=0.00`), with c4096 neutral,
+so the candidate-set scorer keeps the existing fused per-query cosine pass.
+
 PR-local quick vector baseline:
 
 | Bench | 1k | Notes |
 |---|---:|---|
 | `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 22.9 µs unindexed / 24.3 µs flat (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x4` L2-squared accumulation; flat 20k row: ~244 µs. |
 | `graph_exact_vector_scan/cosine_dim128_k10` | 33.5 µs unindexed / 33.6 µs flat (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x4` cosine accumulation; flat 20k row: ~276 µs. |
+| `graph_exact_vector_batch_scan/cosine_q8_dim128_k10` | 1.772 ms unindexed / 1.777 ms flat at 10k; 2.175 ms unindexed / 2.206 ms flat at 50k (quick) | Scores eight 128-dim cosine queries over the same exact row set and reuses each candidate squared norm across the batch. |
 | `graph_vector_candidate_set/neighbor_candidates_depends_on_k64` | 233.8 ns (quick) | Derives a sorted/deduplicated 64-node candidate set from one anchor's outgoing `DEPENDS_ON` adjacency. This measures the reusable Rust candidate-set boundary, not vector scoring. |
 | `graph_vector_candidate_set/adjacency_label_range_l8_k64` | 44.6 ns (quick) | Iterates the sorted label range for 64 matching edges mixed with 8x64 unrelated-label edges. |
 | `graph_vector_candidate_set/adjacency_label_scan_l8_k64` | 374.8 ns (quick) | Benchmark-local old path: scans the same mixed-label adjacency entry and filters by label, showing the range lookup is ~8.4x faster for high-degree mixed-label candidates. |
