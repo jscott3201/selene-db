@@ -437,9 +437,19 @@ fn document_stats(
 ) -> Option<DocumentStats> {
     let mut term_counts = TermCounts::from_elem(0, query_terms.len());
     let mut len = 0_u32;
+    let short_query = query_terms.len() <= 4;
     for token in tokenize_borrowed(text) {
         len = len.saturating_add(1);
-        if let Ok(index) = query_terms.binary_search_by(|term| term.as_str().cmp(token.as_ref())) {
+        if short_query {
+            for (index, term) in query_terms.iter().enumerate() {
+                if term.as_str() == token.as_ref() {
+                    term_counts[index] = term_counts[index].saturating_add(1);
+                    break;
+                }
+            }
+        } else if let Ok(index) =
+            query_terms.binary_search_by(|term| term.as_str().cmp(token.as_ref()))
+        {
             term_counts[index] = term_counts[index].saturating_add(1);
         }
     }
