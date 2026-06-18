@@ -107,7 +107,7 @@ where
     Ok(())
 }
 
-/// Validate that every *non-tombstone* id in a positional row section is unique.
+/// Validate one *non-tombstone* id from a positional row section is unique.
 ///
 /// BRIEF-Item-4a STEP 9: the `CORE/NODE` and `CORE/EDGE` sections are positional
 /// (row order = section order) and store the explicit external id per row, so
@@ -115,35 +115,31 @@ where
 /// order. Aborted-tx hole rows all carry the type's `TOMBSTONE` sentinel and are
 /// exempt from the uniqueness check (many holes share it). Every committed id
 /// must still appear at most once; a duplicate is a corrupt snapshot.
-pub(in crate::core_provider::sections) fn validate_ids_unique<K, V>(
-    rows: &[(K, V)],
+pub(in crate::core_provider::sections) fn validate_id_unique<K>(
+    seen: &mut std::collections::HashSet<K>,
+    id: K,
     tombstone: K,
     section: &'static str,
 ) -> Result<(), crate::ProviderError>
 where
     K: Copy + Eq + std::hash::Hash + std::fmt::Debug,
 {
-    // `HashSet::new()` (not `with_capacity(rows.len())`): the row count comes
-    // from a decoded section whose length is only byte-capped, so pre-sizing
-    // would let a crafted file force an oversized up-front allocation. The set
-    // grows organically as real (non-tombstone) ids are inserted.
-    let mut seen = std::collections::HashSet::new();
-    for (id, _) in rows {
-        if *id == tombstone {
-            continue;
-        }
-        if !seen.insert(*id) {
-            return Err(invalid_payload(format!(
-                "{section} rows must have unique non-tombstone ids; observed duplicate {id:?}"
-            )));
-        }
+    if id == tombstone {
+        return Ok(());
+    }
+    if !seen.insert(id) {
+        return Err(invalid_payload(format!(
+            "{section} rows must have unique non-tombstone ids; observed duplicate {id:?}"
+        )));
     }
     Ok(())
 }
 
 #[cfg(test)]
-mod validate_ids_unique_tests {
-    use super::validate_ids_unique;
+mod validate_id_unique_tests {
+    use std::collections::HashSet;
+
+    use super::validate_id_unique;
     use selene_core::NodeId;
 
     // BRIEF-Item-4a STEP 9: the two contract branches the positional format
@@ -152,12 +148,12 @@ mod validate_ids_unique_tests {
 
     #[test]
     fn rejects_duplicate_non_tombstone_id() {
-        let rows = [
-            (NodeId::new(5), ()),
-            (NodeId::TOMBSTONE, ()),
-            (NodeId::new(5), ()),
-        ];
-        let err = validate_ids_unique(&rows, NodeId::TOMBSTONE, "CORE/NODE")
+        let mut seen = HashSet::new();
+        validate_id_unique(&mut seen, NodeId::new(5), NodeId::TOMBSTONE, "CORE/NODE")
+            .expect("first id is unique");
+        validate_id_unique(&mut seen, NodeId::TOMBSTONE, NodeId::TOMBSTONE, "CORE/NODE")
+            .expect("tombstone row is exempt");
+        let err = validate_id_unique(&mut seen, NodeId::new(5), NodeId::TOMBSTONE, "CORE/NODE")
             .expect_err("a duplicate committed id is a corrupt snapshot");
         assert!(
             format!("{err}").contains("unique non-tombstone"),
@@ -169,13 +165,15 @@ mod validate_ids_unique_tests {
     fn allows_multiple_tombstone_hole_rows() {
         // Aborted-tx hole rows all share the sentinel and are exempt; only the
         // real ids between them must be unique.
-        let rows = [
-            (NodeId::new(1), ()),
-            (NodeId::TOMBSTONE, ()),
-            (NodeId::TOMBSTONE, ()),
-            (NodeId::new(2), ()),
-        ];
-        validate_ids_unique(&rows, NodeId::TOMBSTONE, "CORE/NODE")
-            .expect("multiple tombstone hole rows are valid");
+        let mut seen = HashSet::new();
+        for id in [
+            NodeId::new(1),
+            NodeId::TOMBSTONE,
+            NodeId::TOMBSTONE,
+            NodeId::new(2),
+        ] {
+            validate_id_unique(&mut seen, id, NodeId::TOMBSTONE, "CORE/NODE")
+                .expect("unique real ids and multiple tombstones are valid");
+        }
     }
 }

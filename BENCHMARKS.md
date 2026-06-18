@@ -2162,11 +2162,26 @@ rebuild). Self-validating: asserts node/edge counts survive the roundtrip once
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
 | `graph_snapshot_roundtrip/encode` | 2.13 ms | 15.05 ms | 31.64 ms | rkyv encode of all `CORE/*` sections. |
-| `graph_snapshot_roundtrip/decode` | 15.81 ms | 90.97 ms | 183.20 ms | Positional recovery + `finish_recovery` — dominates. |
+| `graph_snapshot_roundtrip/decode` | 14.55 ms | 86.57 ms | 173.76 ms | Positional recovery + `finish_recovery`; duplicate-id validation is fused with row conversion. |
 | `graph_snapshot_roundtrip/roundtrip` | 18.66 ms | 104.85 ms | 219.89 ms | End-to-end (≈ encode + decode). |
 
-Full rows above were refreshed with
+Encode/roundtrip rows above were refreshed with
 `scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip`.
+Decode rows were refreshed with
+`scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode`.
+
+PR-local fused duplicate-id validation A/B:
+
+Commands:
+
+- `scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --save-baseline d14-decode-fuse-full-pre`
+- `scripts/run-benches.sh --profile full --sample-size 10 --measurement-time 1 --bench graph_snapshot_roundtrip --filter graph_snapshot_roundtrip/decode --baseline d14-decode-fuse-full-pre`
+
+| Bench | Before | After | Delta | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/decode/10000` | 15.31 ms | 14.55 ms | -4.3014%, p=0.00 | `CORE/NODE` and `CORE/EDGE` now validate non-tombstone id uniqueness while converting archive rows into runtime rows, avoiding a separate full traversal. |
+| `graph_snapshot_roundtrip/decode/50000` | 88.63 ms | 86.57 ms | -2.3267%, p=0.00 | Same fused row-validation path. |
+| `graph_snapshot_roundtrip/decode/100000` | 181.54 ms | 173.76 ms | -4.2833%, p=0.00 | Same fused row-validation path. |
 
 PR-local snapshot row-position carrier A/B:
 
