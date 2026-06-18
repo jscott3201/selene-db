@@ -2463,6 +2463,24 @@ then temporarily rerun the old seed-row path and rerun after the change with
 | `read_pipeline/call_subquery_yield/100000` | 17.326 ms | 17.233 ms | Largest yielded row stays neutral (p=0.30). |
 | `read_pipeline/optional_call_subquery_null_yield/100000` | 35.482 ms | 34.021 ms | Largest optional row improves -4.1173%, p=0.00. |
 
+PR-local inline `CALL {}` target-schema hoist A/B:
+
+Commands: `scripts/run-benches.sh --profile quick --bench read_pipeline --filter call_subquery`;
+then temporarily rerun the old per-row target-schema path and rerun after the
+change with
+`scripts/run-benches.sh --profile full --bench read_pipeline --filter call_subquery`.
+
+| Bench | Before | After | Notes |
+|---|---:|---:|---|
+| `read_pipeline/call_subquery_yield/1000` | 142.68 µs | 139.56 µs | `CALL {}` now computes its target seed schema once per operator and clones it per seed table, avoiding per-outer-row pattern/outer-binding schema reconstruction; Criterion reports -2.2856%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/1000` | 234.85 µs | 225.12 µs | Quick optional row improves -5.2429%, p=0.00. |
+| `read_pipeline/call_subquery_yield/10000` | 1.4458 ms | 1.4158 ms | Full-profile yielded row improves -2.4242%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/10000` | 2.2682 ms | 2.1683 ms | Full-profile optional row improves -4.3935%, p=0.00. |
+| `read_pipeline/call_subquery_yield/50000` | 8.1792 ms | 7.9357 ms | Full-profile yielded row improves -2.9773%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/50000` | 14.706 ms | 13.985 ms | Full-profile optional row improves -4.9020%, p=0.00. |
+| `read_pipeline/call_subquery_yield/100000` | 16.978 ms | 16.483 ms | Full-profile yielded row improves -2.9145%, p=0.00. |
+| `read_pipeline/optional_call_subquery_null_yield/100000` | 34.631 ms | 33.133 ms | Full-profile optional row improves -4.3268%, p=0.00. |
+
 PR-local composite lookup guard:
 
 Command:
