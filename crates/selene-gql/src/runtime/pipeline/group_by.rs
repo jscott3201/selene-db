@@ -1,5 +1,6 @@
 use rustc_hash::FxHashMap;
 use selene_core::Value;
+use smallvec::SmallVec;
 
 use crate::{
     Aggregate, BindingTableColumn, ProjectExpr, SourceSpan,
@@ -106,11 +107,11 @@ impl<'plan> Group<'plan> {
     }
 
     fn finalize(self) -> Result<Binding, ExecutorError> {
-        let mut values = self.representative.values().to_vec();
+        let mut values = self.representative.cloned_values();
         for aggregate in self.aggregates {
-            values.extend(aggregate.finalize_values()?);
+            values.push(aggregate.finalize_value()?);
         }
-        Ok(Binding::new(values))
+        Ok(Binding::from_parts(values, SmallVec::new()))
     }
 }
 
