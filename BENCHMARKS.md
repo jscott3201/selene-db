@@ -2714,7 +2714,7 @@ Bench bins: `algo_bench`, `projection`, `vector_graph_retrieval`. Fixture:
 `BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp and
 projection; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for
 triangle_count, WCC/SCC, articulation_points, label_propagation, and louvain;
-`dag_graph(N)` (≈3N edges) for pagerank_orientation, dijkstra, and
+`dag_graph(N)` (≈3N edges) for pagerank_orientation, dijkstra, SSSP, and
 topological_sort.
 `vector_graph_retrieval` is the
 first native graph+vector agent-memory research fixture: it stores topic-summary
@@ -2757,6 +2757,7 @@ topic precision as `precbp{basis points}`.
 | `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
 | `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
 | `algo/dijkstra` | 1k | 6.923 µs | n/a | Sequential-only; DAG first-node to last-node shortest path now relaxes dense projection neighbor rows. |
+| `algo/sssp` | 1k | 6.710 µs | n/a | Sequential-only; direct single-source pathfinding row over the DAG fixture. Command: `scripts/run-benches.sh --profile quick --bench algo_bench --filter sssp`. |
 | `algo/topological_sort` | 10k | 89.09 µs | n/a | Sequential-only; in-degree accounting uses dense projection rows. |
 | `algo/topological_sort` | 50k | 455.4 µs | n/a | |
 | `algo/topological_sort` | 100k | 913.1 µs | n/a | |

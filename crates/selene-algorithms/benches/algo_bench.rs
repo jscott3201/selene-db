@@ -13,8 +13,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
     ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, PageRankOrientation,
     Parallelism, TriangleCountConfig, apsp, articulation_points, betweenness, dijkstra,
-    label_propagation, louvain, pagerank, scc, scc_count, topological_sort, triangle_count, wcc,
-    wcc_count,
+    label_propagation, louvain, pagerank, scc, scc_count, sssp, topological_sort, triangle_count,
+    wcc, wcc_count,
 };
 use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::SharedGraph;
@@ -162,6 +162,22 @@ fn bench_dijkstra(c: &mut Criterion) {
                         .expect("bench DAG has a source-to-target path"),
                 )
             });
+        });
+    }
+    group.finish();
+}
+
+fn bench_sssp(c: &mut Criterion) {
+    let mut group = c.benchmark_group("algo/sssp");
+    for &scale in profile_scales() {
+        let state = BenchState::from_dag(scale, 82_239 + scale as u64);
+        let source = state
+            .projection
+            .iter_nodes()
+            .next()
+            .expect("bench DAG contains nodes");
+        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
+            b.iter(|| black_box(sssp(&state.projection, source).expect("sssp bench succeeds")));
         });
     }
     group.finish();
@@ -401,6 +417,7 @@ criterion_group! {
         bench_triangle_count,
         bench_apsp,
         bench_dijkstra,
+        bench_sssp,
         bench_topological_sort,
         bench_wcc,
         bench_wcc_count,
