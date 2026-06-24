@@ -60,9 +60,9 @@ keeping the Rust crate names stable:
 
 ```toml
 [dependencies]
-selene-core = { package = "selene-db-core", version = "1.3.0" }
-selene-graph = { package = "selene-db-graph", version = "1.3.0" }
-selene-gql = { package = "selene-db-gql", version = "1.3.0" }
+selene-core = { package = "selene-db-core", version = "1.4.0" }
+selene-graph = { package = "selene-db-graph", version = "1.4.0" }
+selene-gql = { package = "selene-db-gql", version = "1.4.0" }
 ```
 
 Create a graph, write through the mutation funnel, and query with GQL:

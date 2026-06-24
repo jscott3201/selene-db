@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-06-24
+
 ### Added
 
 - Global BM25 text search, ANN vector search, and PageRank result candidate
@@ -1838,7 +1840,8 @@ The following items are intentionally deferred and tracked for future
 - OPQ rotation inner-allocation tightening.
 - Fresh extension crates beyond `selene-vector` and `selene-algorithms`.
 
-[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/jscott3201/selene-db/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/jscott3201/selene-db/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/jscott3201/selene-db/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.1.0
