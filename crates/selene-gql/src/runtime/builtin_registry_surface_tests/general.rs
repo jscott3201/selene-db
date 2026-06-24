@@ -1,13 +1,13 @@
 use super::*;
 
 #[test]
-fn registers_all_sixty_seven_procedures() {
+fn registers_all_sixty_eight_procedures() {
     let registry = BuiltinProcedureRegistry::new();
     let handles: Vec<_> = registry.iter_handles().collect();
     assert_eq!(
         handles.len(),
-        67,
-        "expected 19 algo procedures + 48 platform built-ins"
+        68,
+        "expected 19 algo procedures + 49 platform built-ins"
     );
 }
 
@@ -18,11 +18,11 @@ fn pagerank_signature_has_optional_orientation_personalization_and_result_filter
         .lookup(&name(&["algo", "pagerank"]))
         .expect("pagerank resolves");
     let parameters = &metadata.signature.parameters;
-    assert_eq!(parameters.len(), 10);
+    assert_eq!(parameters.len(), 14);
 
     let arity = metadata.signature.arity();
     assert_eq!(arity.minimum, 5);
-    assert_eq!(arity.maximum, 10);
+    assert_eq!(arity.maximum, 14);
     for parameter in &parameters[1..5] {
         assert!(parameter.nullable, "{} should be nullable", parameter.name);
         assert_eq!(parameter.default_doc, Some("NULL (use procedure default)"));
@@ -85,13 +85,65 @@ fn pagerank_signature_has_optional_orientation_personalization_and_result_filter
         Some(crate::ProcedureDefaultValue::Null)
     );
 
+    let edge_filter_label = &parameters[10];
+    assert_eq!(edge_filter_label.name.as_str(), "edge_filter_label");
+    assert!(edge_filter_label.nullable);
+    assert_eq!(edge_filter_label.ty, crate::GqlType::String);
+    assert_eq!(edge_filter_label.default_doc, Some("NULL (no edge filter)"));
+    assert_eq!(
+        edge_filter_label.default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+
+    let edge_filter_property = &parameters[11];
+    assert_eq!(edge_filter_property.name.as_str(), "edge_filter_property");
+    assert!(edge_filter_property.nullable);
+    assert_eq!(edge_filter_property.ty, crate::GqlType::String);
+    assert_eq!(
+        edge_filter_property.default_doc,
+        Some("NULL (no edge filter)")
+    );
+    assert_eq!(
+        edge_filter_property.default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+
+    let edge_filter_values = &parameters[12];
+    assert_eq!(edge_filter_values.name.as_str(), "edge_filter_values");
+    assert!(edge_filter_values.nullable);
+    assert_eq!(
+        edge_filter_values.ty,
+        crate::GqlType::List(Box::new(crate::GqlType::AnyProperty))
+    );
+    assert_eq!(
+        edge_filter_values.default_doc,
+        Some("NULL (no edge filter)")
+    );
+    assert_eq!(
+        edge_filter_values.default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+
+    let edge_filter_endpoint = &parameters[13];
+    assert_eq!(edge_filter_endpoint.name.as_str(), "edge_filter_endpoint");
+    assert!(edge_filter_endpoint.nullable);
+    assert_eq!(edge_filter_endpoint.ty, crate::GqlType::String);
+    assert_eq!(
+        edge_filter_endpoint.default_doc,
+        Some("NULL (no edge filter)")
+    );
+    assert_eq!(
+        edge_filter_endpoint.default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+
     assert_eq!(metadata.output_schema.columns.len(), 2);
     assert_eq!(metadata.output_schema.columns[0].name.as_str(), "node_id");
     assert_eq!(metadata.output_schema.columns[1].name.as_str(), "score");
 }
 
 #[test]
-fn iter_handles_yields_all_forty_eight_platform_builtins() {
+fn iter_handles_yields_all_forty_nine_platform_builtins() {
     let registry = BuiltinProcedureRegistry::new();
     let names: Vec<Vec<String>> = registry
         .iter_handles()
@@ -119,6 +171,7 @@ fn iter_handles_yields_all_forty_eight_platform_builtins() {
         ["selene", "vector_score_candidate_state_expanded"],
         ["selene", "vector_score_candidate_state_expanded_batch"],
         ["selene", "vector_candidate_states"],
+        ["selene", "reachable_nodes"],
         ["selene", "vector_score_expanded_candidates"],
         ["selene", "vector_score_expanded_candidates_batch"],
         ["selene", "vector_search_nodes_ann"],

@@ -11,7 +11,7 @@ use selene_core::{DbString, GraphId, LabelSet, NodeId, PropertyMap, Record, Valu
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
 };
-use selene_graph::SharedGraph;
+use selene_graph::{SharedGraph, TypedIndexKind};
 use smallvec::smallvec;
 
 fn db_string(value: &str) -> DbString {
@@ -86,6 +86,56 @@ fn seed_labeled_pagerank_graph(graph: &SharedGraph) -> Vec<NodeId> {
     vec![left, center, right]
 }
 
+fn edge_props(property: &DbString, value: &str) -> PropertyMap {
+    PropertyMap::from_pairs([(property.clone(), Value::String(db_string(value)))])
+        .expect("test edge property map is valid")
+}
+
+fn seed_edge_filtered_pagerank_graph(graph: &SharedGraph) -> Vec<NodeId> {
+    let mut txn = graph.begin_write();
+    let doc = db_string("Doc");
+    let commit = db_string("Commit");
+    let rel = db_string("R");
+    let at_commit = db_string("AT_COMMIT");
+    let commit_sha = db_string("commit_sha");
+    let mut mutator = txn.mutator();
+    let commit_node = mutator
+        .create_node(LabelSet::single(commit), PropertyMap::new())
+        .expect("commit node creates");
+    let mut docs = Vec::new();
+    for _ in 0..3 {
+        docs.push(
+            mutator
+                .create_node(LabelSet::single(doc.clone()), PropertyMap::new())
+                .expect("doc node creates"),
+        );
+    }
+    mutator
+        .create_edge(rel.clone(), docs[0], docs[1], PropertyMap::new())
+        .expect("first rank edge creates");
+    mutator
+        .create_edge(rel.clone(), docs[1], docs[2], PropertyMap::new())
+        .expect("second rank edge creates");
+    mutator
+        .create_edge(rel, docs[2], docs[0], PropertyMap::new())
+        .expect("third rank edge creates");
+    for (node, sha) in [(docs[0], "abc"), (docs[1], "def"), (docs[2], "abc")] {
+        mutator
+            .create_edge(
+                at_commit.clone(),
+                commit_node,
+                node,
+                edge_props(&commit_sha, sha),
+            )
+            .expect("commit edge creates");
+    }
+    mutator
+        .create_edge_property_index(at_commit, commit_sha, TypedIndexKind::String)
+        .expect("commit edge property index creates");
+    txn.commit().expect("test graph commit");
+    docs
+}
+
 fn rows(output: StatementOutput) -> BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
@@ -134,6 +184,11 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
         .collect()
 }
 
+fn sorted_node_ids(mut nodes: Vec<NodeId>) -> Vec<NodeId> {
+    nodes.sort_by_key(|node| node.get());
+    nodes
+}
+
 fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
     let index = table
         .column_index(db_string(name))
@@ -174,12 +229,12 @@ fn show_procedures_lists_all_nineteen_algo_procedures() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = string_column(&table, "name");
 
-    // The registry also carries the 48 `selene.*` platform built-ins, so SHOW
-    // PROCEDURES lists 67; all 19 algo names must still be present.
+    // The registry also carries the 49 `selene.*` platform built-ins, so SHOW
+    // PROCEDURES lists 68; all 19 algo names must still be present.
     assert_eq!(
         table.row_count(),
-        67,
-        "expected 19 algo procedures + 48 platform built-ins"
+        68,
+        "expected 19 algo procedures + 49 platform built-ins"
     );
     for expected in [
         "algo.projection_build",
@@ -355,6 +410,55 @@ fn pagerank_result_nodes_intersects_before_limit() {
         &registry,
     );
     assert_eq!(empty.row_count(), 0);
+}
+
+#[test]
+fn pagerank_edge_filter_scopes_result_candidates() {
+    let graph = graph(220_013);
+    let nodes = seed_edge_filtered_pagerank_graph(&graph);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL algo.projection_build('p', NULL, NULL, NULL)",
+            &registry,
+        )
+        .expect("projection_build executes");
+    session.bind_parameter(
+        db_string("abc"),
+        Value::List(vec![Value::String(db_string("abc"))]),
+    );
+    session.bind_parameter(
+        db_string("only_last"),
+        Value::List(vec![Value::NodeRef(nodes[2])]),
+    );
+
+    let edge_filtered = execute_rows(
+        &mut session,
+        "CALL algo.pagerank(
+             'p', 0.85D, 20, 0.0D, NULL, 'NATURAL',
+             NULL, 'Doc', NULL, NULL,
+             'AT_COMMIT', 'commit_sha', $abc, 'target'
+         ) YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(
+        sorted_node_ids(node_column(&edge_filtered, "node_id")),
+        vec![nodes[0], nodes[2]]
+    );
+
+    let composed = execute_rows(
+        &mut session,
+        "CALL algo.pagerank(
+             'p', 0.85D, 20, 0.0D, NULL, 'NATURAL',
+             NULL, 'Doc', NULL, $only_last,
+             'AT_COMMIT', 'commit_sha', $abc, 'target'
+         ) YIELD node_id, score",
+        &registry,
+    );
+    assert_eq!(node_column(&composed, "node_id"), vec![nodes[2]]);
+    assert!(float_column(&composed, "score")[0] > 0.0);
 }
 
 #[test]

@@ -137,6 +137,26 @@ fn closed_type_ddl_features_are_supported() {
 }
 
 #[test]
+fn alter_edge_type_stamps_implementation_defined_feature() {
+    let statement =
+        parse("ALTER EDGE TYPE :KNOWS (FROM :Person, :Org TO :Person, since :: STRING)")
+            .expect("ALTER EDGE TYPE parses");
+    let observed = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        observed.contains(&FeatureId::IM_ALTER_EDGE_TYPE),
+        "ALTER EDGE TYPE must flag the implementation-defined extension; observed {observed:?}"
+    );
+    assert!(
+        observed.contains(&FeatureId::GG02) && observed.contains(&FeatureId::GG20),
+        "ALTER EDGE TYPE remains closed-type DDL; observed {observed:?}"
+    );
+}
+
+#[test]
 fn bare_type_ddl_flags_gg02_gg20_but_not_gg21() {
     // 813: type DDL flags GG02 (closed graph type) + GG20 (explicit element type
     // names — the `:Name` after NODE/EDGE TYPE is an explicit `<node/edge type

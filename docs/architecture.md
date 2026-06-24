@@ -42,7 +42,7 @@ and is consumed via `[dev-dependencies]`.
 | `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + imbl storage primitives, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
 | `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`, D17). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
 | `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the D20 snapshot harness. Independent of `selene-gql`. |
-| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait (D15), and its sole frozen production impl `BuiltinProcedureRegistry` — 46 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
+| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait (D15), and its sole frozen production impl `BuiltinProcedureRegistry` — 49 `selene.*` platform built-ins plus 19 `algo.*` procedures binding `CALL` directly over native engine APIs. |
 | `selene-testing` | core, graph (+ algorithms for fixtures) | Shared fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / algorithm corpora. Consumed via `[dev-dependencies]`. |
 
 The dependency graph is intentionally acyclic with a single sink
@@ -307,8 +307,8 @@ in `selene-gql`. It is the plan/execute seam: the planner resolves procedure
 signatures and the executor dispatches calls through a `&dyn
 ProcedureRegistry`. The trait has exactly one frozen production
 implementation — the concrete native `BuiltinProcedureRegistry`
-(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 65
-procedures at construction (the 46 `selene.*` platform built-ins plus the 19
+(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 68
+procedures at construction (the 49 `selene.*` platform built-ins plus the 19
 `algo.*` procedures) and reports a constant `registry_version()` of `0` so
 the CALL plan cache never invalidates. The injectable `&dyn` seam exists for
 the test harness, not for third-party packs: there is no loadable-pack
@@ -442,7 +442,7 @@ buffers, which is what the snapshot reader produces.
 
 `CALL` is dispatched through the `ProcedureRegistry` trait, whose sole
 production implementation, `BuiltinProcedureRegistry`, registers its full
-procedure set (65 procedures: 46 `selene.*` platform built-ins plus 19 `algo.*`
+procedure set (68 procedures: 49 `selene.*` platform built-ins plus 19 `algo.*`
 procedures) once at construction. The registry is frozen — nothing is added
 or removed after construction, and `registry_version()` is a constant `0` —
 which lets the analyzer and planner trust the registry and keep the CALL plan

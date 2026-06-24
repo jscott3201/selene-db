@@ -11,16 +11,17 @@
 //! `ProcedureMetadata` conversion the pack registry performed). The vector
 //! search, batched exact vector-search, candidate vector scoring, batched
 //! candidate vector scoring, neighbor candidate vector scoring, batched neighbor
-//! candidate vector scoring, expanded-candidate vector scoring, batched
-//! expanded-candidate vector scoring, approximate vector-search, batched
-//! approximate vector-search, ANN-expanded vector-search, batched ANN-expanded
-//! vector-search, vector-index stats, vector-index procedures, maintained
-//! text-index stats/procedures, BM25 text-search, candidate BM25 scoring,
-//! batched candidate BM25 scoring, maintained-state BM25 scoring,
-//! maintained-state node-composed BM25 scoring, maintained-state
-//! graph-expanded BM25 batch scoring, Reciprocal Rank Fusion over ranked node lists, JSON containment
-//! node search, JSON path search, and candidate-scoped JSON search are new
-//! native engine functionality on the same concrete built-in dispatch path.
+//! candidate vector scoring, graph reachability candidate production,
+//! expanded-candidate vector scoring, batched expanded-candidate vector
+//! scoring, approximate vector-search, batched approximate vector-search,
+//! ANN-expanded vector-search, batched ANN-expanded vector-search, vector-index
+//! stats, vector-index procedures, maintained text-index stats/procedures, BM25
+//! text-search, candidate BM25 scoring, batched candidate BM25 scoring,
+//! maintained-state BM25 scoring, maintained-state node-composed BM25 scoring,
+//! maintained-state graph-expanded BM25 batch scoring, Reciprocal Rank Fusion
+//! over ranked node lists, JSON containment node search, JSON path search, and
+//! candidate-scoped JSON search are new native engine functionality on the same
+//! concrete built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify`, and
@@ -33,6 +34,7 @@
 //!   `selene.vector_score_candidate_state_expanded`,
 //!   `selene.vector_score_candidate_state_expanded_batch`,
 //!   `selene.vector_candidate_states`,
+//!   `selene.reachable_nodes`,
 //!   `selene.vector_score_expanded_candidates`,
 //!   `selene.vector_score_expanded_candidates_batch`,
 //!   `selene.vector_search_nodes_ann`, `selene.vector_search_nodes_ann_batch`,
@@ -90,8 +92,10 @@ mod json_path_contains_nodes;
 mod json_path_exists_nodes;
 mod json_path_value_nodes;
 mod meta;
+mod reachable_nodes;
 mod rebuild_vector_indexes;
 mod reciprocal_rank_fusion;
+mod retrieval_filter;
 mod text_index_stats;
 mod text_search;
 mod vector_candidate_state_common;

@@ -157,10 +157,10 @@ fn vector_search_ann_signature_has_metric_and_ef_search_args() {
         .expect("vector_search_nodes_ann resolves");
     let arity = metadata.signature.arity();
     assert_eq!(arity.minimum, 4);
-    assert_eq!(arity.maximum, 8);
+    assert_eq!(arity.maximum, 12);
 
     let parameters = &metadata.signature.parameters;
-    assert_eq!(parameters.len(), 8);
+    assert_eq!(parameters.len(), 12);
     assert_eq!(parameters[0].name.as_str(), "label");
     assert_eq!(parameters[0].ty, crate::GqlType::String);
     assert_eq!(parameters[1].name.as_str(), "property");
@@ -208,6 +208,41 @@ fn vector_search_ann_signature_has_metric_and_ef_search_args() {
     assert_eq!(parameters[7].default_doc, Some("NULL (no property filter)"));
     assert_eq!(
         parameters[7].default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+    assert_eq!(parameters[8].name.as_str(), "edge_filter_label");
+    assert_eq!(parameters[8].ty, crate::GqlType::String);
+    assert!(parameters[8].nullable);
+    assert_eq!(parameters[8].default_doc, Some("NULL (no edge filter)"));
+    assert_eq!(
+        parameters[8].default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+    assert_eq!(parameters[9].name.as_str(), "edge_filter_property");
+    assert_eq!(parameters[9].ty, crate::GqlType::String);
+    assert!(parameters[9].nullable);
+    assert_eq!(parameters[9].default_doc, Some("NULL (no edge filter)"));
+    assert_eq!(
+        parameters[9].default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+    assert_eq!(parameters[10].name.as_str(), "edge_filter_values");
+    assert_eq!(
+        parameters[10].ty,
+        crate::GqlType::List(Box::new(crate::GqlType::AnyProperty))
+    );
+    assert!(parameters[10].nullable);
+    assert_eq!(parameters[10].default_doc, Some("NULL (no edge filter)"));
+    assert_eq!(
+        parameters[10].default,
+        Some(crate::ProcedureDefaultValue::Null)
+    );
+    assert_eq!(parameters[11].name.as_str(), "edge_filter_endpoint");
+    assert_eq!(parameters[11].ty, crate::GqlType::String);
+    assert!(parameters[11].nullable);
+    assert_eq!(parameters[11].default_doc, Some("NULL (no edge filter)"));
+    assert_eq!(
+        parameters[11].default,
         Some(crate::ProcedureDefaultValue::Null)
     );
 }
@@ -560,7 +595,7 @@ fn handles_are_unique_and_one_based() {
         .map(|(_, metadata)| metadata.handle.raw())
         .collect();
     handles.sort_unstable();
-    assert_eq!(handles, (1..=67).collect::<Vec<_>>());
+    assert_eq!(handles, (1..=68).collect::<Vec<_>>());
 }
 
 #[test]

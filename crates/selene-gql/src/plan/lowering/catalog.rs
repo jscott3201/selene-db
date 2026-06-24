@@ -81,6 +81,17 @@ pub(crate) fn lower_ddl(
             validation_mode: *validation_mode,
             span: *span,
         },
+        DdlStatement::AlterEdgeType {
+            label,
+            endpoints,
+            properties,
+            span,
+        } => CatalogOp::AlterEdgeType {
+            label: label.clone(),
+            endpoints: endpoints.clone(),
+            properties: lower_property_defs(properties, analyzed)?,
+            span: *span,
+        },
         DdlStatement::DropNodeType {
             label,
             if_exists,

@@ -11,7 +11,8 @@ pub(crate) fn bind_ddl_statement(
 ) -> Result<(), AnalysisError> {
     match statement {
         DdlStatement::CreateNodeType { properties, .. }
-        | DdlStatement::CreateEdgeType { properties, .. } => {
+        | DdlStatement::CreateEdgeType { properties, .. }
+        | DdlStatement::AlterEdgeType { properties, .. } => {
             for property in properties {
                 for constraint in &property.constraints {
                     if let TypePropertyConstraint::Default(value, _) = constraint {

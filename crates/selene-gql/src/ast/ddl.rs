@@ -76,6 +76,17 @@ pub enum DdlStatement {
         /// Source span.
         span: SourceSpan,
     },
+    /// `ALTER EDGE TYPE`.
+    AlterEdgeType {
+        /// Edge type label.
+        label: DbString,
+        /// Optional widened endpoint declaration.
+        endpoints: Option<EdgeEndpointSpec>,
+        /// Optional property definitions to add.
+        properties: Vec<TypePropertyDef>,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `DROP NODE TYPE`.
     DropNodeType {
         /// Node label.
@@ -164,6 +175,7 @@ impl DdlStatement {
             | Self::DropGraph { span, .. }
             | Self::CreateNodeType { span, .. }
             | Self::CreateEdgeType { span, .. }
+            | Self::AlterEdgeType { span, .. }
             | Self::DropNodeType { span, .. }
             | Self::DropEdgeType { span, .. }
             | Self::TruncateNodeType { span, .. }

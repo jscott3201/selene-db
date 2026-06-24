@@ -143,7 +143,8 @@ fn inherit_mutation_parameter_declarations(
 fn inherit_ddl_parameter_declarations(statement: &mut DdlStatement, declarations: &DeclarationMap) {
     match statement {
         DdlStatement::CreateNodeType { properties, .. }
-        | DdlStatement::CreateEdgeType { properties, .. } => {
+        | DdlStatement::CreateEdgeType { properties, .. }
+        | DdlStatement::AlterEdgeType { properties, .. } => {
             for property in properties {
                 for constraint in &mut property.constraints {
                     if let TypePropertyConstraint::Default(value, _) = constraint {
